@@ -95,8 +95,9 @@ public class PolarisProvisioningService {
         public String s3Region;
         public boolean s3PathStyleAccess;
         public boolean stsUnavailable;    // true for the Ozone S3 gateway: no token service
-        public String s3AccessKeyId;      // admin S3 credential, used for the catalog and the bucket
+        public String s3AccessKeyId;      // S3 identity written into the catalog; also creates the bucket unless...
         public String s3SecretAccessKey;
+        public boolean bucketProvisioned; // ...the cluster already did it (PROVISION_OZONE_BUCKET), so no SigV4 call
     }
 
     /** What happened, so the caller can log it and put the credential where the chart expects it. */
@@ -158,7 +159,7 @@ public class PolarisProvisioningService {
         String token = adminToken(req);
 
         if (req.createCatalog) {
-            out.bucketCreated = ensureBucket(req);
+            out.bucketCreated = req.bucketProvisioned || ensureBucket(req);
             out.catalogCreated = ensureCatalog(req, token);
         } else {
             LOG.info("Polaris provisioning: catalog creation disabled; attaching to the existing catalog '{}'.",

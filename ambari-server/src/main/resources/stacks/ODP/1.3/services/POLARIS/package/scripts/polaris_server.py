@@ -27,7 +27,7 @@ from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.script.script import Script
 
-from polaris import configure_polaris, bootstrap_ozone_catalog, sync_managed_principals
+from polaris import configure_polaris, bootstrap_ozone_catalog, sync_managed_principals, provision_ozone_bucket
 from setup_ranger_polaris import setup_ranger_polaris
 
 
@@ -193,6 +193,18 @@ class PolarisServer(Script):
     env.set_params(params)
     Logger.info("Running manual Polaris custom command: BOOTSTRAP_OZONE_CATALOG")
     bootstrap_ozone_catalog()
+
+  def provision_ozone_bucket(self, env):
+    """PROVISION_OZONE_BUCKET, submitted by KDPS while provisioning a release's Polaris catalog.
+    Parameters arrive as commandParams; the secret is named *_password so the agent masks it."""
+    import params
+    env.set_params(params)
+    cp = Script.get_config().get("commandParams", {}) or {}
+    bucket = str(cp.get("kdps_bucket", "")).strip()
+    access_id = str(cp.get("kdps_access_id", "")).strip()
+    secret = str(cp.get("kdps_s3_password", "")).strip()
+    Logger.info("Running Polaris custom command: PROVISION_OZONE_BUCKET (bucket={0}, access id={1})".format(bucket, access_id))
+    provision_ozone_bucket(bucket, access_id, secret)
 
   def sync_principals(self, env):
     """Manually-triggered SYNC_PRINCIPALS custom command. Same logic that runs at start —

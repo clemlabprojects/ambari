@@ -169,6 +169,56 @@ public class AmbariActionClient {
         }
     }
 
+    /**
+     * Runs a stack custom command on one service component and returns the Ambari request id.
+     * {@code parameters} reach the script as {@code config['commandParams']}, which is how KDPS hands
+     * per-release facts (a bucket name, an S3 identity) to code that runs on the cluster with the
+     * cluster's own credentials — the same division of labour as the ad-hoc keytab.
+     */
+    public int submitCustomCommand(String serviceName, String componentName, String command,
+                                   Map<String, String> parameters, String context) throws Exception {
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("command", command);
+        requestInfo.addProperty("context", (context == null || context.isEmpty()) ? command : context);
+        JsonObject opLevel = new JsonObject();
+        opLevel.addProperty("level", "SERVICE");
+        opLevel.addProperty("cluster_name", clusterName);
+        opLevel.addProperty("service_name", serviceName);
+        requestInfo.add("operation_level", opLevel);
+        if (parameters != null && !parameters.isEmpty()) {
+            JsonObject params = new JsonObject();
+            parameters.forEach(params::addProperty);
+            requestInfo.add("parameters", params);
+        }
+        JsonObject filter = new JsonObject();
+        filter.addProperty("service_name", serviceName);
+        filter.addProperty("component_name", componentName);
+        // Ambari's custom-command builder wants the hosts spelled out; left to its own eligibility
+        // filter it can answer "no healthy eligible hosts" even for a STARTED component.
+        java.util.List<String> hosts = getComponentHosts(clusterName, serviceName, componentName);
+        if (hosts == null || hosts.isEmpty()) {
+            throw new IllegalStateException(componentName + " of " + serviceName + " runs on no host of cluster " + clusterName);
+        }
+        filter.addProperty("hosts", String.join(",", hosts));
+        com.google.gson.JsonArray filters = new com.google.gson.JsonArray();
+        filters.add(filter);
+        JsonObject root = new JsonObject();
+        root.add("RequestInfo", requestInfo);
+        root.add("Requests/resource_filters", filters);
+
+        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/requests";
+        try (InputStream is = stream.readFrom(url, "POST", root.toString(),
+                withStdHeaders(Map.of("Content-Type", "application/json")))) {
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject ro = o.getAsJsonObject("Requests");
+            if (ro == null || !ro.has("id")) {
+                throw new IllegalStateException("Unexpected response for custom command " + command + ": " + json);
+            }
+            return ro.get("id").getAsInt();
+        }
+    }
+
     public boolean waitUntilComplete(int requestId, long timeout, TimeUnit unit) throws Exception {
         long deadline = System.nanoTime() + unit.toNanos(timeout);
 
