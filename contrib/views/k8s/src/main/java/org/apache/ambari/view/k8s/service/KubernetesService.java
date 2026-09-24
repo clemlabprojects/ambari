@@ -3654,6 +3654,29 @@ public class KubernetesService {
     }
 
     /**
+     * Names of the cluster's IngressClasses, default class first when one is marked
+     * {@code ingressclass.kubernetes.io/is-default-class}. Empty when the cluster has no ingress
+     * controller, or when listing is not permitted; either way an Ingress would not be served.
+     */
+    public java.util.List<String> listIngressClasses() {
+        checkConfiguration();
+        try {
+            var classes = client.network().v1().ingressClasses().list().getItems();
+            java.util.List<String> names = new java.util.ArrayList<>();
+            for (var ic : classes) {
+                if (ic.getMetadata() == null || ic.getMetadata().getName() == null) continue;
+                var ann = ic.getMetadata().getAnnotations();
+                boolean isDefault = ann != null && "true".equalsIgnoreCase(ann.get("ingressclass.kubernetes.io/is-default-class"));
+                if (isDefault) names.add(0, ic.getMetadata().getName()); else names.add(ic.getMetadata().getName());
+            }
+            return names;
+        } catch (KubernetesClientException e) {
+            LOG.warn("IngressClass listing failed (treating as no ingress controller): {}", e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    /**
      * Check if a CRD does exists in the kubernetes cluster
      */
     public boolean crdExists(String crdName) {
@@ -4822,11 +4845,13 @@ public class KubernetesService {
      * @param mounts      a map describing the mount configuration (structure is mount-manager specific)
      */
     public void createMounts(String namespace, String releaseName, Map<String,Object> mounts){
-        if(mountManager == null) {
+        // ensureMounts is idempotent (an existing PVC is left alone), so it runs on every call. It
+        // used to run only while creating the manager, i.e. once per service instance: the second
+        // deploy in the same JVM silently got no PVCs.
+        if (mountManager == null) {
             this.mountManager = new MountManager(this.client);
-            mountManager.ensureMounts(namespace, releaseName, mounts);
         }
-
+        mountManager.ensureMounts(namespace, releaseName, mounts);
     }
 
     /**
