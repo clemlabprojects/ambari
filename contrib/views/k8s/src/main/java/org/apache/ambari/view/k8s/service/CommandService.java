@@ -1403,16 +1403,14 @@ public class CommandService {
      * Says why a release cannot be installed as configured, before anything is queued, or null when
      * there is nothing to say.
      *
-     * <p>It exists because of one failure that is miserable to diagnose from the outside: a form
-     * that asks for Ranger access control, on a deploy that carries no Ranger wiring. Nothing
-     * refuses it, so the release goes all the way to Helm, whose chart then reports a value the
-     * operator was never shown — {@code ranger.serviceName is required when accessControl.type =
-     * 'ranger'} — a minute into an install that was never going to work. That value is one KDPS
-     * fills in itself while planning the policy repository, and it only plans that when the deploy
-     * carries the Ranger spec, which comes with the release's security profile.
+     * <p>Without it, a form asking for Ranger access control on a deploy that carries no Ranger
+     * wiring goes all the way to Helm, whose chart then reports a value the operator was never
+     * shown: {@code ranger.serviceName is required when accessControl.type = 'ranger'}.
      *
-     * <p>The rule is the one the deploys themselves show: of the releases that asked for Ranger,
-     * every one with a security profile was wired, and the ones without were not.
+     * <p>That wiring is the {@code ranger} block of the service definition, which the wizard sends
+     * only when the release is attached to a platform context. The security profile plays no part:
+     * it configures authentication, shared between services, while the Ranger block is one chart's
+     * authorization wiring.
      */
     public static String describeMissingWiring(HelmDeployRequest request) {
         if (request == null || request.getFormValues() == null) return null;
@@ -1425,19 +1423,14 @@ public class CommandService {
 
         if (request.getRanger() != null && !request.getRanger().isEmpty()) return null;
 
-        boolean hasSecurityProfile = request.getSecurityProfile() != null
-                && !request.getSecurityProfile().trim().isEmpty();
-
-        return "This release asks for Ranger access control, but the deploy carries no Ranger wiring"
-                + (hasSecurityProfile
-                    ? ", although a security profile is selected. The service definition may expose no "
-                      + "Ranger plugin settings for this chart."
-                    : ", because no security profile is selected. The Ranger wiring — which service "
-                      + "repository to create and the service name the chart needs — comes with the "
-                      + "profile, so choose one for this release.")
-                + " Installing as it stands would fail in the chart instead, with 'ranger.serviceName is"
-                + " required when accessControl.type = ranger'. To run without Ranger, set access control"
-                + " to something else.";
+        return "This release asks for Ranger access control, but the deploy carries no Ranger wiring:"
+                + " the plugin settings that say which policy repository to create, and that give the"
+                + " chart its ranger.serviceName. That wiring comes from the service definition and is"
+                + " sent only when the release is attached to a platform context — so either no context"
+                + " is selected for this deploy, or this chart's service definition declares no Ranger"
+                + " plugin settings. Installing as it stands would fail in the chart instead, with"
+                + " 'ranger.serviceName is required when accessControl.type = ranger'. Attach a platform"
+                + " context that provides Ranger, or set access control to something else.";
     }
 
     /**

@@ -25,6 +25,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -32,9 +34,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * A release that asks for Ranger access control without Ranger wiring cannot install: the chart
  * requires a service name that KDPS fills in only while planning the policy repository, which it
- * plans only when the deploy says which Ranger to use. Left alone, that surfaces a minute later as
- * a Helm template error naming a value the operator never saw. These tests pin the refusal — and,
- * just as importantly, pin that it stays out of the way of every release that is fine.
+ * plans only when the deploy carries the service definition's Ranger block. Left alone, that
+ * surfaces a minute later as a Helm template error naming a value the operator never saw. These
+ * tests pin the refusal, pin that it stays out of the way of every release that is fine, and pin
+ * that the security profile plays no part in it.
  */
 class CommandServiceMissingWiringTest {
 
@@ -59,25 +62,34 @@ class CommandServiceMissingWiringTest {
     }
 
     @Test
-    void refusesRangerAccessControlWithNoWiringAndNoSecurityProfile() {
+    void refusesRangerAccessControlWithNoWiring() {
         String problem = CommandService.describeMissingWiring(request("ranger", null, false));
         assertNotNull(problem, "this is exactly the release that fails in the chart");
-        assertTrue(problem.contains("no security profile is selected"), problem);
         assertTrue(problem.contains("ranger.serviceName"),
                 "the operator should recognise the error they would otherwise have got: " + problem);
     }
 
     @Test
-    void saysSomethingDifferentWhenAProfileIsSelectedButBringsNoRanger() {
-        String problem = CommandService.describeMissingWiring(request("ranger", "keycloak", false));
-        assertNotNull(problem);
-        assertTrue(problem.contains("although a security profile is selected"),
-                "a profile that carries no Ranger plugin settings is a different mistake: " + problem);
+    void pointsAtThePlatformContextAndTheServiceDefinition() {
+        String problem = CommandService.describeMissingWiring(request("ranger", null, false));
+        assertTrue(problem.contains("platform context"),
+                "the Ranger block rides on the context, so that is where to send the operator: " + problem);
+        assertTrue(problem.contains("service definition"),
+                "the other real cause is a chart whose definition declares no Ranger block: " + problem);
+    }
+
+    @Test
+    void theSecurityProfileMakesNoDifference() {
+        String withProfile = CommandService.describeMissingWiring(request("ranger", "keycloak", false));
+        String withoutProfile = CommandService.describeMissingWiring(request("ranger", null, false));
+        assertEquals(withoutProfile, withProfile,
+                "the profile is irrelevant to Ranger wiring and must not steer the operator");
+        assertFalse(withProfile.contains("security profile"),
+                "the message must not mention the profile at all: " + withProfile);
     }
 
     @Test
     void allowsRangerWhenTheDeployCarriesItsWiring() {
-        // The case that must never be refused: 21 of the 22 past Ranger deploys look like this.
         assertNull(CommandService.describeMissingWiring(request("ranger", "keycloak", true)));
         assertNull(CommandService.describeMissingWiring(request("ranger", null, true)));
     }
