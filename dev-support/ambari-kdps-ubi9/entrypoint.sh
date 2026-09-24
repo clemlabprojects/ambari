@@ -80,6 +80,36 @@ fi
 # value is root, which no OpenShift pod can be. Everything the server writes to is group-0 writable
 # in this image, so the arbitrary UID -- named through the passwd entry added above -- is the
 # correct value to record. setup rewrites the properties file, so this has to come after it.
+# ambari.properties is rewritten by setup, so anything the deployment wants to say about the server
+# has to be applied after it. AMBARI_EXTRA_PROPERTIES carries one key=value per line; each key is
+# replaced if present and appended otherwise.
+PROPERTIES=/etc/ambari-server/conf/ambari.properties
+set_property() {
+  local key="$1" value="$2" escaped
+  escaped="$(printf '%s' "${value}" | sed -e 's/[\\&|]/\\&/g')"
+  if grep -q "^${key}=" "${PROPERTIES}"; then
+    sed -i "s|^${key}=.*|${key}=${escaped}|" "${PROPERTIES}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" >> "${PROPERTIES}"
+  fi
+}
+
+if [ -n "${AMBARI_EXTRA_PROPERTIES:-}" ]; then
+  while IFS= read -r line; do
+    case "${line}" in ''|'#'*) continue;; esac
+    set_property "${line%%=*}" "${line#*=}"
+  done <<< "${AMBARI_EXTRA_PROPERTIES}"
+  log "applied $(printf '%s' "${AMBARI_EXTRA_PROPERTIES}" | grep -c '=') properties from the deployment"
+fi
+
+# Ambari encrypts what it keeps in its credential store with this key, and so does the KDPS view
+# with the kubeconfig you upload. Without it the view falls back to a passphrase that is a constant
+# in the published source, so refuse to run rather than pretend the kubeconfig is protected.
+if [ -z "${AMBARI_SECURITY_MASTER_KEY:-}" ]; then
+  log "AMBARI_SECURITY_MASTER_KEY is not set: the master key is required."
+  exit 1
+fi
+
 AMBARI_RUN_USER="$(id -u -n)"
 export USER="${AMBARI_RUN_USER}" LOGNAME="${AMBARI_RUN_USER}"
 if [ "$(id -u)" -ne 0 ] && [ -w /etc/ambari-server/conf/ambari.properties ]; then
