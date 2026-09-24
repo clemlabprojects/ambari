@@ -104,18 +104,19 @@ public class CommandResource {
       return Response.status(Response.Status.ACCEPTED)
               .entity(Map.of("id", id))
               .build();
-    } catch (IllegalArgumentException iae) {
-      LOG.warn("submitDeploy rejected (400): {}", iae.getMessage());
+    } catch (IllegalArgumentException | IllegalStateException validation) {
+      LOG.warn("submitDeploy rejected (400): {}", validation.getMessage());
       return Response.status(Response.Status.BAD_REQUEST)
-              .entity(Map.of("error", iae.getMessage()))
+              .entity(Map.of("error", validation.getMessage()))
               .build();
     } catch (RuntimeException re) {
-      // submitDeploy wraps backend.apply(...) exceptions in RuntimeException for
-      // logging; unwrap so the operator gets a 400 with the original validation
-      // message instead of a 500 "Request failed." when the cause is a deliberate
-      // IllegalArgumentException (typically from a TLS-mode payload validation).
+      // submitDeploy wraps backend.apply(...) exceptions in RuntimeException for logging; unwrap so
+      // the operator gets a 400 carrying the validation message (which names the field to fill in)
+      // instead of a 500 "Request failed." Both kinds are deliberate pre-flight rejections: bad
+      // payload (IllegalArgumentException) and an incomplete deploy such as a Kerberized platform
+      // context with no keytab selected (IllegalStateException).
       Throwable cause = re.getCause();
-      if (cause instanceof IllegalArgumentException) {
+      if (cause instanceof IllegalArgumentException || cause instanceof IllegalStateException) {
         LOG.warn("submitDeploy rejected (400, unwrapped): {}", cause.getMessage());
         return Response.status(Response.Status.BAD_REQUEST)
                 .entity(Map.of("error", cause.getMessage()))

@@ -460,6 +460,8 @@ public class ContextService {
         }
         // Schema-driven generic field view (what the UI renders) on top of the typed accessors.
         populateResolvedFields(rc, entity, effectiveAmbari, effectiveCluster, discover);
+        alignRealmWithContextKrb5Conf(rc);
+        markKerberosEnabled(rc, effectiveAmbari, effectiveCluster);
 
         // Populate the typed OIDC admin-credential accessors used by the OIDC client-registration
         // step and by the derived-profile logic — for EXTERNAL (typed config + decrypted secret) and
@@ -766,6 +768,49 @@ public class ContextService {
         return r;
     }
 
+    /**
+     * Answers "is the target cluster Kerberized?" the same way for every context kind, as the resolved
+     * field {@code kerberos.enabled}: the deploy uses it to decide whether the release needs its Kerberos
+     * part (krb5.conf + keytab) without knowing the kind. MANAGED/REMOTE read the cluster's
+     * {@code cluster-env/security_enabled}; CDP and EXTERNAL are Kerberized when a realm is known.
+     */
+    /**
+     * The realm an operator types (or CM reports) has been seen in mixed case while the context's
+     * krb5.conf declares it in the canonical spelling; Kerberos compares realms case-sensitively and the
+     * pods kinit with that krb5.conf, so its spelling wins for {@code kerberos.realm}.
+     */
+    private static void alignRealmWithContextKrb5Conf(ResolvedContext rc) {
+        Map<String, String> rf = rc.getResolvedFields();
+        if (rf == null) return;
+        String aligned = alignRealmWithKrb5Conf(rf.get("kerberos.realm"), rf.get("kerberos.krb5Conf"));
+        if (aligned != null && !aligned.equals(rf.get("kerberos.realm"))) {
+            rf.put("kerberos.realm", aligned);
+        }
+        if (aligned != null && rc.getKerberosRealm() != null && aligned.equalsIgnoreCase(rc.getKerberosRealm())) {
+            rc.setKerberosRealm(aligned);
+        }
+    }
+
+    private void markKerberosEnabled(ResolvedContext rc, AmbariActionClient ambari, String cluster) {
+        Map<String, String> rf = rc.getResolvedFields();
+        if (rf == null || rf.containsKey("kerberos.enabled")) return;
+        try {
+            boolean on;
+            if (KIND_MANAGED.equals(rc.getKind()) || KIND_REMOTE.equals(rc.getKind())) {
+                String se = ambari == null ? null
+                        : ambari.getDesiredConfigProperty(cluster, "cluster-env", "security_enabled");
+                on = "true".equalsIgnoreCase(se == null ? "" : se.trim());
+            } else {
+                String realm = rc.getKerberosRealm() != null && !rc.getKerberosRealm().isBlank()
+                        ? rc.getKerberosRealm() : rf.get("kerberos.realm");
+                on = realm != null && !realm.isBlank();
+            }
+            rf.put("kerberos.enabled", Boolean.toString(on));
+        } catch (Exception e) {
+            LOG.warn("ContextService: could not determine the Kerberos state of context {}: {}", rc.getId(), e.toString());
+        }
+    }
+
     private ResolvedContext resolveExternal(KdpsContextEntity entity) {
         ResolvedContext r = new ResolvedContext();
         r.setId(entity.getId());
@@ -846,6 +891,7 @@ public class ContextService {
             // Kerberos realm (drives hive.authMode).
             String realm = null;
             try { realm = cm.cmConfig().get("SECURITY_REALM"); } catch (Exception ignore) {}
+            realm = alignRealmWithKrb5Conf(realm, str(config.get("krb5Conf")));
             if (realm != null && !realm.isBlank()) {
                 r.setKerberosRealm(realm);
                 rf.put("kerberos.realm", realm);
@@ -945,6 +991,22 @@ public class ContextService {
     }
 
     /** First non-blank value among {@code keys} in {@code m}, or null. */
+    /**
+     * CM's SECURITY_REALM is free text and has been seen with a mixed-case spelling of the realm the
+     * context's krb5.conf declares. Kerberos compares realms case-sensitively and the pods kinit with
+     * that krb5.conf, so when the two differ only by case the krb5.conf spelling wins.
+     */
+    static String alignRealmWithKrb5Conf(String realm, String krb5Conf) {
+        if (realm == null || realm.isBlank() || krb5Conf == null) return realm;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("(?m)^\\s*default_realm\\s*=\\s*(\\S+)").matcher(krb5Conf);
+        if (m.find()) {
+            String declared = m.group(1).trim();
+            if (declared.equalsIgnoreCase(realm) && !declared.equals(realm)) return declared;
+        }
+        return realm;
+    }
+
     private static String pick(Map<String, String> m, String... keys) {
         if (m == null) return null;
         for (String k : keys) {

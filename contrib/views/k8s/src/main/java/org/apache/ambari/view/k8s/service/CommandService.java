@@ -37,6 +37,7 @@ import org.apache.ambari.view.k8s.model.RangerConfigDefaultsRegistry;
 import org.apache.ambari.view.k8s.model.stack.StackConfig;
 import org.apache.ambari.view.k8s.model.stack.StackProperty;
 import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
+import org.apache.ambari.view.k8s.model.FormField;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.store.CommandEntity;
@@ -4446,10 +4447,12 @@ public class CommandService {
         // use it for this deploy (and enable Kerberos wiring) regardless of the hosting cluster's
         // own security state — the deployed pods must speak the backend realm, not ours.
         String contextKrb5 = null;
+        Map<String, String> ctxResolvedKrbFields = Collections.emptyMap();
         try {
             Map<String, String> ctxResolvedKrb =
                     contextResolvedFieldsForDeploy(request.getFormValues(), ambariActionClient, cluster);
             if (ctxResolvedKrb != null) {
+                ctxResolvedKrbFields = ctxResolvedKrb;
                 contextKrb5 = ctxResolvedKrb.get("kerberos.krb5Conf");
             }
         } catch (Exception ex) {
@@ -4464,6 +4467,12 @@ public class CommandService {
         // the krb5.conf ConfigMap is created for this case too — and so we can fail early with a clear
         // message if no krb5.conf can be sourced (instead of a cryptic pod "configmap not found" mount).
         boolean externalKeytabProvided = deployUsesExternalKeytab(request.getFormValues());
+        // The target cluster's own security state (cluster-env security_enabled for Ambari clusters,
+        // a known realm for CDP/EXTERNAL), resolved by the context — the wizard's equivalent of
+        // "is Kerberos on over there?". A service that declares a Kerberos identity (kerberos[] in its
+        // definition) needs the release's Kerberos part whenever the target is Kerberized.
+        boolean contextKerberized = "true".equalsIgnoreCase(ctxResolvedKrbFields.get("kerberos.enabled"));
+        boolean serviceNeedsKerberosIdentity = !normalizeKerberosEntries(request.getKerberos()).isEmpty();
 
         // DESIGN RULE — an EXTERNAL/CDP/REMOTE context must NOT inherit the LOCAL Ambari cluster's
         // Kerberos. Deploying an external-backend service against the internal realm is incorrect, and it
@@ -4494,11 +4503,16 @@ public class CommandService {
         // the view creates neither the krb5.conf ConfigMap nor wires the keytab, and the pod later dies with
         // the opaque "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found". Fail NOW with an
         // actionable message pointing at the missing keytab selection.
-        if (externalContextSelected && !externalKeytabProvided && deployHasKerberizedExternalTarget(request)) {
+        if (externalContextSelected && !externalKeytabProvided
+                && (deployHasKerberizedExternalTarget(request, ctxResolvedKrbFields)
+                    || (contextKerberized && serviceNeedsKerberosIdentity))) {
+            String realm = ctxResolvedKrbFields.getOrDefault("kerberos.realm", "");
             throw new IllegalStateException(
-                    "The selected platform backend uses Kerberos authentication, but no external keytab "
+                    "Platform context '" + selectedContextIdForKrb + "' is Kerberized"
+                    + (realm.isBlank() ? "" : " (realm " + realm + ")")
+                    + " and " + request.getServiceKey() + " needs a service identity there, but no external keytab "
                     + "Secret was attached for this deploy. Create the service's keytab Secret in namespace '"
-                    + request.getNamespace() + "' (holding the service.keytab / keytab for the backend realm) "
+                    + request.getNamespace() + "' (holding the keytab issued by that realm's KDC) "
                     + "and select it in the wizard step 3 ('External ... service keytab Secret'), then redeploy. "
                     + "Without it the pod cannot kinit and the krb5.conf/keytab volume mounts fail.");
         }
@@ -11075,6 +11089,9 @@ public class CommandService {
 
         Map<String, Object> formValues = request.getFormValues();
         if (formValues == null) formValues = java.util.Collections.emptyMap();
+        // Context-resolved fields (host:port, auth mode) stay blank in the form unless the operator
+        // overrides them; their value comes from the selected platform context.
+        Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(formValues, null, null);
 
         for (Map.Entry<String, org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget> entry
                 : def.externalServiceTargets.entrySet()) {
@@ -11083,9 +11100,8 @@ public class CommandService {
             if (target == null || target.urlOverrideField == null || target.urlOverrideField.isBlank()) continue;
             if (target.authModes == null || target.authModes.isEmpty()) continue;
 
-            // (1) URL override gate — blank ⇒ Ambari-managed, skip entirely
-            Object urlRaw = ConfigResolutionService.getByDottedPath(formValues, target.urlOverrideField);
-            String url = urlRaw == null ? "" : String.valueOf(urlRaw).trim();
+            // (1) URL gate — the operator's value or the context's; blank ⇒ Ambari-managed, skip entirely
+            String url = effectiveFormValue(def, formValues, target.urlOverrideField, ctxResolved);
             if (url.isEmpty()) {
                 LOG.debug("applyExternalServiceCredentials: target '{}' has empty URL override — internal/Ambari-managed", targetKey);
                 continue;
@@ -11094,8 +11110,8 @@ public class CommandService {
             // (2) Mode resolution
             String modeName = null;
             if (target.modeField != null && !target.modeField.isBlank()) {
-                Object modeRaw = ConfigResolutionService.getByDottedPath(formValues, target.modeField);
-                modeName = modeRaw == null ? null : String.valueOf(modeRaw).trim();
+                modeName = effectiveFormValue(def, formValues, target.modeField, ctxResolved);
+                if (modeName.isEmpty()) modeName = null;
             }
             if (modeName == null || modeName.isEmpty()) {
                 if (target.authModes.size() == 1) {
@@ -11122,8 +11138,12 @@ public class CommandService {
                 secretName = secretRaw == null ? "" : String.valueOf(secretRaw).trim();
                 if (secretName.isEmpty()) {
                     throw new IllegalStateException(
-                            "External target '" + targetKey + "' mode '" + modeName + "' requires a K8s Secret name "
-                                    + "in form field '" + mode.secretField + "' — operator left it blank.");
+                            "The selected platform context's " + targetKey + " (" + url + ") uses " + modeName
+                                    + " authentication, which needs a Secret selected in form field '"
+                                    + mode.secretField + "' (wizard step 3) — it was left blank. Create the Secret in "
+                                    + "namespace '" + request.getNamespace() + "' with keys "
+                                    + (mode.secretKeys == null ? "(none)" : mode.secretKeys)
+                                    + ", select it, and redeploy.");
                 }
                 String namespace = request.getNamespace();
                 io.fabric8.kubernetes.api.model.Secret sec;
@@ -11343,6 +11363,142 @@ public class CommandService {
     }
 
     /**
+     * Resolves one {@code dnsTemplates} token against the chart values. {@code ingress.host} is
+     * special: the wizard's scalar field becomes the chart's {@code ingress.hosts[]} list via the
+     * ingress binding, so by deploy time only the list exists — and a certificate missing the
+     * ingress host as a SAN fails every client that arrives through the Route.
+     */
+    private static String tlsTemplateToken(String token, Map<String, Object> values) {
+        String direct = stringValue(ConfigResolutionService.getByDottedPath(values, token));
+        if (!direct.isBlank()) return direct;
+        if ("ingress.host".equals(token)) {
+            Object hosts = ConfigResolutionService.getByDottedPath(values, "ingress.hosts");
+            if (hosts instanceof List && !((List<?>) hosts).isEmpty()) {
+                Object first = ((List<?>) hosts).get(0);
+                if (first instanceof Map) return stringValue(((Map<?, ?>) first).get("host"));
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Fills each TLS entry's {@code dnsNames} from the service definition's {@code tls[].dnsTemplates}
+     * when the caller supplied none. Tokens are the ones the templates use: {@code releaseName},
+     * {@code namespace}, {@code nameOverride} and dotted value paths such as {@code ingress.host}.
+     * Entries that already carry {@code dnsNames} are left alone.
+     */
+    @SuppressWarnings("unchecked")
+    void resolveTlsDnsNames(HelmDeployRequest request) {
+        try {
+            Map<String, Object> tls = request.getTls();
+            if (tls == null || tls.isEmpty()) return;
+            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
+            if (def == null || def.tls == null || def.tls.isEmpty()) return;
+            Map<String, Object> values = request.getValues() == null ? Collections.emptyMap() : request.getValues();
+            for (Map<String, Object> spec : def.tls) {
+                if (spec == null) continue;
+                String key = stringValue(spec.get("key"));
+                if (key.isBlank() || !(tls.get(key) instanceof Map)) continue;
+                Map<String, Object> entry = (Map<String, Object>) tls.get(key);
+                Object existing = entry.get("dnsNames");
+                if (existing instanceof Collection && !((Collection<?>) existing).isEmpty()) continue;
+                Object templates = spec.get("dnsTemplates");
+                if (!(templates instanceof Collection)) continue;
+                List<String> names = new ArrayList<>();
+                for (Object t : (Collection<?>) templates) {
+                    String rendered = renderTlsDnsTemplate(String.valueOf(t), request, values);
+                    if (!rendered.isBlank() && !names.contains(rendered)) names.add(rendered);
+                }
+                if (!names.isEmpty()) {
+                    entry.put("dnsNames", names);
+                    LOG.info("TLS entry '{}' SANs resolved server-side: {}", key, names);
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not resolve TLS dnsTemplates: {}", e.toString());
+        }
+    }
+
+    static String renderTlsDnsTemplate(String template, HelmDeployRequest request, Map<String, Object> values) {
+        if (template == null) return "";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\{\\{\\s*([^}]+?)\\s*}}").matcher(template);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            String token = m.group(1).trim();
+            String value;
+            switch (token) {
+                case "releaseName" -> value = request.getReleaseName() == null ? "" : request.getReleaseName();
+                case "namespace"   -> value = request.getNamespace() == null ? "" : request.getNamespace();
+                default            -> value = tlsTemplateToken(token, values);
+            }
+            if (value.isBlank()) return "";  // an unresolved token makes the whole SAN meaningless
+            m.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(value));
+        }
+        m.appendTail(out);
+        return out.toString().trim();
+    }
+
+    /**
+     * Finds a form field by its dotted name anywhere in the form tree (groups are searched
+     * recursively); null when the service definition declares no such field.
+     */
+    static FormField findFormField(List<FormField> fields, String name) {
+        if (fields == null || name == null) return null;
+        for (FormField f : fields) {
+            if (f == null) continue;
+            if (name.equals(f.name)) return f;
+            FormField nested = findFormField(f.fields, name);
+            if (nested != null) return nested;
+        }
+        return null;
+    }
+
+    /**
+     * Applies a form field's {@code condition} the way the wizard does before showing the field:
+     * equality with a scalar or with any entry of an array, or the {@code "non-empty"} operator.
+     * A field without a condition is always in effect.
+     */
+    static boolean formConditionHolds(Map<String, Object> condition, Map<String, Object> formValues) {
+        if (condition == null || condition.get("field") == null) return true;
+        Object actual = ConfigResolutionService.getByDottedPath(
+                formValues == null ? Collections.emptyMap() : formValues, String.valueOf(condition.get("field")));
+        if ("non-empty".equals(condition.get("operator"))) {
+            return actual != null && !String.valueOf(actual).isBlank();
+        }
+        Object expected = condition.get("value");
+        if (expected instanceof Collection) {
+            for (Object e : (Collection<?>) expected) {
+                if (sameFormValue(e, actual)) return true;
+            }
+            return false;
+        }
+        return sameFormValue(expected, actual);
+    }
+
+    private static boolean sameFormValue(Object expected, Object actual) {
+        if (expected == null || actual == null) return expected == actual;
+        return String.valueOf(expected).equalsIgnoreCase(String.valueOf(actual));
+    }
+
+    /**
+     * The value a form field carries into the deploy. The operator's own value wins (typed, or the
+     * Override of a context-resolved field). Otherwise a {@code context-resolved} field whose
+     * condition holds takes the value the selected platform context resolves for its
+     * {@code contextField} — the value the wizard shows read-only. Blank when neither applies.
+     */
+    static String effectiveFormValue(StackServiceDef def, Map<String, Object> formValues,
+                                     String fieldName, Map<String, String> ctxResolved) {
+        Map<String, Object> fv = formValues == null ? Collections.emptyMap() : formValues;
+        Object typed = ConfigResolutionService.getByDottedPath(fv, fieldName);
+        if (typed != null && !String.valueOf(typed).isBlank()) return String.valueOf(typed).trim();
+        FormField field = def == null ? null : findFormField(def.form, fieldName);
+        if (field == null || field.contextField == null || field.contextField.isBlank()) return "";
+        if (!formConditionHolds(field.condition, fv)) return "";
+        String fromCtx = ctxResolved == null ? null : ctxResolved.get(field.contextField);
+        return fromCtx == null ? "" : fromCtx.trim();
+    }
+
+    /**
      * True when the deploy form supplied an external Kerberos keytab secret via a service's
      * {@code externalServiceTargets} kerberos mode (e.g. {@code hive.externalKeytabSecret} for
      * Trino or {@code hiveDb.externalKeytabSecret} for Superset). When set, the deployed pods use
@@ -11417,10 +11573,11 @@ public class CommandService {
      * Used to fail early with an actionable message when the operator selected Kerberos but attached none,
      * instead of the opaque pod-side "configmap {@code <release>-krb5-conf} not found" mount failure.
      *
-     * @param request the deploy request (serviceKey + formValues)
+     * @param request     the deploy request (serviceKey + formValues)
+     * @param ctxResolved the selected platform context's resolved {@code <capability>.<field>} values
      * @return true when a kerberized external target is selected in the form
      */
-    private boolean deployHasKerberizedExternalTarget(HelmDeployRequest request) {
+    private boolean deployHasKerberizedExternalTarget(HelmDeployRequest request, Map<String, String> ctxResolved) {
         try {
             if (request == null || request.getServiceKey() == null || request.getServiceKey().isBlank()) {
                 return false;
@@ -11437,8 +11594,7 @@ public class CommandService {
                 if (t == null || t.modeField == null || t.modeField.isBlank()) {
                     continue;
                 }
-                Object mode = ConfigResolutionService.getByDottedPath(fv, t.modeField);
-                if (mode != null && "kerberos".equalsIgnoreCase(String.valueOf(mode).trim())) {
+                if ("kerberos".equalsIgnoreCase(effectiveFormValue(def, fv, t.modeField, ctxResolved))) {
                     return true;
                 }
             }

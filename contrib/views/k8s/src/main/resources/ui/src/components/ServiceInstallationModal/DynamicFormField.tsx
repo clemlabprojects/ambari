@@ -33,7 +33,18 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   // antd setFieldValue/setFieldsValue do NOT fire the Form's onValuesChange, so any programmatic
   // set below must call this to push the value into the wizard's installValues. See fieldSync.ts.
   const syncFields = React.useContext(FieldSyncContext);
-  const rules = [{ required: (field as any).required, message: `Field '${field.label}' is required.` }];
+  // `requiredWhenContext`: mandatory once a non-managed Platform Context resolves the named
+  // capability field to the given value (hook called unconditionally — rule-of-hooks).
+  const reqWhen = (field as any).requiredWhenContext as { field: string; equals: string } | undefined;
+  const reqCtx = useResolvedContextValue(reqWhen?.field);
+  const requiredByContext = !!reqWhen && reqCtx.resolved && !!reqCtx.kind && reqCtx.kind !== 'MANAGED'
+    && String(reqCtx.value).toLowerCase() === String(reqWhen.equals).toLowerCase();
+  const rules = [{
+    required: (field as any).required || requiredByContext,
+    message: requiredByContext
+      ? `'${field.label}' is required: the selected Platform Context resolves ${reqWhen?.field} to '${reqCtx.value}'.`
+      : `Field '${field.label}' is required.`,
+  }];
   const isLocked = upgradeMode && (field.name === 'releaseName' || field.name === 'namespace');
   const disabledProp = (field as any).disabled || isLocked;
   const nameParts = field.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
@@ -142,7 +153,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           />
         );
       }
-      return <ServiceSelect field={f} />;
+      return <ServiceSelect field={f} rules={rules} />;
     }
     case 'monitoring-discovery':
       return (
@@ -238,7 +249,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           />
         );
       }
-      return <ServiceSelect field={f} />;
+      return <ServiceSelect field={f} rules={rules} />;
     }
     case 'select':
       return (
