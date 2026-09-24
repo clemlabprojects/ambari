@@ -28,5 +28,14 @@
       "help": "Admin password paired with the username above. When BOTH are set, every Ranger operation (repository creation, policy/grant creation) for services wired to this context runs directly against ranger Admin URL. Leave BOTH blank on a managed context to keep delegating those operations to the Ambari server, which holds the credential (the pre-existing behaviour).",
       "group": "Ranger"
     }
-  ]
+    ,
+    {
+      "name": "caCert",
+      "label": "Ranger Admin CA certificate (PEM)",
+      "type": "textarea",
+      "appliesTo": "EXTERNAL,CDP,REMOTE",
+      "help": "CA chain that signed this Ranger's TLS certificate. Deployed plugins trust it in addition to the hosting Ambari CA. Left blank, KDPS pins the chain the server presents at deploy time and says so in the log.",
+      "group": "Ranger"
+    }
+]
 }

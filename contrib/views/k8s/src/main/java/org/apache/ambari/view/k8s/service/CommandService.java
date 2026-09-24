@@ -1603,6 +1603,12 @@ public class CommandService {
                 RangerConfigDefaultsRegistry.resolve(rangerServiceType);
         boolean kerberosClusterEnabled = Boolean.TRUE.equals(params.get("kerberosClusterEnabled"));
         Map<String, String> rangerExtraServiceConfigs = new LinkedHashMap<>();
+        // The Ranger the plugin must talk to is the one the repository was created on: for an
+        // external / CDP / remote context that is the context's Ranger, not the hosting cluster's.
+        final org.apache.ambari.view.k8s.model.ResolvedContext rangerCtx = resolvePlatformContextForStep(params);
+        final String externalRangerUrl = (rangerCtx != null && rangerCtx.hasDirectRangerCreds()
+                && rangerCtx.getRangerUrl() != null && !rangerCtx.getRangerUrl().isBlank())
+                ? rangerCtx.getRangerUrl().trim() : null;
 
         AmbariAliasResolver aliasResolver = ambariAliasResolver != null
                 ? ambariAliasResolver
@@ -1792,7 +1798,10 @@ public class CommandService {
                         );
                     }
 
-                    if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
+                    if (externalRangerUrl != null) {
+                        rangerSecurityConfig.put("ranger.plugin." + rangerServiceType + ".policy.rest.url", externalRangerUrl);
+                        LOG.info("Ranger plugin for '{}' points at the platform context's Ranger {}", rangerRepositoryName, externalRangerUrl);
+                    } else if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
                         try {
                             String rangerPolicyMgrExternalUrl = ambariActionClient.getDesiredConfigProperty(
                                     cluster,
@@ -1944,6 +1953,36 @@ public class CommandService {
                             }
                         } catch (Exception ex) {
                             LOG.warn("Failed to provision Ranger admin truststore: {}", ex.toString());
+                        }
+                    }
+                    if (externalRangerUrl != null && externalRangerUrl.startsWith("https://")) {
+                        // The Ambari truststore only knows the hosting cluster's CA. An external Ranger
+                        // needs its own: the PEM the operator put on the context (ranger.caCert), or, failing
+                        // that, the chain the server presents — pinned at first contact and logged, so it
+                        // is a conscious trust decision rather than a silent one.
+                        try {
+                            String pem = rangerCtx.getResolvedFields() != null ? rangerCtx.getResolvedFields().get("ranger.caCert") : null;
+                            java.util.List<java.security.cert.X509Certificate> extra = new java.util.ArrayList<>();
+                            if (pem != null && !pem.isBlank()) {
+                                extra.addAll(org.apache.ambari.view.k8s.utils.TlsChainCapture.parsePem(pem));
+                                LOG.info("Ranger truststore for '{}': adding {} certificate(s) from the context's ranger.caCert", rangerRepositoryName, extra.size());
+                            } else {
+                                extra.addAll(org.apache.ambari.view.k8s.utils.TlsChainCapture.fetchChain(externalRangerUrl));
+                                LOG.warn("Ranger truststore for '{}': no ranger.caCert on the context; trusting the {} certificate(s) presented by {}. Pin the CA on the context to make this explicit.",
+                                        rangerRepositoryName, extra.size(), externalRangerUrl);
+                            }
+                            if (!extra.isEmpty() && helmValuesFileValue != null && !helmValuesFileValue.isBlank()) {
+                                String tsPath = ctx.getAmbariProperty("ssl.trustStore.path");
+                                String tsType = Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.type")).filter(x -> !x.isBlank()).orElse("JKS");
+                                char[] tsPass = aliasResolver.resolve(ctx, Optional.ofNullable(ctx.getAmbariProperty("ssl.trustStore.password")).orElse(""));
+                                byte[] merged = org.apache.ambari.view.k8s.utils.TlsChainCapture.mergeIntoTruststore(tsPath, tsType, tsPass, extra);
+                                Map<String, byte[]> data = new LinkedHashMap<>();
+                                data.put(helmValuesFileValue, merged);
+                                data.put("ca.crt", org.apache.ambari.view.k8s.utils.TlsChainCapture.toPem(extra).getBytes(StandardCharsets.UTF_8));
+                                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data);
+                            }
+                        } catch (Exception ex) {
+                            LOG.warn("Ranger truststore for '{}': could not add the external Ranger CA: {}", rangerRepositoryName, ex.toString());
                         }
                     }
                     doCreation = false;
