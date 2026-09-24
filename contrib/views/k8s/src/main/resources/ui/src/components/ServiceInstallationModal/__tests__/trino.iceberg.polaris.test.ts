@@ -58,6 +58,7 @@ describe('TRINO service.json — Iceberg catalog on Polaris', () => {
       'iceberg-polaris-credential-inline',
       'iceberg-polaris-credential-secret',
       'iceberg-provisioned-credentials',
+      'iceberg-provisioned-s3-credential',
       'iceberg-s3-credential-inline',
       'iceberg-s3-credential-secret',
     ]);
@@ -144,12 +145,22 @@ describe('TRINO service.json — Iceberg catalog on Polaris', () => {
     expect(merged.s3Credential).toBeUndefined();
   });
 
-  it('provisioning is on by default and points both credential blocks at the Secret KDPS writes', () => {
+  it('provisioning is on by default and points the Polaris credential at the Secret KDPS writes', () => {
     const { merged } = resolve({ ...ON, 'icebergCatalog.provision': true, releaseName: 'lake', namespace: 'analytics' }, CTX);
     expect(merged.polarisCredential.secretRef.name).toBe('lake-polaris-credential');
-    expect(merged.s3Credential.secretRef.name).toBe('lake-polaris-credential');
     const toggle = def.form.find((g: any) => g.name === 'icebergIntegration').fields.find((f: any) => f.name === 'icebergCatalog.provision');
     expect(toggle.defaultValue).toBe(true);
+  });
+
+  it('the S3 credential is wired only when a static access key was supplied', () => {
+    // The provisioning step writes access_key/secret_key into that Secret ONLY for a static key.
+    // Pointing the chart at them regardless makes every pod fail with CreateContainerConfigError.
+    const vended = resolve({ ...ON, 'icebergCatalog.provision': true, releaseName: 'lake', namespace: 'analytics' }, CTX);
+    expect(vended.merged.s3Credential?.secretRef).toBeUndefined();
+
+    const withKey = resolve({ ...ON, 'icebergCatalog.provision': true, releaseName: 'lake', namespace: 'analytics',
+      'icebergCatalog.s3AccessKey': 'AKIA', 'icebergCatalog.s3SecretKey': 'sk' }, CTX);
+    expect(withKey.merged.s3Credential.secretRef.name).toBe('lake-polaris-credential');
   });
 
   it('with provisioning off nothing is auto-wired, so the operator supplies catalog and credentials', () => {

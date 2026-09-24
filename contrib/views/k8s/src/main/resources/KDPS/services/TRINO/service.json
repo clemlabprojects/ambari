@@ -1699,12 +1699,19 @@
       ]
     },
     {
-      "_description": "KDPS-provisioned access. The provisioning step runs before the chart is installed: it mints this release's Polaris identity, creates the catalog and bucket named <release>-<namespace> unless creation was turned off, and writes <release>-polaris-credential. Both credential blocks read that one Secret, whose keys match the chart's defaults.",
+      "_description": "KDPS-provisioned access. The provisioning step runs before the chart is installed: it mints this release's Polaris identity, creates the catalog and bucket named <release>-<namespace> unless creation was turned off, and writes <release>-polaris-credential with client_id/client_secret.",
       "name": "iceberg-provisioned-credentials",
       "skipIfVarEmpty": ["polarisRestUri", "icebergProvision"],
       "targets": [
-        { "path": "polarisCredential.secretRef.name", "op": "set", "from": { "type": "template", "template": "${releaseNameVar}-polaris-credential" } },
-        { "path": "s3Credential.secretRef.name",      "op": "set", "from": { "type": "template", "template": "${releaseNameVar}-polaris-credential" } }
+        { "path": "polarisCredential.secretRef.name", "op": "set", "from": { "type": "template", "template": "${releaseNameVar}-polaris-credential" } }
+      ]
+    },
+    {
+      "_description": "The same Secret also carries access_key/secret_key, but the provisioning step writes those two ONLY when the operator supplied a static S3 access key. Pointing the chart at them regardless makes it mount env vars from keys that do not exist, and every pod fails with CreateContainerConfigError before it starts. Gated on the same form field the provisioning step reads.",
+      "name": "iceberg-provisioned-s3-credential",
+      "skipIfVarEmpty": ["polarisRestUri", "icebergProvision", "icebergS3AccessKey"],
+      "targets": [
+        { "path": "s3Credential.secretRef.name", "op": "set", "from": { "type": "template", "template": "${releaseNameVar}-polaris-credential" } }
       ]
     },
     {
