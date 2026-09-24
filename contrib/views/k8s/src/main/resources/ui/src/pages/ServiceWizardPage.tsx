@@ -124,14 +124,23 @@ const ServiceWizardPage: React.FC = () => {
             }
 
             // Load platform contexts (best-effort) for the persistent context selector.
+            let loadedContexts: PlatformContext[] = [];
             try {
-              setContexts(await getContexts());
+              loadedContexts = await getContexts();
+              setContexts(loadedContexts);
             } catch (e: any) {
               console.warn('Platform contexts load failed', e);
             }
 
             // Initialize defaults
             const initial: any = { releaseName: serviceName.toLowerCase(), namespace: 'dashboarding', deploymentMode: 'DIRECT_HELM' };
+            // The selector renders `platformContextId || 'default'`, so it SHOWS a context before the
+            // operator touches it. Seed the state to match, or the deploy goes out with no context id
+            // and every valueFromContext resolves empty server-side — which is how a Hive catalog got
+            // written with no connector.name and no metastore URI while the toggle was on.
+            initial.platformContextId = loadedContexts.some(c => c.id === 'default') || !loadedContexts.length
+              ? 'default'
+              : loadedContexts[0].id;
             if (upgradeState) {
               initial.releaseName = upgradeState.releaseName || initial.releaseName;
               initial.namespace = upgradeState.namespace || initial.namespace;
