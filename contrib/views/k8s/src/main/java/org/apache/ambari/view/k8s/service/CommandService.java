@@ -10546,6 +10546,17 @@ public class CommandService {
      * @return a short human-readable account of what happened, or null when there was nothing to do
      */
     public String revokePolarisForRelease(String namespace, String releaseName, String mode) {
+        return revokePolarisForRelease(namespace, releaseName, mode, null);
+    }
+
+    /**
+     * @param callerHeaders the uninstalling user's request headers; with them the step can reach the
+     *        Ambari server, which is how a MANAGED context yields its Polaris administrator. Without
+     *        them the context resolves as a skeleton and the principal and catalog are left behind
+     *        on every uninstall — which is what happened until this parameter existed.
+     */
+    public String revokePolarisForRelease(String namespace, String releaseName, String mode,
+                                          MultivaluedMap<String, String> callerHeaders) {
         String cleanupMode = (mode == null || mode.isBlank()) ? "principal" : mode.trim().toLowerCase(Locale.ROOT);
         if ("none".equals(cleanupMode)) return null;
 
@@ -10575,6 +10586,18 @@ public class CommandService {
             Map<String, Object> ctxParams = new LinkedHashMap<>();
             String contextId = ann.get(POLARIS_ANN_CONTEXT);
             if (contextId != null && !contextId.isBlank()) ctxParams.put("_platformContextId", contextId);
+            if (callerHeaders != null) {
+                try {
+                    java.net.URI baseUri = org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver.resolveApiBaseUri(ctx);
+                    Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+                    ctxParams.put("_baseUri", baseUri.toString());
+                    ctxParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+                    ctxParams.put("_cluster", this.commandUtils.resolveClusterName(baseUri.toString(), authHeaders));
+                } catch (Exception e) {
+                    LOG.warn("Polaris revoke for {}/{}: no Ambari access ({}); a managed context will not yield its administrator.",
+                            namespace, releaseName, e.toString());
+                }
+            }
             org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(ctxParams);
             Map<String, String> resolved = (rc != null && rc.getResolvedFields() != null)
                     ? rc.getResolvedFields() : Collections.emptyMap();
@@ -10593,6 +10616,23 @@ public class CommandService {
             req.adminClientSecret = resolved.get("polaris.adminPassword");
             if (rc != null && (req.adminClientSecret == null || req.adminClientSecret.isBlank())) {
                 req.adminClientSecret = new ContextService(ctx).readSecret(rc.getId(), "adminPassword");
+            }
+            // Same rule as provisioning: on a managed cluster the administrator lives in polaris-env.
+            if ((req.adminClientSecret == null || req.adminClientSecret.isBlank())
+                    && ctxParams.get("_cluster") != null && ctxParams.get("_baseUri") != null) {
+                try {
+                    String cluster = (String) ctxParams.get("_cluster");
+                    AmbariActionClient ambari = new AmbariActionClient(ctx,
+                            java.net.URI.create((String) ctxParams.get("_baseUri")).resolve("/api/v1").toString(), cluster,
+                            AmbariActionClient.toAuthHeaders(ctxParams.get("_callerHeaders")));
+                    req.adminClientSecret = ambari.getDesiredConfigProperty(cluster, "polaris-env", "polaris_admin_password");
+                    if (req.adminClientId == null || req.adminClientId.isBlank()) {
+                        req.adminClientId = ambari.getDesiredConfigProperty(cluster, "polaris-env", "polaris_admin_username");
+                    }
+                } catch (Exception ex) {
+                    LOG.warn("Polaris revoke for {}/{}: could not read the administrator from polaris-env: {}",
+                            namespace, releaseName, ex.toString());
+                }
             }
             if (req.restUri == null || req.restUri.isBlank()
                     || req.adminClientId == null || req.adminClientId.isBlank()

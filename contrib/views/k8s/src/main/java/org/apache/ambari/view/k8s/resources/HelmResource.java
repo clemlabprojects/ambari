@@ -1099,7 +1099,8 @@ public class HelmResource {
                              @QueryParam("gitAuthToken") String gitAuthToken,
                              @QueryParam("gitSshKey") String gitSshKey,
                              @QueryParam("gitBranch") String gitBranch,
-                             @QueryParam("polarisCleanup") String polarisCleanup) {
+                             @QueryParam("polarisCleanup") String polarisCleanup,
+                             @Context HttpHeaders requestHeaders) {
         K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
         String polarisCleanupNote = null;
         // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
@@ -1141,7 +1142,8 @@ public class HelmResource {
             // unless it is taken back. Done after the release itself is gone, and never allowed to
             // fail the uninstall: an unreachable Polaris must not leave a half-removed release.
             try {
-                polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup);
+                polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup,
+                        requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
             } catch (Exception ex) {
                 LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
             }
