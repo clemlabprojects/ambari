@@ -29,10 +29,14 @@ pipeline {
     agent none
 
     parameters {
-        string(name: 'AMBARI_VERSION', defaultValue: '2.8.2.0-137',
-               description: 'ambari-server RPM version to install, and the image tag')
-        string(name: 'AMBARI_REPO_BASE', defaultValue: '',
-               description: 'Required. Base of the published Ambari repository tree, e.g. http://<build-host>/ambari-release/dist')
+        string(name: 'AMBARI_BUILD', defaultValue: 'latest',
+               description: "Which published Ambari build to package. 'latest' picks the highest build number present for EVERY architecture being built. Otherwise give a build number (137), a release directory (2.8.2.0.0-137) or an RPM version (2.8.2.0-137).")
+        string(name: 'AMBARI_RELEASE', defaultValue: '2.8.2.0.0',
+               description: 'Release line published under <archive>/<os>/ambari-release/<release>-<build>')
+        string(name: 'ARCHIVE_BASE', defaultValue: 'https://archive.clemlab.com',
+               description: 'Base URL of the published Ambari repositories')
+        string(name: 'ARCHIVE_BUCKET', defaultValue: 's3://clemlabs',
+               description: 'Same tree over S3. Used only to enumerate builds: the HTTP endpoint serves files but denies listing.')
         string(name: 'UBI_VERSION', defaultValue: '9.6', description: 'ubi9/ubi base image tag')
         string(name: 'HELM_VERSION', defaultValue: '3.16.3', description: 'helm shipped in the image')
         string(name: 'HARBOR', defaultValue: 'registry.clemlab.com', description: 'Target registry')
@@ -47,11 +51,60 @@ pipeline {
     }
 
     stages {
+        // One resolution for the whole run, so both architectures and the manifest merge agree on a
+        // single build. 'latest' deliberately takes the newest build present for EVERY architecture
+        // being built: picking each agent's own newest would produce two different Ambari versions
+        // under one tag the moment a per-arch publish lags.
+        stage('Resolve Ambari build') {
+            agent { label 'ubuntu24' }
+            steps {
+                script {
+                    def arches = []
+                    if (params.BUILD_AMD64) arches << 'centos9'
+                    if (params.BUILD_ARM64) arches << 'centos9-aarch64'
+                    if (!arches) error('Nothing to build: both BUILD_AMD64 and BUILD_ARM64 are false.')
+
+                    def wanted = (params.AMBARI_BUILD ?: 'latest').trim()
+                    def build
+                    if (wanted.equalsIgnoreCase('latest')) {
+                        def perArch = arches.collectEntries { os ->
+                            def out = sh(returnStdout: true, script:
+                                "aws s3 ls ${params.ARCHIVE_BUCKET}/${os}/ambari-release/ | grep -oE '${params.AMBARI_RELEASE}-[0-9]+' | sed 's/.*-//' | sort -n | uniq").trim()
+                            [(os): out ? out.split('\n').collect { it as int } as Set : [] as Set]
+                        }
+                        def common = perArch.values().inject { a, b -> a.intersect(b) }
+                        if (!common) error("No ${params.AMBARI_RELEASE} build is published for all of ${arches} under ${params.ARCHIVE_BUCKET}.")
+                        build = common.max()
+                        echo "Builds per architecture: ${perArch.collectEntries { k, v -> [(k): v.sort().takeRight(3)] }}"
+                    } else {
+                        def m = (wanted =~ /(\d+)\s*$/)
+                        if (!m) error("AMBARI_BUILD '${wanted}' carries no build number.")
+                        build = m[0][1] as int
+                    }
+
+                    env.AMBARI_BUILD_DIR = "${params.AMBARI_RELEASE}-${build}"
+                    // The release directory is <release>-<build> (2.8.2.0.0-137) while the RPM it holds
+                    // is <release minus its trailing .0>-<build> (2.8.2.0-137). The image is tagged with
+                    // the RPM version, which is what `ambari-server --version` reports.
+                    env.AMBARI_VERSION = params.AMBARI_RELEASE.replaceFirst(/\.0$/, '') + "-" + build
+
+                    arches.each { os ->
+                        def url = "${params.ARCHIVE_BASE}/${os}/ambari-release/${env.AMBARI_BUILD_DIR}/ambari.repo"
+                        def code = sh(returnStdout: true, script: "curl -sL -o /dev/null -w '%{http_code}' --max-time 30 '${url}'").trim()
+                        if (code != '200') error("${url} is not published (HTTP ${code}). Pick another AMBARI_BUILD.")
+                        echo "${os}: ${url} OK"
+                    }
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} ambari ${env.AMBARI_VERSION}"
+                    echo "Packaging Ambari ${env.AMBARI_VERSION} from ${env.AMBARI_BUILD_DIR}"
+                }
+            }
+        }
+
         stage('Slack Notif Start') {
             agent { label 'ubuntu24' }
             steps {
                 slackSend channel: 'build',
-                          message: "AMBARI KDPS image build started - ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
+                          message: "AMBARI KDPS image ${env.AMBARI_VERSION} build started - ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
             }
         }
 
@@ -81,7 +134,7 @@ pipeline {
                 sh """
                     export HARBOR='${params.HARBOR}'
                     export PROJECT='${params.PROJECT}'
-                    export AMBARI_VERSION='${params.AMBARI_VERSION}'
+                    export AMBARI_VERSION='${env.AMBARI_VERSION}'
                     ./dev-support/ambari-kdps-ubi9/merge-manifest.sh
                 """
             }
@@ -91,7 +144,7 @@ pipeline {
     post {
         success {
             slackSend channel: 'build',
-                      message: "AMBARI KDPS image ${params.AMBARI_VERSION} published - ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
+                      message: "AMBARI KDPS image ${env.AMBARI_VERSION} published - ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
         }
         failure {
             slackSend channel: 'build',
@@ -103,17 +156,14 @@ pipeline {
 // osDist selects the published repository for the architecture being built: the RPM has to match
 // the image, so an aarch64 image installs from the aarch64 repository.
 void buildAmbariImage(String osDist, String osArch) {
-    if (!params.AMBARI_REPO_BASE?.trim()) {
-        error('AMBARI_REPO_BASE is required: point it at the tree the release build published.')
-    }
     checkout scm
     sh """
         export HARBOR='${params.HARBOR}'
         export PROJECT='${params.PROJECT}'
-        export AMBARI_VERSION='${params.AMBARI_VERSION}'
+        export AMBARI_VERSION='${env.AMBARI_VERSION}'
         export UBI_VERSION='${params.UBI_VERSION}'
         export HELM_VERSION='${params.HELM_VERSION}'
-        export AMBARI_REPO_URL='${params.AMBARI_REPO_BASE}/${osDist}/1.x/BUILDS/${params.AMBARI_VERSION}/rpms'
+        export AMBARI_REPO_URL='${params.ARCHIVE_BASE}/${osDist}/ambari-release/${env.AMBARI_BUILD_DIR}/rpms/'
         export OS_ARCH='${osArch}'
         ./dev-support/ambari-kdps-ubi9/build-image.sh
     """
