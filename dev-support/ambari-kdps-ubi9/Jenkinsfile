@@ -55,45 +55,64 @@ pipeline {
         // single build. 'latest' deliberately takes the newest build present for EVERY architecture
         // being built: picking each agent's own newest would produce two different Ambari versions
         // under one tag the moment a per-arch publish lags.
+        //
+        // The arithmetic is done in shell rather than Groovy on purpose. Collection methods like
+        // max() and intersect() are refused by the pipeline sandbox one signature at a time, and
+        // approving them is a standing permission granted to every job on the controller.
         stage('Resolve Ambari build') {
             agent { label 'ubuntu24' }
             steps {
                 script {
-                    def arches = []
-                    if (params.BUILD_AMD64) arches << 'centos9'
-                    if (params.BUILD_ARM64) arches << 'centos9-aarch64'
-                    if (!arches) error('Nothing to build: both BUILD_AMD64 and BUILD_ARM64 are false.')
+                    String arches = ''
+                    if (params.BUILD_AMD64) arches += 'centos9 '
+                    if (params.BUILD_ARM64) arches += 'centos9-aarch64 '
+                    arches = arches.trim()
+                    if (arches.isEmpty()) error('Nothing to build: both BUILD_AMD64 and BUILD_ARM64 are false.')
 
-                    def wanted = (params.AMBARI_BUILD ?: 'latest').trim()
-                    def build
-                    if (wanted.equalsIgnoreCase('latest')) {
-                        def perArch = arches.collectEntries { os ->
-                            def out = sh(returnStdout: true, script:
-                                "aws s3 ls ${params.ARCHIVE_BUCKET}/${os}/ambari-release/ | grep -oE '${params.AMBARI_RELEASE}-[0-9]+' | sed 's/.*-//' | sort -n | uniq").trim()
-                            [(os): out ? out.split('\n').collect { it as int } as Set : [] as Set]
-                        }
-                        def common = perArch.values().inject { a, b -> a.intersect(b) }
-                        if (!common) error("No ${params.AMBARI_RELEASE} build is published for all of ${arches} under ${params.ARCHIVE_BUCKET}.")
-                        build = common.max()
-                        echo "Builds per architecture: ${perArch.collectEntries { k, v -> [(k): v.sort().takeRight(3)] }}"
-                    } else {
-                        def m = (wanted =~ /(\d+)\s*$/)
-                        if (!m) error("AMBARI_BUILD '${wanted}' carries no build number.")
-                        build = m[0][1] as int
+                    String wanted = params.AMBARI_BUILD ? params.AMBARI_BUILD.trim() : 'latest'
+                    String build = sh(returnStdout: true, label: 'resolve the build number', script: """
+                        set -eu
+                        narch=0
+                        for _ in ${arches}; do narch=\$((narch + 1)); done
+
+                        w=\$(printf '%s' '${wanted}' | tr '[:upper:]' '[:lower:]')
+                        if [ "\$w" = "latest" ]; then
+                            # Every build is listed once per architecture, so the ones published for
+                            # all of them are the ones counted narch times. The list is ascending, so
+                            # the last match is the newest.
+                            for os in ${arches}; do
+                                aws s3 ls '${params.ARCHIVE_BUCKET}'/\$os/ambari-release/ | grep -oE '${params.AMBARI_RELEASE}-[0-9]+' | sed 's/.*-//' | sort -un
+                            done | sort -n | uniq -c | awk -v n="\$narch" '\$1 == n { b = \$2 } END { if (b == "") exit 1; print b }'
+                        else
+                            printf '%s' '${wanted}' | grep -oE '[0-9]+\$'
+                        fi
+                    """).trim()
+
+                    if (build.isEmpty()) {
+                        error("No ${params.AMBARI_RELEASE} build is published for all of '${arches}' under ${params.ARCHIVE_BUCKET}, and '${wanted}' carries no build number.")
                     }
 
-                    env.AMBARI_BUILD_DIR = "${params.AMBARI_RELEASE}-${build}"
-                    // The release directory is <release>-<build> (2.8.2.0.0-137) while the RPM it holds
-                    // is <release minus its trailing .0>-<build> (2.8.2.0-137). The image is tagged with
+                    env.AMBARI_BUILD_DIR = params.AMBARI_RELEASE + '-' + build
+                    // The release directory is <release>-<build> (2.8.2.0.0-138) while the RPM it holds
+                    // is <release minus its trailing .0>-<build> (2.8.2.0-138). The image is tagged with
                     // the RPM version, which is what `ambari-server --version` reports.
-                    env.AMBARI_VERSION = params.AMBARI_RELEASE.replaceFirst(/\.0$/, '') + "-" + build
+                    String rel = params.AMBARI_RELEASE
+                    env.AMBARI_VERSION = rel.substring(0, rel.lastIndexOf('.')) + '-' + build
 
-                    arches.each { os ->
-                        def url = "${params.ARCHIVE_BASE}/${os}/ambari-release/${env.AMBARI_BUILD_DIR}/ambari.repo"
-                        def code = sh(returnStdout: true, script: "curl -sL -o /dev/null -w '%{http_code}' --max-time 30 '${url}'").trim()
-                        if (code != '200') error("${url} is not published (HTTP ${code}). Pick another AMBARI_BUILD.")
-                        echo "${os}: ${url} OK"
-                    }
+                    // Fail here, in seconds, rather than part-way through building a layer.
+                    sh label: 'check the repositories are published', script: """
+                        set -eu
+                        for os in ${arches}; do
+                            url='${params.ARCHIVE_BASE}'/\$os/ambari-release/'${env.AMBARI_BUILD_DIR}'/ambari.repo
+                            code=\$(curl -sL -o /dev/null -w '%{http_code}' --max-time 30 "\$url")
+                            if [ "\$code" != "200" ]; then
+                                echo "\$url is not published (HTTP \$code). Pick another AMBARI_BUILD." >&2
+                                exit 1
+                            fi
+                            echo "\$os: \$url OK"
+                        done
+                    """
+
                     currentBuild.displayName = "#${env.BUILD_NUMBER} ambari ${env.AMBARI_VERSION}"
                     echo "Packaging Ambari ${env.AMBARI_VERSION} from ${env.AMBARI_BUILD_DIR}"
                 }
