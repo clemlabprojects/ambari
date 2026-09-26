@@ -68,7 +68,7 @@
     },
     "ranger-trino-security": {
       "service_type": "trino",
-      "superusers": "trino, lbakalian",
+      "superusers": "trino",
       "krb5_princ_srv": "trino",
       "krb5_keytab_path": "/etc/security/keytabs/service.keytab",
       "ranger_policymgr_file": "/etc/trino/ranger/ranger-policymgr-ssl-trino.xml",
