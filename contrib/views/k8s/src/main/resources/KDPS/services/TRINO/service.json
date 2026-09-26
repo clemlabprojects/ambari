@@ -2516,6 +2516,15 @@
           "help": "The Ranger of the selected Platform Context (right panel) whose policies Trino's plugin enforces. Resolved by KDPS from the context."
         },
         {
+          "name": "tagSync.enabled",
+          "label": "Sync Atlas tags to Trino",
+          "type": "boolean",
+          "defaultValue": false,
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "autoEnableWhenContext": "atlasTags",
+          "help": "Projects the Platform Context's Atlas classifications onto Trino's Ranger service so tag-based masking, row-filtering and access policies apply to Trino the way they do for Hive/Impala. On by default when the context exposes Atlas tags. KDPS resolves the Ranger endpoint and credentials from the context; you only turn this on or off."
+        },
+        {
           "name": "nodePort.port",
           "label": "Port du Nœud (Optionnel)",
           "type": "number",
@@ -2841,6 +2850,8 @@
   },
   "requiredChartVersion": ">=1.43.0",
   "platformOps": [
+    { "op": "ranger.tagProjectorSecret", "when": "tagSync.enabled",
+      "_description": "When Atlas tag sync is on, KDPS mints a Secret {user,password} in the release namespace from the selected context's Ranger admin credential and injects tagSync.ranger.{url,existingSecret} into the values, so the tag-projector CronJob authenticates to the context's Ranger without the operator handling any credential." },
     { "op": "ranger.hiveGrant", "when": "hiveCatalog.enabled",
       "_description": "Trino reads Hive tables as its own service identity (hive.hdfs.trino.principal); the Hive metastore's Ranger plugin therefore authorises that identity, not the end user. Grant it SELECT on the context's Hive repository, the way Superset's Hive connection is granted." }
   ],
@@ -2854,6 +2865,11 @@
       "capability": "polaris",
       "fields": ["restUri", "catalog"],
       "when": "icebergCatalog.enabled"
+    },
+    {
+      "capability": "atlasTags",
+      "fields": ["rangerUrl"],
+      "when": "tagSync.enabled"
     }
   ],
   "securityCoupling": {

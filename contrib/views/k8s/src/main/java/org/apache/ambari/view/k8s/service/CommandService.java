@@ -2032,6 +2032,35 @@ public class CommandService {
             params.put("_rangerServiceConfigs", mergedConfigs);
             LOG.info("Added Ranger service configs derived from security settings: {}", mergedConfigs);
         }
+
+        // --- Atlas tag projection (platformOp op=ranger.tagProjectorSecret) ----------------------
+        // When the Trino wizard's "Sync Atlas tags to Trino" toggle is on, mint a Secret holding the
+        // context's Ranger admin credential in the release namespace and inject the projector's
+        // connection values, so the tag-projector CronJob (clemlab-trino tagSync) authenticates to
+        // the context's Ranger without the operator ever handling a credential. Gated exactly like the
+        // toggle: a ranger-authorized deploy against a context that exposes a direct Ranger credential.
+        try {
+            Object tagSyncOn = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.enabled");
+            boolean tagSyncEnabled = tagSyncOn != null && "true".equalsIgnoreCase(String.valueOf(tagSyncOn));
+            if (tagSyncEnabled && externalRangerUrl != null && rangerCtx != null
+                    && rangerCtx.getRangerAdminUsername() != null && !rangerCtx.getRangerAdminUsername().isBlank()
+                    && rangerCtx.getRangerAdminPassword() != null && !rangerCtx.getRangerAdminPassword().isBlank()) {
+                String tsSecretName = request.getReleaseName() + "-tagsync-ranger";
+                Map<String, byte[]> tsData = new LinkedHashMap<>();
+                tsData.put("user", rangerCtx.getRangerAdminUsername().getBytes(StandardCharsets.UTF_8));
+                tsData.put("password", rangerCtx.getRangerAdminPassword().getBytes(StandardCharsets.UTF_8));
+                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), tsSecretName, tsData);
+                this.commandUtils.addOverride(params, "tagSync.ranger.url", externalRangerUrl);
+                this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", tsSecretName);
+                LOG.info("Atlas tag sync: minted Secret {} and wired tagSync.ranger.* for release {} (Ranger {})",
+                        tsSecretName, request.getReleaseName(), externalRangerUrl);
+            } else if (tagSyncEnabled) {
+                LOG.warn("Atlas tag sync is on for release {} but the context exposes no direct Ranger admin "
+                        + "credential/URL; the tag-projector will not be wired.", request.getReleaseName());
+            }
+        } catch (Exception e) {
+            LOG.warn("Atlas tag sync wiring failed for release {}: {}", request.getReleaseName(), e.toString());
+        }
     }
 
     /**

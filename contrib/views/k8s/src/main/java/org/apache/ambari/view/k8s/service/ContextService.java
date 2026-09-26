@@ -833,6 +833,12 @@ public class ContextService {
         r.setRangerAdminPassword(readSecret(entity.getId(), "rangerAdminPassword"));
         r.setAtlasFederationUser(str(config.get("federationUser")));
         r.setAtlasFederationPassword(readSecret(entity.getId(), "federationPassword"));
+        // Mirror the typed endpoints into resolvedFields so the schema-driven UI (and the Trino tag
+        // projector wiring) can consume them the same way it does for a CDP context.
+        Map<String, String> erf = r.getResolvedFields();
+        if (r.getRangerUrl() != null && !r.getRangerUrl().isBlank()) erf.put("ranger.rangerUrl", r.getRangerUrl());
+        if (r.getAtlasUrl() != null && !r.getAtlasUrl().isBlank())  erf.put("atlas.atlasUrl", r.getAtlasUrl());
+        markAtlasTagsCapability(r);
         return r;
     }
 
@@ -987,7 +993,30 @@ public class ContextService {
         } catch (Exception e) {
             LOG.warn("CDP discovery failed for context {} ({}): {}", entity.getId(), cmUrl, e.toString());
         }
+        markAtlasTagsCapability(r);
         return r;
+    }
+
+    /**
+     * Advertise the {@code atlasTags} capability — resolvedFields key {@code atlasTags.rangerUrl} — when
+     * this context has BOTH a Ranger and an Atlas whose authorization is Ranger-based, i.e. Atlas
+     * classifications land in Ranger's tag store. That is precisely the shape where KDPS's Trino tag
+     * projector is useful (and where stock CDP has no Trino tag mapper). The Trino wizard's
+     * "Sync Atlas tags to Trino" toggle auto-enables on this capability, and its requiresContext guard
+     * checks it. The Ranger admin credential the projector needs is NOT put here (secrets never go into
+     * resolvedFields); the deploy's platform op mints it into a Secret from the stored context credential.
+     */
+    private static void markAtlasTagsCapability(ResolvedContext r) {
+        Map<String, String> rf = r.getResolvedFields();
+        if (rf == null) return;
+        String rangerUrl = rf.get("ranger.rangerUrl");
+        if (rangerUrl == null || rangerUrl.isBlank()) rangerUrl = r.getRangerUrl();
+        boolean hasAtlas = (rf.get("atlas.atlasUrl") != null && !rf.get("atlas.atlasUrl").isBlank())
+                || (r.getAtlasUrl() != null && !r.getAtlasUrl().isBlank());
+        boolean rangerAcl = "ranger".equalsIgnoreCase(r.getAtlasAclMode());
+        if (rangerUrl != null && !rangerUrl.isBlank() && hasAtlas && rangerAcl) {
+            rf.put("atlasTags.rangerUrl", rangerUrl);
+        }
     }
 
     /** First non-blank value among {@code keys} in {@code m}, or null. */
