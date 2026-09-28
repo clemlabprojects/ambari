@@ -661,6 +661,9 @@ const HelmReleasesPage: React.FC = () => {
                 deploymentMode: record.deploymentMode,
                 git: gitOptionsForRelease(record),
                 securityProfile: record.securityProfile,
+                // Preserve the DEPLOYED KDPS context so Upgrade/Config re-selects it instead of the
+                // ambari-managed default (which would resolve every context binding against the wrong target).
+                platformContextId: record.platformContextId,
               },
             });
           }

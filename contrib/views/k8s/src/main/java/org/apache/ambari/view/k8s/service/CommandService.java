@@ -4855,6 +4855,7 @@ public class CommandService {
                     request.getNamespace(),
                     request.getReleaseName(),
                     request.getServiceKey(),
+                    stringValue(params.get("_platformContextId")),
                     request.getChart(),
                     effectiveRepoId,
                     version,
@@ -6824,6 +6825,7 @@ public class CommandService {
                                 namespace,
                                 releaseName,
                                 null,            // serviceKey (unknown for deps)
+                                null,            // platformContextId (deps have no context)
                                 chartName,
                                 repoId,
                                 chartVersion,
@@ -7474,6 +7476,7 @@ public class CommandService {
                                     namespace,
                                     releaseName,
                                     existing.getServiceKey(),
+                                    existing.getPlatformContextId(),
                                     existing.getChartRef(),
                                     existing.getRepoId(),
                                     version,

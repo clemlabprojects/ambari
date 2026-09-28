@@ -18,6 +18,7 @@
 
 package org.apache.ambari.view.k8s.store;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -33,7 +34,9 @@ import javax.persistence.Table;
 import javax.persistence.Transient;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Tracking entity for Helm releases managed by the UI.
@@ -72,6 +75,11 @@ public class K8sReleaseEntity extends BaseModel {
     @Column(length = 255)
     private String serviceKey;
 
+    // The KDPS platform context (Atlas/Ranger integration target) the release was deployed against,
+    // so Upgrade/Config can re-select it instead of falling back to the ambari-managed default.
+    @Column(length = 255)
+    private String platformContextId;
+
     @Column(length = 255)
     private String chartRef;
 
@@ -81,6 +89,10 @@ public class K8sReleaseEntity extends BaseModel {
     @Column(length = 128)
     private String version;
 
+    // The KDPS command id that deployed this release (commit SHA for the Flux path). Persisted: it is
+    // the only structured link from a release back to the operation that produced it — CommandEntity
+    // holds namespace/releaseName only inside paramsJson, so without this there is no queryable
+    // release -> deployment trace.
     @Column(length = 255)
     private String deploymentId;
 
@@ -96,32 +108,22 @@ public class K8sReleaseEntity extends BaseModel {
     @Column(length = 255)
     private String securityProfileHash;
 
-    @Column(length = 255)
-    private String gitCommitSha;
+    // ---------------------------------------------------------------------------------------
+    // Git (Flux GitOps) metadata — ONE persisted column holding a small JSON object instead of
+    // nine separate columns. Ambari's DataStore forces every String property to 3000 chars against
+    // a 65000-per-entity total, i.e. a hard ceiling of 21 String properties; nine flat git columns
+    // consumed almost half the budget for metadata only FLUX_GITOPS releases ever set. Folding them
+    // here frees 8 slots. The nine getters/setters below are preserved and simply read/write this
+    // JSON, so every existing call site is unchanged.
+    // Size budget: the worst realistic case (repoUrl+path+prUrl ~512 each, the rest short) is well
+    // under the 3000-char per-property limit the DataStore enforces on store().
+    // ---------------------------------------------------------------------------------------
+    @Column(length = 3000)
+    private String gitMetaJson;
 
-    @Column(length = 255)
-    private String gitBranch;
-
-    @Column(length = 512)
-    private String gitRepoUrl;
-
-    @Column(length = 512)
-    private String gitPath;
-
-    @Column(length = 255)
-    private String gitCredentialAlias;
-
-    @Column(length = 64)
-    private String gitCommitMode;
-
-    @Column(length = 512)
-    private String gitPrUrl;
-
-    @Column(length = 64)
-    private String gitPrNumber;
-
-    @Column(length = 64)
-    private String gitPrState;
+    /** Parsed view of {@link #gitMetaJson}; rebuilt lazily and invalidated whenever the JSON is set. */
+    @Transient
+    private Map<String, String> gitMetaCache;
 
     // Flag: managed by UI (true if registered here)
     private boolean managedByUi;
@@ -200,6 +202,14 @@ public class K8sReleaseEntity extends BaseModel {
         this.serviceKey = serviceKey;
     }
 
+    public String getPlatformContextId() {
+        return platformContextId;
+    }
+
+    public void setPlatformContextId(String platformContextId) {
+        this.platformContextId = platformContextId;
+    }
+
     public String getChartRef() {
         return chartRef;
     }
@@ -269,77 +279,128 @@ public class K8sReleaseEntity extends BaseModel {
         return ns + ":" + name;
     }
 
-    // ---------- Git metadata (flat columns) ----------
+    // ---------- Git metadata (folded into the single gitMetaJson column) ----------
+
+    /** The only git property the DataStore persists. Setting it invalidates the parsed cache. */
+    public String getGitMetaJson() {
+        return gitMetaJson;
+    }
+
+    public void setGitMetaJson(String gitMetaJson) {
+        this.gitMetaJson = gitMetaJson;
+        this.gitMetaCache = null;
+    }
+
+    /** Lazily parse {@link #gitMetaJson}; never returns null, and never throws on malformed JSON. */
+    private Map<String, String> gitMeta() {
+        Map<String, String> cache = this.gitMetaCache;
+        if (cache == null) {
+            final Map<String, String> parsed = new LinkedHashMap<>();
+            if (gitMetaJson != null && !gitMetaJson.isBlank()) {
+                try {
+                    JsonNode node = MAPPER.readTree(gitMetaJson);
+                    if (node != null && node.isObject()) {
+                        node.fields().forEachRemaining(e -> {
+                            if (e.getValue() != null && !e.getValue().isNull()) {
+                                parsed.put(e.getKey(), e.getValue().asText());
+                            }
+                        });
+                    }
+                } catch (Exception ignore) {
+                    // Malformed/legacy content: treat as empty rather than breaking the whole release row.
+                }
+            }
+            this.gitMetaCache = parsed;
+            cache = parsed;
+        }
+        return cache;
+    }
+
+    /** Write one git attribute, re-serialising the column. A null/blank value removes the key. */
+    private void putGitMeta(String key, String value) {
+        Map<String, String> meta = gitMeta();
+        if (value == null || value.isBlank()) {
+            meta.remove(key);
+        } else {
+            meta.put(key, value);
+        }
+        try {
+            this.gitMetaJson = meta.isEmpty() ? null : MAPPER.writeValueAsString(meta);
+        } catch (Exception e) {
+            // Should not happen for a Map<String,String>; keep the previous JSON rather than corrupting it.
+        }
+    }
+
     public String getGitCommitSha() {
-        return gitCommitSha;
+        return gitMeta().get("commitSha");
     }
 
     public void setGitCommitSha(String gitCommitSha) {
-        this.gitCommitSha = gitCommitSha;
+        putGitMeta("commitSha", gitCommitSha);
     }
 
     public String getGitBranch() {
-        return gitBranch;
+        return gitMeta().get("branch");
     }
 
     public void setGitBranch(String gitBranch) {
-        this.gitBranch = gitBranch;
+        putGitMeta("branch", gitBranch);
     }
 
     public String getGitRepoUrl() {
-        return gitRepoUrl;
+        return gitMeta().get("repoUrl");
     }
 
     public void setGitRepoUrl(String gitRepoUrl) {
-        this.gitRepoUrl = gitRepoUrl;
+        putGitMeta("repoUrl", gitRepoUrl);
     }
 
     public String getGitPath() {
-        return gitPath;
+        return gitMeta().get("path");
     }
 
     public void setGitPath(String gitPath) {
-        this.gitPath = gitPath;
+        putGitMeta("path", gitPath);
     }
 
     public String getGitCredentialAlias() {
-        return gitCredentialAlias;
+        return gitMeta().get("credentialAlias");
     }
 
     public void setGitCredentialAlias(String gitCredentialAlias) {
-        this.gitCredentialAlias = gitCredentialAlias;
+        putGitMeta("credentialAlias", gitCredentialAlias);
     }
 
     public String getGitCommitMode() {
-        return gitCommitMode;
+        return gitMeta().get("commitMode");
     }
 
     public void setGitCommitMode(String gitCommitMode) {
-        this.gitCommitMode = gitCommitMode;
+        putGitMeta("commitMode", gitCommitMode);
     }
 
     public String getGitPrUrl() {
-        return gitPrUrl;
+        return gitMeta().get("prUrl");
     }
 
     public void setGitPrUrl(String gitPrUrl) {
-        this.gitPrUrl = gitPrUrl;
+        putGitMeta("prUrl", gitPrUrl);
     }
 
     public String getGitPrNumber() {
-        return gitPrNumber;
+        return gitMeta().get("prNumber");
     }
 
     public void setGitPrNumber(String gitPrNumber) {
-        this.gitPrNumber = gitPrNumber;
+        putGitMeta("prNumber", gitPrNumber);
     }
 
     public String getGitPrState() {
-        return gitPrState;
+        return gitMeta().get("prState");
     }
 
     public void setGitPrState(String gitPrState) {
-        this.gitPrState = gitPrState;
+        putGitMeta("prState", gitPrState);
     }
 
     // ---------- Endpoints stored as JSON array ----------

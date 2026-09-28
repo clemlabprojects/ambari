@@ -29,6 +29,7 @@ export interface HelmRelease {
   // --- champs enrichis par le backend (BDD/annotations) ---
   managedByUi?: boolean;
   serviceKey?: string;   // ex: "trino", "prometheus"
+  platformContextId?: string; // KDPS context the release was deployed against (Upgrade/Config preselect)
   repoId?: string;
   chartRef?: string;
   securityProfile?: string;

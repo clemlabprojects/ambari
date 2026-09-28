@@ -34,6 +34,7 @@ public class HelmReleaseDTO {
 
     public boolean managedByUi;
     public String serviceKey;
+    public String platformContextId; // KDPS context the release was deployed against (for Upgrade/Config preselect)
     public String repoId;
     public String chartRef;
     public boolean restartRequired;

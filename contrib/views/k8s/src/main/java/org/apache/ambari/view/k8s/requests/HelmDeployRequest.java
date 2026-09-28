@@ -536,6 +536,18 @@ public class HelmDeployRequest {
         } catch (Exception ignore) { this.formValues = null; }
     }
 
+    /**
+     * The KDPS platform context id the operator selected for this deploy, read from the form values
+     * (top-level {@code platformContextId}). Best-effort; returns {@code null} when absent. Used to
+     * persist the context on the release so Upgrade/Config can re-select it.
+     */
+    public String getPlatformContextId() {
+        Object v = formValues == null ? null : formValues.get("platformContextId");
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        return s.isEmpty() ? null : s;
+    }
+
     // ----------------- global config management --------------
     public List<ConfigInstantiation> getConfigInstantiations() {
         return configInstantiations;
