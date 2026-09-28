@@ -57,6 +57,23 @@
           {{! right offset. don't delete me! }}
           <ul class="nav navbar-nav navbar-right"></ul>
 
+          {{! KDPS dashboard button — one click to the KDPS console, cluster or not. Hidden when the
+              K8S view is not deployed. Opens standalone in a new tab (the view renders its own chrome). }}
+          {{#if view.kdpsView}}
+            <div class="navbar-nav navbar-right kdps-nav">
+              {{#if view.kdpsView.opensStandalone}}
+                <a class="navbar-btn btn btn-primary kdps-btn" {{bindAttr href="view.kdpsView.href"}} target="_blank" rel="noopener" {{translateAttr title="app.kdps.openDashboard"}}>
+                  <i class="glyphicon glyphicon-th-large"></i>&nbsp;{{t app.kdps.button}}
+                </a>
+              {{else}}
+                <a class="navbar-btn btn btn-primary kdps-btn" {{bindAttr href="view.kdpsView.internalAmbariUrl"}} {{translateAttr title="app.kdps.openDashboard"}}>
+                  <i class="glyphicon glyphicon-th-large"></i>&nbsp;{{t app.kdps.button}}
+                </a>
+              {{/if}}
+            </div>
+          {{/if}}
+          {{! KDPS dashboard button end }}
+
           {{! user dropdown }}
           <div class="app-navbar mx-0">
             <div class="top-nav-user navbar-right btn-group">
