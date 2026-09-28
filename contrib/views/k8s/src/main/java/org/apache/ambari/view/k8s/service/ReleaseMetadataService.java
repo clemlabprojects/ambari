@@ -206,6 +206,7 @@ public class ReleaseMetadataService {
             String namespace,
             String releaseName,
             String serviceKey,           // can be null if unknown
+            String platformContextId,    // KDPS context the release was deployed against; can be null
             String chartRef,
             String repoId,               // can be null
             String version,              // can be null
@@ -240,6 +241,7 @@ public class ReleaseMetadataService {
 
         entity.setManagedByUi(true);
         if (serviceKey != null && !serviceKey.isBlank()) entity.setServiceKey(serviceKey);
+        if (platformContextId != null && !platformContextId.isBlank()) entity.setPlatformContextId(platformContextId);
         if (chartRef != null && !chartRef.isBlank()) entity.setChartRef(chartRef);
         if (repoId != null && !repoId.isBlank()) entity.setRepoId(repoId);
         if (version != null && !version.isBlank()) entity.setVersion(version);

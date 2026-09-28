@@ -613,6 +613,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     namespace,
                     release,
                     request.getServiceKey(),
+                    request.getPlatformContextId(),
                     chart,
                     repoName,
                     version,

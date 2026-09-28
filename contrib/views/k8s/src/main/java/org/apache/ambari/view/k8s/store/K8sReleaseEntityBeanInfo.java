@@ -30,6 +30,21 @@ import java.beans.SimpleBeanInfo;
  * Without a BeanInfo, even @Transient getters (createdAt/updatedAt/endpointsJson)
  * would be counted, pushing us over the limit. This BeanInfo keeps only the
  * persisted, short String properties and the non-string endpoints collection.
+ *
+ * HARD CEILING: 3000 chars per String property against a 65000 total means at most
+ * **21 String properties** for this entity (21 x 3000 = 63000; a 22nd = 66000 and the
+ * DataStore refuses to initialise at all — every view endpoint then 500s with
+ * "Can't initialize data store", and saved contexts/kubeconfig merely LOOK lost).
+ * @Column(length=...) is ignored; the DataStore forces 3000, so shortening a column buys
+ * nothing — only removing a property does.
+ *
+ * This entity previously sat at exactly 21. The nine flat git columns (gitCommitSha,
+ * gitBranch, gitRepoUrl, gitPath, gitCredentialAlias, gitCommitMode, gitPrUrl, gitPrNumber,
+ * gitPrState) were folded into the single `gitMetaJson` column — they are FLUX_GITOPS-only
+ * metadata and the entity keeps all nine getters/setters, backed by that JSON, so no call
+ * site changed. That freed 8 slots, leaving room for `platformContextId` while KEEPING
+ * `deploymentId` (the only queryable release -> deployment trace).
+ * Current count: 14 String properties = 42000, i.e. 7 slots of headroom.
  */
 public class K8sReleaseEntityBeanInfo extends SimpleBeanInfo {
 
@@ -41,6 +56,7 @@ public class K8sReleaseEntityBeanInfo extends SimpleBeanInfo {
                     new PropertyDescriptor("namespace", K8sReleaseEntity.class, "getNamespace", "setNamespace"),
                     new PropertyDescriptor("releaseName", K8sReleaseEntity.class, "getReleaseName", "setReleaseName"),
                     new PropertyDescriptor("serviceKey", K8sReleaseEntity.class, "getServiceKey", "setServiceKey"),
+                    new PropertyDescriptor("platformContextId", K8sReleaseEntity.class, "getPlatformContextId", "setPlatformContextId"),
                     new PropertyDescriptor("chartRef", K8sReleaseEntity.class, "getChartRef", "setChartRef"),
                     new PropertyDescriptor("repoId", K8sReleaseEntity.class, "getRepoId", "setRepoId"),
                     new PropertyDescriptor("version", K8sReleaseEntity.class, "getVersion", "setVersion"),
@@ -49,15 +65,7 @@ public class K8sReleaseEntityBeanInfo extends SimpleBeanInfo {
                     new PropertyDescriptor("globalConfigVersion", K8sReleaseEntity.class, "getGlobalConfigVersion", "setGlobalConfigVersion"),
                     new PropertyDescriptor("securityProfile", K8sReleaseEntity.class, "getSecurityProfile", "setSecurityProfile"),
                     new PropertyDescriptor("securityProfileHash", K8sReleaseEntity.class, "getSecurityProfileHash", "setSecurityProfileHash"),
-                    new PropertyDescriptor("gitCommitSha", K8sReleaseEntity.class, "getGitCommitSha", "setGitCommitSha"),
-                    new PropertyDescriptor("gitBranch", K8sReleaseEntity.class, "getGitBranch", "setGitBranch"),
-                    new PropertyDescriptor("gitRepoUrl", K8sReleaseEntity.class, "getGitRepoUrl", "setGitRepoUrl"),
-                    new PropertyDescriptor("gitPath", K8sReleaseEntity.class, "getGitPath", "setGitPath"),
-                    new PropertyDescriptor("gitCredentialAlias", K8sReleaseEntity.class, "getGitCredentialAlias", "setGitCredentialAlias"),
-                    new PropertyDescriptor("gitCommitMode", K8sReleaseEntity.class, "getGitCommitMode", "setGitCommitMode"),
-                    new PropertyDescriptor("gitPrUrl", K8sReleaseEntity.class, "getGitPrUrl", "setGitPrUrl"),
-                    new PropertyDescriptor("gitPrNumber", K8sReleaseEntity.class, "getGitPrNumber", "setGitPrNumber"),
-                    new PropertyDescriptor("gitPrState", K8sReleaseEntity.class, "getGitPrState", "setGitPrState"),
+                    new PropertyDescriptor("gitMetaJson", K8sReleaseEntity.class, "getGitMetaJson", "setGitMetaJson"),
                     new PropertyDescriptor("managedByUi", K8sReleaseEntity.class, "isManagedByUi", "setManagedByUi")
             };
         } catch (IntrospectionException e) {

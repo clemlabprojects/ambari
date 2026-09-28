@@ -154,6 +154,17 @@ const ServiceWizardPage: React.FC = () => {
               if (upgradeState.securityProfile) {
                 initial.securityProfile = upgradeState.securityProfile;
               }
+              // Re-select the KDPS context the release was deployed against so context bindings resolve
+              // against the right target on upgrade, instead of the ambari-managed default seeded above.
+              // Guard on existence: if that context was since deleted, keep the default rather than
+              // showing a blank selector.
+              if (upgradeState.platformContextId
+                  && loadedContexts.some(c => c.id === upgradeState.platformContextId)) {
+                initial.platformContextId = upgradeState.platformContextId;
+              } else if (upgradeState.platformContextId) {
+                console.warn('Deployed platform context', upgradeState.platformContextId,
+                  'no longer exists; leaving the default selected.');
+              }
             }
             const applyDefaults = (fields: any[], target: any) => {
               fields.forEach(f => {

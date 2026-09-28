@@ -224,6 +224,7 @@ public class HelmResource {
             if (metadata != null) {
                 releaseDto.managedByUi = metadata.isManagedByUi() || kdpsLabelled;
                 releaseDto.serviceKey = metadata.getServiceKey();
+                releaseDto.platformContextId = metadata.getPlatformContextId();
                 releaseDto.repoId = metadata.getRepoId();
                 releaseDto.chartRef = metadata.getChartRef();
                 if (metadata.getVersion() != null && !metadata.getVersion().isBlank()) {
@@ -395,6 +396,7 @@ public class HelmResource {
                 status.managedByUi = metadata.isManagedByUi();
                 status.repoId = metadata.getRepoId();
                 status.serviceKey = metadata.getServiceKey();
+                status.platformContextId = metadata.getPlatformContextId();
                 status.deploymentMode = metadata.getDeploymentMode();
                 status.gitCommitSha = metadata.getGitCommitSha();
                 status.gitBranch = metadata.getGitBranch();
