@@ -43,6 +43,8 @@ Em.I18n.translations = {
   'app.signout':'Sign out',
   'app.settings':'Settings',
   'app.manageAmbari': 'Manage Ambari',
+  'app.kdps.button': 'KDPS',
+  'app.kdps.openDashboard': 'Open the KDPS (Kubernetes Data Platform Services) dashboard',
   'app.aboutAmbari':'About',
   'app.settings.selectTimezone': 'Timezone',
   'app.settings.notshowBgOperationsPopup': 'Do not show the Background Operations dialog when starting an operation',

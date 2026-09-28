@@ -26,6 +26,22 @@ App.ApplicationView = Em.View.extend({
     return App.router.get('loggedIn') ? App.router.get('mainViewsController.visibleAmbariViews') : [];
   }.property('App.router.mainViewsController.visibleAmbariViews.[]', 'App.router.loggedIn'),
 
+  /**
+   * The KDPS (Kubernetes Data Platform Services) view instance, surfaced as a dedicated top-nav
+   * button so the console is one click away regardless of whether an ODP cluster is installed —
+   * rather than being buried in the generic views (grid) dropdown. Resolves the deployed instance
+   * from the loaded views list, so the URL follows the actual view version with no hardcoding, and
+   * is {@code null} (button hidden) when the view is not deployed.
+   * @type {App.ViewInstance|null}
+   */
+  kdpsView: function () {
+    if (!App.router.get('loggedIn')) {
+      return null;
+    }
+    var views = App.router.get('mainViewsController.visibleAmbariViews') || [];
+    return views.findProperty('viewName', 'K8S-VIEW') || null;
+  }.property('App.router.mainViewsController.visibleAmbariViews.[]', 'App.router.loggedIn'),
+
   didInsertElement: function () {
     // on 'Enter' pressed, trigger modal window primary button if primary button is enabled(green)
     // on 'Esc' pressed, close the modal
