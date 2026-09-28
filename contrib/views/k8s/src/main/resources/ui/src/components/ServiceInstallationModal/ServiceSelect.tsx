@@ -20,7 +20,7 @@ import React, { useEffect, useState } from 'react';
 import { Form, Select, AutoComplete, Button, Divider, Space, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import type { ClusterService } from '../../types/ServiceTypes';
-import { getClusterServices, getDiscoveredK8sServices, getDiscoveredK8sSecrets, getDiscoveredClusterIssuers, getDiscoveredSecretStores, getMonitoringDiscovery } from '../../api/client';
+import { getClusterServices, getDiscoveredK8sServices, getDiscoveredK8sSecrets, getDiscoveredClusterIssuers, getDiscoveredSecretStores, getMonitoringDiscovery, getKedaDiscovery } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
 
@@ -70,6 +70,15 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
         // (previously this rendered a bogus "undefined (undefined)" entry).
         if (!res || !res.release || !res.namespace) return [];
         return [{ label: `${res.release} (${res.namespace})`, value: JSON.stringify(res) }];
+      }).catch(() => []);
+    } else if (field.type === 'keda-discovery') {
+      promise = getKedaDiscovery().then((res) => {
+        // Only offer an option when a KEDA operator is actually present. The label distinguishes an
+        // OLM/OpenShift operator (no Helm release) from a Helm-installed one.
+        if (!res || !res.present) return [];
+        const where = res.namespace ? ` (${res.namespace})` : '';
+        const kind = res.source === 'olm' ? 'OpenShift operator' : res.release ? `release ${res.release}` : 'operator';
+        return [{ label: `KEDA — ${kind}${where}`, value: JSON.stringify(res) }];
       }).catch(() => []);
     } else if (field.type === 'secret-discovery') {
       // Dropdown populated from Kubernetes Secrets. Two modes, both returning the {label, value} shape

@@ -667,6 +667,16 @@ export const getMonitoringDiscovery = async (): Promise<{ namespace: string; rel
   return handleApiResponse(response);
 };
 
+/**
+ * Discover an existing KEDA operator on the cluster (autoscaling), so the Trino deploy can reuse it
+ * instead of installing a conflicting one. Detection is CRD/operator-based (finds it in any namespace,
+ * incl. the OpenShift Custom Metrics Autoscaler in openshift-keda).
+ */
+export const getKedaDiscovery = async (): Promise<{ present: boolean; namespace?: string; release?: string; source?: string; message?: string }> => {
+  const response = await fetch(`${API_BASE_URL}/discovery/keda`, { credentials: 'include' });
+  return handleApiResponse(response);
+};
+
 export const getViewSettings = async (): Promise<any> => {
   const response = await fetch(`${API_BASE_URL}/configurations/settings`, { credentials: 'include' });
   if (!response.ok) {

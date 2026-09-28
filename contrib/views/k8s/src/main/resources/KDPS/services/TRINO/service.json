@@ -150,7 +150,9 @@
       "imageRepository": "registry.clemlab.com/clemlabprojects",
       "imageGlobalRegistryProperty": "global.image.registry",
       "namespace": "keda",
+      "namespaceFromForm": "keda.namespace",
       "skipIfReleaseExists": true,
+      "skipIfCrdExists": "scaledobjects.keda.sh",
       "skipOnOpenShift": true,
       "crds": [
         "scaledobjects.keda.sh"
@@ -1856,6 +1858,37 @@
           "label": "Prometheus selector label value",
           "type": "string",
           "defaultValue": ""
+        }
+      ]
+    },
+    {
+      "name": "autoscalingGeneric",
+      "label": "Autoscaling (KEDA)",
+      "type": "group",
+      "capability": "kubernetes",
+      "fields": [
+        {
+          "name": "keda.discovery",
+          "label": "Discover KEDA",
+          "type": "keda-discovery",
+          "excludeFromValues": true,
+          "help": "Detect an existing KEDA operator on the cluster (incl. the OpenShift Custom Metrics Autoscaler) so worker autoscaling reuses it instead of installing a conflicting one. Auto-fills the namespace below."
+        },
+        {
+          "name": "keda.namespace",
+          "label": "KEDA namespace",
+          "type": "string",
+          "excludeFromValues": true,
+          "defaultValue": "keda",
+          "help": "Namespace of the KEDA operator. Used to locate an existing install (skip) or to place a fresh one. Left at the default only matters when KDPS installs KEDA itself."
+        },
+        {
+          "name": "keda.release",
+          "label": "KEDA release (Helm)",
+          "type": "string",
+          "excludeFromValues": true,
+          "defaultValue": "keda",
+          "help": "Helm release name of an existing KEDA, when Helm-installed. Informational for OLM/OpenShift operators."
         }
       ]
     },
