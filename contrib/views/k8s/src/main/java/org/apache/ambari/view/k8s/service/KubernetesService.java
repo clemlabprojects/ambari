@@ -1201,9 +1201,11 @@ public class KubernetesService {
             } catch (Exception e) {
                 LOG.warn("Could not heal OpenShift monitoring state: {}", e.getMessage());
             }
-            // Return null: there is no kube-prometheus-stack to auto-fill, so the "Discover monitoring
-            // stack" selector stays empty (only the dashboard bootstrap state is healed above).
-            return null;
+            // Surface the platform's built-in monitoring (openshift-monitoring + the Thanos querier) so the
+            // "Discover monitoring stack" selector on step 3 offers it and the operator can reuse it rather
+            // than being handed an empty picker. There is no kube-prometheus-stack Helm release to auto-fill,
+            // but the OpenShift stack IS the monitoring here, so advertise it explicitly.
+            return discoverOpenShiftMonitoring();
         }
         MonitoringInfo info = discoverMonitoringPrometheus();
         if (info != null) {
