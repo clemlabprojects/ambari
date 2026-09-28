@@ -176,6 +176,30 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           }}
         />
       );
+    case 'keda-discovery':
+      return (
+        <ServiceSelect
+          field={field as any}
+          onValueSelect={(val) => {
+            try {
+              const parsed = typeof val === 'string' ? JSON.parse(val) : val;
+              // Auto-fill the KEDA namespace (and release when Helm-installed) from the detected operator
+              // so a reused install is honoured and the skip check looks in the right place.
+              if (parsed?.namespace || parsed?.release) {
+                form.setFieldsValue({
+                  keda: {
+                    ...(form.getFieldValue('keda') || {}),
+                    ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+                    ...(parsed.release ? { release: parsed.release } : {}),
+                  },
+                });
+              }
+            } catch (e) {
+              // ignore parse errors
+            }
+          }}
+        />
+      );
     case 'context-resolved': {
       const f = field as any;
       // No value resolved from the context. For a MANAGED context this means the capability

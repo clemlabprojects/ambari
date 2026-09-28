@@ -23,6 +23,7 @@ import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import org.apache.ambari.view.k8s.model.MonitoringDiscoveryResponse;
+import org.apache.ambari.view.k8s.model.KedaDiscoveryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -479,6 +480,24 @@ public class DiscoveryResource {
             return Response.ok(new MonitoringDiscoveryResponse(info.namespace(), info.release(), info.url(), state, message)).build();
         } catch (Exception e) {
             LOG.error("Failed to discover monitoring stack", e);
+            return Response.serverError().entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
+    }
+
+    /**
+     * Discover an existing KEDA operator (autoscaling) so the Trino deploy can reuse it instead of
+     * installing a conflicting one. Read-only; never installs. Detection is CRD/operator-based, so it
+     * finds KEDA regardless of the namespace the initial operators put it in (incl. the OpenShift
+     * Custom Metrics Autoscaler in openshift-keda).
+     */
+    @GET
+    @Path("/keda")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response discoverKeda() {
+        try {
+            return Response.ok(kubernetesService.discoverKeda()).build();
+        } catch (Exception e) {
+            LOG.error("Failed to discover KEDA", e);
             return Response.serverError().entity(Collections.singletonMap("error", e.getMessage())).build();
         }
     }

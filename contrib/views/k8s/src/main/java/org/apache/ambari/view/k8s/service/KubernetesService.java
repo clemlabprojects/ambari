@@ -1231,6 +1231,71 @@ public class KubernetesService {
     }
 
     /**
+     * Detect an existing KEDA operator anywhere on the cluster so the Trino deploy can reuse it
+     * rather than installing a conflicting Helm KEDA. Detection is CRD/operator-based, not
+     * release-name/namespace based, so it finds KEDA whatever namespace the initial operators put
+     * it in ("keda", "keda-system", "openshift-keda" for the OpenShift Custom Metrics Autoscaler, …).
+     *
+     * Presence is keyed on the {@code scaledobjects.keda.sh} CRD being served (that is what actually
+     * lets the chart's ScaledObject reconcile). When present, we best-effort locate the keda-operator
+     * Deployment to report its namespace, the Helm release name (from the meta.helm.sh annotation, if
+     * Helm-installed), and whether it came from OLM/OpenShift.
+     *
+     * @return discovery result; {@code present=false} when no KEDA CRD is served.
+     */
+    public KedaDiscoveryResponse discoverKeda() {
+        checkConfiguration();
+        boolean crdServed;
+        try {
+            crdServed = crdExists("scaledobjects.keda.sh");
+        } catch (Exception e) {
+            LOG.warn("KEDA discovery: CRD check failed: {}", e.getMessage());
+            return new KedaDiscoveryResponse(false, null, null, "unknown",
+                    "Could not query the cluster for the KEDA CRD: " + e.getMessage());
+        }
+        if (!crdServed) {
+            return new KedaDiscoveryResponse(false, null, null, "unknown",
+                    "No KEDA detected (scaledobjects.keda.sh CRD is not served).");
+        }
+
+        // CRD is served — locate the operator Deployment to report where it lives and how it was installed.
+        String ns = null;
+        String release = null;
+        String source = "unknown";
+        try {
+            var deployments = client.apps().deployments().inAnyNamespace().list().getItems();
+            var operator = deployments.stream()
+                    .filter(d -> {
+                        String n = d.getMetadata() != null ? d.getMetadata().getName() : null;
+                        return n != null && (n.equals("keda-operator") || n.startsWith("keda-operator"));
+                    })
+                    .findFirst()
+                    .orElse(null);
+            if (operator != null && operator.getMetadata() != null) {
+                ns = operator.getMetadata().getNamespace();
+                var ann = operator.getMetadata().getAnnotations();
+                var labels = operator.getMetadata().getLabels();
+                if (ann != null && ann.get("meta.helm.sh/release-name") != null) {
+                    release = ann.get("meta.helm.sh/release-name");
+                    source = "helm";
+                } else if ((ns != null && ns.startsWith("openshift-"))
+                        || (labels != null && labels.containsKey("operators.coreos.com/openshift-custom-metrics-autoscaler-operator." + ns))
+                        || (ann != null && ann.keySet().stream().anyMatch(k -> k.startsWith("operators.coreos.com/")))) {
+                    source = "olm";
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("KEDA discovery: operator lookup failed (CRD is served, so KEDA is present): {}", e.getMessage());
+        }
+
+        String msg = "KEDA is present"
+                + (ns != null ? " in namespace '" + ns + "'" : "")
+                + ("olm".equals(source) ? " (OpenShift/OLM operator)" : "helm".equals(source) ? " (Helm release '" + release + "')" : "")
+                + ".";
+        return new KedaDiscoveryResponse(true, ns, release, source, msg);
+    }
+
+    /**
      * Ensure monitoring stack is installed; if not present, install using configured repo/chart.
      * @param repoIdOverride optional repoId to use for installation
      * @return discovered info after ensuring install.

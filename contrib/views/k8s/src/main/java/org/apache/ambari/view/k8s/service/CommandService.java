@@ -4977,6 +4977,17 @@ public class CommandService {
                         dependencySpecMap.put("kerberosClusterEnabled", kerberosEnabled);
                     }
                     skipIfReleaseExists = asBoolean(dependencySpecMap.get("skipIfReleaseExists"), false);
+                    // Let the operator choose where a fresh dependency install lands (and where the
+                    // skipIfReleaseExists check looks) via a form field, instead of a hardcoded namespace.
+                    // e.g. KEDA declares namespaceFromForm=keda.namespace so a cluster whose operators put
+                    // KEDA somewhere other than "keda" is honoured. Falls back to the static namespace.
+                    String depNsFromForm = resolveStringValue(dependencySpecMap.get("namespaceFromForm"), null);
+                    if (depNsFromForm != null && !depNsFromForm.isBlank() && request.getFormValues() != null) {
+                        String chosen = stringValue(ConfigResolutionService.getByDottedPath(request.getFormValues(), depNsFromForm));
+                        if (chosen != null && !chosen.isBlank()) {
+                            dependencySpecMap.put("namespace", chosen);
+                        }
+                    }
                     dependencyNamespace = resolveStringValue(dependencySpecMap.get("namespace"), null);
                 }
 
@@ -4994,6 +5005,29 @@ public class CommandService {
                                 rootCommand, dependencyReleaseName, depSkipMap,
                                 "Skipped on OpenShift — the platform's built-in monitoring stack is used instead.");
                         continue;
+                    }
+                    // Reuse an operator already on the cluster, detected by CRD presence rather than a
+                    // release-name-in-a-fixed-namespace guess. e.g. KEDA declares
+                    // skipIfCrdExists=scaledobjects.keda.sh, so an existing KEDA is honoured whatever
+                    // namespace/release the initial operators used (incl. the OpenShift Custom Metrics
+                    // Autoscaler) and KDPS never installs a conflicting one.
+                    String skipIfCrdExists = resolveStringValue(depSkipMap.get("skipIfCrdExists"), null);
+                    if (skipIfCrdExists != null && !skipIfCrdExists.isBlank()) {
+                        boolean crdPresent = false;
+                        try {
+                            crdPresent = this.kubernetesService.crdExists(skipIfCrdExists);
+                        } catch (Exception crdEx) {
+                            LOG.warn("skipIfCrdExists check for dependency '{}' ({}) failed; proceeding with install: {}",
+                                    dependencyReleaseName, skipIfCrdExists, crdEx.toString());
+                        }
+                        if (crdPresent) {
+                            LOG.info("Skipping dependency '{}' — CRD '{}' is already served (operator present on the cluster).",
+                                    dependencyReleaseName, skipIfCrdExists);
+                            this.commandPlanFactory.createDependencySatisfiedCommand(
+                                    rootCommand, dependencyReleaseName, depSkipMap,
+                                    "Skipped — an existing operator serving '" + skipIfCrdExists + "' was found; reusing it.");
+                            continue;
+                        }
                     }
                 }
 
