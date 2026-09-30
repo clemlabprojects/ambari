@@ -33,6 +33,7 @@ from resource_management.core.resources.service import ServiceConfig
 from resource_management.core.source import InlineTemplate, Template
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
+from zookeeper_logging import configure_logging
 
 @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
 def zookeeper(type = None, upgrade_type=None):
@@ -44,11 +45,7 @@ def zookeeper(type = None, upgrade_type=None):
             group=params.user_group
   )
 
-  File(os.path.join(params.config_dir, "zookeeper-env.sh"),
-       content=InlineTemplate(params.zk_env_sh_template),
-       owner=params.zk_user,
-       group=params.user_group
-  )
+  configure_logging(params)
   
 
   configFile("zoo.cfg", template_name="zoo.cfg.j2")
@@ -99,9 +96,6 @@ def zookeeper(type = None, upgrade_type=None):
          group=params.user_group,
          owner=params.zk_user
     )
-
-  if(params.logback_support):
-    configFile("logback.xml", template_name="zookeeper-logback.xml.j2")
 
   if params.security_enabled:
     if type == "server":
@@ -160,6 +154,5 @@ def configFile(name, template_name=None, mode=None):
        group=params.user_group,
        mode=mode
   )
-
 
 

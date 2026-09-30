@@ -117,5 +117,7 @@ else:
 
 logback_support = check_stack_feature(StackFeature.ZOOKEEPER_SUPPORT_LOGBACK, version_for_stack_feature_checks)
 if logback_support:
+  zookeeper_logback_content = default('/configurations/zookeeper-logback/content', None)
+  zookeeper_logback_server_content = default('/configurations/zookeeper-logback-server/content', None)
   zookeeper_log_level = str(default('configurations/zookeeper-log4j/zookeeper_log_level', "INFO"))
   zookeeper_filename = format('zookeeper-{zk_user}-server-{hostname}.log')

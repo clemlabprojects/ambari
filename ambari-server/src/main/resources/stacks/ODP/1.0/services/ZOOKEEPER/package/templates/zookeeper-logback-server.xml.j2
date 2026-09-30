@@ -21,7 +21,21 @@ limitations under the License.
       <pattern>%d{ISO8601} - %-5p [%t:%C{1}@%L] - %m%n</pattern>
     </encoder>
   </appender>
+  <appender name="ROLLINGFILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <File>{{zk_log_dir}}/{{zookeeper_filename}}</File>
+    <encoder>
+      <pattern>%d{ISO8601} - %-5p [%t:%C{1}@%L] - %m%n</pattern>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+      <maxIndex>{{zookeeper_log_number_of_backup_files}}</maxIndex>
+      <FileNamePattern>{{zk_log_dir}}/{{zookeeper_filename}}.%i</FileNamePattern>
+    </rollingPolicy>
+    <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+      <MaxFileSize>{{zookeeper_log_max_backup_size}}MB</MaxFileSize>
+    </triggeringPolicy>
+  </appender>
   <root level="{{zookeeper_log_level}}">
     <appender-ref ref="CONSOLE" />
+    <appender-ref ref="ROLLINGFILE" />
   </root>
 </configuration>

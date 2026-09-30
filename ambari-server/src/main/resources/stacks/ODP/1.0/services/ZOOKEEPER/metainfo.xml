@@ -66,6 +66,16 @@
               <fileName>log4j.properties</fileName>
               <dictionaryName>zookeeper-log4j</dictionaryName>
             </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>logback.xml</fileName>
+              <dictionaryName>zookeeper-logback</dictionaryName>
+            </configFile>
+            <configFile>
+              <type>env</type>
+              <fileName>logback-server.xml</fileName>
+              <dictionaryName>zookeeper-logback-server</dictionaryName>
+            </configFile>
           </configFiles>
         </component>
       </components>
@@ -111,6 +121,8 @@
 
       <configuration-dependencies>
         <config-type>zookeeper-log4j</config-type>
+        <config-type>zookeeper-logback</config-type>
+        <config-type>zookeeper-logback-server</config-type>
         <config-type>zookeeper-env</config-type>
         <config-type>zoo.cfg</config-type>
       </configuration-dependencies>

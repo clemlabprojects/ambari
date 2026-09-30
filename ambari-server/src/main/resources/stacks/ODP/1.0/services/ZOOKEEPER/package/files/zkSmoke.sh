@@ -65,9 +65,15 @@ function rename_output(){
 }
 
 # Delete /zk_smoketest znode if exists
-/var/lib/ambari-agent/ambari-sudo.sh su $smoke_user -s /bin/bash - -c "source $conf_dir/zookeeper-env.sh ;  echo delete /zk_smoketest | ${zk_cli_shell} -server $zk_node1:$client_port" 2>&1>$test_output_file
+# A missing znode can log an ERROR and return 1. Keep this best-effort cleanup
+# separate so verify_output checks the create operation, not an expected miss.
+/var/lib/ambari-agent/ambari-sudo.sh su $smoke_user -s /bin/bash - -c "source $conf_dir/zookeeper-env.sh ;  echo delete /zk_smoketest | ${zk_cli_shell} -server $zk_node1:$client_port" >"${test_output_file}.cleanup" 2>&1
 # Create /zk_smoketest znode on one zookeeper server
-/var/lib/ambari-agent/ambari-sudo.sh su $smoke_user -s /bin/bash - -c "source $conf_dir/zookeeper-env.sh ; echo create /zk_smoketest smoke_data | ${zk_cli_shell} -server $zk_node1:$client_port" 2>&1>>$test_output_file
+if ! /var/lib/ambari-agent/ambari-sudo.sh su $smoke_user -s /bin/bash - -c "source $conf_dir/zookeeper-env.sh ; echo create /zk_smoketest smoke_data | ${zk_cli_shell} -server $zk_node1:$client_port" >"$test_output_file" 2>&1; then
+  cat "$test_output_file"
+  echo "Zookeeper Smoke Test: Failed to create /zk_smoketest"
+  exit 1
+fi
 verify_output
 rename_output
 

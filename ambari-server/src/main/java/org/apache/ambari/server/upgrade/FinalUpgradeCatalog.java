@@ -99,6 +99,24 @@ public class FinalUpgradeCatalog extends AbstractFinalUpgradeCatalog {
     updateClusterEnv();
     ensureCoreServiceForLegacyOdpClusters();
     ensureFilesystemSelectorDefaultsForLegacyOdpClusters();
+    ensureZooKeeperLogbackDefaults();
+  }
+
+  /**
+   * Adds the UI-editable client and server Logback templates to existing clusters.
+   *
+   * <p>The shared helper selects defaults from the cluster's stack and skips
+   * properties owned by services that are not installed. Only these two config
+   * types are considered; existing content and zookeeper-env are never replaced.
+   * Running in the final catalog also covers Ambari maintenance upgrades. Agent
+   * rendering remains gated by the ZooKeeper Logback stack feature and has
+   * packaged fallbacks for commands received before this migration.</p>
+   */
+  protected void ensureZooKeeperLogbackDefaults() throws AmbariException {
+    updateConfigurationPropertiesWithValuesFromXml(
+        "zookeeper-logback", Collections.singleton("content"), false, true);
+    updateConfigurationPropertiesWithValuesFromXml(
+        "zookeeper-logback-server", Collections.singleton("content"), false, true);
   }
 
   /**

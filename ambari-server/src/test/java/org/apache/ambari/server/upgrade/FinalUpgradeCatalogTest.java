@@ -26,8 +26,10 @@ import static org.easymock.EasyMock.verify;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.ServiceConfigVersionResponse;
@@ -43,6 +45,7 @@ import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.State;
 import org.easymock.EasyMockSupport;
 import org.junit.Before;
+import org.junit.Assert;
 import org.junit.Test;
 
 import com.google.inject.Injector;
@@ -92,6 +95,52 @@ public class FinalUpgradeCatalogTest {
     configHelper = easyMockSupport.createNiceMock(ConfigHelper.class);
     host1 = easyMockSupport.createNiceMock(Host.class);
     host2 = easyMockSupport.createNiceMock(Host.class);
+  }
+
+  @Test
+  public void testZooKeeperLogbackDefaultsAreAddOnlyAndScoped() throws Exception {
+    Set<String> updatedTypes = new HashSet<>();
+    replay(injector);
+    FinalUpgradeCatalog catalog = new TestFinalUpgradeCatalog(injector) {
+      @Override
+      protected void updateConfigurationPropertiesWithValuesFromXml(
+          String configType, Set<String> propertyNames, boolean updateIfExists,
+          boolean createNewConfigType) {
+        Assert.assertEquals(Collections.singleton("content"), propertyNames);
+        Assert.assertFalse("Do not replace saved logging templates", updateIfExists);
+        Assert.assertTrue("Create missing config types on existing clusters", createNewConfigType);
+        Assert.assertTrue("Each config type must be handled once", updatedTypes.add(configType));
+      }
+    };
+    catalog.ensureZooKeeperLogbackDefaults();
+    Assert.assertEquals(new HashSet<>(Arrays.asList(
+        "zookeeper-logback", "zookeeper-logback-server")), updatedTypes);
+  }
+
+  @Test
+  public void testFinalUpgradeRunsZooKeeperLogbackMigration() throws Exception {
+    final boolean[] migrated = {false};
+    replay(injector);
+    FinalUpgradeCatalog catalog = new TestFinalUpgradeCatalog(injector) {
+      @Override
+      protected void updateClusterEnv() {
+      }
+
+      @Override
+      protected void ensureCoreServiceForLegacyOdpClusters() {
+      }
+
+      @Override
+      protected void ensureFilesystemSelectorDefaultsForLegacyOdpClusters() {
+      }
+
+      @Override
+      protected void ensureZooKeeperLogbackDefaults() {
+        migrated[0] = true;
+      }
+    };
+    catalog.executeDMLUpdates();
+    Assert.assertTrue(migrated[0]);
   }
 
   @Test
