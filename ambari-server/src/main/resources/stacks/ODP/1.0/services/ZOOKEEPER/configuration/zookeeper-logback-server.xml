@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<configuration supports_final="false" supports_adding_forbidden="true">
+  <property>
+    <name>content</name>
+    <display-name>ZooKeeper server Logback template</display-name>
+    <description>Template for logback-server.xml, selected only for the ZooKeeper daemon. Existing ZooKeeper log level, directory and rotation settings are available as template variables. Applied only to stack versions with ZooKeeper Logback support.</description>
+    <value><![CDATA[
+<!--
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<configuration>
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{ISO8601} - %-5p [%t:%C{1}@%L] - %m%n</pattern>
+    </encoder>
+  </appender>
+  <appender name="ROLLINGFILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <File>{{zk_log_dir}}/{{zookeeper_filename}}</File>
+    <encoder>
+      <pattern>%d{ISO8601} - %-5p [%t:%C{1}@%L] - %m%n</pattern>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+      <maxIndex>{{zookeeper_log_number_of_backup_files}}</maxIndex>
+      <FileNamePattern>{{zk_log_dir}}/{{zookeeper_filename}}.%i</FileNamePattern>
+    </rollingPolicy>
+    <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+      <MaxFileSize>{{zookeeper_log_max_backup_size}}MB</MaxFileSize>
+    </triggeringPolicy>
+  </appender>
+  <root level="{{zookeeper_log_level}}">
+    <appender-ref ref="CONSOLE" />
+    <appender-ref ref="ROLLINGFILE" />
+  </root>
+</configuration>
+]]></value>
+    <value-attributes>
+      <type>content</type>
+      <show-property-name>false</show-property-name>
+    </value-attributes>
+    <on-ambari-upgrade add="true" update="false"/>
+  </property>
+</configuration>
