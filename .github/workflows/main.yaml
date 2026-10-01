@@ -114,8 +114,15 @@ jobs:
           # installs that fills the GitHub Actions runner's ~14GB free disk and the build
           # dies with ENOSPC.  Release packaging (which DOES need this module to produce
           # ambari-metrics RPM/DEBs) is handled out of band by the Jenkins pipeline.
+          # TEMPORARY: contrib/views/sql-assistant is excluded from this smoke build while the
+          # official 2.8.2.0 release is being prepared, so a failure there cannot hold up the
+          # release build. It is excluded HERE ONLY -- the module stays in contrib/views/pom.xml,
+          # so Jenkins and local builds still build it and nothing about the view itself changes.
+          # It is a second node/yarn frontend in the same reactor (~550MB of node_modules + target
+          # on top of the k8s view's own), on a runner that already had to drop
+          # ambari-metrics-assembly for ENOSPC. Re-enable once it is sorted out.
           mvn -B clean install \
-            -pl '!ambari-metrics/ambari-metrics-assembly' \
+            -pl '!ambari-metrics/ambari-metrics-assembly,!contrib/views/sql-assistant' \
             -DskipTests=true \
             -Dmaven.clover.skip=true \
             -Drat.ignoreErrors=true \
