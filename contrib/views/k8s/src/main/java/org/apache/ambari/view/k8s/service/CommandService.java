@@ -3935,6 +3935,35 @@ public class CommandService {
             LOG.info("Chart version {} satisfies range '{}' for {}", resolvedVersion, def.requiredChartVersion, request.getServiceKey());
         }
 
+        // ----- per-feature chart version check
+        // A toggle whose chart-side template only exists in a later chart must not deploy silently as
+        // a no-op. Enforced only when the toggle is actually on, so the service keeps a permissive
+        // requiredChartVersion for everyone else.
+        if (def.featureChartVersions != null && !def.featureChartVersions.isEmpty()
+                && resolvedVersion != null && !resolvedVersion.isBlank()) {
+            for (Map.Entry<String, String> fe : def.featureChartVersions.entrySet()) {
+                String togglePath = fe.getKey();
+                String range = fe.getValue();
+                if (togglePath == null || togglePath.isBlank() || range == null || range.isBlank()) continue;
+                if (togglePath.startsWith("_")) continue;   // "_comment" and friends: documentation, not a toggle
+                Object enabled = ConfigResolutionService.getByDottedPath(request.getValues(), togglePath);
+                if (!asBoolean(enabled, false) && request.getFormValues() != null) {
+                    enabled = ConfigResolutionService.getByDottedPath(request.getFormValues(), togglePath);
+                }
+                if (!asBoolean(enabled, false)) continue;
+                if (!isChartVersionCompatible(resolvedVersion, range)) {
+                    throw new IllegalArgumentException(
+                            "'" + togglePath + "' is enabled, which needs chart version " + range
+                                    + ", but " + resolvedVersion + " was selected for " + request.getServiceKey()
+                                    + ". That combination would deploy without the feature rather than fail,"
+                                    + " so it is refused: pick a chart version in " + range
+                                    + ", or turn '" + togglePath + "' off.");
+                }
+                LOG.info("Feature '{}' is on and chart version {} satisfies '{}' for {}",
+                        togglePath, resolvedVersion, range, request.getServiceKey());
+            }
+        }
+
         // ----- value path rewrites
         if (def.valueAliases == null || def.valueAliases.isEmpty()) return;
         Map<String, Object> values = request.getValues();

@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.10",
+  "version": "1.43.11",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -2882,6 +2882,10 @@
     }
   },
   "requiredChartVersion": ">=1.43.0",
+  "featureChartVersions": {
+    "_comment": "Atlas tag sync renders a tag-projector CronJob that only exists from 1.43.11; on an older chart the toggle would deploy cleanly and do nothing.",
+    "tagSync.enabled": ">=1.43.11"
+  },
   "platformOps": [
     { "op": "ranger.tagProjectorSecret", "when": "tagSync.enabled",
       "_description": "When Atlas tag sync is on, KDPS mints a Secret {user,password} in the release namespace from the selected context's Ranger admin credential and injects tagSync.ranger.{url,existingSecret} into the values, so the tag-projector CronJob authenticates to the context's Ranger without the operator handling any credential." },
