@@ -20,6 +20,38 @@
 angular.module('ambariAdminConsole')
 .controller('AppCtrl',['$scope','$rootScope', '$route', '$window','Auth', 'Alert', '$modal', 'Cluster', '$translate', '$http', 'Settings', 'Utility', '$q', function($scope, $rootScope, $route, $window, Auth, Alert, $modal, Cluster, $translate, $http, Settings, Utility, $q) {
   var $t = $translate.instant;
+
+  /**
+   * KDPS console button in the top navigation.
+   *
+   * This Admin console is a separate app from ambari-web, so the button ambari-web puts in its own
+   * navbar is absent here — which is exactly the "Welcome to Apache Ambari" screen an operator lands
+   * on when no cluster is installed yet, i.e. the moment KDPS is most likely the thing they came for.
+   *
+   * The URL comes from the instance's context_path rather than being built from name/version, so it
+   * follows whatever view version is deployed with nothing hardcoded. Left null (button hidden) when
+   * the view is absent or not visible, so a stock Ambari is unaffected.
+   */
+  $scope.kdpsViewUrl = null;
+  $http.get(Settings.baseUrl + '/views/K8S-VIEW?fields=versions/instances/ViewInstanceInfo')
+    .then(function (resp) {
+      var versions = (resp.data && resp.data.versions) || [];
+      for (var i = 0; i < versions.length; i++) {
+        var instances = versions[i].instances || [];
+        for (var j = 0; j < instances.length; j++) {
+          var info = instances[j].ViewInstanceInfo || {};
+          if (info.visible === false || !info.context_path) {
+            continue;
+          }
+          $scope.kdpsViewUrl = Settings.siteRoot.replace(/\/$/, '') + info.context_path;
+          return;
+        }
+      }
+    })
+    .catch(function () {
+      $scope.kdpsViewUrl = null;   // view not deployed on this Ambari: just don't offer the button
+    });
+
   $scope.signOut = function () {
     Auth.signout().finally(function () {
       $window.location.pathname = Settings.siteRoot;

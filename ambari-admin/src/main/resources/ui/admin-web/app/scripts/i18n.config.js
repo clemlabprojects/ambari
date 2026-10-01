@@ -27,6 +27,8 @@ angular.module('ambariAdminConsole')
     'common.ambari': 'Ambari',
     'common.apacheAmbari': 'Apache Ambari',
     'common.about': 'About',
+    'common.kdps.button': 'KDPS',
+    'common.kdps.openDashboard': 'Open the KDPS (Kubernetes Data Platform Services) dashboard',
     'common.version': 'Version',
     'common.signOut': 'Sign out',
     'common.register': 'Register',

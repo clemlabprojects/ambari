@@ -58,6 +58,14 @@
            </ol>
          </div>
          <ul class="nav navbar-nav navbar-right">
+           <!-- KDPS console. Hidden when the K8S view is not deployed. Opens standalone (the view
+                renders its own full-page chrome) and works with or without an installed cluster. -->
+           <li ng-if="kdpsViewUrl">
+             <a ng-href="{{kdpsViewUrl}}" target="_blank" rel="noopener"
+                title="{{'common.kdps.openDashboard' | translate}}" ng-cloak>
+               <i class="fa fa-th-large"></i>&nbsp;{{'common.kdps.button' | translate}}
+             </a>
+           </li>
            <li>
              <p class="navbar-text" ng-cloak>{{cluster.Clusters.cluster_name}}</p>
            </li>
