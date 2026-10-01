@@ -138,6 +138,19 @@ public class StackServiceDef {
     public String requiredChartVersion;
 
     /**
+     * Optional per-FEATURE chart version ranges, keyed by the dotted path of the toggle that turns
+     * the feature on (e.g. <code>{"tagSync.enabled": "&gt;=1.43.11"}</code>). The range is enforced
+     * only when that toggle is actually on, so a service can keep a permissive
+     * {@link #requiredChartVersion} for everyone while still refusing a combination that would be a
+     * silent no-op — a toggle whose chart-side template only exists in a later chart.
+     *
+     * <p>Without this, enabling such a toggle against an older chart deploys cleanly and simply does
+     * nothing, which is far worse than an error: Atlas tag sync did exactly that when the wizard
+     * still defaulted to a chart with no tag-projector template.
+     */
+    public Map<String, String> featureChartVersions;
+
+    /**
      * Declarative external-service auth wiring. See
      * {@code docs/EXTERNAL_SERVICE_TARGETS.md} for the full contract.
      *
