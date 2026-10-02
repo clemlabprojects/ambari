@@ -3861,6 +3861,11 @@ public class CommandService {
         // the same rewritten values map.
         applyValueAliasesAndVersionCheck(request, version);
 
+        // Operator-supplied extra catalogs. Parsed here, next to the alias rewriting and for the same
+        // reason: it is the one place every backend goes through, so a deploy driven straight at the
+        // API behaves exactly like one driven from the wizard.
+        applyCustomCatalogs(request);
+
         // Fail-fast on a Terminating namespace. The backends create the namespace
         // anyway as part of the helm install, but they do so several steps into
         // the plan — by which point the operator has already seen Krb5 ConfigMap
@@ -3912,6 +3917,105 @@ public class CommandService {
      * chart version. Refuse the install with a clear error if they don't match — prevents
      * silent breakage when chart and service.json drift apart.
      */
+    /** Catalog names KDPS builds itself from the platform context; an operator must not shadow them. */
+    private static final java.util.Set<String> KDPS_MANAGED_CATALOGS = java.util.Set.of("hive", "iceberg");
+
+    /** Trino catalog names map to a file on disk, so keep them to the conservative set. */
+    private static final java.util.regex.Pattern CATALOG_NAME = java.util.regex.Pattern.compile("[a-z][a-z0-9_]*");
+
+    /**
+     * Turn the wizard's free-text "Additional Trino catalogs" block into chart values.
+     *
+     * <p>The operator writes ordinary Trino catalog files, one {@code [name]} section each:
+     * <pre>
+     * [postgres_prod]
+     * connector.name=postgresql
+     * connection-url=jdbc:postgresql://db:5432/analytics
+     * </pre>
+     * Each section becomes an entry in the chart's {@code catalogs} map (name -&gt; .properties text),
+     * which the chart renders into the catalog ConfigMap. Nothing here understands connectors: the body
+     * is passed through verbatim, so any connector Trino supports works without a KDPS change.
+     *
+     * <p>Rejected rather than silently mangled: properties outside a section, a name Trino cannot use,
+     * a section with no {@code connector.name}, and any attempt to redefine the Hive/Iceberg catalogs
+     * that KDPS wires from the platform context.
+     */
+    private void applyCustomCatalogs(HelmDeployRequest request) {
+        if (request.getFormValues() == null) return;
+        Object raw = ConfigResolutionService.getByDottedPath(request.getFormValues(), "customCatalogs.text");
+        String text = raw == null ? null : String.valueOf(raw);
+        if (text == null || text.isBlank()) return;
+
+        Map<String, String> parsed = parseCustomCatalogs(text);
+        if (parsed.isEmpty()) return;
+
+        Map<String, Object> values = request.getValues();
+        if (values == null) return;
+        Object existing = values.get("catalogs");
+        Map<String, Object> catalogs = (existing instanceof Map)
+                ? (Map<String, Object>) existing : new LinkedHashMap<>();
+        catalogs.putAll(parsed);
+        values.put("catalogs", catalogs);
+        LOG.info("Additional Trino catalogs wired into the release: {}", parsed.keySet());
+    }
+
+    /**
+     * Parse the operator's free-text catalog block into name -> .properties text.
+     * Package-private and static so the parsing rules can be unit-tested on their own.
+     *
+     * @throws IllegalArgumentException with an operator-readable message on malformed input
+     */
+    static Map<String, String> parseCustomCatalogs(String text) {
+        Map<String, String> parsed = new LinkedHashMap<>();
+        String current = null;
+        StringBuilder body = new StringBuilder();
+        int lineNo = 0;
+        for (String line : text.replace("\r\n", "\n").split("\n", -1)) {
+            lineNo++;
+            String trimmed = line.trim();
+            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                if (current != null) parsed.put(current, body.toString().trim());
+                current = trimmed.substring(1, trimmed.length() - 1).trim();
+                body.setLength(0);
+                if (!CATALOG_NAME.matcher(current).matches()) {
+                    throw new IllegalArgumentException("Additional catalogs, line " + lineNo + ": '" + current
+                            + "' is not a usable Trino catalog name. Use lower-case letters, digits and underscores,"
+                            + " starting with a letter.");
+                }
+                if (KDPS_MANAGED_CATALOGS.contains(current)) {
+                    throw new IllegalArgumentException("Additional catalogs, line " + lineNo + ": '" + current
+                            + "' is built by KDPS from the platform context. Configure it in its own section of"
+                            + " this page instead of redefining it here.");
+                }
+                if (parsed.containsKey(current)) {
+                    throw new IllegalArgumentException("Additional catalogs, line " + lineNo + ": '" + current
+                            + "' is defined twice.");
+                }
+                continue;
+            }
+            if (current == null && !trimmed.isEmpty() && !trimmed.startsWith("#")) {
+                throw new IllegalArgumentException("Additional catalogs, line " + lineNo
+                        + ": '" + trimmed + "' is outside a catalog section. Start each catalog with a [name] header.");
+            }
+            if (current != null) body.append(line).append('\n');
+        }
+        if (current != null) parsed.put(current, body.toString().trim());
+
+        for (Map.Entry<String, String> e : parsed.entrySet()) {
+            if (!e.getValue().contains("connector.name")) {
+                throw new IllegalArgumentException("Additional catalogs: '" + e.getKey()
+                        + "' has no connector.name, so Trino would refuse to start. Add the connector it should use.");
+            }
+            // Inline credentials end up readable in the catalog ConfigMap and in SHOW CREATE CATALOG.
+            if (e.getValue().matches("(?s).*(password|secret-key|secret_key)\\s*=\\s*(?!\\$\\{)\\S.*")) {
+                LOG.warn("Additional catalog '{}' appears to carry an inline credential. Prefer a Secret and"
+                        + " ${{ENV:VAR}} so it does not sit in the catalog ConfigMap.", e.getKey());
+            }
+        }
+
+        return parsed;
+    }
+
     private void applyValueAliasesAndVersionCheck(HelmDeployRequest request, String resolvedVersion) {
         if (request.getServiceKey() == null || request.getServiceKey().isBlank()) return;
         StackServiceDef def;

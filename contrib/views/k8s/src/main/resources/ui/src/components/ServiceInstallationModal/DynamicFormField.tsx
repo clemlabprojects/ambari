@@ -305,6 +305,21 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           <Checkbox disabled={disabledProp}>{field.label}</Checkbox>
         </Form.Item>
       );
+    case 'textarea':
+      // Multi-line free text. Used where the operator supplies a block the backend parses rather
+      // than a single scalar (e.g. extra Trino catalogs as plain .properties sections), so the
+      // content is deliberately NOT interpreted here.
+      return (
+        <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
+          <Input.TextArea
+            disabled={disabledProp}
+            rows={(field as any).rows || 10}
+            spellCheck={false}
+            placeholder={(field as any).placeholder}
+            style={{ fontFamily: 'monospace' }}
+          />
+        </Form.Item>
+      );
     case 'string':
     default:
       return (
