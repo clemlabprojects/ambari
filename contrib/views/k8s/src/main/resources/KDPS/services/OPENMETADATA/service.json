@@ -1209,7 +1209,7 @@
       "type": "group",
       "capability": "openshift",
       "collapsed": true,
-      "help": "OpenShift-specific options. Only shown when KDPS detects the cluster is OpenShift.",
+      "help": "Name of the OM databaseService whose table tags Ranger TagSync propagates (the Trino service KDPS registers, or the Hive service fed by Atlas federation, e.g. 'hive-clemlab'). Without this mapping TagSync targets a Ranger service named '<OM service>_trino', which does not exist, and every upload is rejected. Default 'trino-clemlab' matches the OM Trino connection KDPS creates.",
       "fields": [
         {
           "name": "runAsUser",
@@ -1779,7 +1779,7 @@
         },
         {
           "name": "rangerTagSyncTrinoServiceFqn",
-          "label": "OM Trino service name (auto-discovered)",
+          "label": "OM database service whose tags are synced",
           "type": "string",
           "excludeFromValues": true,
           "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. Auto-filled from the OM Trino connection KDPS creates; usually 'trino-clemlab'. Default 'trino-clemlab' matches the KDPS Trino release name.",
@@ -1791,7 +1791,7 @@
         },
         {
           "name": "rangerTagSyncRangerTrinoService",
-          "label": "Ranger Trino service name (auto-discovered)",
+          "label": "Ranger service that receives the tags",
           "type": "string",
           "excludeFromValues": true,
           "help": "Name of the Ranger service of type 'trino' that receives the tags. Auto-discovered from Ranger; usually 'trino-trino-ns'. Default 'trino-trino-ns' matches the standard Trino k8s release.",
