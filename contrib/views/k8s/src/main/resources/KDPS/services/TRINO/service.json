@@ -2853,6 +2853,23 @@
           ]
         }
       ]
+    },
+    {
+      "name": "customCatalogs",
+      "label": "Custom catalogs",
+      "type": "group",
+      "fields": [
+        {
+          "name": "customCatalogs.text",
+          "label": "Additional Trino catalogs",
+          "type": "textarea",
+          "rows": 12,
+          "excludeFromValues": true,
+          "defaultValue": "",
+          "placeholder": "[postgres_prod]\nconnector.name=postgresql\nconnection-url=jdbc:postgresql://db.example.com:5432/analytics\nconnection-user=trino\nconnection-password=${ENV:PG_PASSWORD}\n\n[kafka_events]\nconnector.name=kafka\nkafka.nodes=broker.example.com:9092",
+          "help": "One section per catalog: a [name] header followed by that catalog's .properties lines. Each becomes a Trino catalog of that name and any connector Trino supports will work. connector.name is required. The Hive and Iceberg catalogs above are built by KDPS from the platform context - configure them there, not here. Do not paste credentials inline: put them in a Secret and reference ${ENV:VAR}."
+        }
+      ]
     }
   ],
   "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale.",
