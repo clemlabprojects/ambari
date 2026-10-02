@@ -20,6 +20,7 @@ package org.apache.ambari.view.k8s.service;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -142,9 +143,23 @@ class CommandServiceTagSyncRegisterTest {
         spec.put("rangerTrinoServiceName", "trino-trino-ns");
         Map<String, String> props = CommandService.buildTagSyncRangerSiteOverrides(
                 spec, "openmetadatarest", "https://om", "jwt", null);
+        // Key format = what OpenmetadataResourceMapper.getCustomRangerServiceName() reads
+        // (RANGER-4978): ranger.tagsync.openmetadata.<component>.instance.<OM FQN>.ranger.service
         assertEquals("trino-trino-ns",
-                props.get("ranger.tagsync.atlas.openmetadata.servicename.mapper.trino-clemlab.ranger.service"),
+                props.get("ranger.tagsync.openmetadata.trino.instance.trino-clemlab.ranger.service"),
                 "mapper line should be emitted when both trinoIngestionServiceFqn + rangerTrinoServiceName are set");
+        assertFalse(props.containsKey("ranger.tagsync.source.openmetadatarest.component.tabletype"),
+                "component tabletype is only pushed when the spec sets it");
+
+        // Non-default component → key uses it AND the source's tabletype is pushed so the mapper
+        // builds resources for that service type.
+        spec.put("componentTableType", "hive");
+        Map<String, String> hiveProps = CommandService.buildTagSyncRangerSiteOverrides(
+                spec, "openmetadatarest", "https://om", "jwt", null);
+        assertEquals("trino-trino-ns",
+                hiveProps.get("ranger.tagsync.openmetadata.hive.instance.trino-clemlab.ranger.service"));
+        assertEquals("hive", hiveProps.get("ranger.tagsync.source.openmetadatarest.component.tabletype"));
+        spec.remove("componentTableType");
 
         // Drop one of the two → mapper line must be omitted (we don't want a half-mapping
         // that confuses Ranger TagSync's parser).
@@ -152,8 +167,31 @@ class CommandServiceTagSyncRegisterTest {
         Map<String, String> partial = CommandService.buildTagSyncRangerSiteOverrides(
                 spec, "openmetadatarest", "https://om", "jwt", null);
         assertFalse(
-                partial.keySet().stream().anyMatch(k -> k.contains("servicename.mapper")),
+                partial.keySet().stream().anyMatch(k -> k.contains(".instance.") && k.endsWith(".ranger.service")),
                 "Partial trino mapping should not produce a mapper line");
+    }
+
+    @Test
+    void copyHelmValueIntoSpecHonorsSettingsOverrideAndSkipsBlanks() {
+        Map<String, Object> values = new java.util.HashMap<>();
+        values.put("ranger", new java.util.HashMap<>(Map.of("tagSync",
+                new java.util.HashMap<>(Map.of("trinoIngestionServiceFqn", " hive-clemlab ",
+                                               "rangerTrinoServiceName", "")))));
+        values.put("custom", new java.util.HashMap<>(Map.of("svc", "trino-trino-ns")));
+        Map<String, Object> spec = baseSpec();
+        CommandService.copyHelmValueIntoSpec(values, Collections.emptyMap(), "trino_fqn_helm_prop",
+                "ranger.tagSync.trinoIngestionServiceFqn", spec, "trinoIngestionServiceFqn");
+        CommandService.copyHelmValueIntoSpec(values, Collections.emptyMap(), "ranger_trino_service_helm_prop",
+                "ranger.tagSync.rangerTrinoServiceName", spec, "rangerTrinoServiceName");
+        assertEquals("hive-clemlab", spec.get("trinoIngestionServiceFqn"), "value is trimmed");
+        assertFalse(spec.containsKey("rangerTrinoServiceName"), "blank helm value must not be copied");
+        // settings override the helm path
+        CommandService.copyHelmValueIntoSpec(values, Map.of("ranger_trino_service_helm_prop", "custom.svc"),
+                "ranger_trino_service_helm_prop", "ranger.tagSync.rangerTrinoServiceName", spec, "rangerTrinoServiceName");
+        assertEquals("trino-trino-ns", spec.get("rangerTrinoServiceName"));
+        // null/empty values → no-op
+        CommandService.copyHelmValueIntoSpec(null, null, "x", "a.b", spec, "zzz");
+        assertFalse(spec.containsKey("zzz"));
     }
 
     // -------------------------------------------------------------------------

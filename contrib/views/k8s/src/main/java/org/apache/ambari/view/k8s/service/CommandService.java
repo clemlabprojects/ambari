@@ -8900,6 +8900,25 @@ public class CommandService {
      *                          cluster (CSV); used to dedup-append
      * @return ordered map of properties to set; never null
      */
+    /**
+     * Copy one helm value into the TagSync spec when it is present and non-blank. The helm path
+     * comes from {@code ranger-tagsync-settings} ({@code settingsKey}) with a chart default.
+     */
+    static void copyHelmValueIntoSpec(Map<String, Object> values,
+                                      Map<String, Object> settings,
+                                      String settingsKey,
+                                      String defaultHelmPath,
+                                      Map<String, Object> spec,
+                                      String specKey) {
+        if (values == null || values.isEmpty()) return;
+        String helmPath = String.valueOf(
+                settings == null ? defaultHelmPath : settings.getOrDefault(settingsKey, defaultHelmPath));
+        Object raw = ConfigResolutionService.getByDottedPath(values, helmPath);
+        if (raw != null && !String.valueOf(raw).isBlank()) {
+            spec.put(specKey, String.valueOf(raw).trim());
+        }
+    }
+
     static Map<String, String> buildTagSyncRangerSiteOverrides(Map<String, Object> spec,
                                                                String entryKey,
                                                                String omEndpoint,
@@ -8949,18 +8968,32 @@ public class CommandService {
         // Kafka wired, loops "Failed to initialize TAG source atlas" and can crowd out our source.
         props.put("ranger.tagsync.source.atlas", "false");
 
-        // ----- service-name mapper: maps OM database-service name → Ranger Trino service name -----
-        // The spec may declare a static mapping or rely on the wizard's form-supplied helm values.
-        // We accept either a literal {trinoIngestionServiceFqn → rangerTrinoServiceName} pair
-        // (provided by the plan via _tagSyncTrinoServiceFqn / _tagSyncRangerTrinoService keys)
-        // or skip the mapper line — operators can wire it manually.
+        // ----- service-name mapper: maps OM database-service name → Ranger service name -----
+        // Without a mapping, OpenmetadataResourceMapper (RANGER-4978) targets the Ranger service
+        // "<OM service FQN>_<component>" (e.g. "hive-clemlab_trino"), which normally does not
+        // exist → every upload fails with HTTP 400 "No Service found with name". The mapper
+        // property the mapper actually reads is
+        //   ranger.tagsync.openmetadata.<component>.instance.<OM service FQN>.ranger.service
+        // (TAGSYNC_SERVICENAME_MAPPER_PROP_PREFIX + component + ".instance." + fqn + ".ranger.service"),
+        // the same key the OM chart renders in configmap-ranger-tagsync.yaml. The component is the
+        // Ranger service type the tags land on (default "trino"; also pushed as
+        // ranger.tagsync.source.openmetadatarest.component.tabletype when the spec sets it).
+        // The spec carries the pair as trinoIngestionServiceFqn / rangerTrinoServiceName — the
+        // register step copies them in from the release's helm values (ranger.tagSync.*).
         Object trinoFqn = spec.get("trinoIngestionServiceFqn");
         Object rangerTrinoSvc = spec.get("rangerTrinoServiceName");
+        Object componentRaw = spec.get("componentTableType");
+        String component = (componentRaw != null && !String.valueOf(componentRaw).isBlank())
+                ? String.valueOf(componentRaw).trim()
+                : "trino";
+        if (componentRaw != null && !String.valueOf(componentRaw).isBlank()) {
+            props.put("ranger.tagsync.source." + sourceKey + ".component.tabletype", component);
+        }
         if (trinoFqn != null && rangerTrinoSvc != null
                 && !String.valueOf(trinoFqn).isBlank() && !String.valueOf(rangerTrinoSvc).isBlank()) {
-            props.put("ranger.tagsync.atlas.openmetadata.servicename.mapper."
-                            + trinoFqn + ".ranger.service",
-                    String.valueOf(rangerTrinoSvc));
+            props.put("ranger.tagsync.openmetadata." + component + ".instance."
+                            + String.valueOf(trinoFqn).trim() + ".ranger.service",
+                    String.valueOf(rangerTrinoSvc).trim());
         }
 
         // ----- append source key to ranger.tagsync.sources (dedup, comma-separated) -----
@@ -9153,7 +9186,25 @@ public class CommandService {
                         cluster,
                         AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders")))
                                 .getDesiredConfigProperty(cluster, "ranger-tagsync-site", "ranger.tagsync.sources");
-        Map<String, String> propsToSet = buildTagSyncRangerSiteOverrides(spec, entryKey, omEndpoint, jwt, currentSources);
+        // The service.json entry is static; the OM-service → Ranger-service mapping lives in the
+        // release's helm values (wizard fields rangerTagSyncTrinoServiceFqn /
+        // rangerTagSyncRangerTrinoService → ranger.tagSync.*). Copy it into the spec so the
+        // mapper line is written — the same values the OM chart's ConfigMap renders from, so the
+        // Ambari-managed and external branches agree. Helm paths are settings-overridable.
+        Map<String, Object> effectiveSpec = new LinkedHashMap<>(spec);
+        copyHelmValueIntoSpec(values, settings, "trino_fqn_helm_prop",
+                "ranger.tagSync.trinoIngestionServiceFqn", effectiveSpec, "trinoIngestionServiceFqn");
+        copyHelmValueIntoSpec(values, settings, "ranger_trino_service_helm_prop",
+                "ranger.tagSync.rangerTrinoServiceName", effectiveSpec, "rangerTrinoServiceName");
+        copyHelmValueIntoSpec(values, settings, "component_table_type_helm_prop",
+                "ranger.tagSync.componentTableType", effectiveSpec, "componentTableType");
+        if (!effectiveSpec.containsKey("trinoIngestionServiceFqn") || !effectiveSpec.containsKey("rangerTrinoServiceName")) {
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: no OM-service → Ranger-service mapping in the release values "
+                    + "of {}/{} (ranger.tagSync.trinoIngestionServiceFqn / rangerTrinoServiceName). TagSync will "
+                    + "target '<OM service>_trino' and uploads will fail with HTTP 400 unless a mapping is set.",
+                    namespace, releaseName);
+        }
+        Map<String, String> propsToSet = buildTagSyncRangerSiteOverrides(effectiveSpec, entryKey, omEndpoint, jwt, currentSources);
 
         if (external) {
             // No Ambari mutation, no restart. Surface what the operator must apply.
