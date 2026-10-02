@@ -121,6 +121,13 @@ public class K8sReleaseEntity extends BaseModel {
     @Column(length = 3000)
     private String gitMetaJson;
 
+    // Reusable Trino catalogs attached at deploy time: JSON {catalogName: {id, hash}}. The release
+    // values hold a SNAPSHOT of each catalog's properties; this column keeps the reference (which
+    // object, which content version) so Upgrade/Config can re-select them and the catalog page can
+    // show where a catalog is used. Null for every non-Trino release.
+    @Column(length = 3000)
+    private String catalogRefsJson;
+
     /** Parsed view of {@link #gitMetaJson}; rebuilt lazily and invalidated whenever the JSON is set. */
     @Transient
     private Map<String, String> gitMetaCache;
@@ -278,6 +285,9 @@ public class K8sReleaseEntity extends BaseModel {
     public static String idOf(String ns, String name) {
         return ns + ":" + name;
     }
+
+    public String getCatalogRefsJson() { return catalogRefsJson; }
+    public void setCatalogRefsJson(String catalogRefsJson) { this.catalogRefsJson = catalogRefsJson; }
 
     // ---------- Git metadata (folded into the single gitMetaJson column) ----------
 

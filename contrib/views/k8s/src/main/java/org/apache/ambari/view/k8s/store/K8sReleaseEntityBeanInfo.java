@@ -66,6 +66,7 @@ public class K8sReleaseEntityBeanInfo extends SimpleBeanInfo {
                     new PropertyDescriptor("securityProfile", K8sReleaseEntity.class, "getSecurityProfile", "setSecurityProfile"),
                     new PropertyDescriptor("securityProfileHash", K8sReleaseEntity.class, "getSecurityProfileHash", "setSecurityProfileHash"),
                     new PropertyDescriptor("gitMetaJson", K8sReleaseEntity.class, "getGitMetaJson", "setGitMetaJson"),
+                    new PropertyDescriptor("catalogRefsJson", K8sReleaseEntity.class, "getCatalogRefsJson", "setCatalogRefsJson"),
                     new PropertyDescriptor("managedByUi", K8sReleaseEntity.class, "isManagedByUi", "setManagedByUi")
             };
         } catch (IntrospectionException e) {

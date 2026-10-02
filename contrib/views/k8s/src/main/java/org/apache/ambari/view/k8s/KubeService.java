@@ -641,6 +641,15 @@ public class KubeService {
     public org.apache.ambari.view.k8s.resources.ContextResource contexts() {
         return new org.apache.ambari.view.k8s.resources.ContextResource(viewContext);
     }
+    /**
+     * Reusable Trino catalogs: catalog .properties the operator defines once and attaches to
+     * Trino releases from the deploy wizard (snapshot into the release values + reference kept).
+     * URL: /api/v1/.../resources/api/trino-catalogs
+     */
+    @Path("/trino-catalogs")
+    public org.apache.ambari.view.k8s.resources.TrinoCatalogResource trinoCatalogs() {
+        return new org.apache.ambari.view.k8s.resources.TrinoCatalogResource(viewContext);
+    }
 
     /**
      * Resolve {@code appVersion} (the component's own version — e.g. GitLab

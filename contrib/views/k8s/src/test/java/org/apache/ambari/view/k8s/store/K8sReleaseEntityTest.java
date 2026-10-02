@@ -71,10 +71,12 @@ public class K8sReleaseEntityTest {
         // Rough check that persisted string columns remain under Ambari's limits.
         List<String> fields = Arrays.asList(
                 // id is on the BaseModel; we care about columns declared directly on this class
-                "namespace", "releaseName", "serviceKey", "chartRef", "repoId", "version",
+                "namespace", "releaseName", "serviceKey", "platformContextId", "chartRef", "repoId", "version",
                 "deploymentId", "deploymentMode", "globalConfigVersion", "securityProfile", "securityProfileHash",
-                "gitCommitSha", "gitBranch", "gitRepoUrl", "gitPath", "gitCredentialAlias",
-                "gitCommitMode", "gitPrUrl", "gitPrNumber", "gitPrState"
+                // the nine git columns are folded into ONE JSON column (frees 8 of the 21 String slots)
+                "gitMetaJson",
+                // reusable Trino catalogs attached to the release (name -> {id, hash})
+                "catalogRefsJson"
         );
 
         int totalLength = 0;
@@ -90,6 +92,15 @@ public class K8sReleaseEntityTest {
             }
         }
         assertTrue("Total string length should be well under 65000", totalLength < 65000);
+        for (String folded : Arrays.asList("gitCommitSha", "gitBranch", "gitRepoUrl", "gitPath",
+                "gitCredentialAlias", "gitCommitMode", "gitPrUrl", "gitPrNumber", "gitPrState")) {
+            try {
+                K8sReleaseEntity.class.getDeclaredField(folded);
+                fail("Git column '" + folded + "' must stay folded into gitMetaJson (DataStore slot budget)");
+            } catch (NoSuchFieldException expected) {
+                // good: only the JSON column is persisted
+            }
+        }
     }
 
     @Test
