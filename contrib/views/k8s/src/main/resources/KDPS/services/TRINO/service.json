@@ -2867,6 +2867,14 @@
           "help": "Turns on Trino dynamic catalog management: the coordinator keeps a writable catalog store seeded from the catalogs below, so CREATE CATALOG / DROP CATALOG work immediately without a restart, and Ranger authorises them per user (catalog-level create/drop). Catalogs created only at runtime do not survive a pod restart - define them in this section to keep them. Needs chart 1.43.12 or later; the deploy is refused otherwise."
         },
         {
+          "name": "customCatalogs.refs",
+          "label": "Reusable catalogs",
+          "type": "trino-catalog-select",
+          "excludeFromValues": true,
+          "defaultValue": [],
+          "help": "Catalogs defined once on the Trino Catalogs page and attached here. Each selected catalog's properties are copied into this release at deploy time (the release keeps that copy until you re-apply it from Upgrade/Config). Add a catalog to the list from the Trino Catalogs page."
+        },
+        {
           "name": "customCatalogs.text",
           "label": "Additional Trino catalogs",
           "type": "textarea",

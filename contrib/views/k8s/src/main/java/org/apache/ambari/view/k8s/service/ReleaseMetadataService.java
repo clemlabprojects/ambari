@@ -202,6 +202,20 @@ public class ReleaseMetadataService {
      * @param gitPrNumber          the pull request number; may be {@code null}
      * @param gitPrState           the pull request state; may be {@code null}
      */
+    /**
+     * Persist (or clear, with null/blank) the reusable-catalog references of a release. Separate
+     * from {@link #recordInstallOrUpgrade} on purpose: only Trino deploys set it and the metadata
+     * record call already carries twenty positional parameters.
+     */
+    public void recordCatalogRefs(String namespace, String releaseName, String catalogRefsJson) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null) return;
+        String v = catalogRefsJson == null || catalogRefsJson.isBlank() ? null : catalogRefsJson;
+        if (java.util.Objects.equals(v, e.getCatalogRefsJson())) return;
+        e.setCatalogRefsJson(v);
+        releaseRepository.update(e);
+    }
+
     public void recordInstallOrUpgrade(
             String namespace,
             String releaseName,

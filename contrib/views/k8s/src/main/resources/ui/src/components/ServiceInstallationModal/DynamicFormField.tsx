@@ -20,6 +20,7 @@ import React from 'react';
 import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography } from 'antd';
 import type { FormField, ExternalAuthTargetFormField } from '../../types/ServiceTypes';
 import ServiceSelect from './ServiceSelect';
+import TrinoCatalogSelect from './TrinoCatalogSelect';
 import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
 import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
@@ -303,6 +304,14 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       return wrapLinked(
         <Form.Item name={nameParts} valuePropName="checked" help={field.help} style={{ marginBottom: 8 }}>
           <Checkbox disabled={disabledProp}>{field.label}</Checkbox>
+        </Form.Item>
+      );
+    case 'trino-catalog-select':
+      // Reusable Trino catalogs (ids). The backend snapshots the selected catalogs' properties into
+      // the release values at deploy time, so the value never carries the properties themselves.
+      return (
+        <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
+          <TrinoCatalogSelect disabled={disabledProp} />
         </Form.Item>
       );
     case 'textarea':

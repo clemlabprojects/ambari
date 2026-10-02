@@ -3918,10 +3918,10 @@ public class CommandService {
      * silent breakage when chart and service.json drift apart.
      */
     /** Catalog names KDPS builds itself from the platform context; an operator must not shadow them. */
-    private static final java.util.Set<String> KDPS_MANAGED_CATALOGS = java.util.Set.of("hive", "iceberg");
+    static final java.util.Set<String> KDPS_MANAGED_CATALOGS = java.util.Set.of("hive", "iceberg");
 
     /** Trino catalog names map to a file on disk, so keep them to the conservative set. */
-    private static final java.util.regex.Pattern CATALOG_NAME = java.util.regex.Pattern.compile("[a-z][a-z0-9_]*");
+    static final java.util.regex.Pattern CATALOG_NAME = java.util.regex.Pattern.compile("[a-z][a-z0-9_]*");
 
     /**
      * Turn the wizard's free-text "Additional Trino catalogs" block into chart values.
@@ -3942,21 +3942,68 @@ public class CommandService {
      */
     private void applyCustomCatalogs(HelmDeployRequest request) {
         if (request.getFormValues() == null) return;
+        // (1) reusable catalogs selected in the wizard (ids) -> snapshot their properties + remember refs
+        Map<String, String> fromRefs = new LinkedHashMap<>();
+        Map<String, Map<String, String>> refs = new LinkedHashMap<>();
+        Object refsRaw = ConfigResolutionService.getByDottedPath(request.getFormValues(), "customCatalogs.refs");
+        for (String catalogId : asStringList(refsRaw)) {
+            org.apache.ambari.view.k8s.store.TrinoCatalogEntity cat = new TrinoCatalogService(this.ctx).findEntity(catalogId);
+            if (cat == null) {
+                throw new IllegalArgumentException("Reusable catalog '" + catalogId + "' no longer exists."
+                        + " Remove it from the selection or recreate it on the Trino Catalogs page.");
+            }
+            String name = cat.getName();
+            if (fromRefs.containsKey(name)) {
+                throw new IllegalArgumentException("Reusable catalog '" + name + "' is selected twice.");
+            }
+            fromRefs.put(name, cat.getPropertiesText() == null ? "" : cat.getPropertiesText());
+            Map<String, String> ref = new LinkedHashMap<>();
+            ref.put("id", cat.getId());
+            ref.put("hash", TrinoCatalogService.contentHash(cat.getPropertiesText()));
+            refs.put(name, ref);
+        }
+        // (2) inline free-text catalogs
         Object raw = ConfigResolutionService.getByDottedPath(request.getFormValues(), "customCatalogs.text");
         String text = raw == null ? null : String.valueOf(raw);
-        if (text == null || text.isBlank()) return;
+        Map<String, String> parsed = (text == null || text.isBlank()) ? new LinkedHashMap<>() : parseCustomCatalogs(text);
+        for (String name : parsed.keySet()) {
+            if (fromRefs.containsKey(name)) {
+                throw new IllegalArgumentException("Catalog '" + name + "' is both a selected reusable catalog and"
+                        + " defined inline in 'Additional Trino catalogs'. Keep one of the two.");
+            }
+        }
+        // Remember the refs for the metadata record (null clears them on an upgrade that deselected all).
+        request.getFormValues().put("_catalogRefsJson", TrinoCatalogService.toRefsJson(refs));
 
-        Map<String, String> parsed = parseCustomCatalogs(text);
-        if (parsed.isEmpty()) return;
+        Map<String, String> merged = new LinkedHashMap<>(fromRefs);
+        merged.putAll(parsed);
+        if (merged.isEmpty()) return;
 
         Map<String, Object> values = request.getValues();
         if (values == null) return;
         Object existing = values.get("catalogs");
         Map<String, Object> catalogs = (existing instanceof Map)
                 ? (Map<String, Object>) existing : new LinkedHashMap<>();
-        catalogs.putAll(parsed);
+        catalogs.putAll(merged);
         values.put("catalogs", catalogs);
-        LOG.info("Additional Trino catalogs wired into the release: {}", parsed.keySet());
+        LOG.info("Trino catalogs wired into the release: reusable={} inline={}", fromRefs.keySet(), parsed.keySet());
+    }
+
+    /** A form value that may arrive as a List, a JSON-ish array string or a comma-separated string. */
+    static List<String> asStringList(Object raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null) return out;
+        if (raw instanceof Collection) {
+            for (Object o : (Collection<?>) raw) if (o != null && !String.valueOf(o).isBlank()) out.add(String.valueOf(o).trim());
+            return out;
+        }
+        String s = String.valueOf(raw).trim();
+        if (s.startsWith("[") && s.endsWith("]")) s = s.substring(1, s.length() - 1);
+        for (String part : s.split(",")) {
+            String t = part.trim().replaceAll("^\"|\"$", "");
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
     }
 
     /**
@@ -4545,6 +4592,11 @@ public class CommandService {
                     "platformContextId"), "");
             if (deployPcId != null && !deployPcId.isBlank()) params.put("_platformContextId", deployPcId);
         }
+        // Reusable Trino catalog references (set by applyCustomCatalogs; absent for non-Trino deploys).
+        if (request.getFormValues() != null && request.getFormValues().containsKey("_catalogRefsJson")) {
+            params.put("_catalogRefsJson", stringValue(request.getFormValues().get("_catalogRefsJson")));
+            params.put("_catalogRefsSet", "true");
+        }
         // command status
         CommandStatusEntity commandStatusEntity = new CommandStatusEntity();
         commandStatusEntity.setId(id + "-status");
@@ -5009,6 +5061,10 @@ public class CommandService {
                     null, // gitPrNumber
                     null  // gitPrState
             );
+            if ("true".equals(stringValue(params.get("_catalogRefsSet")))) {
+                metadataService.recordCatalogRefs(request.getNamespace(), request.getReleaseName(),
+                        stringValue(params.get("_catalogRefsJson")));
+            }
         } catch (Exception ex) {
             LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }

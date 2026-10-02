@@ -1621,3 +1621,29 @@ export const deleteTruststore = async (namespace: string, name: string): Promise
   fetchJson<void>(`/truststores/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
     method: 'DELETE',
   });
+
+// ---------------------------------------------------------------------------------------------
+// Reusable Trino catalogs — defined once on the Trino Catalogs page, attached to releases in the
+// deploy wizard (customCatalogs.refs). The release gets a snapshot of the properties; `usedBy`
+// lists the releases currently holding one.
+// ---------------------------------------------------------------------------------------------
+export interface TrinoCatalog {
+  id?: string;
+  name: string;
+  connectorName?: string;
+  description?: string;
+  propertiesText: string;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  usedBy?: string[];
+}
+
+export const getTrinoCatalogs = (): Promise<TrinoCatalog[]> =>
+  fetchJson<TrinoCatalog[]>("/trino-catalogs");
+
+export const saveTrinoCatalog = (catalog: TrinoCatalog): Promise<TrinoCatalog> =>
+  fetchJson<TrinoCatalog>("/trino-catalogs", { method: "POST", body: JSON.stringify(catalog) });
+
+export const deleteTrinoCatalog = (id: string): Promise<void> =>
+  fetchJson<void>(`/trino-catalogs/${encodeURIComponent(id)}`, { method: "DELETE" });

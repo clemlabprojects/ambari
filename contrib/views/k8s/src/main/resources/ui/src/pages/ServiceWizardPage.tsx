@@ -268,6 +268,14 @@ const ServiceWizardPage: React.FC = () => {
               // default (trinodb/trino), which would silently switch charts.
               if (upgradeState?.chart) initial.chartOverride = upgradeState.chart;
               if (upgradeState?.version) initial.version = upgradeState.version;
+              // Re-select the reusable Trino catalogs the release was deployed with (ids) — AFTER
+              // applyDefaults, which writes the field's [] default. A catalog deleted since still shows
+              // up (flagged red by the picker) so the operator decides, rather than vanishing silently.
+              if (upgradeState?.catalogRefs && typeof upgradeState.catalogRefs === 'object') {
+                const ids = Object.values(upgradeState.catalogRefs as Record<string, { id?: string }>)
+                  .map(r => r && r.id).filter(Boolean);
+                if (ids.length) initial.customCatalogs = { ...(initial.customCatalogs || {}), refs: ids };
+              }
               try {
                 const deployed = await getReleaseValues(initial.namespace, initial.releaseName);
                 if (deployed && typeof deployed === 'object' && Object.keys(deployed).length > 0) {

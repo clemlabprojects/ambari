@@ -18,7 +18,7 @@ limitations under the License.
 <view>
     <name>K8S-VIEW</name>
     <label>Ambari K8S View</label>
-    <version>1.0.0.7</version>
+    <version>1.0.0.8</version>
     <build>${env.BUILD_NUMBER}</build>
     <min-ambari-version>2.5.0</min-ambari-version>
 
@@ -117,6 +117,10 @@ limitations under the License.
         </entity>
         <entity>
             <class>org.apache.ambari.view.k8s.store.KdpsContextEntity</class>
+            <id-property>id</id-property>
+        </entity>
+        <entity>
+            <class>org.apache.ambari.view.k8s.store.TrinoCatalogEntity</class>
             <id-property>id</id-property>
         </entity>
         <!-- If more entities are added later, list them here as well -->

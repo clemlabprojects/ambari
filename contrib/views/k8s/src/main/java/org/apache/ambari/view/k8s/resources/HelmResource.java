@@ -225,6 +225,7 @@ public class HelmResource {
                 releaseDto.managedByUi = metadata.isManagedByUi() || kdpsLabelled;
                 releaseDto.serviceKey = metadata.getServiceKey();
                 releaseDto.platformContextId = metadata.getPlatformContextId();
+                releaseDto.catalogRefs = org.apache.ambari.view.k8s.service.TrinoCatalogService.parseRefs(metadata.getCatalogRefsJson());
                 releaseDto.repoId = metadata.getRepoId();
                 releaseDto.chartRef = metadata.getChartRef();
                 if (metadata.getVersion() != null && !metadata.getVersion().isBlank()) {

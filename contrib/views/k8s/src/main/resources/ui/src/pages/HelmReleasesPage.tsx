@@ -664,6 +664,8 @@ const HelmReleasesPage: React.FC = () => {
                 // Preserve the DEPLOYED KDPS context so Upgrade/Config re-selects it instead of the
                 // ambari-managed default (which would resolve every context binding against the wrong target).
                 platformContextId: record.platformContextId,
+                // Reusable Trino catalogs attached at deploy time, so Upgrade/Config re-selects them.
+                catalogRefs: record.catalogRefs,
               },
             });
           }
