@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.11",
+  "version": "1.43.12",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -2860,6 +2860,13 @@
       "type": "group",
       "fields": [
         {
+          "name": "dynamicCatalogs.enabled",
+          "label": "Allow catalogs to be created at runtime (CREATE CATALOG, no restart)",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "Turns on Trino dynamic catalog management: the coordinator keeps a writable catalog store seeded from the catalogs below, so CREATE CATALOG / DROP CATALOG work immediately without a restart, and Ranger authorises them per user (catalog-level create/drop). Catalogs created only at runtime do not survive a pod restart - define them in this section to keep them. Needs chart 1.43.12 or later; the deploy is refused otherwise."
+        },
+        {
           "name": "customCatalogs.text",
           "label": "Additional Trino catalogs",
           "type": "textarea",
@@ -2901,7 +2908,8 @@
   "requiredChartVersion": ">=1.43.0",
   "featureChartVersions": {
     "_comment": "Atlas tag sync renders a tag-projector CronJob that only exists from 1.43.11; on an older chart the toggle would deploy cleanly and do nothing.",
-    "tagSync.enabled": ">=1.43.11"
+    "tagSync.enabled": ">=1.43.11",
+    "dynamicCatalogs.enabled": ">=1.43.12"
   },
   "platformOps": [
     { "op": "ranger.tagProjectorSecret", "when": "tagSync.enabled",
