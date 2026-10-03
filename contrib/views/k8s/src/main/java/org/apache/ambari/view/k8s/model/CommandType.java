@@ -193,7 +193,10 @@ public enum CommandType {
      * values at plan time. Declared via platformOp {@code trino.baseIngestion}, gated on
      * {@code baseIngestion.trinoEnabled=true}.
      */
-    OM_TRINO_BASE_INGESTION_REGISTER,
+        OM_TRINO_BASE_INGESTION_REGISTER,
+
+    /** Standalone replay of {@link #OM_TRINO_BASE_INGESTION_REGISTER} (Releases → re-register Trino ingestion). */
+    OM_TRINO_BASE_INGESTION_REAPPLY,
 
     /**
      * Provisions the OpenMetadata federation user in an Ambari-managed Atlas

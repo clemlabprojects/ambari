@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.31",
+  "version": "1.13.32",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",
@@ -2487,6 +2487,20 @@
       "endpoint": "actions/om-atlas-federation",
       "skipIfValueEmpty": "atlasFederation.enabled",
       "_description": "Replays the four OM REST calls that wire an Atlas federation. Hidden when atlasFederation.enabled=false in the release values so the operator doesn't get a button that always fails."
+    },
+    {
+      "key": "om-hive-base-ingestion",
+      "label": "Re-register Hive ingestion",
+      "endpoint": "actions/om-base-ingestion/hive",
+      "skipIfValueEmpty": "baseIngestion.hiveEnabled",
+      "_description": "Replays the OpenMetadata Hive databaseService + metadata pipeline registration from the deployed values."
+    },
+    {
+      "key": "om-trino-base-ingestion",
+      "label": "Re-register Trino ingestion",
+      "endpoint": "actions/om-base-ingestion/trino",
+      "skipIfValueEmpty": "baseIngestion.trinoEnabled",
+      "_description": "Replays the OpenMetadata Trino databaseService + metadata pipeline registration (and the kdps metadata grants) from the deployed values."
     }
   ]
 }
