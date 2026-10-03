@@ -236,7 +236,18 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
                 // commandParams shared across stages
                 Map<String, String> commandParameters = new LinkedHashMap<>();
                 commandParameters.put("clusterName", clusterName);
-                commandParameters.put("rangerRepositoryName", rangerRepositoryName);
+                if (StringUtils.isNotBlank(rangerRepositoryName)) {
+                    commandParameters.put("rangerRepositoryName", rangerRepositoryName);
+                }
+                if (StringUtils.isNotBlank(userRoles)) {
+                    commandParameters.put("userRoles", userRoles);
+                }
+                                if (resetPassword) {
+                    commandParameters.put("resetPassword", "true");
+                }
+                if (StringUtils.isNotBlank(tagService)) {
+                    commandParameters.put("tagService", tagService);
+                }
                 if (StringUtils.isNotBlank(serviceType)) {
                     commandParameters.put("serviceType", serviceType);
                 }

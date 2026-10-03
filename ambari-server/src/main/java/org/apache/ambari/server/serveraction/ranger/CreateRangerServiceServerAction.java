@@ -86,6 +86,9 @@ public class CreateRangerServiceServerAction extends AbstractServerAction {
         String pluginUserPassword     = trimToNull(commandParameters.get("pluginUserPassword"));
         String repositoryDescription  = commandParameters.get("repositoryDescription");
         String serviceConfigsJson     = trimToNull(commandParameters.get("serviceConfigsJson"));
+        // Tag service the repo is linked to. Blank = derive from the cluster's Hive repo so Atlas /
+        // OpenMetadata tags reach this repo (Ranger would otherwise auto-link a default 'tag').
+        String tagService             = trimToNull(commandParameters.get("tagService"));
 
         actionLog.writeStdOut("Starting CreateRangerServiceServerAction with:");
         actionLog.writeStdOut("  clusterName          = " + clusterName);
@@ -219,7 +222,8 @@ public class CreateRangerServiceServerAction extends AbstractServerAction {
                     pluginUserName,
                     pluginUserPassword,
                     serviceConfigs,
-                    repositoryDescription
+                    repositoryDescription,
+                    tagService
             );
 
             actionLog.writeStdOut("Ranger service '" + rangerRepositoryName +
@@ -260,8 +264,9 @@ public class CreateRangerServiceServerAction extends AbstractServerAction {
             String serviceType,
             String pluginUserName,
             String pluginUserPassword,
-            Map<String, Object> extraConfigs,
-            String repositoryDescription) throws Exception {
+                        Map<String, Object> extraConfigs,
+            String repositoryDescription,
+            String tagService) throws Exception {
 
         String authorizationHeader = buildBasicAuth(adminUserName, adminPassword);
 
@@ -287,7 +292,13 @@ public class CreateRangerServiceServerAction extends AbstractServerAction {
         if (!isBlank(repositoryDescription)) {
             body.put("description", repositoryDescription);
         }
-        body.put("configs", configs);
+                body.put("configs", configs);
+        String effectiveTagService = resolveTagService(baseUrl, authorizationHeader, tagService);
+        if (effectiveTagService != null) {
+            body.put("tagService", effectiveTagService);
+            actionLog.writeStdOut("Linking Ranger service '" + rangerRepositoryName + "' to tag service '" + effectiveTagService + "'");
+            LOG.info("Linking Ranger service '{}' to tag service '{}'", rangerRepositoryName, effectiveTagService);
+        }
 
         // -----------------------------------------------------------------------
         // 2. CHECK EXISTENCE
@@ -644,6 +655,38 @@ public class CreateRangerServiceServerAction extends AbstractServerAction {
             this.statusCode = statusCode;
             this.body = body;
         }
+    }
+
+        /**
+     * The tag service this repo should share: the explicit one when given, else the tag service of
+     * the cluster's Hive repo (tags flow Atlas/OpenMetadata -> tag service -> every linked repo, so
+     * a Trino repo must sit on the SAME tag service as Hive for Hive-side tags to apply to it),
+     * else null (Ranger then applies its own default).
+     */
+    String resolveTagService(String baseUrl, String authorizationHeader, String explicit) {
+        if (!isBlank(explicit)) {
+            return explicit.trim();
+        }
+        try {
+            HttpResponse r = httpGetWithBody(baseUrl + "/service/public/v2/api/service?serviceType=hive", authorizationHeader);
+            if (r.statusCode != 200 || r.body == null || r.body.isBlank()) {
+                return null;
+            }
+            java.util.List<Map<String, Object>> services = GSON.fromJson(r.body,
+                    new com.google.gson.reflect.TypeToken<java.util.List<Map<String, Object>>>() { }.getType());
+            if (services == null) {
+                return null;
+            }
+            for (Map<String, Object> s : services) {
+                Object ts = s.get("tagService");
+                if (ts != null && !String.valueOf(ts).isBlank()) {
+                    return String.valueOf(ts).trim();
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not derive the tag service from the Hive repo: {}", e.toString());
+        }
+        return null;
     }
 
     private HttpResponse httpGetWithBody(String urlAsString, String authorizationHeader) throws Exception {

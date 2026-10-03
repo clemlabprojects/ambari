@@ -992,7 +992,15 @@ public final class OmAtlasProvisioning {
                 if (e.getKey() != null && e.getValue() != null) cfg.addProperty(e.getKey(), e.getValue());
             }
         }
-        svc.add("configs", cfg);
+                svc.add("configs", cfg);
+        // Tags flow Atlas/OpenMetadata -> tag service -> every repo linked to it, so the new repo must
+        // sit on the SAME tag service as the context's Hive repo for Hive-side tags to apply to it
+        // (Ranger would otherwise auto-link a default 'tag' service nothing else uses).
+        String tagService = deriveTagServiceFromHive(rangerAdminUrl, basic);
+        if (tagService != null) {
+            svc.addProperty("tagService", tagService);
+            LOG.info("OmAtlasProvisioning: linking Ranger service '{}' to tag service '{}' (from the Hive repo)", serviceName, tagService);
+        }
 
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/service").openConnection();
@@ -1012,6 +1020,31 @@ public final class OmAtlasProvisioning {
         long id = JsonParser.parseString(readBody(conn, false)).getAsJsonObject().get("id").getAsLong();
         LOG.info("OmAtlasProvisioning: Ranger service '{}' (type={}) created (id={})", serviceName, serviceType, id);
         return id;
+    }
+
+        /** The tag service of the first Hive repo that has one, or null (best effort — never fails the caller). */
+    static String deriveTagServiceFromHive(String rangerAdminUrl, String basic) {
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new URL(
+                    rangerAdminUrl + "/service/public/v2/api/service?serviceType=hive").openConnection();
+            configureSsl(conn);
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Authorization", basic);
+            conn.setRequestProperty("Accept", "application/json");
+            if (conn.getResponseCode() != 200) return null;
+            com.google.gson.JsonElement root = JsonParser.parseString(readBody(conn, false));
+            if (!root.isJsonArray()) return null;
+            for (com.google.gson.JsonElement e : root.getAsJsonArray()) {
+                JsonObject svc = e.getAsJsonObject();
+                if (svc.has("tagService") && !svc.get("tagService").isJsonNull()
+                        && !svc.get("tagService").getAsString().isBlank()) {
+                    return svc.get("tagService").getAsString().trim();
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("OmAtlasProvisioning: could not derive the tag service from the Hive repo: {}", e.toString());
+        }
+        return null;
     }
 
     /** GET a Ranger service by name; returns its id, or null on 404. */
