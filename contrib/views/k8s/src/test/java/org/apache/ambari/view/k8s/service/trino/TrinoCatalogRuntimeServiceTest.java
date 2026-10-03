@@ -64,8 +64,10 @@ class TrinoCatalogRuntimeServiceTest {
         persisted.put("pg", "connector.name=postgresql");
         persisted.put("staged", "connector.name=memory");           // persisted but not live yet (restart pending)
         Map<String, Map<String, String>> refs = Map.of("pg", Map.of("id", "abc", "hash", "h"));
+        Map<String, String> rendered = new LinkedHashMap<>(persisted);
+        rendered.put("tpch", "connector.name=tpch");                 // chart default: rendered, not in values
         List<TrinoCatalogRuntimeService.CatalogView> out = TrinoCatalogRuntimeService.merge(
-                List.of("system", "hive", "pg", "probe_x"), persisted, refs);
+                List.of("system", "hive", "pg", "probe_x", "tpch"), rendered, persisted, refs);
         Map<String, TrinoCatalogRuntimeService.CatalogView> by = new LinkedHashMap<>();
         for (TrinoCatalogRuntimeService.CatalogView v : out) by.put(v.name, v);
         assertEquals("builtin", by.get("system").source);
@@ -77,6 +79,16 @@ class TrinoCatalogRuntimeServiceTest {
         assertTrue(by.get("probe_x").live && !by.get("probe_x").persisted);
         assertEquals("inline", by.get("staged").source);
         assertTrue(by.get("staged").persisted && !by.get("staged").live);
+        assertEquals("default", by.get("tpch").source);
+        assertTrue(by.get("tpch").persisted && by.get("tpch").live);
+        assertEquals("tpch", by.get("tpch").connector);
+    }
+
+    @Test
+    void storeFileBecomesPropertiesTextWithConnectorFirst() {
+        String raw = "#Sat Oct 03 09:07:21 UTC 2026\nmemory.max-data-per-node=16MB\nconnector.name=memory\nconnection-url=jdbc\\:postgresql\\://db\\:5432/x\n";
+        assertEquals("connector.name=memory\nmemory.max-data-per-node=16MB\nconnection-url=jdbc:postgresql://db:5432/x",
+                TrinoCatalogRuntimeService.propertiesFromStoreFile(raw));
     }
 
     @Test

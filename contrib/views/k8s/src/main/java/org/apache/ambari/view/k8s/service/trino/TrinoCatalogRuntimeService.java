@@ -74,6 +74,9 @@ public class TrinoCatalogRuntimeService {
         public String namespace, release, podName, container, serviceUser, servicePassword, rangerService;
         public int httpsPort;
         public boolean dynamicCatalogs;
+        public String storeDir;
+        /** name -> properties text as RENDERED in the catalog ConfigMap (chart defaults + values + KDPS-managed). */
+        public Map<String, String> renderedCatalogs = new LinkedHashMap<>();
         public Map<String, Object> values;
         public K8sReleaseEntity metadata;
     }
@@ -104,6 +107,8 @@ public class TrinoCatalogRuntimeService {
         t.httpsPort = port == null ? 8443 : Integer.parseInt(String.valueOf(port));
         Object dyn = ConfigResolutionService.getByDottedPath(t.values, "dynamicCatalogs.enabled");
         t.dynamicCatalogs = dyn != null && "true".equalsIgnoreCase(String.valueOf(dyn));
+        Object sd = ConfigResolutionService.getByDottedPath(t.values, "dynamicCatalogs.storeDir");
+        t.storeDir = sd == null || String.valueOf(sd).isBlank() ? "/opt/trino/catalog-store" : String.valueOf(sd);
         Object rs = ConfigResolutionService.getByDottedPath(t.values, "ranger.serviceName");
         t.rangerService = rs == null ? null : String.valueOf(rs);
         Object su = ConfigResolutionService.getByDottedPath(t.values, "kdps.serviceUser.enabled");
@@ -124,6 +129,15 @@ public class TrinoCatalogRuntimeService {
         }
         if (coord == null) throw new IllegalStateException("No running Trino coordinator pod found for " + namespace + "/" + release);
         t.podName = coord.getMetadata().getName();
+        // The rendered catalog ConfigMap is the durable truth (chart defaults + values + KDPS-managed catalogs).
+        for (io.fabric8.kubernetes.api.model.ConfigMap cm : client.configMaps().inNamespace(namespace)
+                .withLabel("app.kubernetes.io/instance", release).list().getItems()) {
+            if (cm.getMetadata().getName().endsWith("-catalog-coordinator") && cm.getData() != null) {
+                for (Map.Entry<String, String> e : cm.getData().entrySet()) {
+                    if (e.getKey().endsWith(".properties")) t.renderedCatalogs.put(e.getKey().substring(0, e.getKey().length() - ".properties".length()), e.getValue());
+                }
+            }
+        }
         List<Container> cs = coord.getSpec().getContainers();
         t.container = cs.isEmpty() ? null : cs.get(0).getName();
         // service user secret
@@ -159,23 +173,33 @@ public class TrinoCatalogRuntimeService {
         if (!r.ok()) throw accessOrState(r, t, "list catalogs");
         List<String> live = new ArrayList<>();
         for (List<Object> row : r.rows) if (!row.isEmpty() && row.get(0) != null) live.add(String.valueOf(row.get(0)));
-        return merge(live, valuesCatalogs(t.values), refsOf(t.metadata));
+        return merge(live, t.renderedCatalogs.isEmpty() ? valuesCatalogs(t.values) : t.renderedCatalogs, valuesCatalogs(t.values), refsOf(t.metadata));
     }
 
-    /** Pure merge of SHOW CATALOGS with the persisted values and the reusable refs (unit-tested). */
-    static List<CatalogView> merge(List<String> live, Map<String, String> persisted, Map<String, Map<String, String>> refs) {
+    /**
+     * Pure merge (unit-tested) of SHOW CATALOGS with what is persisted. {@code rendered} = the catalog
+     * ConfigMap (chart defaults + values + KDPS-managed), {@code inValues} = the release's own
+     * {@code catalogs} values, {@code refs} = reusable-catalog references.
+     * Sources: builtin, managed (KDPS hive/iceberg), reusable, inline (in values), default (rendered by
+     * the chart but not in the values), unmanaged (live only — lost at restart).
+     */
+    static List<CatalogView> merge(List<String> live, Map<String, String> rendered, Map<String, String> inValues,
+                                   Map<String, Map<String, String>> refs) {
         Set<String> names = new LinkedHashSet<>(live);
-        names.addAll(persisted.keySet());
+        names.addAll(rendered.keySet());
+        names.addAll(inValues.keySet());
         List<CatalogView> out = new ArrayList<>();
         for (String n : names) {
             CatalogView v = new CatalogView();
-            v.name = n; v.live = live.contains(n); v.persisted = persisted.containsKey(n);
+            v.name = n; v.live = live.contains(n); v.persisted = rendered.containsKey(n) || inValues.containsKey(n);
+            String text = inValues.containsKey(n) ? inValues.get(n) : rendered.get(n);
             if (BUILTIN.contains(n)) v.source = "builtin";
             else if (KDPS_MANAGED.contains(n) && v.persisted) v.source = "managed";
             else if (refs.containsKey(n)) { v.source = "reusable"; v.reusableId = refs.get(n).get("id"); }
-            else if (v.persisted) v.source = "inline";
+            else if (inValues.containsKey(n)) v.source = "inline";
+            else if (v.persisted) v.source = "default";
             else v.source = "unmanaged";
-            if (v.persisted) { v.properties = persisted.get(n); v.connector = connectorOf(persisted.get(n)); }
+            if (v.persisted) { v.properties = text; v.connector = connectorOf(text); }
             out.add(v);
         }
         return out;
@@ -225,10 +249,17 @@ public class TrinoCatalogRuntimeService {
     public Map<String, Object> adopt(String namespace, String release, String name, String operator) {
         Target t = resolve(namespace, release);
         if (!IDENT.matcher(name).matches()) throw new IllegalArgumentException("'" + name + "' is not a catalog name.");
-        TrinoStatementClient.Result r = clientFor(t).execute("SHOW CREATE CATALOG " + name, operator);
-        if (!r.ok()) throw accessOrState(r, t, "read the definition of '" + name + "'");
-        if (r.rows.isEmpty() || r.rows.get(0).isEmpty()) throw new IllegalStateException("Trino returned no definition for '" + name + "'.");
-        String text = propertiesFromShowCreate(String.valueOf(r.rows.get(0).get(0)));
+        // Trino 476 has no SHOW CREATE CATALOG; under dynamic management the file catalog store inside the
+        // coordinator holds exactly what was created at runtime, so read it there (as a sanity gate the
+        // operator must still be allowed to SHOW SCHEMAS on it — i.e. Ranger lets them use the catalog).
+        TrinoStatementClient.Result r = clientFor(t).execute("SHOW SCHEMAS FROM " + name, operator);
+        if (!r.ok()) throw accessOrState(r, t, "read catalog '" + name + "'");
+        String raw = clientFor(t).readFile(t.storeDir + "/" + name + ".properties");
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalStateException("'" + name + "' has no file in the catalog store (" + t.storeDir + ") — only catalogs"
+                    + " created at runtime under dynamic management can be adopted.");
+        }
+        String text = propertiesFromStoreFile(raw);
         TrinoCatalogService.validateCatalog(name, text);
         persistCatalog(t, name, text);
         Map<String, Object> out = new LinkedHashMap<>();
@@ -272,6 +303,20 @@ public class TrinoCatalogRuntimeService {
         while (p.find()) {
             String k = p.group(1).replace("\"\"", "\""); String v = p.group(2).replace("''", "'");
             if (!"connector.name".equals(k)) sb.append(k).append('=').append(v).append('\n');
+        }
+        return sb.toString().trim();
+    }
+
+    /** The store file is a java.util.Properties dump: drop the "#date" comment line, keep key=value lines. */
+    static String propertiesFromStoreFile(String raw) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : raw.replace("\r\n", "\n").split("\n")) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#") || t.startsWith("!")) continue;
+            int i = t.indexOf('='); if (i < 0) i = t.indexOf(':');
+            if (i < 0) continue;
+            String k = t.substring(0, i).trim().replace("\\", ""); String v = t.substring(i + 1).trim().replace("\\:", ":").replace("\\=", "=");
+            if ("connector.name".equals(k)) sb.insert(0, "connector.name=" + v + "\n"); else sb.append(k).append('=').append(v).append('\n');
         }
         return sb.toString().trim();
     }
