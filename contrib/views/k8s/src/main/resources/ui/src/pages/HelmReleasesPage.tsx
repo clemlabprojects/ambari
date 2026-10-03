@@ -28,13 +28,14 @@ import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined } from '@ant-design/icons';
+import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { serviceIcon } from '../assets/services';
 
+import TrinoCatalogsModal from '../components/common/TrinoCatalogsModal';
 import './Page.css';
 
 const { Title, Text } = Typography;
@@ -65,6 +66,7 @@ const HelmReleasesPage: React.FC = () => {
   const [releaseDetail, setReleaseDetail] = useState<{ pods: KubePod[]; deployments: DeploymentRow[]; loading: boolean }>(
     { pods: [], deployments: [], loading: false });
   const [historyModalRelease, setHistoryModalRelease] = useState<HelmRelease | null>(null);
+  const [catalogsRelease, setCatalogsRelease] = useState<HelmRelease | null>(null);
 
   // When the detail modal opens, pull the release's live pods + deployments (by the Helm instance
   // label) so the modal shows real health/workloads instead of mostly-empty Flux reconcile metadata.
@@ -637,6 +639,13 @@ const HelmReleasesPage: React.FC = () => {
           label: 'Revision history…',
           onClick: () => { void openHistoryModal(record); },
         },
+        // Live catalog management, Trino releases only: runs on the coordinator as the operator.
+        ...((record.serviceKey || '').toUpperCase() === 'TRINO' ? [{
+          key: 'catalogs',
+          icon: <DatabaseOutlined />,
+          label: 'Catalogs…',
+          onClick: () => setCatalogsRelease(record),
+        }] : []),
         {
           key: 'update',
           icon: <SyncOutlined />,
@@ -1250,6 +1259,7 @@ const HelmReleasesPage: React.FC = () => {
               })()}
             </Modal>
 
+            <TrinoCatalogsModal release={catalogsRelease} onClose={() => setCatalogsRelease(null)} />
             <Modal
               title={`Revision history — ${historyModalRelease?.namespace || ''}/${historyModalRelease?.name || ''}`}
               open={!!historyModalRelease}

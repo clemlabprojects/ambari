@@ -143,7 +143,7 @@ public class TrinoCatalogService {
      *
      * @throws IllegalArgumentException with an operator-readable message
      */
-    static String validateCatalog(String name, String propertiesText) {
+    public static String validateCatalog(String name, String propertiesText) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("Give the catalog a name: lower-case letters, digits and underscores,"
                     + " starting with a letter (e.g. postgres_prod).");

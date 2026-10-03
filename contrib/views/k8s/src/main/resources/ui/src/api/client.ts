@@ -1647,3 +1647,28 @@ export const saveTrinoCatalog = (catalog: TrinoCatalog): Promise<TrinoCatalog> =
 
 export const deleteTrinoCatalog = (id: string): Promise<void> =>
   fetchJson<void>(`/trino-catalogs/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+// ---------------------------------------------------------------------------------------------
+// Live Trino catalog management on a deployed release (runs as the logged-in operator; Ranger
+// authorises). Backed by /helm/releases/{ns}/{release}/catalogs.
+// ---------------------------------------------------------------------------------------------
+export interface ReleaseCatalog {
+  name: string;
+  /** managed (KDPS-built hive/iceberg) | reusable | inline | unmanaged | builtin */
+  source: 'managed' | 'reusable' | 'inline' | 'unmanaged' | 'builtin' | string;
+  connector?: string;
+  live: boolean;
+  persisted: boolean;
+  reusableId?: string;
+  properties?: string;
+}
+const relCat = (ns: string, rel: string) => `/helm/releases/${encodeURIComponent(ns)}/${encodeURIComponent(rel)}/catalogs`;
+export const listReleaseCatalogs = (ns: string, rel: string): Promise<ReleaseCatalog[]> => fetchJson<ReleaseCatalog[]>(relCat(ns, rel));
+export const createReleaseCatalog = (ns: string, rel: string, body: { name: string; properties: string; persist: boolean }) =>
+  fetchJson<{ name: string; connector?: string; live: boolean; persisted?: boolean }>(relCat(ns, rel), { method: 'POST', body: JSON.stringify(body) });
+export const dropReleaseCatalog = (ns: string, rel: string, name: string, forget = true) =>
+  fetchJson<{ name: string }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}?forget=${forget}`, { method: 'DELETE' });
+export const testReleaseCatalog = (ns: string, rel: string, name: string) =>
+  fetchJson<{ schemas: string[] }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/test`, { method: 'POST' });
+export const adoptReleaseCatalog = (ns: string, rel: string, name: string) =>
+  fetchJson<{ name: string; properties: string }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, { method: 'POST' });
