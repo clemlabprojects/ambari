@@ -38,6 +38,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -340,9 +341,12 @@ public class TrinoCatalogRuntimeService {
 
     private RuntimeException accessOrState(TrinoStatementClient.Result r, Target t, String action) {
         if ("PERMISSION_DENIED".equalsIgnoreCase(r.errorName) || (r.error != null && r.error.contains("Access Denied"))) {
+            boolean queryRight = r.error != null && (r.error.contains("execute query") || r.error.toLowerCase(Locale.ROOT).contains("queryid"));
             return new SecurityException("Ranger denied you the right to " + action + " on this Trino"
                     + (t.rangerService != null ? " (Ranger service '" + t.rangerService + "')" : "") + ": " + r.error
-                    + ". Ask for the matching catalog permission (create/drop/alter) in Ranger.");
+                    + (queryRight
+                        ? ". You first need 'execute' on queryid=* in Ranger (the right to run queries at all)."
+                        : ". Ask for the matching catalog permission (create/drop/alter/use/show) on that catalog in Ranger."));
         }
         if (r.error != null && r.error.contains("not supported by the static catalog store")) {
             return new IllegalStateException("This Trino runs with static catalogs — turn on 'Allow catalogs to be created at runtime' "

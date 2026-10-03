@@ -4261,11 +4261,36 @@ public class CommandService {
                     + " of a KDPS Trino release in this cluster (expected <service>.<namespace>.svc.cluster.local[:port]"
                     + " of a release deployed with the KDPS service user, chart >= 1.43.13). Pick a coordinator from the list.");
         }
+                // Fail at submit when the Trino release cannot serve OM: the registration needs the KDPS
+        // service user (basic auth) and HTTPS (Trino refuses password auth on plain HTTP).
+        try {
+            Map<String, Object> tv = kubernetesService.getHelmReleaseValues(ref[0], ref[1]);
+            Object su = tv == null ? null : ConfigResolutionService.getByDottedPath(tv, "kdps.serviceUser.enabled");
+            Object https = tv == null ? null : ConfigResolutionService.getByDottedPath(tv, "server.config.https.enabled");
+            if (su == null || !"true".equalsIgnoreCase(String.valueOf(su))) {
+                throw new IllegalArgumentException("Trino base ingestion: release " + ref[0] + "/" + ref[1]
+                        + " was deployed without the KDPS service user ('Let KDPS manage catalogs', chart >= 1.43.13)."
+                        + " Upgrade that Trino release with the option on first.");
+            }
+            if (https != null && !"true".equalsIgnoreCase(String.valueOf(https))) {
+                throw new IllegalArgumentException("Trino base ingestion: release " + ref[0] + "/" + ref[1]
+                        + " has HTTPS disabled; OpenMetadata authenticates with a password, which Trino only accepts over HTTPS.");
+            }
+        } catch (IllegalArgumentException iae) {
+            throw iae;
+        } catch (Exception e) {
+            LOG.warn("applyTrinoBaseIngestion: could not read the values of Trino release {}/{}: {}", ref[0], ref[1], e.toString());
+        }
         String omTrinoService = stringValue(ConfigResolutionService.getByDottedPath(request.getValues(), "baseIngestion.trinoServiceName"));
         if (omTrinoService.isBlank()) omTrinoService = defaultOmTrinoServiceName(ref[1]);
         String trinoRangerRepo = trinoRangerServiceNameOf(ref[0], ref[1]);
-        putDotted(request.getValues(), "ranger.tagSync.trinoIngestionServiceFqn", omTrinoService);
+                putDotted(request.getValues(), "ranger.tagSync.trinoIngestionServiceFqn", omTrinoService);
         putDotted(request.getValues(), "ranger.tagSync.rangerTrinoServiceName", trinoRangerRepo);
+        // Remember the resolved target in the values: the wizard field (ui_trino_host) is form-only,
+        // and the re-register action and the step must find the same release later.
+        putDotted(request.getValues(), "baseIngestion.trinoNamespace", ref[0]);
+        putDotted(request.getValues(), "baseIngestion.trinoRelease", ref[1]);
+        putDotted(request.getValues(), "baseIngestion.trinoHost", trinoHost);
         if (request.getFormValues() != null) {
             // Keep the form in step so the wizard's summary / re-upgrade seeds show what was applied.
             request.getFormValues().put("ui_trino_host", trinoHost);
