@@ -1655,7 +1655,7 @@ export const deleteTrinoCatalog = (id: string): Promise<void> =>
 export interface ReleaseCatalog {
   name: string;
   /** managed (KDPS-built hive/iceberg) | reusable | inline | unmanaged | builtin */
-  source: 'managed' | 'reusable' | 'inline' | 'unmanaged' | 'builtin' | string;
+  source: 'managed' | 'reusable' | 'inline' | 'default' | 'unmanaged' | 'builtin' | string;
   connector?: string;
   live: boolean;
   persisted: boolean;

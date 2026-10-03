@@ -117,6 +117,15 @@ public class TrinoStatementClient {
         }
     }
 
+    /** Read a file inside the coordinator container (used for the dynamic catalog store); null when absent. */
+    public String readFile(String path) {
+        try {
+            return exec("cat " + sq(path) + " 2>/dev/null");
+        } catch (IllegalStateException e) {
+            return null;
+        }
+    }
+
     private String curl(String method, String url, String data, String asUser) {
         StringBuilder cmd = new StringBuilder("curl -sS -k --max-time 60 -u ")
                 .append(sq(serviceUser + ":" + servicePassword))

@@ -32,6 +32,7 @@ const SOURCE_TAG: Record<string, { color: string; label: string; hint: string }>
   managed: { color: 'geekblue', label: 'KDPS-managed', hint: 'Built from the platform context (hive/iceberg toggles). Change it in Upgrade/Config.' },
   reusable: { color: 'purple', label: 'Reusable', hint: 'Snapshot of a catalog from the Trino Catalogs page.' },
   inline: { color: 'blue', label: 'Persisted', hint: 'Kept in the release values — survives restarts.' },
+  default: { color: 'cyan', label: 'Chart default', hint: 'Rendered by the chart (not in your release values) — survives restarts.' },
   unmanaged: { color: 'volcano', label: 'Unmanaged', hint: 'Exists in Trino only (created outside KDPS). It disappears at the next restart unless you adopt it.' },
   builtin: { color: 'default', label: 'Built-in', hint: 'Trino system catalog.' },
 };
