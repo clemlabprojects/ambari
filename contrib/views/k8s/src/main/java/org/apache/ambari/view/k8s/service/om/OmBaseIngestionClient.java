@@ -131,6 +131,41 @@ public final class OmBaseIngestionClient {
                                   String schedule,
                                   String schemaIncludesCsv,
                                   java.time.Duration timeout) throws Exception {
+        return register(client, namespace, release, jwt, serviceName, serviceType, scheme, hostPort,
+                authMode, kerberosServiceName, username, password, schedule, schemaIncludesCsv,
+                null, null, false, timeout);
+    }
+
+    /**
+     * Full form of {@link #register}. The extra parameters are what a <b>Trino</b> registration
+     * needs on top of the Hive one:
+     *
+     * @param databaseIncludesCsv optional comma-separated regexes of catalogs (OM "databases") to
+     *                            ingest; blank means all
+     * @param databaseExcludesCsv optional comma-separated regexes of catalogs to skip (KDPS passes
+     *                            {@code system} for Trino so its runtime/jdbc schemas stay out of OM)
+     * @param skipTlsVerify       true when the coordinator serves a certificate the ingestion
+     *                            container does not trust (KDPS-internal CA): OM then connects with
+     *                            {@code verify=false}; basic/JWT auth already forces https
+     */
+    public static Result register(KubernetesClient client,
+                                  String namespace,
+                                  String release,
+                                  String jwt,
+                                  String serviceName,
+                                  String serviceType,
+                                  String scheme,
+                                  String hostPort,
+                                  String authMode,
+                                  String kerberosServiceName,
+                                  String username,
+                                  String password,
+                                  String schedule,
+                                  String schemaIncludesCsv,
+                                  String databaseIncludesCsv,
+                                  String databaseExcludesCsv,
+                                  boolean skipTlsVerify,
+                                  java.time.Duration timeout) throws Exception {
         if (client == null) throw new IllegalArgumentException("client is required");
         if (namespace == null || namespace.isBlank()) throw new IllegalArgumentException("namespace is required");
         if (release == null || release.isBlank()) throw new IllegalArgumentException("release is required");
@@ -158,6 +193,18 @@ public final class OmBaseIngestionClient {
         String podName = target.getMetadata().getName();
         String pipelineName = serviceName + "-metadata-ingest";
         String schemaIncludesJson = buildIncludesJson(schemaIncludesCsv);
+        String dbIncludesJson = buildIncludesJson(databaseIncludesCsv);
+        String dbExcludesJson = buildIncludesJson(databaseExcludesCsv);
+        String dbFilterJson = "{}";
+        if (!"[]".equals(dbIncludesJson) || !"[]".equals(dbExcludesJson)) {
+            StringBuilder f = new StringBuilder("{");
+            if (!"[]".equals(dbIncludesJson)) f.append("\"includes\":").append(dbIncludesJson);
+            if (!"[]".equals(dbExcludesJson)) {
+                if (f.length() > 1) f.append(',');
+                f.append("\"excludes\":").append(dbExcludesJson);
+            }
+            dbFilterJson = f.append('}').toString();
+        }
 
         LOG.info("OmBaseIngestionClient: exec into pod '{}' to register base ingestion "
                         + "(service='{}', type='{}', scheme='{}', hostPort='{}', auth='{}', pipeline='{}')",
@@ -191,6 +238,11 @@ public final class OmBaseIngestionClient {
             "    conn['password'] = os.environ.get('DB_PASS', '')\n" +
             "    if am == 'ldap': conn['auth'] = 'LDAP'\n" +
             "# am == 'none' -> no auth fields\n" +
+            "if os.environ['SVC_TYPE'] == 'Trino':\n" +
+            "    # OM's TrinoConnection schema: basic auth travels as authType.password (a top-level\n" +
+            "    # 'password' is rejected by the schema) and TLS verification is a connect argument.\n" +
+            "    if 'password' in conn: conn['authType'] = {'password': conn.pop('password')}\n" +
+            "    if os.environ.get('SKIP_TLS_VERIFY') == 'true': conn['connectionArguments'] = {'verify': False}\n" +
             "# 1) databaseService (creates the tables' parent service in OM)\n" +
             "code, body = om('PUT', '/services/databaseServices', {\n" +
             "    'name': os.environ['SVC_NAME'],\n" +
@@ -209,6 +261,9 @@ public final class OmBaseIngestionClient {
             "incl = json.loads(os.environ['SCHEMA_INCLUDES_JSON'])\n" +
             "if incl:\n" +
             "    src['schemaFilterPattern'] = {'includes': incl}\n" +
+            "dbf = json.loads(os.environ.get('DB_FILTER_JSON') or '{}')\n" +
+            "if dbf:\n" +
+            "    src['databaseFilterPattern'] = dbf\n" +
             "code, body = om('PUT', '/services/ingestionPipelines', {\n" +
             "    'name': os.environ['PIPELINE_NAME'],\n" +
             "    'displayName': os.environ['SVC_TYPE'] + ' metadata ingest',\n" +
@@ -261,7 +316,9 @@ public final class OmBaseIngestionClient {
               + " DB_PASS=" + OmBotJwtClient.shellQuote(password == null ? "" : password)
               + " PIPELINE_NAME=" + OmBotJwtClient.shellQuote(pipelineName)
               + " SCHEDULE=" + OmBotJwtClient.shellQuote(schedule)
-              + " SCHEMA_INCLUDES_JSON=" + OmBotJwtClient.shellQuote(schemaIncludesJson);
+              + " SCHEMA_INCLUDES_JSON=" + OmBotJwtClient.shellQuote(schemaIncludesJson)
+              + " DB_FILTER_JSON=" + OmBotJwtClient.shellQuote(dbFilterJson)
+              + " SKIP_TLS_VERIFY=" + (skipTlsVerify ? "true" : "false");
 
         try (ExecWatch watch = client.pods().inNamespace(namespace).withName(podName)
                 .inContainer("scheduler")

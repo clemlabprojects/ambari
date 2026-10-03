@@ -24,6 +24,7 @@
   ],
   "platformOps": [
     { "op": "hive.baseIngestion", "when": "baseIngestion.hiveEnabled" },
+    { "op": "trino.baseIngestion", "when": "baseIngestion.trinoEnabled" },
     { "op": "atlas.federation", "when": "atlasFederation.enabled" }
   ],
   "dynamicValues": [
@@ -496,6 +497,13 @@
       "from": {
         "type": "form",
         "field": "baseIngestion.hiveEnabled"
+      }
+    },
+    {
+      "name": "baseIngestionTrinoEnabled",
+      "from": {
+        "type": "form",
+        "field": "baseIngestion.trinoEnabled"
       }
     },
     {
@@ -1098,6 +1106,31 @@
       ]
     },
     {
+      "name": "base-trino-ingestion-toggle",
+      "_description": "Base Trino ingestion requires Airflow too → flips dependencies.enabled when turned on (same pattern as the Hive toggle).",
+      "targets": [
+        {
+          "path": "baseIngestion.trinoEnabled",
+          "from": { "type": "form", "field": "baseIngestion.trinoEnabled" }
+        },
+        {
+          "path": "dependencies.enabled",
+          "skipIfVarEmpty": "baseIngestionTrinoEnabled",
+          "from": { "type": "template", "template": "true" }
+        }
+      ]
+    },
+    {
+      "name": "base-trino-ingestion-config",
+      "skipIfVarEmpty": "baseIngestionTrinoEnabled",
+      "targets": [
+        { "path": "baseIngestion.trinoServiceName",     "from": { "type": "form", "field": "baseIngestion.trinoServiceName" } },
+        { "path": "baseIngestion.trinoSchedule",        "from": { "type": "form", "field": "baseIngestion.trinoSchedule" } },
+        { "path": "baseIngestion.trinoCatalogIncludes", "from": { "type": "form", "field": "baseIngestion.trinoCatalogIncludes" } },
+        { "path": "baseIngestion.trinoSchemaIncludes",  "from": { "type": "form", "field": "baseIngestion.trinoSchemaIncludes" } }
+      ]
+    },
+    {
       "name": "atlas-federation-toggle",
       "_description": "Atlas federation requires Airflow → also flips dependencies.enabled when the operator turns this on. Express via two targets so the bindings engine sets both atomically.",
       "targets": [
@@ -1610,7 +1643,7 @@
     },
     {
       "name": "baseIngestion",
-      "label": "Base Metadata Ingestion (Hive)",
+      "label": "Base Metadata Ingestion (Hive / Trino)",
       "type": "group",
       "help": "Ingest Hive table metadata directly into OpenMetadata. This is layer 1 of Atlas+Hive federation: it creates the OM Hive database service and its tables; the Atlas Federation section below then enriches those tables with Atlas lineage and tags. Requires the bundled ingestion runner (Airflow) — enabling this turns it on automatically.",
       "fields": [
@@ -1725,6 +1758,46 @@
           "excludeFromValues": true,
           "help": "Only when the selected Platform Context is EXTERNAL and its Hive / Atlas live in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding key 'service.keytab' (the service keytab issued by the backend realm's KDC). The ingestion pods auto-detect the principal from it (klist), so you only need the keytab. Create it first, e.g.: kubectl -n <ns> create secret generic om-cdp-keytab --from-file=service.keytab=./oma-ing.keytab. Leave blank when the context's realm is the same as the Ambari cluster — KDPS then mints the ingestion keytab automatically. This one keytab is used by ALL federated-service ingestion (Hive, Atlas, HDFS)."
         }
+,
+        {
+          "name": "baseIngestion.trinoEnabled",
+          "label": "Enable Trino base ingestion",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "When ON, KDPS registers the Trino coordinator selected under 'Trino Coordinator' as an OpenMetadata Trino database service (basic auth with the release's KDPS service user over HTTPS — needs a KDPS Trino release on chart >= 1.43.13 with 'Let KDPS manage catalogs' on) plus a scheduled metadata ingestion. OM entities then carry Trino's own shape (service.catalog.schema.table), so tags set in OM land on exactly the Trino resource in Ranger — KDPS fills the Ranger TagSync mapping below automatically. Also flips 'Deploy bundled Airflow' on."
+        },
+        {
+          "name": "baseIngestion.trinoServiceName",
+          "label": "OM database service name (Trino)",
+          "type": "string",
+          "defaultValue": "trino-clemlab",
+          "help": "Name of the OpenMetadata Trino databaseService KDPS creates. It becomes the 'OM database service whose tags are synced' for Ranger TagSync.",
+          "condition": { "field": "baseIngestion.trinoEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.trinoSchedule",
+          "label": "Trino ingestion schedule (cron)",
+          "type": "string",
+          "defaultValue": "0 */12 * * *",
+          "help": "Default every 12h.",
+          "condition": { "field": "baseIngestion.trinoEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.trinoCatalogIncludes",
+          "label": "Catalog include patterns",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Optional comma-separated regex patterns of Trino catalogs to ingest (e.g. hive,iceberg). Blank ingests every catalog except 'system'.",
+          "condition": { "field": "baseIngestion.trinoEnabled", "value": true }
+        },
+        {
+          "name": "baseIngestion.trinoSchemaIncludes",
+          "label": "Schema include patterns (Trino)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Optional comma-separated regex patterns of schemas to include. Blank ingests all schemas.",
+          "condition": { "field": "baseIngestion.trinoEnabled", "value": true }
+        }
       ]
     },
     {
@@ -1782,7 +1855,7 @@
           "label": "OM database service whose tags are synced",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. Auto-filled from the OM Trino connection KDPS creates; usually 'trino-clemlab'. Default 'trino-clemlab' matches the KDPS Trino release name.",
+          "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. Auto-filled from the OM Trino connection KDPS creates; usually 'trino-clemlab'. Default 'trino-clemlab' matches the KDPS Trino release name. With 'Enable Trino base ingestion' on, KDPS sets this to the OM Trino service it registers (your value is overridden).",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1794,7 +1867,7 @@
           "label": "Ranger service that receives the tags",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the Ranger service of type 'trino' that receives the tags. Auto-discovered from Ranger; usually 'trino-trino-ns'. Default 'trino-trino-ns' matches the standard Trino k8s release.",
+          "help": "Name of the Ranger service of type 'trino' that receives the tags. Auto-discovered from Ranger; usually 'trino-trino-ns'. Default 'trino-trino-ns' matches the standard Trino k8s release. With 'Enable Trino base ingestion' on, KDPS sets this to the registered Trino release's Ranger repo (ranger.serviceName, default <release>-<namespace>; your value is overridden).",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
