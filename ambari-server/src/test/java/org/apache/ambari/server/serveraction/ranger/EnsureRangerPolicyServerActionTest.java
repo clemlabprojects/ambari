@@ -121,4 +121,61 @@ public class EnsureRangerPolicyServerActionTest {
     assertFalse(EnsureRangerPolicyServerAction.userHasAllAccesses(
         items, "openmetadata-federation", new String[]{"entity-read", "type-read"}));
   }
+
+  @Test
+  public void buildPolicy_dataMaskShape_putsItemInDataMaskPolicyItems() {
+    EnsureRangerPolicyServerAction.GrantSpec spec = new EnsureRangerPolicyServerAction.GrantSpec();
+    spec.policyType = 1;
+    spec.maskType = "MASK_SHOW_LAST_4";
+    JsonObject p = EnsureRangerPolicyServerAction.buildPolicy(
+        "trino-sec", "kdps-mask", "mask customer.name", "alice", "select",
+        "{\"catalog\":[\"tpch\"],\"schema\":[\"sf1\"],\"table\":[\"customer\"],\"column\":[\"name\"]}", spec);
+    assertEquals(1, p.get("policyType").getAsInt());
+    assertEquals(0, p.getAsJsonArray("policyItems").size());
+    assertEquals(0, p.getAsJsonArray("rowFilterPolicyItems").size());
+    JsonArray items = p.getAsJsonArray("dataMaskPolicyItems");
+    assertEquals(1, items.size());
+    JsonObject item = items.get(0).getAsJsonObject();
+    assertEquals("alice", item.getAsJsonArray("users").get(0).getAsString());
+    assertEquals("MASK_SHOW_LAST_4", item.getAsJsonObject("dataMaskInfo").get("dataMaskType").getAsString());
+    assertEquals("select", item.getAsJsonArray("accesses").get(0).getAsJsonObject().get("type").getAsString());
+  }
+
+  @Test
+  public void buildPolicy_rowFilterShape_withGroupsOnly() {
+    EnsureRangerPolicyServerAction.GrantSpec spec = new EnsureRangerPolicyServerAction.GrantSpec();
+    spec.policyType = 2;
+    spec.rowFilterExpr = "nationkey < 5";
+    spec.groups = EnsureRangerPolicyServerAction.splitCsv("public, analysts");
+    JsonObject p = EnsureRangerPolicyServerAction.buildPolicy(
+        "trino-sec", "kdps-filter", null, null, "select",
+        "{\"catalog\":[\"tpch\"],\"schema\":[\"sf1\"],\"table\":[\"nation\"]}", spec);
+    assertEquals(2, p.get("policyType").getAsInt());
+    JsonArray items = p.getAsJsonArray("rowFilterPolicyItems");
+    assertEquals(1, items.size());
+    JsonObject item = items.get(0).getAsJsonObject();
+    assertEquals(0, item.getAsJsonArray("users").size());
+    assertEquals(2, item.getAsJsonArray("groups").size());
+    assertEquals("nationkey < 5", item.getAsJsonObject("rowFilterInfo").get("filterExpr").getAsString());
+  }
+
+  @Test
+  public void buildPolicy_defaultShape_isUnchangedAccessPolicy() {
+    JsonObject p = EnsureRangerPolicyServerAction.buildPolicy(
+        "svc", "name", "d", "bob", "select,use", "{\"catalog\":[\"*\"]}");
+    assertEquals(0, p.get("policyType").getAsInt());
+    assertEquals(1, p.getAsJsonArray("policyItems").size());
+    assertEquals(0, p.getAsJsonArray("dataMaskPolicyItems").size());
+  }
+
+  @Test
+  public void itemsKeyFor_and_samePrincipals() {
+    assertEquals("policyItems", EnsureRangerPolicyServerAction.itemsKeyFor(0));
+    assertEquals("dataMaskPolicyItems", EnsureRangerPolicyServerAction.itemsKeyFor(1));
+    assertEquals("rowFilterPolicyItems", EnsureRangerPolicyServerAction.itemsKeyFor(2));
+    JsonObject item = JsonParser.parseString("{\"users\":[\"alice\"],\"groups\":[]}").getAsJsonObject();
+    assertTrue(EnsureRangerPolicyServerAction.samePrincipals(item, "alice", EnsureRangerPolicyServerAction.splitCsv(null)));
+    assertFalse(EnsureRangerPolicyServerAction.samePrincipals(item, "bob", EnsureRangerPolicyServerAction.splitCsv(null)));
+    assertFalse(EnsureRangerPolicyServerAction.samePrincipals(item, "alice", EnsureRangerPolicyServerAction.splitCsv("public")));
+  }
 }

@@ -22,9 +22,14 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Matcher;
@@ -109,6 +114,17 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
         String policyNameHint    = trimToNull(commandParameters.get("policyNameHint"));
         String policyDescription = trimToNull(commandParameters.get("policyDescription"));
         long timeoutMs           = parseLong(commandParameters.get("timeoutSeconds"), 45L) * 1000L;
+        // Policy shape: 0 = access (default), 1 = data masking, 2 = row filtering.
+        GrantSpec spec = new GrantSpec();
+        spec.policyType        = (int) parseLong(commandParameters.get("policyType"), 0L);
+        spec.maskType          = trimToNull(commandParameters.get("maskType"));
+        spec.maskConditionExpr = trimToNull(commandParameters.get("maskConditionExpr"));
+        spec.maskValueExpr     = trimToNull(commandParameters.get("maskValueExpr"));
+        spec.rowFilterExpr     = trimToNull(commandParameters.get("rowFilterExpr"));
+        spec.groups            = splitCsv(trimToNull(commandParameters.get("groups")));
+        if (accessTypes == null && spec.policyType != 0) {
+            accessTypes = "select";
+        }
 
         LOG.info("EnsureRangerPolicyServerAction called: clusterName='{}', rangerServiceName='{}', "
                         + "userName='{}', accessTypes='{}', policyNameHint='{}'",
@@ -120,14 +136,29 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
         actionLog.writeStdOut("  userName          = " + userName);
         actionLog.writeStdOut("  accessTypes       = " + accessTypes);
         actionLog.writeStdOut("  policyNameHint    = " + policyNameHint);
+        actionLog.writeStdOut("  policyType        = " + spec.policyType
+                + (spec.maskType != null ? " maskType=" + spec.maskType : "")
+                + (spec.rowFilterExpr != null ? " rowFilterExpr=" + spec.rowFilterExpr : "")
+                + (spec.groups.isEmpty() ? "" : " groups=" + spec.groups));
 
         String missing = firstMissing(
                 "clusterName", clusterName,
                 "rangerServiceName", rangerServiceName,
-                "userName", userName,
                 "accessTypes", accessTypes,
                 "resourcesJson", resourcesJson,
                 "policyNameHint", policyNameHint);
+        if (missing == null && userName == null && spec.groups.isEmpty()) {
+            missing = "userName (or groups)";
+        }
+        if (missing == null && spec.policyType == 1 && spec.maskType == null) {
+            missing = "maskType (required for policyType=1)";
+        }
+        if (missing == null && spec.policyType == 2 && spec.rowFilterExpr == null) {
+            missing = "rowFilterExpr (required for policyType=2)";
+        }
+        if (missing == null && (spec.policyType < 0 || spec.policyType > 2)) {
+            missing = "policyType (0, 1 or 2)";
+        }
         if (missing != null) {
             String message = "Required parameter '" + missing + "' is missing or empty";
             actionLog.writeStdErr(message);
@@ -171,11 +202,13 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
                     + " with admin user " + rangerAdminUserName);
 
             // 1) Ensure the user exists (Ranger rejects policy items that reference unknown users).
-            ensureUserExists(policymgrExternalUrl, auth, userName);
+            if (userName != null) {
+                ensureUserExists(policymgrExternalUrl, auth, userName);
+            }
 
             // 2) Grant the access (append-to-existing or create), then poll for readability.
             long policyId = ensureGrant(policymgrExternalUrl, auth, rangerServiceName, userName,
-                    accessTypes, resourcesJson, policyNameHint, policyDescription, timeoutMs);
+                    accessTypes, resourcesJson, policyNameHint, policyDescription, spec, timeoutMs);
 
             Map<String, Object> structuredOutMap = new HashMap<>();
             structuredOutMap.put("clusterName", clusterName);
@@ -185,7 +218,8 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
             String structuredOut = toJson(structuredOutMap);
 
             String done = "Granted '" + accessTypes + "' on Ranger service '" + rangerServiceName
-                    + "' to user '" + userName + "' (policyId=" + policyId + ")";
+                    + "' to " + describePrincipals(userName, spec.groups)
+                    + " (policyType=" + spec.policyType + ", policyId=" + policyId + ")";
             actionLog.writeStdOut(done);
             LOG.info(done);
             return createCommandReport(0, HostRoleStatus.COMPLETED,
@@ -257,18 +291,18 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
 
     private long ensureGrant(String baseUrl, String auth, String serviceName, String userName,
                              String accessTypes, String resourcesJson, String policyNameHint,
-                             String policyDescription, long timeoutMs) throws Exception {
+                             String policyDescription, GrantSpec spec, long timeoutMs) throws Exception {
 
         // (a) If a policy with our hinted name already exists, append to it.
         Long existing = lookupPolicyIdByName(baseUrl, auth, serviceName, policyNameHint);
         if (existing != null) {
-            appendGrant(baseUrl, auth, existing, userName, accessTypes);
+            appendGrant(baseUrl, auth, existing, userName, accessTypes, spec);
             return pollReadable(baseUrl, auth, existing, timeoutMs);
         }
 
         // (b) Try to create a fresh policy.
         JsonObject policy = buildPolicy(serviceName, policyNameHint, policyDescription,
-                userName, accessTypes, resourcesJson);
+                userName, accessTypes, resourcesJson, spec);
         HttpResponse create = http(baseUrl + "/service/public/v2/api/policy", "POST", auth, policy.toString());
         if (create.statusCode / 100 == 2) {
             long id = JsonParser.parseString(create.body).getAsJsonObject().get("id").getAsLong();
@@ -290,7 +324,7 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
                     throw new IllegalStateException("Ranger reported conflicting policy '" + ownerName
                             + "' but it could not be looked up by name");
                 }
-                appendGrant(baseUrl, auth, ownerId, userName, accessTypes);
+                appendGrant(baseUrl, auth, ownerId, userName, accessTypes, spec);
                 return pollReadable(baseUrl, auth, ownerId, timeoutMs);
             }
         }
@@ -316,35 +350,150 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
     }
 
     /** GET policy by id, append an allow policyItem for (user, accessTypes), PUT back. Idempotent. */
-    private void appendGrant(String baseUrl, String auth, long policyId, String userName, String accessTypes)
-            throws Exception {
+    private void appendGrant(String baseUrl, String auth, long policyId, String userName, String accessTypes,
+                             GrantSpec spec) throws Exception {
         HttpResponse get = http(baseUrl + "/service/public/v2/api/policy/" + policyId, "GET", auth, null);
         if (get.statusCode != 200) {
             throw new IllegalStateException("Ranger policy GET by id=" + policyId + " returned HTTP "
                     + get.statusCode + ": " + get.body);
         }
         JsonObject policy = JsonParser.parseString(get.body).getAsJsonObject();
-        JsonArray policyItems = policy.has("policyItems") && policy.get("policyItems").isJsonArray()
-                ? policy.getAsJsonArray("policyItems")
+        int existingType = policy.has("policyType") && !policy.get("policyType").isJsonNull()
+                ? policy.get("policyType").getAsInt() : 0;
+        if (existingType != spec.policyType) {
+            throw new IllegalStateException("Ranger policy id=" + policyId + " ('" + policy.get("name")
+                    + "') is of policyType " + existingType + " but policyType " + spec.policyType
+                    + " was requested — use a different policyNameHint");
+        }
+        String itemsKey = itemsKeyFor(spec.policyType);
+        JsonArray policyItems = policy.has(itemsKey) && policy.get(itemsKey).isJsonArray()
+                ? policy.getAsJsonArray(itemsKey)
                 : new JsonArray();
 
         String[] wanted = accessTypes.split(",");
-        // Idempotency: skip if the user already has all requested accesses in some item.
-        if (userHasAllAccesses(policyItems, userName, wanted)) {
+        // Idempotency (allow policies): skip if the user already has all requested accesses in some item.
+        if (spec.policyType == 0 && userName != null && spec.groups.isEmpty()
+                && userHasAllAccesses(policyItems, userName, wanted)) {
             actionLog.writeStdOut("Ranger policy id=" + policyId + " already grants requested access to '"
                     + userName + "'; no-op");
             LOG.info("Ranger policy id={} already grants '{}' to '{}'; no-op", policyId, accessTypes, userName);
             return;
         }
+        JsonObject item = buildPolicyItem(userName, spec.groups, wanted, spec);
+        if (spec.policyType != 0) {
+            // A principal gets ONE mask / ONE row filter per policy: replace the item that already
+            // targets exactly these users/groups (the expression may have changed), else append.
+            JsonArray kept = new JsonArray();
+            boolean replaced = false;
+            for (JsonElement e : policyItems) {
+                JsonObject it = e.getAsJsonObject();
+                if (!replaced && samePrincipals(it, userName, spec.groups)) {
+                    kept.add(item);
+                    replaced = true;
+                } else {
+                    kept.add(it);
+                }
+            }
+            if (!replaced) {
+                kept.add(item);
+            }
+            policyItems = kept;
+            actionLog.writeStdOut((replaced ? "Replaced" : "Appended") + " " + itemsKey + " entry for "
+                    + describePrincipals(userName, spec.groups) + " in Ranger policy id=" + policyId);
+        } else {
+            policyItems.add(item);
+        }
+        policy.add(itemsKey, policyItems);
+        HttpResponse put = http(baseUrl + "/service/public/v2/api/policy/" + policyId, "PUT", auth,
+                policy.toString());
+        if (put.statusCode / 100 != 2) {
+            throw new IllegalStateException("Ranger policy update (id=" + policyId + ") failed: HTTP "
+                    + put.statusCode + " — " + put.body);
+        }
+        actionLog.writeStdOut("Appended grant (" + describePrincipals(userName, spec.groups) + ", access='" + accessTypes
+                + "') to Ranger policy id=" + policyId);
+        LOG.info("Appended grant ({}, access='{}') to Ranger policy id={}", describePrincipals(userName, spec.groups),
+                accessTypes, policyId);
+    }
 
+    /** Which policy array a policy type's items live in. */
+    static String itemsKeyFor(int policyType) {
+        switch (policyType) {
+            case 1:
+                return "dataMaskPolicyItems";
+            case 2:
+                return "rowFilterPolicyItems";
+            default:
+                return "policyItems";
+        }
+    }
+
+    static boolean samePrincipals(JsonObject item, String userName, List<String> groups) {
+        Set<String> users = new HashSet<>();
+        if (item.has("users") && item.get("users").isJsonArray()) {
+            for (JsonElement u : item.getAsJsonArray("users")) {
+                users.add(u.getAsString());
+            }
+        }
+        Set<String> itemGroups = new HashSet<>();
+        if (item.has("groups") && item.get("groups").isJsonArray()) {
+            for (JsonElement g : item.getAsJsonArray("groups")) {
+                itemGroups.add(g.getAsString());
+            }
+        }
+        Set<String> wantUsers = userName == null ? new HashSet<>() : new HashSet<>(Collections.singleton(userName));
+        return users.equals(wantUsers) && itemGroups.equals(new HashSet<>(groups));
+    }
+
+    static String describePrincipals(String userName, List<String> groups) {
+        StringBuilder sb = new StringBuilder();
+        if (userName != null) {
+            sb.append("user '").append(userName).append("'");
+        }
+        if (groups != null && !groups.isEmpty()) {
+            if (sb.length() > 0) {
+                sb.append(" and ");
+            }
+            sb.append("groups ").append(groups);
+        }
+        return sb.toString();
+    }
+
+    static List<String> splitCsv(String csv) {
+        List<String> out = new ArrayList<>();
+        if (csv == null) {
+            return out;
+        }
+        for (String g : csv.split(",")) {
+            if (!g.trim().isEmpty()) {
+                out.add(g.trim());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * One policy item (allow / mask / row-filter) for the given principals. Masking items carry
+     * {@code dataMaskInfo} (Ranger mask type such as MASK, MASK_HASH, MASK_NULL, MASK_SHOW_LAST_4,
+     * or CUSTOM with a value expression); row-filter items carry {@code rowFilterInfo}.
+     */
+    static JsonObject buildPolicyItem(String userName, List<String> groups, String[] accessTypes, GrantSpec spec) {
         JsonObject item = new JsonObject();
         JsonArray users = new JsonArray();
-        users.add(userName);
+        if (userName != null) {
+            users.add(userName);
+        }
         item.add("users", users);
-        item.add("groups", new JsonArray());
+        JsonArray groupArray = new JsonArray();
+        if (groups != null) {
+            for (String g : groups) {
+                groupArray.add(g);
+            }
+        }
+        item.add("groups", groupArray);
         item.add("roles", new JsonArray());
         JsonArray accesses = new JsonArray();
-        for (String a : wanted) {
+        for (String a : accessTypes) {
             String t = a.trim();
             if (t.isEmpty()) {
                 continue;
@@ -356,18 +505,37 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
         }
         item.add("accesses", accesses);
         item.addProperty("delegateAdmin", false);
-        policyItems.add(item);
-        policy.add("policyItems", policyItems);
-
-        HttpResponse put = http(baseUrl + "/service/public/v2/api/policy/" + policyId, "PUT", auth,
-                policy.toString());
-        if (put.statusCode / 100 != 2) {
-            throw new IllegalStateException("Ranger policy update (id=" + policyId + ") failed: HTTP "
-                    + put.statusCode + " — " + put.body);
+        if (spec != null && spec.policyType == 1) {
+            JsonObject mask = new JsonObject();
+            mask.addProperty("dataMaskType", spec.maskType);
+            if (spec.maskConditionExpr != null) {
+                mask.addProperty("conditionExpr", spec.maskConditionExpr);
+            }
+            if (spec.maskValueExpr != null) {
+                mask.addProperty("valueExpr", spec.maskValueExpr);
+            }
+            item.add("dataMaskInfo", mask);
+        } else if (spec != null && spec.policyType == 2) {
+            JsonObject filter = new JsonObject();
+            filter.addProperty("filterExpr", spec.rowFilterExpr);
+            item.add("rowFilterInfo", filter);
         }
-        actionLog.writeStdOut("Appended grant (user='" + userName + "', access='" + accessTypes
-                + "') to Ranger policy id=" + policyId);
-        LOG.info("Appended grant (user='{}', access='{}') to Ranger policy id={}", userName, accessTypes, policyId);
+        return item;
+    }
+
+        /**
+     * The extra shape of a grant beyond resources + access types. Defaults to a plain allow policy.
+     * Mask types are Ranger's ({@code MASK}, {@code MASK_HASH}, {@code MASK_NULL}, {@code MASK_SHOW_LAST_4},
+     * {@code CUSTOM} ...); on a tag service they are component-prefixed ({@code trino:MASK_HASH}), as are
+     * the access types ({@code trino:select}).
+     */
+    static final class GrantSpec {
+        int policyType = 0;
+        String maskType;
+        String maskConditionExpr;
+        String maskValueExpr;
+        String rowFilterExpr;
+        List<String> groups = new ArrayList<>();
     }
 
     /**
@@ -429,6 +597,11 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
     /** Build a brand-new allow policy for the given resource map + access. Package-private for testing. */
     static JsonObject buildPolicy(String serviceName, String policyName, String description,
                                   String userName, String accessTypes, String resourcesJson) {
+        return buildPolicy(serviceName, policyName, description, userName, accessTypes, resourcesJson, new GrantSpec());
+    }
+
+    static JsonObject buildPolicy(String serviceName, String policyName, String description,
+                                  String userName, String accessTypes, String resourcesJson, GrantSpec spec) {
         JsonObject p = new JsonObject();
         p.addProperty("service", serviceName);
         p.addProperty("name", policyName);
@@ -437,7 +610,7 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
         }
         p.addProperty("isAuditEnabled", true);
         p.addProperty("isEnabled", true);
-        p.addProperty("policyType", 0);
+        p.addProperty("policyType", spec.policyType);
         p.addProperty("policyPriority", 0);
 
         JsonObject resources = new JsonObject();
@@ -452,34 +625,16 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
         }
         p.add("resources", resources);
 
-        JsonObject item = new JsonObject();
-        JsonArray users = new JsonArray();
-        users.add(userName);
-        item.add("users", users);
-        item.add("groups", new JsonArray());
-        item.add("roles", new JsonArray());
-        JsonArray accesses = new JsonArray();
-        for (String a : accessTypes.split(",")) {
-            String t = a.trim();
-            if (t.isEmpty()) {
-                continue;
-            }
-            JsonObject acc = new JsonObject();
-            acc.addProperty("type", t);
-            acc.addProperty("isAllowed", true);
-            accesses.add(acc);
-        }
-        item.add("accesses", accesses);
-        item.addProperty("delegateAdmin", false);
+        JsonObject item = buildPolicyItem(userName, spec.groups, accessTypes.split(","), spec);
         JsonArray policyItems = new JsonArray();
         policyItems.add(item);
-        p.add("policyItems", policyItems);
+        p.add("policyItems", spec.policyType == 0 ? policyItems : new JsonArray());
 
         p.add("denyPolicyItems", new JsonArray());
         p.add("allowExceptions", new JsonArray());
         p.add("denyExceptions", new JsonArray());
-        p.add("dataMaskPolicyItems", new JsonArray());
-        p.add("rowFilterPolicyItems", new JsonArray());
+        p.add("dataMaskPolicyItems", spec.policyType == 1 ? policyItems : new JsonArray());
+        p.add("rowFilterPolicyItems", spec.policyType == 2 ? policyItems : new JsonArray());
         return p;
     }
 
