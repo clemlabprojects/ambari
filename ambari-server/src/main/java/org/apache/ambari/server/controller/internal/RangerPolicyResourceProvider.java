@@ -95,6 +95,18 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
 
     private static final String PROPERTY_TIMEOUT               = "timeoutSeconds";
     private static final String PROPERTY_TIMEOUT_NS            = "RangerPolicy/timeoutSeconds";
+    private static final String PROPERTY_POLICY_TYPE           = "policyType";
+    private static final String PROPERTY_POLICY_TYPE_NS        = "RangerPolicy/policyType";
+    private static final String PROPERTY_MASK_TYPE             = "maskType";
+    private static final String PROPERTY_MASK_TYPE_NS          = "RangerPolicy/maskType";
+    private static final String PROPERTY_MASK_CONDITION        = "maskConditionExpr";
+    private static final String PROPERTY_MASK_CONDITION_NS     = "RangerPolicy/maskConditionExpr";
+    private static final String PROPERTY_MASK_VALUE            = "maskValueExpr";
+    private static final String PROPERTY_MASK_VALUE_NS         = "RangerPolicy/maskValueExpr";
+    private static final String PROPERTY_ROW_FILTER            = "rowFilterExpr";
+    private static final String PROPERTY_ROW_FILTER_NS         = "RangerPolicy/rowFilterExpr";
+    private static final String PROPERTY_GROUPS                = "groups";
+    private static final String PROPERTY_GROUPS_NS             = "RangerPolicy/groups";
 
     private static final String PROPERTY_CONTEXT               = "context";
     private static final String PROPERTY_CONTEXT_NS            = "RequestInfo/context";
@@ -113,7 +125,13 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 PROPERTY_POLICY_NAME_HINT, PROPERTY_POLICY_NAME_HINT_NS,
                 PROPERTY_POLICY_DESCRIPTION, PROPERTY_POLICY_DESCRIPTION_NS,
                 PROPERTY_TIMEOUT, PROPERTY_TIMEOUT_NS,
-                PROPERTY_CONTEXT, PROPERTY_CONTEXT_NS
+                PROPERTY_CONTEXT, PROPERTY_CONTEXT_NS,
+                PROPERTY_POLICY_TYPE, PROPERTY_POLICY_TYPE_NS,
+                PROPERTY_MASK_TYPE, PROPERTY_MASK_TYPE_NS,
+                PROPERTY_MASK_CONDITION, PROPERTY_MASK_CONDITION_NS,
+                PROPERTY_MASK_VALUE, PROPERTY_MASK_VALUE_NS,
+                PROPERTY_ROW_FILTER, PROPERTY_ROW_FILTER_NS,
+                PROPERTY_GROUPS, PROPERTY_GROUPS_NS
         );
         PROPERTY_IDS = Collections.unmodifiableSet(propertyIds);
 
@@ -199,6 +217,29 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                     integerValue(properties.get(PROPERTY_TIMEOUT)),
                     integerValue(properties.get(PROPERTY_TIMEOUT_NS)),
                     120);
+            // Policy shape: 0 = access (default), 1 = data masking, 2 = row filtering.
+            int policyType           = firstInt(
+                    integerValue(properties.get(PROPERTY_POLICY_TYPE)),
+                    integerValue(properties.get(PROPERTY_POLICY_TYPE_NS)),
+                    0);
+            String maskType          = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_MASK_TYPE)),
+                    stringValue(properties.get(PROPERTY_MASK_TYPE_NS)));
+            String maskConditionExpr = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_MASK_CONDITION)),
+                    stringValue(properties.get(PROPERTY_MASK_CONDITION_NS)));
+            String maskValueExpr     = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_MASK_VALUE)),
+                    stringValue(properties.get(PROPERTY_MASK_VALUE_NS)));
+            String rowFilterExpr     = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_ROW_FILTER)),
+                    stringValue(properties.get(PROPERTY_ROW_FILTER_NS)));
+            String groups            = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_GROUPS)),
+                    stringValue(properties.get(PROPERTY_GROUPS_NS)));
+            if (StringUtils.isBlank(accessTypes) && policyType != 0) {
+                accessTypes = "select";
+            }
 
             if (StringUtils.isBlank(clusterName)) {
                 throw new SystemException("clusterName is required");
@@ -206,8 +247,17 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             if (StringUtils.isBlank(rangerServiceName)) {
                 throw new SystemException("rangerServiceName is required");
             }
-            if (StringUtils.isBlank(userName)) {
-                throw new SystemException("userName is required");
+            if (StringUtils.isBlank(userName) && StringUtils.isBlank(groups)) {
+                throw new SystemException("userName or groups is required");
+            }
+            if (policyType < 0 || policyType > 2) {
+                throw new SystemException("policyType must be 0 (access), 1 (data mask) or 2 (row filter)");
+            }
+            if (policyType == 1 && StringUtils.isBlank(maskType)) {
+                throw new SystemException("maskType is required for policyType=1");
+            }
+            if (policyType == 2 && StringUtils.isBlank(rowFilterExpr)) {
+                throw new SystemException("rowFilterExpr is required for policyType=2");
             }
             if (StringUtils.isBlank(accessTypes)) {
                 throw new SystemException("accessTypes is required");
@@ -227,8 +277,26 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 Map<String, String> commandParameters = new LinkedHashMap<>();
                 commandParameters.put("clusterName", clusterName);
                 commandParameters.put("rangerServiceName", rangerServiceName);
-                commandParameters.put("userName", userName);
+                if (StringUtils.isNotBlank(userName)) {
+                    commandParameters.put("userName", userName);
+                }
                 commandParameters.put("accessTypes", accessTypes);
+                commandParameters.put("policyType", String.valueOf(policyType));
+                if (StringUtils.isNotBlank(maskType)) {
+                    commandParameters.put("maskType", maskType);
+                }
+                if (StringUtils.isNotBlank(maskConditionExpr)) {
+                    commandParameters.put("maskConditionExpr", maskConditionExpr);
+                }
+                if (StringUtils.isNotBlank(maskValueExpr)) {
+                    commandParameters.put("maskValueExpr", maskValueExpr);
+                }
+                if (StringUtils.isNotBlank(rowFilterExpr)) {
+                    commandParameters.put("rowFilterExpr", rowFilterExpr);
+                }
+                if (StringUtils.isNotBlank(groups)) {
+                    commandParameters.put("groups", groups);
+                }
                 commandParameters.put("resourcesJson", resourcesJson);
                 commandParameters.put("policyNameHint", policyNameHint);
                 if (StringUtils.isNotBlank(policyDescription)) {

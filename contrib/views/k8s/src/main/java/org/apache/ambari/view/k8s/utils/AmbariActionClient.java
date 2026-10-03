@@ -1058,7 +1058,7 @@ public class AmbariActionClient {
      * @param timeoutSeconds    propagation-poll budget passed to the server action
      * @param context           Ambari request context label
      */
-    public int submitRangerPolicyGrant(
+        public int submitRangerPolicyGrant(
             String rangerServiceName,
             String userName,
             String accessTypes,
@@ -1068,10 +1068,57 @@ public class AmbariActionClient {
             Integer timeoutSeconds,
             String context
     ) throws Exception {
+        return submitRangerPolicyGrant(rangerServiceName, userName, accessTypes, resourcesJson, policyNameHint,
+                policyDescription, timeoutSeconds, context, null);
+    }
+
+    /**
+     * The shape of a Ranger policy beyond resources + access types, for the Ambari
+     * {@code ranger_policy} action: {@code policyType} 0 = access (default), 1 = data masking
+     * ({@code maskType} such as MASK, MASK_HASH, MASK_NULL, MASK_SHOW_LAST_4, MASK_DATE_SHOW_YEAR or
+          * CUSTOM with {@code maskValueExpr}), 2 = row filtering ({@code rowFilterExpr}); {@code groups}
+     * is an optional comma-separated list of Ranger groups granted alongside (or instead of) the user.
+     * On a TAG service (tag-based policies) Ranger expects the component-prefixed forms, e.g.
+     * {@code accessTypes = "trino:select"} and {@code maskType = "trino:MASK_HASH"}.
+     */
+    public static final class PolicyShape {
+        public int policyType;
+        public String maskType;
+        public String maskConditionExpr;
+        public String maskValueExpr;
+        public String rowFilterExpr;
+        public String groups;
+
+        public static PolicyShape mask(String maskType, String maskValueExpr, String groups) {
+            PolicyShape s = new PolicyShape();
+            s.policyType = 1; s.maskType = maskType; s.maskValueExpr = maskValueExpr; s.groups = groups;
+            return s;
+        }
+
+        public static PolicyShape rowFilter(String filterExpr, String groups) {
+            PolicyShape s = new PolicyShape();
+            s.policyType = 2; s.rowFilterExpr = filterExpr; s.groups = groups;
+            return s;
+        }
+    }
+
+    /** {@link #submitRangerPolicyGrant} with an explicit policy shape (mask / row filter / groups). */
+    public int submitRangerPolicyGrant(
+            String rangerServiceName,
+            String userName,
+            String accessTypes,
+            String resourcesJson,
+            String policyNameHint,
+            String policyDescription,
+            Integer timeoutSeconds,
+            String context,
+            PolicyShape shape
+    ) throws Exception {
         Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger policy grant");
         Objects.requireNonNull(rangerServiceName, "rangerServiceName");
-        Objects.requireNonNull(userName, "userName");
-
+        if ((userName == null || userName.isBlank()) && (shape == null || shape.groups == null || shape.groups.isBlank())) {
+            throw new IllegalArgumentException("userName or groups is required for a Ranger policy grant");
+        }
         JsonObject root = new JsonObject();
 
         JsonObject requestInfo = new JsonObject();
@@ -1079,10 +1126,20 @@ public class AmbariActionClient {
                 (context == null || context.isBlank()) ? "Ensure Ranger policy" : context);
         root.add("RequestInfo", requestInfo);
 
-        JsonObject rangerPolicy = new JsonObject();
+                JsonObject rangerPolicy = new JsonObject();
         rangerPolicy.addProperty("rangerServiceName", rangerServiceName);
-        rangerPolicy.addProperty("userName", userName);
+        if (userName != null && !userName.isBlank()) {
+            rangerPolicy.addProperty("userName", userName);
+        }
         rangerPolicy.addProperty("accessTypes", accessTypes);
+        if (shape != null) {
+            rangerPolicy.addProperty("policyType", shape.policyType);
+            if (shape.maskType != null && !shape.maskType.isBlank()) rangerPolicy.addProperty("maskType", shape.maskType);
+            if (shape.maskConditionExpr != null && !shape.maskConditionExpr.isBlank()) rangerPolicy.addProperty("maskConditionExpr", shape.maskConditionExpr);
+            if (shape.maskValueExpr != null && !shape.maskValueExpr.isBlank()) rangerPolicy.addProperty("maskValueExpr", shape.maskValueExpr);
+            if (shape.rowFilterExpr != null && !shape.rowFilterExpr.isBlank()) rangerPolicy.addProperty("rowFilterExpr", shape.rowFilterExpr);
+            if (shape.groups != null && !shape.groups.isBlank()) rangerPolicy.addProperty("groups", shape.groups);
+        }
         rangerPolicy.addProperty("resourcesJson", resourcesJson);
         rangerPolicy.addProperty("policyNameHint", policyNameHint);
         if (policyDescription != null && !policyDescription.isBlank()) {
