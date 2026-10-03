@@ -17,13 +17,14 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ColumnsType } from 'antd/es/table';
-import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import { DatabaseOutlined, DeleteOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import {
   adoptReleaseCatalog, createReleaseCatalog, dropReleaseCatalog, listReleaseCatalogs, testReleaseCatalog,
   type ReleaseCatalog,
 } from '../../api/client';
-import { CATALOG_TEMPLATES, renderTemplate } from './trinoCatalogTemplates';
+import { CATALOG_TEMPLATES, renderTemplate, type CatalogTemplate } from './trinoCatalogTemplates';
+import ConnectorGallery, { ConnectorLogo } from './ConnectorGallery';
 import type { HelmRelease } from '../../types';
 
 const { Text, Paragraph } = Typography;
@@ -56,6 +57,7 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const [templateId, setTemplateId] = useState('postgresql');
   const [form] = Form.useForm();
   const [preview, setPreview] = useState('');
@@ -73,7 +75,16 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
     finally { setLoading(false); }
   }, [release, ns, rel]);
 
-  useEffect(() => { if (release) { setRows([]); setSchemas(null); setCreating(false); void load(); } }, [release, load]);
+  useEffect(() => { if (release) { setRows([]); setSchemas(null); setCreating(false); setGalleryOpen(false); void load(); } }, [release, load]);
+
+  // Starburst-style flow: pick a connector card first, then fill that connector's form.
+  const pickConnector = (t: CatalogTemplate) => {
+    setTemplateId(t.id);
+    form.resetFields(CATALOG_TEMPLATES.flatMap(x => x.fields.map(f => f.key)).concat(['__raw']));
+    setPreview('');
+    setGalleryOpen(false);
+    setCreating(true);
+  };
 
   const refreshPreview = () => {
     const v = form.getFieldsValue();
@@ -167,19 +178,20 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
       ) : null}
       <div style={{ marginTop: 16 }}>
         {!creating ? (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setCreating(true); setPreview(''); }}>New catalog</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setGalleryOpen(true)}>Add a connector</Button>
         ) : (
           <Form form={form} layout="vertical" onValuesChange={refreshPreview} requiredMark="optional">
-            <Space align="start" style={{ width: '100%' }} size="large">
-              <Form.Item name="__name" label="Catalog name" rules={[{ required: true, message: 'Give the catalog a name' }, { pattern: /^[a-z][a-z0-9_]*$/, message: 'lower-case letters, digits, underscores' }]} style={{ minWidth: 220 }}>
-                <Input placeholder="postgres_prod" />
-              </Form.Item>
-              <Form.Item label="Connector" style={{ minWidth: 340 }}>
-                <Select value={templateId} onChange={(v) => { setTemplateId(v); form.resetFields(CATALOG_TEMPLATES.flatMap(t => t.fields.map(f => f.key)).concat(['__raw'])); setPreview(''); }}
-                  options={CATALOG_TEMPLATES.map(t => ({ value: t.id, label: t.label }))} />
-              </Form.Item>
-            </Space>
-            <Paragraph type="secondary" style={{ marginTop: -8 }}>{template.description}</Paragraph>
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center', padding: 12, border: '1px solid #f0f0f0', borderRadius: 8, marginBottom: 12 }}>
+              <ConnectorLogo id={template.id} size={44} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600 }}>{template.label} <Text type="secondary" style={{ fontWeight: 400 }}>— {template.tagline}</Text></div>
+                <Text type="secondary" style={{ fontSize: 12 }}>{template.description}</Text>
+              </div>
+              <Button size="small" onClick={() => setGalleryOpen(true)}>Change connector</Button>
+            </div>
+            <Form.Item name="__name" label="Catalog name" rules={[{ required: true, message: 'Give the catalog a name' }, { pattern: /^[a-z][a-z0-9_]*$/, message: 'lower-case letters, digits, underscores' }]} style={{ maxWidth: 320 }}>
+              <Input placeholder="postgres_prod" />
+            </Form.Item>
             {template.id === 'generic' ? (
               <Form.Item name="__raw" label="Catalog properties" rules={[{ required: true, message: 'connector.name=… is required' }]}>
                 <Input.TextArea rows={8} spellCheck={false} style={{ fontFamily: 'monospace' }} placeholder={'connector.name=kafka\nkafka.nodes=k1:9092'} />
@@ -207,6 +219,7 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
           </Form>
         )}
       </div>
+      <ConnectorGallery open={galleryOpen} onPick={pickConnector} onClose={() => setGalleryOpen(false)} />
     </Modal>
   );
 }
