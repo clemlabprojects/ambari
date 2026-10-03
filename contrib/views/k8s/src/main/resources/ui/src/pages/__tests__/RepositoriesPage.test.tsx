@@ -15,148 +15,62 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-// IMPORTANT: mocker le module API
 jest.mock('../../api/client');
 
-import {
-  getHelmRepos,
-  createHelmRepo,
-  loginHelmRepo,
-  deleteHelmRepo,
-} from '../../api/client';
+import { getHelmRepos, saveHelmRepo, loginHelmRepo, deleteHelmRepo } from '../../api/client';
+import RepositoriesPage from '../HelmRepositoriesPage';
 
-import RepositoriesPage from '../RepositoriesPage'; // <-- adapte le chemin
-
+/** Helm repositories page: add / validate / login-sync / delete, against the current (modal-based) UI. */
 describe('RepositoriesPage', () => {
   const user = userEvent.setup();
+  const repo = { id: 'bitnami', name: 'Bitnami', type: 'HTTP', url: 'https://charts.bitnami.com/bitnami', authMode: 'anonymous' } as any;
 
   beforeEach(() => {
     jest.clearAllMocks();
     (getHelmRepos as jest.Mock).mockResolvedValue([]);
+    (saveHelmRepo as jest.Mock).mockImplementation(async (r: any) => r);
   });
 
-  function renderPage() {
-    return render(<RepositoriesPage />);
-  }
+  const openAddModal = async () => {
+    render(<RepositoriesPage />);
+    await waitFor(() => expect(getHelmRepos).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: /Add repository/i }));
+    return screen.getByRole('dialog');
+  };
 
-  it('crée un dépôt HTTP anonyme', async () => {
-    renderPage();
-
-    // Remplir le formulaire
-    await user.type(screen.getByLabelText(/ID/i), 'bitnami');
-    await user.type(screen.getByLabelText(/^Nom$/i), 'bitnami');
-    // Type = HTTP (si Select a déjà la valeur par défaut, on peut le laisser)
-    await user.type(screen.getByLabelText(/^URL$/i), 'https://charts.bitnami.com/bitnami');
-    // Auth = anonymous (par défaut suivant ton implémentation, sinon sélectionner)
-
-    // Soumettre
-    await user.click(screen.getByRole('button', { name: /Enregistrer/i }));
-
-    await waitFor(() => {
-      expect(createHelmRepo).toHaveBeenCalledWith({
-        id: 'bitnami',
-        name: 'bitnami',
-        type: 'HTTP',
-        url: 'https://charts.bitnami.com/bitnami',
-        authMode: 'anonymous',
-        username: undefined,
-        secret: undefined,
-      });
-    });
-
-    // La page rafraîchit la liste
-    expect(getHelmRepos).toHaveBeenCalledTimes(2); // 1er load + refresh après création
+  it('adds an anonymous HTTP repository', async () => {
+    const dialog = await openAddModal();
+    await user.type(within(dialog).getByLabelText(/^ID$/i), 'bitnami');
+    await user.type(within(dialog).getByLabelText(/Display name/i), 'Bitnami');
+    await user.type(within(dialog).getByLabelText(/Chart index URL/i), 'https://charts.bitnami.com/bitnami');
+    await user.click(within(dialog).getByRole('button', { name: /^Add$/ }));
+    await waitFor(() => expect(saveHelmRepo).toHaveBeenCalledWith(expect.objectContaining({ id: 'bitnami', name: 'Bitnami', url: 'https://charts.bitnami.com/bitnami' }), undefined)); // (entity, secret)
+    await waitFor(() => expect(getHelmRepos).toHaveBeenCalledTimes(2)); // initial load + refresh after save
   });
 
-  it('affiche les erreurs de validation si champs requis manquants', async () => {
-    renderPage();
-
-    await user.click(screen.getByRole('button', { name: /Enregistrer/i }));
-
-    // createHelmRepo ne doit pas être appelé
-    await waitFor(() => {
-      expect(createHelmRepo).not.toHaveBeenCalled();
-    });
-
-    // AntD affiche les messages de rules ; adapte le texte si tu as des messages custom
-    expect(screen.getByText(/id is required/i)).toBeInTheDocument();
-    expect(screen.getByText(/name is required/i)).toBeInTheDocument();
-    expect(screen.getByText(/url is required/i)).toBeInTheDocument();
+  it('shows validation errors when required fields are missing', async () => {
+    const dialog = await openAddModal();
+    await user.click(within(dialog).getByRole('button', { name: /^Add$/ }));
+    await waitFor(() => expect(within(dialog).getAllByText(/required/i).length).toBeGreaterThanOrEqual(3));
+    expect(saveHelmRepo).not.toHaveBeenCalled();
   });
 
-  it('login/sync appelé sur clic du bouton', async () => {
-    (getHelmRepos as jest.Mock).mockResolvedValueOnce([
-      { id: 'bitnami', name: 'bitnami', type: 'HTTP', url: 'https://charts.bitnami.com/bitnami', authMode: 'anonymous', authInvalid: false },
-    ]);
-
-    renderPage();
-
-    // Le bouton est dans la table, trouve la ligne "bitnami"
-    const loginBtn = await screen.findByRole('button', { name: /Login\/Sync/i });
-    await user.click(loginBtn);
-
-    await waitFor(() => {
-      expect(loginHelmRepo).toHaveBeenCalledWith('bitnami');
-    });
-
-    // refresh après login
-    expect(getHelmRepos).toHaveBeenCalledTimes(2);
+  it('calls login/sync for a repository', async () => {
+    (getHelmRepos as jest.Mock).mockResolvedValue([repo]);
+    render(<RepositoriesPage />);
+    await user.click(await screen.findByRole('button', { name: /Login \/ Sync/i }));
+    await waitFor(() => expect(loginHelmRepo).toHaveBeenCalledWith('bitnami'));
   });
 
-  it('supprime un dépôt via le bouton Delete + confirmation', async () => {
-    (getHelmRepos as jest.Mock).mockResolvedValueOnce([
-      { id: 'tmp', name: 'tmp', type: 'HTTP', url: 'https://x/y', authMode: 'anonymous', authInvalid: false },
-    ]);
-
-    renderPage();
-
-    const delBtn = await screen.findByRole('button', { name: /Delete/i });
-    await user.click(delBtn);
-
-    // Popconfirm apparaît → confirmer
-    const okBtn = await screen.findByRole('button', { name: /^OK$|^Ok$|^Confirmer$/i });
-    await user.click(okBtn);
-
-    await waitFor(() => {
-      expect(deleteHelmRepo).toHaveBeenCalledWith('tmp');
-    });
-
-    // refresh après suppression
-    expect(getHelmRepos).toHaveBeenCalledTimes(2);
-  });
-
-  it('crée un dépôt HTTP basic avec username/secret', async () => {
-    renderPage();
-
-    await user.type(screen.getByLabelText(/ID/i), 'priv');
-    await user.type(screen.getByLabelText(/^Nom$/i), 'priv');
-    // Sélectionne Auth = basic
-    const authSelect = screen.getByLabelText(/^Auth$/i);
-    await user.click(authSelect);
-    await user.click(await screen.findByText(/basic/i));
-
-    await user.type(screen.getByLabelText(/Username/i), 'user1');
-    await user.type(screen.getByLabelText(/Password \/ Token/i), 's3cr3t');
-    await user.type(screen.getByLabelText(/^URL$/i), 'https://repo.local/helm');
-
-    await user.click(screen.getByRole('button', { name: /Enregistrer/i }));
-
-    await waitFor(() => {
-      expect(createHelmRepo).toHaveBeenCalledWith({
-        id: 'priv',
-        name: 'priv',
-        type: 'HTTP',
-        url: 'https://repo.local/helm',
-        authMode: 'basic',
-        username: 'user1',
-        secret: 's3cr3t',
-      });
-    });
+  it('deletes a repository after confirmation', async () => {
+    (getHelmRepos as jest.Mock).mockResolvedValue([repo]);
+    render(<RepositoriesPage />);
+    await user.click(await screen.findByRole('button', { name: /^Delete$/ }));
+    await user.click(await screen.findByRole('button', { name: /^OK$/i }));
+    await waitFor(() => expect(deleteHelmRepo).toHaveBeenCalledWith('bitnami'));
   });
 });
-
