@@ -10313,9 +10313,14 @@ public class CommandService {
                     + "enable 'Trino base ingestion' in the wizard and upgrade the release.");
         }
         org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
-        String trinoHost = stringValue(childParams.get("_trinoHost"));
+                String trinoHost = stringValue(childParams.get("_trinoHost"));
         String trinoNs = stringValue(childParams.get("_trinoNamespace"));
         String trinoRelease = stringValue(childParams.get("_trinoRelease"));
+        if (trinoNs.isBlank() || trinoRelease.isBlank()) {
+            trinoNs = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoNamespace"));
+            trinoRelease = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoRelease"));
+        }
+        if (trinoHost.isBlank()) trinoHost = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoHost"));
         if (trinoNs.isBlank() || trinoRelease.isBlank()) {
             if (trinoHost.isBlank()) {
                 trinoHost = stringValue(ConfigResolutionService.getByDottedPath(values, "openmetadata.config.connectors.trino.hostPort"));
