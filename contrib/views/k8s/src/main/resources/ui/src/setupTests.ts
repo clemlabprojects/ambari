@@ -8,3 +8,15 @@ beforeAll(() => {
   document.body.appendChild(root);
 });
 
+
+// antd (Grid/responsive observers) calls window.matchMedia, which jsdom does not implement.
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: (query: string) => ({
+      matches: false, media: query, onchange: null,
+      addListener: () => undefined, removeListener: () => undefined,
+      addEventListener: () => undefined, removeEventListener: () => undefined, dispatchEvent: () => false,
+    }),
+  });
+}

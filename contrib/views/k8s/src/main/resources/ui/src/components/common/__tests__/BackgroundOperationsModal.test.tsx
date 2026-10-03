@@ -73,62 +73,22 @@ describe('BackgroundOperationsModal', () => {
   });
 
   it('keeps polling active commands when watched command fails', async () => {
-    jest.useFakeTimers();
-
-    const failedCommand = {
-      id: 'cmd-failed',
-      state: 'FAILED',
-      percent: 100,
-      step: 0,
-      message: 'Failed',
-      type: 'TEST',
-      hasChildren: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    } as any;
-
-    const runningCommand = {
-      id: 'cmd-running',
-      state: 'RUNNING',
-      percent: 10,
-      step: 0,
-      message: 'Running',
-      type: 'TEST',
-      hasChildren: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    } as any;
-
+    const failedCommand = { id: 'cmd-failed', state: 'FAILED', percent: 100, step: 0, message: 'Failed', type: 'TEST', hasChildren: false,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as any;
+    const runningCommand = { id: 'cmd-running', state: 'RUNNING', percent: 10, step: 0, message: 'Running', type: 'TEST', hasChildren: false,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as any;
     (listCommands as jest.Mock).mockResolvedValue([failedCommand, runningCommand]);
-    (getCommandStatus as jest.Mock).mockImplementation(async (id: string) => {
-      return id === runningCommand.id ? runningCommand : failedCommand;
-    });
-
+    (getCommandStatus as jest.Mock).mockImplementation(async (id: string) => (id === runningCommand.id ? runningCommand : failedCommand));
     const onAutoClose = jest.fn();
-    render(
-      <BackgroundOperationsModal
-        open
-        onClose={() => undefined}
-        watchCommandId={failedCommand.id}
-        onAutoClose={onAutoClose}
-      />
-    );
-
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={failedCommand.id} onAutoClose={onAutoClose} />);
     await waitFor(() => expect(listCommands).toHaveBeenCalled());
-    await waitFor(() => expect(getCommandStatus).toHaveBeenCalled());
-
+    // initial prefetch touches every listed row once
+    await waitFor(() => expect(getCommandStatus).toHaveBeenCalledWith(runningCommand.id));
     (getCommandStatus as jest.Mock).mockClear();
-
-    await act(async () => {
-      jest.advanceTimersByTime(2000);
-    });
-
-    await waitFor(() => expect(getCommandStatus).toHaveBeenCalled());
-
-    expect(getCommandStatus).toHaveBeenCalledWith(runningCommand.id);
+    // the 2s poller refreshes only the non-terminal command; the failed one is never re-polled
+    await waitFor(() => expect(getCommandStatus).toHaveBeenCalledWith(runningCommand.id), { timeout: 5000 });
     expect(getCommandStatus).not.toHaveBeenCalledWith(failedCommand.id);
+    // a FAILED watched command never auto-closes the modal
     expect(onAutoClose).not.toHaveBeenCalled();
-
-    jest.useRealTimers();
-  });
+  }, 10000);
 });

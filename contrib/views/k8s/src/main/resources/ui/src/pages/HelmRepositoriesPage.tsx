@@ -197,18 +197,19 @@ export default function RepositoriesPage() {
       render: (_: any, r: HelmRepo) => (
         <Space>
           <Tooltip title="Edit">
-            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
+            <Button size="small" aria-label="Edit" icon={<EditOutlined />} onClick={() => openEdit(r)} />
           </Tooltip>
           <Tooltip title="Login / Sync">
             <Button
               size="small"
+              aria-label="Login / Sync"
               icon={<CheckCircleTwoTone twoToneColor="#52c41a" />}
               loading={!!syncing[r.id]}
               onClick={() => handleLogin(r.id)}
             />
           </Tooltip>
           <Popconfirm title="Delete this repository?" onConfirm={() => handleDelete(r.id)}>
-            <Button size="small" danger icon={<DeleteOutlined />} />
+            <Button size="small" danger aria-label="Delete" icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),

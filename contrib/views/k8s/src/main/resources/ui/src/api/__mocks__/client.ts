@@ -15,3 +15,16 @@ export const createReleaseCatalog = jest.fn<Promise<any>, [string, string, any]>
 export const dropReleaseCatalog = jest.fn<Promise<any>, [string, string, string, boolean?]>((_n, _r, name) => Promise.resolve({ name }));
 export const testReleaseCatalog = jest.fn<Promise<any>, [string, string, string]>(() => Promise.resolve({ schemas: [] }));
 export const adoptReleaseCatalog = jest.fn<Promise<any>, [string, string, string]>((_n, _r, name) => Promise.resolve({ name, properties: '' }));
+
+// command/background-operations API (BackgroundOperationsModal)
+export const listCommands = jest.fn<Promise<any>, any[]>(() => Promise.resolve(undefined));
+export const getCommandStatus = jest.fn<Promise<any>, any[]>(() => Promise.resolve(undefined));
+export const listChildCommands = jest.fn<Promise<any>, any[]>(() => Promise.resolve(undefined));
+export const getCommandLogs = jest.fn<Promise<any>, any[]>(() => Promise.resolve(undefined));
+export const cancelCommand = jest.fn<Promise<any>, any[]>(() => Promise.resolve(undefined));
+export const refreshDependencies = jest.fn<Promise<any>, any[]>(() => Promise.resolve(undefined));
+
+// Helm repositories page API
+export const saveHelmRepo = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
+export const installMonitoring = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
+export const getMonitoringDiscovery = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));

@@ -4,6 +4,10 @@ import { getMockSecurityConfig } from './mock';
 import type {ClusterService} from '../types/ServiceTypes';
 import type {HelmRepo} from '../types';
 import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
+// Dev-mode flag: Vite statically replaces process.env.NODE_ENV at build time, and jest provides it at
+// run time — unlike import.meta.env, which is a syntax error under CommonJS test transforms.
+declare const process: { env: Record<string, string | undefined> } | undefined;
+const IS_DEV: boolean = (() => { try { return typeof process !== 'undefined' && !!process.env && process.env.NODE_ENV === 'development'; } catch { return false; } })();
 
 /**
  * Resolve API base from current view URL so bumps to the view version or instance
@@ -121,7 +125,7 @@ export interface StackConfig {
 }
 
 export const getGlobalConfigs = async (): Promise<StackConfig[]> => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return (await import('./mock')).getStackConfigsMock('GLOBAL') as any;
   }
   const res = await fetch(`./api/v1/globals/configurations`, { headers: { 'X-Requested-By': 'ambari' } });
@@ -638,7 +642,7 @@ export async function resetMonitoringCache() {
 
 
 export const getClusterEvents = async () => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return getMockClusterEvents();
   }
@@ -705,7 +709,7 @@ export interface SecurityProfiles {
 }
 
 export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return getMockSecurityConfig();
   }
   const res = await fetch(`${API_BASE_URL}/configurations/security`, { credentials: 'include' });
@@ -734,7 +738,7 @@ export interface SecurityProfileUsage {
 }
 
 export const getSecuritySchema = async (): Promise<any> => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     const { getMockSecuritySchema } = await import('./mock');
     return getMockSecuritySchema();
   }
@@ -787,9 +791,9 @@ export const deleteSecurityProfile = async (profile: string): Promise<void> => {
  */
 
 export const getDiscoveredK8sServices = async (labelSelector: string): Promise<ClusterService[]> => {
-    // In import.meta.env.DEV you might want to return mock data,
+    // In IS_DEV you might want to return mock data,
     // otherwise call the real backend.
-    if (import.meta.env.DEV) {
+    if (IS_DEV) {
        console.log(`Mocking K8s discovery for label: ${labelSelector}`);
        return [
          { label: 'trino-test-1 (mock)', value: 'trino-test-1.default.svc.cluster.local' }
@@ -810,7 +814,7 @@ export const getDiscoveredK8sServices = async (labelSelector: string): Promise<C
  * Calls GET /api/discovery/secrets?label=... or ?namespace=...
  */
 export const getDiscoveredK8sSecrets = async (labelSelector?: string, namespace?: string): Promise<ClusterService[]> => {
-    if (import.meta.env.DEV) {
+    if (IS_DEV) {
        console.log(`Mocking K8s Secret discovery (label=${labelSelector ?? ''}, namespace=${namespace ?? ''})`);
        return [];
     }
@@ -823,7 +827,7 @@ export const getDiscoveredK8sSecrets = async (labelSelector?: string, namespace?
 
 /** cert-manager.io ClusterIssuer/Issuer discovery (Ready=True by default). */
 export const getDiscoveredClusterIssuers = async (includeNotReady = false): Promise<ClusterService[]> => {
-    if (import.meta.env.DEV) return [];
+    if (IS_DEV) return [];
     const params = new URLSearchParams();
     if (includeNotReady) params.set('includeNotReady', 'true');
     const response = await fetch(`${API_BASE_URL}/discovery/cluster-issuers${params.toString() ? '?' + params : ''}`);
@@ -832,7 +836,7 @@ export const getDiscoveredClusterIssuers = async (includeNotReady = false): Prom
 
 /** external-secrets.io SecretStore/ClusterSecretStore discovery (Ready=True by default). */
 export const getDiscoveredSecretStores = async (includeNotReady = false): Promise<ClusterService[]> => {
-    if (import.meta.env.DEV) return [];
+    if (IS_DEV) return [];
     const params = new URLSearchParams();
     if (includeNotReady) params.set('includeNotReady', 'true');
     const response = await fetch(`${API_BASE_URL}/discovery/secret-stores${params.toString() ? '?' + params : ''}`);
@@ -840,7 +844,7 @@ export const getDiscoveredSecretStores = async (includeNotReady = false): Promis
 }
 
 export const getClusterStats = async (forceRefresh = false) => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     if (sessionStorage.getItem('isUnconfigured')) {
       throw new Error('unconfigured');
     }
@@ -853,7 +857,7 @@ export const getClusterStats = async (forceRefresh = false) => {
 };
 
 export async function getCommandStatus(id: string) {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return getMockCommandStatus(id);
   }
   // Explicit fetch keeps polling simple and avoids any header/caching surprises
@@ -866,7 +870,7 @@ export async function getCommandStatus(id: string) {
 }
 
 export async function listCommands(limit = 10, offset = 0) {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return getMockCommands(limit, offset);
   }
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
@@ -937,7 +941,7 @@ export async function refreshDependencies() {
 }
 
 export const getComponentStatuses = async () => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return getMockComponentStatuses();
   }
@@ -946,7 +950,7 @@ export const getComponentStatuses = async () => {
 };
 
 export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = false) => {
-    if (import.meta.env.DEV) {
+    if (IS_DEV) {
         if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
         return getMockHelmReleases();
     }
@@ -1183,14 +1187,14 @@ export interface ClusterLiveness {
  * so this call itself does not throw for a dead token — the caller inspects `state`.
  */
 export const getClusterLiveness = async (): Promise<ClusterLiveness> => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return { state: 'CONNECTED', message: 'dev mock' };
   }
   return fetchJson<ClusterLiveness>('/cluster/liveness');
 };
 
 export const getHelmRepos = () => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return getMockHelmRepos();
   } else {
     return fetchJson<HelmRepo[]>("/helm/repos");
@@ -1202,7 +1206,7 @@ export const getHelmRepos = () => {
  */
 export const getKubeconfigContent = async (): Promise<string> => {
   // In dev mode, return a simple example
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return "apiVersion: v1\nclusters:\n- name: mocked-cluster\n  cluster:\n    server: https://mock.server:6443";
   }
 
@@ -1220,7 +1224,7 @@ export const getKubeconfigContent = async (): Promise<string> => {
 };
 
 export const getNodes = async (limit = 200, offset = 0) => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return { items: getMockNodes(), total: getMockNodes().length };
   }
@@ -1230,7 +1234,7 @@ export const getNodes = async (limit = 200, offset = 0) => {
 };
 
 export const isViewConfigured = async () => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return !sessionStorage.getItem('isUnconfigured');
   }
   const response = await fetch(`${API_BASE_URL}/cluster/configured`);
@@ -1513,7 +1517,7 @@ export const getReleaseValues = async (namespace: string, releaseName: string): 
 
 /** Stack Definition */
 export const getStackService = async (name: string): Promise<StackServiceDef> => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return (await import('./mock')).getStackServiceMock(name);
   }
   const res = await fetch(`${API_BASE_URL}/services/${name}`, { headers: { 'X-Requested-By': 'ambari' } });
@@ -1522,7 +1526,7 @@ export const getStackService = async (name: string): Promise<StackServiceDef> =>
 };
 
 export const getStackConfigs = async (name: string): Promise<StackConfig[]> => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     return (await import('./mock')).getStackConfigsMock(name) as any;
   }
   const res = await fetch(`${API_BASE_URL}/services/${name}/configurations`, { headers: { 'X-Requested-By': 'ambari' } });
@@ -1532,7 +1536,7 @@ export const getStackConfigs = async (name: string): Promise<StackConfig[]> => {
 
 
 export const getAvailableServices = async () => {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     // Use KDPS-style mocks in dev
     return getChartsJSON();
   }
