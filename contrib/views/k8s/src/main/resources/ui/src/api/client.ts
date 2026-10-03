@@ -1674,5 +1674,30 @@ export const dropReleaseCatalog = (ns: string, rel: string, name: string, forget
   fetchJson<{ name: string }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}?forget=${forget}`, { method: 'DELETE' });
 export const testReleaseCatalog = (ns: string, rel: string, name: string) =>
   fetchJson<{ schemas: string[] }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/test`, { method: 'POST' });
+/** Releases → "Ranger policy…": one Ranger policy (allow / mask / row filter) on a Trino release's repo or its tag service. */
+export type RangerPolicyRequest = {
+  target: 'resource' | 'tag';
+  policyType: 0 | 1 | 2;
+  resources?: { catalog?: string; schema?: string; table?: string; column?: string };
+  tag?: string;
+  tagServiceName?: string;
+  users?: string;
+  groups?: string;
+  accessTypes?: string;
+  maskType?: string;
+  maskValueExpr?: string;
+  maskConditionExpr?: string;
+  rowFilterExpr?: string;
+  policyName?: string;
+  description?: string;
+};
+export type RangerPolicyResult = {
+  rangerServiceName: string; policyName: string; policyType: number; accessTypes: string;
+  via: 'ambari-server-action' | 'context-ranger-rest'; policyId?: number; requestId?: number; rangerUrl?: string;
+};
+export const createReleaseRangerPolicy = (ns: string, rel: string, body: RangerPolicyRequest) =>
+  fetchJson<RangerPolicyResult>(`/helm/releases/${encodeURIComponent(ns)}/${encodeURIComponent(rel)}/actions/ranger-policy`,
+    { method: 'POST', body: JSON.stringify(body) });
+
 export const adoptReleaseCatalog = (ns: string, rel: string, name: string) =>
   fetchJson<{ name: string; properties: string }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, { method: 'POST' });

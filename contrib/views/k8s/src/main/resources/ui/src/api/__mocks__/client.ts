@@ -28,3 +28,4 @@ export const refreshDependencies = jest.fn<Promise<any>, any[]>(() => Promise.re
 export const saveHelmRepo = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
 export const installMonitoring = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
 export const getMonitoringDiscovery = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
+export const createReleaseRangerPolicy = jest.fn<Promise<any>, [string, string, any]>(() => Promise.resolve({ rangerServiceName: 'trino-ns', policyName: 'p', policyType: 0, accessTypes: 'select', via: 'ambari-server-action', requestId: 1 }));

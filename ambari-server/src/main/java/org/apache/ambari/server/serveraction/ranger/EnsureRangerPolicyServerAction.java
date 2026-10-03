@@ -202,8 +202,11 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
                     + " with admin user " + rangerAdminUserName);
 
             // 1) Ensure the user exists (Ranger rejects policy items that reference unknown users).
-            if (userName != null) {
+                        if (userName != null) {
                 ensureUserExists(policymgrExternalUrl, auth, userName);
+            }
+            for (String g : spec.groups) {
+                ensureGroupExists(policymgrExternalUrl, auth, g);
             }
 
             // 2) Grant the access (append-to-existing or create), then poll for readability.
@@ -288,6 +291,28 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
     // ------------------------------------------------------------------
     // Ranger policy grant
     // ------------------------------------------------------------------
+
+        /** Ranger refuses a policy that names an unknown group; create it as an internal group like we do for users. */
+    private void ensureGroupExists(String baseUrl, String auth, String groupName) throws Exception {
+        HttpResponse lookup = http(baseUrl + "/service/xusers/groups?name=" + urlEncode(groupName), "GET", auth, null);
+        if (lookup.statusCode == 200 && lookup.body != null
+                && lookup.body.contains("\"name\":\"" + escape(groupName) + "\"")) {
+            actionLog.writeStdOut("Ranger group '" + groupName + "' already exists");
+            return;
+        }
+        JsonObject group = new JsonObject();
+        group.addProperty("name", groupName);
+        group.addProperty("description", "Provisioned by Ambari for KDPS policies");
+        HttpResponse created = http(baseUrl + "/service/xusers/secure/groups", "POST", auth, group.toString());
+        if (created.statusCode / 100 == 2
+                || (created.statusCode == 400 && created.body != null && created.body.toLowerCase().contains("already exists"))) {
+            actionLog.writeStdOut("Created Ranger group '" + groupName + "'");
+            LOG.info("Created Ranger group '{}'", groupName);
+            return;
+        }
+        throw new IllegalStateException("Failed to create Ranger group '" + groupName + "': HTTP " + created.statusCode
+                + ", body=" + created.body);
+    }
 
     private long ensureGrant(String baseUrl, String auth, String serviceName, String userName,
                              String accessTypes, String resourcesJson, String policyNameHint,
