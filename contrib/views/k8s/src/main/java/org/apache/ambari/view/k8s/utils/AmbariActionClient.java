@@ -1171,6 +1171,61 @@ public class AmbariActionClient {
         }
     }
 
+        /**
+     * Create (or, with {@code resetPassword}, reset the password and roles of) an INTERNAL Ranger
+     * user through the Ambari server — {@code POST /clusters/{c}/ranger_plugin_repository} in
+     * user-only mode, so no repository is touched and the Ranger admin password stays on the server.
+     * KDPS uses it for the TagSync writer account: Ranger's {@code importServiceTags} is sys-admin
+     * only, hence {@code userRoles = "ROLE_SYS_ADMIN"} for that caller.
+     *
+     * @return the Ambari request id to wait on with {@link #waitUntilComplete}
+     */
+    public int submitRangerUserUpsert(
+            String userName,
+            String password,
+            String userRoles,
+            boolean resetPassword,
+            Integer timeoutSeconds,
+            String context
+    ) throws Exception {
+        Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger user upsert");
+        Objects.requireNonNull(userName, "userName");
+        Objects.requireNonNull(password, "password");
+        JsonObject root = new JsonObject();
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("context", (context == null || context.isBlank())
+                ? ("Ensure Ranger user " + userName) : context);
+        root.add("RequestInfo", requestInfo);
+        JsonObject rangerPlugin = new JsonObject();
+        rangerPlugin.addProperty("userOnly", "true");
+        rangerPlugin.addProperty("pluginUserName", userName);
+        rangerPlugin.addProperty("pluginUserPassword", password);
+        if (userRoles != null && !userRoles.isBlank()) {
+            rangerPlugin.addProperty("userRoles", userRoles);
+        }
+        if (resetPassword) {
+            rangerPlugin.addProperty("resetPassword", "true");
+        }
+        if (timeoutSeconds != null) {
+            rangerPlugin.addProperty("timeoutSeconds", timeoutSeconds);
+        }
+        root.add("RangerPlugin", rangerPlugin);
+        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/ranger_plugin_repository";
+        LOG.info("Submitting Ranger user upsert to {} for user='{}', roles='{}', reset={}", url, userName, userRoles, resetPassword);
+        try (InputStream is = stream.readFrom(url, "POST", root.toString(),
+                withStdHeaders(Map.of("Content-Type", "application/json")))) {
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject ro = o.getAsJsonObject("Requests");
+            if (ro == null || !ro.has("id")) {
+                throw new IllegalStateException("Unexpected response for Ranger user upsert submission: " + json);
+            }
+            int id = ro.get("id").getAsInt();
+            LOG.info("Ranger user upsert request accepted by Ambari, request id={}", id);
+            return id;
+        }
+    }
+
     public int submitRangerPluginRepository(
             String rangerRepositoryName,
             String serviceType,
