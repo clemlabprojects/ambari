@@ -1013,9 +1013,11 @@ public final class OmAtlasProvisioning {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
 
-        Long existing = lookupServiceByName(rangerAdminUrl, basic, serviceName);
+                Long existing = lookupServiceByName(rangerAdminUrl, basic, serviceName);
         if (existing != null) {
-            LOG.info("OmAtlasProvisioning: Ranger service '{}' already exists (id={}) — no-op", serviceName, existing);
+            LOG.info("OmAtlasProvisioning: Ranger service '{}' already exists (id={}) — keeping it, checking its tag service",
+                    serviceName, existing);
+            relinkTagServiceIfNeeded(rangerAdminUrl, basic, existing, serviceName);
             return existing;
         }
 
@@ -1059,7 +1061,93 @@ public final class OmAtlasProvisioning {
         return id;
     }
 
-        /** The tag service of the first Hive repo that has one, or null (best effort — never fails the caller). */
+            /**
+     * An existing repo created before KDPS set tag services sits on Ranger's default {@code tag}
+     * service (or none). Move it to the Hive repo's tag service so Hive-side tags apply to it; a repo
+     * already on a non-default tag service is left alone. Best effort — never fails the caller.
+     */
+    static void relinkTagServiceIfNeeded(String rangerAdminUrl, String basic, long serviceId, String serviceName) {
+        try {
+            String want = deriveTagServiceFromHive(rangerAdminUrl, basic);
+            if (want == null) return;
+            HttpURLConnection get = (HttpURLConnection) new URL(
+                    rangerAdminUrl + "/service/public/v2/api/service/" + serviceId).openConnection();
+            configureSsl(get);
+            get.setRequestMethod("GET");
+            get.setRequestProperty("Authorization", basic);
+            get.setRequestProperty("Accept", "application/json");
+            if (get.getResponseCode() != 200) return;
+            JsonObject svc = JsonParser.parseString(readBody(get, false)).getAsJsonObject();
+            String current = svc.has("tagService") && !svc.get("tagService").isJsonNull() ? svc.get("tagService").getAsString() : "";
+            if (want.equals(current) || (!current.isBlank() && !"tag".equals(current))) return;
+            svc.addProperty("tagService", want);
+            HttpURLConnection put = (HttpURLConnection) new URL(
+                    rangerAdminUrl + "/service/public/v2/api/service/" + serviceId).openConnection();
+            configureSsl(put);
+            put.setRequestMethod("PUT");
+            put.setRequestProperty("Authorization", basic);
+            put.setRequestProperty("Content-Type", "application/json");
+            put.setDoOutput(true);
+            try (var os = put.getOutputStream()) {
+                os.write(GSON.toJson(svc).getBytes(StandardCharsets.UTF_8));
+            }
+            int code = put.getResponseCode();
+            LOG.info("OmAtlasProvisioning: relinked Ranger service '{}' from tag service '{}' to '{}' (HTTP {})",
+                    serviceName, current, want, code);
+        } catch (Exception e) {
+            LOG.warn("OmAtlasProvisioning: could not relink the tag service of '{}': {}", serviceName, e.toString());
+        }
+    }
+
+        /** Ranger refuses a policy naming an unknown group: create it as an internal group (idempotent). */
+    static void ensureRangerGroupExists(String rangerAdminUrl, String basic, String groupName) throws Exception {
+        HttpURLConnection get = (HttpURLConnection) new URL(rangerAdminUrl + "/service/xusers/groups?name="
+                + java.net.URLEncoder.encode(groupName, StandardCharsets.UTF_8)).openConnection();
+        configureSsl(get);
+        get.setRequestMethod("GET");
+        get.setRequestProperty("Authorization", basic);
+        get.setRequestProperty("Accept", "application/json");
+        if (get.getResponseCode() == 200 && readBody(get, false).contains("\"name\":\"" + groupName + "\"")) return;
+        JsonObject group = new JsonObject();
+        group.addProperty("name", groupName);
+        group.addProperty("description", "Provisioned by KDPS for Ranger policies");
+        HttpURLConnection post = (HttpURLConnection) new URL(rangerAdminUrl + "/service/xusers/secure/groups").openConnection();
+        configureSsl(post);
+        post.setRequestMethod("POST");
+        post.setRequestProperty("Authorization", basic);
+        post.setRequestProperty("Content-Type", "application/json");
+        post.setDoOutput(true);
+        try (var os = post.getOutputStream()) {
+            os.write(GSON.toJson(group).getBytes(StandardCharsets.UTF_8));
+        }
+        int code = post.getResponseCode();
+        if (code / 100 != 2 && !(code == 400 && readBody(post, true).toLowerCase().contains("already exists"))) {
+            throw new IllegalStateException("Ranger group '" + groupName + "' could not be created: HTTP " + code + " — " + readBody(post, true));
+        }
+        LOG.info("OmAtlasProvisioning: created Ranger group '{}'", groupName);
+    }
+
+    /** The tag service of a Ranger repo by name, or null. */
+    public static String getTagServiceOf(String rangerAdminUrl, String rangerUser, String rangerPassword, String serviceName) {
+        try {
+            String basic = "Basic " + Base64.getEncoder().encodeToString(
+                    (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+            HttpURLConnection get = (HttpURLConnection) new URL(
+                    rangerAdminUrl + "/service/public/v2/api/service/name/" + java.net.URLEncoder.encode(serviceName, StandardCharsets.UTF_8)).openConnection();
+            configureSsl(get);
+            get.setRequestMethod("GET");
+            get.setRequestProperty("Authorization", basic);
+            get.setRequestProperty("Accept", "application/json");
+            if (get.getResponseCode() != 200) return null;
+            JsonObject svc = JsonParser.parseString(readBody(get, false)).getAsJsonObject();
+            return svc.has("tagService") && !svc.get("tagService").isJsonNull() ? svc.get("tagService").getAsString() : null;
+        } catch (Exception e) {
+            LOG.warn("OmAtlasProvisioning: could not read the tag service of '{}': {}", serviceName, e.toString());
+            return null;
+        }
+    }
+
+    /** The tag service of the first Hive repo that has one, or null (best effort — never fails the caller). */
     static String deriveTagServiceFromHive(String rangerAdminUrl, String basic) {
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(
