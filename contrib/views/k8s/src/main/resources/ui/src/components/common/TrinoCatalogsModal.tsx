@@ -23,8 +23,9 @@ import {
   adoptReleaseCatalog, createReleaseCatalog, dropReleaseCatalog, listReleaseCatalogs, testReleaseCatalog,
   type ReleaseCatalog,
 } from '../../api/client';
-import { CATALOG_TEMPLATES, renderTemplate, type CatalogTemplate } from './trinoCatalogTemplates';
-import ConnectorGallery, { ConnectorLogo } from './ConnectorGallery';
+import { CATALOG_TEMPLATES, type CatalogTemplate } from './trinoCatalogTemplates';
+import ConnectorGallery from './ConnectorGallery';
+import CatalogDefinitionForm, { TEMPLATE_FIELD_NAMES, previewFor } from './CatalogDefinitionForm';
 import type { HelmRelease } from '../../types';
 
 const { Text, Paragraph } = Typography;
@@ -80,21 +81,17 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
   // Starburst-style flow: pick a connector card first, then fill that connector's form.
   const pickConnector = (t: CatalogTemplate) => {
     setTemplateId(t.id);
-    form.resetFields(CATALOG_TEMPLATES.flatMap(x => x.fields.map(f => f.key)).concat(['__raw']));
+    form.resetFields(TEMPLATE_FIELD_NAMES);
     setPreview('');
     setGalleryOpen(false);
     setCreating(true);
   };
 
-  const refreshPreview = () => {
-    const v = form.getFieldsValue();
-    setPreview(template.id === 'generic' ? (v.__raw || '') : renderTemplate(template, v));
-  };
 
   const doCreate = async () => {
     const v = await form.validateFields();
     const name = String(v.__name || '').trim();
-    const properties = template.id === 'generic' ? String(v.__raw || '') : (preview || renderTemplate(template, v));
+    const properties = template.id === 'generic' ? String(v.__raw || '') : (preview || previewFor(template, v));
     setBusy('create');
     try {
       const r = await createReleaseCatalog(ns, rel, { name, properties, persist });
@@ -180,37 +177,11 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
         {!creating ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setGalleryOpen(true)}>Add a connector</Button>
         ) : (
-          <Form form={form} layout="vertical" onValuesChange={refreshPreview} requiredMark="optional">
-            <div style={{ display: 'flex', gap: 14, alignItems: 'center', padding: 12, border: '1px solid #f0f0f0', borderRadius: 8, marginBottom: 12 }}>
-              <ConnectorLogo id={template.id} size={44} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600 }}>{template.label} <Text type="secondary" style={{ fontWeight: 400 }}>— {template.tagline}</Text></div>
-                <Text type="secondary" style={{ fontSize: 12 }}>{template.description}</Text>
-              </div>
-              <Button size="small" onClick={() => setGalleryOpen(true)}>Change connector</Button>
-            </div>
+          <Form form={form} layout="vertical" requiredMark="optional">
             <Form.Item name="__name" label="Catalog name" rules={[{ required: true, message: 'Give the catalog a name' }, { pattern: /^[a-z][a-z0-9_]*$/, message: 'lower-case letters, digits, underscores' }]} style={{ maxWidth: 320 }}>
               <Input placeholder="postgres_prod" />
             </Form.Item>
-            {template.id === 'generic' ? (
-              <Form.Item name="__raw" label="Catalog properties" rules={[{ required: true, message: 'connector.name=… is required' }]}>
-                <Input.TextArea rows={8} spellCheck={false} style={{ fontFamily: 'monospace' }} placeholder={'connector.name=kafka\nkafka.nodes=k1:9092'} />
-              </Form.Item>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-                {template.fields.map(f => (
-                  <Form.Item key={f.key} name={f.key} label={f.label} initialValue={f.defaultValue} rules={f.required ? [{ required: true, message: `${f.label} is required` }] : []}
-                    extra={f.secret ? (f.help || 'Prefer a Secret exposed as an env var and reference it as ${ENV:VAR}.') : f.help}>
-                    <Input placeholder={f.placeholder} spellCheck={false} />
-                  </Form.Item>
-                ))}
-              </div>
-            )}
-            {template.id !== 'generic' ? (
-              <Form.Item label={<span>Resulting properties <Text type="secondary">(editable)</Text></span>}>
-                <Input.TextArea rows={6} value={preview} onChange={(e) => setPreview(e.target.value)} spellCheck={false} style={{ fontFamily: 'monospace' }} placeholder="Fill the fields above…" />
-              </Form.Item>
-            ) : null}
+            <CatalogDefinitionForm template={template} form={form} preview={preview} setPreview={setPreview} onChangeConnector={() => setGalleryOpen(true)} />
             <Space>
               <Button type="primary" icon={<PlusOutlined />} loading={busy === 'create'} onClick={doCreate}>Create catalog</Button>
               <Checkbox checked={persist} onChange={(e) => setPersist(e.target.checked)}>save to release (survives restarts)</Checkbox>
