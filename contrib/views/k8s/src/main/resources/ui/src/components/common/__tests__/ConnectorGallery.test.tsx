@@ -12,7 +12,7 @@ describe('ConnectorGallery', () => {
       expect(screen.getByRole('button', { name: `connector ${t.label}` })).toBeInTheDocument();
       expect(screen.getAllByText(t.tagline).length).toBeGreaterThan(0); // taglines may repeat (two RDBMS)
     }
-    expect(screen.getAllByRole('img')).toHaveLength(CATALOG_TEMPLATES.length);
+    for (const t of CATALOG_TEMPLATES) expect(screen.getByRole('img', { name: t.id })).toBeInTheDocument(); // one logo per card (the modal's close icon is also an img)
     await userEvent.click(screen.getByRole('button', { name: 'connector S3 object storage' }));
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ id: 's3', connector: 'hive' }));
   });
