@@ -4027,7 +4027,7 @@ public class CommandService {
                     + " of a release deployed with the KDPS service user, chart >= 1.43.13). Pick a coordinator from the list.");
         }
         String omTrinoService = stringValue(ConfigResolutionService.getByDottedPath(request.getValues(), "baseIngestion.trinoServiceName"));
-        if (omTrinoService.isBlank()) omTrinoService = "trino-clemlab";
+        if (omTrinoService.isBlank()) omTrinoService = defaultOmTrinoServiceName(ref[1]);
         String trinoRangerRepo = trinoRangerServiceNameOf(ref[0], ref[1]);
         putDotted(request.getValues(), "ranger.tagSync.trinoIngestionServiceFqn", omTrinoService);
         putDotted(request.getValues(), "ranger.tagSync.rangerTrinoServiceName", trinoRangerRepo);
@@ -5886,7 +5886,7 @@ public class CommandService {
                             trinoParams.put("_trinoNamespace", trinoRef[0]);
                             trinoParams.put("_trinoRelease", trinoRef[1]);
                             String omTrinoService = stringValue(ConfigResolutionService.getByDottedPath(trinoVals, "baseIngestion.trinoServiceName"));
-                            if (omTrinoService.isBlank()) omTrinoService = "trino-clemlab";
+                            if (omTrinoService.isBlank()) omTrinoService = defaultOmTrinoServiceName(trinoRef[1]);
                             String trinoRangerRepo = trinoRangerServiceNameOf(trinoRef[0], trinoRef[1]);
                             trinoParams.put("_trinoRangerServiceName", trinoRangerRepo);
                             this.commandPlanFactory.createOmTrinoBaseIngestionRegister(rootCommand, trinoParams);
@@ -9720,11 +9720,19 @@ public class CommandService {
                 String s = String.valueOf(o).trim();
                 if (!s.isEmpty()) dbs.add(s);
             }
-        } else if (dbsRaw != null) {
+                } else if (dbsRaw != null) {
             for (String s : String.valueOf(dbsRaw).split(",")) {
                 String t = s.trim();
                 if (!t.isEmpty()) dbs.add(t);
             }
+        }
+        if (dbs.isEmpty()) {
+            // Blank = the Hive base-ingestion service of this release (explicit name, else hive-<cluster>),
+            // so the two wizard fields cannot drift apart.
+            String hiveSvc = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveServiceName"));
+            if (hiveSvc.isBlank()) hiveSvc = defaultOmHiveServiceName(childParams, resolvePlatformContextForStep(childParams));
+            dbs.add(hiveSvc);
+            LOG.info("OM_ATLAS_FEDERATION_REGISTER: atlasFederation.databaseServiceNames is blank — targeting '{}'", hiveSvc);
         }
 
         // Mint the JWT (chart-default Fernet unless the operator's <release>-fernet
@@ -9821,7 +9829,7 @@ public class CommandService {
         org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
 
         String serviceName = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.hiveServiceName"));
-        if (serviceName.isBlank()) serviceName = "hive-clemlab";
+        if (serviceName.isBlank()) serviceName = defaultOmHiveServiceName(childParams, rc);
         // Connection scheme/host/auth are DELIVERED BY KDPS from the selected platform context —
         // computed from Ambari hive-site for a MANAGED context (hive.scheme / hive.hs2HostPort /
         // hive.authMode), or operator-supplied for an EXTERNAL one. The baseIngestion.* form fields
@@ -10097,7 +10105,7 @@ public class CommandService {
         }
         String hostPort = host + ":" + target.httpsPort;
         String serviceName = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoServiceName"));
-        if (serviceName.isBlank()) serviceName = "trino-clemlab";
+        if (serviceName.isBlank()) serviceName = defaultOmTrinoServiceName(trinoRelease);
         String schedule = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoSchedule"));
         if (schedule.isBlank()) schedule = "0 */12 * * *";
         String catalogIncludes = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoCatalogIncludes"));
@@ -10283,6 +10291,27 @@ public class CommandService {
         }
         sb.append((char) ('a' + rnd.nextInt(26))).append((char) ('2' + rnd.nextInt(8)));
         return sb.toString();
+    }
+
+        /**
+     * Default OpenMetadata service name for a KDPS Trino release: {@code trino-<release>} — one OM
+     * service per Trino release, never a fixed vendor name.
+     */
+    static String defaultOmTrinoServiceName(String trinoRelease) {
+        String r = trinoRelease == null ? "" : trinoRelease.trim().toLowerCase(Locale.ROOT);
+        return r.isEmpty() ? "trino-kdps" : (r.startsWith("trino") ? r : "trino-" + r);
+    }
+
+    /**
+     * Default OpenMetadata service name for the platform's Hive: {@code hive-<cluster>}, the cluster
+     * being the Ambari cluster of a managed context (or the context's cluster name), else {@code hive-odp}.
+     */
+    static String defaultOmHiveServiceName(Map<String, Object> childParams,
+            org.apache.ambari.view.k8s.model.ResolvedContext rc) {
+        String cluster = childParams == null ? "" : stringValue(childParams.get("_cluster"));
+        if (cluster.isBlank() && rc != null && rc.getClusterName() != null) cluster = rc.getClusterName().trim();
+        cluster = cluster.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "-");
+        return cluster.isBlank() ? "hive-odp" : "hive-" + cluster;
     }
 
     /** Set a dotted path in a nested map, creating intermediate maps as needed. */

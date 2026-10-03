@@ -1242,7 +1242,7 @@
       "type": "group",
       "capability": "openshift",
       "collapsed": true,
-      "help": "Name of the OM databaseService whose table tags Ranger TagSync propagates (the Trino service KDPS registers, or the Hive service fed by Atlas federation, e.g. 'hive-clemlab'). Without this mapping TagSync targets a Ranger service named '<OM service>_trino', which does not exist, and every upload is rejected. Default 'trino-clemlab' matches the OM Trino connection KDPS creates.",
+      "help": "Name of the OM databaseService whose table tags Ranger TagSync propagates (the Trino service KDPS registers, or the Hive service fed by Atlas federation, e.g. 'hive-<cluster>'). Without this mapping TagSync targets a Ranger service named '<OM service>_trino', which does not exist, and every upload is rejected. Default 'trino-clemlab' matches the OM Trino connection KDPS creates.",
       "fields": [
         {
           "name": "runAsUser",
@@ -1501,7 +1501,7 @@
           "type": "k8s-discovery",
           "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
           "excludeFromValues": true,
-          "help": "Trino coordinator consumed by OM's Trino connector. KDPS automatically registers the 'trino-clemlab' connection in OM at install when this is set."
+          "help": "Trino coordinator consumed by OM's Trino connector. KDPS registers it in OM as the Trino service trino-<release> when 'Enable Trino base ingestion' is on."
         },
         {
           "name": "ui_trino_host_override",
@@ -1632,8 +1632,8 @@
           "name": "atlasFederation.databaseServiceNames",
           "label": "Target OM database services",
           "type": "string",
-          "defaultValue": "hive-clemlab",
-          "help": "Comma-separated OM databaseService names that receive Atlas hive_table entities. For Atlas+Hive federation this must match the base Hive ingestion service name above (default 'hive-clemlab').",
+          "defaultValue": "",
+          "help": "Comma-separated OM databaseService names that receive Atlas hive_table entities. Blank = the Hive base ingestion service of this release (its explicit name, else hive-<cluster>), so both fields stay aligned.",
           "condition": {
             "field": "atlasFederation.enabled",
             "value": true
@@ -1660,8 +1660,8 @@
           "name": "baseIngestion.hiveServiceName",
           "label": "OM database service name",
           "type": "string",
-          "defaultValue": "hive-clemlab",
-          "help": "Name of the OpenMetadata Hive databaseService to create. Atlas Federation's 'Target OM database services' must reference this exact name so Atlas hive_table entities enrich these tables.",
+          "defaultValue": "",
+          "help": "Name of the OpenMetadata Hive databaseService to create. Blank = hive-<cluster> (the platform context's cluster, e.g. hive-clemlabtest). Atlas Federation's 'Target OM database services' follows it when left blank.",
           "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
         },
         {
@@ -1770,8 +1770,8 @@
           "name": "baseIngestion.trinoServiceName",
           "label": "OM database service name (Trino)",
           "type": "string",
-          "defaultValue": "trino-clemlab",
-          "help": "Name of the OpenMetadata Trino databaseService KDPS creates. It becomes the 'OM database service whose tags are synced' for Ranger TagSync.",
+          "defaultValue": "",
+          "help": "Name of the OpenMetadata Trino databaseService KDPS creates. Blank = trino-<release> (the selected Trino release, e.g. trino-sec). It becomes the 'OM database service whose tags are synced' for Ranger TagSync.",
           "condition": { "field": "baseIngestion.trinoEnabled", "value": true }
         },
         {
@@ -1855,12 +1855,12 @@
           "label": "OM database service whose tags are synced",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. Auto-filled from the OM Trino connection KDPS creates; usually 'trino-clemlab'. Default 'trino-clemlab' matches the KDPS Trino release name. With 'Enable Trino base ingestion' on, KDPS sets this to the OM Trino service it registers (your value is overridden).",
+          "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. With 'Enable Trino base ingestion' on, KDPS sets it to the OM Trino service it registers (trino-<release> unless you named it) and your value is overridden. Without Trino base ingestion, type the OM service name explicitly.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
           },
-          "defaultValue": "trino-clemlab"
+          "defaultValue": ""
         },
         {
           "name": "rangerTagSyncRangerTrinoService",
