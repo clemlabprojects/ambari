@@ -8,7 +8,7 @@ module.exports = {
   },
   // optional: speed up transforms
   transform: {
-    '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
+    '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: 'tsconfig.jest.json' }],
   },
   // optional: if some ESM deps need transforming
   transformIgnorePatterns: [

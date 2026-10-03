@@ -35,6 +35,8 @@ export interface CatalogTemplate {
   id: string;
   label: string;
   connector: string;
+  /** One line under the card title in the connector gallery. */
+  tagline: string;
   description: string;
   fixed?: Record<string, string>;   // properties always emitted
   fields: TemplateField[];
@@ -42,7 +44,7 @@ export interface CatalogTemplate {
 
 export const CATALOG_TEMPLATES: CatalogTemplate[] = [
   {
-    id: 'postgresql', label: 'PostgreSQL', connector: 'postgresql',
+    id: 'postgresql', label: 'PostgreSQL', connector: 'postgresql', tagline: 'Relational database',
     description: 'Query a PostgreSQL database.',
     fields: [
       { key: 'connection-url', label: 'JDBC URL', placeholder: 'jdbc:postgresql://db.example.com:5432/analytics', required: true },
@@ -51,7 +53,7 @@ export const CATALOG_TEMPLATES: CatalogTemplate[] = [
     ],
   },
   {
-    id: 'mysql', label: 'MySQL / MariaDB', connector: 'mysql',
+    id: 'mysql', label: 'MySQL / MariaDB', connector: 'mysql', tagline: 'Relational database',
     description: 'Query a MySQL or MariaDB database.',
     fields: [
       { key: 'connection-url', label: 'JDBC URL', placeholder: 'jdbc:mysql://db.example.com:3306', required: true },
@@ -60,7 +62,7 @@ export const CATALOG_TEMPLATES: CatalogTemplate[] = [
     ],
   },
   {
-    id: 's3', label: 'S3 object storage (Hive tables, file metastore)', connector: 'hive',
+    id: 's3', label: 'S3 object storage', connector: 'hive', tagline: 'Hive tables on S3, file metastore',
     description: 'Tables stored on S3 or any S3-compatible store, with the metastore kept as files in the bucket (no Hive Metastore service needed).',
     fixed: { 'hive.metastore': 'file', 'fs.native-s3.enabled': 'true' },
     fields: [
@@ -73,7 +75,7 @@ export const CATALOG_TEMPLATES: CatalogTemplate[] = [
     ],
   },
   {
-    id: 'hdfs', label: 'HDFS cluster (remote Hive Metastore)', connector: 'hive',
+    id: 'hdfs', label: 'HDFS cluster', connector: 'hive', tagline: 'Hive tables on another Hadoop cluster',
     description: 'Another Hadoop cluster\'s Hive tables on HDFS, through its Hive Metastore. Kerberos fields are optional.',
     fixed: { 'fs.hadoop.enabled': 'true' },
     fields: [
@@ -89,7 +91,7 @@ export const CATALOG_TEMPLATES: CatalogTemplate[] = [
     ],
   },
   {
-    id: 'impala', label: 'Impala / CDP tables (Hive Metastore)', connector: 'hive',
+    id: 'impala', label: 'Impala / CDP', connector: 'hive', tagline: 'Impala tables through the CDP Hive Metastore',
     description: 'Tables managed by Impala on a CDP cluster. Trino reads them through the CDP Hive Metastore (Impala has no connector of its own; its tables are Hive Metastore tables).',
     fixed: { 'fs.hadoop.enabled': 'true', 'hive.metastore.authentication.type': 'KERBEROS', 'hive.hdfs.authentication.type': 'KERBEROS', 'hive.hdfs.impersonation.enabled': 'true' },
     fields: [
@@ -103,7 +105,7 @@ export const CATALOG_TEMPLATES: CatalogTemplate[] = [
     ],
   },
   {
-    id: 'generic', label: 'Other connector (raw properties)', connector: '',
+    id: 'generic', label: 'Other connector', connector: '', tagline: 'Any Trino connector, raw properties',
     description: 'Any Trino connector: write the .properties lines yourself (connector.name required).',
     fields: [],
   },
