@@ -5864,6 +5864,36 @@ public class CommandService {
                         }
                     }
 
+                    // KDPS service user on a Trino release (chart kdps.serviceUser): the view runs catalog
+                    // statements as this user while impersonating the operator, so it needs 'impersonate'
+                    // on THIS release's Ranger repo (ranger.serviceName). Only meaningful with Ranger ACLs.
+                    {
+                        Map<String, Object> vals = request.getValues() != null ? request.getValues() : Collections.emptyMap();
+                        boolean kdpsSu = asBoolean(ConfigResolutionService.getByDottedPath(vals, "kdps.serviceUser.enabled"), false);
+                        String acl = stringValue(ConfigResolutionService.getByDottedPath(vals, "accessControl.type"));
+                        String ownRepo = stringValue(ConfigResolutionService.getByDottedPath(vals, "ranger.serviceName"));
+                        if (kdpsSu && "ranger".equalsIgnoreCase(acl) && !ownRepo.isBlank()) {
+                            String kdpsUser = stringValue(ConfigResolutionService.getByDottedPath(vals, "kdps.serviceUser.username"));
+                            if (kdpsUser.isBlank()) kdpsUser = "kdps";
+                            Map<String, Object> grantParams = new LinkedHashMap<>();
+                            grantParams.put("releaseName", request.getReleaseName());
+                            grantParams.put("namespace", request.getNamespace());
+                            grantParams.put("serviceKey", request.getServiceKey());
+                            grantParams.put("_principal", kdpsUser);
+                            grantParams.put("_trinoRangerServiceName", ownRepo);
+                            String pc = stringValue(params.get("_platformContextId"));
+                            if (!pc.isBlank()) grantParams.put("_platformContextId", pc);
+                            if (params.get("_cluster") != null) grantParams.put("_cluster", params.get("_cluster"));
+                            if (params.get("_baseUri") != null) grantParams.put("_baseUri", params.get("_baseUri"));
+                            if (params.get("_callerHeaders") != null) grantParams.put("_callerHeaders", params.get("_callerHeaders"));
+                            this.commandPlanFactory.createRangerPolicyGrantTrinoImpersonate(rootCommand, grantParams);
+                            LOG.info("Queued impersonate grant for the KDPS service user '{}' on Ranger repo '{}' (release '{}')",
+                                    kdpsUser, ownRepo, request.getReleaseName());
+                        } else if (kdpsSu) {
+                            LOG.info("kdps.serviceUser is on for '{}' but accessControl.type='{}'/ranger.serviceName='{}' — no Ranger grant to queue",
+                                    request.getReleaseName(), acl, ownRepo);
+                        }
+                    }
                     // Atlas federation: queue only when the wizard toggle is on. The step
                     // body re-checks atlasFederation.enabled at execute time so a reapply
                     // after the toggle was flipped off still fails loudly instead of

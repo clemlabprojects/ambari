@@ -541,6 +541,101 @@ public class HelmResource {
      * component. Only valid for releases whose service.json declares a
      * {@code ranger-tagsync-source} entry.
      */
+    // ------------------------------------------------------------------------------------------
+    // Live Trino catalog management (as the logged-in operator; Ranger authorises). Trino releases only.
+    // ------------------------------------------------------------------------------------------
+    @GET
+    @Path("/releases/{namespace}/{release}/catalogs")
+    public Response listTrinoCatalogs(@PathParam("namespace") String namespace, @PathParam("release") String releaseName) {
+        try {
+            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+                    .list(namespace, releaseName, viewContext.getUsername())).build();
+        } catch (SecurityException se) {
+            return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
+        } catch (Exception e) {
+            LOG.warn("Listing Trino catalogs for {}/{} failed: {}", namespace, releaseName, e.toString());
+            return Response.serverError().entity(java.util.Map.of("error", String.valueOf(e.getMessage()))).build();
+        }
+    }
+
+    /** Body: {name, properties (text), persist (default true)}. Runs CREATE CATALOG as the operator, then writes the values. */
+    @POST
+    @Path("/releases/{namespace}/{release}/catalogs")
+    public Response createTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
+                                       java.util.Map<String, Object> body) {
+        try {
+            authHelper.checkWritePermission();
+            String name = body == null ? null : java.util.Objects.toString(body.get("name"), null);
+            String props = body == null ? null : java.util.Objects.toString(body.get("properties"), null);
+            boolean persist = body == null || body.get("persist") == null || Boolean.parseBoolean(String.valueOf(body.get("persist")));
+            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+                    .create(namespace, releaseName, name, props, persist, viewContext.getUsername())).build();
+        } catch (SecurityException se) {
+            return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
+        } catch (Exception e) {
+            LOG.warn("Creating Trino catalog on {}/{} failed: {}", namespace, releaseName, e.toString());
+            return Response.serverError().entity(java.util.Map.of("error", String.valueOf(e.getMessage()))).build();
+        }
+    }
+
+    /** DROP CATALOG as the operator; {@code ?forget=true} (default) also removes it from the release values. */
+    @DELETE
+    @Path("/releases/{namespace}/{release}/catalogs/{name}")
+    public Response dropTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
+                                     @PathParam("name") String name, @QueryParam("forget") @DefaultValue("true") boolean forget) {
+        try {
+            authHelper.checkWritePermission();
+            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+                    .drop(namespace, releaseName, name, forget, viewContext.getUsername())).build();
+        } catch (SecurityException se) {
+            return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
+        } catch (Exception e) {
+            LOG.warn("Dropping Trino catalog {} on {}/{} failed: {}", name, namespace, releaseName, e.toString());
+            return Response.serverError().entity(java.util.Map.of("error", String.valueOf(e.getMessage()))).build();
+        }
+    }
+
+    /** SHOW SCHEMAS FROM <name> as the operator — a connectivity + permission check. */
+    @POST
+    @Path("/releases/{namespace}/{release}/catalogs/{name}/test")
+    public Response testTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
+                                     @PathParam("name") String name) {
+        try {
+            return Response.ok(java.util.Map.of("schemas", new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+                    .test(namespace, releaseName, name, viewContext.getUsername()))).build();
+        } catch (SecurityException se) {
+            return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
+        } catch (Exception e) {
+            return Response.serverError().entity(java.util.Map.of("error", String.valueOf(e.getMessage()))).build();
+        }
+    }
+
+    /** Adopt an unmanaged (runtime-only) catalog into the release values so it survives restarts. */
+    @POST
+    @Path("/releases/{namespace}/{release}/catalogs/{name}/adopt")
+    public Response adoptTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
+                                      @PathParam("name") String name) {
+        try {
+            authHelper.checkWritePermission();
+            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+                    .adopt(namespace, releaseName, name, viewContext.getUsername())).build();
+        } catch (SecurityException se) {
+            return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
+        } catch (Exception e) {
+            return Response.serverError().entity(java.util.Map.of("error", String.valueOf(e.getMessage()))).build();
+        }
+    }
+
     @POST
     @Path("/releases/{namespace}/{release}/actions/om-ranger-tagsync")
     public Response reapplyReleaseOmRangerTagSync(@PathParam("namespace") String namespace,

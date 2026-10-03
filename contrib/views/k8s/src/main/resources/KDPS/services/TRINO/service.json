@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.12",
+  "version": "1.43.13",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -2867,6 +2867,13 @@
           "help": "Turns on Trino dynamic catalog management: the coordinator keeps a writable catalog store seeded from the catalogs below, so CREATE CATALOG / DROP CATALOG work immediately without a restart, and Ranger authorises them per user (catalog-level create/drop). Catalogs created only at runtime do not survive a pod restart - define them in this section to keep them. Needs chart 1.43.12 or later; the deploy is refused otherwise."
         },
         {
+          "name": "kdps.serviceUser.enabled",
+          "label": "Let KDPS manage catalogs on the running Trino as the logged-in operator",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "Adds a dedicated Trino login for KDPS (a file password user beside your LDAP/OIDC/Kerberos setup) and grants it 'impersonate' in Ranger. The Catalogs action on the release then runs CREATE/DROP CATALOG as you, so Ranger decides what you may do. Needs chart 1.43.13 or later and Trino HTTPS (on by default)."
+        },
+        {
           "name": "customCatalogs.refs",
           "label": "Reusable catalogs",
           "type": "trino-catalog-select",
@@ -2917,7 +2924,8 @@
   "featureChartVersions": {
     "_comment": "Atlas tag sync renders a tag-projector CronJob that only exists from 1.43.11; on an older chart the toggle would deploy cleanly and do nothing.",
     "tagSync.enabled": ">=1.43.11",
-    "dynamicCatalogs.enabled": ">=1.43.12"
+    "dynamicCatalogs.enabled": ">=1.43.12",
+    "kdps.serviceUser.enabled": ">=1.43.13"
   },
   "platformOps": [
     { "op": "ranger.tagProjectorSecret", "when": "tagSync.enabled",
