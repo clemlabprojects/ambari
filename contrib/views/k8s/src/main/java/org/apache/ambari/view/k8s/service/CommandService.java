@@ -5872,7 +5872,10 @@ public class CommandService {
                         boolean kdpsSu = asBoolean(ConfigResolutionService.getByDottedPath(vals, "kdps.serviceUser.enabled"), false);
                         String acl = stringValue(ConfigResolutionService.getByDottedPath(vals, "accessControl.type"));
                         String ownRepo = stringValue(ConfigResolutionService.getByDottedPath(vals, "ranger.serviceName"));
-                        if (kdpsSu && "ranger".equalsIgnoreCase(acl) && !ownRepo.isBlank()) {
+                        // The repo name is normally written by the RANGER_REPOSITORY_CREATION step, i.e. AFTER
+                        // planning; use the same fallback that step uses so the grant targets the right repo.
+                        if (ownRepo.isBlank()) ownRepo = request.getReleaseName() + "-" + request.getNamespace();
+                        if (kdpsSu && "ranger".equalsIgnoreCase(acl)) {
                             String kdpsUser = stringValue(ConfigResolutionService.getByDottedPath(vals, "kdps.serviceUser.username"));
                             if (kdpsUser.isBlank()) kdpsUser = "kdps";
                             Map<String, Object> grantParams = new LinkedHashMap<>();
