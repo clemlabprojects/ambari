@@ -36,6 +36,7 @@ import BackgroundOperationsModal from '../components/common/BackgroundOperations
 import { serviceIcon } from '../assets/services';
 
 import TrinoCatalogsModal from '../components/common/TrinoCatalogsModal';
+import RangerPolicyModal from '../components/common/RangerPolicyModal';
 import './Page.css';
 
 const { Title, Text } = Typography;
@@ -67,6 +68,7 @@ const HelmReleasesPage: React.FC = () => {
     { pods: [], deployments: [], loading: false });
   const [historyModalRelease, setHistoryModalRelease] = useState<HelmRelease | null>(null);
   const [catalogsRelease, setCatalogsRelease] = useState<HelmRelease | null>(null);
+  const [policyRelease, setPolicyRelease] = useState<HelmRelease | null>(null);
 
   // When the detail modal opens, pull the release's live pods + deployments (by the Helm instance
   // label) so the modal shows real health/workloads instead of mostly-empty Flux reconcile metadata.
@@ -645,6 +647,13 @@ const HelmReleasesPage: React.FC = () => {
           icon: <DatabaseOutlined />,
           label: 'Catalogs…',
           onClick: () => setCatalogsRelease(record),
+        }, {
+          // One Ranger policy (allow / mask / row filter) without leaving KDPS; the backend routes to
+          // the Ambari server (managed context) or to the context's Ranger (external context).
+          key: 'ranger-policy',
+          icon: <SafetyCertificateOutlined />,
+          label: 'Ranger policy…',
+          onClick: () => setPolicyRelease(record),
         }] : []),
         {
           key: 'update',
@@ -1260,6 +1269,7 @@ const HelmReleasesPage: React.FC = () => {
             </Modal>
 
             <TrinoCatalogsModal release={catalogsRelease} onClose={() => setCatalogsRelease(null)} />
+            <RangerPolicyModal release={policyRelease} onClose={() => setPolicyRelease(null)} />
             <Modal
               title={`Revision history — ${historyModalRelease?.namespace || ''}/${historyModalRelease?.name || ''}`}
               open={!!historyModalRelease}

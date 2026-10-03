@@ -808,14 +808,36 @@ public final class OmAtlasProvisioning {
      *                    levels, so a wrong name fails the call rather than granting nothing
      * @param accessTypes access type names as the service definition spells them
      */
-    public static long createOrFindPolicy(String rangerAdminUrl, String rangerUser, String rangerPassword,
+        public static long createOrFindPolicy(String rangerAdminUrl, String rangerUser, String rangerPassword,
                                           String serviceName, String policyName, String description,
                                           java.util.Map<String, java.util.List<String>> resources,
                                           java.util.List<String> accessTypes, String grantee,
                                           long timeoutMs) throws Exception {
+        return createOrFindPolicy(rangerAdminUrl, rangerUser, rangerPassword, serviceName, policyName, description,
+                resources, accessTypes, grantee, null, 0, null, null, null, null, timeoutMs);
+    }
+
+    /**
+     * {@link #createOrFindPolicy} with the full policy shape: {@code policyType} 0 = access, 1 = data
+     * masking ({@code maskType}, optional {@code maskValueExpr}/{@code maskConditionExpr}), 2 = row
+     * filtering ({@code rowFilterExpr}); {@code groups} may replace or complement the user. On a tag
+     * service the component-prefixed spellings apply ({@code trino:select}, {@code trino:MASK_HASH}).
+     */
+    public static long createOrFindPolicy(String rangerAdminUrl, String rangerUser, String rangerPassword,
+                                          String serviceName, String policyName, String description,
+                                          java.util.Map<String, java.util.List<String>> resources,
+                                          java.util.List<String> accessTypes, String grantee,
+                                          java.util.List<String> groups, int policyType, String maskType,
+                                          String maskValueExpr, String maskConditionExpr, String rowFilterExpr,
+                                          long timeoutMs) throws Exception {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
-        ensureRangerUserExists(rangerAdminUrl, basic, grantee);
+                if (grantee != null && !grantee.isBlank()) {
+            ensureRangerUserExists(rangerAdminUrl, basic, grantee);
+        }
+        if (groups != null) {
+            for (String g : groups) if (g != null && !g.isBlank()) ensureRangerGroupExists(rangerAdminUrl, basic, g.trim());
+        }
 
         Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, serviceName, policyName);
         if (existing != null) {
@@ -828,9 +850,9 @@ public final class OmAtlasProvisioning {
         p.addProperty("service", serviceName);
         p.addProperty("name", policyName);
         p.addProperty("description", description);
-        p.addProperty("isAuditEnabled", true);
+                p.addProperty("isAuditEnabled", true);
         p.addProperty("isEnabled", true);
-        p.addProperty("policyType", 0);
+        p.addProperty("policyType", policyType);
         p.addProperty("policyPriority", 0);
         JsonObject resourceObj = new JsonObject();
         for (java.util.Map.Entry<String, java.util.List<String>> e : resources.entrySet()) {
@@ -842,16 +864,31 @@ public final class OmAtlasProvisioning {
             r.addProperty("isRecursive", false);
             resourceObj.add(e.getKey(), r);
         }
-        p.add("resources", resourceObj);
+                p.add("resources", resourceObj);
         JsonObject item = new JsonObject();
-        item.add("users", arrayOf(grantee));
-        item.add("groups", new JsonArray());
+        item.add("users", grantee == null || grantee.isBlank() ? new JsonArray() : arrayOf(grantee));
+        JsonArray groupArray = new JsonArray();
+        if (groups != null) for (String g : groups) if (g != null && !g.isBlank()) groupArray.add(g.trim());
+        item.add("groups", groupArray);
         item.add("roles", new JsonArray());
         item.add("accesses", arrayOfObjects(accessTypes.toArray(new String[0]), "isAllowed", true));
         item.addProperty("delegateAdmin", false);
+        if (policyType == 1) {
+            JsonObject mask = new JsonObject();
+            mask.addProperty("dataMaskType", maskType);
+            if (maskConditionExpr != null && !maskConditionExpr.isBlank()) mask.addProperty("conditionExpr", maskConditionExpr);
+            if (maskValueExpr != null && !maskValueExpr.isBlank()) mask.addProperty("valueExpr", maskValueExpr);
+            item.add("dataMaskInfo", mask);
+        } else if (policyType == 2) {
+            JsonObject filter = new JsonObject();
+            filter.addProperty("filterExpr", rowFilterExpr);
+            item.add("rowFilterInfo", filter);
+        }
         JsonArray items = new JsonArray();
         items.add(item);
-        p.add("policyItems", items);
+        p.add("policyItems", policyType == 0 ? items : new JsonArray());
+        p.add("dataMaskPolicyItems", policyType == 1 ? items : new JsonArray());
+        p.add("rowFilterPolicyItems", policyType == 2 ? items : new JsonArray());
 
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy").openConnection();

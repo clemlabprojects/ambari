@@ -636,6 +636,55 @@ public class HelmResource {
         }
     }
 
+        /** Releases → re-register the OpenMetadata Hive ("hive") or Trino ("trino") base ingestion. */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/om-base-ingestion/{kind}")
+    public Response reapplyReleaseOmBaseIngestion(@PathParam("namespace") String namespace,
+                                                  @PathParam("release") String releaseName,
+                                                  @PathParam("kind") String kind,
+                                                  @Context HttpHeaders requestHeaders,
+                                                  @Context UriInfo uriInfo) {
+        try {
+            authHelper.checkWritePermission();
+            String commandId = commandService.submitReleaseOmBaseIngestionReapply(namespace, releaseName, kind,
+                    requestHeaders.getRequestHeaders(), AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext));
+            URI commandLocation = UriBuilder.fromUri(getCommandsUrl(uriInfo)).path(commandId).build();
+            return Response.status(Response.Status.ACCEPTED)
+                    .entity(Map.of("id", commandId, "href", commandLocation.toString())).location(commandLocation).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", fe.getMessage())).build();
+        } catch (IllegalArgumentException | IllegalStateException bad) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", bad.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("OM base-ingestion reapply failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /** Releases → "Ranger policy…": create one Ranger policy (allow / mask / row filter) for a Trino release. */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/ranger-policy")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response createReleaseRangerPolicy(@PathParam("namespace") String namespace,
+                                              @PathParam("release") String releaseName,
+                                              Map<String, Object> body,
+                                              @Context HttpHeaders requestHeaders) {
+        try {
+            authHelper.checkWritePermission();
+            Map<String, Object> result = commandService.createReleaseRangerPolicy(namespace, releaseName, body,
+                    requestHeaders.getRequestHeaders(), AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext));
+            return Response.ok(result).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", fe.getMessage())).build();
+        } catch (IllegalArgumentException bad) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", bad.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("Ranger policy creation failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
     @POST
     @Path("/releases/{namespace}/{release}/actions/om-ranger-tagsync")
     public Response reapplyReleaseOmRangerTagSync(@PathParam("namespace") String namespace,

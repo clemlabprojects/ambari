@@ -219,6 +219,40 @@ public class AmbariActionClient {
         }
     }
 
+        /**
+     * The stderr (else the stdout tail) of the failed task(s) of an Ambari request — what Ranger
+     * actually answered — so callers can show it instead of "request did not complete".
+     */
+    public String failureDetail(int requestId) {
+        try {
+            String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/requests/" + requestId
+                    + "/tasks?fields=Tasks/status,Tasks/stderr,Tasks/stdout";
+            try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(Map.of()))) {
+                JsonObject o = JsonParser.parseString(new String(is.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+                StringBuilder sb = new StringBuilder();
+                for (com.google.gson.JsonElement e : o.getAsJsonArray("items")) {
+                    JsonObject t = e.getAsJsonObject().getAsJsonObject("Tasks");
+                    String status = t.has("status") ? t.get("status").getAsString() : "";
+                    if (!"FAILED".equals(status) && !"TIMEDOUT".equals(status) && !"ABORTED".equals(status)) continue;
+                    String err = t.has("stderr") && !t.get("stderr").isJsonNull() ? t.get("stderr").getAsString().trim() : "";
+                    if (err.isEmpty() && t.has("stdout") && !t.get("stdout").isJsonNull()) {
+                        String out = t.get("stdout").getAsString().trim();
+                        err = out.length() > 400 ? out.substring(out.length() - 400) : out;
+                    }
+                    // keep the last line(s): that is where the Ranger message sits
+                    String[] lines = err.split("\\n");
+                    String last = lines.length == 0 ? err : lines[lines.length - 1];
+                    if (sb.length() > 0) sb.append(" | ");
+                    sb.append(last.replaceFirst("^\\d{4}-\\d{2}-\\d{2} [\\d:,]+ - ", ""));
+                }
+                return sb.toString();
+            }
+        } catch (Exception e) {
+            LOG.debug("failureDetail({}) unavailable: {}", requestId, e.toString());
+            return "";
+        }
+    }
+
     public boolean waitUntilComplete(int requestId, long timeout, TimeUnit unit) throws Exception {
         long deadline = System.nanoTime() + unit.toNanos(timeout);
 

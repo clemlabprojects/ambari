@@ -2066,9 +2066,11 @@ public class CommandService {
                 String tsPassword = generateRangerPassword();
                 int req = ambariActionClient.submitRangerUserUpsert(tsUser, tsPassword, "ROLE_SYS_ADMIN", true, 90,
                         "KDPS tag sync: provision Ranger tag-writer user " + tsUser + " for " + request.getReleaseName());
-                if (!ambariActionClient.waitUntilComplete(req, 120, java.util.concurrent.TimeUnit.SECONDS)) {
+                                if (!ambariActionClient.waitUntilComplete(req, 120, java.util.concurrent.TimeUnit.SECONDS)) {
+                    String detail = ambariActionClient.failureDetail(req);
                     throw new IllegalStateException("Ambari request " + req + " (Ranger tag-writer user '" + tsUser
-                            + "') did not complete — Atlas tag sync cannot be wired; see the Ambari request log.");
+                            + "') did not complete — Atlas tag sync cannot be wired"
+                            + (detail.isBlank() ? "; see the Ambari request log." : ": " + detail));
                 }
                 String managedRangerUrl = rangerCtx.getRangerUrl() != null && !rangerCtx.getRangerUrl().isBlank()
                         ? rangerCtx.getRangerUrl().trim()
@@ -3297,6 +3299,239 @@ public class CommandService {
      *
      * @return command id for polling
      */
+        /**
+     * Releases → "Re-register Hive/Trino ingestion": replay the OpenMetadata base-ingestion step of
+     * an OPENMETADATA release ({@code kind} = "hive" | "trino") with the deployed values. Same root
+     * shape as the TagSync reapply; the step itself re-resolves everything from the release values.
+     */
+    public String submitReleaseOmBaseIngestionReapply(String namespace, String releaseName, String kind,
+                                                      MultivaluedMap<String, String> callerHeaders, URI baseUri) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        boolean trino = "trino".equalsIgnoreCase(kind);
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
+        }
+        Map<String, Object> values = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        if (values == null) values = Collections.emptyMap();
+        String toggle = trino ? "baseIngestion.trinoEnabled" : "baseIngestion.hiveEnabled";
+        Object on = ConfigResolutionService.getByDottedPath(values, toggle);
+        if (on == null || !"true".equalsIgnoreCase(String.valueOf(on))) {
+            throw new IllegalArgumentException("'" + toggle + "' is off in the deployed values of " + namespace + "/"
+                    + releaseName + " — enable it with Upgrade / Config first.");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String clusterName = null;
+        try {
+            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        } catch (Exception ex) {
+            LOG.warn("OM base-ingestion reapply: could not resolve the Ambari cluster name: {}", ex.toString());
+        }
+        final String commandId = UUID.randomUUID().toString();
+        final String now = Instant.now().toString();
+        CommandEntity rootCommand = new CommandEntity();
+        rootCommand.setId(commandId);
+        rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setType((trino ? CommandType.OM_TRINO_BASE_INGESTION_REAPPLY : CommandType.OM_HIVE_BASE_INGESTION_REAPPLY).name());
+        rootCommand.setTitle("Re-register OpenMetadata " + (trino ? "Trino" : "Hive") + " ingestion for " + releaseName);
+        CommandStatusEntity rootStatus = new CommandStatusEntity();
+        rootStatus.setId(commandId + "-status");
+        rootStatus.setViewInstance(ctx.getInstanceName());
+        rootStatus.setCreatedBy(ctx.getUsername());
+        rootStatus.setState(CommandState.PENDING.name());
+        rootStatus.setCreatedAt(now);
+        rootStatus.setUpdatedAt(now);
+        rootStatus.setAttempt(0);
+        rootCommand.setCommandStatusId(rootStatus.getId());
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("releaseName", releaseName);
+        params.put("namespace", namespace);
+        params.put("serviceKey", releaseMetadata.getServiceKey());
+        if (releaseMetadata.getPlatformContextId() != null && !releaseMetadata.getPlatformContextId().isBlank()) {
+            params.put("_platformContextId", releaseMetadata.getPlatformContextId());
+        }
+        if (clusterName != null) params.put("_cluster", clusterName);
+        params.put("_baseUri", baseUri.toString());
+        params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+                if (trino) {
+            String host = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoHost"));
+            if (host.isBlank()) host = stringValue(ConfigResolutionService.getByDottedPath(values, "openmetadata.config.connectors.trino.hostPort"));
+            if (!host.isBlank()) params.put("_trinoHost", host);
+        }
+        rootCommand.setParamsJson(gson.toJson(params));
+        rootCommand.setChildListJson(gson.toJson(new ArrayList<String>()));
+        store(rootStatus);
+        store(rootCommand);
+        if (trino) {
+            this.commandPlanFactory.createOmTrinoBaseIngestionRegister(rootCommand, params);
+        } else {
+            this.commandPlanFactory.createOmHiveBaseIngestionRegister(rootCommand, params);
+        }
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Releases → "Ranger policy…" on a Trino release: create (or append to) ONE Ranger policy on the
+     * release's own repo, or on its tag service for tag-based rules, synchronously. Body keys:
+     * {@code target} ("resource" | "tag"), {@code resources} (map level → values, e.g.
+     * {catalog:[tpch], schema:[sf1], table:[customer], column:[name]}) or {@code tag},
+     * {@code policyType} (0 allow, 1 mask, 2 row filter), {@code users} / {@code groups} (csv),
+     * {@code accessTypes} (csv; default select), {@code maskType}, {@code maskValueExpr},
+     * {@code maskConditionExpr}, {@code rowFilterExpr}, {@code policyName}, {@code description},
+     * {@code tagServiceName} (override for the tag target). Managed context → Ambari
+     * {@code ranger_policy} action; external context → direct Ranger REST. Returns what was done.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> createReleaseRangerPolicy(String namespace, String releaseName, Map<String, Object> body,
+                                                         MultivaluedMap<String, String> callerHeaders, URI baseUri) throws Exception {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(releaseName, "releaseName");
+        if (body == null) throw new IllegalArgumentException("Empty request");
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
+        }
+        Map<String, Object> values = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        if (values == null) values = Collections.emptyMap();
+        Object ac = ConfigResolutionService.getByDottedPath(values, "accessControl.type");
+        if (ac == null || !"ranger".equalsIgnoreCase(String.valueOf(ac))) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not authorized by Ranger (accessControl.type).");
+        }
+        String repo = stringValue(ConfigResolutionService.getByDottedPath(values, "ranger.serviceName"));
+        if (repo.isBlank()) repo = releaseName + "-" + namespace;
+        Map<String, Object> params = new LinkedHashMap<>();
+        if (releaseMetadata.getPlatformContextId() != null && !releaseMetadata.getPlatformContextId().isBlank()) {
+            params.put("_platformContextId", releaseMetadata.getPlatformContextId());
+        }
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(params);
+        boolean direct = rc != null && rc.hasDirectRangerCreds();
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String cluster = null;
+        if (!direct) {
+            try {
+                cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+            } catch (Exception ex) {
+                throw new IllegalStateException("Unable to resolve the Ambari cluster name for the Ranger policy.", ex);
+            }
+        }
+        // ---- shape
+        int policyType = (int) Math.max(0, Math.min(2, asLong(body.get("policyType"), 0)));
+        String target = stringValue(body.get("target")).toLowerCase(Locale.ROOT);
+        boolean tagTarget = "tag".equals(target);
+        String users = stringValue(body.get("users"));
+        String groups = stringValue(body.get("groups"));
+        if (users.isBlank() && groups.isBlank()) throw new IllegalArgumentException("Give at least one user or group.");
+        if (users.contains(",")) throw new IllegalArgumentException("One user per policy (groups may be a comma-separated list).");
+        String accessTypes = stringValue(body.get("accessTypes"));
+        if (accessTypes.isBlank() || policyType != 0) accessTypes = policyType == 0 ? accessTypes : "select";
+        if (accessTypes.isBlank()) throw new IllegalArgumentException("Pick at least one access type.");
+        String maskType = stringValue(body.get("maskType"));
+        String maskValueExpr = stringValue(body.get("maskValueExpr"));
+        String maskConditionExpr = stringValue(body.get("maskConditionExpr"));
+        String rowFilterExpr = stringValue(body.get("rowFilterExpr"));
+        if (policyType == 1 && maskType.isBlank()) throw new IllegalArgumentException("A masking policy needs a mask type.");
+        if (policyType == 1 && "CUSTOM".equalsIgnoreCase(maskType.replaceFirst("^[a-z]+:", "")) && maskValueExpr.isBlank()) {
+            throw new IllegalArgumentException("A CUSTOM mask needs the value expression.");
+        }
+        if (policyType == 2 && rowFilterExpr.isBlank()) throw new IllegalArgumentException("A row-filter policy needs the filter expression.");
+        // ---- resources
+        Map<String, List<String>> resources = new LinkedHashMap<>();
+        String serviceName;
+        if (tagTarget) {
+            String tag = stringValue(body.get("tag"));
+            if (tag.isBlank()) throw new IllegalArgumentException("A tag-based policy needs the tag name (as Ranger stores it, e.g. Sensitive).");
+            resources.put("tag", List.of(tag));
+            String tagService = stringValue(body.get("tagServiceName"));
+            if (tagService.isBlank() && direct) {
+                tagService = stringValue(org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.getTagServiceOf(
+                        rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(), repo));
+            }
+            if (tagService.isBlank() && cluster != null) tagService = cluster + "_tag"; // Ambari's tag service naming
+            if (tagService.isBlank()) throw new IllegalArgumentException("Could not determine the tag service; set tagServiceName.");
+            serviceName = tagService;
+            // tag-service policies spell everything component-prefixed
+            StringBuilder prefixed = new StringBuilder();
+            for (String a : accessTypes.split(",")) {
+                String x = a.trim(); if (x.isEmpty()) continue;
+                if (prefixed.length() > 0) prefixed.append(',');
+                prefixed.append(x.contains(":") ? x : "trino:" + x);
+            }
+            accessTypes = prefixed.toString();
+            if (!maskType.isBlank() && !maskType.contains(":")) maskType = "trino:" + maskType;
+        } else {
+            Object resRaw = body.get("resources");
+            if (!(resRaw instanceof Map)) throw new IllegalArgumentException("A resource policy needs 'resources' (catalog / schema / table / column).");
+            for (Map.Entry<String, Object> e : ((Map<String, Object>) resRaw).entrySet()) {
+                List<String> vals = new ArrayList<>();
+                if (e.getValue() instanceof List) { for (Object v : (List<Object>) e.getValue()) { String s = stringValue(v); if (!s.isBlank()) vals.add(s); } }
+                else { for (String s : stringValue(e.getValue()).split(",")) if (!s.trim().isEmpty()) vals.add(s.trim()); }
+                if (!vals.isEmpty()) resources.put(e.getKey(), vals);
+            }
+            if (resources.isEmpty()) throw new IllegalArgumentException("A resource policy needs at least a catalog.");
+            if (policyType == 1 && (!resources.containsKey("column") || resources.get("column").size() != 1 || "*".equals(resources.get("column").get(0)))) {
+                throw new IllegalArgumentException("A masking policy targets exactly ONE column (no wildcard).");
+            }
+            serviceName = repo;
+        }
+        String policyName = stringValue(body.get("policyName"));
+        if (policyName.isBlank()) {
+            String what = tagTarget ? "tag-" + resources.get("tag").get(0) : String.join(".", resources.values().stream().map(l -> String.join("+", l)).toList());
+            policyName = "kdps-" + releaseName + "-" + (policyType == 1 ? "mask" : policyType == 2 ? "filter" : "allow") + "-"
+                    + what.replaceAll("[^A-Za-z0-9_.+*-]", "_");
+        }
+        String description = stringValue(body.get("description"));
+        if (description.isBlank()) description = "KDPS: created from the Releases page for " + namespace + "/" + releaseName;
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("rangerServiceName", serviceName);
+        result.put("policyName", policyName);
+        result.put("policyType", policyType);
+        result.put("accessTypes", accessTypes);
+        if (direct) {
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+                    rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                    serviceName, policyName, description, resources, Arrays.asList(accessTypes.split(",")),
+                    users.isBlank() ? null : users, groups.isBlank() ? null : Arrays.asList(groups.split(",")),
+                    policyType, maskType.isBlank() ? null : maskType, maskValueExpr.isBlank() ? null : maskValueExpr,
+                    maskConditionExpr.isBlank() ? null : maskConditionExpr, rowFilterExpr.isBlank() ? null : rowFilterExpr,
+                    java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+            result.put("policyId", pid);
+            result.put("via", "context-ranger-rest");
+            result.put("rangerUrl", rc.getRangerUrl());
+            return result;
+        }
+        if (rc != null && !rc.isRangerManaged()) {
+            throw new IllegalArgumentException("The platform context of this release has no Ranger (neither Ambari-managed nor direct credentials).");
+        }
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        AmbariActionClient.PolicyShape shape = new AmbariActionClient.PolicyShape();
+        shape.policyType = policyType;
+        shape.maskType = maskType.isBlank() ? null : maskType;
+        shape.maskValueExpr = maskValueExpr.isBlank() ? null : maskValueExpr;
+        shape.maskConditionExpr = maskConditionExpr.isBlank() ? null : maskConditionExpr;
+        shape.rowFilterExpr = rowFilterExpr.isBlank() ? null : rowFilterExpr;
+        shape.groups = groups.isBlank() ? null : groups;
+        int req = ambari.submitRangerPolicyGrant(serviceName, users.isBlank() ? null : users, accessTypes, gson.toJson(resources),
+                policyName, description, 60, "KDPS Releases: Ranger policy '" + policyName + "' for " + releaseName, shape);
+                if (!ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS)) {
+            String detail = ambari.failureDetail(req);
+            throw new IllegalArgumentException(detail.isBlank()
+                    ? "Ambari ranger_policy request " + req + " did not complete — see Ambari → Background operations."
+                    : "Ranger refused the policy (Ambari request " + req + "): " + detail);
+        }
+        result.put("requestId", req);
+        result.put("via", "ambari-server-action");
+        return result;
+    }
+
+    private static long asLong(Object o, long def) {
+        if (o == null) return def;
+        try { return (long) Double.parseDouble(String.valueOf(o)); } catch (Exception e) { return def; }
+    }
+
     public String submitReleaseOmRangerTagSyncReapply(String namespace,
                                                       String releaseName,
                                                       MultivaluedMap<String, String> callerHeaders,
