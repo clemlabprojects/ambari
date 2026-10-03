@@ -22,6 +22,9 @@ import {
 } from "antd";
 import { DatabaseOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { deleteTrinoCatalog, getTrinoCatalogs, saveTrinoCatalog, type TrinoCatalog } from "../api/client";
+import ConnectorGallery from "../components/common/ConnectorGallery";
+import CatalogDefinitionForm, { TEMPLATE_FIELD_NAMES, previewFor } from "../components/common/CatalogDefinitionForm";
+import { CATALOG_TEMPLATES, type CatalogTemplate } from "../components/common/trinoCatalogTemplates";
 import "./Page.css";
 
 const { Title, Text, Paragraph } = Typography;
@@ -52,8 +55,10 @@ export default function TrinoCatalogsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<TrinoCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [form] = Form.useForm<TrinoCatalog>();
-  const propertiesText = Form.useWatch("propertiesText", form);
+  const [form] = Form.useForm<any>();
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [template, setTemplate] = useState<CatalogTemplate>(CATALOG_TEMPLATES[CATALOG_TEMPLATES.length - 1]); // generic when editing existing text
+  const [preview, setPreview] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,14 +74,27 @@ export default function TrinoCatalogsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Create = pick a connector card first (Starburst-style), then fill its form.
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
+    setPreview("");
+    setGalleryOpen(true);
+  };
+  const pickConnector = (t: CatalogTemplate) => {
+    setTemplate(t);
+    form.resetFields(TEMPLATE_FIELD_NAMES);
+    setPreview("");
+    setGalleryOpen(false);
     setModalOpen(true);
   };
+  // Edit = the saved properties, as raw text (the generic connector form).
   const openEdit = (c: TrinoCatalog) => {
     setEditing(c);
-    form.setFieldsValue({ name: c.name, description: c.description, propertiesText: c.propertiesText });
+    setTemplate(CATALOG_TEMPLATES[CATALOG_TEMPLATES.length - 1]);
+    form.resetFields();
+    form.setFieldsValue({ name: c.name, description: c.description, __raw: c.propertiesText });
+    setPreview(c.propertiesText || "");
     setModalOpen(true);
   };
 
@@ -84,7 +102,8 @@ export default function TrinoCatalogsPage() {
     const v = await form.validateFields();
     setSaving(true);
     try {
-      const saved = await saveTrinoCatalog({ ...(editing?.id ? { id: editing.id } : {}), ...v });
+      const propertiesText = template.id === "generic" ? String(v.__raw || "") : (preview || previewFor(template, v));
+      const saved = await saveTrinoCatalog({ ...(editing?.id ? { id: editing.id } : {}), name: v.name, description: v.description, propertiesText });
       message.success(editing ? `Catalog '${saved.name}' updated` : `Catalog '${saved.name}' created`);
       setModalOpen(false);
       await load();
@@ -167,7 +186,7 @@ export default function TrinoCatalogsPage() {
       />
 
       <Modal
-        title={editing ? `Edit catalog '${editing.name}'` : "New reusable catalog"}
+        title={editing ? `Edit catalog '${editing.name}'` : `New reusable catalog — ${template.label}`}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={submit}
@@ -191,24 +210,11 @@ export default function TrinoCatalogsPage() {
           <Form.Item name="description" label="Description">
             <Input placeholder="Production PostgreSQL (analytics schema)" maxLength={1024} />
           </Form.Item>
-          <Form.Item
-            name="propertiesText" label="Catalog properties"
-            extra={
-              <Space direction="vertical" size={0}>
-                <Text type="secondary">One key=value per line, exactly as in a Trino catalog .properties file. Connector detected: <Tag>{connectorOf(propertiesText) || "none yet"}</Tag></Text>
-                <Text type="secondary">Keep passwords out: reference a Secret with ${"{"}ENV:VAR{"}"} instead of pasting them.</Text>
-              </Space>
-            }
-            rules={[
-              { required: true, message: "Add the catalog's properties (at least connector.name)" },
-              { validator: (_, v) => connectorOf(v) ? Promise.resolve() : Promise.reject(new Error("A connector.name line is required")) },
-              { max: 3000, message: "At most 3000 characters" },
-            ]}
-          >
-            <Input.TextArea rows={10} spellCheck={false} placeholder={PLACEHOLDER} style={{ fontFamily: "monospace" }} />
-          </Form.Item>
+          <CatalogDefinitionForm template={template} form={form} preview={preview} setPreview={setPreview}
+            onChangeConnector={() => { setModalOpen(false); setGalleryOpen(true); }} />
         </Form>
       </Modal>
+      <ConnectorGallery open={galleryOpen} onPick={pickConnector} onClose={() => setGalleryOpen(false)} />
     </div>
   );
 }
