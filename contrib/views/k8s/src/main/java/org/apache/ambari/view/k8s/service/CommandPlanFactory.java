@@ -1042,6 +1042,17 @@ public class CommandPlanFactory {
      * @param params      root params propagated to the step (must carry
      *                    {@code namespace}, {@code releaseName})
      */
+    /**
+     * Queue the OpenMetadata Trino base-ingestion registration (see
+     * {@link CommandType#OM_TRINO_BASE_INGESTION_REGISTER}). Same one-child shape as the Hive step.
+     */
+    public void createOmTrinoBaseIngestionRegister(CommandEntity rootCommand, Map<String, Object> params) {
+        queueAtlasFederationStep(rootCommand, params,
+                CommandType.OM_TRINO_BASE_INGESTION_REGISTER,
+                "OpenMetadata: register base Trino ingestion",
+                "-trino-base-");
+    }
+
     public void createOmHiveBaseIngestionRegister(CommandEntity rootCommand,
                                                   Map<String, Object> params) {
         final String now = Instant.now().toString();

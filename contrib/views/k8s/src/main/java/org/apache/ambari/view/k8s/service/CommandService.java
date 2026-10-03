@@ -73,6 +73,7 @@ import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -3875,6 +3876,11 @@ public class CommandService {
         // API behaves exactly like one driven from the wizard.
         applyCustomCatalogs(request);
 
+        // OpenMetadata Trino base ingestion: validate the target release and write the TagSync
+        // mapping into the values BEFORE anything is persisted, so a bad selection fails the
+        // submit with a readable message instead of leaving a half-planned command.
+        applyTrinoBaseIngestion(request);
+
         // Fail-fast on a Terminating namespace. The backends create the namespace
         // anyway as part of the helm install, but they do so several steps into
         // the plan — by which point the operator has already seen Krb5 ConfigMap
@@ -3949,6 +3955,58 @@ public class CommandService {
      * a section with no {@code connector.name}, and any attempt to redefine the Hive/Iceberg catalogs
      * that KDPS wires from the platform context.
      */
+    /**
+     * OPENMETADATA with {@code baseIngestion.trinoEnabled}: resolve the KDPS Trino release behind
+     * the "Trino Coordinator" selection, refuse unresolvable targets up front, and write the
+     * OM-service → Trino-Ranger-repo pair into {@code ranger.tagSync.*} so the TagSync register
+     * step and the chart's tagsync ConfigMap agree. No-op for other services or when the toggle
+     * is off. The post-deploy step itself is queued by the planner.
+     */
+    void applyTrinoBaseIngestion(HelmDeployRequest request) {
+        if (request == null || request.getServiceKey() == null || request.getServiceKey().isBlank()
+                || request.getValues() == null) return;
+        Object enabledRaw = ConfigResolutionService.getByDottedPath(request.getValues(), "baseIngestion.trinoEnabled");
+        if (enabledRaw == null || !"true".equalsIgnoreCase(String.valueOf(enabledRaw))) return;
+        StackServiceDef serviceDef;
+        try {
+            serviceDef = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
+        } catch (Exception e) {
+            LOG.warn("applyTrinoBaseIngestion: could not load service definition '{}': {}", request.getServiceKey(), e.toString());
+            return;
+        }
+        if (!hasPlatformOp(serviceDef, "trino.baseIngestion")) return;
+        Map<String, Object> fv = request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap();
+        String trinoHost = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_host_override"));
+        if (trinoHost.isBlank()) trinoHost = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_host"));
+        if (trinoHost.isBlank()) {
+            // API-driven deploys may carry the connector host in values instead of the form.
+            trinoHost = stringValue(ConfigResolutionService.getByDottedPath(request.getValues(),
+                    "openmetadata.config.connectors.trino.hostPort"));
+        }
+        if (trinoHost.isBlank()) {
+            throw new IllegalArgumentException("Trino base ingestion ('baseIngestion.trinoEnabled') needs a Trino"
+                    + " coordinator: pick one under 'Trino Coordinator' (or fill the host:port override), or turn"
+                    + " 'Enable Trino base ingestion' off.");
+        }
+        String[] ref = trinoReleaseFromServiceHost(trinoHost);
+        if (ref == null) {
+            throw new IllegalArgumentException("Trino base ingestion: '" + trinoHost + "' is not the coordinator Service"
+                    + " of a KDPS Trino release in this cluster (expected <service>.<namespace>.svc.cluster.local[:port]"
+                    + " of a release deployed with the KDPS service user, chart >= 1.43.13). Pick a coordinator from the list.");
+        }
+        String omTrinoService = stringValue(ConfigResolutionService.getByDottedPath(request.getValues(), "baseIngestion.trinoServiceName"));
+        if (omTrinoService.isBlank()) omTrinoService = "trino-clemlab";
+        String trinoRangerRepo = trinoRangerServiceNameOf(ref[0], ref[1]);
+        putDotted(request.getValues(), "ranger.tagSync.trinoIngestionServiceFqn", omTrinoService);
+        putDotted(request.getValues(), "ranger.tagSync.rangerTrinoServiceName", trinoRangerRepo);
+        if (request.getFormValues() != null) {
+            // Keep the form in step so the wizard's summary / re-upgrade seeds show what was applied.
+            request.getFormValues().put("ui_trino_host", trinoHost);
+        }
+        LOG.info("applyTrinoBaseIngestion: '{}' -> Trino {}/{} ; TagSync mapping OM '{}' -> Ranger '{}'",
+                trinoHost, ref[0], ref[1], omTrinoService, trinoRangerRepo);
+    }
+
     private void applyCustomCatalogs(HelmDeployRequest request) {
         if (request.getFormValues() == null) return;
         // (1) reusable catalogs selected in the wizard (ids) -> snapshot their properties + remember refs
@@ -5751,6 +5809,62 @@ public class CommandService {
                         }
                     }
 
+                    // Trino base ingestion (the Trino twin of the Hive step above): register the KDPS
+                    // Trino release picked under "Trino Coordinator" as an OM Trino databaseService so
+                    // OM entities carry the Trino FQN shape (<service>.<catalog>.<schema>.<table>) and
+                    // the Ranger TagSync OpenMetadata source maps them 1:1 onto Trino resources. The
+                    // OM-service -> Trino-Ranger-repo mapping is written into the release values NOW,
+                    // so the TagSync register step (which reads the deployed values) and the chart's
+                    // tagsync ConfigMap agree without the operator typing either name. Declared via
+                    // platformOp (op=trino.baseIngestion), gated on baseIngestion.trinoEnabled=true.
+                    if (hasPlatformOp(serviceDef, "trino.baseIngestion")) {
+                        Map<String, Object> trinoVals = request.getValues() != null
+                                ? request.getValues() : Collections.emptyMap();
+                        Map<String, Object> trinoFv = request.getFormValues() != null
+                                ? request.getFormValues() : Collections.emptyMap();
+                        Object trinoEnabledRaw = ConfigResolutionService.getByDottedPath(trinoVals, "baseIngestion.trinoEnabled");
+                        if (trinoEnabledRaw != null && "true".equalsIgnoreCase(String.valueOf(trinoEnabledRaw))) {
+                            String trinoHost = stringValue(ConfigResolutionService.getByDottedPath(trinoFv, "ui_trino_host_override"));
+                            if (trinoHost.isBlank()) {
+                                trinoHost = stringValue(ConfigResolutionService.getByDottedPath(trinoFv, "ui_trino_host"));
+                            }
+                            if (trinoHost.isBlank()) {
+                                trinoHost = stringValue(ConfigResolutionService.getByDottedPath(trinoVals,
+                                        "openmetadata.config.connectors.trino.hostPort"));
+                            }
+                            // Validated (and the TagSync mapping written) by applyTrinoBaseIngestion at submit;
+                            // this is the same resolution again, so a failure here is a race, not a user error.
+                            String[] trinoRef = trinoReleaseFromServiceHost(trinoHost);
+                            if (trinoRef == null) {
+                                LOG.warn("Trino base ingestion: '{}' no longer resolves to a KDPS Trino release — step not queued",
+                                        trinoHost);
+                                trinoRef = new String[0];
+                            }
+                            if (trinoRef.length == 2) {
+                            Map<String, Object> trinoParams = new LinkedHashMap<>();
+                            trinoParams.put("releaseName", request.getReleaseName());
+                            trinoParams.put("namespace", request.getNamespace());
+                            trinoParams.put("serviceKey", request.getServiceKey());
+                            String trinoPcId = stringValue(ConfigResolutionService.getByDottedPath(trinoFv, "platformContextId"));
+                            if (!trinoPcId.isBlank()) trinoParams.put("_platformContextId", trinoPcId);
+                            if (params.get("_cluster") != null) trinoParams.put("_cluster", params.get("_cluster"));
+                            if (params.get("_baseUri") != null) trinoParams.put("_baseUri", params.get("_baseUri"));
+                            if (params.get("_callerHeaders") != null) trinoParams.put("_callerHeaders", params.get("_callerHeaders"));
+                            trinoParams.put("_trinoHost", trinoHost);
+                            trinoParams.put("_trinoNamespace", trinoRef[0]);
+                            trinoParams.put("_trinoRelease", trinoRef[1]);
+                            String omTrinoService = stringValue(ConfigResolutionService.getByDottedPath(trinoVals, "baseIngestion.trinoServiceName"));
+                            if (omTrinoService.isBlank()) omTrinoService = "trino-clemlab";
+                            String trinoRangerRepo = trinoRangerServiceNameOf(trinoRef[0], trinoRef[1]);
+                            trinoParams.put("_trinoRangerServiceName", trinoRangerRepo);
+                            this.commandPlanFactory.createOmTrinoBaseIngestionRegister(rootCommand, trinoParams);
+                            LOG.info("Queued OM_TRINO_BASE_INGESTION_REGISTER for release '{}' -> Trino {}/{} (OM service '{}',"
+                                    + " Ranger repo '{}')", request.getReleaseName(), trinoRef[0], trinoRef[1],
+                                    omTrinoService, trinoRangerRepo);
+                            }
+                        }
+                    }
+
                     // Superset (or any service building a Hive database connection) needs its
                     // Kerberos principal granted SELECT on the Hive Ranger repo: Superset runs
                     // schema/column reflection as the SERVICE principal (queries impersonate the
@@ -7279,6 +7393,10 @@ public class CommandService {
                 }
                 case OM_HIVE_BASE_INGESTION_REGISTER -> {
                     String result = registerOmHiveBaseIngestion(childParams);
+                    if (result != null) childSt.setResultJson(result);
+                }
+                case OM_TRINO_BASE_INGESTION_REGISTER -> {
+                    String result = registerOmTrinoBaseIngestion(childParams);
                     if (result != null) childSt.setResultJson(result);
                 }
                 case ATLAS_USER_PROVISION_OM -> {
@@ -9895,6 +10013,260 @@ public class CommandService {
             LOG.warn("OM_HIVE_BASE_INGESTION: Ranger Hive grant for '{}' failed ({}). Pipeline still deployed; "
                     + "grant access manually if needed.", principal, e.toString());
         }
+    }
+
+    /**
+     * OM_TRINO_BASE_INGESTION_REGISTER: register the KDPS Trino release behind the wizard's
+     * "Trino Coordinator" as an OM <b>Trino</b> databaseService + DatabaseMetadata pipeline.
+     *
+     * <p>Connection = basic auth with the release's KDPS service user over HTTPS (Trino refuses
+     * password auth on plain HTTP). The coordinator certificate is issued by the Ambari internal
+     * CA (KDPS TLS block), which the OM ingestion pods trust, so TLS stays verified. Before registering, the service user is
+     * granted the metadata-only Ranger permissions the ingestion needs (SHOW CATALOGS/SCHEMAS/
+     * TABLES/COLUMNS, information_schema, system.metadata) on the Trino repo — delegated to the
+     * Ambari server on a managed context, direct REST on an external one — non-fatally, like the
+     * Hive step. Catalog {@code system} is excluded from ingestion by default.
+     */
+    String registerOmTrinoBaseIngestion(Map<String, Object> childParams) throws Exception {
+        String namespace = (String) childParams.get("namespace");
+        String releaseName = (String) childParams.get("releaseName");
+        Map<String, Object> values = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        if (values == null) values = Collections.emptyMap();
+        Object enabledRaw = ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoEnabled");
+        if (enabledRaw == null || !"true".equalsIgnoreCase(String.valueOf(enabledRaw))) {
+            throw new IllegalStateException("baseIngestion.trinoEnabled is false in the current release values — "
+                    + "enable 'Trino base ingestion' in the wizard and upgrade the release.");
+        }
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        String trinoHost = stringValue(childParams.get("_trinoHost"));
+        String trinoNs = stringValue(childParams.get("_trinoNamespace"));
+        String trinoRelease = stringValue(childParams.get("_trinoRelease"));
+        if (trinoNs.isBlank() || trinoRelease.isBlank()) {
+            if (trinoHost.isBlank()) {
+                trinoHost = stringValue(ConfigResolutionService.getByDottedPath(values, "openmetadata.config.connectors.trino.hostPort"));
+            }
+            String[] ref = trinoReleaseFromServiceHost(trinoHost);
+            if (ref == null) {
+                throw new IllegalStateException("Trino base ingestion: '" + trinoHost + "' is not the coordinator Service of a"
+                        + " KDPS Trino release in this cluster. Pick a coordinator under 'Trino Coordinator' and re-run.");
+            }
+            trinoNs = ref[0]; trinoRelease = ref[1];
+        }
+        org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.Target target =
+                new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(ctx).resolve(trinoNs, trinoRelease);
+        // host = the coordinator Service's cluster DNS name; port = the HTTPS port (password auth is HTTPS-only).
+        String host = trinoHost;
+        int colon = host.lastIndexOf(':');
+        if (colon > 0 && host.indexOf(']') < colon) host = host.substring(0, colon);
+        if (host.isBlank()) {
+            String svc = coordinatorServiceName(trinoNs, trinoRelease);
+            if (svc == null) throw new IllegalStateException("No coordinator Service found for Trino release " + trinoNs + "/" + trinoRelease);
+            host = svc + "." + trinoNs + ".svc.cluster.local";
+        }
+        String hostPort = host + ":" + target.httpsPort;
+        String serviceName = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoServiceName"));
+        if (serviceName.isBlank()) serviceName = "trino-clemlab";
+        String schedule = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoSchedule"));
+        if (schedule.isBlank()) schedule = "0 */12 * * *";
+        String catalogIncludes = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoCatalogIncludes"));
+        String schemaIncludes = stringValue(ConfigResolutionService.getByDottedPath(values, "baseIngestion.trinoSchemaIncludes"));
+        String rangerRepo = stringValue(childParams.get("_trinoRangerServiceName"));
+        if (rangerRepo.isBlank()) {
+            rangerRepo = target.rangerService != null && !target.rangerService.isBlank()
+                    ? target.rangerService : trinoRelease + "-" + trinoNs;
+        }
+        LOG.info("OM_TRINO_BASE_INGESTION_REGISTER: service='{}' trino={}/{} hostPort='{}' user='{}' rangerRepo='{}' schedule='{}'",
+                serviceName, trinoNs, trinoRelease, hostPort, target.serviceUser, rangerRepo, schedule);
+        grantTrinoRangerMetadataReadForOmIngestion(childParams, rc, rangerRepo, target.serviceUser, releaseName);
+        String fernetKey = null;
+        try {
+            io.fabric8.kubernetes.api.model.Secret fernetSec =
+                    this.kubernetesService.getSecret(namespace, releaseName + "-fernet");
+            if (fernetSec != null && fernetSec.getData() != null && fernetSec.getData().containsKey("fernet-key")) {
+                fernetKey = new String(java.util.Base64.getDecoder().decode(fernetSec.getData().get("fernet-key")),
+                        java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+        } catch (Exception ex) {
+            LOG.warn("OM_TRINO_BASE_INGESTION_REGISTER: could not read '{}/{}-fernet' Secret, using chart default: {}",
+                    namespace, releaseName, ex.toString());
+        }
+        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
+                this.kubernetesService.getClient(), namespace, releaseName, fernetKey, java.time.Duration.ofSeconds(120));
+        org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.Result result =
+                org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.register(
+                        this.kubernetesService.getClient(), namespace, releaseName, jwt,
+                        serviceName, "Trino", "trino", hostPort,
+                        // TLS stays VERIFIED: the KDPS TLS block issues the coordinator certificate from the
+                        // Ambari internal CA with the Service DNS names as SANs, and the OM ingestion pods
+                        // already trust that CA (REQUESTS_CA_BUNDLE -> <release>-truststore ca.crt).
+                        "basic", null, target.serviceUser, target.servicePassword,
+                        schedule, schemaIncludes, catalogIncludes, "system", false,
+                        java.time.Duration.ofSeconds(180));
+        Map<String, Object> resultMap = new LinkedHashMap<>();
+        resultMap.put("databaseServiceId", result.databaseServiceId);
+        resultMap.put("databaseServiceName", result.databaseServiceName);
+        resultMap.put("pipelineId", result.pipelineId);
+        resultMap.put("deployStatus", result.deployStatus);
+        resultMap.put("triggerStatus", result.triggerStatus);
+        resultMap.put("trinoNamespace", trinoNs);
+        resultMap.put("trinoRelease", trinoRelease);
+        resultMap.put("hostPort", hostPort);
+        resultMap.put("rangerTrinoServiceName", rangerRepo);
+        return gson.toJson(resultMap);
+    }
+
+    /**
+     * Grant the Trino KDPS service user the metadata-only permissions OM's DatabaseMetadata
+     * ingestion exercises on the Trino Ranger repo: SHOW CATALOGS / SCHEMAS / TABLES / COLUMNS (a
+     * column-level 'show' is required or Ranger's column filter hides every column),
+     * {@code information_schema} reads (view definitions) and {@code system.metadata}
+     * (table comments) — plus query execution. No data read is granted: the service user also
+     * impersonates end users for KDPS catalog management, so it must not become a read-all
+     * account. Dual routing like the Hive grant; non-fatal (the pipeline is still deployed).
+     */
+    private void grantTrinoRangerMetadataReadForOmIngestion(Map<String, Object> childParams,
+            org.apache.ambari.view.k8s.model.ResolvedContext rc, String trinoService, String principal,
+            String omRelease) {
+        String cluster = stringValue(childParams.get("_cluster"));
+        String baseUriStr = stringValue(childParams.get("_baseUri"));
+        String[][] grants = {
+            {"queryid", "{\"queryid\":[\"*\"]}", "execute"},
+            {"catalogs", "{\"catalog\":[\"*\"]}", "show,use"},
+            {"schemas", "{\"catalog\":[\"*\"],\"schema\":[\"*\"]}", "show"},
+            {"tables", "{\"catalog\":[\"*\"],\"schema\":[\"*\"],\"table\":[\"*\"]}", "show"},
+            // Ranger's filterColumns hides every column the user has NO permission on, so SHOW COLUMNS
+            // (OM's column ingestion) needs a column-level permission; 'show' is enough — no data read.
+            {"columns", "{\"catalog\":[\"*\"],\"schema\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}", "show"},
+            {"information-schema", "{\"catalog\":[\"*\"],\"schema\":[\"information_schema\"],\"table\":[\"*\"],\"column\":[\"*\"]}", "select"},
+            {"system-metadata", "{\"catalog\":[\"system\"],\"schema\":[\"metadata\",\"jdbc\"],\"table\":[\"*\"],\"column\":[\"*\"]}", "select"},
+        };
+        boolean direct = rc != null && rc.hasDirectRangerCreds();
+        boolean viaAmbari = !direct && rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUriStr.isBlank();
+        if (!direct && !viaAmbari) {
+            LOG.warn("OM_TRINO_BASE_INGESTION: Ranger is not part of the platform context — grant '{}' the metadata "
+                    + "permissions on Ranger service '{}' manually (queryid execute; catalog/schema/table show; "
+                    + "information_schema + system.metadata select), or the Trino plugin will deny the ingestion.",
+                    principal, trinoService);
+            return;
+        }
+        for (String[] g : grants) {
+            String policyName = "kdps-openmetadata-" + omRelease + "-trino-" + g[0];
+            String description = "KDPS: OpenMetadata Trino metadata-ingestion (" + g[0] + ")";
+            try {
+                if (direct) {
+                    java.util.Map<String, java.util.List<String>> resources = gson.fromJson(g[1],
+                            new TypeToken<java.util.Map<String, java.util.List<String>>>() {}.getType());
+                    long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+                            rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                            trinoService, policyName, description, resources, Arrays.asList(g[2].split(",")),
+                            principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+                    LOG.info("OM_TRINO_BASE_INGESTION: Ranger policy '{}' id={} for '{}' on '{}' (direct REST)",
+                            policyName, pid, principal, trinoService);
+                } else {
+                    Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                    AmbariActionClient ambari = new AmbariActionClient(ctx,
+                            java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
+                    int req = ambari.submitRangerPolicyGrant(trinoService, principal, g[2], g[1], policyName,
+                            description, 60, "KDPS OpenMetadata Trino ingestion: grant " + g[2] + " (" + g[0] + ") to " + principal);
+                    if (ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS)) {
+                        LOG.info("OM_TRINO_BASE_INGESTION: granted '{}' ({}) to '{}' on '{}' via Ambari (req {})",
+                                g[2], g[0], principal, trinoService, req);
+                    } else {
+                        LOG.warn("OM_TRINO_BASE_INGESTION: Ambari ranger_policy request {} ({}) for '{}' did not complete; "
+                                + "grant it manually if the ingestion is denied.", req, g[0], principal);
+                    }
+                }
+            } catch (Exception e) {
+                LOG.warn("OM_TRINO_BASE_INGESTION: Ranger grant '{}' for '{}' on '{}' failed ({}). Pipeline still deployed; "
+                        + "grant it manually if needed.", policyName, principal, trinoService, e.toString());
+            }
+        }
+    }
+
+    /**
+     * {namespace, release} of the KDPS Trino release whose coordinator Service answers at
+     * {@code <service>.<namespace>.svc.cluster.local[:port]} (the value the "Trino Coordinator"
+     * discovery field yields), or null when no such Service exists or it carries no
+     * {@code app.kubernetes.io/instance} label.
+     */
+    String[] trinoReleaseFromServiceHost(String hostPort) {
+        if (hostPort == null || hostPort.isBlank()) return null;
+        String host = hostPort.trim();
+        int colon = host.lastIndexOf(':');
+        if (colon > 0 && host.indexOf(']') < colon) host = host.substring(0, colon);
+        String[] parts = host.split("\\.");
+        if (parts.length < 2 || parts[0].isBlank() || parts[1].isBlank()) return null;
+        try {
+            io.fabric8.kubernetes.api.model.Service svc = kubernetesService.getClient().services()
+                    .inNamespace(parts[1]).withName(parts[0]).get();
+            if (svc == null || svc.getMetadata() == null || svc.getMetadata().getLabels() == null) return null;
+            String release = svc.getMetadata().getLabels().get("app.kubernetes.io/instance");
+            if (release == null || release.isBlank()) return null;
+            return new String[] {parts[1], release};
+        } catch (Exception e) {
+            LOG.warn("Could not resolve Trino release behind '{}': {}", hostPort, e.toString());
+            return null;
+        }
+    }
+
+    /** The coordinator Service name of a KDPS Trino release, or null. */
+    private String coordinatorServiceName(String namespace, String release) {
+        try {
+            for (io.fabric8.kubernetes.api.model.Service s : kubernetesService.getClient().services().inNamespace(namespace)
+                    .withLabel("app.kubernetes.io/instance", release)
+                    .withLabel("app.kubernetes.io/component", "coordinator").list().getItems()) {
+                return s.getMetadata().getName();
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not list coordinator Services of {}/{}: {}", namespace, release, e.toString());
+        }
+        return null;
+    }
+
+    /**
+     * The Ranger repo a KDPS Trino release reports to: its {@code ranger.serviceName} value, else
+     * the chart default {@code <release>-<namespace>}.
+     */
+    String trinoRangerServiceNameOf(String namespace, String release) {
+        try {
+            Map<String, Object> v = kubernetesService.getHelmReleaseValues(namespace, release);
+            Object rs = v == null ? null : ConfigResolutionService.getByDottedPath(v, "ranger.serviceName");
+            if (rs != null && !String.valueOf(rs).isBlank()) return String.valueOf(rs).trim();
+        } catch (Exception e) {
+            LOG.warn("Could not read helm values of Trino release {}/{}: {}", namespace, release, e.toString());
+        }
+        return release + "-" + namespace;
+    }
+
+        /**
+     * A Ranger-acceptable random password (Ranger requires >= 8 chars with at least one letter and
+     * one digit): 28 alphanumeric chars from SecureRandom, with a letter and a digit guaranteed.
+     */
+    static String generateRangerPassword() {
+        final String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+        java.security.SecureRandom rnd = new java.security.SecureRandom();
+        StringBuilder sb = new StringBuilder(28);
+        for (int i = 0; i < 26; i++) {
+            sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
+        }
+        sb.append((char) ('a' + rnd.nextInt(26))).append((char) ('2' + rnd.nextInt(8)));
+        return sb.toString();
+    }
+
+    /** Set a dotted path in a nested map, creating intermediate maps as needed. */
+    @SuppressWarnings("unchecked")
+    static void putDotted(Map<String, Object> root, String dottedPath, Object value) {
+        String[] parts = dottedPath.split("\\.");
+        Map<String, Object> cur = root;
+        for (int i = 0; i < parts.length - 1; i++) {
+            Object next = cur.get(parts[i]);
+            if (!(next instanceof Map)) {
+                next = new LinkedHashMap<String, Object>();
+                cur.put(parts[i], next);
+            }
+            cur = (Map<String, Object>) next;
+        }
+        cur.put(parts[parts.length - 1], value);
     }
 
     private static String stringValue(Object o) {

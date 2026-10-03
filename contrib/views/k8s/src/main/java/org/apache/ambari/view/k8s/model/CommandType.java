@@ -184,6 +184,18 @@ public enum CommandType {
     OM_HIVE_BASE_INGESTION_REAPPLY,
 
     /**
+     * Post-deploy step for OPENMETADATA: register the KDPS Trino release selected in the
+     * wizard as an OM <b>Trino</b> databaseService (basic auth with the KDPS service user
+     * over HTTPS) plus a scheduled DatabaseMetadata ingestion pipeline. Gives OM entities the
+     * Trino FQN shape ({@code <service>.<catalog>.<schema>.<table>}) so the Ranger TagSync
+     * OpenMetadata source maps them 1:1 onto Trino resources, and writes the
+     * {@code ranger.tagSync.*} mapping (OM service → Trino Ranger repo) into the release
+     * values at plan time. Declared via platformOp {@code trino.baseIngestion}, gated on
+     * {@code baseIngestion.trinoEnabled=true}.
+     */
+    OM_TRINO_BASE_INGESTION_REGISTER,
+
+    /**
      * Provisions the OpenMetadata federation user in an Ambari-managed Atlas
      * (basic-auth mode only). Writes {@code openmetadata.federation.username} +
      * {@code openmetadata.federation.password_hash} into the {@code atlas-env}
