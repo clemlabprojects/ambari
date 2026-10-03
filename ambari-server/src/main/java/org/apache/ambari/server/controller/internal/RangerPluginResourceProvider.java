@@ -89,6 +89,14 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
 
     private static final String PROPERTY_SERVICE_CONFIGS            = "serviceConfigs";
     private static final String PROPERTY_SERVICE_CONFIGS_NS         = "RangerPlugin/serviceConfigs";
+    private static final String PROPERTY_USER_ROLES                 = "userRoles";
+    private static final String PROPERTY_USER_ROLES_NS              = "RangerPlugin/userRoles";
+    private static final String PROPERTY_RESET_PASSWORD             = "resetPassword";
+    private static final String PROPERTY_RESET_PASSWORD_NS          = "RangerPlugin/resetPassword";
+        private static final String PROPERTY_USER_ONLY                  = "userOnly";
+    private static final String PROPERTY_USER_ONLY_NS               = "RangerPlugin/userOnly";
+    private static final String PROPERTY_TAG_SERVICE                = "tagService";
+    private static final String PROPERTY_TAG_SERVICE_NS             = "RangerPlugin/tagService";
 
     private static final Set<String> PROPERTY_IDS;
     private static final Map<Resource.Type, String> KEY_PROPERTY_IDS;
@@ -104,7 +112,11 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
                 PROPERTY_TIMEOUT, PROPERTY_TIMEOUT_NS,
                 PROPERTY_CONTEXT, PROPERTY_CONTEXT_NS,
                 PROPERTY_REPOSITORY_DESCRIPTION, PROPERTY_REPOSITORY_DESCRIPTION_NS,
-                PROPERTY_SERVICE_CONFIGS, PROPERTY_SERVICE_CONFIGS_NS
+                PROPERTY_SERVICE_CONFIGS, PROPERTY_SERVICE_CONFIGS_NS,
+                PROPERTY_USER_ROLES, PROPERTY_USER_ROLES_NS,
+                PROPERTY_RESET_PASSWORD, PROPERTY_RESET_PASSWORD_NS,
+                                PROPERTY_USER_ONLY, PROPERTY_USER_ONLY_NS,
+                PROPERTY_TAG_SERVICE, PROPERTY_TAG_SERVICE_NS
         );
         PROPERTY_IDS = Collections.unmodifiableSet(propertyIds);
 
@@ -188,12 +200,29 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
             String repositoryDescription = firstNonBlank(
                     stringValue(properties.get(PROPERTY_REPOSITORY_DESCRIPTION)),
                     stringValue(properties.get(PROPERTY_REPOSITORY_DESCRIPTION_NS)));
+            // User-only mode: create/reset a Ranger user without touching any repository (KDPS uses it
+            // for the TagSync writer account). userRoles is a comma-separated Ranger role list.
+            String userRoles             = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_USER_ROLES)),
+                    stringValue(properties.get(PROPERTY_USER_ROLES_NS)));
+            boolean resetPassword        = "true".equalsIgnoreCase(firstNonBlank(
+                    stringValue(properties.get(PROPERTY_RESET_PASSWORD)),
+                    stringValue(properties.get(PROPERTY_RESET_PASSWORD_NS))));
+                        boolean userOnly             = "true".equalsIgnoreCase(firstNonBlank(
+                    stringValue(properties.get(PROPERTY_USER_ONLY)),
+                    stringValue(properties.get(PROPERTY_USER_ONLY_NS))));
+            String tagService            = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_TAG_SERVICE)),
+                    stringValue(properties.get(PROPERTY_TAG_SERVICE_NS)));
 
             if (StringUtils.isBlank(clusterName)) {
                 throw new SystemException("clusterName is required");
             }
-            if (StringUtils.isBlank(rangerRepositoryName)) {
+            if (!userOnly && StringUtils.isBlank(rangerRepositoryName)) {
                 throw new SystemException("rangerRepositoryName is required");
+            }
+            if (userOnly && (StringUtils.isBlank(pluginUserName) || StringUtils.isBlank(pluginUserPassword))) {
+                throw new SystemException("pluginUserName and pluginUserPassword are required when userOnly=true");
             }
 
             try {
@@ -228,7 +257,9 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
                 String commandParametersJson = GSON.toJson(commandParameters);
                 String hostParametersJson    = "{}";
 
-                // Stage 1: create/ensure Ranger service
+                List<Stage> stages = new ArrayList<>();
+                // Stage 1: create/ensure Ranger service (skipped in user-only mode)
+                if (!userOnly) {
                 Stage stageRepository = stageFactory.createNew(
                         requestId,
                         logDirectory,
@@ -255,9 +286,8 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
                         false
                 );
 
-                List<Stage> stages = new ArrayList<>();
                 stages.add(stageRepository);
-
+                }
                 // Stage 2 (optional): create/update Ranger user
                 if (StringUtils.isNotBlank(pluginUserName)) {
                     Stage stageUser = stageFactory.createNew(
@@ -269,7 +299,7 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
                             commandParametersJson,
                             hostParametersJson
                     );
-                    stageUser.setStageId(2L);
+                    stageUser.setStageId(userOnly ? 1L : 2L);
 
                     stageUser.addServerActionCommand(
                             UpsertRangerUserServerAction.class.getName(),

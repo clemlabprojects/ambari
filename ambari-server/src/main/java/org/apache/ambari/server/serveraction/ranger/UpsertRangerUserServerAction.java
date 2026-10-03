@@ -23,8 +23,10 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
@@ -41,6 +43,10 @@ import org.apache.ambari.server.utils.SecretReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.inject.Inject;
 
 public class UpsertRangerUserServerAction extends AbstractServerAction {
@@ -66,6 +72,11 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
         String pluginUserName     = commandParameters.get("pluginUserName");
         String pluginUserPassword = commandParameters.get("pluginUserPassword");
         String repositoryDescription  = commandParameters.get("repositoryDescription");
+        // Optional (AMBARI-673): Ranger roles for the user (default ROLE_USER; a TagSync writer needs
+        // ROLE_SYS_ADMIN because Ranger's importServiceTags is sys-admin only) and whether an EXISTING
+        // user gets its password + roles reset to the supplied ones (default: leave it untouched).
+        List<String> userRoles = splitCsv(commandParameters.get("userRoles"));
+        boolean resetPassword = "true".equalsIgnoreCase(trimToNull(commandParameters.get("resetPassword")));
 
         LOG.info("UpsertRangerUserServerAction called with parameters: clusterName='{}', pluginUserName='{}', repositoryDescription='{}'",
                 clusterName, pluginUserName, repositoryDescription);
@@ -160,7 +171,9 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
                     rangerAdminUserName,
                     rangerAdminPassword,
                     pluginUserName,
-                    pluginUserPassword
+                    pluginUserPassword,
+                    userRoles,
+                    resetPassword
             );
 
             Map<String, Object> structuredOutMap = new HashMap<>();
@@ -189,9 +202,12 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
             String adminUserName,
             String adminPassword,
             String pluginUserName,
-            String pluginUserPassword) throws Exception {
-
+            String pluginUserPassword,
+            List<String> userRoles,
+            boolean resetPassword) throws Exception {
         String authorizationHeader = buildBasicAuth(adminUserName, adminPassword);
+        List<String> roles = (userRoles == null || userRoles.isEmpty())
+                ? new ArrayList<>(java.util.Collections.singletonList("ROLE_USER")) : userRoles;
 
         // ---------- EXISTENCE CHECK ----------
         boolean exists = rangerUserExists(baseUrl, authorizationHeader, pluginUserName);
@@ -200,6 +216,10 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
         actionLog.writeStdOut(lookupMsg);
         LOG.info(lookupMsg);
 
+        if (exists && resetPassword) {
+            resetRangerUser(baseUrl, authorizationHeader, pluginUserName, pluginUserPassword, roles);
+            return;
+        }
         if (exists) {
             String msg = "Ranger user '" + pluginUserName + "' already exists; skipping creation";
             actionLog.writeStdOut(msg);
@@ -225,7 +245,14 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
         StringBuilder json = new StringBuilder();
         json.append('{');
         json.append("\"status\":1,");
-        json.append("\"userRoleList\":[\"ROLE_USER\"],");
+        json.append("\"userRoleList\":[");
+        for (int i = 0; i < roles.size(); i++) {
+            if (i > 0) {
+                json.append(',');
+            }
+            json.append('"').append(escape(roles.get(i))).append('"');
+        }
+        json.append("],");
         json.append("\"name\":\"").append(safeUser).append("\",");
         json.append("\"firstName\":\"").append(safeUser).append("\",");
         json.append("\"lastName\":\"").append(safeUser).append("\",");
@@ -413,6 +440,113 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
      * @return
      * @throws Exception
      */
+    /**
+     * Reset an EXISTING internal Ranger user's password and roles (PUT /service/xusers/secure/users/{id}
+     * with the full user object; Ranger only re-hashes the password when it is not the masked
+     * placeholder, and refuses to change EXTERNAL users' passwords — those are reported as a failure).
+     */
+    private void resetRangerUser(String baseUrl, String authHeader, String userName, String password,
+                                 List<String> roles) throws Exception {
+        JsonObject user = fetchRangerUser(baseUrl, authHeader, userName);
+        if (user == null) {
+            throw new IllegalStateException("Ranger user '" + userName + "' exists but could not be fetched for reset");
+        }
+        int userSource = user.has("userSource") && !user.get("userSource").isJsonNull() ? user.get("userSource").getAsInt() : 0;
+        if (userSource != 0) {
+            throw new IllegalStateException("Ranger user '" + userName + "' is an EXTERNAL (synced) user; its password"
+                    + " cannot be reset by Ambari — pick a dedicated internal user name");
+        }
+        user.addProperty("password", password);
+        JsonArray roleList = new JsonArray();
+        for (String r : roles) {
+            roleList.add(r);
+        }
+        user.add("userRoleList", roleList);
+        user.addProperty("status", 1);
+        long id = user.get("id").getAsLong();
+        String url = baseUrl + "/service/xusers/secure/users/" + id;
+        String masked = user.toString().replace("\"password\":\"" + escape(password) + "\"", "\"password\":\"*****\"");
+        actionLog.writeStdOut("Resetting Ranger user '" + userName + "' (id=" + id + ", roles=" + roles + ") via " + url);
+        LOG.info("Resetting Ranger user '{}' (id={}, roles={}) via {}", userName, id, roles, url);
+        LOG.debug("Reset payload (masked): {}", masked);
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(url).openConnection();
+            connection.setRequestMethod("PUT");
+            connection.setConnectTimeout(20000);
+            connection.setReadTimeout(20000);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Authorization", authHeader);
+            connection.getOutputStream().write(user.toString().getBytes(StandardCharsets.UTF_8));
+            connection.getOutputStream().flush();
+            int status = connection.getResponseCode();
+            String body = null;
+            InputStream is = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            if (is != null) {
+                body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            if (status / 100 != 2) {
+                throw new IllegalStateException("Failed to reset Ranger user '" + userName + "': HTTP " + status
+                        + (body != null ? ", body: " + body : ""));
+            }
+            actionLog.writeStdOut("Ranger user '" + userName + "' password and roles reset");
+            LOG.info("Ranger user '{}' password and roles reset", userName);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /** The full VXUser object of an existing user (first exact-name match), or null. */
+    private JsonObject fetchRangerUser(String baseUrl, String authHeader, String userName) throws Exception {
+        String queryUrl = baseUrl + "/service/xusers/users?name=" + urlEncode(userName);
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(queryUrl).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(15000);
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Authorization", authHeader);
+            int status = connection.getResponseCode();
+            if (status != 200) {
+                return null;
+            }
+            String body = new String(connection.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            if (!root.has("vXUsers") || !root.get("vXUsers").isJsonArray()) {
+                return null;
+            }
+            for (JsonElement e : root.getAsJsonArray("vXUsers")) {
+                JsonObject u = e.getAsJsonObject();
+                if (u.has("name") && userName.equals(u.get("name").getAsString())) {
+                    return u;
+                }
+            }
+            return null;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    static List<String> splitCsv(String csv) {
+        List<String> out = new ArrayList<>();
+        if (csv == null) {
+            return out;
+        }
+        for (String g : csv.split(",")) {
+            if (!g.trim().isEmpty()) {
+                out.add(g.trim());
+            }
+        }
+        return out;
+    }
+
     private boolean rangerUserExists(String baseUrl, String authHeader, String userName) throws Exception {
         String queryUrl = baseUrl + "/service/xusers/users?name=" + urlEncode(userName);
         actionLog.writeStdOut("Checking Ranger user existence via URL: " + queryUrl);

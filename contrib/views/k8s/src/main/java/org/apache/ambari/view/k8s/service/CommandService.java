@@ -2055,18 +2055,50 @@ public class CommandService {
                 this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", tsSecretName);
                 LOG.info("Atlas tag sync: minted Secret {} and wired tagSync.ranger.* for release {} (Ranger {})",
                         tsSecretName, request.getReleaseName(), externalRangerUrl);
+                        } else if (tagSyncEnabled && rangerCtx != null && rangerCtx.isRangerManaged()
+                    && ambariActionClient != null && cluster != null && !cluster.isBlank()) {
+                // Ambari-MANAGED context: the view never holds the Ranger admin password, so it asks the
+                // Ambari server to provision a DEDICATED internal Ranger user for the projector
+                // (kdps-tagsync-<release>, ROLE_SYS_ADMIN — Ranger's importServiceTags is sys-admin
+                // only) with a password the view generates and rotates on every deploy. Only that
+                // scoped credential ever lands in the release namespace (<release>-tagsync-ranger).
+                String tsUser = ("kdps-tagsync-" + request.getReleaseName()).toLowerCase(Locale.ROOT);
+                String tsPassword = generateRangerPassword();
+                int req = ambariActionClient.submitRangerUserUpsert(tsUser, tsPassword, "ROLE_SYS_ADMIN", true, 90,
+                        "KDPS tag sync: provision Ranger tag-writer user " + tsUser + " for " + request.getReleaseName());
+                if (!ambariActionClient.waitUntilComplete(req, 120, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Ambari request " + req + " (Ranger tag-writer user '" + tsUser
+                            + "') did not complete — Atlas tag sync cannot be wired; see the Ambari request log.");
+                }
+                String managedRangerUrl = rangerCtx.getRangerUrl() != null && !rangerCtx.getRangerUrl().isBlank()
+                        ? rangerCtx.getRangerUrl().trim()
+                        : ambariActionClient.getDesiredConfigProperty(cluster, "admin-properties", "policymgr_external_url");
+                if (managedRangerUrl == null || managedRangerUrl.isBlank()) {
+                    throw new IllegalStateException("Atlas tag sync: the managed context exposes no Ranger URL"
+                            + " (admin-properties/policymgr_external_url is empty).");
+                }
+                String tsSecretName = request.getReleaseName() + "-tagsync-ranger";
+                Map<String, byte[]> tsData = new LinkedHashMap<>();
+                tsData.put("user", tsUser.getBytes(StandardCharsets.UTF_8));
+                tsData.put("password", tsPassword.getBytes(StandardCharsets.UTF_8));
+                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), tsSecretName, tsData);
+                this.commandUtils.addOverride(params, "tagSync.ranger.url", managedRangerUrl.trim());
+                this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", tsSecretName);
+                LOG.info("Atlas tag sync (managed context): provisioned Ranger tag-writer '{}' via Ambari request {},"
+                        + " minted Secret {} and wired tagSync.ranger.* for release {} (Ranger {})",
+                        tsUser, req, tsSecretName, request.getReleaseName(), managedRangerUrl);
             } else if (tagSyncEnabled) {
                 // Refuse NOW rather than ten steps later: the chart `require`s tagSync.ranger.url and
                 // tagSync.ranger.existingSecret, so without them the helm dry-run fails after the Ranger
-                // repo, keytabs and OIDC client were already created. The Ambari-managed context never
-                // exposes the Ranger admin password to the view (by design — Ranger writes are delegated
-                // to the Ambari server), so Atlas tag sync needs an external/manual context that does.
-                throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a platform context that"
-                        + " exposes Ranger admin credentials (external CDP or manual context). The selected context"
+                // repo, keytabs and OIDC client were already created. A context without Ranger (or a
+                // managed one reached without Ambari access) cannot feed the projector.
+                throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a platform context with"
+                        + " Ranger: an Ambari-managed one (KDPS provisions a scoped tag-writer user through Ambari)"
+                        + " or an external/manual one exposing Ranger admin credentials. The selected context"
                         + (rangerCtx != null && rangerCtx.getName() != null ? " '" + rangerCtx.getName() + "'" : "")
-                        + " does not — turn 'Sync Atlas tags to Trino' off, or pick a context with Ranger credentials.");
+                        + " offers neither — turn 'Sync Atlas tags to Trino' off, or pick a context with Ranger.");
             }
-        } catch (IllegalArgumentException refused) {
+                } catch (IllegalArgumentException | IllegalStateException refused) {
             throw refused;
         } catch (Exception e) {
             LOG.warn("Atlas tag sync wiring failed for release {}: {}", request.getReleaseName(), e.toString());
