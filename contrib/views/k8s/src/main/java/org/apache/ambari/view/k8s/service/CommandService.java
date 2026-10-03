@@ -2055,9 +2055,18 @@ public class CommandService {
                 LOG.info("Atlas tag sync: minted Secret {} and wired tagSync.ranger.* for release {} (Ranger {})",
                         tsSecretName, request.getReleaseName(), externalRangerUrl);
             } else if (tagSyncEnabled) {
-                LOG.warn("Atlas tag sync is on for release {} but the context exposes no direct Ranger admin "
-                        + "credential/URL; the tag-projector will not be wired.", request.getReleaseName());
+                // Refuse NOW rather than ten steps later: the chart `require`s tagSync.ranger.url and
+                // tagSync.ranger.existingSecret, so without them the helm dry-run fails after the Ranger
+                // repo, keytabs and OIDC client were already created. The Ambari-managed context never
+                // exposes the Ranger admin password to the view (by design — Ranger writes are delegated
+                // to the Ambari server), so Atlas tag sync needs an external/manual context that does.
+                throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a platform context that"
+                        + " exposes Ranger admin credentials (external CDP or manual context). The selected context"
+                        + (rangerCtx != null && rangerCtx.getName() != null ? " '" + rangerCtx.getName() + "'" : "")
+                        + " does not — turn 'Sync Atlas tags to Trino' off, or pick a context with Ranger credentials.");
             }
+        } catch (IllegalArgumentException refused) {
+            throw refused;
         } catch (Exception e) {
             LOG.warn("Atlas tag sync wiring failed for release {}: {}", request.getReleaseName(), e.toString());
         }
