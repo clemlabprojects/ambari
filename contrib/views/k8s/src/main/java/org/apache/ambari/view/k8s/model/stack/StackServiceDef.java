@@ -195,6 +195,18 @@ public class StackServiceDef {
     public List<String> imagePullSecretTargets;
 
     /**
+     * Value paths that hold plain image references (name or name:tag) in charts that ignore
+     * {@code global.imageRegistry}, e.g. Z2JH's {@code hub.image.name} or
+     * {@code singleuser.extraContainers[0].image}. At deploy time the view rewrites the registry
+     * prefix of each listed value to the effective image registry of the selected Helm repository,
+     * so a private mirror works without touching the wizard (AMBARI-690). An entry is either the
+     * path itself or {@code {"path": ..., "default": ...}}; the default is used when the request
+     * carries no value for the path (API-driven deploys that skip the wizard bindings), so the
+     * chart's upstream default image is never pulled.
+     */
+    public List<Object> imageRegistryPaths;
+
+    /**
      * Platform-context requirements (see docs/CONTEXT_FRAMEWORK.md). Each entry declares a
      * capability + the fields the service needs from its resolved context, optionally gated
      * by a {@code when} form-value path and scoped by {@code appliesTo} (EXTERNAL|MANAGED).

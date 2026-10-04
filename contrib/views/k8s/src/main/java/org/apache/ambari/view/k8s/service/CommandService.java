@@ -7871,6 +7871,12 @@ public class CommandService {
                         LOG.info("Execution Action {}: Injecting 'global.imageRegistry' in values.yaml with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
                     }
 
+                    // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
+                    // service definition; rewrite them onto the repository's image registry (AMBARI-690).
+                    applyImageRegistryPaths(childParams.get("serviceKey"),
+                            this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
+                            valuesMap, overrideProperties);
+
                     appendCommandLog(id, "Dry-run main release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
                     ScheduledFuture<?> heartbeat = startHeartbeat(id, () -> {
                         CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
@@ -7948,6 +7954,12 @@ public class CommandService {
                      * so right now the repositories are read from the charts Values.yaml
                      * in the clemlab powered charts, there is a global.registry configuration
                      */
+                    // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
+                    // service definition; rewrite them onto the repository's image registry (AMBARI-690).
+                    applyImageRegistryPaths(childParams.get("serviceKey"),
+                            this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
+                            valuesMap, overrideProperties);
+
                     appendCommandLog(id, "Installing release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
                     ScheduledFuture<?> heartbeatDeploy = startHeartbeat(id, () -> {
                         CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
@@ -8076,6 +8088,12 @@ public class CommandService {
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
                         overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
                         applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
+                    }
+
+                    if (repoId != null && !repoId.isBlank()) {
+                        applyImageRegistryPaths(childParams.get("serviceKey"),
+                                this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
+                                valuesMap, overrideProperties);
                     }
 
                     appendCommandLog(id, "Upgrading release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
@@ -12958,6 +12976,100 @@ public class CommandService {
                 Object v = formValues.get(key);
                 if (v instanceof String str && !str.isBlank()) return str.trim();
             }
+        }
+        return null;
+    }
+
+    /** Registry prefix every KDPS service definition uses for its default images. */
+    static final String DEFAULT_IMAGE_REGISTRY = "registry.clemlab.com/clemlabprojects";
+
+    /**
+     * Moves an image reference onto {@code effectiveRegistry} (host or host/project, as the Helm
+     * repository resolves it). The Clemlab default prefix is replaced as a whole; any other registry
+     * host (quay.io, registry.k8s.io, ghcr.io, docker.io) is replaced by the target, Docker Hub's
+     * {@code library/} is dropped, tags and digests are kept, and a reference already on the target
+     * registry is returned unchanged. Mirrors therefore keep the upstream repository path, which is
+     * how the Clemlab registry itself is laid out (kedacore/keda, prometheus/prometheus, ...).
+     */
+    static String rewriteImageRegistry(String image, String effectiveRegistry) {
+        if (image == null || image.isBlank() || effectiveRegistry == null || effectiveRegistry.isBlank()) return image;
+        String ref = image.trim();
+        String target = effectiveRegistry.trim().replaceAll("/+$", "");
+        if (ref.equals(target) || ref.startsWith(target + "/")) return ref;
+        String path = ref;
+        if (path.startsWith(DEFAULT_IMAGE_REGISTRY + "/")) {
+            path = path.substring(DEFAULT_IMAGE_REGISTRY.length() + 1);
+        } else {
+            int slash = path.indexOf('/');
+            if (slash > 0) {
+                String first = path.substring(0, slash);
+                if (first.contains(".") || first.contains(":") || first.equals("localhost")) {
+                    path = path.substring(slash + 1);
+                }
+            }
+            if (path.startsWith("library/")) path = path.substring("library/".length());
+        }
+        return target + "/" + path;
+    }
+
+    /**
+     * Applies {@link #rewriteImageRegistry} to every path the service definition lists in
+     * {@code imageRegistryPaths}. The current value comes from the explicit overrides first, then
+     * from the submitted values; paths without a value are left to the chart (nothing to rewrite).
+     */
+    private void applyImageRegistryPaths(Object serviceKeyObj, String effectiveRegistry,
+                                         Map<String, Object> valuesMap, Map<String, String> overrideProperties) {
+        if (serviceKeyObj == null || effectiveRegistry == null || effectiveRegistry.isBlank()) return;
+        String serviceKey = String.valueOf(serviceKeyObj).trim();
+        if (serviceKey.isEmpty() || "null".equals(serviceKey)) return;
+        List<Object> entries;
+        try {
+            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+            entries = (def == null) ? null : def.imageRegistryPaths;
+        } catch (Exception e) {
+            LOG.warn("imageRegistryPaths: cannot load the definition of {}: {}", serviceKey, e.toString());
+            return;
+        }
+        if (entries == null || entries.isEmpty()) return;
+        for (Object entry : entries) {
+            String[] pd = imageRegistryEntry(entry);
+            if (pd == null) continue;
+            String path = pd[0], fallback = pd[1];
+            Object current = overrideProperties.get(path);
+            if (current == null && valuesMap != null) current = getByPath(valuesMap, path);
+            String value = (current instanceof String s && !s.isBlank()) ? s : null;
+            if (value == null) {
+                if (fallback == null || fallback.isBlank()) {
+                    LOG.debug("imageRegistryPaths: {} has no value in the request and no default; chart default stays", path);
+                    continue;
+                }
+                value = fallback;
+                LOG.info("imageRegistryPaths: {} not in the request; using the definition default {}", path, fallback);
+            }
+            String rewritten = rewriteImageRegistry(value, effectiveRegistry);
+            if (!rewritten.equals(value)) {
+                LOG.info("imageRegistryPaths: {} follows the repository registry: {} -> {}", path, value, rewritten);
+            }
+            if (current == null || !rewritten.equals(current)) {
+                overrideProperties.put(path, rewritten);
+            }
+        }
+    }
+
+    /**
+     * Normalises one {@code imageRegistryPaths} entry: a bare path string, or a map with
+     * {@code path} and an optional {@code default} image. Returns {path, default-or-null}, or null
+     * for an unusable entry.
+     */
+    static String[] imageRegistryEntry(Object entry) {
+        if (entry instanceof String str) {
+            return str.isBlank() ? null : new String[] {str.trim(), null};
+        }
+        if (entry instanceof Map<?, ?> m) {
+            Object path = m.get("path");
+            if (!(path instanceof String ps) || ps.isBlank()) return null;
+            Object def = m.get("default");
+            return new String[] {ps.trim(), (def instanceof String ds && !ds.isBlank()) ? ds.trim() : null};
         }
         return null;
     }

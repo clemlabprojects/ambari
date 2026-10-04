@@ -422,6 +422,18 @@
       "serviceAccounts": ["default"]
     }
   ],
+  "_imageRegistryPaths": "Z2JH ignores global.imageRegistry. At deploy time the view rewrites the registry prefix of these image values to the image registry of the selected Helm repository (private mirrors keep the upstream repository path: quay.io/jupyterhub/x -> <registry>/jupyterhub/x, registry.k8s.io/x -> <registry>/x). Entries with a default cover the chart-managed images the wizard does not expose, so API-driven deploys never fall back to quay.io / registry.k8s.io; the defaults are the Clemlab mirrors of the chart 4.3.5 upstream images.",
+  "imageRegistryPaths": [
+    "hub.image.name",
+    "singleuser.image.name",
+    "singleuser.extraContainers[0].image",
+    { "path": "singleuser.networkTools.image.name",    "default": "registry.clemlab.com/clemlabprojects/jupyterhub/k8s-network-tools" },
+    { "path": "proxy.chp.image.name",                  "default": "registry.clemlab.com/clemlabprojects/jupyterhub/configurable-http-proxy" },
+    { "path": "scheduling.userScheduler.image.name",   "default": "registry.clemlab.com/clemlabprojects/kube-scheduler" },
+    { "path": "scheduling.userPlaceholder.image.name", "default": "registry.clemlab.com/clemlabprojects/pause" },
+    { "path": "prePuller.hook.image.name",             "default": "registry.clemlab.com/clemlabprojects/jupyterhub/k8s-image-awaiter" },
+    { "path": "prePuller.pause.image.name",            "default": "registry.clemlab.com/clemlabprojects/pause" }
+  ],
   "requiresContext": [
     { "capability": "oidc", "fields": ["issuerUrl"] },
     { "capability": "kerberos", "fields": ["realm"] }
