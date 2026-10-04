@@ -163,7 +163,21 @@ public class ContextService {
 
         // Serialize non-secret config. Ambari stores String columns up to 3000 chars; guard with a
         // clear error rather than letting the persistence layer throw an opaque one.
-        Map<String, Object> config = request.config != null ? request.config : new LinkedHashMap<>();
+                Map<String, Object> config = request.config != null ? new LinkedHashMap<>(request.config) : new LinkedHashMap<>();
+        // Defence in depth: a secret typed into `config` (the wizard sends secrets separately, an API
+        // caller may not) must never be persisted in clear nor echoed by GET. Move every schema-secret
+        // key out of config into the encrypted secrets.
+        Map<String, String> secrets = request.secrets != null ? new LinkedHashMap<>(request.secrets) : new LinkedHashMap<>();
+        for (org.apache.ambari.view.k8s.model.ContextCapabilitySchema cap : new ContextSchemaService().loadSchema()) {
+            for (org.apache.ambari.view.k8s.model.ContextCapabilitySchema.ContextFieldDef f : cap.fields) {
+                if (f.secret && config.containsKey(f.name)) {
+                    Object v = config.remove(f.name);
+                    if (v != null && !String.valueOf(v).isBlank() && !secrets.containsKey(f.name)) {
+                        secrets.put(f.name, String.valueOf(v));
+                    }
+                }
+            }
+        }
         String configJson = GSON.toJson(config);
         if (configJson.length() > MAX_CONFIG_JSON_LENGTH) {
             throw new IllegalArgumentException("Context configuration is too large ("
@@ -180,8 +194,8 @@ public class ContextService {
                 if (!k.isBlank()) keys.add(k.trim());
             }
         }
-        if (request.secrets != null) {
-            for (Map.Entry<String, String> e : request.secrets.entrySet()) {
+                if (!secrets.isEmpty()) {
+            for (Map.Entry<String, String> e : secrets.entrySet()) {
                 String name = e.getKey();
                 String plain = e.getValue();
                 if (name == null || name.isBlank() || plain == null || plain.isBlank()) {
@@ -831,11 +845,19 @@ public class ContextService {
         r.setRangerUrl(str(config.get("rangerUrl")));
         r.setRangerAdminUsername(defaultStr(str(config.get("rangerAdminUsername")), "admin"));
         r.setRangerAdminPassword(readSecret(entity.getId(), "rangerAdminPassword"));
-        r.setAtlasFederationUser(str(config.get("federationUser")));
+                r.setAtlasFederationUser(str(config.get("federationUser")));
         r.setAtlasFederationPassword(readSecret(entity.getId(), "federationPassword"));
         // Mirror the typed endpoints into resolvedFields so the schema-driven UI (and the Trino tag
         // projector wiring) can consume them the same way it does for a CDP context.
         Map<String, String> erf = r.getResolvedFields();
+        // Kerberos: an EXTERNAL context types its realm/KDC; expose them like MANAGED and CDP do, so
+        // steps that infer "kerberos" from the realm (Hive base ingestion, keytab alignment) see it.
+        String extRealm = alignRealmWithKrb5Conf(str(config.get("realm")), str(config.get("krb5Conf")));
+        if (extRealm != null && !extRealm.isBlank()) {
+            r.setKerberosRealm(extRealm);
+            erf.put("kerberos.realm", extRealm);
+        }
+        if (str(config.get("kdcHost")) != null && !str(config.get("kdcHost")).isBlank()) erf.put("kerberos.kdcHost", str(config.get("kdcHost")));
         if (r.getRangerUrl() != null && !r.getRangerUrl().isBlank()) erf.put("ranger.rangerUrl", r.getRangerUrl());
         if (r.getAtlasUrl() != null && !r.getAtlasUrl().isBlank())  erf.put("atlas.atlasUrl", r.getAtlasUrl());
         markAtlasTagsCapability(r);
