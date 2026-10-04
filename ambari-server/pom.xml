@@ -40,6 +40,8 @@
     <ambari-web-dir>${basedir}/../ambari-web/public</ambari-web-dir>
     <ambari-admin-dir>${basedir}/../ambari-admin</ambari-admin-dir>
     <contrib-views-dir>${basedir}/../contrib/views</contrib-views-dir>
+    <!-- Must match contrib/views/k8s/pom.xml <version>; bumped together with it. -->
+    <kdps.view.version>1.0.0.8</kdps.view.version>
     <resourceManagementSrcLocation>${project.basedir}/../ambari-common/src/main/python/resource_management</resourceManagementSrcLocation>
     <customActionsRoot>src/main/resources/custom_actions</customActionsRoot>
     <ambariProperties>conf/unix/ambari.properties</ambariProperties>
@@ -217,12 +219,24 @@
             </goals>
             <configuration>
               <target>
+                <!-- A previous build's view jar (another version) must not ride along into the RPM:
+                     drop any KDPS view jar already collected, then copy the current ones. -->
+                <delete>
+                  <fileset dir="${ambari-admin-dir}/target" includes="k8s-view-*.jar" erroronmissingdir="false"/>
+                </delete>
                 <copy todir="${ambari-admin-dir}/target" flatten="true">
                   <fileset dir="${contrib-views-dir}">
                     <include name="*/target/*jar" />
+                    <exclude name="k8s/target/k8s-view-*.jar" />
                     <exclude name="**/ambari-views-utils*jar" />
                     <exclude name="**/ambari-views-commons*jar" />
                     <exclude name="**/ambari-views-package*jar" />
+                  </fileset>
+                </copy>
+                <!-- Only the KDPS view version this tree builds (the k8s module's own pom.version). -->
+                <copy todir="${ambari-admin-dir}/target" flatten="true">
+                  <fileset dir="${contrib-views-dir}/k8s/target">
+                    <include name="k8s-view-${kdps.view.version}.jar" />
                   </fileset>
                 </copy>
               </target>

@@ -513,6 +513,20 @@ limitations under the License.
                 <version>3.1.0</version>
                 <executions>
                     <execution>
+                        <id>drop-stale-view-jars</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <!-- An older k8s-view-*.jar left in target/ by a previous build (no mvn clean on
+                                     the agent) would be packaged next to the new one. Remove before packaging. -->
+                                <delete>
+                                    <fileset dir="${project.build.directory}" includes="k8s-view-*.jar" erroronmissingdir="false"/>
+                                </delete>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <execution>
                         <id>remove-old-k8s-view-jars</id>
                         <phase>prepare-package</phase>
                         <goals><goal>run</goal></goals>
