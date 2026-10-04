@@ -23,6 +23,15 @@
     "class": "org.apache.solr.security.InfraRuleBasedAuthorizationPlugin",
     "user-role": {
       "{{infra_solr_kerberos_service_user}}@{{kerberos_realm}}": "admin",
+{# Solr authenticates its own inter-node calls (e.g. SolrConfigHandler waiting for every replica to load a
+   config overlay, /config/znodeVersion) with the host-qualified service principal. Without an admin role for
+   it, InfraRuleBasedAuthorizationPlugin answers 403 and every Atlas /freetext handler update times out
+   after 30 s (AMBARI/ODP dev11 finding, 2026-10-04). #}
+{% if infra_solr_hosts is defined %}
+{%   for _infra_solr_host in infra_solr_hosts %}
+      "{{infra_solr_kerberos_service_user}}/{{_infra_solr_host}}@{{kerberos_realm}}": "admin",
+{%   endfor %}
+{% endif %}
 {% if infra_solr_logsearch_service_users %}
 {%   for _logsearch_kerberos_service_user in infra_solr_logsearch_service_users %}
       "{{_logsearch_kerberos_service_user}}@{{kerberos_realm}}": ["{{infra_solr_role_logsearch}}", "{{infra_solr_role_ranger_admin}}", "{{infra_solr_role_dev}}"],
