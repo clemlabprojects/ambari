@@ -177,6 +177,11 @@
             <type>atlas-env</type>
             <replace key="metadata_opts" find="-Dlog4j.configuration=atlas-log4j.xml" replace-with="-Dlogback.configurationFile=/etc/atlas/conf/atlas-logback.xml"/>
           </definition>
+          <definition xsi:type="configure" id="odp_1_3_2_0_atlas_solr_wait_searcher"
+                      summary="Commit Atlas index mutations to Solr (wait-searcher): Atlas 2.5 defaults it to false and the Atlas solrconfig has no autoSoftCommit, so new entities were not searchable.">
+            <type>application-properties</type>
+            <set key="atlas.graph.index.search.solr.wait-searcher" value="true" if-key="atlas.graph.index.search.solr.wait-searcher" if-key-state="absent"/>
+          </definition>
           <definition xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_default">
             <type>atlas-env</type>
             <set key="metadata_opts" value="-Dlogback.configurationFile=/etc/atlas/conf/atlas-logback.xml" if-key="metadata_opts" if-key-state="absent"/>
@@ -184,11 +189,6 @@
           <definition xsi:type="configure" id="odp_1_3_2_0_atlas_openmetadata_federation_props"
                       summary="Add openmetadata.federation.{username,password_hash,role} placeholders to atlas-env so KDPS Atlas-federation provisioning can populate them on demand.">
             <type>atlas-env</type>
-          <definition xsi:type="configure" id="odp_1_3_2_0_atlas_solr_wait_searcher"
-                      summary="Commit Atlas index mutations to Solr (wait-searcher): Atlas 2.5 defaults it to false and the Atlas solrconfig has no autoSoftCommit, so new entities were not searchable.">
-            <type>application-properties</type>
-            <set key="atlas.graph.index.search.solr.wait-searcher" value="true" if-key="atlas.graph.index.search.solr.wait-searcher" if-key-state="absent"/>
-          </definition>
             <set key="openmetadata.federation.username" value="" if-key="openmetadata.federation.username" if-key-state="absent"/>
             <set key="openmetadata.federation.password_hash" value="" if-key="openmetadata.federation.password_hash" if-key-state="absent"/>
             <set key="openmetadata.federation.role" value="ROLE_USER" if-key="openmetadata.federation.role" if-key-state="absent"/>
