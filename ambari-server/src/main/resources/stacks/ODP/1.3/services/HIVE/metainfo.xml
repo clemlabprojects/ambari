@@ -29,6 +29,12 @@
         <component>
           <name>HIVE_SERVER</name>
           <javaHomeSelector>secondary_java_home</javaHomeSelector>
+          <commandScript>
+            <script>scripts/hive_server.py</script>
+            <scriptType>PYTHON</scriptType>
+            <!-- Allow the default 30-minute drain plus restart work. -->
+            <timeout>3600</timeout>
+          </commandScript>
         </component>
         <component>
           <name>HIVE_SERVER_INTERACTIVE</name>

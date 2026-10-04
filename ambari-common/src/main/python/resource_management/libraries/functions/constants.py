@@ -85,6 +85,7 @@ class StackFeature:
   HIVE_WEBHCAT_SPECIFIC_CONFIGS = "hive_webhcat_specific_configs"
   HIVE_PURGE_TABLE = "hive_purge_table"
   HIVE_SERVER2_KERBERIZED_ENV = "hive_server2_kerberized_env"
+  HIVE_SERVER2_GRACEFUL_SHUTDOWN = "hive_server2_graceful_shutdown"
   HIVE_ENV_HEAPSIZE = "hive_env_heapsize"
   RANGER_KMS_HSM_SUPPORT = "ranger_kms_hsm_support"
   RANGER_LOG4J_SUPPORT = "ranger_log4j_support"

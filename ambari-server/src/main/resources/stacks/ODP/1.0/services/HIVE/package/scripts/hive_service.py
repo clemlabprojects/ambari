@@ -20,6 +20,8 @@ limitations under the License.
 
 # Python Imports
 import os
+import math
+import re
 import time
 
 # Ambari Commons & Resource Management Imports
@@ -37,6 +39,7 @@ from resource_management.libraries.functions.decorator import retry
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.version_select_util import get_component_version_from_symlink
 
 
 def hive_service(name, action='start', upgrade_type=None):
@@ -111,6 +114,21 @@ def hive_service(name, action='start', upgrade_type=None):
 
   elif action == 'stop':
 
+    graceful_timeout = None
+    if name == 'hiveserver2':
+      pid = pid.strip()
+      if not pid:
+        File(pid_file, action="delete")
+        return
+      if not pid.isdigit() or int(pid) <= 1:
+        raise Fail("Invalid HiveServer2 PID in {0}: {1}".format(pid_file, pid))
+      # Hive may remove its PID file while draining; wait for the process itself.
+      process_id_exists_command = format("ps -p {pid} >/dev/null 2>&1")
+      if shell.call(process_id_exists_command, quiet=True)[0] != 0:
+        File(pid_file, action="delete")
+        return
+      graceful_timeout = hiveserver2_stop_timeout()
+
     daemon_kill_cmd = format("{sudo} kill {pid}")
     daemon_hard_kill_cmd = format("{sudo} kill -9 {pid}")
 
@@ -118,7 +136,17 @@ def hive_service(name, action='start', upgrade_type=None):
       not_if = format("! ({process_id_exists_command})")
     )
 
-    wait_time = 5
+    if graceful_timeout is not None:
+      # Hive's --graceful_stop launcher uses this same SIGTERM shutdown hook.
+      Logger.info("Waiting up to {0}s for HiveServer2 PID {1} to drain".format(graceful_timeout, pid))
+      deadline = time.monotonic() + graceful_timeout
+      while shell.call(process_id_exists_command, quiet=True)[0] == 0:
+        if time.monotonic() >= deadline:
+          Logger.warning("HiveServer2 PID {0} exceeded its graceful shutdown timeout; forcing stop".format(pid))
+          break
+        time.sleep(1)
+
+    wait_time = 5 if graceful_timeout is None else 0
     Execute(daemon_hard_kill_cmd,
       not_if = format("! ({process_id_exists_command}) || ( sleep {wait_time} && ! ({process_id_exists_command}) )"),
       ignore_failures = True
@@ -137,6 +165,41 @@ def hive_service(name, action='start', upgrade_type=None):
     File(pid_file,
          action = "delete"
     )
+
+
+def hiveserver2_stop_timeout():
+  """Use the selected HS2 binaries, not an upgrade command's target version."""
+  import params
+
+  running_version = get_component_version_from_symlink(params.stack_name, "hive-server2")
+  if not check_stack_feature(StackFeature.HIVE_SERVER2_GRACEFUL_SHUTDOWN, running_version):
+    return None
+
+  key = "hive.server2.graceful.stop.timeout"
+  configurations = params.config["configurations"]
+  value = configurations.get("hiveserver2-site", {}).get(
+    key, configurations.get("hive-site", {}).get(key, "1800s"))
+  match = re.fullmatch(r"\s*(\d+)\s*([a-z]*)\s*", str(value).lower())
+  units = {
+    "": 1, "s": 1, "sec": 1, "second": 1, "seconds": 1,
+    "m": 60, "min": 60, "minute": 60, "minutes": 60,
+    "h": 3600, "hour": 3600, "hours": 3600,
+    "d": 86400, "day": 86400, "days": 86400,
+    "ms": .001, "msec": .001, "millisecond": .001, "milliseconds": .001,
+    "us": .000001, "usec": .000001, "microsecond": .000001, "microseconds": .000001,
+    "ns": .000000001, "nsec": .000000001, "nanosecond": .000000001, "nanoseconds": .000000001,
+  }
+  if match is None or match.group(2) not in units:
+    raise Fail("Invalid {0}: {1}".format(key, value))
+  # Hive reserves 30s for cleanup even when draining is disabled with zero.
+  timeout = max(30, int(math.ceil(int(match.group(1)) * units[match.group(2)]))) + 5
+  command_timeout = int(params.config.get("commandParams", {}).get("command_timeout", 3600))
+  if timeout + 120 > command_timeout:
+    raise Fail("HiveServer2 graceful shutdown needs {0}s plus command overhead, but Ambari's "
+               "command timeout is {1}s. Increase the command timeout or reduce {2}.".format(
+                 timeout, command_timeout, key))
+  return timeout
+
 
 def validate_connection(target_path_to_jdbc, hive_lib_path):
   import params
