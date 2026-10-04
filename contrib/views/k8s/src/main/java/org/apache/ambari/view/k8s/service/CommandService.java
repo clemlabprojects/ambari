@@ -4763,11 +4763,7 @@ public class CommandService {
                 // bringYourOwn flow — uploadLeaf and selfSign flows would otherwise leave the
                 // rendered Ingress object without a `tls:` block, and the discovered endpoint
                 // URL falls back to http://.
-                Object ingressHostVal = (request.getValues() != null)
-                        ? (request.getValues().get("ingress.host") != null
-                                ? request.getValues().get("ingress.host")
-                                : getByPath(request.getValues(), "ingress.host"))
-                        : null;
+                Object ingressHostVal = resolveIngressHostForTls(request.getValues(), request.getFormValues());
                 if (ingressHostVal != null && !String.valueOf(ingressHostVal).isBlank()) {
                     this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
                     this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", String.valueOf(ingressHostVal));
@@ -4796,11 +4792,7 @@ public class CommandService {
             // Default the host to whatever ingress.host the form provided (resolved earlier via values).
             String ingressHost = (String) ingressTlsSelfSign.get("ingressHost");
             if (ingressHost == null || ingressHost.isBlank()) {
-                Object fromValues = getByPath(request.getValues(), "ingress.host");
-                if (fromValues == null && request.getValues() != null) {
-                    fromValues = request.getValues().get("ingress.host");
-                }
-                if (fromValues != null) ingressHost = String.valueOf(fromValues);
+                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
             }
             Integer validityDays = null;
             Object vd = ingressTlsSelfSign.get("validityDays");
@@ -4855,9 +4847,7 @@ public class CommandService {
             String certName = String.valueOf(ingressTlsCM.getOrDefault("certName", secretName));
             String ingressHost = (String) ingressTlsCM.get("ingressHost");
             if (ingressHost == null || ingressHost.isBlank()) {
-                Object fromValues = getByPath(request.getValues(), "ingress.host");
-                if (fromValues == null && request.getValues() != null) fromValues = request.getValues().get("ingress.host");
-                if (fromValues != null) ingressHost = String.valueOf(fromValues);
+                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
             }
             Integer durationHours = null;
             Object dh = ingressTlsCM.get("durationHours");
@@ -4916,9 +4906,7 @@ public class CommandService {
             String refreshInterval = String.valueOf(ingressTlsES.getOrDefault("refreshInterval", "1h"));
             String ingressHost = (String) ingressTlsES.get("ingressHost");
             if (ingressHost == null || ingressHost.isBlank()) {
-                Object fromValues = getByPath(request.getValues(), "ingress.host");
-                if (fromValues == null && request.getValues() != null) fromValues = request.getValues().get("ingress.host");
-                if (fromValues != null) ingressHost = String.valueOf(fromValues);
+                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
             }
             if (storeName == null || storeName.isBlank() || remoteKey == null || remoteKey.isBlank()) {
                 throw new IllegalArgumentException(
@@ -12931,6 +12919,49 @@ public class CommandService {
      * null — same family of bug as HelmService.insertNested and bindings.ts'
      * pathToParts before they were fixed. Kept aligned with those.
      */
+    /**
+     * Resolves the primary ingress DNS name that the ingress-TLS planning steps (self-signed leaf,
+     * cert-manager Certificate, external-secret sync) put into the certificate and into
+     * {@code ingress.tls[0].hosts[0]}. Charts spell the host differently: most KDPS charts use
+     * {@code ingress.host}, Z2JH (JupyterHub) uses {@code ingress.hosts[0]} as a bare string,
+     * bitnami-style charts use {@code ingress.hostname} or {@code ingress.hosts[0].host}. JupyterHub
+     * additionally keeps the host in a form field ({@code jupyterHost}) that the wizard strips from
+     * the values (strict chart schema), so the raw form snapshot is the last resort. Before this
+     * fallback chain a "Signed by Ambari CA" JupyterHub deploy silently skipped the TLS step: on
+     * nginx the Ingress then served the controller's fake certificate, on OpenShift the
+     * ingress-to-route controller refused to publish a Route at all (missing TLS Secret).
+     *
+     * @return the host, or {@code null} when no shape matched
+     */
+    static String resolveIngressHostForTls(Map<String, Object> values, Map<String, Object> formValues) {
+        if (values != null) {
+            Object flat = values.get("ingress.host");
+            if (flat instanceof String str && !str.isBlank()) return str.trim();
+            Object ingress = values.get("ingress");
+            if (ingress instanceof Map<?, ?> ing) {
+                Object host = ing.get("host");
+                if (host instanceof String str && !str.isBlank()) return str.trim();
+                Object hostname = ing.get("hostname");
+                if (hostname instanceof String str && !str.isBlank()) return str.trim();
+                Object hosts = ing.get("hosts");
+                if (hosts instanceof List<?> list && !list.isEmpty()) {
+                    Object first = list.get(0);
+                    if (first instanceof String str && !str.isBlank()) return str.trim();
+                    if (first instanceof Map<?, ?> m && m.get("host") instanceof String str && !str.isBlank()) return str.trim();
+                }
+            }
+            Object flatFirst = values.get("ingress.hosts[0]");
+            if (flatFirst instanceof String str && !str.isBlank()) return str.trim();
+        }
+        if (formValues != null) {
+            for (String key : new String[] {"ingress.host", "ingressHost", "jupyterHost", "hostname"}) {
+                Object v = formValues.get(key);
+                if (v instanceof String str && !str.isBlank()) return str.trim();
+            }
+        }
+        return null;
+    }
+
     private Object getByPath(Map<String, Object> root, String path) {
         if (root == null || path == null || path.isBlank()) return null;
         String[] parts = path.split("\\.");
