@@ -385,6 +385,17 @@
           "skipIfVarEmpty": "jupyterTlsClusterIssuer",
           "from": { "type": "template", "template": "${jupyterTlsClusterIssuer}" } }
       ]
+    },
+    {
+      "name": "openshift-no-prepuller",
+      "_description": "OpenShift adjustments: the image pre-puller hooks (fixed UID 65534 + seccomp annotations) cannot run under OpenShift SCCs and only warm caches, so off; the proxy Service must be ClusterIP (Helm waits forever for a LoadBalancer IP that OpenShift never assigns); the Ingress uses the openshift-default class so the ingress-to-route controller publishes the Route.",
+      "skipIfVarEmpty": "isOpenShift",
+      "targets": [
+        { "path": "prePuller.hook.enabled",       "from": { "type": "template", "template": "false" } },
+        { "path": "prePuller.continuous.enabled", "from": { "type": "template", "template": "false" } },
+        { "path": "proxy.service.type",           "from": { "type": "template", "template": "ClusterIP" } },
+        { "path": "ingress.ingressClassName",     "from": { "type": "template", "template": "openshift-default" } }
+      ]
     }
   ],
   "endpoints": [
@@ -399,6 +410,18 @@
     }
   ],
   "requiredChartVersion": ">=4.3.0",
+  "openshiftScc": [
+    {
+      "comment": "OpenShift: the hub, the user scheduler and the proxy (namespace 'default' SA) pin a non-root UID that restricted-v2 refuses; nonroot-v2 accepts any non-root UID and the seccomp profile these pods declare (anyuid would refuse seccomp). 'default' also gets anyuid below; admission picks the SCC that validates each pod.",
+      "scc": "nonroot-v2",
+      "serviceAccounts": ["hub", "user-scheduler", "default"]
+    },
+    {
+      "comment": "User pods run under the namespace 'default' SA and carry the krb-renewer sidecar as root (constrained delegation), so they need anyuid.",
+      "scc": "anyuid",
+      "serviceAccounts": ["default"]
+    }
+  ],
   "requiresContext": [
     { "capability": "oidc", "fields": ["issuerUrl"] },
     { "capability": "kerberos", "fields": ["realm"] }
