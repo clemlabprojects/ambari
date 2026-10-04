@@ -1163,6 +1163,7 @@
           <task xsi:type="restart-task"/>
         </upgrade>
       </component>
+          <task xsi:type="configure" id="odp_1_3_2_0_atlas_solr_wait_searcher" />
       <component name="ATLAS_CLIENT">
         <upgrade>
           <task xsi:type="restart-task"/>

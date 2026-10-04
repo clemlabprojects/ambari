@@ -1214,6 +1214,7 @@
         <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task"/>
+          <task xsi:type="configure" id="odp_1_3_2_0_atlas_solr_wait_searcher" />
         </upgrade>
       </component>
       <component name="ATLAS_CLIENT">
