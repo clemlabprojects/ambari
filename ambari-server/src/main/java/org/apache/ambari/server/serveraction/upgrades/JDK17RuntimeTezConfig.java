@@ -27,7 +27,9 @@ import java.util.stream.Collectors;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.agent.CommandReport;
+import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
+import org.apache.ambari.server.stack.HiveJdkConfigurationSync;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.Host;
@@ -35,6 +37,8 @@ import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.UpgradeContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.inject.Inject;
 
 /**
  * Migrates Tez JVM options into the new tez-env base/extra properties and clears the legacy tez-site
@@ -56,6 +60,9 @@ public class JDK17RuntimeTezConfig extends AbstractUpgradeServerAction {
   private static final String HEAP_DUMP_PLACEHOLDER = "{{heap_dump_opts}}";
 
   private static final String TARGET_STACK_VERSION = "1.3";
+
+  @Inject
+  private Configuration configuration;
 
   @Override
   public CommandReport execute(ConcurrentMap<String, Object> requestSharedDataContext)
@@ -81,7 +88,10 @@ public class JDK17RuntimeTezConfig extends AbstractUpgradeServerAction {
     Map<String, String> tezSiteProps = new HashMap<>(tezSite.getProperties());
     Map<String, String> tezEnvProps = new HashMap<>(tezEnv.getProperties());
 
-    boolean updated = migrateTezJvmOpts(tezSiteProps, tezEnvProps);
+    String stackJavaVersion = configuration.getStackJavaVersion();
+    int javaMajor = stackJavaVersion == null || stackJavaVersion.trim().isEmpty()
+        ? configuration.getJavaVersion() : HiveJdkConfigurationSync.parseJavaMajor(stackJavaVersion);
+    boolean updated = migrateTezJvmOpts(tezSiteProps, tezEnvProps, javaMajor);
 
     if (!updated) {
       return createCommandReport(0, HostRoleStatus.COMPLETED, "{}",
@@ -124,7 +134,7 @@ public class JDK17RuntimeTezConfig extends AbstractUpgradeServerAction {
    *
    * @return true if any change was made.
    */
-  boolean migrateTezJvmOpts(Map<String, String> tezSiteProps, Map<String, String> tezEnvProps) {
+  boolean migrateTezJvmOpts(Map<String, String> tezSiteProps, Map<String, String> tezEnvProps, int javaMajor) {
     String amOpts = safe(tezSiteProps.get(TEZ_AM_OPTS));
     String taskOpts = safe(tezSiteProps.get(TEZ_TASK_OPTS));
 
@@ -145,6 +155,21 @@ public class JDK17RuntimeTezConfig extends AbstractUpgradeServerAction {
       }
       tezSiteProps.put(TEZ_TASK_OPTS, "");
       updated = true;
+    }
+    // Moving a legacy value is not a JDK migration. Remove the retired timestamp
+    // switches in the persisted config, including values migrated on an earlier run.
+    // Retain GC logging, heap sizing, collector selection and other operator settings.
+    if (javaMajor >= 9) {
+      for (String key : new String[] {TEZ_AM_BASE, TEZ_AM_EXTRA, TEZ_TASK_BASE, TEZ_TASK_EXTRA}) {
+        String current = tezEnvProps.get(key);
+        if (current != null) {
+          String migrated = current.replaceAll("(?<!\\S)-XX:[+-]PrintGC(?:Time|Date)Stamps(?=\\s|$)", "").trim();
+          if (!migrated.equals(current)) {
+            tezEnvProps.put(key, migrated);
+            updated = true;
+          }
+        }
+      }
     }
     return updated;
   }
