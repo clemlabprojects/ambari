@@ -88,6 +88,9 @@ def configure_polaris(component_type='server'):
 
   if component_type == 'server':
     setup_database()
+    # Polaris >= 1.8.0: 'admin bootstrap' no longer creates the relational-jdbc schema (tables).
+    # Runs as the Polaris DB user with the SQL shipped by ODP; no-op for packages without it.
+    ensure_relational_jdbc_schema()
     run_admin_bootstrap()
     setup_token_broker()
 
@@ -372,6 +375,80 @@ def setup_database():
        mode=0o600
        )
   _run_postgres_sql(schema_grant_file, polaris_db_jdbc_url)
+
+
+def ensure_relational_jdbc_schema():
+  """Create or upgrade the Polaris relational-jdbc schema from the SQL shipped by ODP.
+
+  Polaris 1.8.0 made schema creation a prerequisite of 'admin bootstrap' (it used to run
+  CREATE SCHEMA itself up to 1.7.x) and bumped the schema to v6. Upstream ships only full
+  schema-vN.sql files (CREATE ... IF NOT EXISTS, version upsert) and no migration scripts, so
+  existing databases are migrated here with the documented deltas before the latest full
+  file is replayed idempotently:
+    v4 -> v5: drop the unused idempotency_records table, events.catalog_id becomes nullable
+    v5 -> v6: idx_locations leads with catalog_id instead of parent_id (recreated by schema-v6.sql)
+  Everything runs as the Polaris DB user (owner of the database), so it also works when the
+  database itself is DBA-managed (create_db_dbuser=false) and the objects stay owned by it.
+  """
+  import params
+
+  if params.polaris_db_flavor != "POSTGRES":
+    Logger.info("Relational-jdbc schema provisioning is only implemented for POSTGRES; skipping.")
+    return
+
+  sql_dir = os.path.join(params.polaris_home, "sql", "postgres")
+  if not os.path.isdir(sql_dir):
+    Logger.info("No shipped relational-jdbc schema under {0}; this Polaris version bootstraps its own schema.".format(sql_dir))
+    return
+
+  schema_files = {}
+  for name in os.listdir(sql_dir):
+    match = re.match(r"^schema-v(\d+)\.sql$", name)
+    if match:
+      schema_files[int(match.group(1))] = os.path.join(sql_dir, name)
+  if not schema_files:
+    Logger.info("No schema-vN.sql files under {0}; skipping schema provisioning.".format(sql_dir))
+    return
+
+  latest_version = max(schema_files)
+  with open(schema_files[latest_version]) as handle:
+    latest_sql = handle.read()
+
+  jdbc_url = str(params.application_properties.get("quarkus.datasource.jdbc.url", "")).strip()
+  if not jdbc_url:
+    jdbc_url = "jdbc:postgresql://{0}:{1}/{2}".format(params.polaris_db_host, params.polaris_db_port, params.polaris_db_name)
+  db_user = str(params.application_properties.get("quarkus.datasource.username", "")).strip() or params.polaris_db_user
+  db_password = str(params.application_properties.get("quarkus.datasource.password", "")).strip() or str(params.polaris_db_password or "")
+  if not db_password:
+    raise Fail("Polaris DB password is required to provision the relational-jdbc schema.")
+
+  statements = [
+    "CREATE SCHEMA IF NOT EXISTS polaris_schema;",
+    "SET search_path TO polaris_schema;",
+    # Migration deltas for databases created by earlier Polaris releases (schema version < latest).
+    "DO $$ DECLARE current_version INT; BEGIN "
+    "IF to_regclass('polaris_schema.version') IS NOT NULL THEN "
+    "SELECT version_value INTO current_version FROM polaris_schema.version WHERE version_key = 'version'; "
+    "IF current_version IS NOT NULL AND current_version < 5 THEN "
+    "DROP TABLE IF EXISTS polaris_schema.idempotency_records; "
+    "ALTER TABLE polaris_schema.events ALTER COLUMN catalog_id DROP NOT NULL; "
+    "END IF; "
+    "IF current_version IS NOT NULL AND current_version < 6 THEN "
+    "DROP INDEX IF EXISTS polaris_schema.idx_locations; "
+    "END IF; "
+    "END IF; END $$;",
+    latest_sql,
+  ]
+
+  schema_file = format("{polaris_pid_dir}/polaris-db-relational-schema.sql")
+  File(schema_file,
+       content="\n".join(statements),
+       owner=params.polaris_user,
+       group=params.user_group,
+       mode=0o600
+       )
+  Logger.info("Applying Polaris relational-jdbc schema v{0} from {1} as {2}".format(latest_version, schema_files[latest_version], db_user))
+  _run_postgres_sql(schema_file, jdbc_url, db_user=db_user, db_password=db_password)
 
 
 def run_admin_bootstrap():
@@ -1583,8 +1660,12 @@ def _sql_literal(value):
   return "'{0}'".format(str(value or "").replace("'", "''"))
 
 
-def _run_postgres_sql(sql_file, jdbc_url):
+def _run_postgres_sql(sql_file, jdbc_url, db_user=None, db_password=None):
   import params
+
+  db_user = db_user or params.polaris_db_root_user
+  if db_password is None:
+    db_password = str(params.polaris_db_root_password or "")
 
   jdbc_driver_jar = _find_jdbc_driver()
   if not jdbc_driver_jar:
@@ -1604,7 +1685,7 @@ def _run_postgres_sql(sql_file, jdbc_url):
 
   password_file = format("{polaris_pid_dir}/polaris-db-admin-password.txt")
   File(password_file,
-       content=str(params.polaris_db_root_password or ""),
+       content=db_password,
        owner=params.polaris_user,
        group=params.user_group,
        mode=0o600
@@ -1616,7 +1697,7 @@ def _run_postgres_sql(sql_file, jdbc_url):
     jdbc_driver_jar,
     runner_java_file,
     jdbc_url,
-    params.polaris_db_root_user,
+    db_user,
     sql_file,
     password_file,
   ]
