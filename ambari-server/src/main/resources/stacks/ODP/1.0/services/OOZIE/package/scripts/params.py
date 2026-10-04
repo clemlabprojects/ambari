@@ -30,6 +30,17 @@ else:
 java_home = config['ambariLevelParams']['java_home']
 java_version = expect("/ambariLevelParams/java_version", int)
 
+# Oozie loads Hive's HCatalog classes during server startup. Keep its launcher
+# and environment template on the same feature-gated JDK, including module flags.
+if not OSCheck.is_windows_family() and check_stack_feature(
+    StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
+  secondary_java_home = default("/ambariLevelParams/secondary_java_home", None) or \
+                        default("/hostLevelParams/secondary_java_home", None)
+  if secondary_java_home:
+    java_home = java64_home = secondary_java_home
+    # The supported secondary runtime is Java 21; enable its template JVM options.
+    java_version = 21
+
 
 host_sys_prepped = default("/ambariLevelParams/host_sys_prepped", False)
 
