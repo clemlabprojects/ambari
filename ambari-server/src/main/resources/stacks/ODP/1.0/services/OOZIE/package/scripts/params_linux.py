@@ -37,6 +37,7 @@ from resource_management.libraries.functions.get_architecture import get_archite
 from resource_management.libraries.functions.stack_features import get_stack_feature_version
 from resource_management.libraries.functions.stack_tools import get_stack_name
 from resource_management.libraries.functions.version import get_major_version
+from resource_management.libraries.functions.version_select_util import get_component_version_from_symlink
 
 
 from resource_management.core.utils import PasswordString
@@ -102,6 +103,18 @@ if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE,
 
 # oozie-server or oozie-client, depending on role
 oozie_root = status_params.component_directory
+
+# Defaults injected by Oozie into every action/launcher configuration (conf_dir/action-conf/default.xml).
+# mapred-site refers to the stack version as ${<stack>.version}; the Oozie server JVM has no such system
+# property, so the version of the Oozie binaries in use is published as a configuration property. The
+# MapReduce framework archive is localized for the launcher AM, which Hadoop only does for MapReduce jobs.
+oozie_stack_version_property = format("{stack_name}.version").lower()
+oozie_stack_version = version
+if oozie_stack_version is None:
+  oozie_stack_version = get_component_version_from_symlink(stack_name, "oozie-server")
+if oozie_stack_version is None:
+  oozie_stack_version = stack_version_unformatted
+oozie_launcher_framework_archive = default("/configurations/mapred-site/mapreduce.application.framework.path", None)
 
 # using the correct oozie root dir, format the correct location
 oozie_lib_dir = format("{stack_root}/current/{oozie_root}")

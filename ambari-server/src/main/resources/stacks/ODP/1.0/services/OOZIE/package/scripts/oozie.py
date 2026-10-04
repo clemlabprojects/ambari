@@ -192,6 +192,19 @@ def oozie(is_server=False, upgrade_type=None):
     )
   pass
 
+  if is_server:
+    Directory(format("{conf_dir}/action-conf"),
+      owner = params.oozie_user,
+      group = params.user_group,
+      create_parents = True
+    )
+    File(format("{conf_dir}/action-conf/default.xml"),
+      owner = params.oozie_user,
+      group = params.user_group,
+      mode = 0o644,
+      content = Template("action-conf-default.xml.j2")
+    )
+
   oozie_ownership()
   
   if params.lzo_enabled:

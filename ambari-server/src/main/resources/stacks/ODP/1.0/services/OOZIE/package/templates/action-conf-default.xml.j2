@@ -1,0 +1,55 @@
+{#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+-#}
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  Managed by Ambari. Defaults that Oozie injects into the configuration of every action it submits
+  (oozie.service.HadoopAccessorService.action.configurations = *=action-conf); the oozie.launcher.*
+  entries also reach the launcher ApplicationMaster configuration. Per-action files (<action>.xml)
+  override these values; workflow <configuration> entries override both.
+-->
+<configuration>
+  <!--
+    mapred-site and yarn-site refer to the stack version through ${{ '{' }}{{oozie_stack_version_property}}{{ '}' }}
+    (framework path, application classpath, admin JVM options). Hadoop clients resolve it from the
+    -D{{oozie_stack_version_property}} system property set by the stack wrappers; the Oozie server and its
+    launchers do not run with it, so define it as a configuration property for every action.
+  -->
+  <property>
+    <name>{{oozie_stack_version_property}}</name>
+    <value>{{oozie_stack_version}}</value>
+  </property>
+  <!-- Only oozie.launcher.* entries reach the launcher ApplicationMaster configuration, which
+       inherits the same ${{ '{' }}{{oozie_stack_version_property}}{{ '}' }} placeholders from mapred-site and yarn-site. -->
+  <property>
+    <name>oozie.launcher.{{oozie_stack_version_property}}</name>
+    <value>{{oozie_stack_version}}</value>
+  </property>
+{% if oozie_launcher_framework_archive %}
+  <!--
+    The Oozie launcher is a plain YARN ApplicationMaster. Hadoop localizes
+    mapreduce.application.framework.path only for MapReduce jobs, while the launcher classpath built
+    from mapreduce.application.classpath expects the framework archive under $PWD. Localize it for
+    the launcher so MapReduce, Java, Hive2, Sqoop and DistCp actions can load the MapReduce classes.
+  -->
+  <property>
+    <name>oozie.launcher.mapreduce.job.cache.archives</name>
+    <value>{{oozie_launcher_framework_archive}}</value>
+  </property>
+{% endif %}
+</configuration>
