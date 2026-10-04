@@ -104,6 +104,14 @@ if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE,
 spark_daemon_memory = config['configurations']['spark3-env']['spark_daemon_memory']
 spark_thrift_server_conf_file = spark_conf + "/spark-thrift-sparkconf.conf"
 java_home = config['ambariLevelParams']['java_home']
+# Spark daemons, clients and rendered configuration must use the same runtime.
+if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
+  java_home = (default('/ambariLevelParams/secondary_java_home', None)
+               or default('/hostLevelParams/secondary_java_home', None)
+               or java_home)
+
+# Existing upgrade packs may have stored this placeholder in spark-env content.
+spark_java_home = java_home
 
 # spark.sql.hive.metastore.version must exact-string match the Hive jars
 # bundled in /usr/odp/current/spark3-client/jars/ when
@@ -269,18 +277,6 @@ hdfs_resource_ignore_file = "/var/lib/ambari-agent/data/.hdfs_resource_ignore"
 
 hive_schematool_bin = format('{stack_root}/current/{hive_component_directory}/bin')
 hive_metastore_db_type = config['configurations']['hive-env']['hive_database_type']
-
-# AMBARI-487: Hive 4's schematool is compiled by JDK 21, so the embedded -createCatalog call
-# in spark_service.py needs the secondary JDK on ODP 1.3.2.0+ even though the Spark history
-# server itself runs on the primary (JDK 17). Resolve from ambariLevelParams (always published)
-# with host_level_params fallback. Stays on the primary on older stacks (feature gate off).
-hive_schematool_java_home = java_home
-host_level_params = default("/hostLevelParams", {})
-ambari_level_params = default("/ambariLevelParams", {})
-if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
-  secondary = ambari_level_params.get("secondary_java_home") or host_level_params.get("secondary_java_home")
-  if secondary:
-    hive_schematool_java_home = secondary
 
 ats_host = set(default("/clusterHostInfo/app_timeline_server_hosts", []))
 has_ats = len(ats_host) > 0

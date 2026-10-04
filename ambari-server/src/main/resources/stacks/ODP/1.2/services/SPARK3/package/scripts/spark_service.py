@@ -104,7 +104,7 @@ def spark_service(name, upgrade_type=None, action=None):
 
       Execute(create_catalog_cmd,
                 user = params.hive_user,
-                environment = {'JAVA_HOME': params.hive_schematool_java_home})
+                environment = {'JAVA_HOME': params.java_home})
 
       historyserver_no_op_test = as_sudo(["test", "-f", params.spark_history_server_pid_file]) + " && " + as_sudo(["pgrep", "-F", params.spark_history_server_pid_file])
       try:
@@ -157,5 +157,3 @@ def spark_service(name, upgrade_type=None, action=None):
       File(params.spark_thrift_server_pid_file,
         action="delete"
       )
-
-

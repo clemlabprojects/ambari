@@ -686,6 +686,16 @@
       </service>
     </group>
 
+    <group xsi:type="cluster" name="SPARK3_JAVA_CONFIG" title="Configure Spark3 YARN Java homes">
+      <direction>UPGRADE</direction>
+      <execute-stage service="SPARK3" component="SPARK3_CLIENT" title="Configure Spark3 ApplicationMaster and executor Java homes">
+        <task xsi:type="configure" id="spark3_yarn_java_home_defaults"/>
+      </execute-stage>
+      <execute-stage service="SPARK3" component="SPARK3_CLIENT" title="Configure Spark3 Thrift Server container Java homes">
+        <task xsi:type="configure" id="spark3_thrift_yarn_java_home_defaults"/>
+      </execute-stage>
+    </group>
+
     <group xsi:type="restart" name="SPARK3" title="Spark3">
       <service-check>false</service-check>
       <skippable>true</skippable>

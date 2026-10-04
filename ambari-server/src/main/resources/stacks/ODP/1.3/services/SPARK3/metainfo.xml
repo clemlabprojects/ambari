@@ -38,6 +38,10 @@
           <javaHomeSelector>secondary_java_home</javaHomeSelector>
         </component>
         <component>
+          <name>SPARK3_LIVY2_SERVER</name>
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
+        </component>
+        <component>
           <name>LIVY2_SERVER</name>
           <javaHomeSelector>secondary_java_home</javaHomeSelector>
         </component>

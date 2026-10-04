@@ -144,6 +144,16 @@
     <service name="SPARK3">
       <component name="SPARK3_CLIENT">
         <changes>
+          <definition xsi:type="configure" id="spark3_yarn_java_home_defaults">
+            <type>spark3-defaults</type>
+            <set key="spark.yarn.appMasterEnv.JAVA_HOME" value="{{java_home}}" if-key="spark.yarn.appMasterEnv.JAVA_HOME" if-key-state="absent"/>
+            <set key="spark.executorEnv.JAVA_HOME" value="{{java_home}}" if-key="spark.executorEnv.JAVA_HOME" if-key-state="absent"/>
+          </definition>
+          <definition xsi:type="configure" id="spark3_thrift_yarn_java_home_defaults">
+            <type>spark3-thrift-sparkconf</type>
+            <set key="spark.yarn.appMasterEnv.JAVA_HOME" value="{{java_home}}" if-key="spark.yarn.appMasterEnv.JAVA_HOME" if-key-state="absent"/>
+            <set key="spark.executorEnv.JAVA_HOME" value="{{java_home}}" if-key="spark.executorEnv.JAVA_HOME" if-key-state="absent"/>
+          </definition>
           <definition xsi:type="configure" id="odp_1_3_0_spark3_thrift_builtin_hive_metastore">
             <type>spark3-thrift-sparkconf</type>
             <transfer operation="delete" delete-key="spark.sql.hive.metastore.version"
