@@ -913,6 +913,16 @@ public class UpgradeContext {
     return parameters;
   }
 
+  private UpgradeJavaRuntime.Plan javaRuntimePlan;
+
+  public UpgradeJavaRuntime.Plan getJavaRuntimePlan() {
+    return javaRuntimePlan;
+  }
+
+  public void setJavaRuntimePlan(UpgradeJavaRuntime.Plan plan) {
+    javaRuntimePlan = plan;
+  }
+
   /**
    * {@inheritDoc}
    */

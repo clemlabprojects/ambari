@@ -18,6 +18,7 @@
 
 var App = require('app');
 var stringUtils = require('utils/string_utils');
+var upgradeJava = require('utils/upgrade_java');
 
 App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, {
   name: 'mainAdminStackAndUpgradeController',
@@ -1525,12 +1526,33 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
         bypassedFailures: bypassedFailures,
         noCallbackCondition: hasFails,
         callback: function () {
-          self.upgrade(params);
+          self.upgradeWithJavaSelection(params, data);
         }
       }, configs, params.label);
     } else {
-      this.upgrade(params);
+      this.upgradeWithJavaSelection(params, data);
     }
+  },
+
+  /**
+   * Use the final precheck response after warnings are acknowledged, so all
+   * submission paths pass through the JDK selector when a transition is required.
+   */
+  upgradeWithJavaSelection: function (params, checks) {
+    var self = this;
+    var javaCheck = checks.items.findProperty('UpgradeChecks.id', 'SECONDARY_JAVA_HOME');
+    var details = javaCheck && javaCheck.UpgradeChecks.failed_detail;
+    if (params.type === 'NON_ROLLING' && details && details.length && details[0].primary_java_major) {
+      this.set('requestInProgress', false);
+      var selection = Em.Object.create({id: params.id});
+      return upgradeJava.show(selection, details[0], function () {
+        params.primaryJavaHome = selection.get('primaryJavaHome');
+        params.secondaryJavaHome = selection.get('secondaryJavaHome');
+        params.javaValidationRequestId = selection.get('javaValidationRequestId');
+        self.upgrade(params);
+      });
+    }
+    return this.upgrade(params);
   },
 
   runPreUpgradeCheckError: function() {

@@ -19,6 +19,7 @@ package org.apache.ambari.server.serveraction.upgrades;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -54,12 +55,14 @@ import org.apache.ambari.server.orm.dao.HostDAO;
 import org.apache.ambari.server.orm.dao.HostVersionDAO;
 import org.apache.ambari.server.orm.dao.RepositoryVersionDAO;
 import org.apache.ambari.server.orm.dao.RequestDAO;
+import org.apache.ambari.server.orm.dao.SettingDAO;
 import org.apache.ambari.server.orm.dao.StackDAO;
 import org.apache.ambari.server.orm.dao.UpgradeDAO;
 import org.apache.ambari.server.orm.entities.HostComponentStateEntity;
 import org.apache.ambari.server.orm.entities.HostVersionEntity;
 import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.orm.entities.RequestEntity;
+import org.apache.ambari.server.orm.entities.SettingEntity;
 import org.apache.ambari.server.orm.entities.StackEntity;
 import org.apache.ambari.server.orm.entities.UpgradeEntity;
 import org.apache.ambari.server.orm.entities.UpgradeHistoryEntity;
@@ -396,9 +399,11 @@ public class UpgradeActionTest {
     finalizeUpgradeAction.setExecutionCommand(executionCommand);
     finalizeUpgradeAction.setHostRoleCommand(hostRoleCommand);
 
+    String draft = createJavaDraft(repositoryVersion2111);
     CommandReport report = finalizeUpgradeAction.execute(null);
     assertNotNull(report);
     assertEquals(HostRoleStatus.COMPLETED.name(), report.getStatus());
+    assertNull(m_injector.getInstance(SettingDAO.class).findByName(draft));
 
     for (HostVersionEntity entity : hostVersionDAO.findByClusterAndHost(clusterName, "h1")) {
       if (StringUtils.equals(entity.getRepositoryVersion().getVersion(), repositoryVersion2110.getVersion())) {
@@ -432,9 +437,11 @@ public class UpgradeActionTest {
     finalizeUpgradeAction.setExecutionCommand(executionCommand);
     finalizeUpgradeAction.setHostRoleCommand(hostRoleCommand);
 
+    String draft = createJavaDraft(repositoryVersion2111);
     // this should fail since the host versions have not moved to current
     CommandReport report = finalizeUpgradeAction.execute(null);
     assertEquals(HostRoleStatus.FAILED.name(), report.getStatus());
+    assertNotNull(m_injector.getInstance(SettingDAO.class).findByName(draft));
 
     List<HostVersionEntity> hostVersions = hostVersionDAO.findHostVersionByClusterAndRepository(
         cluster.getClusterId(), repositoryVersion2111);
@@ -445,6 +452,7 @@ public class UpgradeActionTest {
 
     report = finalizeUpgradeAction.execute(null);
     assertEquals(HostRoleStatus.COMPLETED.name(), report.getStatus());
+    assertNull(m_injector.getInstance(SettingDAO.class).findByName(draft));
 
     hostVersions = hostVersionDAO.findHostVersionByClusterAndRepository(cluster.getClusterId(),
         repositoryVersion2111);
@@ -455,6 +463,17 @@ public class UpgradeActionTest {
        assertEquals(UpgradeState.NONE, hostComponentStateEntity.getUpgradeState());
       }
     }
+  }
+
+  private String createJavaDraft(RepositoryVersionEntity target) {
+    SettingEntity draft = new SettingEntity();
+    draft.setName("upgrade-java-" + clusterName + "-" + target.getId());
+    draft.setSettingType("UPGRADE_JAVA");
+    draft.setContent("{}");
+    draft.setUpdatedBy("admin");
+    draft.setUpdateTimestamp(System.currentTimeMillis());
+    m_injector.getInstance(SettingDAO.class).create(draft);
+    return draft.getName();
   }
 
   /**

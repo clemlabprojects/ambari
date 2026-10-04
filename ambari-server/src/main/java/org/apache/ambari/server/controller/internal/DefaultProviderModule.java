@@ -94,6 +94,8 @@ public class DefaultProviderModule extends AbstractProviderModule {
         return new UpgradeItemResourceProvider(managementController);
       case UpgradeSummary:
         return new UpgradeSummaryResourceProvider(managementController);
+      case JavaRuntime:
+        return new JavaRuntimeResourceProvider(managementController);
       case PreUpgradeCheck:
         return new PreUpgradeCheckResourceProvider(managementController);
       case HostStackVersion:

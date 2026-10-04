@@ -1850,6 +1850,9 @@ var urls = {
             "upgrade_type": data.type,
             "skip_failures": data.skipComponentFailures,
             "skip_service_check_failures": data.skipSCFailures,
+            "primary_java_home": data.primaryJavaHome,
+            "secondary_java_home": data.secondaryJavaHome,
+            "java_validation_request_id": data.javaValidationRequestId,
             "direction": "UPGRADE"
           }
         })
@@ -2005,6 +2008,61 @@ var urls = {
   'admin.upgrade.pre_upgrade_check': {
     'real': '/clusters/{clusterName}/rolling_upgrades_check?fields=*&UpgradeChecks/repository_version_id={id}&UpgradeChecks/upgrade_type={type}',
     'mock': '/data/stack_versions/pre_upgrade_check.json'
+  },
+
+  'admin.java.get': {
+    'real': '/clusters/{clusterName}/java_runtimes/stack?fields=JavaRuntime/*'
+  },
+
+  'admin.java.save': {
+    'real': '/clusters/{clusterName}/java_runtimes/stack',
+    'type': 'PUT',
+    'format': function (data) { return {dataType: 'text', data: JSON.stringify({JavaRuntime: data.runtime})}; }
+  },
+
+  'admin.upgrade.java.hosts': {
+    'real': '/clusters/{clusterName}/hosts?fields=Hosts/host_name'
+  },
+
+  'admin.upgrade.java.check': {
+    'real': '/clusters/{clusterName}/requests',
+    'type': 'POST',
+    'format': function (data) {
+      return {data: JSON.stringify({
+        RequestInfo: {
+          context: 'Validate upgrade JDKs',
+          action: 'check_upgrade_java',
+          parameters: {
+            primary_java_home: data.primary,
+            secondary_java_home: data.secondary,
+            primary_java_major: data.primaryMajor,
+            secondary_java_major: data.secondaryMajor
+          }
+        },
+        'Requests/resource_filters': [{hosts: data.hosts.join(',')}]
+      })};
+    }
+  },
+
+  'admin.upgrade.java.results': {
+    'real': '/clusters/{clusterName}/requests/{requestId}?fields=Requests/request_status,tasks/Tasks/host_name,tasks/Tasks/status,tasks/Tasks/structured_out,tasks/Tasks/end_time'
+  },
+
+  'admin.upgrade.java.draft.get': {
+    'real': '/settings/{draftName}?fields=Settings/*'
+  },
+
+  'admin.upgrade.java.draft.create': {
+    'real': '/settings',
+    'type': 'POST',
+    'format': function (data) { return {dataType: 'text', data: JSON.stringify({Settings: data.settings})}; }
+  },
+
+  'admin.upgrade.java.draft.update': {
+    'real': '/settings/{draftName}',
+    'type': 'PUT',
+    // Settings updates return HTTP 200 with no body, not a JSON document.
+    'format': function (data) { return {dataType: 'text', data: JSON.stringify({Settings: data.settings})}; }
   },
 
   'admin.upgrade.get_supported_upgradeTypes': {

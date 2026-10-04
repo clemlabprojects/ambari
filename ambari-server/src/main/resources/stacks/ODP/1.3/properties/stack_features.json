@@ -2,6 +2,14 @@
   "ODP": {
     "stack_features": [
       {
+        "name": "upgrade_java_home_selection",
+        "description": "Select JDKs on express upgrades crossing min_version; retain existing paths on subsequent upgrades",
+        "enabled": true,
+        "min_version": "1.3.2.0",
+        "primary_java_major": 17,
+        "secondary_java_major": 21
+      },
+      {
         "name": "snappy",
         "description": "Snappy compressor/decompressor support",
         "min_version": "1.0.0.0",

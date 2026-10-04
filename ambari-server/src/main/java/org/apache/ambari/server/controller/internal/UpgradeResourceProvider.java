@@ -92,6 +92,7 @@ import org.apache.ambari.server.state.UpgradeContext;
 import org.apache.ambari.server.state.UpgradeContextFactory;
 import org.apache.ambari.server.state.UpgradeHelper;
 import org.apache.ambari.server.state.UpgradeHelper.UpgradeGroupHolder;
+import org.apache.ambari.server.state.UpgradeJavaRuntime;
 import org.apache.ambari.server.state.stack.ConfigUpgradePack;
 import org.apache.ambari.server.state.stack.UpgradePack;
 import org.apache.ambari.server.state.stack.upgrade.AddComponentTask;
@@ -257,6 +258,9 @@ public class UpgradeResourceProvider extends AbstractControllerResourceProvider 
   private static UpgradeContextFactory s_upgradeContextFactory;
 
   @Inject
+  private static UpgradeJavaRuntime s_upgradeJavaRuntime;
+
+  @Inject
   private STOMPUpdatePublisher STOMPUpdatePublisher;
 
   @Inject
@@ -274,6 +278,9 @@ public class UpgradeResourceProvider extends AbstractControllerResourceProvider 
   static {
     // properties
     PROPERTY_IDS.add(UPGRADE_CLUSTER_NAME);
+    PROPERTY_IDS.add(UpgradeJavaRuntime.PRIMARY);
+    PROPERTY_IDS.add(UpgradeJavaRuntime.SECONDARY);
+    PROPERTY_IDS.add(UpgradeJavaRuntime.VALIDATION);
     PROPERTY_IDS.add(UPGRADE_REPO_VERSION_ID);
     PROPERTY_IDS.add(UPGRADE_TYPE);
     PROPERTY_IDS.add(UPGRADE_PACK);
@@ -353,6 +360,7 @@ public class UpgradeResourceProvider extends AbstractControllerResourceProvider 
 
         // create the context, validating the properties in the process
         final UpgradeContext upgradeContext = s_upgradeContextFactory.create(cluster, requestMap);
+        upgradeContext.setJavaRuntimePlan(s_upgradeJavaRuntime.prepare(upgradeContext, requestMap));
 
         try {
           return createUpgrade(upgradeContext);
@@ -729,6 +737,10 @@ public class UpgradeResourceProvider extends AbstractControllerResourceProvider 
     ConfigHelper configHelper = getManagementController().getConfigHelper();
 
     List<UpgradeGroupHolder> groups = s_upgradeHelper.createSequence(pack, upgradeContext);
+
+    if (upgradeContext.getJavaRuntimePlan() != null) {
+      s_upgradeJavaRuntime.addStage(groups, upgradeContext.getJavaRuntimePlan());
+    }
 
     if (groups.isEmpty()) {
       throw new AmbariException("There are no groupings available");
@@ -1450,7 +1462,7 @@ public class UpgradeResourceProvider extends AbstractControllerResourceProvider 
         cluster.getClusterName(),
         new ServiceComponentHostServerActionEvent(null, System.currentTimeMillis()), commandParams,
         itemDetail, null, s_configuration.getDefaultServerTaskTimeout(), group.allowRetry,
-        context.isComponentFailureAutoSkipped());
+        context.isComponentFailureAutoSkipped() && group.supportsAutoSkipOnFailure);
 
     request.addStages(Collections.singletonList(stage));
 

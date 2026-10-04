@@ -51,6 +51,7 @@ import org.apache.ambari.server.state.ServiceComponentHost;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.StackInfo;
 import org.apache.ambari.server.state.UpgradeContext;
+import org.apache.ambari.server.state.UpgradeJavaRuntime;
 import org.apache.ambari.server.state.UpgradeState;
 import org.apache.ambari.server.state.repository.AvailableService;
 import org.apache.ambari.server.state.repository.VersionDefinitionXml;
@@ -82,6 +83,9 @@ public class FinalizeUpgradeAction extends AbstractUpgradeServerAction {
   @Inject
   private VersionEventPublisher versionEventPublisher;
 
+  @Inject
+  private UpgradeJavaRuntime javaRuntimes;
+
   @Override
   public CommandReport execute(ConcurrentMap<String, Object> requestSharedDataContext)
       throws AmbariException, InterruptedException {
@@ -91,11 +95,12 @@ public class FinalizeUpgradeAction extends AbstractUpgradeServerAction {
 
     UpgradeContext upgradeContext = getUpgradeContext(cluster);
 
-    if (upgradeContext.getDirection() == Direction.UPGRADE) {
-      return finalizeUpgrade(upgradeContext);
-    } else {
-      return finalizeDowngrade(upgradeContext);
+    CommandReport report = upgradeContext.getDirection() == Direction.UPGRADE
+        ? finalizeUpgrade(upgradeContext) : finalizeDowngrade(upgradeContext);
+    if (HostRoleStatus.COMPLETED.name().equals(report.getStatus())) {
+      javaRuntimes.retireDraft(cluster, upgradeContext.getRepositoryVersion());
     }
+    return report;
   }
 
   /**

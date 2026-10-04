@@ -1,0 +1,98 @@
+{{!
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements. See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership. The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License. You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+}}
+<p>{{view.parentView.introduction}}</p>
+<div class="row upgrade-java-requirements">
+  <div class="col-sm-6">
+    <strong>{{view.parentView.primaryMinimum}}: {{t admin.upgrade.java.primary}}</strong>
+    <p>{{t admin.upgrade.java.primaryComponents}}</p>
+  </div>
+  <div class="col-sm-6">
+    <strong>{{view.parentView.secondaryMinimum}}: {{t admin.upgrade.java.secondary}}</strong>
+    <p>{{t admin.upgrade.java.secondaryComponents}}</p>
+  </div>
+</div>
+<p class="alert alert-info upgrade-java-activation"><strong>{{view.parentView.activationMessage}}</strong></p>
+<p>{{t admin.upgrade.java.explanation}}</p>
+<div class="row">
+  <div class="col-sm-6 form-group">
+    <label for="upgrade-primary-java">{{t admin.upgrade.java.primary}} (JDK {{view.parentView.primaryMajor}})</label>
+    {{#if view.parentView.hostCount}}
+      <span class="upgrade-java-count primary-count" aria-live="polite">{{view.parentView.primarySuccessCount}}/{{view.parentView.hostCount}} {{t admin.upgrade.java.passedHosts}}</span>
+    {{/if}}
+    {{view Em.TextField id="upgrade-primary-java" class="form-control" valueBinding="view.parentView.primaryHome" disabledBinding="view.parentView.inputsDisabled"}}
+  </div>
+  <div class="col-sm-6 form-group">
+    <label for="upgrade-secondary-java">{{t admin.upgrade.java.secondary}} (JDK {{view.parentView.secondaryMajor}})</label>
+    {{#if view.parentView.hostCount}}
+      <span class="upgrade-java-count secondary-count" aria-live="polite">{{view.parentView.secondarySuccessCount}}/{{view.parentView.hostCount}} {{t admin.upgrade.java.passedHosts}}</span>
+    {{/if}}
+    {{view Em.TextField id="upgrade-secondary-java" class="form-control" valueBinding="view.parentView.secondaryHome" disabledBinding="view.parentView.inputsDisabled"}}
+  </div>
+</div>
+<button class="btn btn-success" {{bindAttr disabled="view.parentView.disableCheck"}} {{action check target="view"}}>
+  <i class="glyphicon glyphicon-ok" aria-hidden="true"></i> {{t admin.upgrade.java.check}}
+</button>
+{{#if view.parentView.checking}}<p class="upgrade-java-feedback">{{t admin.upgrade.java.checking}}</p>{{/if}}
+{{#if view.parentView.loadingDraft}}<p class="upgrade-java-feedback">{{t admin.upgrade.java.loadingDraft}}</p>{{/if}}
+{{#if view.parentView.error}}<p class="alert alert-danger upgrade-java-feedback" role="alert">{{view.parentView.error}}</p>{{/if}}
+{{#if view.parentView.saving}}<p class="upgrade-java-feedback">{{t admin.java.saving}}</p>{{/if}}
+{{#if view.parentView.validated}}<p class="alert alert-success upgrade-java-feedback" role="status">{{view.parentView.validatedMessage}}</p>{{/if}}
+{{#if view.parentView.hostCount}}
+  <div class="table-responsive upgrade-java-results">
+    <table class="table table-striped">
+      <thead><tr><th class="java-host">{{t common.host}}</th><th class="java-progress">{{t common.status}}</th><th>{{t admin.upgrade.java.primary}}</th><th>{{t admin.upgrade.java.secondary}}</th></tr></thead>
+      <tbody>
+        {{#each row in view.parentView.rows}}
+          <tr>
+            <td>{{row.host}}</td>
+            <td>
+              <div class="progress" aria-hidden="true">
+                <div {{bindAttr class="row.progressClass row.running:progress-bar-striped row.running:active :progress-bar"}} style="width:100%"></div>
+              </div>
+              <span>{{row.statusLabel}}</span>
+            </td>
+            <td class="java-primary-result">
+              {{#if row.primaryValid}}
+                <i class="glyphicon glyphicon-ok text-success" aria-hidden="true"></i><span class="sr-only">{{t admin.upgrade.java.passed}}: </span>
+              {{else}}
+                {{#if row.primaryFailed}}
+                  <i class="glyphicon glyphicon-remove text-danger" aria-hidden="true"></i><span class="sr-only">{{t admin.upgrade.java.failed}}: </span>
+                {{else}}
+                  <i class="glyphicon glyphicon-time text-muted" aria-hidden="true"></i><span class="sr-only">{{t admin.upgrade.java.pending}}</span>
+                {{/if}}
+              {{/if}}
+              {{row.primary}}
+            </td>
+            <td class="java-secondary-result">
+              {{#if row.secondaryValid}}
+                <i class="glyphicon glyphicon-ok text-success" aria-hidden="true"></i><span class="sr-only">{{t admin.upgrade.java.passed}}: </span>
+              {{else}}
+                {{#if row.secondaryFailed}}
+                  <i class="glyphicon glyphicon-remove text-danger" aria-hidden="true"></i><span class="sr-only">{{t admin.upgrade.java.failed}}: </span>
+                {{else}}
+                  <i class="glyphicon glyphicon-time text-muted" aria-hidden="true"></i><span class="sr-only">{{t admin.upgrade.java.pending}}</span>
+                {{/if}}
+              {{/if}}
+              {{row.secondary}}
+            </td>
+          </tr>
+        {{/each}}
+      </tbody>
+    </table>
+  </div>
+{{/if}}

@@ -773,6 +773,11 @@ public class ClusterService extends BaseService {
       @PathParam("clusterName") String clusterName) {
     return new UpgradeSummaryService(clusterName);
   }
+
+  @Path("{clusterName}/java_runtimes")
+  public JavaRuntimeService getJavaRuntimeService(@PathParam("clusterName") String clusterName) {
+    return new JavaRuntimeService(clusterName);
+  }
   
   /**
    * Gets the pre-upgrade checks service.

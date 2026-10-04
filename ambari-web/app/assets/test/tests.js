@@ -34,6 +34,7 @@ require('utils/ajax/ajax');
 require('utils/ajax/ajax_queue');
 
 var files = [
+  'test/utils/upgrade_java_test',
   'test/init_test',
   'test/init_computed_aliases',
   'test/init_model_test',

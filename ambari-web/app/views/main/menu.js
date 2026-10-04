@@ -100,6 +100,9 @@ App.MainSideMenuView = Em.CollectionView.extend({
       // create dropdown categories for each menu item
       let {router} = App;
       if (itemName === 'admin') {
+        if (App.isAuthorized('AMBARI.MANAGE_CONFIGURATION')) {
+          categories.push({name: 'javaRuntimes', label: Em.I18n.t('admin.java.title'), disabled: upg, href: '#'});
+        }
         if(App.isAuthorized('CLUSTER.VIEW_STACK_DETAILS, CLUSTER.UPGRADE_DOWNGRADE_STACK') || upg) {
           categories.push({
             name: 'stackAndUpgrade',
@@ -147,7 +150,7 @@ App.MainSideMenuView = Em.CollectionView.extend({
         }
       }
       return categories;
-    }.property('content.routing'),
+    }.property('content.routing', 'App.upgradeInProgress', 'App.upgradeHolding'),
 
     AdminDropdownItemView: Ember.View.extend({
       tagName: 'li',
@@ -162,6 +165,10 @@ App.MainSideMenuView = Em.CollectionView.extend({
         // route to correct category of current menu item
         // skip routing to already selected category
         if (itemName === 'admin' && !this.get('isActive') && !this.get('isDisabled')) {
+          if (event.context === 'javaRuntimes') {
+            require('utils/upgrade_java').showAdministration();
+            return;
+          }
           App.router.route('main/admin/' + event.context);
         }
       }

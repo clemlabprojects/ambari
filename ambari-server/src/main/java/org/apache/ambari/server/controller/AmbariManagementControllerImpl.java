@@ -407,7 +407,6 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
   final private static int REPO_URL_READ_TIMEOUT = 2000;
 
   final private String jdkResourceUrl;
-  final private String javaHome;
   final private String ambariJavaHome;
   final private int ambariJavaVersion;
   final private String jdkName;
@@ -453,7 +452,6 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
         masterPort = configs.getClientApiPort();
       }
       jdkResourceUrl = getAmbariServerURI(JDK_RESOURCE_LOCATION);
-      javaHome = configs.getJavaHome();
       ambariJavaHome = configs.getAmbariJavaHome();
       ambariJavaVersion = configs.getAmbariJavaVersion();
       jdkName = configs.getJDKName();
@@ -467,7 +465,6 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
       masterPort = null;
 
       jdkResourceUrl = null;
-      javaHome = null;
       ambariJavaHome = null;
       ambariJavaVersion = -1;
       jdkName = null;
@@ -5159,7 +5156,9 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
 
   @Override
   public String getJavaHome() {
-    return javaHome;
+    // Read the live value after an explicit upgrade switch, not a startup snapshot.
+    // Preserve the constructor's null-configuration behavior for partial instances.
+    return configs == null ? null : configs.getJavaHome();
   }
 
   @Override
@@ -6106,9 +6105,8 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
     // AMBARI-483: publish secondary_java_home in ambariLevelParams so per-component scripts can
     // resolve the JDK their metainfo javaHomeSelector points to. Without this, components running
     // on a different JDK than the stack primary (Hive 4, NiFi 2, etc.) fall back to the primary.
-    if (StringUtils.isNotEmpty(configs.getSecondaryJavaHome())) {
-      clusterLevelParams.put(SECONDARY_JAVA_HOME, configs.getSecondaryJavaHome());
-    }
+    // Send an empty value as well: a downgrade can remove the secondary JDK.
+    clusterLevelParams.put(SECONDARY_JAVA_HOME, StringUtils.defaultString(configs.getSecondaryJavaHome()));
     clusterLevelParams.put(DB_NAME, getServerDB());
     clusterLevelParams.put(MYSQL_JDBC_URL, getMysqljdbcUrl());
     clusterLevelParams.put(ORACLE_JDBC_URL, getOjdbcUrl());

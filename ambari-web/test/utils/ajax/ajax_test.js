@@ -100,6 +100,63 @@ describe('App.ajax', function() {
     });
   });
 
+  describe('JDK preparation responses', function () {
+    var server, settings, settingsUrl;
+    beforeEach(function () {
+      // Exercise jQuery response conversion, not a pre-resolved AJAX stub.
+      $.ajax.restore();
+      sinon.spy($, 'ajax');
+      server = sinon.fakeServer.create();
+      settingsUrl = 'http://' + $.hostName + '/api/v1/settings';
+      settings = {name: 'upgrade-java-test-51', setting_type: 'UPGRADE_JAVA',
+        content: JSON.stringify({primary: '/jdk17', secondary: '/jdk21', requestId: 42})};
+    });
+    afterEach(function () {
+      server.restore();
+    });
+
+    function save(name) {
+      return App.ajax.send({name: name, sender: {failed: Em.K}, error: 'failed',
+        data: {draftName: settings.name, settings: settings}});
+    }
+
+    it('accepts the empty HTTP 200 returned by a Settings update', function () {
+      server.respondWith('PUT', settingsUrl + '/' + settings.name,
+        [200, {'Content-Type': 'application/json'}, '']);
+      var request = save('admin.upgrade.java.draft.update');
+      server.respond();
+      expect(request.state()).to.equal('resolved');
+      expect(JSON.parse(server.requests[0].requestBody).Settings).to.deep.equal(settings);
+    });
+
+    it('accepts the HTTP 201 resource response when creating preparation', function () {
+      server.respondWith('POST', settingsUrl,
+        [201, {'Content-Type': 'application/json'}, JSON.stringify({resources: [{Settings: {name: settings.name}}]})]);
+      var request = save('admin.upgrade.java.draft.create');
+      server.respond();
+      expect(request.state()).to.equal('resolved');
+    });
+
+    it('still rejects a Settings write denied by the server', function () {
+      server.respondWith('PUT', settingsUrl + '/' + settings.name,
+        [403, {'Content-Type': 'application/json'}, '{"status":403,"message":"Forbidden"}']);
+      var request = save('admin.upgrade.java.draft.update');
+      server.respond();
+      expect(request.state()).to.equal('rejected');
+    });
+
+    it('continues to parse the preparation GET response as JSON', function () {
+      server.respondWith('GET', settingsUrl + '/' + settings.name + '?fields=Settings/*',
+        [200, {'Content-Type': 'text/plain'}, JSON.stringify({Settings: settings})]);
+      var response;
+      var request = App.ajax.send({name: 'admin.upgrade.java.draft.get', sender: this,
+        data: {draftName: settings.name}}).done(function (data) { response = data; });
+      server.respond();
+      expect(request.state()).to.equal('resolved');
+      expect(response.Settings).to.deep.equal(settings);
+    });
+  });
+
   describe('Check "real" property for each url object', function() {
     var names = App.ajax.fakeGetUrlNames();
     names.forEach(function(name) {

@@ -18,6 +18,7 @@
 
 
 var App = require('app');
+var upgradeJava = require('utils/upgrade_java');
 require('controllers/main/admin/stack_and_upgrade_controller');
 require('utils/string_utils');
 var testHelpers = require('test/helpers');
@@ -583,6 +584,94 @@ describe('App.MainAdminStackAndUpgradeController', function() {
           expect(App.showClusterCheckPopup.firstCall.args[2]).to.eql(item.configs);
         }
       });
+    });
+  });
+
+  describe('JDK selection after final upgrade prechecks', function () {
+    var params, requirements, data;
+
+    beforeEach(function () {
+      sinon.stub(App, 'showClusterCheckPopup', Em.K);
+      sinon.stub(controller, 'upgrade', Em.K);
+      sinon.stub(upgradeJava, 'show', Em.K);
+      controller.set('requestInProgress', true);
+      params = {id: 51, type: 'NON_ROLLING', value: '1.3.2.0-36', label: 'ODP-1.3.2.0-36',
+        skipComponentFailures: 'false', skipSCFailures: 'false'};
+      requirements = {primary_java_major: 17, secondary_java_major: 21,
+        primary_java_home: '/old8', secondary_java_home: ''};
+      data = {items: [{UpgradeChecks: {id: 'SECONDARY_JAVA_HOME', status: 'PASS',
+        failed_detail: [requirements]}}]};
+    });
+
+    afterEach(function () {
+      App.showClusterCheckPopup.restore();
+      controller.upgrade.restore();
+      upgradeJava.show.restore();
+      controller.set('requestInProgress', false);
+    });
+
+    function validateAndProceed() {
+      var call = upgradeJava.show.firstCall;
+      expect(call.args[0].get('id')).to.equal(51);
+      expect(call.args[1]).to.eql(requirements);
+      call.args[0].setProperties({primaryJavaHome: '/jdk17', secondaryJavaHome: '/jdk21',
+        javaValidationRequestId: 42});
+      call.args[2]();
+      expect(controller.upgrade.calledOnce).to.equal(true);
+      expect(controller.upgrade.firstCall.args[0]).to.eql({id: 51, type: 'NON_ROLLING',
+        value: '1.3.2.0-36', label: 'ODP-1.3.2.0-36', skipComponentFailures: 'false',
+        skipSCFailures: 'false', primaryJavaHome: '/jdk17', secondaryJavaHome: '/jdk21',
+        javaValidationRequestId: 42});
+    }
+
+    it('selects JDKs using the final precheck response before submitting an upgrade', function () {
+      controller.runPreUpgradeCheckSuccess(data, null, params);
+      expect(upgradeJava.show.calledOnce).to.equal(true);
+      expect(controller.upgrade.called).to.equal(false);
+      expect(controller.get('requestInProgress')).to.equal(false);
+      validateAndProceed();
+    });
+
+    ['WARNING', 'BYPASS'].forEach(function (status) {
+      it('Proceed anyway for ' + status + ' still requires JDK selection', function () {
+        data.items.push({UpgradeChecks: {id: 'HEALTH', status: status}});
+        controller.runPreUpgradeCheckSuccess(data, null, params);
+        expect(upgradeJava.show.called).to.equal(false);
+        expect(controller.upgrade.called).to.equal(false);
+        expect(App.showClusterCheckPopup.firstCall.args[1].noCallbackCondition).to.equal(false);
+        App.showClusterCheckPopup.firstCall.args[1].callback();
+        expect(upgradeJava.show.calledOnce).to.equal(true);
+        expect(controller.upgrade.called).to.equal(false);
+        validateAndProceed();
+      });
+    });
+
+    it('does not start an upgrade when the selector is cancelled', function () {
+      controller.runPreUpgradeCheckSuccess(data, null, params);
+      expect(upgradeJava.show.calledOnce).to.equal(true);
+      expect(controller.upgrade.called).to.equal(false);
+    });
+
+    it('keeps failed prechecks blocking before selection', function () {
+      data.items.push({UpgradeChecks: {id: 'SERVICES_UP', status: 'FAIL'}});
+      controller.runPreUpgradeCheckSuccess(data, null, params);
+      expect(App.showClusterCheckPopup.firstCall.args[1].noCallbackCondition).to.equal(true);
+      expect(upgradeJava.show.called).to.equal(false);
+      expect(controller.upgrade.called).to.equal(false);
+    });
+
+    it('keeps upgrades within the same runtime range unchanged', function () {
+      data.items[0].UpgradeChecks.failed_detail = [];
+      controller.runPreUpgradeCheckSuccess(data, null, params);
+      expect(upgradeJava.show.called).to.equal(false);
+      expect(controller.upgrade.calledWith(params)).to.equal(true);
+    });
+
+    it('does not enable the express JDK switch for rolling upgrades', function () {
+      params.type = 'ROLLING';
+      controller.runPreUpgradeCheckSuccess(data, null, params);
+      expect(upgradeJava.show.called).to.equal(false);
+      expect(controller.upgrade.calledWith(params)).to.equal(true);
     });
   });
 

@@ -31,6 +31,9 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.lang.reflect.Field;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
@@ -3111,6 +3114,67 @@ public class Configuration {
 
     // reloading properties
     properties = readConfigFile();
+  }
+
+  /**
+   * Persist an explicit administrative or upgrade runtime selection before publishing it to agents.
+   * Only stack runtime properties may change; the running server's JDK is untouched.
+   * An atomic replacement leaves the previous file intact if writing fails.
+   */
+  public synchronized void updateStackJavaHomes(Map<String, String> values) throws AmbariException {
+    Set<String> allowed = new HashSet<>(java.util.Arrays.asList(
+        JAVA_HOME.getKey(), STACK_JAVA_HOME.getKey(), SECONDARY_JAVA_HOME.getKey()));
+    if (!allowed.equals(values.keySet())) {
+      throw new AmbariException("Expected only primary, stack and secondary Java homes");
+    }
+    Path temporary = null;
+    try {
+      Path destination = getConfigFile().toPath().toRealPath();
+      Properties updated = new Properties();
+      try (java.io.Reader reader = Files.newBufferedReader(destination, Charsets.UTF_8)) {
+        updated.load(reader);
+      }
+      for (String key : allowed) {
+        if (!java.util.Objects.equals(updated.getProperty(key), properties.getProperty(key))) {
+          throw new AmbariException("Java configuration was edited on disk. Reload Ambari before retrying the JDK update.");
+        }
+      }
+      values.forEach((key, value) -> {
+        if (value == null) {
+          updated.remove(key);
+        } else {
+          updated.setProperty(key, value);
+        }
+      });
+      temporary = Files.createTempFile(destination.getParent(), ".ambari-java-", ".properties");
+      Files.copy(destination, temporary, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+      try (Writer writer = Files.newBufferedWriter(temporary, Charsets.UTF_8)) {
+        updated.store(writer, "Stack JDKs selected through Ambari");
+      }
+      try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(
+          temporary, java.nio.file.StandardOpenOption.WRITE)) {
+        channel.force(true);
+      }
+      Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+      values.forEach((key, value) -> {
+        if (value == null) {
+          properties.remove(key);
+        } else {
+          properties.setProperty(key, value);
+        }
+      });
+      configsMap.put(JAVA_HOME.getKey(), getJavaHome());
+    } catch (Exception e) {
+      throw new AmbariException("Cannot persist the stack JDK transition", e);
+    } finally {
+      if (temporary != null) {
+        try {
+          Files.deleteIfExists(temporary);
+        } catch (IOException e) {
+          LOG.warn("Cannot remove temporary Java configuration file", e);
+        }
+      }
+    }
   }
 
 

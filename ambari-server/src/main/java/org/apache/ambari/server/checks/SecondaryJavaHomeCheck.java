@@ -23,46 +23,34 @@ import java.util.List;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.controller.PrereqCheckRequest;
 import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
+import org.apache.ambari.server.state.UpgradeJavaRuntime;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
 import org.apache.ambari.server.state.stack.PrerequisiteCheck;
-import org.apache.ambari.server.utils.VersionUtils;
+import org.apache.ambari.server.state.stack.upgrade.UpgradeType;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.JsonObject;
+import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
 /**
- * ODP 1.3.2.0 introduces a dual-JDK runtime: Hadoop/YARN/HBase and most of the
- * stack run the primary JDK (Java 17), while Hive 4, NiFi 2, NiFi-Registry and
- * Polaris must run a secondary JDK (Java 21) - delivered via the
- * {@code secondary_java_home} selector and the Hive-private hadoop conf dir
- * ({@code hive_isolated_hadoop_conf}). The secondary JDK is read from the
- * Ambari server property {@code secondary.java.home}.
- * <p>
- * This pre-upgrade check fails an upgrade <b>into ODP 1.3.2.0 or later</b> when
- * {@code secondary.java.home} is not configured. The requirement is cluster-wide
- * and not conditioned on the secondary-JDK services being installed yet: an
- * operator may add Hive/NiFi/Polaris after the upgrade, at which point the
- * secondary JDK must already be provisioned. Failing early forces the operator
- * to install Java 21 and set the property before any service restarts onto the
- * new (Java-21) binaries.
- * <p>
- * Note: a server-side check can only confirm that the value is set; whether the
- * configured path actually points at a Java 21 runtime on every host is an
- * operator responsibility (documented in the upgrade prerequisites).
+ * Advertises JDK requirements only when an express upgrade crosses a stack
+ * runtime boundary. Later upgrades within the same runtime keep their paths.
+ * Preliminary checks do not activate the selected runtimes. Upgrade creation
+ * separately enforces successful host validation through {@link UpgradeJavaRuntime}.
+ * Rolling upgrades retain the existing requirement for a configured secondary JDK.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.CONFIGURATION_WARNING, order = 1.0f)
+@UpgradeCheck(group = UpgradeCheckGroup.CONFIGURATION_WARNING, order = 1.0f,
+    required = { UpgradeType.NON_ROLLING })
 public class SecondaryJavaHomeCheck extends AbstractCheckDescriptor {
 
   private static final Logger LOG = LoggerFactory.getLogger(SecondaryJavaHomeCheck.class);
 
-  /**
-   * The first ODP version that runs a dual-JDK stack and therefore requires a
-   * secondary JDK to be configured.
-   */
-  static final String SECONDARY_JAVA_HOME_MIN_VERSION = "1.3.2.0";
+  @Inject
+  private UpgradeJavaRuntime runtimes;
 
   /**
    * Default constructor.
@@ -85,13 +73,26 @@ public class SecondaryJavaHomeCheck extends AbstractCheckDescriptor {
   @Override
   public void perform(PrerequisiteCheck prerequisiteCheck, PrereqCheckRequest request)
       throws AmbariException {
+    if (request.getUpgradeType() == UpgradeType.NON_ROLLING) {
+      JsonObject required = runtimes.transitionRequirements(
+          clustersProvider.get().getCluster(request.getClusterName()), request.getTargetRepositoryVersion());
+      if (required == null) {
+        return;
+      }
+      JsonObject selection = required.deepCopy();
+      selection.addProperty("primary_java_home", config.getJavaHome());
+      selection.addProperty("secondary_java_home", StringUtils.defaultString(config.getSecondaryJavaHome()));
+      prerequisiteCheck.getFailedDetail().add(gson.fromJson(selection, java.util.Map.class));
+      // Selection happens after these preliminary checks. Upgrade creation separately
+      // requires successful, recent host checks; a precheck bypass cannot skip them.
+      return;
+    }
     // The secondary JDK is a single server-level property, not a cluster config.
     if (StringUtils.isNotBlank(config.getSecondaryJavaHome())) {
       return;
     }
 
-    LOG.info("secondary.java.home is not set while upgrading to a dual-JDK ODP version (>= {})",
-        SECONDARY_JAVA_HOME_MIN_VERSION);
+    LOG.info("secondary.java.home is not set while upgrading to a dual-JDK stack");
 
     prerequisiteCheck.getFailedOn().add(request.getClusterName());
     prerequisiteCheck.setStatus(PrereqCheckStatus.FAIL);
@@ -99,8 +100,8 @@ public class SecondaryJavaHomeCheck extends AbstractCheckDescriptor {
   }
 
   /**
-   * Restricts the check to upgrades whose target is ODP 1.3.2.0 or later - the
-   * first version that splits the stack across a primary and a secondary JDK.
+   * Restricts express selection to source/target pairs crossing the boundary.
+   * Rolling upgrades retain the target-only configured-secondary prerequisite.
    */
   final class TargetVersionQualification implements CheckQualification {
     @Override
@@ -110,9 +111,11 @@ public class SecondaryJavaHomeCheck extends AbstractCheckDescriptor {
         return false;
       }
 
-      // Strip any build suffix, e.g. "1.3.2.0-25" -> "1.3.2.0".
-      String targetVersion = StringUtils.substringBefore(targetRepositoryVersion.getVersion(), "-");
-      return VersionUtils.compareVersions(targetVersion, SECONDARY_JAVA_HOME_MIN_VERSION) >= 0;
+      if (request.getUpgradeType() == UpgradeType.NON_ROLLING) {
+        return runtimes.transitionRequirements(
+            clustersProvider.get().getCluster(request.getClusterName()), targetRepositoryVersion) != null;
+      }
+      return runtimes.requirements(targetRepositoryVersion) != null;
     }
   }
 }

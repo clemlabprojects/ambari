@@ -403,6 +403,9 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
         resourceDefinition = new SimpleResourceDefinition(
             Resource.Type.UpgradeSummary, "upgrade_summary", "upgrade_summary");
         break;
+      case JavaRuntime:
+        resourceDefinition = new SimpleResourceDefinition(Resource.Type.JavaRuntime, "java_runtime", "java_runtimes");
+        break;
 
       case PreUpgradeCheck:
         resourceDefinition = new SimpleResourceDefinition(Resource.Type.PreUpgradeCheck, "rolling_upgrade_check", "rolling_upgrade_checks");

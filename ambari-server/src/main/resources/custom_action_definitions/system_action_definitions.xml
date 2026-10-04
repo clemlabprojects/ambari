@@ -20,6 +20,17 @@
 
 <actionDefinitions>
   <actionDefinition>
+    <actionName>check_upgrade_java</actionName>
+    <actionType>SYSTEM</actionType>
+    <inputs>primary_java_home, secondary_java_home, primary_java_major, secondary_java_major</inputs>
+    <targetService/>
+    <targetComponent/>
+    <defaultTimeout>60</defaultTimeout>
+    <description>Validate the selected upgrade JDKs without changing the host</description>
+    <targetType>ANY</targetType>
+    <permissions>AMBARI.MANAGE_CONFIGURATION</permissions>
+  </actionDefinition>
+  <actionDefinition>
     <actionName>check_host</actionName>
     <actionType>SYSTEM</actionType>
     <inputs/>

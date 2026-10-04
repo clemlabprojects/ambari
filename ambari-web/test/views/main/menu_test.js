@@ -133,6 +133,21 @@ describe('App.MainMenuView', function () {
       });
 
       describe("#goToCategory()", function () {
+        [false, true].forEach(function (disabled) {
+          it('opens Java Runtimes only when enabled: ' + !disabled, function () {
+            var selector = require('utils/upgrade_java');
+            sinon.stub(selector, 'showAdministration');
+            try {
+              adminDropdownItemView.set('parentView.content.routing', 'admin');
+              adminDropdownItemView.reopen({isActive: false, isDisabled: disabled});
+              adminDropdownItemView.goToCategory({context: 'javaRuntimes'});
+              expect(selector.showAdministration.called).to.equal(!disabled);
+              expect(App.router.route.called).to.equal(false);
+            } finally {
+              selector.showAdministration.restore();
+            }
+          });
+        });
         var testCases = [
           {
             routing: '',

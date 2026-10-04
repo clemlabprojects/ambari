@@ -436,6 +436,45 @@
   }
 }
 
+.modal-dialog.upgrade-java-dialog {
+  width: 1050px;
+  max-width: calc(~"100% - 20px");
+
+  .upgrade-java-requirements {
+    margin-bottom: 10px;
+  }
+
+  .upgrade-java-count {
+    display: inline-block;
+    margin-left: 8px;
+    color: #555;
+  }
+
+  .upgrade-java-feedback,
+  .upgrade-java-results {
+    margin-top: 20px;
+  }
+
+  .upgrade-java-results {
+    overflow-x: auto;
+    table {
+      min-width: 700px;
+      table-layout: fixed;
+    }
+    th.java-host { width: 30%; }
+    th.java-progress { width: 16%; }
+    td {
+      vertical-align: middle;
+      word-wrap: break-word;
+    }
+    .progress {
+      height: 12px;
+      margin-bottom: 5px;
+    }
+    .glyphicon { margin-right: 4px; }
+  }
+}
+
 .modal-graph-line {
   .modal-dialog {
     width: 820px;
