@@ -129,18 +129,13 @@ public class ViewDataMigrationUtility {
   /**
    * Saves the target instance (instance data and properties) through the view registry.
    *
-   * <p>Every failure, including unchecked persistence errors, is reported as a
-   * {@link ViewDataMigrationException}: the startup migration logs those and keeps the view deployed,
-   * whereas any other exception would reach the registry's outer handler and mark the whole view as
-   * ERROR.</p>
-   *
    * @param targetInstanceDefinition the migrated instance
    * @throws ViewDataMigrationException if the instance can not be saved
    */
   protected void persistTargetInstance(ViewInstanceEntity targetInstanceDefinition) throws ViewDataMigrationException {
     try {
       viewRegistry.updateViewInstance(targetInstanceDefinition);
-    } catch (ValidationException | SystemException | RuntimeException e) {
+    } catch (ValidationException | SystemException e) {
       String msg = "Migrated data of view instance " + targetInstanceDefinition.getInstanceName()
           + " could not be saved: " + e.getMessage();
       LOG.error(msg, e);
