@@ -18,10 +18,17 @@
 
 package org.apache.ambari.server.view;
 
+import java.util.Collection;
 import java.util.Map;
+import java.util.Objects;
 
+import org.apache.ambari.server.orm.entities.ViewEntity;
 import org.apache.ambari.server.orm.entities.ViewInstanceEntity;
+import org.apache.ambari.server.orm.entities.ViewInstancePropertyEntity;
+import org.apache.ambari.server.orm.entities.ViewParameterEntity;
+import org.apache.ambari.server.view.validation.ValidationException;
 import org.apache.ambari.view.PersistenceException;
+import org.apache.ambari.view.SystemException;
 import org.apache.ambari.view.ViewInstanceDefinition;
 import org.apache.ambari.view.migration.ViewDataMigrationContext;
 import org.apache.ambari.view.migration.ViewDataMigrationException;
@@ -106,7 +113,83 @@ public class ViewDataMigrationUtility {
 
     migrationContext.putCurrentInstanceData("upgrade", "upgradedFrom", sourceInstanceDefinition.getViewEntity().getVersion());
 
+    LOG.debug("Copying instance properties left at their defaults");
+    copyDefaultedProperties(sourceInstanceDefinition, targetInstanceDefinition);
+
     migrationContext.closeMigration();
+
+    // The migration context only adds instance data (and the properties above) to the in-memory
+    // target instance. Without an explicit update they are never written to the database, so a view
+    // looks migrated until the next server restart and then loses its settings and secrets, while the
+    // one-time migration is not retried because the target already holds the copied entities.
+    LOG.debug("Saving the migrated instance");
+    persistTargetInstance(targetInstanceDefinition);
+  }
+
+  /**
+   * Saves the target instance (instance data and properties) through the view registry.
+   *
+   * @param targetInstanceDefinition the migrated instance
+   * @throws ViewDataMigrationException if the instance can not be saved
+   */
+  protected void persistTargetInstance(ViewInstanceEntity targetInstanceDefinition) throws ViewDataMigrationException {
+    try {
+      viewRegistry.updateViewInstance(targetInstanceDefinition);
+    } catch (ValidationException | SystemException e) {
+      String msg = "Migrated data of view instance " + targetInstanceDefinition.getInstanceName()
+          + " could not be saved: " + e.getMessage();
+      LOG.error(msg, e);
+      throw new ViewDataMigrationException(msg, e);
+    }
+  }
+
+  /**
+   * Copies the instance properties of the source to the target when the target still has the
+   * parameter's default (or no value): the operator's choices on the previous version (users,
+   * feature switches, directories) survive a view version change, while a value the operator already
+   * set on the new instance is kept. Only parameters the target view still declares are copied.
+   *
+   * @param sourceInstanceDefinition the instance migrated from
+   * @param targetInstanceDefinition the instance migrated to
+   */
+  protected static void copyDefaultedProperties(ViewInstanceEntity sourceInstanceDefinition,
+                                                ViewInstanceEntity targetInstanceDefinition) {
+    ViewEntity targetView = targetInstanceDefinition.getViewEntity();
+    Collection<ViewInstancePropertyEntity> sourceProperties = sourceInstanceDefinition.getProperties();
+    if (targetView == null || sourceProperties == null) {
+      return;
+    }
+    Collection<ViewParameterEntity> parameters = targetView.getParameters();
+    if (parameters == null) {
+      return;
+    }
+    for (ViewInstancePropertyEntity sourceProperty : sourceProperties) {
+      String name = sourceProperty.getName();
+      String value = sourceProperty.getValue();
+      if (name == null || value == null) {
+        continue;
+      }
+      ViewParameterEntity parameter = null;
+      for (ViewParameterEntity candidate : parameters) {
+        if (name.equals(candidate.getName())) {
+          parameter = candidate;
+          break;
+        }
+      }
+      if (parameter == null) {
+        LOG.debug("Property {} is no longer declared by {}, not copied", name, targetView.getName());
+        continue;
+      }
+      ViewInstancePropertyEntity targetProperty = targetInstanceDefinition.getProperty(name);
+      String targetValue = targetProperty == null ? null : targetProperty.getValue();
+      boolean targetDefaulted = targetValue == null || targetValue.trim().isEmpty()
+          || Objects.equals(targetValue, parameter.getDefaultValue());
+      if (targetDefaulted && !value.equals(targetValue)) {
+        targetInstanceDefinition.putProperty(name, value);
+        LOG.info("Copied view instance property {} from {} to {}", name,
+            sourceInstanceDefinition.getViewName(), targetInstanceDefinition.getViewName());
+      }
+    }
   }
 
   private boolean isTargetEmpty(ViewDataMigrationContext migrationContext) {

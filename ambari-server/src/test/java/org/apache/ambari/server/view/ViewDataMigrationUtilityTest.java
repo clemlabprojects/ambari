@@ -25,12 +25,14 @@ import static org.easymock.EasyMock.expectLastCall;
 import static org.easymock.EasyMock.replay;
 import static org.easymock.EasyMock.verify;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.ambari.server.orm.entities.ViewEntity;
 import org.apache.ambari.server.orm.entities.ViewInstanceEntity;
+import org.apache.ambari.server.orm.entities.ViewParameterEntity;
 import org.apache.ambari.view.migration.ViewDataMigrationContext;
 import org.apache.ambari.view.migration.ViewDataMigrationException;
 import org.apache.ambari.view.migration.ViewDataMigrator;
@@ -115,6 +117,59 @@ public class ViewDataMigrationUtilityTest {
 
     thrown.expect(ViewDataMigrationException.class);
     migrationUtility.migrateData(targetInstance, sourceInstance, false);
+  }
+
+  @Test
+  public void testMigrateDataSavesTheTargetInstance() throws Exception {
+    ViewRegistry strictRegistry = createNiceMock(ViewRegistry.class);
+    ViewInstanceEntity targetInstance = getInstanceDefinition(viewName, version2, instanceName);
+    ViewInstanceEntity sourceInstance = getInstanceDefinition(viewName, version1, instanceName);
+    strictRegistry.updateViewInstance(targetInstance);
+    expectLastCall().once();
+    replay(strictRegistry);
+
+    TestViewDataMigrationUtility migrationUtility = new TestViewDataMigrationUtility(strictRegistry);
+    migrationUtility.setMigrationContext(getViewDataMigrationContext(42, 42));
+    migrationUtility.migrateData(targetInstance, sourceInstance, false);
+
+    // instance data and properties only reach the database through updateViewInstance
+    verify(strictRegistry);
+  }
+
+  @Test
+  public void testCopyDefaultedPropertiesKeepsOperatorChoices() throws Exception {
+    ViewEntity targetView = new ViewEntity();
+    targetView.setName(viewName + "{" + version2 + "}");
+    targetView.setParameters(Arrays.asList(
+        parameter("view.operator.users", null),
+        parameter("discovery.enabled", "true"),
+        parameter("working.dir", null)));
+
+    ViewInstanceEntity target = new ViewInstanceEntity(targetView, instanceName, "label");
+    target.putProperty("discovery.enabled", "true");      // default materialised by the new instance
+    target.putProperty("working.dir", "/data/new");       // set by the operator on the new instance
+
+    ViewEntity sourceView = new ViewEntity();
+    sourceView.setName(viewName + "{" + version1 + "}");
+    ViewInstanceEntity source = new ViewInstanceEntity(sourceView, instanceName, "label");
+    source.putProperty("view.operator.users", "bob");
+    source.putProperty("discovery.enabled", "false");
+    source.putProperty("working.dir", "/data/old");
+    source.putProperty("dropped.parameter", "x");
+
+    ViewDataMigrationUtility.copyDefaultedProperties(source, target);
+
+    Assert.assertEquals("bob", target.getProperty("view.operator.users").getValue());
+    Assert.assertEquals("false", target.getProperty("discovery.enabled").getValue());
+    Assert.assertEquals("/data/new", target.getProperty("working.dir").getValue());
+    Assert.assertNull(target.getProperty("dropped.parameter"));
+  }
+
+  private static ViewParameterEntity parameter(String name, String defaultValue) {
+    ViewParameterEntity parameter = new ViewParameterEntity();
+    parameter.setName(name);
+    parameter.setDefaultValue(defaultValue);
+    return parameter;
   }
 
   private static ViewDataMigrationContextImpl getViewDataMigrationContext(int currentVersion, int originVersion) {
