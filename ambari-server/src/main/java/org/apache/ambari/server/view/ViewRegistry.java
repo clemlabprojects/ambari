@@ -1875,6 +1875,17 @@ public class ViewRegistry {
       LOG.debug("Cancel auto migration of not loaded view: {}.", viewDefinition.getName());
       return;
     }
+    // Called twice at startup for a freshly extracted view: from the extraction task and from the
+    // main-thread loop over deployed views. The "target instance is not empty" guard only works when the
+    // two runs are serialised; in parallel both copy the data and the second save fails with an
+    // EclipseLink "mapped to a primary key column, updates are not allowed" on the rows the first one
+    // inserted, which marks the view ERROR.
+    synchronized (viewDefinition) {
+      migrateDataFromPreviousVersionLocked(viewDefinition, serverVersion);
+    }
+  }
+
+  private void migrateDataFromPreviousVersionLocked(ViewEntity viewDefinition, String serverVersion) {
     try {
 
       for (ViewInstanceEntity instance : viewDefinition.getInstances()) {
