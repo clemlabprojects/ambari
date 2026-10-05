@@ -21,6 +21,15 @@ limitations under the License.
     <version>1.0.0.8</version>
     <build>${env.BUILD_NUMBER}</build>
     <min-ambari-version>2.5.0</min-ambari-version>
+    <!--
+      Data migration across view versions. Ambari runs data-migrator-class once, on the first start of a
+      new version, when the previous version's instance of the same name is still extracted under
+      views/work. It is only used when data-version differs from the previous version's value, otherwise
+      Ambari falls back to a generic copy that loses BeanInfo-hidden fields (release Git metadata).
+      Keep data-version equal to the last number of <version>; ViewXmlMigrationContractTest enforces it.
+    -->
+    <data-version>8</data-version>
+    <data-migrator-class>org.apache.ambari.view.k8s.migration.KdpsDataMigrator</data-migrator-class>
 
     <description>Une vue Ambari pour interagir avec un cluster Kubernetes.</description>
     
