@@ -137,6 +137,25 @@ public class ViewDataMigrationUtilityTest {
   }
 
   @Test
+  public void testMigrateDataReportsAFailedSaveAsAMigrationError() throws Exception {
+    ViewRegistry failingRegistry = createNiceMock(ViewRegistry.class);
+    ViewInstanceEntity targetInstance = getInstanceDefinition(viewName, version2, instanceName);
+    ViewInstanceEntity sourceInstance = getInstanceDefinition(viewName, version1, instanceName);
+    failingRegistry.updateViewInstance(targetInstance);
+    expectLastCall().andThrow(new javax.persistence.PersistenceException("value too long for column"));
+    replay(failingRegistry);
+
+    TestViewDataMigrationUtility migrationUtility = new TestViewDataMigrationUtility(failingRegistry);
+    migrationUtility.setMigrationContext(getViewDataMigrationContext(42, 42));
+
+    // an unchecked database error must not escape: ViewRegistry logs ViewDataMigrationException and keeps
+    // the view deployed, while any other exception marks the whole view as ERROR
+    thrown.expect(ViewDataMigrationException.class);
+    thrown.expectMessage("could not be saved");
+    migrationUtility.migrateData(targetInstance, sourceInstance, false);
+  }
+
+  @Test
   public void testCopyDefaultedPropertiesKeepsOperatorChoices() throws Exception {
     ViewEntity targetView = new ViewEntity();
     targetView.setName(viewName + "{" + version2 + "}");
