@@ -520,7 +520,42 @@ public class CommandService {
      * @param principal the rendered principal (e.g. {@code primary@REALM})
      * @return the same principal, or one with a shortened primary when it exceeded the limit
      */
-    private String normalizeKerberosPrincipalLength(String principal) {
+    /**
+     * Short name (primary without realm or host part) of the Kerberos principal KDPS issues for the
+     * service's first {@code kerberos[]} entry: same template rendering and the same length
+     * normalisation as the keytab step, so Ranger grants name the identity the keytab really holds.
+     */
+    private String issuedPrincipalShortName(StackServiceDef serviceDef, HelmDeployRequest request, String kerberosRealm) {
+        String serviceName = request.getReleaseName();
+        String principalTemplate = "{{service}}-{{namespace}}@{{realm}}";
+        if (serviceDef != null && serviceDef.kerberos != null && !serviceDef.kerberos.isEmpty()) {
+            Map<String, Object> entry = serviceDef.kerberos.get(0);
+            serviceName = resolveStringValue(entry.get("serviceName"), serviceName);
+            principalTemplate = resolveStringValue(entry.get("principalTemplate"), principalTemplate);
+        }
+        Map<String, String> tokens = new LinkedHashMap<>();
+        if (request.getFormValues() != null) {
+            for (Map.Entry<String, Object> e : request.getFormValues().entrySet()) {
+                if (e.getValue() != null) tokens.put(e.getKey(), String.valueOf(e.getValue()));
+            }
+        }
+        String rendered = renderKerberosPrincipalTemplate(principalTemplate, serviceName, request.getNamespace(),
+                request.getReleaseName(), kerberosRealm == null ? "" : kerberosRealm, tokens);
+        return principalShortName(normalizeKerberosPrincipalLength(rendered));
+    }
+
+    /** {@code trino-ns@REALM} -> {@code trino-ns}; {@code trino/host@REALM} -> {@code trino}. */
+    static String principalShortName(String principal) {
+        if (principal == null) return null;
+        String p = principal.trim();
+        int at = p.indexOf('@');
+        if (at >= 0) p = p.substring(0, at);
+        int slash = p.indexOf('/');
+        if (slash >= 0) p = p.substring(0, slash);
+        return p;
+    }
+
+    String normalizeKerberosPrincipalLength(String principal) {
         if (principal == null || principal.isBlank()) {
             return principal;
         }
@@ -6175,15 +6210,14 @@ public class CommandService {
                                             : Collections.emptyMap(), hiveGrantWhen);
                         }
                         if (hiveDbEnabledRaw != null && "true".equalsIgnoreCase(String.valueOf(hiveDbEnabledRaw))) {
-                            // Ranger short name = <kerberos serviceName>-<namespace> (the realm is
-                            // stripped by Ranger's auth_to_local). serviceName comes from the
-                            // service.json kerberos[] block (e.g. "superset-dashboard").
-                            String kerbServiceName = request.getReleaseName();
-                            if (serviceDef.kerberos != null && !serviceDef.kerberos.isEmpty()) {
-                                kerbServiceName = resolveStringValue(
-                                        serviceDef.kerberos.get(0).get("serviceName"), kerbServiceName);
-                            }
-                            String principal = kerbServiceName + "-" + request.getNamespace();
+                            // Ranger short name of the identity Hive sees = the principal KDPS issues for
+                            // the service's first kerberos[] entry, rendered from its principalTemplate and
+                            // shortened exactly like the keytab step (the realm is stripped by Ranger's
+                            // auth_to_local). Building "<serviceName>-<namespace>" here instead granted
+                            // trino-coordinator-<ns> while the keytab held trino-<ns> (and the unshortened
+                            // name for long namespaces): HIVE_METASTORE_ERROR "Permission denied" on every
+                            // table read from a fresh install.
+                            String principal = issuedPrincipalShortName(serviceDef, request, kerberosRealm);
                             // With an operator-supplied keytab the identity Hive sees is that keytab's
                             // principal (short name), not the one KDPS would have minted.
                             Map<String, Object> fvGrant = request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap();

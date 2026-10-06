@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * Charts whose kinit sidecar derives its own principal must have the issued principal pinned by KDPS
@@ -45,5 +46,13 @@ public class KerberosPrincipalPinContractTest {
         assertEquals("{{service}}-{{namespace}}@{{realm}}", service.get("principalTemplate"));
         assertEquals("global.security.kerberos.kinitSidecar.principal", service.get("principalValuePath"),
                 "the Superset chart reads the pinned principal from global.security.kerberos.kinitSidecar.principal");
+    }
+
+    @Test
+    void shortNameStripsRealmAndHostAndSurvivesShortening() {
+        assertEquals("trino-trino-fresh", CommandService.principalShortName("trino-trino-fresh@DEV21.HADOOP.CLEMLAB.COM"));
+        assertEquals("trino", CommandService.principalShortName("trino/coordinator.ns.svc@REALM"));
+        assertEquals("plain", CommandService.principalShortName(" plain "));
+        assertNull(CommandService.principalShortName(null));
     }
 }
