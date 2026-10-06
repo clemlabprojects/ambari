@@ -137,6 +137,57 @@ describe.skip('App.ApplicationView', function () {
     }
   });
 
+  describe('#kdpsView', function () {
+
+    var routerState;
+
+    beforeEach(function () {
+      routerState = {loggedIn: true, views: []};
+      sinon.stub(App.router, 'get', function (key) {
+        if (key === 'loggedIn') {
+          return routerState.loggedIn;
+        }
+        if (key === 'mainViewsController.visibleAmbariViews') {
+          return routerState.views;
+        }
+        return undefined;
+      });
+    });
+
+    afterEach(function () {
+      App.router.get.restore();
+    });
+
+    function instance(version) {
+      return Em.Object.create({viewName: 'K8S-VIEW', version: version, instanceName: 'K8S_VIEW_INSTANCE'});
+    }
+
+    it('is null when logged out or when the view is not deployed', function () {
+      routerState.loggedIn = false;
+      routerState.views = [instance('1.0.0.8')];
+      expect(view.get('kdpsView')).to.be.null;
+      routerState.loggedIn = true;
+      routerState.views = [Em.Object.create({viewName: 'FILES', version: '1.0.0'})];
+      view.propertyDidChange('kdpsView');
+      expect(view.get('kdpsView')).to.be.null;
+    });
+
+    it('points at the newest deployed version when several are registered', function () {
+      routerState.views = [instance('1.0.0.7'), instance('1.0.0.10'), instance('1.0.0.8')];
+      view.propertyDidChange('kdpsView');
+      expect(view.get('kdpsView.version')).to.equal('1.0.0.10');
+    });
+  });
+
+  describe('.compareViewVersions', function () {
+    it('compares dotted versions numerically', function () {
+      expect(App.ApplicationView.compareViewVersions('1.0.0.10', '1.0.0.8')).to.be.above(0);
+      expect(App.ApplicationView.compareViewVersions('1.0.0.8', '1.0.0.8')).to.equal(0);
+      expect(App.ApplicationView.compareViewVersions('1.0.0', '1.0.0.1')).to.be.below(0);
+      expect(App.ApplicationView.compareViewVersions('2.0.0-SNAPSHOT', '2.0.0')).to.not.equal(0);
+    });
+  });
+
   describe('#didInsertElement', function () {
     events.forEach(function (item) {
       it('should ' + item.particle + 'close modal window on ' + item.key + ' press', function () {

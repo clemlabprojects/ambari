@@ -39,7 +39,16 @@ App.ApplicationView = Em.View.extend({
       return null;
     }
     var views = App.router.get('mainViewsController.visibleAmbariViews') || [];
-    return views.findProperty('viewName', 'K8S-VIEW') || null;
+    var candidates = views.filterProperty('viewName', 'K8S-VIEW');
+    if (!candidates.length) {
+      return null;
+    }
+    // Several versions of the view can be deployed at once (an older jar left behind, or a
+    // just-upgraded server whose previous version is still registered). Always point the button at
+    // the newest one, so a version bump never sends users to a stale instance.
+    return candidates.sort(function (a, b) {
+      return App.ApplicationView.compareViewVersions(b.get('version'), a.get('version'));
+    })[0];
   }.property('App.router.mainViewsController.visibleAmbariViews.[]', 'App.router.loggedIn'),
 
   didInsertElement: function () {
@@ -89,4 +98,31 @@ App.ApplicationView = Em.View.extend({
     }
   }.observes('App.router.mainController.isClusterDataLoaded')
 
+});
+
+App.ApplicationView.reopenClass({
+  /**
+   * Numeric, segment-wise comparison of dotted view versions ("1.0.0.10" > "1.0.0.8"); non-numeric
+   * segments fall back to string order, missing segments count as 0.
+   * @param {string} a
+   * @param {string} b
+   * @returns {number} negative when a < b, positive when a > b, 0 when equal
+   */
+  compareViewVersions: function (a, b) {
+    var pa = String(a || '').split('.'), pb = String(b || '').split('.');
+    var n = Math.max(pa.length, pb.length);
+    for (var i = 0; i < n; i++) {
+      var sa = pa[i] || '0', sb = pb[i] || '0';
+      var na = parseInt(sa, 10), nb = parseInt(sb, 10);
+      var bothNumeric = String(na) === sa && String(nb) === sb;
+      if (bothNumeric) {
+        if (na !== nb) {
+          return na - nb;
+        }
+      } else if (sa !== sb) {
+        return sa < sb ? -1 : 1;
+      }
+    }
+    return 0;
+  }
 });
