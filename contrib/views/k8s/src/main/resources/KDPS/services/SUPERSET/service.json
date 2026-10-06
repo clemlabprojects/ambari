@@ -995,9 +995,10 @@
       "label": "Default Trino catalog",
       "type": "string",
       "defaultValue": "hive",
+      "required": true,
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_host", "operator": "non-empty" },
-      "help": "Default catalog for the Superset → Trino connection (e.g. hive, iceberg). Other catalogs stay reachable with catalog.schema.table."
+      "help": "Default catalog for the Superset → Trino connection (e.g. hive, iceberg); it becomes the path of the SQLAlchemy URI. Required: without it Trino rejects every SQL Lab query that selects a schema with 'Schema is set but catalog is not'. Other catalogs stay reachable with catalog.schema.table."
     },
     {
       "name": "ui_trino_svc_user",
