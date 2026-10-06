@@ -45,6 +45,8 @@
       "key": "service",
       "serviceName": "superset-dashboard",
       "principalTemplate": "{{service}}-{{namespace}}@{{realm}}",
+      "_principalValuePath": "The chart's kinit sidecar derives <serviceLabel>-<namespace>@<realm> when this value is empty; KDPS shortens primaries above the FreeIPA 32-char limit when it issues the keytab, so the issued name is pinned here or kinit fails with 'Keytab contains no suitable keys'.",
+      "principalValuePath": "global.security.kerberos.kinitSidecar.principal",
       "secretNameTemplate": "{{releaseName}}-keytab",
       "keyNameInSecret": "service.keytab",
       "mountPath": "/etc/security/keytabs"

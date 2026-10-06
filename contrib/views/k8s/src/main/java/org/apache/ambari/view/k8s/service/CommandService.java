@@ -5761,6 +5761,16 @@ public class CommandService {
                                 if (mountPath != null && !mountPath.isBlank()) {
                                     this.commandUtils.addOverride(params, "global.security.kerberos.keytab.mountPath", mountPath);
                                 }
+                                // Charts that kinit with a principal they derive themselves (Superset:
+                                // <serviceLabel>-<namespace>@<realm>) must be told the principal the keytab was
+                                // really issued for: KDPS shortens primaries above the FreeIPA limit, and a
+                                // derived name then no longer matches the keytab ("Keytab contains no suitable
+                                // keys"). The entry names the chart value that pins the principal.
+                                String principalValuePath = resolveStringValue(kerberosEntry.get("principalValuePath"), "");
+                                if (principalValuePath != null && !principalValuePath.isBlank()) {
+                                    this.commandUtils.addOverride(params, principalValuePath.trim(), principalFqdn);
+                                    LOG.info("Pinned the chart principal {} = {} (entry {})", principalValuePath.trim(), principalFqdn, entryKey);
+                                }
                                 helmOverridesApplied = true;
                             } else {
                                 LOG.warn("Multiple Kerberos entries detected; Helm overrides already set from the first entry.");
