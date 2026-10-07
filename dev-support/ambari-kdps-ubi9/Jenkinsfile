@@ -146,6 +146,39 @@ pipeline {
 
         // Only worth doing when both halves exist; otherwise the bare tag would point at a
         // manifest with a missing member.
+        // Publish the build context (this directory + the exact build arguments) next to the image, so a
+        // customer can rebuild the image from its own mirrors: README.md, "Rebuilding the image at a
+        // customer site". Architecture-neutral, so published once.
+        stage('Publish build context') {
+            agent { label 'ubuntu24' }
+            steps {
+                checkout scm
+                sh label: 'tar + upload the image build context', script: """
+                    set -eu
+                    ctx=ambari-kdps-image-context
+                    rm -rf "\$ctx" && mkdir "\$ctx"
+                    cp dev-support/ambari-kdps-ubi9/Dockerfile dev-support/ambari-kdps-ubi9/entrypoint.sh \\
+                       dev-support/ambari-kdps-ubi9/openshift-nonroot.py dev-support/ambari-kdps-ubi9/build-image.sh \\
+                       dev-support/ambari-kdps-ubi9/README.md "\$ctx/"
+                    cat > "\$ctx/BUILD-INFO" <<EOF
+AMBARI_VERSION=${env.AMBARI_VERSION}
+AMBARI_BUILD_DIR=${env.AMBARI_BUILD_DIR}
+AMBARI_REPO_URL_X86_64=${params.ARCHIVE_BASE}/centos9/ambari-release/${env.AMBARI_BUILD_DIR}/rpms/
+AMBARI_REPO_URL_AARCH64=${params.ARCHIVE_BASE}/centos9-aarch64/ambari-release/${env.AMBARI_BUILD_DIR}/rpms/
+BASE_IMAGE=registry.access.redhat.com/ubi9/ubi
+UBI_VERSION=${params.UBI_VERSION}
+HELM_VERSION=${params.HELM_VERSION}
+IMAGE=${params.HARBOR}/${params.PROJECT}/ambari-kdps:${env.AMBARI_VERSION}
+SOURCE_COMMIT=\$(git rev-parse HEAD)
+EOF
+                    tarball="\$ctx-${env.AMBARI_VERSION}.tar.gz"
+                    tar -czf "\$tarball" "\$ctx"
+                    aws s3 cp "\$tarball" '${params.ARCHIVE_BUCKET}'/ambari-kdps-image/'${env.AMBARI_BUILD_DIR}'/"\$tarball"
+                    echo "published ${params.ARCHIVE_BASE}/ambari-kdps-image/${env.AMBARI_BUILD_DIR}/\$tarball"
+                """
+            }
+        }
+
         stage('Merge manifest') {
             agent { label 'rhel9-arm' }
             when { expression { params.BUILD_AMD64 && params.BUILD_ARM64 } }

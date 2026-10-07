@@ -59,6 +59,10 @@ BUILD_ARGS="--build-arg UBI_VERSION=${UBI_VERSION}
             --build-arg AMBARI_VERSION=${AMBARI_VERSION}
             --build-arg AMBARI_REPO_URL=${AMBARI_REPO_URL}
             --build-arg HELM_VERSION=${HELM_VERSION}"
+# Optional mirror-friendly overrides (unset = Dockerfile defaults).
+[ -n "${BASE_IMAGE:-}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg BASE_IMAGE=${BASE_IMAGE}"
+[ -n "${HELM_URL:-}" ]   && BUILD_ARGS="${BUILD_ARGS} --build-arg HELM_URL=${HELM_URL}"
+[ -n "${DROP_VIEWS+x}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg DROP_VIEWS=${DROP_VIEWS}"
 
 case "$PLATFORMS" in
   *,*)

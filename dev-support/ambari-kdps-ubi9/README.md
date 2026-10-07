@@ -21,15 +21,22 @@ useful rather than odd.
 | Component | Why |
 |---|---|
 | `registry.access.redhat.com/ubi9/ubi` | Base, as required for the customer's OpenShift platform |
-| `java-11-openjdk-headless` | Runs the server |
+| `java-17-openjdk-headless` | Runs the server |
 | `python3` + `distro` | The server RPM requires both; `python3-distro` is not in the UBI repositories, so pip supplies it |
 | `postgresql` (client) | Schema load and the readiness check in the entrypoint |
 | `helm` | KDPS shells out to the binary rather than embedding a Helm library |
 | `git` | The GitOps deployment mode |
-| `ambari-server` | From the repository the release build published |
+| `ambari-server` | From the repository the release build published, with only the admin and KDPS views kept |
 
 No agent, no stack RPMs, no `ambari-server setup` prompts: setup runs silently at build time, and the
 database is configured at run time because its address is not known when the image is built.
+
+**Size.** About 0.7 GB compressed per architecture. Everything that writes under the Ambari directories
+(the RPM install, `ambari-server setup`, the resource-files housekeeping and the OpenShift group
+permissions) runs in a single `RUN`: as separate instructions each step rewrote the ~1 GB of RPM files
+into a new layer and the image weighed 3.3 GB. The HDFS Files, Capacity Scheduler, Tez and SQL
+Assistant views are removed (`DROP_VIEWS`, ~570 MB); to add one back, mount its jar under
+`/opt/ambari-views`, which the entrypoint installs at start.
 
 ## Building
 
@@ -50,6 +57,38 @@ builds only its own architecture, so nothing runs under emulation. Once both hav
 `merge-manifest.sh` assembles the multi-arch manifest under the bare tag. A single-run multi-arch
 build is still available for ad-hoc use (`PLATFORMS=linux/amd64,linux/arm64`), but it needs a builder
 with both platforms registered, which a plain agent does not have.
+
+### Rebuilding the image at a customer site
+
+Each image build publishes its build context next to the image:
+
+```
+https://archive.clemlab.com/ambari-kdps-image/<release>-<build>/ambari-kdps-image-context-<version>.tar.gz
+```
+
+It holds this directory (Dockerfile, entrypoint, OpenShift patch, build script) and a `BUILD-INFO` file
+with the exact arguments Clemlab used. Everything the build downloads is a build argument, so the image
+can be rebuilt from the customer's own mirrors without reaching the Internet:
+
+| Argument | Default | Customer mirror |
+|---|---|---|
+| `AMBARI_REPO_URL` | Clemlab yum repository of the build | a `reposync` copy of it |
+| `BASE_IMAGE` + `UBI_VERSION` | `registry.access.redhat.com/ubi9/ubi:9.6` | the customer registry's UBI copy |
+| `HELM_URL` | `https://get.helm.sh/helm-v<HELM_VERSION>-linux-<arch>.tar.gz` | any HTTP copy of that tarball |
+| `DROP_VIEWS` | Files, Capacity Scheduler, Tez, SQL Assistant | empty string to keep them all |
+
+The UBI package installs (Java 17, Python, the PostgreSQL client) come from the base image's own
+repositories, so a mirrored UBI with its repositories configured is enough.
+
+```sh
+tar -xzf ambari-kdps-image-context-2.8.2.0-154.tar.gz && cd ambari-kdps-image-context
+docker build \
+  --build-arg AMBARI_VERSION=2.8.2.0-154 \
+  --build-arg AMBARI_REPO_URL=https://mirror.client.local/ambari/centos9/2.8.2.0.0-154/rpms/ \
+  --build-arg BASE_IMAGE=registry.client.local/ubi9/ubi \
+  --build-arg HELM_URL=https://mirror.client.local/helm/helm-v3.16.3-linux-amd64.tar.gz \
+  -t registry.client.local/kdps/ambari-kdps:2.8.2.0-154 .
+```
 
 ### In CI
 
