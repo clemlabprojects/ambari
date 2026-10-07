@@ -274,6 +274,14 @@ public class CommandService {
      * @return normalized injection mode ("WEBHOOK" or "PRE_PROVISIONED"); defaults to WEBHOOK
      */
     private String resolveKerberosInjectionModeFromSettings() {
+        return resolveKerberosInjectionMode(ctx);
+    }
+
+    /**
+     * Same resolution as {@link #resolveKerberosInjectionModeFromSettings()} for callers that only hold a
+     * ViewContext (the kubeconfig upload): "WEBHOOK" or "PRE_PROVISIONED" (default).
+     */
+    public static String resolveKerberosInjectionMode(org.apache.ambari.view.ViewContext ctx) {
         // Default to PRE_PROVISIONED: Ambari mints the keytab Secret and the chart mounts it into the
         // pods (init/side path) — no mutating admission webhook. It's the less-intrusive model, needs no
         // CA-signed webhook serving cert, and is the only option for external (non-Ambari) contexts where
@@ -285,7 +293,7 @@ public class CommandService {
                 return defaultMode;
             }
             @SuppressWarnings("unchecked")
-            Map<String, Object> rawSettings = objectMapper.readValue(rawSettingsJson, Map.class);
+            Map<String, Object> rawSettings = new com.fasterxml.jackson.databind.ObjectMapper().readValue(rawSettingsJson, Map.class);
             Object kerberosSettingsObj = rawSettings.get("kerberos");
             if (!(kerberosSettingsObj instanceof Map)) {
                 return defaultMode;
@@ -5535,6 +5543,23 @@ public class CommandService {
                 dependenciesToProcess = new LinkedHashMap<>(dependenciesToProcess);
                 dependenciesToProcess.remove("kerberos-keytab-mutating-webhook");
                 LOG.info("Removed kerberos-keytab-mutating-webhook dependency due to PRE_PROVISIONED mode");
+            }
+            if (dependenciesToProcess.containsKey("kerberos-keytab-mutating-webhook")) {
+                // WEBHOOK mode only: the keytab webhook lives in its own namespace with an mTLS client
+                // Secret, a serving cert and the Ambari CA bundle. Prepared here, when the webhook is about
+                // to be installed, rather than at kubeconfig upload: in the default PRE_PROVISIONED mode
+                // nothing uses that namespace, and on OpenShift sites where namespaces cannot be created
+                // on the fly it must not be required at all.
+                try {
+                    org.apache.ambari.view.k8s.utils.WebHookBootstrap.prepareWebhookPrereqs(
+                            this.ctx, this.kubernetesService, "keytab-webhook", callerHeaders);
+                } catch (Exception e) {
+                    throw new IllegalArgumentException("Kerberos injection mode is WEBHOOK, which needs the keytab "
+                            + "webhook namespace (default 'ambari-mutating-webhooks') and its certificates, but they "
+                            + "could not be prepared: " + e.getMessage() + ". Pre-create that namespace and grant the "
+                            + "view access to it, or switch Settings > Kerberos injection mode to PRE_PROVISIONED "
+                            + "(the default, which needs no webhook).", e);
+                }
             }
             for (Map.Entry<String, Object> dependencyEntry : dependenciesToProcess.entrySet()) {
                 Object dependencySpec = dependencyEntry.getValue();

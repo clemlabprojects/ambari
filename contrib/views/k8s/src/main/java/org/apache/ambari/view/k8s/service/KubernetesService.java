@@ -3114,8 +3114,21 @@ public class KubernetesService {
     public void createNamespace(String namespace) {
         Objects.requireNonNull(namespace, "namespace");
         try {
-            io.fabric8.kubernetes.api.model.Namespace existing =
-                    client.namespaces().withName(namespace).get();
+            io.fabric8.kubernetes.api.model.Namespace existing;
+            try {
+                existing = client.namespaces().withName(namespace).get();
+            } catch (KubernetesClientException e) {
+                if (e.getCode() == 403) {
+                    // Namespaces are cluster-scoped. On OpenShift sites where projects are requested from
+                    // the platform team, the view's ServiceAccount may only hold rights INSIDE the
+                    // pre-provisioned project, not on the namespace object itself. Treat the namespace as
+                    // pre-provisioned; if it really is missing, the following namespaced call fails with
+                    // a clear error.
+                    LOG.info("Not allowed to read namespace '{}' (403); assuming it is pre-provisioned", namespace);
+                    return;
+                }
+                throw e;
+            }
             if (existing != null) {
                 String phase = existing.getStatus() == null ? null : existing.getStatus().getPhase();
                 if ("Terminating".equalsIgnoreCase(phase)) {

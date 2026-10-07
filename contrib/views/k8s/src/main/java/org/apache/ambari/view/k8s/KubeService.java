@@ -173,22 +173,32 @@ public class KubeService {
             LOG.info("Configuring Apache Ambari View Backend CA bundle");
             final String webhookName = "keytab-webhook"; // must match your Helm values prefix
 
-            try {
-                // Reinitialize K8s client now that kubeconfig is saved
-                this.getKubernetesService().reloadClientIfConfigured();
-                WebHookBootstrap.prepareWebhookPrereqs(
-                        this.viewContext,
-                        this.getKubernetesService(),
-                        webhookName,
-                        headers.getRequestHeaders()
-                );
-                // We NOT install the chart here. This only prepares secrets + namespace + caBundle.
-                // Later, when we deploy the webhook chart, collect all ambari.properties overrides
-                // under k8s.view.webhooks.<webhookName>.* and pass them straight to Helm.
-            } catch (Exception ex) {
-                // Decide your policy: either fail fast or keep the View up and show an actionable error.
-                // Failing fast is often better so the admin knows to fix TLS prerequisites.
-                throw new IllegalStateException("Failed preparing webhook prerequisites", ex);
+            // Reinitialize K8s client now that kubeconfig is saved
+            this.getKubernetesService().reloadClientIfConfigured();
+            // The keytab webhook prerequisites (its namespace, mTLS Secrets, CA bundle) only matter in the
+            // WEBHOOK Kerberos injection mode. In the default PRE_PROVISIONED mode nothing uses them, and on
+            // OpenShift sites where namespaces cannot be created on the fly preparing them made the upload
+            // fail with a 500 although the kubeconfig was saved. Deploys in WEBHOOK mode prepare them on
+            // demand (CommandService.directHelmDeploy); here a failure is reported, not fatal.
+            String injectionMode = org.apache.ambari.view.k8s.service.CommandService.resolveKerberosInjectionMode(this.viewContext);
+            if ("WEBHOOK".equals(injectionMode)) {
+                try {
+                    WebHookBootstrap.prepareWebhookPrereqs(
+                            this.viewContext,
+                            this.getKubernetesService(),
+                            webhookName,
+                            headers.getRequestHeaders()
+                    );
+                } catch (Exception ex) {
+                    LOG.warn("/cluster/config: kubeconfig saved, but the keytab webhook prerequisites could not be prepared: {}", ex.toString());
+                    return Response.ok(Map.of(
+                            "message", "Configuration saved.",
+                            "warning", "Kerberos injection mode is WEBHOOK but the keytab webhook prerequisites could not be "
+                                    + "prepared (" + ex.getMessage() + "). Pre-create the webhook namespace or switch the "
+                                    + "injection mode to PRE_PROVISIONED.")).build();
+                }
+            } else {
+                LOG.info("/cluster/config: Kerberos injection mode {}; keytab webhook prerequisites not needed", injectionMode);
             }
             return Response.ok(Collections.singletonMap("message", "Configuration saved.")).build();
 
