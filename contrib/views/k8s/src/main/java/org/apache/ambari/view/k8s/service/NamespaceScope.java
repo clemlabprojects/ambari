@@ -473,6 +473,27 @@ public class NamespaceScope {
     }
 
     /**
+     * Whether {@code namespace} needs to be created: {@code true} only when the API server says it does not exist.
+     * A namespace this account may not even read is a pre-provisioned project (OpenShift sites where the platform
+     * team hands out projects) and is reported as existing. Any other failure answers {@code true}, so callers keep
+     * their previous behaviour of letting Helm create it.
+     *
+     * @param namespace namespace name
+     * @return {@code true} when the namespace is missing or its existence could not be established
+     */
+    public boolean namespaceMissing(String namespace) {
+        try {
+            return apiCall.run("get namespace " + namespace, () -> client().namespaces().withName(namespace).get()) == null;
+        } catch (RuntimeException e) {
+            if (isForbidden(e)) {
+                return false;
+            }
+            LOG.debug("Could not check whether namespace {} exists: {}", namespace, e.toString());
+            return true;
+        }
+    }
+
+    /**
      * Whether the API server serves {@code <plural>.<group>} (a CRD name), read from API discovery, which every
      * authenticated account may read. Answers the same question as reading the CRD, without the cluster right.
      *
