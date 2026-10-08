@@ -112,5 +112,10 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
 EXPOSE 8080 8443
+# OpenShift runs the container as an arbitrary user without a passwd entry, so HOME would be "/", which that user
+# cannot write. Helm keeps its chart cache and registry settings under HOME: without a writable one every chart
+# install from KDPS fails with "mkdir /.cache: permission denied". The Ambari data directory is group-writable.
+# Set here, after the build steps, so they keep writing their own files where they did before.
+ENV HOME=/var/lib/ambari-server
 USER 1001
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
