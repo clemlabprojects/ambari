@@ -418,9 +418,59 @@ public class ViewConfigurationService {
     }
 
     /**
-     * Returns the plain YAML content as a string.
+     * The kubeconfig every consumer should connect with (Helm, deploys, the Kubernetes client): the saved file with
+     * its {@code current-context} set to the context selected in KDPS. Helm follows {@code current-context}, so
+     * without this a multi-context kubeconfig made Helm target another cluster than the rest of KDPS.
+     *
+     * @return kubeconfig contents
      */
     public String getKubeconfigContents() {
+        return withCurrentContext(getRawKubeconfigContents(), getSelectedContext());
+    }
+
+    /**
+     * Returns {@code kubeconfig} with {@code current-context} set to {@code context}, or unchanged when no context is
+     * selected, it is already current, it is not declared in the file, or the file cannot be parsed. Only that key
+     * changes; every other field (exec plugins, extensions) is kept.
+     *
+     * @param kubeconfig kubeconfig as YAML or JSON
+     * @param context    the context to make current, may be {@code null}
+     * @return the kubeconfig to connect with
+     */
+    @SuppressWarnings("unchecked")
+    static String withCurrentContext(String kubeconfig, String context) {
+        if (kubeconfig == null || context == null || context.isBlank()) {
+            return kubeconfig;
+        }
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper yaml =
+                    new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory());
+            Map<String, Object> model = yaml.readValue(kubeconfig, LinkedHashMap.class);
+            if (model == null || context.equals(model.get("current-context"))) {
+                return kubeconfig;
+            }
+            Object contexts = model.get("contexts");
+            boolean declared = contexts instanceof List<?> list && list.stream()
+                    .anyMatch(c -> c instanceof Map<?, ?> m && context.equals(m.get("name")));
+            if (!declared) {
+                LOG.warn("Selected kubeconfig context '{}' is not in the kubeconfig; using its current-context", context);
+                return kubeconfig;
+            }
+            model.put("current-context", context);
+            return yaml.writeValueAsString(model);
+        } catch (Exception e) {
+            LOG.warn("Could not apply the selected kubeconfig context '{}': {}", context, e.toString());
+            return kubeconfig;
+        }
+    }
+
+    /**
+     * The kubeconfig as saved (uploaded file or synthesized OpenShift login), without the selected context applied.
+     * For showing the file and listing its contexts.
+     *
+     * @return kubeconfig contents
+     */
+    public String getRawKubeconfigContents() {
         if (isOpenShiftLogin()) {
             return synthesizeOpenShiftKubeconfig();
         }

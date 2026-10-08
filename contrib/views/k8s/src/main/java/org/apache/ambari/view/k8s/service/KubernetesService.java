@@ -3106,7 +3106,8 @@ public class KubernetesService {
         java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
         String content;
         try {
-            content = configurationService.getKubeconfigContents();
+            // The file as uploaded: its own current-context is reported as such, the selection separately.
+            content = configurationService.getRawKubeconfigContents();
         } catch (Exception e) {
             LOG.warn("listAvailableContexts: kubeconfig not available: {}", e.toString());
             return out;
