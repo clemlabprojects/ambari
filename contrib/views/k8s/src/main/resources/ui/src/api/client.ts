@@ -14,7 +14,8 @@ const IS_DEV: boolean = (() => { try { return typeof process !== 'undefined' && 
  * do not break the frontend. Falls back to the known default if parsing fails.
  */
 const resolveApiBase = (): string => {
-  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.5/instances/K8S_VIEW_INSTANCE/resources/api`;
+  // Keep the version equal to view.xml's <version>: ViewXmlMigrationContractTest checks it.
+  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.8/instances/K8S_VIEW_INSTANCE/resources/api`;
   if (typeof window === 'undefined') return fallback;
   try {
     // Examples of pathname we might see:

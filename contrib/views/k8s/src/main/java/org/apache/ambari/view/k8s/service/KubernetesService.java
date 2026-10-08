@@ -474,6 +474,9 @@ public class KubernetesService {
         return e != null && e.getCode() == 401;
     }
 
+    /** Serializes token renewals so simultaneous 401s renew once. */
+    private final Object authRenewLock = new Object();
+
     /**
      * Executes a Kubernetes API call and, on an authentication failure (HTTP 401), transparently
      * re-authenticates and retries the call exactly ONCE.
@@ -500,6 +503,7 @@ public class KubernetesService {
      * @return the result of the call (first attempt, or the retry after a successful re-authentication)
      */
     private <T> T executeWithAuthRetry(String operation, Supplier<T> call) {
+        final KubernetesClient clientUsed = this.client;
         try {
             return call.get();
         } catch (KubernetesClientException e) {
@@ -513,23 +517,41 @@ public class KubernetesService {
                         + "The operator must re-upload valid credentials on the Cluster settings page.", operation);
                 throw e;
             }
-            LOG.info("Auth mode is 'openshift-login' — attempting to re-authenticate and retry '{}' once.", operation);
-            try {
-                configurationService.getOpenShiftLoginProvider().refresh();
-                boolean reloaded = forceReloadClient();
-                if (!reloaded) {
-                    LOG.error("Client reload after re-authentication reported not-configured; cannot retry '{}'.", operation);
-                    throw e;
+            synchronized (authRenewLock) {
+                // Several requests refused at the same moment: the first renews, the others find a new client
+                // and just retry with it (outside the lock), instead of each minting a token and building a client.
+                if (this.client != null && this.client != clientUsed) {
+                    LOG.info("Credentials were renewed meanwhile — retrying '{}' with the new client.", operation);
+                } else {
+                    renewCredentials(operation, e);
                 }
-            } catch (KubernetesClientException reconnectKce) {
-                throw reconnectKce;
-            } catch (Exception reconnect) {
-                LOG.error("Auto-reconnect before retrying '{}' failed: {}", operation, reconnect.toString());
-                throw e; // surface the original 401 to the caller
             }
-            LOG.info("Re-authentication succeeded — retrying '{}' with the refreshed token.", operation);
             return call.get();
         }
+    }
+
+    /**
+     * Mints a new token through the OpenShift login and rebuilds the client; called under {@code authRenewLock}.
+     *
+     * @param operation the refused call, for the logs
+     * @param refusal   the original 401, rethrown when the renewal fails
+     */
+    private void renewCredentials(String operation, KubernetesClientException refusal) {
+        LOG.info("Auth mode is 'openshift-login' — attempting to re-authenticate and retry '{}' once.", operation);
+        try {
+            configurationService.getOpenShiftLoginProvider().refresh();
+            boolean reloaded = forceReloadClient();
+            if (!reloaded) {
+                LOG.error("Client reload after re-authentication reported not-configured; cannot retry '{}'.", operation);
+                throw refusal;
+            }
+        } catch (KubernetesClientException reconnectKce) {
+            throw reconnectKce;
+        } catch (Exception reconnect) {
+            LOG.error("Auto-reconnect before retrying '{}' failed: {}", operation, reconnect.toString());
+            throw refusal; // surface the original 401 to the caller
+        }
+        LOG.info("Re-authentication succeeded — retrying '{}' with the refreshed token.", operation);
     }
 
     /**
@@ -2574,13 +2596,25 @@ public class KubernetesService {
                 if (hasToken || "kubernetes.io/service-account-token".equals(existing.getType())) {
                     try {
                         ensureKedaTenancyRole(namespace, saName + "-thanos-tenancy");
-                        // A release first deployed by a project-limited account has no cluster binding; when an
-                        // account allowed to create one deploys it with cluster-port triggers, add the binding.
+                    } catch (Exception e) {
+                        // Without the pod-metrics rule the autoscaler's queries are refused (403): stop with what to
+                        // run rather than deploy an autoscaler that never scales.
+                        LOG.warn("Could not bring the KEDA/Thanos tenancy Role {}/{}-thanos-tenancy up to date: {}",
+                                namespace, saName, e.toString());
+                        return "The autoscaler's monitoring token cannot read this project's pod metrics, and this account "
+                                + "could not update its Role (" + e.getMessage() + "). Ask an administrator of project "
+                                + namespace + " to run:\n"
+                                + "  oc -n " + namespace + " create role " + saName + "-thanos-tenancy --verb=get,list,watch "
+                                + "--resource=pods,pods.metrics.k8s.io --dry-run=client -o yaml | oc apply -f -";
+                    }
+                    // A release first deployed by a project-limited account has no cluster binding; when an account
+                    // allowed to create one deploys it with cluster-port triggers, add the binding.
+                    try {
                         if (!projectScoped && canBindClusterRoles()) {
                             ensureMonitoringViewBinding(namespace, saName, "kdps-monview-" + namespace + "-" + saName);
                         }
                     } catch (Exception e) {
-                        LOG.warn("Could not bring the KEDA/Thanos tenancy Role {}/{}-thanos-tenancy up to date: {}",
+                        LOG.warn("Could not bind cluster-monitoring-view for the KEDA/Thanos token {}/{}: {}",
                                 namespace, saName, e.toString());
                     }
                     return null;
@@ -3843,7 +3877,7 @@ public class KubernetesService {
                             .thenComparing(x -> x.name == null ? "" : x.name))
                     .toList();
         } catch (Exception e) {
-            LOG.warn("listCrds failed: {}", e.toString());
+            logDiscoveryFailure("listCrds", e);
             return java.util.Collections.emptyList();
         }
     }
@@ -4905,9 +4939,24 @@ public class KubernetesService {
                 if (includeNotReady || Boolean.TRUE.equals(entry.get("ready"))) result.add(entry);
             }
         } catch (Exception ex) {
-            LOG.warn("listClusterIssuers failed: {}", ex.toString());
+            logDiscoveryFailure("listClusterIssuers", ex);
         }
         return result;
+    }
+
+    /**
+     * Logs a failed optional discovery (cert-manager issuers, External Secrets stores, CRDs). Not being allowed to read
+     * them, or the operator not being installed, is normal for many accounts and clusters: the wizard just offers
+     * nothing there. Only other failures are worth a warning; this runs every time the wizard opens.
+     */
+    private static void logDiscoveryFailure(String what, Exception ex) {
+        boolean expected = NamespaceScope.isForbidden(ex)
+                || (ex instanceof KubernetesClientException kce && kce.getCode() == 404);
+        if (expected) {
+            LOG.debug("{}: not available to this account or not installed ({})", what, ex.getMessage());
+        } else {
+            LOG.warn("{} failed: {}", what, ex.toString());
+        }
     }
 
     /**
@@ -4924,7 +4973,7 @@ public class KubernetesService {
                 if (includeNotReady || Boolean.TRUE.equals(entry.get("ready"))) result.add(entry);
             }
         } catch (Exception ex) {
-            LOG.warn("listClusterSecretStores failed: {}", ex.toString());
+            logDiscoveryFailure("listClusterSecretStores", ex);
         }
         try {
             var storeOp = client.genericKubernetesResources(externalSecretStoreRdc());
@@ -4936,7 +4985,7 @@ public class KubernetesService {
                 if (includeNotReady || Boolean.TRUE.equals(entry.get("ready"))) result.add(entry);
             }
         } catch (Exception ex) {
-            LOG.warn("listSecretStores failed: {}", ex.toString());
+            logDiscoveryFailure("listSecretStores", ex);
         }
         return result;
     }

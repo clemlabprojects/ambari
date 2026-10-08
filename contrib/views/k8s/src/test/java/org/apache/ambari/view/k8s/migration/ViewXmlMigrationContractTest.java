@@ -55,6 +55,16 @@ public class ViewXmlMigrationContractTest {
         assertEquals(KdpsDataMigrator.class, migratorClass);
     }
 
+    @Test
+    void theUiFallbackApiPathUsesTheCurrentViewVersion() throws Exception {
+        Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(new File("src/main/resources/view.xml"));
+        String version = text(doc, "version");
+        String client = new String(java.nio.file.Files.readAllBytes(
+                java.nio.file.Paths.get("src/main/resources/ui/src/api/client.ts")), java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(client.contains("/api/v1/views/K8S-VIEW/versions/" + version + "/instances/"),
+                "ui/src/api/client.ts fallback API path must use the view version " + version);
+    }
+
     private static String text(Document doc, String tag) {
         assertEquals(1, doc.getElementsByTagName(tag).getLength(), "exactly one <" + tag + "> expected");
         return doc.getElementsByTagName(tag).item(0).getTextContent().trim();

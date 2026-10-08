@@ -292,7 +292,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 Map<String, Object> normalizedMounts = CommandUtils.normalizeMountsObject(request.getMounts());
                 if (!normalizedMounts.isEmpty()) {
                     kubernetesService.createMounts(namespace, release, normalizedMounts);
-                    logFluxInfo(namespace, release, "automation", "Created {} mount(s)", normalizedMounts.size());
+                    logFluxInfo(namespace, release, "automation", "Created %s mount(s)", normalizedMounts.size());
                 }
             } catch (Exception ex) {
                 LOG.warn("Failed to create mounts for {}/{}: {}", namespace, release, ex.getMessage());
@@ -318,7 +318,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                             ? (Map<String, String>) cmSpec.get("labels")
                             : Map.of("managed-by", "ambari-k8s-view");
                     kubernetesService.createOrUpdateConfigMap(namespace, cmName, data, labels, Map.of());
-                    logFluxInfo(namespace, release, "automation", "Created ConfigMap {}/{}", namespace, cmName);
+                    logFluxInfo(namespace, release, "automation", "Created ConfigMap %s/%s", namespace, cmName);
                 }
             } catch (Exception ex) {
                 LOG.warn("Failed to create required ConfigMaps for {}/{}: {}", namespace, release, ex.getMessage());
@@ -368,7 +368,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     globalImagePullSecrets.add(Map.of("name", request.getSecretName()));
                 }
                 
-                logFluxInfo(namespace, release, "automation", "Ensured image pull secret {}/{}", namespace, request.getSecretName());
+                logFluxInfo(namespace, release, "automation", "Ensured image pull secret %s/%s", namespace, request.getSecretName());
             } catch (Exception ex) {
                 LOG.warn("Failed to ensure image pull secret {}/{}: {}", namespace, request.getSecretName(), ex.getMessage());
                 // Continue - secret might already exist
@@ -381,7 +381,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         List<DepRef> depRefs = new ArrayList<>();
         if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
             try {
-                logFluxInfo(namespace, release, "automation", "Processing {} dependencies", request.getDependencies().size());
+                logFluxInfo(namespace, release, "automation", "Processing %s dependencies", request.getDependencies().size());
                 Path depDir = targetDir.resolve("dependencies");
                 Files.createDirectories(repoDir.resolve(depDir));
                 
@@ -476,10 +476,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         gitClient.writeFile(depDir.resolve(depRepoName + "-helmrepository.yaml"), chartSources.get(depRepoName));
                     }
                     
-                    logFluxInfo(namespace, release, "automation", "Added dependency HelmRelease {}/{} (chart={}, version={})",
+                    logFluxInfo(namespace, release, "automation", "Added dependency HelmRelease %s/%s (chart=%s, version=%s)",
                             depNamespace, depReleaseName, depChart, depVersion);
                 }
-            logFluxInfo(namespace, release, "automation", "Generated {} dependency HelmReleases and dependsOn", depRefs.size());
+            logFluxInfo(namespace, release, "automation", "Generated %s dependency HelmReleases and dependsOn", depRefs.size());
             } catch (Exception ex) {
                 LOG.warn("Failed to process dependencies for {}/{}: {}", namespace, release, ex.getMessage(), ex);
                 // Continue - dependencies might be optional or can be added manually
@@ -1947,13 +1947,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private void logFluxInfo(String namespace, String release, String phase, String message, Object... args) {
         String context = buildContext(namespace, release);
         String formatted = (args == null || args.length == 0) ? message : String.format(message, args);
-        LOG.info("[FluxGitOps:%s][%s] %s", context, phase, formatted);
+        LOG.info("[FluxGitOps:{}][{}] {}", context, phase, formatted);
     }
 
     private void logFluxWarn(String namespace, String release, String phase, String message, Object... args) {
         String context = buildContext(namespace, release);
         String formatted = (args == null || args.length == 0) ? message : String.format(message, args);
-        LOG.warn("[FluxGitOps:%s][%s] %s", context, phase, formatted);
+        LOG.warn("[FluxGitOps:{}][{}] {}", context, phase, formatted);
     }
 
     private String buildContext(String namespace, String release) {

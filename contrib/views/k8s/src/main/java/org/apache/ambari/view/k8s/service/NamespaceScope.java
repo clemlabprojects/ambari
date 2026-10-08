@@ -486,6 +486,9 @@ public class NamespaceScope {
             return apiCall.run("get namespace " + namespace, () -> client().namespaces().withName(namespace).get()) == null;
         } catch (RuntimeException e) {
             if (isForbidden(e)) {
+                LOG.info("Namespace {} is not readable by this account: treating it as a pre-provisioned project. If the "
+                        + "account is not a member of that project, the install will fail with \"namespace not found\".",
+                        namespace);
                 return false;
             }
             LOG.debug("Could not check whether namespace {} exists: {}", namespace, e.toString());
