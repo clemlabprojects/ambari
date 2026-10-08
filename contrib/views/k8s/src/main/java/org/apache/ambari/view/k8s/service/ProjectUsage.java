@@ -37,21 +37,26 @@ import java.util.Objects;
  * CPU and memory used by the projects an account may use, for accounts that cannot read cluster-wide usage.
  *
  * <p>Usage comes from the pod metrics API ({@code metrics.k8s.io}, what {@code oc adm top pods} shows), which any
- * account with a role in a project may read for that project. It is measured against what the projects are
- * allotted: their ResourceQuotas when every project has one, otherwise the resources their running pods request.
+ * account with a role in a project may read for that project. Only projects whose metrics could be read count, for
+ * the usage and for what it is measured against.
+ *
+ * <p>Each resource (CPU, memory, pods) is measured against the projects' ResourceQuotas when every measured project
+ * limits that resource with the same kind of quota (all {@code limits.*}, or all {@code requests.*}); otherwise CPU
+ * and memory are measured against what the running pods of those projects request, and pods against nothing.
+ * Pods that request nothing (best-effort) count in the usage but add nothing to the requests.
  */
 public final class ProjectUsage {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProjectUsage.class);
     private static final double GIB = 1024.0 * 1024.0 * 1024.0;
 
-    /** What the usage is measured against. */
+    /** What one resource is measured against. */
     public enum Basis {
-        /** The projects' ResourceQuotas (limits preferred over requests). */
+        /** The projects' ResourceQuotas. */
         QUOTA("quota"),
-        /** The resources requested by the running pods (some project has no quota). */
+        /** The resources requested by the running pods. */
         REQUESTS("requests"),
-        /** Nothing to measure against: no quota and no requests. */
+        /** Nothing to measure against. */
         NONE("none");
 
         private final String label;
@@ -66,115 +71,136 @@ public final class ProjectUsage {
         }
     }
 
-    /**
-     * The measured usage. {@code cpuTotal}, {@code memoryTotalGiB} and {@code podsTotal} are 0 when the basis is
-     * {@link Basis#NONE}; {@code podsTotal} is 0 when no quota limits the number of pods.
-     */
-    public record Result(double cpuUsedCores, double memoryUsedGiB, double cpuTotalCores, double memoryTotalGiB,
-                         int podsTotal, Basis basis, int projectsMeasured) {
+    /** Used and total of one resource, and what the total is. {@code total} is 0 for {@link Basis#NONE}. */
+    public record Figure(double used, double total, Basis basis) {
+    }
+
+    /** The measured usage: CPU in cores, memory in GiB, pods (used = running pods of the measured projects). */
+    public record Result(Figure cpu, Figure memory, Figure pods, int projectsMeasured) {
     }
 
     private ProjectUsage() {
     }
 
     /**
-     * Measures the usage of {@code namespaces}. A project whose metrics the account may not read is left out of the
-     * usage; when none can be read the result is {@code null}.
+     * Measures the usage of {@code namespaces}.
      *
      * @param client      the view's Kubernetes client
      * @param namespaces  the projects the account may use
-     * @param runningPods the running pods of those projects (for the requests basis)
+     * @param runningPods the running pods of those projects
      * @return the usage, or {@code null} when no project's metrics could be read
      */
     public static Result measure(KubernetesClient client, Collection<String> namespaces, List<Pod> runningPods) {
         Objects.requireNonNull(client, "client");
         double cpuUsed = 0;
         double memUsed = 0;
-        int measured = 0;
-        double quotaCpu = 0;
-        double quotaMem = 0;
-        int quotaPods = 0;
-        boolean everyProjectHasQuota = !namespaces.isEmpty();
+        java.util.Set<String> measured = new java.util.TreeSet<>();
+        Map<String, Map<String, Double>> quotaByNamespace = new java.util.HashMap<>();
         for (String ns : namespaces) {
+            List<PodMetrics> metrics;
             try {
-                for (PodMetrics pm : client.top().pods().metrics(ns).getItems()) {
-                    if (pm.getContainers() == null) continue;
-                    for (ContainerMetrics cm : pm.getContainers()) {
-                        cpuUsed += amount(cm.getUsage(), "cpu");
-                        memUsed += amount(cm.getUsage(), "memory") / GIB;
-                    }
-                }
-                measured++;
+                metrics = client.top().pods().metrics(ns).getItems();
             } catch (RuntimeException e) {
                 LOG.debug("Pod metrics of namespace {} not readable: {}", ns, e.getMessage());
+                continue;
             }
-            double[] quota = quotaOf(client, ns);
-            if (quota == null) {
-                everyProjectHasQuota = false;
-            } else {
-                quotaCpu += quota[0];
-                quotaMem += quota[1];
-                quotaPods += (int) quota[2];
+            for (PodMetrics pm : metrics) {
+                if (pm.getContainers() == null) continue;
+                for (ContainerMetrics cm : pm.getContainers()) {
+                    cpuUsed += amount(cm.getUsage(), "cpu");
+                    memUsed += amount(cm.getUsage(), "memory");
+                }
             }
+            measured.add(ns);
+            quotaByNamespace.put(ns, hardLimits(client, ns));
         }
-        if (measured == 0) {
+        if (measured.isEmpty()) {
             return null;
         }
-        if (everyProjectHasQuota && (quotaCpu > 0 || quotaMem > 0)) {
-            return new Result(cpuUsed, memUsed, quotaCpu, quotaMem, quotaPods, Basis.QUOTA, measured);
+        List<Pod> measuredPods = runningPods.stream()
+                .filter(p -> p.getMetadata() != null && measured.contains(p.getMetadata().getNamespace()))
+                .collect(java.util.stream.Collectors.toList());
+
+        Figure cpu = figure(cpuUsed, quotaTotal(quotaByNamespace, "cpu"), requested(measuredPods, "cpu"), 1);
+        Figure memory = figure(memUsed / GIB, quotaTotal(quotaByNamespace, "memory"), requested(measuredPods, "memory"), GIB);
+        Double podQuota = sumIfEveryone(quotaByNamespace, "pods");
+        Figure pods = podQuota != null
+                ? new Figure(measuredPods.size(), podQuota, Basis.QUOTA)
+                : new Figure(measuredPods.size(), 0, Basis.NONE);
+        return new Result(cpu, memory, pods, measured.size());
+    }
+
+    private static Figure figure(double used, Double quota, double requested, double unit) {
+        if (quota != null) {
+            return new Figure(used, quota / unit, Basis.QUOTA);
         }
-        double reqCpu = 0;
-        double reqMem = 0;
-        for (Pod pod : runningPods) {
-            if (pod.getSpec() == null || pod.getSpec().getContainers() == null) continue;
-            for (Container c : pod.getSpec().getContainers()) {
-                if (c.getResources() == null) continue;
-                reqCpu += amount(c.getResources().getRequests(), "cpu");
-                reqMem += amount(c.getResources().getRequests(), "memory") / GIB;
-            }
+        if (requested > 0) {
+            return new Figure(used, requested / unit, Basis.REQUESTS);
         }
-        Basis basis = reqCpu > 0 || reqMem > 0 ? Basis.REQUESTS : Basis.NONE;
-        return new Result(cpuUsed, memUsed, reqCpu, reqMem, 0, basis, measured);
+        return new Figure(used, 0, Basis.NONE);
     }
 
     /**
-     * The quota of one namespace as {cpu cores, memory GiB, pods}, or {@code null} when it has none or it cannot be
-     * read. With several quotas, the most restrictive value of each resource applies.
+     * Sum of one resource's quota over every measured namespace, or {@code null} when some namespace does not limit
+     * it with the same kind of quota as the others. {@code limits.*} is preferred; {@code requests.*} (and the bare
+     * name, which Kubernetes treats as requests) is used when every namespace has it.
      */
-    private static double[] quotaOf(KubernetesClient client, String ns) {
+    private static Double quotaTotal(Map<String, Map<String, Double>> quotaByNamespace, String resource) {
+        Double limits = sumIfEveryone(quotaByNamespace, "limits." + resource);
+        if (limits != null) {
+            return limits;
+        }
+        double sum = 0;
+        for (Map<String, Double> hard : quotaByNamespace.values()) {
+            Double v = hard.containsKey("requests." + resource) ? hard.get("requests." + resource) : hard.get(resource);
+            if (v == null) return null;
+            sum += v;
+        }
+        return quotaByNamespace.isEmpty() ? null : sum;
+    }
+
+    private static Double sumIfEveryone(Map<String, Map<String, Double>> quotaByNamespace, String key) {
+        double sum = 0;
+        for (Map<String, Double> hard : quotaByNamespace.values()) {
+            Double v = hard.get(key);
+            if (v == null) return null;
+            sum += v;
+        }
+        return quotaByNamespace.isEmpty() ? null : sum;
+    }
+
+    private static double requested(List<Pod> pods, String resource) {
+        double sum = 0;
+        for (Pod pod : pods) {
+            if (pod.getSpec() == null || pod.getSpec().getContainers() == null) continue;
+            for (Container c : pod.getSpec().getContainers()) {
+                if (c.getResources() != null) sum += amount(c.getResources().getRequests(), resource);
+            }
+        }
+        return sum;
+    }
+
+    /**
+     * The hard limits of a namespace's quotas, in base units (cores, bytes, counts), keyed by quota name such as
+     * {@code limits.cpu}. With several quotas the strictest value of each key applies. Empty when the namespace has
+     * no quota or its quotas cannot be read.
+     */
+    private static Map<String, Double> hardLimits(KubernetesClient client, String ns) {
+        Map<String, Double> hard = new java.util.HashMap<>();
         List<ResourceQuota> quotas;
         try {
             quotas = client.resourceQuotas().inNamespace(ns).list().getItems();
         } catch (RuntimeException e) {
             LOG.debug("Quotas of namespace {} not readable: {}", ns, e.getMessage());
-            return null;
+            return hard;
         }
-        if (quotas == null || quotas.isEmpty()) {
-            return null;
+        for (ResourceQuota q : quotas == null ? List.<ResourceQuota>of() : quotas) {
+            if (q.getSpec() == null || q.getSpec().getHard() == null) continue;
+            q.getSpec().getHard().forEach((k, v) -> {
+                if (v != null) hard.merge(k, v.getNumericalAmount().doubleValue(), Math::min);
+            });
         }
-        double cpu = Double.MAX_VALUE;
-        double mem = Double.MAX_VALUE;
-        double pods = Double.MAX_VALUE;
-        for (ResourceQuota q : quotas) {
-            Map<String, Quantity> hard = q.getSpec() == null ? null : q.getSpec().getHard();
-            if (hard == null) continue;
-            cpu = Math.min(cpu, first(hard, "limits.cpu", "requests.cpu", "cpu"));
-            mem = Math.min(mem, first(hard, "limits.memory", "requests.memory", "memory") / GIB);
-            pods = Math.min(pods, first(hard, "pods"));
-        }
-        return new double[]{cpu == Double.MAX_VALUE ? 0 : cpu, mem == Double.MAX_VALUE ? 0 : mem,
-                pods == Double.MAX_VALUE ? 0 : pods};
-    }
-
-    /** The first of {@code keys} present in {@code values}, or {@link Double#MAX_VALUE} (no limit). */
-    private static double first(Map<String, Quantity> values, String... keys) {
-        for (String k : keys) {
-            Quantity q = values.get(k);
-            if (q != null) {
-                return q.getNumericalAmount().doubleValue();
-            }
-        }
-        return Double.MAX_VALUE;
+        return hard;
     }
 
     private static double amount(Map<String, Quantity> values, String key) {

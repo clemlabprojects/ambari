@@ -789,10 +789,10 @@ public class KubernetesService {
                 LOG.warn("Could not measure the usage of this account's projects: {}", e.toString());
             }
             if (projectUsage != null) {
-                usedCpuTotal = projectUsage.cpuUsedCores();
-                usedMemoryTotal = projectUsage.memoryUsedGiB();
-                totalCpuCapacity = projectUsage.cpuTotalCores();
-                totalMemoryCapacity = projectUsage.memoryTotalGiB();
+                usedCpuTotal = projectUsage.cpu().used();
+                usedMemoryTotal = projectUsage.memory().used();
+                totalCpuCapacity = projectUsage.cpu().total();
+                totalMemoryCapacity = projectUsage.memory().total();
                 metricsFound.set(true);
                 metricsSource.set("pod-metrics");
             }
@@ -810,7 +810,7 @@ public class KubernetesService {
         double podDenominator = totalPodCapacity > 0 ? totalPodCapacity : podItems.size();
         if (projectUsage != null) {
             // Node pod capacity says nothing about a project's allotment: use its pod quota, else its pods.
-            podDenominator = projectUsage.podsTotal() > 0 ? projectUsage.podsTotal() : podItems.size();
+            podDenominator = projectUsage.pods().basis() == ProjectUsage.Basis.QUOTA ? projectUsage.pods().total() : podItems.size();
         }
         ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(runningPods.size(), podDenominator);
         ClusterStats.ResourceStat nodeStatistics = new ClusterStats.ResourceStat(readyNodesCount, nodeList.getItems().size());
@@ -846,7 +846,8 @@ public class KubernetesService {
         ClusterStats result = new ClusterStats(cpuStatistics, memoryStatistics, podStatistics, nodeStatistics, helmStatistics);
         result.setSource(metricsSource.get());
         if (projectUsage != null) {
-            result.setProjectScope(projectUsage.basis().label(), projectUsage.projectsMeasured());
+            result.setProjectScope(projectUsage.projectsMeasured(), projectUsage.cpu().basis().label(),
+                    projectUsage.memory().basis().label(), projectUsage.pods().basis().label());
         }
         statsCache.put("clusterStats", result);
         return result;

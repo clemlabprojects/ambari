@@ -119,7 +119,14 @@ class KubernetesServiceNamespaceScopeTest {
     org.apache.ambari.view.k8s.model.ClusterStats stats = svc.getClusterStats(true);
 
     assertEquals("projects", stats.getScope());
-    assertEquals("quota", stats.getBasis());
     assertEquals(1, stats.getProjects());
+    assertEquals(0.5, stats.getCpu().getUsed(), 1e-9);
+    assertEquals(2.0, stats.getCpu().getTotal(), 1e-9);
+    assertEquals("quota", stats.getCpu().getBasis());
+    assertEquals(1.0, stats.getMemory().getUsed(), 1e-9);
+    assertEquals(4.0, stats.getMemory().getTotal(), 1e-9);
+    assertEquals("quota", stats.getMemory().getBasis());
+    assertEquals(1.0, stats.getPods().getUsed());
+    assertEquals(10.0, stats.getPods().getTotal(), "pod quota, not node capacity");
   }
 }

@@ -73,10 +73,16 @@ class ProjectUsageTest {
     server.expect().get().withPath("/api/v1/namespaces/" + ns + "/resourcequotas").andReturn(200, list.build()).always();
   }
 
-  private static Pod podRequesting(String cpu, String memory) {
-    return new PodBuilder().withNewSpec().addNewContainer().withName("c").withNewResources()
+  private static Pod podRequesting(String ns, String cpu, String memory) {
+    return new PodBuilder().withNewMetadata().withName("p").withNamespace(ns).endMetadata()
+        .withNewSpec().addNewContainer().withName("c").withNewResources()
         .addToRequests("cpu", new Quantity(cpu)).addToRequests("memory", new Quantity(memory))
         .endResources().endContainer().endSpec().build();
+  }
+
+  private static Pod bestEffortPod(String ns) {
+    return new PodBuilder().withNewMetadata().withName("be").withNamespace(ns).endMetadata()
+        .withNewSpec().addNewContainer().withName("c").endContainer().endSpec().build();
   }
 
   @Test
@@ -87,31 +93,70 @@ class ProjectUsageTest {
     quotas("team-b", Map.of("limits.cpu", "4", "limits.memory", "8Gi", "pods", "20"),
         Map.of("limits.cpu", "2")); // two quotas: the stricter one applies
 
+    ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a", "team-b"),
+        List.of(podRequesting("team-a", "1", "1Gi"), podRequesting("team-b", "1", "1Gi")));
+
+    assertEquals(ProjectUsage.Basis.QUOTA, r.cpu().basis());
+    assertEquals(1.0, r.cpu().used(), 1e-9);
+    assertEquals(6.0, r.cpu().total(), 1e-9, "4 (limits beat requests) + 2 (stricter of two quotas)");
+    assertEquals(ProjectUsage.Basis.QUOTA, r.memory().basis());
+    assertEquals(4.0, r.memory().used(), 1e-9);
+    assertEquals(16.0, r.memory().total(), 1e-9);
+    assertEquals(new ProjectUsage.Figure(2, 40, ProjectUsage.Basis.QUOTA), r.pods());
+    assertEquals(2, r.projectsMeasured());
+  }
+
+  @Test
+  void aCpuOnlyQuotaLeavesMemoryMeasuredAgainstRequests() {
+    podMetrics("team-a", "500m", "1Gi");
+    quotas("team-a", Map.of("limits.cpu", "4"));
+
+    ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a"), List.of(podRequesting("team-a", "1", "2Gi")));
+
+    assertEquals(new ProjectUsage.Figure(0.5, 4.0, ProjectUsage.Basis.QUOTA), r.cpu());
+    assertEquals(ProjectUsage.Basis.REQUESTS, r.memory().basis());
+    assertEquals(2.0, r.memory().total(), 1e-9, "no absurd memory total from the missing key");
+    assertEquals(ProjectUsage.Basis.NONE, r.pods().basis());
+  }
+
+  @Test
+  void anObjectCountOnlyQuotaGivesNoCpuOrMemoryQuota() {
+    podMetrics("team-a", "100m", "512Mi");
+    quotas("team-a", Map.of("pods", "10", "count/secrets", "50"));
+
+    ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a"), List.of(podRequesting("team-a", "200m", "1Gi")));
+
+    assertEquals(ProjectUsage.Basis.REQUESTS, r.cpu().basis());
+    assertEquals(0.2, r.cpu().total(), 1e-9);
+    assertEquals(ProjectUsage.Basis.REQUESTS, r.memory().basis());
+    assertEquals(new ProjectUsage.Figure(1, 10, ProjectUsage.Basis.QUOTA), r.pods());
+  }
+
+  @Test
+  void quotasOfDifferentKindsAcrossProjectsAreNotMixed() {
+    podMetrics("team-a", "500m", "1Gi");
+    podMetrics("team-b", "500m", "1Gi");
+    quotas("team-a", Map.of("limits.cpu", "4", "requests.cpu", "2"));
+    quotas("team-b", Map.of("requests.cpu", "1"));     // no limits.cpu here
+
     ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a", "team-b"), List.of());
 
-    assertEquals(ProjectUsage.Basis.QUOTA, r.basis());
-    assertEquals(1.0, r.cpuUsedCores(), 1e-9);
-    assertEquals(4.0, r.memoryUsedGiB(), 1e-9);
-    assertEquals(6.0, r.cpuTotalCores(), 1e-9, "4 (limits beat requests) + 2 (stricter of two quotas)");
-    assertEquals(16.0, r.memoryTotalGiB(), 1e-9);
-    assertEquals(40, r.podsTotal());
-    assertEquals(2, r.projectsMeasured());
+    assertEquals(new ProjectUsage.Figure(1.0, 3.0, ProjectUsage.Basis.QUOTA), r.cpu(), "requests in both: 2 + 1");
   }
 
   @Test
   void aProjectWithoutQuotaMeansUsageIsMeasuredAgainstRequests() {
     podMetrics("team-a", "500m", "1Gi");
     podMetrics("team-b", "500m", "1Gi");
-    quotas("team-a", Map.of("limits.cpu", "4"));
+    quotas("team-a", Map.of("limits.cpu", "4", "limits.memory", "8Gi"));
     quotas("team-b"); // no quota
 
     ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a", "team-b"),
-        List.of(podRequesting("1", "2Gi"), podRequesting("500m", "1Gi")));
+        List.of(podRequesting("team-a", "1", "2Gi"), podRequesting("team-b", "500m", "1Gi"), bestEffortPod("team-b")));
 
-    assertEquals(ProjectUsage.Basis.REQUESTS, r.basis());
-    assertEquals(1.5, r.cpuTotalCores(), 1e-9);
-    assertEquals(3.0, r.memoryTotalGiB(), 1e-9);
-    assertEquals(0, r.podsTotal());
+    assertEquals(new ProjectUsage.Figure(1.0, 1.5, ProjectUsage.Basis.REQUESTS), r.cpu());
+    assertEquals(new ProjectUsage.Figure(2.0, 3.0, ProjectUsage.Basis.REQUESTS), r.memory());
+    assertEquals(3.0, r.pods().used(), "best-effort pods count as running pods");
   }
 
   @Test
@@ -119,24 +164,26 @@ class ProjectUsageTest {
     podMetrics("team-a", "100m", "512Mi");
     quotas("team-a");
 
-    ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a"), List.of(new PodBuilder().withNewSpec().addNewContainer().withName("c").endContainer().endSpec().build()));
+    ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a"), List.of(bestEffortPod("team-a")));
 
-    assertEquals(ProjectUsage.Basis.NONE, r.basis());
-    assertEquals(0.1, r.cpuUsedCores(), 1e-9);
-    assertEquals(0.5, r.memoryUsedGiB(), 1e-9);
-    assertEquals(0.0, r.cpuTotalCores());
+    assertEquals(new ProjectUsage.Figure(0.1, 0, ProjectUsage.Basis.NONE), r.cpu());
+    assertEquals(new ProjectUsage.Figure(0.5, 0, ProjectUsage.Basis.NONE), r.memory());
   }
 
   @Test
-  void projectsWhoseMetricsAreRefusedAreLeftOut() {
+  void projectsWhoseMetricsAreRefusedLeaveTheUsageAndTheTotals() {
     podMetrics("team-a", "250m", "1Gi");
     forbiddenMetrics("team-b");
     quotas("team-a", Map.of("limits.cpu", "1"));
-    quotas("team-b", Map.of("limits.cpu", "1"));
+    quotas("team-b", Map.of("limits.cpu", "100"));
 
-    ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a", "team-b"), List.of());
+    ProjectUsage.Result r = ProjectUsage.measure(client, List.of("team-a", "team-b"),
+        List.of(podRequesting("team-a", "1", "1Gi"), podRequesting("team-b", "50", "50Gi")));
+
     assertEquals(1, r.projectsMeasured());
-    assertEquals(0.25, r.cpuUsedCores(), 1e-9);
+    assertEquals(new ProjectUsage.Figure(0.25, 1.0, ProjectUsage.Basis.QUOTA), r.cpu(), "team-b's quota is not counted");
+    assertEquals(1.0, r.memory().total(), 1e-9, "team-b's pods are not counted either");
+    assertEquals(1.0, r.pods().used());
   }
 
   @Test

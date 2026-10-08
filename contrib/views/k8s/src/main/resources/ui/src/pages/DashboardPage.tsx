@@ -74,11 +74,12 @@ const DashboardPage: React.FC = () => {
     // reachable/authorized Thanos and no metrics-server). Render "N/A" rather than a bogus negative %.
     const metricUnavailable = (m?: { used: number; total: number }) => !m || m.used < 0 || !isFinite(m.used);
     const projectScope = stats?.scope === 'projects';
-    const basisLabel = stats?.basis === 'quota' ? 'quota' : stats?.basis === 'requests' ? 'requested' : '';
+    const basisLabel = (b?: string) => (b === 'quota' ? 'quota' : b === 'requests' ? 'requested' : '');
     const amount = (n: number) => (n >= 10 ? n.toFixed(0) : n.toFixed(n >= 1 ? 1 : 2));
     // Project scope: absolute figures with what they are measured against, so nobody reads them as cluster capacity.
-    const projectHint = (m: { used: number; total: number }, unit: string) =>
-        m.total > 0 ? `${amount(m.used)} of ${amount(m.total)} ${unit} · ${basisLabel}` : `${amount(m.used)} ${unit} used`;
+    const projectHint = (m: { used: number; total: number; basis?: string }, unit: string) =>
+        m.total > 0 ? `${amount(m.used)} of ${amount(m.total)} ${unit} · ${basisLabel(m.basis)}` : `${amount(m.used)} ${unit} used`;
+    const nodesHidden = projectScope && !!stats && stats.nodes.total === 0;
     const usageValue = (m: { used: number; total: number }, unit: string) => {
         if (metricUnavailable(m)) return 'N/A';
         if (projectScope && !m.total) return `${amount(m.used)} ${unit}`;
@@ -156,18 +157,20 @@ const DashboardPage: React.FC = () => {
             {stats && projectScope && (
               <Paragraph type="secondary" style={{ marginBottom: -8 }}>
                 CPU, memory and pods cover the {stats.projects ?? ''} project{stats.projects === 1 ? '' : 's'} this
-                account can use{basisLabel ? `, measured against their ${basisLabel === 'quota' ? 'quotas' : 'requested resources'}` : ''}.
-                Cluster-wide usage needs cluster monitoring rights.
+                account can use, measured against their quotas where every project sets one, otherwise against what
+                their pods request. Cluster-wide usage needs cluster monitoring rights.
               </Paragraph>
             )}
             {stats && (
               <div className="kdps-kpis">
-                {capTile('Nodes Ready', `${stats.nodes.used}/${stats.nodes.total}`, stats.nodes.total ? stats.nodes.used / stats.nodes.total : 0, '/nodes')}
+                {capTile('Nodes Ready', nodesHidden ? 'N/A' : `${stats.nodes.used}/${stats.nodes.total}`, stats.nodes.total ? stats.nodes.used / stats.nodes.total : 0, '/nodes',
+                         nodesHidden ? 'not visible to this account' : undefined)}
                 {capTile(projectScope ? 'CPU · your projects' : 'CPU', usageValue(stats.cpu, 'cores'), metricUnavailable(stats.cpu) ? 0 : (stats.cpu.total ? stats.cpu.used / stats.cpu.total : 0), '/nodes',
                          projectScope && !metricUnavailable(stats.cpu) ? projectHint(stats.cpu, 'cores') : undefined)}
                 {capTile(projectScope ? 'Memory · your projects' : 'Memory', usageValue(stats.memory, 'GiB'), metricUnavailable(stats.memory) ? 0 : (stats.memory.total ? stats.memory.used / stats.memory.total : 0), '/nodes',
                          projectScope && !metricUnavailable(stats.memory) ? projectHint(stats.memory, 'GiB') : undefined)}
-                {capTile(projectScope ? 'Pods · your projects' : 'Pods', `${stats.pods.used}/${stats.pods.total}`, stats.pods.total ? stats.pods.used / stats.pods.total : 0, '/workloads')}
+                {capTile(projectScope ? 'Pods · your projects' : 'Pods', `${stats.pods.used}/${stats.pods.total}`, stats.pods.total ? stats.pods.used / stats.pods.total : 0, '/workloads',
+                         projectScope && stats.pods.basis === 'quota' ? 'running · of quota' : projectScope ? 'running · of all pods' : undefined)}
               </div>
             )}
             <Row gutter={[24, 24]}>
