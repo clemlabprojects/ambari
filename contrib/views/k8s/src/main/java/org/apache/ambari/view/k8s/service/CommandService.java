@@ -4633,6 +4633,19 @@ public class CommandService {
 
         List<String> childCommands = new ArrayList<>();
         // command params
+        // OpenShift KEDA autoscaling reads platform monitoring with a token. An account that may not create
+        // ClusterRoleBindings cannot give that token cluster-wide monitoring access, so the triggers are pointed at
+        // the Thanos tenancy port for the release's project (decided here, before the values are saved).
+        boolean kedaProjectScope = false;
+        if (this.kubernetesService.isOpenShiftCluster()
+                && KedaThanosScope.triggerAuthenticationEnabled(request.getValues())
+                && !this.kubernetesService.canBindClusterRoles()) {
+            int scoped = KedaThanosScope.scopeTriggersToNamespace(request.getValues(), request.getNamespace());
+            kedaProjectScope = true;
+            LOG.info("KEDA autoscaling for {}/{}: this account may not bind cluster roles; {} trigger(s) read the "
+                    + "project's monitoring through the Thanos tenancy port", request.getNamespace(),
+                    request.getReleaseName(), scoped);
+        }
         Map<String, Object> params = new LinkedHashMap<>();
         if ((request.getValues() != null) && !request.getValues().isEmpty()) {
             String valuesJson = gson.toJson(request.getValues());
@@ -5703,6 +5716,18 @@ public class CommandService {
             }
         }
 
+        // ServiceMonitors (how Trino's metrics reach OpenShift monitoring) need the monitoring-edit role in the
+        // project, which a project admin does not hold by default. Without it Helm fails half-way through the
+        // install; stop here with the grant the platform team has to make instead.
+        if (this.kubernetesService.isOpenShiftCluster()
+                && KedaThanosScope.serviceMonitorsEnabled(request.getValues())
+                && !this.kubernetesService.canI("create", "monitoring.coreos.com", "servicemonitors", null, request.getNamespace())) {
+            throw new IllegalStateException("Cannot deploy " + request.getReleaseName() + ": this account may not create "
+                    + "ServiceMonitors in project " + request.getNamespace() + " (needed so OpenShift monitoring collects "
+                    + "the service's metrics, which autoscaling reads). Ask the platform team to grant it, per project:\n"
+                    + "  oc policy add-role-to-user monitoring-edit <account KDPS connects with> -n " + request.getNamespace());
+        }
+
         if (this.kubernetesService.isOpenShiftCluster()) {
             Map<String, Object> deployValues = request.getValues();
             Object kedaNode = mapGet(mapGet(deployValues, "server"), "keda");
@@ -5715,7 +5740,7 @@ public class CommandService {
                             + " with OpenShift KEDA autoscaling: server.keda.triggerAuthentication.secretName is not set.");
                 }
                 String problem = this.kubernetesService.ensureKedaThanosTokenSecret(
-                        request.getNamespace(), tokenSecretName, tokenSecretName);
+                        request.getNamespace(), tokenSecretName, tokenSecretName, kedaProjectScope);
                 if (problem != null) {
                     throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
                             + " with OpenShift KEDA autoscaling: " + problem);
