@@ -43,7 +43,9 @@ angular.module('ambariAdminConsole')
           if (info.visible === false || !info.context_path) {
             continue;
           }
-          $scope.kdpsViewUrl = Settings.siteRoot.replace(/\/$/, '') + info.context_path;
+          // Trailing slash required: the view's page loads its scripts as ./assets/..., which without it
+          // resolve one directory too high (404, blank page). ambari-web's view links add it the same way.
+          $scope.kdpsViewUrl = Settings.siteRoot.replace(/\/$/, '') + info.context_path.replace(/\/?$/, '/');
           return;
         }
       }
