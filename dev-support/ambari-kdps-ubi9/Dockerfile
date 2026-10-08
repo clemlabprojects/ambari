@@ -73,6 +73,10 @@ RUN set -eux; \
     helm version --short
 
 ENV AMBARI_JAVA_HOME=/usr/lib/jvm/ambari-java
+# OpenShift runs the container as an arbitrary user without a passwd entry, so HOME would be "/", which that user
+# cannot write. Helm keeps its chart cache and registry settings under HOME: without a writable one every chart
+# install from KDPS fails with "mkdir /.cache: permission denied". The Ambari data directory is group-writable.
+ENV HOME=/var/lib/ambari-server
 
 COPY openshift-nonroot.py /tmp/openshift-nonroot.py
 
