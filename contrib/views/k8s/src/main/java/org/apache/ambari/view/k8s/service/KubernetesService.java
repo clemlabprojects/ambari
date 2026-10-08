@@ -2610,7 +2610,7 @@ public class KubernetesService {
                  // The thanos-querier tenancy endpoint (:9092) authorizes each query with a
                  // `get pods` SubjectAccessReview in the tenant namespace; cluster-monitoring-view
                  // grants only `get namespaces`, so a namespaced pods-read binding is also required.
-                 + "  oc -n " + namespace + " create role " + tenancyRoleName + " --verb=get,list --resource=pods\n"
+                 + "  oc -n " + namespace + " create role " + tenancyRoleName + " --verb=get,list,watch --resource=pods,pods.metrics.k8s.io\n"
                  + "  oc -n " + namespace + " create rolebinding " + tenancyRoleName
                  + " --role=" + tenancyRoleName + " --serviceaccount=" + namespace + ":" + saName + "\n"
                  + "  oc -n " + namespace + " apply -f - <<'EOF'\n"
@@ -2644,21 +2644,31 @@ public class KubernetesService {
                 LOG.info("Bound {}/{} to {} via ClusterRoleBinding {}",
                         namespace, saName, MONITORING_VIEWER_CLUSTER_ROLE, crbName);
             }
-            // The thanos-querier tenancy port (:9092) authorizes every query by running a
-            // `get pods` SubjectAccessReview in the namespace passed as the tenancy scope.
-            // cluster-monitoring-view grants only `get namespaces`, so without this the query
-            // returns 403 (verb=get, resource=pods). Grant a minimal namespaced pods-read Role.
-            if (client.rbac().roles().inNamespace(namespace).withName(tenancyRoleName).get() == null) {
-                client.rbac().roles().inNamespace(namespace).resource(
-                        new RoleBuilder()
-                                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
-                                .addNewRule()
-                                    .withApiGroups("")
-                                    .withResources("pods")
-                                    .withVerbs("get", "list")
-                                .endRule()
-                                .build()).create();
-                LOG.info("Created KEDA/Thanos tenancy Role {}/{} (get,list pods)", namespace, tenancyRoleName);
+            // The thanos-querier tenancy port (:9092) authorizes every query with a "get pods" check in the
+            // namespace passed as the tenancy scope, against the core API group and metrics.k8s.io (the proxy
+            // answers 403 "verb=get, resource=pods" without the latter). The Role Red Hat documents for the Custom
+            // Metrics Autoscaler grants both; a Role left by an earlier deploy without the second rule is updated.
+            Role desiredTenancyRole = new RoleBuilder()
+                    .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
+                    .addNewRule()
+                        .withApiGroups("")
+                        .withResources("pods")
+                        .withVerbs("get", "list", "watch")
+                    .endRule()
+                    .addNewRule()
+                        .withApiGroups("metrics.k8s.io")
+                        .withResources("pods")
+                        .withVerbs("get", "list", "watch")
+                    .endRule()
+                    .build();
+            Role existingTenancyRole = client.rbac().roles().inNamespace(namespace).withName(tenancyRoleName).get();
+            if (existingTenancyRole == null) {
+                client.rbac().roles().inNamespace(namespace).resource(desiredTenancyRole).create();
+                LOG.info("Created KEDA/Thanos tenancy Role {}/{} (pods and pod metrics read)", namespace, tenancyRoleName);
+            } else if (!desiredTenancyRole.getRules().equals(existingTenancyRole.getRules())) {
+                client.rbac().roles().inNamespace(namespace).withName(tenancyRoleName)
+                        .edit(r -> new RoleBuilder(r).withRules(desiredTenancyRole.getRules()).build());
+                LOG.info("Updated KEDA/Thanos tenancy Role {}/{} to read pod metrics", namespace, tenancyRoleName);
             }
             if (client.rbac().roleBindings().inNamespace(namespace).withName(tenancyRoleName).get() == null) {
                 client.rbac().roleBindings().inNamespace(namespace).resource(

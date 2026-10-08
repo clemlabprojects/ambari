@@ -108,7 +108,7 @@ class KedaThanosScopeTest {
   private void projectLimitedAccount() {
     server.expect().post().withPath("/apis/authorization.k8s.io/v1/selfsubjectaccessreviews")
         .andReply(201, req -> {
-          String body = req.getBody().readUtf8();
+          String body = req.getBody().clone().readUtf8();
           boolean allowed = !body.contains("clusterrolebindings");
           return answered(body, allowed);
         }).always();
@@ -118,14 +118,19 @@ class KedaThanosScopeTest {
     for (String p : List.of("/api/v1/namespaces/team-a/serviceaccounts", "/apis/rbac.authorization.k8s.io/v1/namespaces/team-a/roles",
         "/apis/rbac.authorization.k8s.io/v1/namespaces/team-a/rolebindings", "/api/v1/namespaces/team-a/secrets",
         "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings")) {
-      server.expect().post().withPath(p).andReply(201, req -> req.getBody().readUtf8()).always();
+      server.expect().post().withPath(p).andReply(201, req -> req.getBody().clone().readUtf8()).always();
     }
   }
+
+  private final Map<String, String> bodies = new LinkedHashMap<>();
 
   private List<String> requests() throws InterruptedException {
     List<String> out = new ArrayList<>();
     RecordedRequest r;
-    while ((r = server.takeRequest(100, TimeUnit.MILLISECONDS)) != null) out.add(r.getMethod() + " " + r.getPath());
+    while ((r = server.takeRequest(100, TimeUnit.MILLISECONDS)) != null) {
+      out.add(r.getMethod() + " " + r.getPath());
+      bodies.put(r.getMethod() + " " + r.getPath(), r.getBody().readUtf8());
+    }
     return out;
   }
 
@@ -152,6 +157,30 @@ class KedaThanosScopeTest {
     assertTrue(calls.contains("POST /api/v1/namespaces/team-a/secrets"), calls::toString);
     assertTrue(calls.stream().noneMatch(c -> c.contains("clusterrolebindings") && !c.contains("selfsubjectaccessreviews")), calls::toString);
     assertTrue(calls.stream().noneMatch(c -> c.contains("/clusterroles/")), "no cluster-wide read either: " + calls);
+    String role = bodies.get("POST /apis/rbac.authorization.k8s.io/v1/namespaces/team-a/roles");
+    assertTrue(role.contains("metrics.k8s.io"), "the tenancy port also checks pod metrics read: " + role);
+  }
+
+  @Test
+  void aTenancyRoleFromAnEarlierDeployGainsThePodMetricsRule() throws Exception {
+    projectLimitedAccount();
+    namespacedObjectsCanBeCreated();
+    String rolePath = "/apis/rbac.authorization.k8s.io/v1/namespaces/team-a/roles/trino-thanos-token-thanos-tenancy";
+    server.expect().get().withPath(rolePath).andReturn(200,
+        "{\"kind\":\"Role\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"metadata\":{\"name\":\"trino-thanos-token-thanos-tenancy\",\"namespace\":\"team-a\",\"resourceVersion\":\"1\"},"
+            + "\"rules\":[{\"apiGroups\":[\"\"],\"resources\":[\"pods\"],\"verbs\":[\"get\",\"list\"]}]}").always();
+    String updated = "{\"kind\":\"Role\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"metadata\":{\"name\":\"trino-thanos-token-thanos-tenancy\",\"namespace\":\"team-a\",\"resourceVersion\":\"2\"}}";
+    server.expect().patch().withPath(rolePath).andReturn(200, updated).always();
+    server.expect().put().withPath(rolePath).andReturn(200, updated).always();
+
+    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true));
+
+    List<String> calls = requests();
+    String update = bodies.entrySet().stream()
+        .filter(e -> (e.getKey().startsWith("PATCH ") || e.getKey().startsWith("PUT ")) && e.getKey().contains("/roles/"))
+        .map(Map.Entry::getValue).findFirst().orElse(null);
+    assertNotNull(update, "the existing Role is updated: " + calls);
+    assertTrue(update.contains("metrics.k8s.io"), update);
   }
 
   @Test
@@ -170,7 +199,7 @@ class KedaThanosScopeTest {
   void projectScopedInstructionsNeverAskForAClusterBinding() {
     // Nothing allowed at all: the instructions must still only list namespaced objects.
     server.expect().post().withPath("/apis/authorization.k8s.io/v1/selfsubjectaccessreviews")
-        .andReply(201, req -> answered(req.getBody().readUtf8(), false)).always();
+        .andReply(201, req -> answered(req.getBody().clone().readUtf8(), false)).always();
     String problem = service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true);
     assertNotNull(problem);
     assertFalse(problem.contains("clusterrolebinding"), problem);
