@@ -46,7 +46,7 @@ public class FluxGitOpsBackendTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> krb = (Map<String, Object>) sec.get("kerberos");
         assertNotNull(krb);
-        assertEquals("true", krb.get("enabled"));
+        assertEquals(Boolean.TRUE, krb.get("enabled"));
         assertEquals("krb5-cm", krb.get("configMapName"));
 
     }
@@ -114,5 +114,37 @@ public class FluxGitOpsBackendTest {
         assertEquals("a cluster without Kerberos, or no cluster, turns the chart default off",
                 "false", FluxGitOpsBackend.kerberosEnabledValue(false, Boolean.FALSE));
         assertNull("unknown state leaves the chart default", FluxGitOpsBackend.kerberosEnabledValue(false, null));
+    }
+
+    @Test
+    public void overridesAreTypedLikeHelmSet() {
+        Map<String, Object> values = new LinkedHashMap<>();
+        Map<String, String> overrides = new LinkedHashMap<>();
+        overrides.put("a.off", "false");
+        overrides.put("a.count", "3");
+        overrides.put("a.name", "trino-krb5-conf");
+
+        FluxGitOpsBackend.applyOverridesToValues(values, overrides);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> a = (Map<String, Object>) values.get("a");
+        assertEquals("a string \"false\" would be truthy in the chart templates", Boolean.FALSE, a.get("off"));
+        assertEquals(3, a.get("count"));
+        assertEquals("trino-krb5-conf", a.get("name"));
+    }
+
+    @Test
+    public void onlyWhatHelmSetTypesIsTyped() {
+        assertEquals(Boolean.FALSE, FluxGitOpsBackend.parseScalar("false"));
+        assertEquals(476, FluxGitOpsBackend.parseScalar("476"));
+        assertEquals(0, FluxGitOpsBackend.parseScalar("0"));
+        assertEquals(-2, FluxGitOpsBackend.parseScalar("-2"));
+        assertEquals(12345678901L, FluxGitOpsBackend.parseScalar("12345678901"));
+        assertEquals("a version keeps its trailing zero", "1.10", FluxGitOpsBackend.parseScalar("1.10"));
+        assertEquals("a code keeps its leading zero", "0123", FluxGitOpsBackend.parseScalar("0123"));
+        assertEquals("476.1.3.2.0-37", FluxGitOpsBackend.parseScalar("476.1.3.2.0-37"));
+        assertEquals("1.0e3", FluxGitOpsBackend.parseScalar("1.0e3"));
+        assertEquals("False", FluxGitOpsBackend.parseScalar("False"));
+        assertEquals("99999999999999999999", FluxGitOpsBackend.parseScalar("99999999999999999999"));
     }
 }
