@@ -319,18 +319,18 @@ class NamespaceScopeTest {
   }
 
   @Test
-  void parallelWalkDeadlineCountsTimeQueuedBehindOtherWork() throws Exception {
+  void parallelWalkWhereNothingAnswersFailsInsteadOfLookingEmpty() throws Exception {
     forbidden("/api/v1/namespaces", 1);
     projects();
     java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
     java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
     pool.submit(() -> { release.await(); return null; }); // another walk holds the only thread
     try {
-      List<String> listed = scope.listAcrossNamespaces(Resource.SECRETS,
+      IllegalStateException e = assertThrows(IllegalStateException.class, () -> scope.listAcrossNamespaces(Resource.SECRETS,
           () -> { throw new KubernetesClientException("x", 403, null); },
           List::of,
-          NamespaceScope::isForbidden, new NamespaceScope.Parallel(pool, java.time.Duration.ofMillis(200)));
-      assertEquals(List.of(), listed, "nothing answered in time: an empty listing, not a hung request");
+          NamespaceScope::isForbidden, new NamespaceScope.Parallel(pool, java.time.Duration.ofMillis(200))));
+      assertTrue(e.getMessage().contains("none of 2 namespace(s) answered"), e.getMessage());
     } finally {
       release.countDown();
       pool.shutdownNow();

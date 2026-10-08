@@ -130,7 +130,8 @@ public class NamespaceScope {
     /**
      * Runs a walk's per-namespace calls in parallel on {@code executor}. Namespaces that have not answered within
      * {@code timeout} of the start of the walk (including time queued behind other walks on a shared executor) are
-     * left out with a warning, so one slow namespace or a busy executor yields a partial listing, not a failure.
+     * left out with a warning, so one slow namespace yields a partial listing, not a failure. When none answered,
+     * the listing fails rather than look empty.
      * A call blocked inside native code cannot be interrupted and keeps its thread until it returns.
      */
     public static final class Parallel {
@@ -363,6 +364,12 @@ public class NamespaceScope {
             futures.forEach(f -> f.cancel(true));
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while listing " + resource.apiName(), e);
+        }
+        if (!namespaces.isEmpty() && skipped.size() == namespaces.size()) {
+            // Nothing answered: an empty list would read as "nothing there". Usually the shared executor is busy
+            // or blocked (calls stuck in native code keep their threads), which must show as an error.
+            throw new IllegalStateException("Listing " + resource.apiName() + ": none of " + namespaces.size()
+                    + " namespace(s) answered within " + parallel.timeout.getSeconds() + " s");
         }
         if (!skipped.isEmpty()) {
             LOG.warn("Listing {}: {} of {} namespace(s) did not answer within {} s and are left out: {}",
