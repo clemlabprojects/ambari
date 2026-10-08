@@ -100,10 +100,19 @@ class KubeServiceTest {
         new java.io.ByteArrayInputStream(KUBECONFIG.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
   }
 
+  private void reconnects() {
+    when(k8s.forceReloadClient()).thenReturn(true);
+    when(k8s.pingCluster()).thenReturn(org.apache.ambari.view.k8s.model.ConnectionHealth.connected());
+  }
+
+  private static String error(Response r) {
+    return String.valueOf(((Map<?, ?>) r.getEntity()).get("error"));
+  }
+
   @Test
   void uploadingAKubeconfigRebuildsAnExistingConnection(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
-    when(k8s.forceReloadClient()).thenReturn(true);
+    reconnects();
 
     assertEquals(200, upload(api).getStatus());
     verify(k8s).forceReloadClient();
@@ -111,13 +120,24 @@ class KubeServiceTest {
   }
 
   @Test
-  void uploadThatCannotConnectSaysSo(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+  void uploadFromWhichNoClientCanBeBuiltSaysSo(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
     when(k8s.forceReloadClient()).thenReturn(false);
 
     Response r = upload(api);
     assertEquals(400, r.getStatus());
-    assertTrue(String.valueOf(((Map<?, ?>) r.getEntity()).get("error")).contains("could not connect"));
+    assertTrue(error(r).contains("could not build a connection"), error(r));
+  }
+
+  @Test
+  void uploadThatCannotReachTheClusterSaysWhy(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.forceReloadClient()).thenReturn(true);
+    when(k8s.pingCluster()).thenReturn(org.apache.ambari.view.k8s.model.ConnectionHealth.unauthenticated("token expired"));
+
+    Response r = upload(api);
+    assertEquals(503, r.getStatus());
+    assertTrue(error(r).startsWith("The kubeconfig was saved, but KDPS could not connect with it"), error(r));
   }
 
   @Test
@@ -125,7 +145,7 @@ class KubeServiceTest {
     KubeService api = apiAsViewAdmin(workDir);
     when(ctx.getInstanceData(anyString())).thenReturn("old-cluster");
     when(k8s.listAvailableContexts()).thenReturn(java.util.List.of(Map.of("name", "new-cluster")));
-    when(k8s.forceReloadClient()).thenReturn(true);
+    reconnects();
 
     assertEquals(200, upload(api).getStatus());
     verify(ctx).removeInstanceData(anyString());
@@ -136,7 +156,7 @@ class KubeServiceTest {
     KubeService api = apiAsViewAdmin(workDir);
     when(ctx.getInstanceData(anyString())).thenReturn("same-cluster");
     when(k8s.listAvailableContexts()).thenReturn(java.util.List.of(Map.of("name", "same-cluster")));
-    when(k8s.forceReloadClient()).thenReturn(true);
+    reconnects();
 
     assertEquals(200, upload(api).getStatus());
     verify(ctx, never()).removeInstanceData(anyString());
@@ -145,7 +165,8 @@ class KubeServiceTest {
   @Test
   void selectingAContextRebuildsAnExistingConnection(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
-    when(k8s.forceReloadClient()).thenReturn(true);
+    when(k8s.listAvailableContexts()).thenReturn(java.util.List.of(Map.of("name", "other-cluster")));
+    reconnects();
 
     Response r = api.selectKubeconfigContext(Map.of("context", "other-cluster"));
 
@@ -156,12 +177,26 @@ class KubeServiceTest {
   }
 
   @Test
-  void selectingAContextThatCannotConnectSaysSo(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+  void selectingAContextMissingFromTheKubeconfigIsRefusedAndNotSaved(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
-    when(k8s.forceReloadClient()).thenReturn(false);
+    when(k8s.listAvailableContexts()).thenReturn(java.util.List.of(Map.of("name", "other-cluster")));
 
     Response r = api.selectKubeconfigContext(Map.of("context", "missing"));
     assertEquals(400, r.getStatus());
-    assertTrue(String.valueOf(((Map<?, ?>) r.getEntity()).get("error")).contains("'missing' was saved"));
+    assertEquals("Context 'missing' is not in the uploaded kubeconfig.", error(r));
+    verify(ctx, never()).putInstanceData(anyString(), anyString());
+    verify(k8s, never()).forceReloadClient();
+  }
+
+  @Test
+  void selectingAContextThatCannotReachTheClusterSaysWhy(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.listAvailableContexts()).thenReturn(java.util.List.of(Map.of("name", "other-cluster")));
+    when(k8s.forceReloadClient()).thenReturn(true);
+    when(k8s.pingCluster()).thenReturn(org.apache.ambari.view.k8s.model.ConnectionHealth.unreachable("connection refused"));
+
+    Response r = api.selectKubeconfigContext(Map.of("context", "other-cluster"));
+    assertEquals(503, r.getStatus());
+    assertTrue(error(r).startsWith("Context 'other-cluster' was saved, but KDPS could not connect with it"), error(r));
   }
 }

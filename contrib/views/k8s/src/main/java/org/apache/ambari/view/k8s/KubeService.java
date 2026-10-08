@@ -185,12 +185,9 @@ public class KubeService {
             }
             // Rebuild the client from the kubeconfig just saved. A plain reload keeps an existing client, so a
             // view that was already connected would go on using the previous account until Ambari restarts.
-            if (!this.getKubernetesService().forceReloadClient()) {
-                LOG.warn("/cluster/config: kubeconfig saved, but no Kubernetes client could be built from it");
-                return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
-                        "The kubeconfig was saved, but KDPS could not connect with it. Check that the file is a valid "
-                                + "kubeconfig and that the selected context exists in it (details in the Ambari server log)."))
-                        .build();
+            Response notConnected = reconnect("The kubeconfig was saved");
+            if (notConnected != null) {
+                return notConnected;
             }
             // The keytab webhook prerequisites (its namespace, mTLS Secrets, CA bundle) only matter in the
             // WEBHOOK Kerberos injection mode. In the default PRE_PROVISIONED mode nothing uses them, and on
@@ -226,6 +223,37 @@ public class KubeService {
     }
 
     /**
+     * Rebuilds the Kubernetes client from the saved configuration and checks, with one API call, that it reaches the
+     * cluster. Building a client never contacts the cluster, so without the check a kubeconfig pointing nowhere or
+     * holding rejected credentials would be reported as working.
+     *
+     * @param saved what was saved, to start the error message with (e.g. "The kubeconfig was saved")
+     * @return {@code null} when connected; otherwise the response to return: 400 when no client can be built from the
+     *         configuration, 503 when the cluster cannot be reached or rejects the credentials
+     */
+    private Response reconnect(String saved) {
+        boolean built;
+        try {
+            built = this.getKubernetesService().forceReloadClient();
+        } catch (Exception e) {
+            LOG.warn("Kubernetes client rebuild failed: {}", e.toString());
+            built = false;
+        }
+        if (!built) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    saved + ", but KDPS could not build a connection from it. Check that the kubeconfig is valid "
+                            + "(details in the Ambari server log).")).build();
+        }
+        org.apache.ambari.view.k8s.model.ConnectionHealth health = this.getKubernetesService().pingCluster();
+        if (!health.isConnected()) {
+            LOG.warn("{}, but the cluster check failed: {}", saved, health.getMessage());
+            return Response.status(Response.Status.SERVICE_UNAVAILABLE).entity(Collections.singletonMap("error",
+                    saved + ", but KDPS could not connect with it: " + health.getMessage())).build();
+        }
+        return null;
+    }
+
+    /**
      * List the contexts available in the uploaded kubeconfig so the operator can choose which
      * cluster/context this view instance targets.
      */
@@ -254,19 +282,16 @@ public class KubeService {
         new AuthHelper(viewContext).checkConfigurationPermission();
         String context = body == null ? null : body.get("context");
         LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
-        this.getConfigService().saveSelectedContext(context);
-        boolean connected;
-        try {
-            connected = this.getKubernetesService().forceReloadClient();
-        } catch (Exception e) {
-            LOG.warn("/cluster/context: client reload after context selection failed: {}", e.toString());
-            connected = false;
-        }
-        if (!connected) {
+        if (context != null && !context.isBlank()
+                && this.getKubernetesService().listAvailableContexts().stream().noneMatch(c -> context.equals(c.get("name")))) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
-                    "Context '" + (context == null || context.isBlank() ? "current-context" : context) + "' was saved, but "
-                            + "KDPS could not connect with it. Check that the context exists in the kubeconfig "
-                            + "(details in the Ambari server log).")).build();
+                    "Context '" + context + "' is not in the uploaded kubeconfig.")).build();
+        }
+        this.getConfigService().saveSelectedContext(context);
+        Response notConnected = reconnect(
+                "Context '" + (context == null || context.isBlank() ? "current-context" : context) + "' was saved");
+        if (notConnected != null) {
+            return notConnected;
         }
         return Response.ok(Collections.singletonMap(
                 "message", "Context set to: " + (context == null || context.isBlank() ? "current-context" : context))).build();
