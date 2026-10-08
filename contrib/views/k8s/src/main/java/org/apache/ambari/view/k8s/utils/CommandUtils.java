@@ -63,6 +63,16 @@ public class CommandUtils {
      * resolve the cluster name by doscvering list of cluster and picking one
      * @return
      */
+    /**
+     * Ambari manages no cluster (a KDPS-only Ambari). A definite answer, unlike a failure to ask: there is, for
+     * instance, no Kerberos to inherit.
+     */
+    public static final class NoAmbariClusterException extends IllegalStateException {
+        public NoAmbariClusterException() {
+            super("Cluster auto-discovery found no clusters in Ambari.");
+        }
+    }
+
     public String resolveClusterName(String baseUriStr, Map<String,String> headers) throws Exception {
         // 1) Normal path: the View is bound to a cluster
         if (ctx.getCluster() != null && ctx.getCluster().getName() != null && !ctx.getCluster().getName().isBlank()) {
@@ -81,7 +91,7 @@ public class CommandUtils {
         var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, headers);
         List<String> all = ambariActionClient.listClusters();
         if (all == null || all.isEmpty()) {
-            throw new IllegalStateException("Cluster auto-discovery found no clusters in Ambari.");
+            throw new NoAmbariClusterException();
         }
 
         // 4) Prefer a configured name if present

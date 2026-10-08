@@ -5024,11 +5024,13 @@ public class CommandService {
 
         Map<String, Map<String, Object>> ranger = request.getRanger();
         String cluster = null;
+        boolean ambariManagesNoCluster = false;
         if ((hadoopRequiredConfigMaps != null) || (ranger != null)) {
             try {
                 cluster = this.commandUtils.resolveClusterName(baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
                 params.put("_cluster", cluster);
             } catch (Exception ex) {
+                ambariManagesNoCluster = ex instanceof CommandUtils.NoAmbariClusterException;
                 LOG.error("Could not fetch cluster name, dynamic Values will be ignored");
             }
             ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
@@ -5040,13 +5042,20 @@ public class CommandService {
                 params.put("_cluster", cluster);
                 ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
             } catch (Exception ex) {
+                ambariManagesNoCluster = ex instanceof CommandUtils.NoAmbariClusterException;
                 LOG.warn("Could not initialize AmbariActionClient for kerberos detection: {}", ex.toString());
             }
         }
         boolean kerberosEnabled = false;
         boolean kerberosDetectionAvailable = false;
         try {
-            if (ambariActionClient != null) {
+            if (ambariManagesNoCluster) {
+                // A KDPS-only Ambari: no cluster, hence no Kerberos to inherit. Knowing this (rather than failing to
+                // ask) lets the charts' Kerberos default be turned off below; left on, pods wait for a krb5.conf
+                // ConfigMap that is only created for Kerberized clusters.
+                LOG.info("Ambari manages no cluster: no Kerberos to inherit");
+                kerberosDetectionAvailable = true;
+            } else if (ambariActionClient != null) {
                 String securityEnabledCluster = ambariActionClient.getDesiredConfigProperty(
                         cluster, "cluster-env", "security_enabled"
                 );
