@@ -41,7 +41,19 @@ public class ClusterStats {
     private HelmStat helm;
 
     @JsonProperty("source")
-    private String source; // metrics source identifier (prometheus, metrics-server, unknown)
+    private String source; // metrics source identifier (prometheus, metrics-server, pod-metrics, unknown)
+
+    /** "cluster", or "projects" when the figures cover only the projects the account may use. */
+    @JsonProperty("scope")
+    private String scope = "cluster";
+
+    /** For the "projects" scope: what CPU and memory are measured against (quota, requests or none). */
+    @JsonProperty("basis")
+    private String basis;
+
+    /** For the "projects" scope: how many projects' usage was read. */
+    @JsonProperty("projects")
+    private Integer projects;
 
     // Default constructor for JSON deserialization
     public ClusterStats() {
@@ -58,6 +70,22 @@ public class ClusterStats {
     public void setSource(String source) {
         this.source = source;
     }
+
+    /**
+     * Marks the figures as covering only the projects the account may use.
+     *
+     * @param basis    what CPU and memory are measured against (quota, requests or none)
+     * @param projects how many projects' usage was read
+     */
+    public void setProjectScope(String basis, int projects) {
+        this.scope = "projects";
+        this.basis = basis;
+        this.projects = projects;
+    }
+
+    public String getScope() { return scope; }
+    public String getBasis() { return basis; }
+    public Integer getProjects() { return projects; }
 
     public static class ResourceStat {
         @JsonProperty("used")

@@ -79,6 +79,12 @@ export interface ClusterStats {
   pods: { used: number; total: number };
   nodes: { used: number; total: number };
   helm: { deployed: number; pending: number; failed: number; total: number };
+  /** "projects" when the account may not read the whole cluster: the figures cover the projects it may use. */
+  scope?: 'cluster' | 'projects';
+  /** For the "projects" scope: what CPU and memory are measured against. */
+  basis?: 'quota' | 'requests' | 'none';
+  /** For the "projects" scope: how many projects were measured. */
+  projects?: number;
 }
 
 // NOUVEAUX TYPES
