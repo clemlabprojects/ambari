@@ -589,10 +589,16 @@ public class KubernetesService {
     public List<ComponentStatus> getComponentStatuses() {
         checkConfiguration();
         LOG.info("Fetching component statuses from Kubernetes API.");
-        return executeWithAuthRetry("list component statuses",
-                () -> client.componentstatuses().list().getItems().stream()
-                        .map(this::toComponentStatus)
-                        .collect(Collectors.toList()));
+        try {
+            return executeWithAuthRetry("list component statuses",
+                    () -> client.componentstatuses().list().getItems().stream()
+                            .map(this::toComponentStatus)
+                            .collect(Collectors.toList()));
+        } catch (RuntimeException e) {
+            if (!isForbidden(e)) throw e;
+            LOG.debug("Component statuses are not readable by this account: {}", e.getMessage());
+            return Collections.emptyList();
+        }
     }
     
     /**
@@ -604,8 +610,10 @@ public class KubernetesService {
         checkConfiguration();
         LOG.info("Fetching recent events from Kubernetes API.");
 
-        List<Event> eventItems = executeWithAuthRetry("list cluster events",
-                () -> client.v1().events().inAnyNamespace().list().getItems());
+        List<Event> eventItems = listAcrossNamespaces("events",
+                () -> executeWithAuthRetry("list cluster events",
+                        () -> client.v1().events().inAnyNamespace().list().getItems()),
+                ns -> client.v1().events().inNamespace(ns).list().getItems());
 
         Comparator<Event> byTimeDescending = Comparator.comparing(
             this::eventInstantSafely,
@@ -634,9 +642,19 @@ public class KubernetesService {
         checkConfiguration();
         LOG.info("Calculating cluster stats from Kubernetes API.");
 
-        NodeList nodeList = executeWithAuthRetry("list nodes (stats)", () -> client.nodes().list());
-        PodList podList = executeWithAuthRetry("list pods (stats)", () -> client.pods().inAnyNamespace().list());
-        List<String> runningPods = podList.getItems().stream()
+        NodeList nodeList;
+        try {
+            nodeList = executeWithAuthRetry("list nodes (stats)", () -> client.nodes().list());
+        } catch (RuntimeException e) {
+            if (!isForbidden(e)) throw e;
+            LOG.debug("Nodes are not readable by this account; node and capacity figures stay empty");
+            nodeList = new NodeList();
+            nodeList.setItems(new ArrayList<>());
+        }
+        List<Pod> podItems = listAcrossNamespaces("pods",
+                () -> executeWithAuthRetry("list pods (stats)", () -> client.pods().inAnyNamespace().list().getItems()),
+                ns -> client.pods().inNamespace(ns).list().getItems());
+        List<String> runningPods = podItems.stream()
             .filter(pod -> "Running".equalsIgnoreCase(pod.getStatus().getPhase()))
             .map(pod -> pod.getMetadata().getName())
             .collect(Collectors.toList());
@@ -762,7 +780,7 @@ public class KubernetesService {
         // Pods card denominator is schedulable pod CAPACITY (sum of node "pods" capacity), NOT the count
         // of all pod objects — on OpenShift the latter includes thousands of Completed/Failed pods and is
         // meaningless as a denominator. Fall back to the object count only if capacity is unavailable.
-        double podDenominator = totalPodCapacity > 0 ? totalPodCapacity : podList.getItems().size();
+        double podDenominator = totalPodCapacity > 0 ? totalPodCapacity : podItems.size();
         ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(runningPods.size(), podDenominator);
         ClusterStats.ResourceStat nodeStatistics = new ClusterStats.ResourceStat(readyNodesCount, nodeList.getItems().size());
         
@@ -800,21 +818,6 @@ public class KubernetesService {
         return result;
     }
 
-    /**
-     * List namespaces with lightweight metadata.
-     */
-    public List<KubeNamespace> listNamespaces() {
-        checkConfiguration();
-        NamespaceList list = client.namespaces().list();
-        return list.getItems().stream().map(ns -> {
-            KubeNamespace dto = new KubeNamespace();
-            dto.name = ns.getMetadata() != null ? ns.getMetadata().getName() : null;
-            dto.labels = ns.getMetadata() != null && ns.getMetadata().getLabels() != null ? ns.getMetadata().getLabels() : Collections.emptyMap();
-            dto.createdAt = ns.getMetadata() != null ? ns.getMetadata().getCreationTimestamp() : null;
-            dto.status = ns.getStatus() != null ? ns.getStatus().getPhase() : null;
-            return dto;
-        }).collect(Collectors.toList());
-    }
 
     /**
      * List pods in a namespace with optional label selector.
@@ -2134,6 +2137,254 @@ public class KubernetesService {
         return result;
     }
 
+    // ---------- Namespace scope ----------
+    // On sites where the platform team hands out projects, the account KDPS connects with only holds rights
+    // INSIDE its projects: cluster-wide listings (namespaces, secrets for Helm, pods, events, CRDs) answer 403.
+    // Every cluster-wide listing therefore tries the cluster first and, when refused, walks the namespaces the
+    // account can see instead. On OpenShift that list comes from the Project API, which returns exactly the
+    // projects the caller may use (all of them for a cluster admin) and needs no cluster permission.
+
+    /** OpenShift Project API (cluster-scoped): lists only the projects the caller may see. */
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext PROJECT_RDC =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup("project.openshift.io").withVersion("v1")
+                    .withKind("Project").withPlural("projects").withNamespaced(false).build();
+
+    /** How long the namespace list is reused; a listing per page refresh would multiply API calls. */
+    private static final long ACCESSIBLE_NAMESPACES_TTL_MS = 30_000L;
+    /** How long a refused cluster-wide listing is remembered before it is tried again (rights can be granted later). */
+    private static final long CLUSTER_WIDE_FORBIDDEN_TTL_MS = 10 * 60_000L;
+
+    /** Cluster-wide listings this account was refused, keyed by resource, with the refusal time. Reset on client reload. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> clusterWideForbidden =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final AtomicReference<CachedNamespaces> accessibleNamespacesCache = new AtomicReference<>(null);
+
+    private static final class CachedNamespaces {
+        final List<KubeNamespace> items;
+        final long fetchedAt;
+        CachedNamespaces(List<KubeNamespace> items, long fetchedAt) {
+            this.items = items;
+            this.fetchedAt = fetchedAt;
+        }
+    }
+
+    /**
+     * True when the failure is an authorization refusal (HTTP 403), whether raised by the Kubernetes client
+     * or reported in the message of a Helm error ("secrets is forbidden: User ... cannot list ...").
+     *
+     * @param e any failure, possibly wrapped
+     * @return {@code true} when some cause in the chain is a 403
+     */
+    public static boolean isForbidden(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof KubernetesClientException kce && kce.getCode() == 403) {
+                return true;
+            }
+            String m = t.getMessage();
+            if (m != null && (m.contains(" is forbidden") || m.contains("Forbidden"))) {
+                return true;
+            }
+            if (t.getCause() == t) break;
+        }
+        return false;
+    }
+
+    /** Whether a cluster-wide listing of {@code resource} was refused recently, so it is not retried on every call. */
+    public boolean isClusterWideForbidden(String resource) {
+        Long at = clusterWideForbidden.get(resource);
+        if (at == null) return false;
+        if (System.currentTimeMillis() - at > CLUSTER_WIDE_FORBIDDEN_TTL_MS) {
+            clusterWideForbidden.remove(resource, at);
+            return false;
+        }
+        return true;
+    }
+
+    /** Records that a cluster-wide listing of {@code resource} was refused; logged once per refusal window. */
+    public void noteClusterWideForbidden(String resource, Throwable cause) {
+        if (clusterWideForbidden.put(resource, System.currentTimeMillis()) == null) {
+            LOG.info("This account may not list {} across the cluster; listing them project by project instead ({})",
+                    resource, cause == null ? "403" : cause.getMessage());
+        }
+    }
+
+    /**
+     * Runs a listing across the whole cluster when the account may, otherwise namespace by namespace over
+     * {@link #listNamespaces()}. Namespaces that refuse the call are skipped; other errors propagate.
+     *
+     * @param resource     resource name used to remember a refusal (e.g. "pods", "secrets")
+     * @param clusterWide  the cluster-wide listing
+     * @param perNamespace the same listing for one namespace
+     * @return the combined items
+     */
+    public <T> List<T> listAcrossNamespaces(String resource, Supplier<List<T>> clusterWide,
+                                            java.util.function.Function<String, List<T>> perNamespace) {
+        if (!isClusterWideForbidden(resource)) {
+            try {
+                return clusterWide.get();
+            } catch (RuntimeException e) {
+                if (!isForbidden(e)) throw e;
+                noteClusterWideForbidden(resource, e);
+            }
+        }
+        List<T> out = new ArrayList<>();
+        for (String ns : accessibleNamespaceNames()) {
+            try {
+                List<T> items = perNamespace.apply(ns);
+                if (items != null) out.addAll(items);
+            } catch (RuntimeException e) {
+                if (!isForbidden(e)) throw e;
+                LOG.debug("Listing {} in namespace {} refused; skipping it", resource, ns);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Names of the namespaces this account can work in (see {@link #listNamespaces()}), sorted.
+     *
+     * @return namespace names; empty when none are known
+     */
+    public List<String> accessibleNamespaceNames() {
+        return listNamespaces().stream()
+                .map(n -> n.name)
+                .filter(n -> n != null && !n.isBlank())
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Namespaces this account can work in, with lightweight metadata. The whole cluster when the account may
+     * list namespaces. Otherwise, on OpenShift, the projects the account may use; elsewhere, the namespaces KDPS
+     * already knows (the kubeconfig's namespace and the namespaces of recorded releases). Reused for
+     * {@value #ACCESSIBLE_NAMESPACES_TTL_MS} ms.
+     *
+     * @return namespace descriptions
+     */
+    public List<KubeNamespace> listNamespaces() {
+        checkConfiguration();
+        long now = System.currentTimeMillis();
+        CachedNamespaces cached = accessibleNamespacesCache.get();
+        if (cached != null && now - cached.fetchedAt < ACCESSIBLE_NAMESPACES_TTL_MS) {
+            return cached.items;
+        }
+        List<KubeNamespace> items = java.util.Collections.unmodifiableList(computeAccessibleNamespaces());
+        accessibleNamespacesCache.set(new CachedNamespaces(items, now));
+        return items;
+    }
+
+    /** Forgets the cached namespace list (after creating a namespace, or when the connection changes). */
+    public void invalidateNamespaceCache() {
+        accessibleNamespacesCache.set(null);
+    }
+
+    private List<KubeNamespace> computeAccessibleNamespaces() {
+        if (!isClusterWideForbidden("namespaces")) {
+            try {
+                NamespaceList list = executeWithAuthRetry("list namespaces", () -> client.namespaces().list());
+                return list.getItems().stream().map(KubernetesService::toKubeNamespace).collect(Collectors.toList());
+            } catch (RuntimeException e) {
+                if (!isForbidden(e)) throw e;
+                noteClusterWideForbidden("namespaces", e);
+            }
+        }
+        if (isOpenShiftCluster()) {
+            try {
+                var projects = executeWithAuthRetry("list projects",
+                        () -> client.genericKubernetesResources(PROJECT_RDC).list().getItems());
+                List<KubeNamespace> out = new ArrayList<>();
+                for (var p : projects) {
+                    KubeNamespace dto = new KubeNamespace();
+                    dto.name = p.getMetadata() != null ? p.getMetadata().getName() : null;
+                    if (dto.name == null) continue;
+                    dto.labels = p.getMetadata().getLabels() != null ? p.getMetadata().getLabels() : Collections.emptyMap();
+                    dto.createdAt = p.getMetadata().getCreationTimestamp();
+                    Object status = p.getAdditionalProperties() == null ? null : p.getAdditionalProperties().get("status");
+                    dto.status = status instanceof Map<?, ?> sm && sm.get("phase") != null ? String.valueOf(sm.get("phase")) : null;
+                    out.add(dto);
+                }
+                out.sort(Comparator.comparing(n -> n.name));
+                LOG.debug("Namespace scope: {} OpenShift project(s) visible to this account", out.size());
+                return out;
+            } catch (RuntimeException e) {
+                LOG.warn("Listing OpenShift projects failed; falling back to the namespaces KDPS knows: {}", e.toString());
+            }
+        }
+        return knownNamespaces();
+    }
+
+    /** The kubeconfig's namespace plus the namespaces of releases KDPS recorded: all it can name without listing. */
+    private List<KubeNamespace> knownNamespaces() {
+        java.util.TreeSet<String> names = new java.util.TreeSet<>();
+        if (client.getNamespace() != null && !client.getNamespace().isBlank()) {
+            names.add(client.getNamespace());
+        }
+        if (viewContext != null) {
+            try {
+                for (var rel : new ReleaseMetadataService(viewContext).findAll()) {
+                    if (rel.getNamespace() != null && !rel.getNamespace().isBlank()) names.add(rel.getNamespace());
+                }
+            } catch (RuntimeException e) {
+                LOG.debug("Could not read recorded releases for the namespace list: {}", e.toString());
+            }
+        }
+        List<KubeNamespace> out = new ArrayList<>();
+        for (String n : names) {
+            KubeNamespace dto = new KubeNamespace();
+            dto.name = n;
+            dto.labels = Collections.emptyMap();
+            out.add(dto);
+        }
+        return out;
+    }
+
+    private static KubeNamespace toKubeNamespace(Namespace ns) {
+        KubeNamespace dto = new KubeNamespace();
+        dto.name = ns.getMetadata() != null ? ns.getMetadata().getName() : null;
+        dto.labels = ns.getMetadata() != null && ns.getMetadata().getLabels() != null ? ns.getMetadata().getLabels() : Collections.emptyMap();
+        dto.createdAt = ns.getMetadata() != null ? ns.getMetadata().getCreationTimestamp() : null;
+        dto.status = ns.getStatus() != null ? ns.getStatus().getPhase() : null;
+        return dto;
+    }
+
+    /**
+     * Whether the API server serves {@code <plural>.<group>} (a CRD name), read from API discovery, which every
+     * authenticated account may read. Used when the account may not read CustomResourceDefinitions.
+     *
+     * @param crdName CRD name, e.g. {@code certificates.cert-manager.io}
+     * @return {@code true} when some served version of the group lists that resource
+     */
+    public boolean servedByApiDiscovery(String crdName) {
+        int dot = crdName.indexOf('.');
+        if (dot <= 0 || dot == crdName.length() - 1) return false;
+        String plural = crdName.substring(0, dot);
+        String group = crdName.substring(dot + 1);
+        io.fabric8.kubernetes.api.model.APIGroup g = client.getApiGroup(group);
+        if (g == null || g.getVersions() == null) return false;
+        for (var v : g.getVersions()) {
+            io.fabric8.kubernetes.api.model.APIResourceList rl = client.getApiResources(v.getGroupVersion());
+            if (rl != null && rl.getResources() != null
+                    && rl.getResources().stream().anyMatch(r -> plural.equals(r.getName()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Versions of an API group the server serves, from API discovery (e.g. {@code [v1, v1beta1]}).
+     *
+     * @param group API group name
+     * @return served version names; empty when the group is not served
+     */
+    public List<String> servedApiVersions(String group) {
+        io.fabric8.kubernetes.api.model.APIGroup g = client.getApiGroup(group);
+        if (g == null || g.getVersions() == null) return Collections.emptyList();
+        return g.getVersions().stream().map(v -> v.getVersion()).filter(Objects::nonNull).collect(Collectors.toList());
+    }
+
     /**
      * Send a single PromQL query, applying the kubeconfig credential first. If the backend rejects it
      * with 401/403 on an OpenShift target (e.g. the kubeconfig token lacks cluster-monitoring-view, or
@@ -3144,6 +3395,7 @@ public class KubernetesService {
             client.namespaces().createOrReplace(new NamespaceBuilder()
                     .withNewMetadata().withName(namespace).endMetadata()
                     .build());
+            invalidateNamespaceCache();
         } catch (KubernetesClientException e) {
             throw new RuntimeException("Failed to create namespace: " + namespace, e);
         }
@@ -3245,6 +3497,8 @@ public class KubernetesService {
             this.prometheusClientCache.clear();
             this.openShiftDetectionCache.set(null);
             this.monitoringTokenCache.set(null);
+            this.clusterWideForbidden.clear();
+            this.accessibleNamespacesCache.set(null);
             applyProxySettings();
             LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
             return true;
@@ -3396,7 +3650,9 @@ public class KubernetesService {
             checkConfiguration();
             var deployList = (namespace != null && !namespace.isBlank())
                     ? client.apps().deployments().inNamespace(namespace).list().getItems()
-                    : client.apps().deployments().inAnyNamespace().list().getItems();
+                    : listAcrossNamespaces("deployments",
+                            () -> client.apps().deployments().inAnyNamespace().list().getItems(),
+                            ns -> client.apps().deployments().inNamespace(ns).list().getItems());
             List<Map<String, Object>> out = new ArrayList<>();
             for (var d : deployList) {
                 Map<String, Object> r = new LinkedHashMap<>();
@@ -3433,7 +3689,9 @@ public class KubernetesService {
             checkConfiguration();
             var cms = (namespace != null && !namespace.isBlank())
                     ? client.configMaps().inNamespace(namespace).list().getItems()
-                    : client.configMaps().inAnyNamespace().list().getItems();
+                    : listAcrossNamespaces("configmaps",
+                            () -> client.configMaps().inAnyNamespace().list().getItems(),
+                            ns -> client.configMaps().inNamespace(ns).list().getItems());
             List<Map<String, Object>> out = new ArrayList<>();
             for (var cm : cms) {
                 Map<String, Object> r = new LinkedHashMap<>();
@@ -3463,7 +3721,9 @@ public class KubernetesService {
             checkConfiguration();
             var items = (namespace != null && !namespace.isBlank())
                     ? client.network().v1().ingresses().inNamespace(namespace).list().getItems()
-                    : client.network().v1().ingresses().inAnyNamespace().list().getItems();
+                    : listAcrossNamespaces("ingresses",
+                            () -> client.network().v1().ingresses().inAnyNamespace().list().getItems(),
+                            ns -> client.network().v1().ingresses().inNamespace(ns).list().getItems());
             List<Map<String, Object>> out = new ArrayList<>();
             for (var ing : items) {
                 Map<String, Object> r = new LinkedHashMap<>();
@@ -3543,7 +3803,9 @@ public class KubernetesService {
             var op = client.genericKubernetesResources(ROUTE_RDC);
             var items = (namespace != null && !namespace.isBlank())
                     ? op.inNamespace(namespace).list().getItems()
-                    : op.inAnyNamespace().list().getItems();
+                    : listAcrossNamespaces("routes",
+                            () -> op.inAnyNamespace().list().getItems(),
+                            ns -> op.inNamespace(ns).list().getItems());
             List<Map<String, Object>> out = new ArrayList<>();
             for (var route : items) {
                 Map<String, Object> props = route.getAdditionalProperties();
@@ -3675,7 +3937,9 @@ public class KubernetesService {
             if (namespace != null && !namespace.isBlank()) {
                 secrets = client.secrets().inNamespace(namespace).list().getItems();
             } else {
-                secrets = client.secrets().inAnyNamespace().list().getItems();
+                secrets = listAcrossNamespaces("secrets",
+                        () -> client.secrets().inAnyNamespace().list().getItems(),
+                        ns -> client.secrets().inNamespace(ns).list().getItems());
             }
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             Instant now = Instant.now();
@@ -3769,7 +4033,14 @@ public class KubernetesService {
                     .withName(crdName)
                     .get() != null;
         } catch (KubernetesClientException e) {
-            LOG.error("Erreur lors de la vérification du CRD {}: {}", crdName, e.getMessage());
+            if (e.getCode() == 403) {
+                // Accounts limited to their own projects may not read CRD objects; API discovery says the same
+                // thing (is the resource served?) and is open to every authenticated account.
+                boolean served = servedByApiDiscovery(crdName);
+                LOG.debug("CRD {} not readable by this account; API discovery says served={}", crdName, served);
+                return served;
+            }
+            LOG.error("Could not check CRD {}: {}", crdName, e.getMessage());
             throw e;
         }
     }
@@ -4276,6 +4547,16 @@ public class KubernetesService {
             LOG.info("external-secrets API version detected: {}", picked);
             return picked;
         } catch (Exception ex) {
+            if (isForbidden(ex)) {
+                try {
+                    String picked = servedApiVersions("external-secrets.io").contains("v1") ? "v1" : "v1beta1";
+                    externalSecretsApiVersion = picked;
+                    LOG.info("external-secrets API version detected from API discovery: {}", picked);
+                    return picked;
+                } catch (RuntimeException discoveryEx) {
+                    LOG.debug("API discovery for external-secrets.io failed: {}", discoveryEx.toString());
+                }
+            }
             LOG.warn("Falling back to external-secrets.io/v1beta1: {}", ex.toString());
             externalSecretsApiVersion = "v1beta1";
             return "v1beta1";
@@ -4694,7 +4975,10 @@ public class KubernetesService {
             LOG.warn("listClusterSecretStores failed: {}", ex.toString());
         }
         try {
-            var nsStores = client.genericKubernetesResources(externalSecretStoreRdc()).inAnyNamespace().list().getItems();
+            var storeOp = client.genericKubernetesResources(externalSecretStoreRdc());
+            var nsStores = listAcrossNamespaces("secretstores",
+                    () -> storeOp.inAnyNamespace().list().getItems(),
+                    ns -> storeOp.inNamespace(ns).list().getItems());
             for (var s : nsStores) {
                 java.util.Map<String, Object> entry = describeStoreLike(s, "SecretStore");
                 if (includeNotReady || Boolean.TRUE.equals(entry.get("ready"))) result.add(entry);
@@ -5649,11 +5933,9 @@ public class KubernetesService {
     private List<Map<String, String>> fetchServicesFromK8s(String selector) {
         try {
             // Fetch services across ALL namespaces
-            List<io.fabric8.kubernetes.api.model.Service> svcList = client.services()
-                    .inAnyNamespace()
-                    .withLabelSelector(selector)
-                    .list()
-                    .getItems();
+            List<io.fabric8.kubernetes.api.model.Service> svcList = listAcrossNamespaces("services",
+                    () -> client.services().inAnyNamespace().withLabelSelector(selector).list().getItems(),
+                    ns -> client.services().inNamespace(ns).withLabelSelector(selector).list().getItems());
 
             List<Map<String, String>> results = new ArrayList<>();
             for (io.fabric8.kubernetes.api.model.Service svc : svcList) {
@@ -5693,14 +5975,14 @@ public class KubernetesService {
         checkConfiguration();
         try {
             // If labelValue is null/wildcard, just check for existence of key
-            var filter = client.secrets().inAnyNamespace();
-
-            List<Secret> secrets;
-            if (labelValue != null && !labelValue.equals("*")) {
-                secrets = filter.withLabel(labelKey, labelValue).list().getItems();
-            } else {
-                secrets = filter.withLabel(labelKey).list().getItems();
-            }
+            final boolean byValue = labelValue != null && !labelValue.equals("*");
+            List<Secret> secrets = listAcrossNamespaces("secrets",
+                    () -> (byValue
+                            ? client.secrets().inAnyNamespace().withLabel(labelKey, labelValue)
+                            : client.secrets().inAnyNamespace().withLabel(labelKey)).list().getItems(),
+                    ns -> (byValue
+                            ? client.secrets().inNamespace(ns).withLabel(labelKey, labelValue)
+                            : client.secrets().inNamespace(ns).withLabel(labelKey)).list().getItems());
 
             List<Map<String, String>> results = new ArrayList<>();
             for (Secret s : secrets) {

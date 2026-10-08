@@ -83,8 +83,83 @@ public class HelmService {
      * @return list of discovered Helm releases
      */
     public List<Release> list(String namespace, String kubeconfig) {
-        LOG.info("Listing Helm releases in namespace: '{}'", namespace);
-        return helmClient.list(namespace, kubeconfig, false);
+        if (namespace != null && !namespace.isBlank()) {
+            LOG.info("Listing Helm releases in namespace: '{}'", namespace);
+            return helmClient.list(namespace, kubeconfig, false);
+        }
+        // All namespaces. Helm keeps each release in a Secret, so this needs "list secrets" across the cluster.
+        // An account limited to its own projects is refused (403); list project by project instead.
+        KubernetesService kube = kubernetesService();
+        if (kube == null || !kube.isClusterWideForbidden(HELM_STORAGE_RESOURCE)) {
+            try {
+                LOG.info("Listing Helm releases in all namespaces");
+                return helmClient.list(null, kubeconfig, false);
+            } catch (RuntimeException e) {
+                if (kube == null || !KubernetesService.isForbidden(e)) throw e;
+                kube.noteClusterWideForbidden(HELM_STORAGE_RESOURCE, e);
+            }
+        }
+        return listPerNamespace(kube.accessibleNamespaceNames(), kubeconfig);
+    }
+
+    /** Resource Helm stores releases in; a cluster-wide refusal of it is shared with the other secret listings. */
+    static final String HELM_STORAGE_RESOURCE = "secrets";
+
+    /** Parallel Helm listings when walking projects one by one (each call is a full Helm client round-trip). */
+    private static final int PER_NAMESPACE_LIST_PARALLELISM = 4;
+
+    /**
+     * Lists releases namespace by namespace, a few at a time. Namespaces that refuse the call are skipped.
+     *
+     * @param namespaces namespaces to list
+     * @param kubeconfig kubeconfig contents
+     * @return releases of every namespace that answered, in namespace order
+     */
+    List<Release> listPerNamespace(List<String> namespaces, String kubeconfig) {
+        LOG.info("Listing Helm releases project by project ({} namespaces)", namespaces.size());
+        if (namespaces.isEmpty()) return new java.util.ArrayList<>();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
+                Math.min(PER_NAMESPACE_LIST_PARALLELISM, namespaces.size()));
+        try {
+            List<java.util.concurrent.Future<List<Release>>> futures = new java.util.ArrayList<>();
+            for (String ns : namespaces) {
+                futures.add(pool.submit(() -> {
+                    try {
+                        return helmClient.list(ns, kubeconfig, false);
+                    } catch (RuntimeException e) {
+                        if (!KubernetesService.isForbidden(e)) throw e;
+                        LOG.debug("Helm releases in namespace {} are not readable; skipping it", ns);
+                        return List.<Release>of();
+                    }
+                }));
+            }
+            List<Release> out = new java.util.ArrayList<>();
+            for (var f : futures) {
+                try {
+                    out.addAll(f.get());
+                } catch (java.util.concurrent.ExecutionException e) {
+                    Throwable c = e.getCause();
+                    throw c instanceof RuntimeException re ? re : new IllegalStateException(c);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while listing Helm releases", e);
+                }
+            }
+            return out;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /** The view's Kubernetes service, or {@code null} when it cannot be reached (unit tests without a view). */
+    private KubernetesService kubernetesService() {
+        if (viewContext == null || viewContext.getInstanceName() == null) return null;
+        try {
+            return KubernetesService.get(viewContext);
+        } catch (RuntimeException e) {
+            LOG.debug("Kubernetes service unavailable: {}", e.toString());
+            return null;
+        }
     }
 
     /**
