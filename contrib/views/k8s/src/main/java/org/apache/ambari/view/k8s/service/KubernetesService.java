@@ -3494,13 +3494,13 @@ public class KubernetesService {
             }
             this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
             this.isConfigured = true;
-            this.prometheusClientCache.clear();
-            this.openShiftDetectionCache.set(null);
-            this.monitoringTokenCache.set(null);
             // Cached answers about the previous cluster (a new kubeconfig or context can point elsewhere).
             this.externalSecretsApiVersion = null;
             this.statsCache.invalidateAll();
             this.serviceCache.invalidateAll();
+            this.prometheusClientCache.clear();
+            this.openShiftDetectionCache.set(null);
+            this.monitoringTokenCache.set(null);
             this.clusterWideForbidden.clear();
             this.accessibleNamespacesCache.set(null);
             applyProxySettings();
