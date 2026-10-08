@@ -33,6 +33,7 @@ import java.lang.reflect.Field;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -76,5 +77,43 @@ class KubeServiceTest {
     Response r = api.getCurrentUserPermissions();
     assertEquals(200, r.getStatus());
     assertNotNull(r.getEntity());
+  }
+
+  private KubeService apiAsViewAdmin(java.nio.file.Path workDir) throws Exception {
+    when(ctx.getUsername()).thenReturn("dave");
+    when(ctx.getInstanceName()).thenReturn("reload-test");
+    when(ctx.getProperties()).thenReturn(Map.of(
+        "view.admin.users", "dave",
+        "k8s.view.working.dir", workDir.toString()));
+    KubeService api = new KubeService();
+    api.setKubernetesService(k8s);
+    Field f = KubeService.class.getDeclaredField("viewContext");
+    f.setAccessible(true);
+    f.set(api, ctx);
+    return api;
+  }
+
+  @Test
+  void uploadingAKubeconfigRebuildsAnExistingConnection(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    String kubeconfig = "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n";
+
+    Response r = api.uploadKubeconfig(null, null, new java.io.ByteArrayInputStream(kubeconfig.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+    assertEquals(200, r.getStatus());
+    verify(k8s).forceReloadClient();
+    verify(k8s, never()).reloadClientIfConfigured();
+  }
+
+  @Test
+  void selectingAContextRebuildsAnExistingConnection(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+
+    Response r = api.selectKubeconfigContext(Map.of("context", "other-cluster"));
+
+    assertEquals(200, r.getStatus());
+    verify(ctx).putInstanceData(anyString(), eq("other-cluster"));
+    verify(k8s).forceReloadClient();
+    verify(k8s, never()).reloadClientIfConfigured();
   }
 }

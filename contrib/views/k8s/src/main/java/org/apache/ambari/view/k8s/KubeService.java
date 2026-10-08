@@ -173,8 +173,9 @@ public class KubeService {
             LOG.info("Configuring Apache Ambari View Backend CA bundle");
             final String webhookName = "keytab-webhook"; // must match your Helm values prefix
 
-            // Reinitialize K8s client now that kubeconfig is saved
-            this.getKubernetesService().reloadClientIfConfigured();
+            // Rebuild the client from the kubeconfig just saved. A plain reload keeps an existing client, so a
+            // view that was already connected would go on using the previous account until Ambari restarts.
+            this.getKubernetesService().forceReloadClient();
             // The keytab webhook prerequisites (its namespace, mTLS Secrets, CA bundle) only matter in the
             // WEBHOOK Kerberos injection mode. In the default PRE_PROVISIONED mode nothing uses them, and on
             // OpenShift sites where namespaces cannot be created on the fly preparing them made the upload
@@ -239,7 +240,7 @@ public class KubeService {
         LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
         this.getConfigService().saveSelectedContext(context);
         try {
-            this.getKubernetesService().reloadClientIfConfigured();
+            this.getKubernetesService().forceReloadClient();
         } catch (Exception e) {
             LOG.warn("/cluster/context: client reload after context selection failed: {}", e.toString());
         }
