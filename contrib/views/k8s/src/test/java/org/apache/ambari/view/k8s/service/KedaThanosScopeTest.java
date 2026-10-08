@@ -205,4 +205,28 @@ class KedaThanosScopeTest {
     assertFalse(problem.contains("clusterrolebinding"), problem);
     assertTrue(problem.contains("create role"), problem);
   }
+
+  @Test
+  void anAlreadyDeployedReleaseGetsItsTenancyRoleUpdated() throws Exception {
+    projectLimitedAccount();
+    String rolePath = "/apis/rbac.authorization.k8s.io/v1/namespaces/team-a/roles/trino-thanos-token-thanos-tenancy";
+    server.expect().get().withPath("/api/v1/namespaces/team-a/secrets/trino-thanos-token").andReturn(200,
+        "{\"kind\":\"Secret\",\"apiVersion\":\"v1\",\"type\":\"kubernetes.io/service-account-token\","
+            + "\"metadata\":{\"name\":\"trino-thanos-token\",\"namespace\":\"team-a\"},\"data\":{\"token\":\"dG9r\"}}").always();
+    server.expect().get().withPath(rolePath).andReturn(200,
+        "{\"kind\":\"Role\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"metadata\":{\"name\":\"trino-thanos-token-thanos-tenancy\",\"namespace\":\"team-a\",\"resourceVersion\":\"1\"},"
+            + "\"rules\":[{\"apiGroups\":[\"\"],\"resources\":[\"pods\"],\"verbs\":[\"get\",\"list\"]}]}").always();
+    String updated = "{\"kind\":\"Role\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"metadata\":{\"name\":\"trino-thanos-token-thanos-tenancy\",\"namespace\":\"team-a\",\"resourceVersion\":\"2\"}}";
+    server.expect().patch().withPath(rolePath).andReturn(200, updated).always();
+    server.expect().put().withPath(rolePath).andReturn(200, updated).always();
+
+    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true));
+
+    List<String> calls = requests();
+    String update = bodies.entrySet().stream()
+        .filter(e -> (e.getKey().startsWith("PATCH ") || e.getKey().startsWith("PUT ")) && e.getKey().contains("/roles/"))
+        .map(Map.Entry::getValue).findFirst().orElse(null);
+    assertNotNull(update, "the Role of an existing release is brought up to date: " + calls);
+    assertTrue(update.contains("metrics.k8s.io"), update);
+  }
 }

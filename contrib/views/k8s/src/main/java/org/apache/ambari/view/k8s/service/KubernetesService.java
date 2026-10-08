@@ -2564,12 +2564,22 @@ public class KubernetesService {
         }
         if (saName == null || saName.isBlank()) saName = secretName;
 
-        // Already provisioned? A populated (or freshly-created) service-account-token Secret is enough.
+        // Already provisioned? A populated (or freshly-created) service-account-token Secret is enough, once the
+        // tenancy Role is current: a release deployed before that Role gained the pod-metrics rule keeps failing
+        // its queries with 403 until it is updated.
         try {
             Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
             if (existing != null) {
                 boolean hasToken = existing.getData() != null && existing.getData().containsKey("token");
-                if (hasToken || "kubernetes.io/service-account-token".equals(existing.getType())) return null;
+                if (hasToken || "kubernetes.io/service-account-token".equals(existing.getType())) {
+                    try {
+                        ensureKedaTenancyRole(namespace, saName + "-thanos-tenancy");
+                    } catch (Exception e) {
+                        LOG.warn("Could not bring the KEDA/Thanos tenancy Role {}/{}-thanos-tenancy up to date: {}",
+                                namespace, saName, e.toString());
+                    }
+                    return null;
+                }
             }
         } catch (Exception ignore) { /* fall through to (re)create */ }
 
@@ -2648,28 +2658,7 @@ public class KubernetesService {
             // namespace passed as the tenancy scope, against the core API group and metrics.k8s.io (the proxy
             // answers 403 "verb=get, resource=pods" without the latter). The Role Red Hat documents for the Custom
             // Metrics Autoscaler grants both; a Role left by an earlier deploy without the second rule is updated.
-            Role desiredTenancyRole = new RoleBuilder()
-                    .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
-                    .addNewRule()
-                        .withApiGroups("")
-                        .withResources("pods")
-                        .withVerbs("get", "list", "watch")
-                    .endRule()
-                    .addNewRule()
-                        .withApiGroups("metrics.k8s.io")
-                        .withResources("pods")
-                        .withVerbs("get", "list", "watch")
-                    .endRule()
-                    .build();
-            Role existingTenancyRole = client.rbac().roles().inNamespace(namespace).withName(tenancyRoleName).get();
-            if (existingTenancyRole == null) {
-                client.rbac().roles().inNamespace(namespace).resource(desiredTenancyRole).create();
-                LOG.info("Created KEDA/Thanos tenancy Role {}/{} (pods and pod metrics read)", namespace, tenancyRoleName);
-            } else if (!desiredTenancyRole.getRules().equals(existingTenancyRole.getRules())) {
-                client.rbac().roles().inNamespace(namespace).withName(tenancyRoleName)
-                        .edit(r -> new RoleBuilder(r).withRules(desiredTenancyRole.getRules()).build());
-                LOG.info("Updated KEDA/Thanos tenancy Role {}/{} to read pod metrics", namespace, tenancyRoleName);
-            }
+            ensureKedaTenancyRole(namespace, tenancyRoleName);
             if (client.rbac().roleBindings().inNamespace(namespace).withName(tenancyRoleName).get() == null) {
                 client.rbac().roleBindings().inNamespace(namespace).resource(
                         new RoleBindingBuilder()
@@ -2700,6 +2689,35 @@ public class KubernetesService {
             return null;
         } catch (Exception e) {
             return "Failed to provision the KEDA/Thanos monitoring token in namespace '" + namespace + "': " + e.getMessage();
+        }
+    }
+
+    /**
+     * Creates, or brings up to date, the Role that lets the KEDA monitoring token query the Thanos tenancy port
+     * for {@code namespace}: read pods and pod metrics.
+     */
+    private void ensureKedaTenancyRole(String namespace, String tenancyRoleName) {
+        Role desiredTenancyRole = new RoleBuilder()
+                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
+                .addNewRule()
+                    .withApiGroups("")
+                    .withResources("pods")
+                    .withVerbs("get", "list", "watch")
+                .endRule()
+                .addNewRule()
+                    .withApiGroups("metrics.k8s.io")
+                    .withResources("pods")
+                    .withVerbs("get", "list", "watch")
+                .endRule()
+                .build();
+        Role existingTenancyRole = client.rbac().roles().inNamespace(namespace).withName(tenancyRoleName).get();
+        if (existingTenancyRole == null) {
+            client.rbac().roles().inNamespace(namespace).resource(desiredTenancyRole).create();
+            LOG.info("Created KEDA/Thanos tenancy Role {}/{} (pods and pod metrics read)", namespace, tenancyRoleName);
+        } else if (!desiredTenancyRole.getRules().equals(existingTenancyRole.getRules())) {
+            client.rbac().roles().inNamespace(namespace).withName(tenancyRoleName)
+                    .edit(r -> new RoleBuilder(r).withRules(desiredTenancyRole.getRules()).build());
+            LOG.info("Updated KEDA/Thanos tenancy Role {}/{} to read pod metrics", namespace, tenancyRoleName);
         }
     }
 
