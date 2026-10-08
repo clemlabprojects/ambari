@@ -17,6 +17,9 @@
  */
 package org.apache.ambari.view.k8s.service.deployment;
 
+import org.apache.ambari.view.k8s.store.HelmRepoEntity;
+import org.apache.ambari.view.k8s.service.HelmRepositoryService;
+
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
@@ -122,6 +125,64 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         this.securityProfileService = new SecurityProfileService(viewContext);
     }
 
+    /**
+     * The Flux HelmRepository of the release's chart repository and of each dependency's, by repository id.
+     *
+     * @throws IllegalStateException when one of them is not configured in KDPS
+     */
+    private Map<String, String> chartRepositoryYamls(String repoName, Map<String, Object> dependencies) {
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put(repoName, chartRepositoryYaml(repoName));
+        if (dependencies != null) {
+            for (Object spec : dependencies.values()) {
+                Object depRepo = spec instanceof Map<?, ?> m ? m.get("repoId") : null;
+                String id = depRepo == null || String.valueOf(depRepo).isBlank() ? repoName : String.valueOf(depRepo);
+                sources.computeIfAbsent(id, this::chartRepositoryYaml);
+            }
+        }
+        return sources;
+    }
+
+    /**
+     * The Flux HelmRepository for a chart repository configured in KDPS: its URL, and {@code type: oci} for OCI
+     * registries (Flux needs the {@code oci://} scheme and the type to pull charts from a registry).
+     *
+     * @param repoId KDPS chart repository id
+     * @return the HelmRepository manifest
+     * @throws IllegalStateException when the repository is not configured in KDPS
+     */
+    String chartRepositoryYaml(String repoId) {
+        HelmRepoEntity repo = new HelmRepositoryService(viewContext).get(repoId);
+        if (repo == null || repo.getUrl() == null || repo.getUrl().isBlank()) {
+            throw new IllegalStateException("Chart repository '" + repoId + "' is not configured in KDPS: add it under "
+                    + "Configuration > Helm repositories before deploying with GitOps.");
+        }
+        return renderHelmRepository(repoId, repo.getType(), repo.getUrl(), repo.getAuthMode());
+    }
+
+    /** Renders a Flux HelmRepository; OCI URLs get the oci:// scheme and {@code type: oci}. */
+    static String renderHelmRepository(String name, String type, String url, String authMode) {
+        boolean oci = "OCI".equalsIgnoreCase(type);
+        String effectiveUrl = url.trim();
+        if (oci) {
+            effectiveUrl = "oci://" + effectiveUrl.replaceFirst("^[a-zA-Z]+://", "");
+        }
+        if (authMode != null && !authMode.isBlank() && !"anonymous".equalsIgnoreCase(authMode)) {
+            LOG.warn("Chart repository {} needs credentials: Flux pulls it only with a secretRef, which KDPS does not "
+                    + "write yet; create the Secret in flux-system and reference it from HelmRepository {}", name, name);
+        }
+        return """
+                apiVersion: %s
+                kind: HelmRepository
+                metadata:
+                  name: %s
+                  namespace: flux-system
+                spec:
+                  interval: 5m
+                %s  url: %s
+                """.formatted(FLUX_SRC_API_VERSION, name, oci ? "  type: oci\n" : "", effectiveUrl);
+    }
+
     @Override
     public String apply(HelmDeployRequest request, DeploymentContext context) throws Exception {
         Objects.requireNonNull(request.getNamespace(), "namespace is required");
@@ -147,6 +208,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         request.setRepoId(repoName);
         String chart = request.getChart();
         String version = firstNonBlank(request.getVersion(), "latest");
+        // Every chart source, resolved before anything is created or committed: an unknown repository stops here.
+        Map<String, String> chartSources = chartRepositoryYamls(repoName, request.getDependencies());
 
         String pathOverride = git.getPathPrefix();
         String storedPath = existingMeta != null ? existingMeta.getGitPath() : null;
@@ -408,6 +471,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     
                     // Write dependency HelmRelease to Git
                     gitClient.writeFile(depDir.resolve(depReleaseName + "-helmrelease.yaml"), depHrYaml);
+                    if (!depRepoName.equals(repoName)) {
+                        // A dependency from another chart repository needs its own Flux source.
+                        gitClient.writeFile(depDir.resolve(depRepoName + "-helmrepository.yaml"), chartSources.get(depRepoName));
+                    }
                     
                     logFluxInfo(namespace, release, "automation", "Added dependency HelmRelease {}/{} (chart={}, version={})",
                             depNamespace, depReleaseName, depChart, depVersion);
@@ -523,16 +590,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // Serialize values as proper YAML for readable git diffs.
         String valuesYaml = serializeValuesAsYaml(mergedValues);
 
-        String repoYaml = """
-                apiVersion: %s
-                kind: HelmRepository
-                metadata:
-                  name: %s
-                  namespace: flux-system
-                spec:
-                  interval: 5m
-                  url: %s
-                """.formatted(FLUX_SRC_API_VERSION, repoName, repoUrl);
+        String repoYaml = chartSources.get(repoName);
 
         String dependsYaml = buildDependsOnYaml(depRefs);
         String hrYaml = ("""

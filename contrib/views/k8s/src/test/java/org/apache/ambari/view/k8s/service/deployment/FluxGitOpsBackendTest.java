@@ -66,4 +66,29 @@ public class FluxGitOpsBackendTest {
         assertTrue(yaml.contains("name: dep2"));
         assertTrue(yaml.contains("namespace: ns2"));
     }
+
+    @Test
+    public void ociChartRepositoryIsDeclaredAsAnOciHelmRepository() {
+        String yaml = FluxGitOpsBackend.renderHelmRepository("clemlab", "OCI", "registry.example.com/charts", "anonymous");
+
+        assertTrue(yaml, yaml.contains("name: clemlab"));
+        assertTrue(yaml, yaml.contains("  type: oci\n"));
+        assertTrue(yaml, yaml.contains("  url: oci://registry.example.com/charts\n"));
+    }
+
+    @Test
+    public void ociUrlWithASchemeKeepsASingleOciScheme() {
+        String yaml = FluxGitOpsBackend.renderHelmRepository("r", "OCI", "oci://registry.example.com/charts", null);
+
+        assertTrue(yaml, yaml.contains("url: oci://registry.example.com/charts"));
+        assertFalse(yaml, yaml.contains("oci://oci://"));
+    }
+
+    @Test
+    public void httpChartRepositoryKeepsItsUrlAndHasNoType() {
+        String yaml = FluxGitOpsBackend.renderHelmRepository("bitnami", "HTTP", "https://charts.example.com/", null);
+
+        assertTrue(yaml, yaml.contains("  url: https://charts.example.com/\n"));
+        assertFalse(yaml, yaml.contains("type:"));
+    }
 }
