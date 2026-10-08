@@ -137,7 +137,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         String repoUrl = git.getRepoUrl().trim();
-        boolean isHttps = repoUrl.startsWith("https://");
+        boolean isHttps = repoUrl.startsWith("https://") || repoUrl.startsWith("http://");
         boolean isSsh = repoUrl.startsWith("git@") || repoUrl.startsWith("ssh://");
 
         logFluxInfo(namespace, release, "apply", "Starting Flux GitOps deploy (mode=%s, repo=%s)", git.getCommitMode(), repoUrl);

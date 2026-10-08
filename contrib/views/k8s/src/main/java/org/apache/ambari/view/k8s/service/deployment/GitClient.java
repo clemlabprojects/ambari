@@ -88,11 +88,25 @@ public class GitClient {
     // ---- auth / transport ------------------------------------------------------------------------
 
     private CredentialsProvider credentials() {
-        if (authToken != null && !authToken.isBlank() && repoUrl != null && repoUrl.startsWith("https")) {
-            // Token as username, empty password (works for GitHub/GitLab PAT and mirrors token@host).
+        if (authToken == null || authToken.isBlank() || repoUrl == null) {
+            return null;
+        }
+        if (repoUrl.startsWith("https://") || repoUrl.startsWith("http://")) {
+            if (repoUrl.startsWith("http://") && !plaintextWarningLogged) {
+                plaintextWarningLogged = true;
+                LOG.warn("Git repository {} is reached over plain HTTP: the access token travels unencrypted", redact(repoUrl));
+            }
+            // Token as username, empty password (works for GitHub/GitLab/Gitea tokens and mirrors token@host).
             return new UsernamePasswordCredentialsProvider(authToken, "");
         }
         return null;
+    }
+
+    private boolean plaintextWarningLogged;
+
+    /** The URL without any user information, for logs. */
+    private static String redact(String url) {
+        return url.replaceFirst("://[^@/]+@", "://");
     }
 
     /**

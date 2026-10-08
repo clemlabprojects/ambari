@@ -100,4 +100,21 @@ class GitClientTest {
             assertTrue(Files.notExists(verify.resolve("gone.txt")), "deleted file must be gone in the remote");
         }
     }
+
+  private static Object credentialsFor(String url, String token) throws Exception {
+    org.apache.ambari.view.k8s.service.deployment.GitClient c = new org.apache.ambari.view.k8s.service.deployment.GitClient(
+        java.nio.file.Files.createTempDirectory("git-cred"), url, "main", token, null);
+    java.lang.reflect.Method m = c.getClass().getDeclaredMethod("credentials");
+    m.setAccessible(true);
+    return m.invoke(c);
+  }
+
+  @org.junit.jupiter.api.Test
+  void aTokenIsSentForHttpsAndPlainHttpGitServers() throws Exception {
+    org.junit.jupiter.api.Assertions.assertNotNull(credentialsFor("https://git.example.com/a/b.git", "t0k"));
+    org.junit.jupiter.api.Assertions.assertNotNull(credentialsFor("http://gitea.gitea.svc:3000/a/b.git", "t0k"),
+        "internal Git servers reached over plain HTTP need the token too");
+    org.junit.jupiter.api.Assertions.assertNull(credentialsFor("ssh://git@git.example.com/a/b.git", "t0k"));
+    org.junit.jupiter.api.Assertions.assertNull(credentialsFor("https://git.example.com/a/b.git", ""));
+  }
 }
