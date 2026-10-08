@@ -309,7 +309,15 @@ const ConfigurationPage: React.FC = () => {
         };
         xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) { if (onSuccess) onSuccess(xhr.responseText, xhr); }
-            else { if (onError) onError(new Error(`Error ${xhr.status}: ${xhr.statusText}`), xhr); }
+            else {
+                // Show the server's reason (e.g. "saved, but KDPS could not connect with it"), not just the status.
+                let reason = xhr.statusText;
+                try {
+                    const body = JSON.parse(xhr.responseText);
+                    reason = body?.error || body?.message || reason;
+                } catch { /* not JSON: keep the status text */ }
+                if (onError) onError(new Error(`Error ${xhr.status}: ${reason}`), xhr);
+            }
         };
         xhr.onerror = () => { if (onError) onError(new Error('Failed to upload the kubeconfig yaml'), xhr); };
         xhr.open('POST', `${API_BASE_URL}/cluster/config`, true);
@@ -402,7 +410,8 @@ const ConfigurationPage: React.FC = () => {
                 void fetchData(true);
                 void promptContextSelection();
             } else if (uploadInfo.file.status === 'error') {
-                message.error(`Failed to upload ${uploadInfo.file.name}.`);
+                const reason = uploadInfo.file.error?.message;
+                message.error(reason ? `${uploadInfo.file.name}: ${reason}` : `Failed to upload ${uploadInfo.file.name}.`);
             }
         },
     };

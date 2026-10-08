@@ -173,9 +173,25 @@ public class KubeService {
             LOG.info("Configuring Apache Ambari View Backend CA bundle");
             final String webhookName = "keytab-webhook"; // must match your Helm values prefix
 
+            // A context chosen for the previous kubeconfig may not exist in this one: fall back to the new file's
+            // current-context (the operator is then offered the context list) instead of failing to connect.
+            String selectedContext = configurationService.getSelectedContext();
+            if (selectedContext != null && !selectedContext.isBlank()
+                    && this.getKubernetesService().listAvailableContexts().stream()
+                        .noneMatch(c -> selectedContext.equals(c.get("name")))) {
+                LOG.info("/cluster/config: selected context '{}' is not in the new kubeconfig; using its current-context",
+                        selectedContext);
+                configurationService.saveSelectedContext(null);
+            }
             // Rebuild the client from the kubeconfig just saved. A plain reload keeps an existing client, so a
             // view that was already connected would go on using the previous account until Ambari restarts.
-            this.getKubernetesService().forceReloadClient();
+            if (!this.getKubernetesService().forceReloadClient()) {
+                LOG.warn("/cluster/config: kubeconfig saved, but no Kubernetes client could be built from it");
+                return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                        "The kubeconfig was saved, but KDPS could not connect with it. Check that the file is a valid "
+                                + "kubeconfig and that the selected context exists in it (details in the Ambari server log)."))
+                        .build();
+            }
             // The keytab webhook prerequisites (its namespace, mTLS Secrets, CA bundle) only matter in the
             // WEBHOOK Kerberos injection mode. In the default PRE_PROVISIONED mode nothing uses them, and on
             // OpenShift sites where namespaces cannot be created on the fly preparing them made the upload
@@ -239,10 +255,18 @@ public class KubeService {
         String context = body == null ? null : body.get("context");
         LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
         this.getConfigService().saveSelectedContext(context);
+        boolean connected;
         try {
-            this.getKubernetesService().forceReloadClient();
+            connected = this.getKubernetesService().forceReloadClient();
         } catch (Exception e) {
             LOG.warn("/cluster/context: client reload after context selection failed: {}", e.toString());
+            connected = false;
+        }
+        if (!connected) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    "Context '" + (context == null || context.isBlank() ? "current-context" : context) + "' was saved, but "
+                            + "KDPS could not connect with it. Check that the context exists in the kubeconfig "
+                            + "(details in the Ambari server log).")).build();
         }
         return Response.ok(Collections.singletonMap(
                 "message", "Context set to: " + (context == null || context.isBlank() ? "current-context" : context))).build();
