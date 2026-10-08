@@ -68,7 +68,7 @@ public class HelmClientDefault implements HelmClient {
 
     @Override
     public List<Release> list(String namespace, String kubeconfigContents, boolean deployedOnly) {
-        LOG.info("Listing releases in namespace: '{}'", namespace);
+        LOG.debug("Listing releases in namespace: '{}'", namespace);
         var command = Helm.list()
             .withNamespace(namespace)
             .withKubeConfigContents(kubeconfigContents);

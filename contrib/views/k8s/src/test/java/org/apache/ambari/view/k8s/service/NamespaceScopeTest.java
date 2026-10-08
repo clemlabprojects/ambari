@@ -19,7 +19,6 @@
 package org.apache.ambari.view.k8s.service;
 
 import io.fabric8.kubernetes.api.model.APIGroupBuilder;
-import io.fabric8.kubernetes.api.model.APIGroupListBuilder;
 import io.fabric8.kubernetes.api.model.APIResourceListBuilder;
 import io.fabric8.kubernetes.api.model.EventBuilder;
 import io.fabric8.kubernetes.api.model.EventListBuilder;
@@ -30,9 +29,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
 import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
-import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.service.NamespaceScope.Resource;
-import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -45,7 +42,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 /**
  * An account limited to its own projects (OpenShift sites where the platform team hands out projects) is refused
@@ -165,9 +161,24 @@ class NamespaceScopeTest {
 
   @Test
   void resetForgetsRefusals() {
-    scope.recordRefusal(Resource.SECRETS, null);
-    assertTrue(scope.isRefused(Resource.SECRETS));
+    forbidden("/api/v1/namespaces", 1);
+    assertFalse(scope.isRefused(Resource.NAMESPACES));
+    projects();
+    scope.listNamespaces();
+    assertTrue(scope.isRefused(Resource.NAMESPACES));
     scope.reset();
+    assertFalse(scope.isRefused(Resource.NAMESPACES));
+  }
+
+  @Test
+  void aRefusalSeenByACallThatStartedBeforeAResetIsNotRemembered() {
+    projects();
+    scope.listAcrossNamespaces(Resource.SECRETS,
+        () -> {
+          scope.reset(); // credentials change while the call is in flight
+          throw new KubernetesClientException("secrets is forbidden", 403, null);
+        },
+        ns -> List.of(), NamespaceScope::isForbidden, null);
     assertFalse(scope.isRefused(Resource.SECRETS));
   }
 
@@ -221,23 +232,105 @@ class NamespaceScopeTest {
   }
 
   @Test
-  void crdCheckFallsBackToApiDiscoveryWhenCrdsAreNotReadable() {
-    ViewContext ctx = mock(ViewContext.class, RETURNS_DEEP_STUBS);
-    when(ctx.getInstanceName()).thenReturn("ns-scope-test");
-    when(ctx.getProperties()).thenReturn(Map.of("k8s.view.working.dir", System.getProperty("java.io.tmpdir") + "/k8s-ut"));
-    KubernetesService svc = new KubernetesService(ctx, client, mock(HelmClient.class), /*isConfigured=*/true);
-    server.expect().get().withPath("/apis").andReturn(200, new APIGroupListBuilder().build()).always();
-    forbidden("/apis/apiextensions.k8s.io/v1/customresourcedefinitions/scaledobjects.keda.sh", 1);
-    server.expect().get().withPath("/apis/keda.sh").andReturn(200, new APIGroupBuilder()
-        .withName("keda.sh")
-        .addNewVersion().withGroupVersion("keda.sh/v1alpha1").withVersion("v1alpha1").endVersion()
-        .build()).always();
-    server.expect().get().withPath("/apis/keda.sh/v1alpha1").andReturn(200, new APIResourceListBuilder()
-        .withGroupVersion("keda.sh/v1alpha1")
-        .addNewResource().withName("scaledobjects").withKind("ScaledObject").withNamespaced(true).endResource()
-        .build()).always();
+  void refusedNamespacesAreRememberedAndNotCalledAgain() {
+    forbidden("/api/v1/namespaces", 1);
+    projects();
+    forbidden("/api/v1/events", 1);
+    eventsInTeamA(2);
+    forbidden("/api/v1/namespaces/team-b/events", 1); // a second call to team-b would get 404 and fail the test
 
-    assertTrue(svc.crdExists("scaledobjects.keda.sh"));
+    assertEquals(1, listEvents().size());
+    assertEquals(1, listEvents().size());
+  }
+
+  @Test
+  void onOpenShiftTheWalkUsesTheProjectsEvenWhenNamespacesAreListable() {
+    server.expect().get().withPath("/api/v1/namespaces").andReturn(200, new NamespaceListBuilder()
+        .addToItems(new NamespaceBuilder().withNewMetadata().withName("openshift-etcd").endMetadata().build())
+        .addToItems(new NamespaceBuilder().withNewMetadata().withName("team-a").endMetadata().build())
+        .build()).always();
+    projects();
+
+    assertEquals(List.of("team-a", "team-b"), scope.namespacesToWalk());
+  }
+
+  @Test
+  void projectApiRefusalFallsBackToTheKnownNamespaces() {
+    known = List.of("apps");
+    forbidden("/api/v1/namespaces", 1);
+    forbidden("/apis/project.openshift.io/v1/projects", 1);
+
+    assertEquals(List.of("apps"), scope.listNamespaces().stream().map(n -> n.name).collect(Collectors.toList()));
+  }
+
+  @Test
+  void projectApiServerErrorsAreNotHidden() {
+    forbidden("/api/v1/namespaces", 1);
+    server.expect().get().withPath("/apis/project.openshift.io/v1/projects").andReturn(400, "bad request").always();
+
+    assertThrows(KubernetesClientException.class, scope::listNamespaces);
+  }
+
+  @Test
+  void walkNamespacesAreListedAgainAfterTheirTtlOrAnInvalidation() {
+    projects();
+    int start = server.getRequestCount();
+
+    scope.namespacesToWalk();
+    scope.namespacesToWalk();
+    assertEquals(start + 1, server.getRequestCount(), "second walk within the TTL reuses the list");
+    now.addAndGet(NamespaceScope.WALK_NAMESPACES_TTL_MS + 1);
+    scope.namespacesToWalk();
+    assertEquals(start + 2, server.getRequestCount(), "listed again once the TTL has passed");
+    scope.invalidateNamespaces();
+    scope.namespacesToWalk();
+    assertEquals(start + 3, server.getRequestCount(), "listed again after an invalidation");
+  }
+
+  @Test
+  void anonymousRefusalIsAConnectionProblemNotAScopeLimit() {
+    server.expect().get().withPath("/api/v1/events").andReturn(403, new StatusBuilder()
+        .withCode(403).withReason("Forbidden")
+        .withMessage("events is forbidden: User \"system:anonymous\" cannot list resource \"events\"").build()).once();
+
+    assertThrows(KubernetesClientException.class, this::listEvents);
+    assertFalse(scope.isRefused(Resource.EVENTS));
+  }
+
+  @Test
+  void parallelWalkFailsWhenItExceedsItsDeadline() throws Exception {
+    forbidden("/api/v1/namespaces", 1);
+    projects();
+    java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      IllegalStateException e = assertThrows(IllegalStateException.class, () -> scope.listAcrossNamespaces(Resource.SECRETS,
+          () -> { throw new KubernetesClientException("x", 403, null); },
+          ns -> {
+            if (ns.equals("team-b")) {
+              try { Thread.sleep(5_000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            }
+            return List.of(ns);
+          },
+          NamespaceScope::isForbidden, new NamespaceScope.Parallel(pool, java.time.Duration.ofMillis(300))));
+      assertTrue(e.getMessage().contains("did not finish within"), e.getMessage());
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  @Test
+  void parallelWalkRethrowsErrorsUnchanged() {
+    forbidden("/api/v1/namespaces", 1);
+    projects();
+    java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      assertThrows(UnsatisfiedLinkError.class, () -> scope.listAcrossNamespaces(Resource.SECRETS,
+          () -> { throw new KubernetesClientException("x", 403, null); },
+          ns -> { throw new UnsatisfiedLinkError("native helm library"); },
+          NamespaceScope::isForbidden, new NamespaceScope.Parallel(pool, java.time.Duration.ofSeconds(5))));
+    } finally {
+      pool.shutdownNow();
+    }
   }
 
   @Test
@@ -247,5 +340,7 @@ class NamespaceScopeTest {
     assertFalse(NamespaceScope.isForbidden(new KubernetesClientException("x", 401, null)));
     assertFalse(NamespaceScope.isForbidden(new IllegalStateException("Forbidden by a proxy policy")),
         "free text is never trusted here");
+    assertFalse(NamespaceScope.isForbidden(new KubernetesClientException(
+        "pods is forbidden: User \"system:anonymous\" cannot list resource \"pods\"", 403, null)));
   }
 }

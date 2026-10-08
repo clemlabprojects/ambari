@@ -32,7 +32,6 @@ import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.LocalObjectReferenceBuilder;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
-import io.fabric8.kubernetes.api.model.NamespaceList;
 import io.fabric8.kubernetes.api.model.ListOptionsBuilder;
 import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.NodeAddress;
@@ -615,8 +614,7 @@ public class KubernetesService {
         LOG.info("Fetching recent events from Kubernetes API.");
 
         List<Event> eventItems = namespaceScope.listAcrossNamespaces(NamespaceScope.Resource.EVENTS,
-                () -> executeWithAuthRetry("list cluster events",
-                        () -> client.v1().events().inAnyNamespace().list().getItems()),
+                () -> client.v1().events().inAnyNamespace().list().getItems(),
                 ns -> client.v1().events().inNamespace(ns).list().getItems());
 
         Comparator<Event> byTimeDescending = Comparator.comparing(
@@ -656,7 +654,7 @@ public class KubernetesService {
             nodeList.setItems(new ArrayList<>());
         }
         List<Pod> podItems = namespaceScope.listAcrossNamespaces(NamespaceScope.Resource.PODS,
-                () -> executeWithAuthRetry("list pods (stats)", () -> client.pods().inAnyNamespace().list().getItems()),
+                () -> client.pods().inAnyNamespace().list().getItems(),
                 ns -> client.pods().inNamespace(ns).list().getItems());
         List<String> runningPods = podItems.stream()
             .filter(pod -> "Running".equalsIgnoreCase(pod.getStatus().getPhase()))
@@ -5991,6 +5989,7 @@ public class KubernetesService {
      */
     public static void shutdownStaticExecutors() {
         LOG.info("Shutting down KubernetesService static executor pools");
+        HelmService.shutdownExecutor();
         
         if (METRICS_POOL != null) {
             METRICS_POOL.shutdown();

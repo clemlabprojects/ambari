@@ -29,6 +29,7 @@ import org.apache.ambari.view.k8s.model.kube.KubeNamespace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -37,11 +38,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeSet;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -51,39 +60,39 @@ import java.util.stream.Collectors;
  * <p>On sites where the platform team hands out projects, the account KDPS connects with only holds rights inside
  * its own projects: every cluster-wide listing (namespaces, secrets for Helm, pods, events, CRDs) answers 403. Asking
  * for cluster-wide rights is not the answer: "list secrets" across the cluster would let the account read every
- * secret. Instead, each listing tries the cluster first and, when refused, walks the namespaces the account can see.
+ * secret. Instead, each listing tries the cluster first and, when refused, walks the namespaces the account can use.
  *
- * <p>Where that namespace list comes from, in order:
- * <ol>
- *   <li>the cluster's namespaces, when the account may list them;</li>
- *   <li>on OpenShift, the Project API, which returns exactly the projects the caller may use (all of them for a
- *       cluster admin) and needs no cluster permission;</li>
- *   <li>otherwise, the namespaces KDPS can name without listing (supplied by the owner: the kubeconfig namespace and
- *       the namespaces of recorded releases).</li>
- * </ol>
+ * <p>The namespaces walked are, in order of preference: on OpenShift, the Project API, which returns exactly the
+ * projects the caller may use and needs no cluster permission; the cluster's namespaces, when the account may list
+ * them; otherwise the namespaces KDPS can name without listing (supplied by the owner).
  *
- * <p>A refusal is remembered for {@link #REFUSAL_TTL_MS} so a restricted account does not retry the cluster-wide call
- * on every page refresh, while a right granted later is picked up. Behaviour therefore follows the account's rights,
- * not the platform type: a cluster admin on OpenShift keeps the single cluster-wide call.
+ * <p>Refusals are remembered for {@link #REFUSAL_TTL_MS}, for the cluster-wide call and for each namespace, so a
+ * restricted account does not repeat refused calls on every page refresh while a right granted later is picked up.
+ * Behaviour follows the account's rights, not the platform type: an account allowed to list the cluster keeps the
+ * single cluster-wide call and never walks.
  *
- * <p>Thread-safe. One instance per Kubernetes connection; {@link #reset()} when the connection changes.
+ * <p>Thread-safe. One instance per Kubernetes connection; the owner calls {@link #reset()} whenever the connection
+ * or its credentials change. Results of calls that started before a reset are not remembered.
  */
 public class NamespaceScope {
 
     private static final Logger LOG = LoggerFactory.getLogger(NamespaceScope.class);
 
-    /** How long a refused cluster-wide listing is remembered before it is tried again. */
+    /** How long a refused listing is remembered before it is tried again. */
     static final long REFUSAL_TTL_MS = 10 * 60_000L;
 
-    /** How long the namespace list used for walks is reused; each walk would otherwise re-list projects. */
+    /** How long the namespaces to walk are reused; a single page can trigger several walks in a row. */
     static final long WALK_NAMESPACES_TTL_MS = 30_000L;
 
-    /** OpenShift Project API (cluster-scoped): lists only the projects the caller may see. */
+    /** Cause chains deeper than this are not inspected (guards against cycles that skip a level). */
+    private static final int MAX_CAUSE_DEPTH = 16;
+
+    /** OpenShift Project API (cluster-scoped): lists only the projects the caller may use. */
     private static final ResourceDefinitionContext PROJECT_RDC = new ResourceDefinitionContext.Builder()
             .withGroup("project.openshift.io").withVersion("v1")
             .withKind("Project").withPlural("projects").withNamespaced(false).build();
 
-    /** Listings whose cluster-wide refusal is remembered. One key per Kubernetes resource listed across namespaces. */
+    /** Listings whose refusals are remembered. */
     public enum Resource {
         NAMESPACES("namespaces"),
         /** Includes Helm's release storage: Helm keeps each release in a Secret. */
@@ -111,10 +120,32 @@ public class NamespaceScope {
 
     /**
      * Runs one Kubernetes API call. The owner supplies its retry policy (e.g. re-authenticate once on 401).
+     * Implemented by a method reference such as {@code service::executeWithAuthRetry}.
      */
     @FunctionalInterface
     public interface ApiCall {
         <T> T run(String operation, Supplier<T> call);
+    }
+
+    /**
+     * Runs a walk's per-namespace calls in parallel on {@code executor}, failing the whole listing if it has not
+     * finished within {@code timeout}.
+     */
+    public static final class Parallel {
+        final ExecutorService executor;
+        final Duration timeout;
+
+        public Parallel(ExecutorService executor, Duration timeout) {
+            this.executor = Objects.requireNonNull(executor, "executor");
+            this.timeout = Objects.requireNonNull(timeout, "timeout");
+        }
+    }
+
+    /** A remembered refusal: of the cluster-wide call when {@code namespace} is null, else of one namespace. */
+    private record RefusalKey(Resource resource, String namespace) {
+    }
+
+    private record CachedNamespaces(List<String> names, long fetchedAt) {
     }
 
     private final Supplier<KubernetesClient> client;
@@ -123,21 +154,14 @@ public class NamespaceScope {
     private final ApiCall apiCall;
     private final LongSupplier clock;
 
-    private final Map<Resource, Long> refusedAt = new ConcurrentHashMap<>();
+    private final Map<RefusalKey, Long> refusedAt = new ConcurrentHashMap<>();
     private final AtomicReference<CachedNamespaces> walkNamespaces = new AtomicReference<>(null);
-
-    private static final class CachedNamespaces {
-        final List<String> names;
-        final long fetchedAt;
-
-        CachedNamespaces(List<String> names, long fetchedAt) {
-            this.names = names;
-            this.fetchedAt = fetchedAt;
-        }
-    }
+    /** Incremented by {@link #reset()}; state computed under an older generation is discarded. */
+    private final AtomicLong generation = new AtomicLong();
 
     /**
-     * @param client          the current Kubernetes client (read on every call: the owner may rebuild it)
+     * @param client          the current Kubernetes client, {@code null} while the view is not configured (read on
+     *                        every call: the owner may rebuild it)
      * @param openShift       whether the cluster is OpenShift
      * @param knownNamespaces namespaces the owner can name without listing; used when nothing can be listed
      * @param apiCall         how to run an API call (retry policy)
@@ -158,15 +182,33 @@ public class NamespaceScope {
     }
 
     /**
-     * True when a Kubernetes API call was refused for lack of rights (HTTP 403), anywhere in the cause chain.
-     * Helm reports refusals as plain text and is recognised by {@link HelmService} instead.
+     * True when a Kubernetes API call was refused for lack of rights: a 403 from the Kubernetes client anywhere in
+     * the cause chain. A 403 for {@code system:anonymous} is not a lack of rights but credentials that were not sent
+     * or not accepted, and is left to surface as a connection problem. Helm reports refusals as plain text and is
+     * recognised by {@link HelmService} instead.
      *
      * @param e any failure, possibly wrapped
-     * @return {@code true} when some cause is a {@link KubernetesClientException} with code 403
+     * @return {@code true} for a rights refusal
      */
     public static boolean isForbidden(Throwable e) {
-        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+        Throwable t = e;
+        for (int depth = 0; t != null && depth < MAX_CAUSE_DEPTH; depth++, t = t.getCause()) {
             if (t instanceof KubernetesClientException kce && kce.getCode() == 403) {
+                return !isAnonymous(kce.getMessage());
+            }
+        }
+        return false;
+    }
+
+    /** Whether an API error message names the anonymous user, i.e. the request carried no accepted credentials. */
+    static boolean isAnonymous(String message) {
+        return message != null && message.contains("User \"system:anonymous\"");
+    }
+
+    private static boolean isNotFound(Throwable e) {
+        Throwable t = e;
+        for (int depth = 0; t != null && depth < MAX_CAUSE_DEPTH; depth++, t = t.getCause()) {
+            if (t instanceof KubernetesClientException kce && kce.getCode() == 404) {
                 return true;
             }
         }
@@ -175,141 +217,237 @@ public class NamespaceScope {
 
     /** Forgets remembered refusals and cached namespaces. Call when the connection or its credentials change. */
     public void reset() {
+        generation.incrementAndGet();
         refusedAt.clear();
         walkNamespaces.set(null);
     }
 
-    /** Forgets the cached namespace list, e.g. after creating a namespace. */
+    /** Forgets the cached namespaces to walk, e.g. after creating a namespace. */
     public void invalidateNamespaces() {
         walkNamespaces.set(null);
     }
 
     /** Whether a cluster-wide listing of {@code resource} was refused within the last {@link #REFUSAL_TTL_MS}. */
     public boolean isRefused(Resource resource) {
-        Long at = refusedAt.get(resource);
+        return isRefused(new RefusalKey(resource, null));
+    }
+
+    private boolean isRefused(RefusalKey key) {
+        Long at = refusedAt.get(key);
         if (at == null) {
             return false;
         }
         if (clock.getAsLong() - at > REFUSAL_TTL_MS) {
-            refusedAt.remove(resource, at);
+            refusedAt.remove(key, at);
             return false;
         }
         return true;
     }
 
-    /** Records that a cluster-wide listing of {@code resource} was refused; logged once per refusal window. */
-    public void recordRefusal(Resource resource, Throwable cause) {
-        if (refusedAt.put(resource, clock.getAsLong()) == null) {
-            LOG.info("This account may not list {} across the cluster; listing them namespace by namespace instead ({})",
-                    resource.apiName(), cause == null ? "403" : cause.getMessage());
+    private void recordRefusal(long gen, RefusalKey key, Throwable cause) {
+        if (gen != generation.get()) {
+            return; // started before a reset: belongs to the previous connection
+        }
+        if (refusedAt.put(key, clock.getAsLong()) == null) {
+            if (key.namespace() == null) {
+                LOG.info("This account may not list {} across the cluster; listing them namespace by namespace instead ({})",
+                        key.resource().apiName(), cause == null ? "403" : cause.getMessage());
+            } else {
+                LOG.debug("Listing {} in namespace {} refused; skipping it", key.resource().apiName(), key.namespace());
+            }
         }
     }
 
     /**
-     * Runs a listing across the whole cluster when the account may, otherwise namespace by namespace over
-     * {@link #namespacesToWalk()}. Namespaces that refuse the call are skipped; other errors propagate.
+     * Lists {@code resource} across the whole cluster when the account may, otherwise namespace by namespace over
+     * {@link #namespacesToWalk()}, one namespace at a time. Refused namespaces are skipped; other errors propagate.
      *
-     * @param resource     what is listed (keys the remembered refusal)
+     * @param resource     what is listed (keys the remembered refusals)
      * @param clusterWide  the cluster-wide listing
      * @param perNamespace the same listing for one namespace
-     * @return the combined items
+     * @return the combined items, cluster order or namespace order
      */
     public <T> List<T> listAcrossNamespaces(Resource resource, Supplier<List<T>> clusterWide,
                                             Function<String, List<T>> perNamespace) {
-        if (!isRefused(resource)) {
+        return listAcrossNamespaces(resource, clusterWide, perNamespace, NamespaceScope::isForbidden, null);
+    }
+
+    /**
+     * Same as {@link #listAcrossNamespaces(Resource, Supplier, Function)}, with the caller's own way of recognising
+     * a refusal (e.g. Helm's text errors) and, optionally, parallel per-namespace calls with a deadline.
+     *
+     * @param resource     what is listed (keys the remembered refusals)
+     * @param clusterWide  the cluster-wide listing
+     * @param perNamespace the same listing for one namespace
+     * @param isRefusal    whether a failure is a refusal for lack of rights
+     * @param parallel     how to run the walk in parallel, or {@code null} to walk one namespace at a time
+     * @return the combined items, cluster order or namespace order
+     * @throws IllegalStateException when a parallel walk exceeds its deadline
+     */
+    public <T> List<T> listAcrossNamespaces(Resource resource, Supplier<List<T>> clusterWide,
+                                            Function<String, List<T>> perNamespace,
+                                            Predicate<Throwable> isRefusal, Parallel parallel) {
+        final long gen = generation.get();
+        RefusalKey clusterKey = new RefusalKey(resource, null);
+        if (!isRefused(clusterKey)) {
             try {
-                return clusterWide.get();
+                return apiCall.run("list " + resource.apiName() + " in all namespaces", clusterWide);
             } catch (RuntimeException e) {
-                if (!isForbidden(e)) {
+                if (!isRefusal.test(e)) {
                     throw e;
                 }
-                recordRefusal(resource, e);
+                recordRefusal(gen, clusterKey, e);
             }
         }
-        List<T> out = new ArrayList<>();
-        for (String ns : namespacesToWalk()) {
+        List<String> namespaces = namespacesToWalk().stream()
+                .filter(ns -> !isRefused(new RefusalKey(resource, ns)))
+                .collect(Collectors.toList());
+        Function<String, List<T>> guarded = ns -> {
             try {
-                List<T> items = perNamespace.apply(ns);
-                if (items != null) {
-                    out.addAll(items);
-                }
+                List<T> items = apiCall.run("list " + resource.apiName() + " in " + ns, () -> perNamespace.apply(ns));
+                return items == null ? List.of() : items;
             } catch (RuntimeException e) {
-                if (!isForbidden(e)) {
+                if (!isRefusal.test(e)) {
                     throw e;
                 }
-                LOG.debug("Listing {} in namespace {} refused; skipping it", resource.apiName(), ns);
+                recordRefusal(gen, new RefusalKey(resource, ns), e);
+                return List.of();
             }
+        };
+        return parallel == null ? walkSequentially(namespaces, guarded) : walkInParallel(resource, namespaces, guarded, parallel);
+    }
+
+    private static <T> List<T> walkSequentially(List<String> namespaces, Function<String, List<T>> perNamespace) {
+        List<T> out = new ArrayList<>();
+        for (String ns : namespaces) {
+            out.addAll(perNamespace.apply(ns));
         }
         return out;
     }
 
+    private static <T> List<T> walkInParallel(Resource resource, List<String> namespaces,
+                                              Function<String, List<T>> perNamespace, Parallel parallel) {
+        List<Future<List<T>>> futures = new ArrayList<>(namespaces.size());
+        for (String ns : namespaces) {
+            futures.add(parallel.executor.submit(() -> perNamespace.apply(ns)));
+        }
+        long deadline = System.nanoTime() + parallel.timeout.toNanos();
+        List<T> out = new ArrayList<>();
+        try {
+            for (Future<List<T>> f : futures) {
+                out.addAll(f.get(Math.max(0L, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
+            }
+            return out;
+        } catch (TimeoutException e) {
+            futures.forEach(f -> f.cancel(true));
+            throw new IllegalStateException("Listing " + resource.apiName() + " in " + namespaces.size()
+                    + " namespaces did not finish within " + parallel.timeout.getSeconds() + " s", e);
+        } catch (ExecutionException e) {
+            futures.forEach(f -> f.cancel(true));
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            if (cause instanceof Error err) {
+                throw err;
+            }
+            throw new IllegalStateException(cause);
+        } catch (CancellationException e) {
+            throw new IllegalStateException("Listing " + resource.apiName() + " was cancelled", e);
+        } catch (InterruptedException e) {
+            futures.forEach(f -> f.cancel(true));
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while listing " + resource.apiName(), e);
+        }
+    }
+
     /**
-     * Namespace names to walk when a cluster-wide listing is refused, sorted. Reused for
-     * {@link #WALK_NAMESPACES_TTL_MS}, since a page can trigger several walks in a row.
+     * Namespace names to walk when a cluster-wide listing is refused, sorted: on OpenShift the projects the account
+     * may use, else the cluster's namespaces, else the namespaces the owner knows. Reused for
+     * {@link #WALK_NAMESPACES_TTL_MS}.
      *
      * @return namespace names; empty when none are known
      */
     public List<String> namespacesToWalk() {
+        final long gen = generation.get();
         long now = clock.getAsLong();
         CachedNamespaces cached = walkNamespaces.get();
-        if (cached != null && now - cached.fetchedAt < WALK_NAMESPACES_TTL_MS) {
-            return cached.names;
+        if (cached != null && now - cached.fetchedAt() < WALK_NAMESPACES_TTL_MS) {
+            return cached.names();
         }
-        List<String> names = Collections.unmodifiableList(listNamespaces().stream()
+        List<KubeNamespace> source = null;
+        if (openShift.getAsBoolean()) {
+            source = listProjectsOrNull();
+        }
+        if (source == null) {
+            source = listNamespaces();
+        }
+        List<String> names = Collections.unmodifiableList(source.stream()
                 .map(n -> n.name)
                 .filter(n -> n != null && !n.isBlank())
                 .distinct()
                 .sorted()
                 .collect(Collectors.toList()));
-        walkNamespaces.set(new CachedNamespaces(names, now));
+        if (gen == generation.get()) {
+            walkNamespaces.set(new CachedNamespaces(names, now));
+        }
         return names;
     }
 
     /**
-     * Namespaces this account can work in, with lightweight metadata, read live: the cluster's namespaces when the
-     * account may list them, else the OpenShift projects it may use, else the namespaces the owner knows.
+     * Namespaces this account can work in, with lightweight metadata, read live and sorted by name: the cluster's
+     * namespaces when the account may list them, else the OpenShift projects it may use, else the namespaces the
+     * owner knows.
      *
      * @return namespace descriptions
      */
     public List<KubeNamespace> listNamespaces() {
-        if (!isRefused(Resource.NAMESPACES)) {
+        final long gen = generation.get();
+        RefusalKey key = new RefusalKey(Resource.NAMESPACES, null);
+        if (!isRefused(key)) {
             try {
-                return apiCall.run("list namespaces", () -> client.get().namespaces().list()).getItems().stream()
-                        .map(NamespaceScope::toKubeNamespace)
-                        .collect(Collectors.toList());
+                return sortedByName(apiCall.run("list namespaces", () -> client().namespaces().list())
+                        .getItems().stream()
+                        .map(NamespaceScope::toKubeNamespace));
             } catch (RuntimeException e) {
                 if (!isForbidden(e)) {
                     throw e;
                 }
-                recordRefusal(Resource.NAMESPACES, e);
+                recordRefusal(gen, key, e);
             }
         }
         if (openShift.getAsBoolean()) {
-            try {
-                List<GenericKubernetesResource> projects = apiCall.run("list projects",
-                        () -> client.get().genericKubernetesResources(PROJECT_RDC).list().getItems());
-                List<KubeNamespace> out = projects.stream()
-                        .map(NamespaceScope::projectToKubeNamespace)
-                        .filter(Objects::nonNull)
-                        .sorted(Comparator.comparing(n -> n.name))
-                        .collect(Collectors.toList());
-                LOG.debug("{} OpenShift project(s) visible to this account", out.size());
-                return out;
-            } catch (RuntimeException e) {
-                LOG.warn("Listing OpenShift projects failed; using the namespaces KDPS knows: {}", e.toString());
+            List<KubeNamespace> projects = listProjectsOrNull();
+            if (projects != null) {
+                return projects;
             }
         }
-        List<KubeNamespace> out = new ArrayList<>();
-        for (String name : new TreeSet<>(knownNamespaces.get())) {
-            if (name == null || name.isBlank()) {
-                continue;
+        return sortedByName(new TreeSet<>(knownNamespaces.get()).stream()
+                .filter(n -> n != null && !n.isBlank())
+                .map(n -> {
+                    KubeNamespace dto = new KubeNamespace();
+                    dto.name = n;
+                    dto.labels = Collections.emptyMap();
+                    return dto;
+                }));
+    }
+
+    /**
+     * The OpenShift projects this account may use, or {@code null} when the Project API refuses (403) or is not
+     * served (404). Any other failure propagates.
+     */
+    private List<KubeNamespace> listProjectsOrNull() {
+        try {
+            List<GenericKubernetesResource> projects = apiCall.run("list projects",
+                    () -> client().genericKubernetesResources(PROJECT_RDC).list().getItems());
+            return sortedByName(projects.stream().map(NamespaceScope::projectToKubeNamespace).filter(Objects::nonNull));
+        } catch (RuntimeException e) {
+            if (isForbidden(e) || isNotFound(e)) {
+                LOG.debug("OpenShift projects are not listable here: {}", e.getMessage());
+                return null;
             }
-            KubeNamespace dto = new KubeNamespace();
-            dto.name = name;
-            dto.labels = Collections.emptyMap();
-            out.add(dto);
+            throw e;
         }
-        return out;
     }
 
     /**
@@ -326,12 +464,13 @@ public class NamespaceScope {
         }
         String plural = crdName.substring(0, dot);
         String group = crdName.substring(dot + 1);
-        APIGroup apiGroup = client.get().getApiGroup(group);
+        KubernetesClient c = client();
+        APIGroup apiGroup = c.getApiGroup(group);
         if (apiGroup == null || apiGroup.getVersions() == null) {
             return false;
         }
         for (var version : apiGroup.getVersions()) {
-            APIResourceList resources = client.get().getApiResources(version.getGroupVersion());
+            APIResourceList resources = c.getApiResources(version.getGroupVersion());
             if (resources != null && resources.getResources() != null
                     && resources.getResources().stream().anyMatch(r -> plural.equals(r.getName()))) {
                 return true;
@@ -347,13 +486,27 @@ public class NamespaceScope {
      * @return served version names; empty when the group is not served
      */
     public List<String> servedApiVersions(String group) {
-        APIGroup apiGroup = client.get().getApiGroup(group);
+        APIGroup apiGroup = client().getApiGroup(group);
         if (apiGroup == null || apiGroup.getVersions() == null) {
             return Collections.emptyList();
         }
         return apiGroup.getVersions().stream()
                 .map(v -> v.getVersion())
                 .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    private KubernetesClient client() {
+        KubernetesClient c = client.get();
+        if (c == null) {
+            throw new IllegalStateException("The view is not configured with a kubeconfig.");
+        }
+        return c;
+    }
+
+    private static List<KubeNamespace> sortedByName(java.util.stream.Stream<KubeNamespace> namespaces) {
+        return namespaces
+                .sorted(Comparator.comparing((KubeNamespace n) -> n.name, Comparator.nullsLast(Comparator.naturalOrder())))
                 .collect(Collectors.toList());
     }
 
