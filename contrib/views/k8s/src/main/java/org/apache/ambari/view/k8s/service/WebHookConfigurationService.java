@@ -83,7 +83,6 @@ public class WebHookConfigurationService {
 
     private final ViewContext viewContext;
     private final KubernetesService kubernetesService;
-    private final KubernetesClient kubernetesClient;
     private final ViewConfigurationService configurationService;
 
     // Per-directory in-JVM lock map
@@ -96,8 +95,15 @@ public class WebHookConfigurationService {
     public WebHookConfigurationService(ViewContext viewContext, KubernetesService kubernetesService) {
         this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
         this.kubernetesService = Objects.requireNonNull(kubernetesService, "kubernetesService");
-        this.kubernetesClient = Objects.requireNonNull(kubernetesService.getClient(), "kubernetesClient");
         this.configurationService = new ViewConfigurationService(viewContext);
+    }
+
+    /**
+     * The view's current Kubernetes client. Read on every call: the connection is replaced when the operator
+     * uploads a kubeconfig, selects another context or the token is renewed, and the previous one is closed.
+     */
+    private KubernetesClient kubernetesClient() {
+        return Objects.requireNonNull(kubernetesService.getClient(), "The view is not configured with a kubeconfig.");
     }
 
     // -------------------- Public API --------------------
@@ -242,12 +248,12 @@ public class WebHookConfigurationService {
                 .addToData("ca.crt",     base64(clientMaterial.certificateAuthorityCertificatePem()))
                 .build();
 
-        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
         if (existing == null) {
-            kubernetesClient.secrets().inNamespace(namespace).resource(desired).create();
+            kubernetesClient().secrets().inNamespace(namespace).resource(desired).create();
             LOG.info("Created webhook client mTLS Secret '{}/{}'", namespace, secretName);
         } else {
-            kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            kubernetesClient().secrets().inNamespace(namespace).resource(desired).createOrReplace();
             LOG.info("Updated webhook client mTLS Secret '{}/{}'", namespace, secretName);
         }
     }
@@ -281,7 +287,6 @@ public class WebHookConfigurationService {
                                            String userName,
                                            String password) {
 
-        KubernetesClient kubernetesClient = this.kubernetesService.getClient();
         Map<String,String> data = new LinkedHashMap<>();
         data.put("username", base64(userName));
         data.put("password", base64(password));
@@ -296,12 +301,12 @@ public class WebHookConfigurationService {
                 .addToData(data)
                 .build();
 
-        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
         if (existing == null) {
-            kubernetesClient.secrets().inNamespace(namespace).resource(desired).create();
+            kubernetesClient().secrets().inNamespace(namespace).resource(desired).create();
             LOG.info("Created webhook credentials Secret {}/{}", namespace, secretName);
         } else {
-            kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            kubernetesClient().secrets().inNamespace(namespace).resource(desired).createOrReplace();
             LOG.info("Updated webhook credentials Secret {}/{}", namespace, secretName);
         }
     }
@@ -373,7 +378,7 @@ public class WebHookConfigurationService {
         Objects.requireNonNull(namespace);
         Objects.requireNonNull(secretName);
 
-        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
         boolean needIssue = true;
 
         if (existing != null && existing.getData() != null && existing.getData().get("client.crt") != null) {
@@ -419,7 +424,7 @@ public class WebHookConfigurationService {
                 .addToData("ca.crt",     base64(client.certificateAuthorityCertificatePem()))
                 .build();
 
-        kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+        kubernetesClient().secrets().inNamespace(namespace).resource(desired).createOrReplace();
         LOG.info("Issued/rotated client mTLS Secret {}/{} (notAfter={})",
                 namespace, secretName, c.getNotAfter().toInstant());
     }
@@ -436,7 +441,7 @@ public class WebHookConfigurationService {
         Objects.requireNonNull(namespace);
         Objects.requireNonNull(secretName);
 
-        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
         boolean needIssue = true;
 
         if (existing != null && existing.getData() != null && existing.getData().get("tls.crt") != null) {
@@ -519,7 +524,7 @@ public class WebHookConfigurationService {
                     .addToData("tls.key", getEncoder().encodeToString(keyPem.getBytes(StandardCharsets.UTF_8)))
                     .build();
 
-            kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            kubernetesClient().secrets().inNamespace(namespace).resource(desired).createOrReplace();
             LOG.info("Issued/rotated serving TLS Secret {}/{} (notAfter={})",
                     namespace, secretName, cert.getNotAfter().toInstant());
         } catch (Exception e) {
@@ -947,14 +952,14 @@ public class WebHookConfigurationService {
                 .addToData("ca.crt",  base64(ca.caCertificatePem()))
                 .build();
 
-        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
         if (existing == null) {
-            kubernetesClient.secrets().inNamespace(namespace).resource(desired).create();
+            kubernetesClient().secrets().inNamespace(namespace).resource(desired).create();
             LOG.info("Created ingress TLS Secret '{}/{}' for host '{}', serial={}, notAfter={}",
                     namespace, secretName, ingressHost, leafCert.getSerialNumber().toString(16),
                     leafCert.getNotAfter().toInstant());
         } else {
-            kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            kubernetesClient().secrets().inNamespace(namespace).resource(desired).createOrReplace();
             LOG.info("Replaced ingress TLS Secret '{}/{}' for host '{}', serial={}, notAfter={}",
                     namespace, secretName, ingressHost, leafCert.getSerialNumber().toString(16),
                     leafCert.getNotAfter().toInstant());
@@ -974,7 +979,7 @@ public class WebHookConfigurationService {
      */
     public CertificateAuthorityMaterial loadUploadedCertificateAuthority(String namespace,
                                                                           String secretName) {
-        Secret secret = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        Secret secret = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
         if (secret == null) {
             throw new IllegalArgumentException("Uploaded CA not found: " + namespace + "/" + secretName);
         }
@@ -1154,7 +1159,7 @@ public class WebHookConfigurationService {
         String pemBundle = toPemBundle(certs);
         Instant earliest = earliestExpiry(certs);
 
-        Secret existing = kubernetesClient.secrets().inNamespace(namespace).withName(secretName).get();
+        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
         boolean needUpdate = (existing == null);
 
         if (!needUpdate) {
@@ -1199,7 +1204,7 @@ public class WebHookConfigurationService {
                 .addToData("ca.crt", getEncoder().encodeToString(pemBundle.getBytes(StandardCharsets.UTF_8)))
                 .build();
 
-        kubernetesClient.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+        kubernetesClient().secrets().inNamespace(namespace).resource(desired).createOrReplace();
         LOG.info("Created/rotated Truststore CA Secret {}/{} (earliestNotAfter={})",
                 namespace, secretName, earliest);
     }

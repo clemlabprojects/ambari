@@ -149,8 +149,9 @@ public class KubernetesService {
     // Singleton cache per view instance to avoid reinitializing K8s client repeatedly
     private static final java.util.concurrent.ConcurrentMap<String, KubernetesService> INSTANCES = new java.util.concurrent.ConcurrentHashMap<>();
     
-    private KubernetesClient client;
-    private boolean isConfigured;
+    // Volatile: replaced by a fully built client on reconnection while other request threads read it.
+    private volatile KubernetesClient client;
+    private volatile boolean isConfigured;
     private ViewContext viewContext;
     private WebHookConfigurationService webHookConfigurationService;
 
@@ -188,8 +189,6 @@ public class KubernetesService {
             this.expiresAtMs = expiresAtMs;
         }
     }
-
-    private MountManager mountManager;
 
     private ViewConfigurationService configurationService;
 
@@ -3227,83 +3226,152 @@ public class KubernetesService {
                 + " -o yaml | grep -A5 finalizers` — common culprits are pending CRD instances or admission webhooks.");
     }
 
+    /** How long a replaced client stays open so that calls already running on it can finish. */
+    static final long RETIRED_CLIENT_GRACE_SECONDS = 60;
+
+    /** Closes replaced clients once their grace period is over. */
+    private static final java.util.concurrent.ScheduledExecutorService CLIENT_RETIREMENT =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "k8s-client-retirement");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** Grace period applied by this instance; shortened by tests only. */
+    long retiredClientGraceSeconds = RETIRED_CLIENT_GRACE_SECONDS;
+
     /**
-     * Force-rebuild the client from the currently saved configuration, even if one already exists
-     * (used when the auth mode/credentials change, e.g. switching to OpenShift username/password login).
+     * Rebuilds the client from the currently saved configuration, even if one already exists (new kubeconfig,
+     * another context, OpenShift login, token renewal).
+     *
+     * @return {@code true} when a client was built
      */
     public synchronized boolean forceReloadClient() {
-        this.client = null;
-        this.isConfigured = false;
-        return reloadClientIfConfigured();
+        return rebuildClient();
     }
 
     /**
-     * Reinitialize the Kubernetes client from the currently saved kubeconfig if it was previously unconfigured.
-     * @return true if the client was reinitialized.
+     * Builds the client from the currently saved configuration if there is none yet.
+     *
+     * @return {@code true} when a client exists afterwards
      */
     public synchronized boolean reloadClientIfConfigured() {
-        try {
-            if (this.client != null && this.isConfigured) {
-                return true;
-            }
-            this.configurationService = new ViewConfigurationService(viewContext);
-            boolean openShiftLogin = configurationService.isOpenShiftLogin();
-            String kubeconfigContent;
-            if (openShiftLogin) {
-                // Synthesized kubeconfig with a freshly-minted OpenShift token (username/password login).
-                kubeconfigContent = configurationService.getKubeconfigContents();
-            } else {
-                String kubeconfigPath = configurationService.getKubeconfigPath();
-                if (kubeconfigPath == null) {
-                    LOG.warn("reloadClientIfConfigured: kubeconfig path is null");
-                    return false;
-                }
-                if (!new File(kubeconfigPath).exists()) {
-                    LOG.warn("reloadClientIfConfigured: kubeconfig file missing at {}", kubeconfigPath);
-                    return false;
-                }
-                EncryptionService encryptionService = new EncryptionService();
-                byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
-                byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
-                kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
-            }
-
-            // Mirror the constructor's CA-loading step.  Without this, the JVM default
-            // SSLContext is never updated with the kubeconfig CA and any post-upload HTTPS
-            // call that doesn't go through the Fabric8 client's own SSL stack (e.g. the
-            // webhook bootstrap below, or the Prometheus HTTP client built later from the
-            // same view) fails with `PKIX path building failed`.  Bug only manifested on
-            // FIRST upload after server restart (when the constructor's "View is not
-            // configured" path had skipped this work).  See KubernetesService(ViewContext).
-            io.fabric8.kubernetes.api.model.Config kubeconfigModel =
-                Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
-            java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
-            if (!allClusterCaData.isEmpty()) {
-                installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
-            }
-
-            Config finalConfiguration = buildConfigForSelectedContext(kubeconfigContent);
-            loadK8sPropsAsSystemProperties(viewContext);
-            if (configurationService.isOpenShiftLogin()) {
-                finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());
-            }
-            this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
-            this.isConfigured = true;
-            // Cached answers about the previous cluster (a new kubeconfig or context can point elsewhere).
-            this.externalSecretsApiVersion = null;
-            this.statsCache.invalidateAll();
-            this.serviceCache.invalidateAll();
-            this.prometheusClientCache.clear();
-            this.openShiftDetectionCache.set(null);
-            this.monitoringTokenCache.set(null);
-            this.namespaceScope.reset();
-            applyProxySettings();
-            LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
+        if (this.client != null && this.isConfigured) {
             return true;
+        }
+        return rebuildClient();
+    }
+
+    /**
+     * Builds a client from the saved configuration and only then swaps it in, so calls made meanwhile keep using the
+     * previous client instead of finding the view unconfigured. The previous client is closed after
+     * {@link #retiredClientGraceSeconds}. When no client can be built, the view becomes unconfigured: keeping the
+     * previous connection would leave it talking to an account the saved configuration no longer names (Helm reads
+     * the saved kubeconfig on every call).
+     */
+    private boolean rebuildClient() {
+        KubernetesClient previous = this.client;
+        KubernetesClient fresh;
+        try {
+            fresh = buildClientFromSavedConfiguration();
         } catch (Exception e) {
             LOG.warn("Failed to reinitialize Kubernetes client: {}", e.getMessage());
+            fresh = null;
+        }
+        if (fresh == null) {
+            this.isConfigured = false;
+            this.client = null;
+            retire(previous);
             return false;
         }
+        this.client = fresh;
+        this.isConfigured = true;
+        // Cached answers about the previous cluster (a new kubeconfig or context can point elsewhere).
+        this.externalSecretsApiVersion = null;
+        this.statsCache.invalidateAll();
+        this.serviceCache.invalidateAll();
+        this.prometheusClientCache.clear();
+        this.openShiftDetectionCache.set(null);
+        this.monitoringTokenCache.set(null);
+        this.namespaceScope.reset();
+        try {
+            applyProxySettings();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not apply proxy settings to the new client: {}", e.toString());
+        }
+        retire(previous);
+        LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
+        return true;
+    }
+
+    /** Closes a replaced client once its grace period is over. */
+    private void retire(KubernetesClient previous) {
+        if (previous == null) {
+            return;
+        }
+        Runnable close = () -> {
+            try {
+                previous.close();
+            } catch (RuntimeException e) {
+                LOG.debug("Closing a replaced Kubernetes client failed: {}", e.toString());
+            }
+        };
+        try {
+            CLIENT_RETIREMENT.schedule(close, retiredClientGraceSeconds, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            close.run(); // the view is shutting down
+        }
+    }
+
+    /**
+     * Builds a Kubernetes client from the saved configuration without installing it.
+     *
+     * @return the client, or {@code null} when no kubeconfig is saved
+     * @throws Exception when the saved configuration cannot be read or turned into a client
+     */
+    KubernetesClient buildClientFromSavedConfiguration() throws Exception {
+        this.configurationService = new ViewConfigurationService(viewContext);
+        boolean openShiftLogin = configurationService.isOpenShiftLogin();
+        String kubeconfigContent;
+        if (openShiftLogin) {
+            // Synthesized kubeconfig with a freshly-minted OpenShift token (username/password login).
+            kubeconfigContent = configurationService.getKubeconfigContents();
+        } else {
+            String kubeconfigPath = configurationService.getKubeconfigPath();
+            if (kubeconfigPath == null) {
+                LOG.warn("reloadClientIfConfigured: kubeconfig path is null");
+                return null;
+            }
+            if (!new File(kubeconfigPath).exists()) {
+                LOG.warn("reloadClientIfConfigured: kubeconfig file missing at {}", kubeconfigPath);
+                return null;
+            }
+            EncryptionService encryptionService = new EncryptionService();
+            byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
+            byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
+            kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
+        }
+
+        // Mirror the constructor's CA-loading step.  Without this, the JVM default
+        // SSLContext is never updated with the kubeconfig CA and any post-upload HTTPS
+        // call that doesn't go through the Fabric8 client's own SSL stack (e.g. the
+        // webhook bootstrap below, or the Prometheus HTTP client built later from the
+        // same view) fails with `PKIX path building failed`.  Bug only manifested on
+        // FIRST upload after server restart (when the constructor's "View is not
+        // configured" path had skipped this work).  See KubernetesService(ViewContext).
+        io.fabric8.kubernetes.api.model.Config kubeconfigModel =
+            Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
+        java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
+        if (!allClusterCaData.isEmpty()) {
+            installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
+        }
+
+        Config finalConfiguration = buildConfigForSelectedContext(kubeconfigContent);
+        loadK8sPropsAsSystemProperties(viewContext);
+        if (configurationService.isOpenShiftLogin()) {
+            finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());
+        }
+        return buildTrustingClient(finalConfiguration, allClusterCaData);
     }
 
     /**
@@ -5010,10 +5078,8 @@ public class KubernetesService {
         // ensureMounts is idempotent (an existing PVC is left alone), so it runs on every call. It
         // used to run only while creating the manager, i.e. once per service instance: the second
         // deploy in the same JVM silently got no PVCs.
-        if (mountManager == null) {
-            this.mountManager = new MountManager(this.client);
-        }
-        mountManager.ensureMounts(namespace, releaseName, mounts);
+        // Built per call on the current client: a cached manager would keep a replaced connection.
+        new MountManager(this.client).ensureMounts(namespace, releaseName, mounts);
     }
 
     /**
@@ -5999,6 +6065,7 @@ public class KubernetesService {
     public static void shutdownStaticExecutors() {
         LOG.info("Shutting down KubernetesService static executor pools");
         HelmService.shutdownExecutor();
+        CLIENT_RETIREMENT.shutdown(); // pending closes are dropped: the JVM is going away
         
         if (METRICS_POOL != null) {
             METRICS_POOL.shutdown();
