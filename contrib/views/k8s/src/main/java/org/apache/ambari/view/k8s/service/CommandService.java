@@ -12659,7 +12659,7 @@ public class CommandService {
      * Trino or {@code hiveDb.externalKeytabSecret} for Superset). When set, the deployed pods use
      * that operator-provided keytab, so the view must NOT issue an Ambari keytab.
      */
-    private boolean deployUsesExternalKeytab(Map<String, Object> formValues) {
+    public static boolean deployUsesExternalKeytab(Map<String, Object> formValues) {
         if (formValues == null) {
             return false;
         }

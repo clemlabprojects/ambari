@@ -91,4 +91,28 @@ public class FluxGitOpsBackendTest {
         assertTrue(yaml, yaml.contains("  url: https://charts.example.com/\n"));
         assertFalse(yaml, yaml.contains("type:"));
     }
+
+    @Test
+    public void onlyTheManagedContextWithoutAnExternalKeytabFollowsAmbariKerberos() {
+        org.apache.ambari.view.k8s.requests.HelmDeployRequest managed = new org.apache.ambari.view.k8s.requests.HelmDeployRequest();
+        assertTrue(FluxGitOpsBackend.followsAmbariKerberos(managed));
+
+        org.apache.ambari.view.k8s.requests.HelmDeployRequest external = new org.apache.ambari.view.k8s.requests.HelmDeployRequest();
+        external.setFormValues(new LinkedHashMap<>(Map.of("platformContextId", "cdp-prod")));
+        assertFalse("an external context must not inherit the local realm", FluxGitOpsBackend.followsAmbariKerberos(external));
+
+        org.apache.ambari.view.k8s.requests.HelmDeployRequest keytab = new org.apache.ambari.view.k8s.requests.HelmDeployRequest();
+        keytab.setFormValues(new LinkedHashMap<>(Map.of("hive", Map.of("externalKeytabSecret", "hive-keytab"))));
+        assertFalse("an operator keytab decides Kerberos itself", FluxGitOpsBackend.followsAmbariKerberos(keytab));
+    }
+
+    @Test
+    public void kerberosFollowsTheProfileThenTheAmbariCluster() {
+        assertEquals("true", FluxGitOpsBackend.kerberosEnabledValue(true, null));
+        assertEquals("true", FluxGitOpsBackend.kerberosEnabledValue(true, Boolean.FALSE));
+        assertEquals("true", FluxGitOpsBackend.kerberosEnabledValue(false, Boolean.TRUE));
+        assertEquals("a cluster without Kerberos, or no cluster, turns the chart default off",
+                "false", FluxGitOpsBackend.kerberosEnabledValue(false, Boolean.FALSE));
+        assertNull("unknown state leaves the chart default", FluxGitOpsBackend.kerberosEnabledValue(false, null));
+    }
 }

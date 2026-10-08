@@ -54,7 +54,9 @@ import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.TrustBundleService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
+import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
+import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
@@ -123,6 +125,61 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         this.commandUtils = new CommandUtils(viewContext, kubernetesService);
         this.helmService = new HelmService(viewContext);
         this.securityProfileService = new SecurityProfileService(viewContext);
+    }
+
+    /**
+     * The {@code global.security.kerberos.enabled} value for a GitOps deploy.
+     *
+     * @param profileKerberos       the selected security profile asks for Kerberos
+     * @param ambariClusterKerberos Kerberos state of the Ambari cluster, {@code null} when unknown
+     * @return "true", "false", or {@code null} to leave the chart default
+     */
+    static String kerberosEnabledValue(boolean profileKerberos, Boolean ambariClusterKerberos) {
+        if (profileKerberos || Boolean.TRUE.equals(ambariClusterKerberos)) {
+            return "true";
+        }
+        return ambariClusterKerberos == null ? null : "false";
+    }
+
+    /**
+     * Whether the Ambari cluster's Kerberos state applies to this deploy: only on the managed (default) context and
+     * without an operator-supplied keytab. Direct deploys apply the same rule; an external context must not inherit
+     * the local realm.
+     */
+    static boolean followsAmbariKerberos(HelmDeployRequest request) {
+        Map<String, Object> form = request.getFormValues() == null ? Map.of() : request.getFormValues();
+        Object fromForm = ConfigResolutionService.getByDottedPath(form, "platformContextId");
+        String contextId = request.getPlatformContextId();
+        if (contextId == null || contextId.isBlank()) {
+            contextId = fromForm == null || String.valueOf(fromForm).isBlank() ? ContextService.DEFAULT_CONTEXT_ID
+                    : String.valueOf(fromForm);
+        }
+        return ContextService.DEFAULT_CONTEXT_ID.equals(contextId) && !CommandService.deployUsesExternalKeytab(form);
+    }
+
+    /**
+     * Asks Ambari whether its cluster is Kerberized.
+     *
+     * @return TRUE or FALSE; FALSE when Ambari manages no cluster; {@code null} when Ambari cannot be asked
+     */
+    private Boolean ambariClusterKerberos(DeploymentContext context) {
+        if (context == null || context.getBaseUri() == null) {
+            return null;
+        }
+        String base = context.getBaseUri().toString();
+        Map<String, String> headers = AmbariActionClient.toAuthHeaders(context.getCallerHeaders());
+        try {
+            String cluster = commandUtils.resolveClusterName(base, headers);
+            String securityEnabled = new AmbariActionClient(viewContext, base, cluster, headers)
+                    .getDesiredConfigProperty(cluster, "cluster-env", "security_enabled");
+            return "true".equalsIgnoreCase(securityEnabled);
+        } catch (CommandUtils.NoAmbariClusterException noCluster) {
+            LOG.info("Ambari manages no cluster: no Kerberos to inherit");
+            return Boolean.FALSE;
+        } catch (Exception ex) {
+            LOG.warn("Could not determine the Kerberos state from Ambari, leaving the chart default: {}", ex.toString());
+            return null;
+        }
     }
 
     /**
@@ -514,8 +571,16 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
         applySecurityOverrides(securityCfg, explicitOverrides);
-        // Kerberos wiring if security mode indicates it
-        if (securityCfg != null && securityCfg.mode != null && securityCfg.mode.toLowerCase().contains("kerberos")) {
+        // Kerberos: on when the security profile asks for it or the Ambari cluster is Kerberized, off when Ambari
+        // reports no Kerberos (or manages no cluster) - the same rule as direct deploys. Left to the chart otherwise.
+        boolean profileKerberos = securityCfg != null && securityCfg.mode != null
+                && securityCfg.mode.toLowerCase().contains("kerberos");
+        // External contexts keep their own rules (Kerberos only from the operator's keytab), as before.
+        Boolean ambariKerberos = followsAmbariKerberos(request) ? ambariClusterKerberos(context) : null;
+        String kerberosEnabled = kerberosEnabledValue(profileKerberos, ambariKerberos);
+        if ("false".equals(kerberosEnabled)) {
+            addOverride(explicitOverrides, "global.security.kerberos.enabled", "false");
+        } else if ("true".equals(kerberosEnabled)) {
             String krb5ConfigMapName = (release.isBlank() ? "krb5-conf" : (release + "-krb5-conf"));
             try {
                 commandUtils.ensureKrb5ConfConfigMap(namespace, krb5ConfigMapName);
