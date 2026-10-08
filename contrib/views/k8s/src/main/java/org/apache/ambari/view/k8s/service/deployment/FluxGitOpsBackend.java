@@ -206,15 +206,22 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // ============================================================
         logFluxInfo(namespace, release, "automation", "Starting pre-deployment automation steps");
 
-        // 1. Ensure namespace exists and is webhook-enabled
+        // 1. Ensure the namespace exists; label it for the keytab webhook only in the WEBHOOK Kerberos injection mode
+        //    (the default PRE_PROVISIONED mode does not use the label, and a project-limited account may not set it).
         try {
             kubernetesService.createNamespace(namespace);
-            kubernetesService.ensureWebhookEnabledNamespace(namespace);
-            LOG.info("Ensured namespace {} exists and is webhook-enabled", namespace);
+            if ("WEBHOOK".equals(org.apache.ambari.view.k8s.service.CommandService.resolveKerberosInjectionMode(viewContext))) {
+                kubernetesService.ensureWebhookEnabledNamespace(namespace);
+            }
+            LOG.info("Ensured namespace {} exists", namespace);
         } catch (Exception ex) {
             LOG.warn("Failed to ensure namespace {}: {}", namespace, ex.getMessage());
             // Continue - namespace might already exist
         }
+
+        // 1b. OpenShift: ServiceMonitor right and the KEDA monitoring token, exactly as in direct mode. A refusal
+        //     stops the deploy before anything is committed to Git.
+        org.apache.ambari.view.k8s.service.OpenShiftMonitoringSetup.prepare(kubernetesService, request);
 
         // 2. Create mounts/PVCs if specified
         if (request.getMounts() != null) {
