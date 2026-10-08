@@ -26,6 +26,12 @@ import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 
 import java.util.*;
+import java.time.Duration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
@@ -50,6 +56,7 @@ public class HelmService {
 
     private final ViewContext viewContext;
     private final HelmClient helmClient;
+    private final Supplier<NamespaceScope> namespaceScope;
      final HelmRepositoryService repositoryService;
     private final PathConfig pathConfiguration;
 
@@ -63,14 +70,28 @@ public class HelmService {
     }
 
     /**
-     * Constructs a {@code HelmService} with an explicit Helm client (useful for testing).
+     * Constructs a {@code HelmService} with an explicit Helm client. The namespace scope is the one of the view
+     * instance's {@link KubernetesService}, looked up on first use (only cluster-wide listings need it).
      *
      * @param ctx  the Ambari view context providing configuration and instance data
      * @param helm the Helm client to delegate low-level Helm operations to
      */
     public HelmService(ViewContext ctx, HelmClient helm) {
+        this(ctx, helm, () -> KubernetesService.get(Objects.requireNonNull(ctx, "view context")).namespaceScope());
+    }
+
+    /**
+     * Constructs a {@code HelmService} with an explicit Helm client and namespace scope.
+     *
+     * @param ctx            the Ambari view context providing configuration and instance data
+     * @param helm           the Helm client to delegate low-level Helm operations to
+     * @param namespaceScope supplies the scope used when the account may not list releases across the cluster;
+     *                       called only for cluster-wide listings
+     */
+    public HelmService(ViewContext ctx, HelmClient helm, Supplier<NamespaceScope> namespaceScope) {
         this.viewContext = ctx;
         this.helmClient = helm;
+        this.namespaceScope = Objects.requireNonNull(namespaceScope, "namespaceScope");
         this.repositoryService = new HelmRepositoryService(ctx, helm);
         this.pathConfiguration = repositoryService.paths();
     }
@@ -78,88 +99,91 @@ public class HelmService {
     /**
      * Lists all Helm releases in the given namespace.
      *
-     * @param namespace  the Kubernetes namespace to query, or {@code null} for all namespaces
-     * @param kubeconfig path or content of the kubeconfig file to authenticate with the cluster
-     * @return list of discovered Helm releases
+     * @param namespace  the Kubernetes namespace to query, or {@code null} for all namespaces (an empty string is
+     *                   passed to Helm as is)
+     * @param kubeconfig content of the view's own kubeconfig: when the account may not list all namespaces, the
+     *                   namespaces walked come from the view's connection, so another cluster's kubeconfig must
+     *                   only be used with an explicit namespace
+     * @return list of discovered Helm releases, by release name then namespace when listing all namespaces
      */
     public List<Release> list(String namespace, String kubeconfig) {
-        if (namespace != null && !namespace.isBlank()) {
+        if (namespace != null) {
             LOG.info("Listing Helm releases in namespace: '{}'", namespace);
             return helmClient.list(namespace, kubeconfig, false);
         }
-        // All namespaces. Helm keeps each release in a Secret, so this needs "list secrets" across the cluster.
-        // An account limited to its own projects is refused (403); list project by project instead.
-        KubernetesService kube = kubernetesService();
-        if (kube == null || !kube.isClusterWideForbidden(HELM_STORAGE_RESOURCE)) {
-            try {
-                LOG.info("Listing Helm releases in all namespaces");
-                return helmClient.list(null, kubeconfig, false);
-            } catch (RuntimeException e) {
-                if (kube == null || !KubernetesService.isForbidden(e)) throw e;
-                kube.noteClusterWideForbidden(HELM_STORAGE_RESOURCE, e);
-            }
-        }
-        return listPerNamespace(kube.accessibleNamespaceNames(), kubeconfig);
+        // All namespaces. Helm keeps each release in a Secret, so this needs "list secrets" across the cluster;
+        // an account limited to its own projects is refused and the scope lists namespace by namespace instead.
+        List<Release> releases = new ArrayList<>(namespaceScope.get().listAcrossNamespaces(
+                NamespaceScope.Resource.SECRETS,
+                () -> {
+                    LOG.info("Listing Helm releases in all namespaces");
+                    return helmClient.list(null, kubeconfig, false);
+                },
+                ns -> helmClient.list(ns, kubeconfig, false),
+                HelmService::isRbacRefusal,
+                PER_NAMESPACE_WALK));
+        // Same order whichever way they were listed, so pages are stable when an account's rights change.
+        releases.sort(RELEASE_ORDER);
+        return releases;
     }
 
-    /** Resource Helm stores releases in; a cluster-wide refusal of it is shared with the other secret listings. */
-    static final String HELM_STORAGE_RESOURCE = "secrets";
+    /** Helm's own order for "list in all namespaces": by release name, then namespace. */
+    private static final Comparator<Release> RELEASE_ORDER = Comparator
+            .comparing(Release::getName, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(Release::getNamespace, Comparator.nullsLast(Comparator.naturalOrder()));
 
-    /** Parallel Helm listings when walking projects one by one (each call is a full Helm client round-trip). */
+    /**
+     * Kubernetes' wording for an RBAC refusal, as Helm passes it on in plain text (Helm errors carry no status code),
+     * e.g. {@code secrets is forbidden: User "u" cannot list resource "secrets" in API group "" in the namespace "x"}.
+     */
+    private static final Pattern RBAC_REFUSAL = Pattern.compile("is forbidden: User \"[^\"]*\" cannot [a-z]+ resource \"");
+
+    /** Cause chains deeper than this are not inspected. */
+    private static final int MAX_CAUSE_DEPTH = 16;
+
+    /** Per-namespace Helm listings in flight at once, shared by every view instance; each is a full Helm round-trip. */
     private static final int PER_NAMESPACE_LIST_PARALLELISM = 4;
 
     /**
-     * Lists releases namespace by namespace, a few at a time. Namespaces that refuse the call are skipped.
-     *
-     * @param namespaces namespaces to list
-     * @param kubeconfig kubeconfig contents
-     * @return releases of every namespace that answered, in namespace order
+     * Deadline for listing every namespace one by one; namespaces that have not answered by then are left out of the
+     * listing (logged as a warning). A Helm call blocked inside the native library cannot be interrupted and keeps
+     * its pool thread until it returns; the deadline keeps the caller's request thread from waiting on it.
      */
-    List<Release> listPerNamespace(List<String> namespaces, String kubeconfig) {
-        LOG.info("Listing Helm releases project by project ({} namespaces)", namespaces.size());
-        if (namespaces.isEmpty()) return new java.util.ArrayList<>();
-        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
-                Math.min(PER_NAMESPACE_LIST_PARALLELISM, namespaces.size()));
-        try {
-            List<java.util.concurrent.Future<List<Release>>> futures = new java.util.ArrayList<>();
-            for (String ns : namespaces) {
-                futures.add(pool.submit(() -> {
-                    try {
-                        return helmClient.list(ns, kubeconfig, false);
-                    } catch (RuntimeException e) {
-                        if (!KubernetesService.isForbidden(e)) throw e;
-                        LOG.debug("Helm releases in namespace {} are not readable; skipping it", ns);
-                        return List.<Release>of();
-                    }
-                }));
-            }
-            List<Release> out = new java.util.ArrayList<>();
-            for (var f : futures) {
-                try {
-                    out.addAll(f.get());
-                } catch (java.util.concurrent.ExecutionException e) {
-                    Throwable c = e.getCause();
-                    throw c instanceof RuntimeException re ? re : new IllegalStateException(c);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Interrupted while listing Helm releases", e);
-                }
-            }
-            return out;
-        } finally {
-            pool.shutdownNow();
-        }
+    private static final Duration PER_NAMESPACE_LIST_TIMEOUT = Duration.ofSeconds(60);
+
+    private static final AtomicInteger PER_NAMESPACE_THREAD_ID = new AtomicInteger();
+
+    private static final ExecutorService PER_NAMESPACE_LIST_POOL = Executors.newFixedThreadPool(
+            PER_NAMESPACE_LIST_PARALLELISM, r -> {
+                Thread t = new Thread(r, "helm-list-per-namespace-" + PER_NAMESPACE_THREAD_ID.incrementAndGet());
+                t.setDaemon(true);
+                return t;
+            });
+
+    private static final NamespaceScope.Parallel PER_NAMESPACE_WALK =
+            new NamespaceScope.Parallel(PER_NAMESPACE_LIST_POOL, PER_NAMESPACE_LIST_TIMEOUT);
+
+    /** Stops the shared per-namespace listing pool; called once when the view shuts down. */
+    static void shutdownExecutor() {
+        PER_NAMESPACE_LIST_POOL.shutdownNow();
     }
 
-    /** The view's Kubernetes service, or {@code null} when it cannot be reached (unit tests without a view). */
-    private KubernetesService kubernetesService() {
-        if (viewContext == null || viewContext.getInstanceName() == null) return null;
-        try {
-            return KubernetesService.get(viewContext);
-        } catch (RuntimeException e) {
-            LOG.debug("Kubernetes service unavailable: {}", e.toString());
-            return null;
+    /**
+     * True when a Helm call failed because the account lacks a Kubernetes right. A refusal for
+     * {@code system:anonymous} means the credentials were not sent or not accepted, and does not count.
+     *
+     * @param e the failure raised by the Helm client
+     * @return {@code true} for an RBAC refusal reported by Helm, or a rights refusal from the Kubernetes client
+     */
+    static boolean isRbacRefusal(Throwable e) {
+        Throwable t = e;
+        for (int depth = 0; t != null && depth < MAX_CAUSE_DEPTH; depth++, t = t.getCause()) {
+            String m = t.getMessage();
+            if (m != null && RBAC_REFUSAL.matcher(m).find()) {
+                return !NamespaceScope.isAnonymous(m);
+            }
         }
+        return NamespaceScope.isForbidden(e);
     }
 
     /**
