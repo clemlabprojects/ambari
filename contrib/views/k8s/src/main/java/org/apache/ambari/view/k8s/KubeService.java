@@ -166,15 +166,53 @@ public class KubeService {
             ViewConfigurationService configurationService = this.getConfigService();
 
             LOG.info("/cluster/config: Received kubeconfig upload request.");
+            // Check the file before it replaces the saved one: an unreadable upload must not break a working view.
+            byte[] uploaded = fileInputStream.readNBytes(MAX_KUBECONFIG_BYTES + 1);
+            if (uploaded.length > MAX_KUBECONFIG_BYTES) {
+                return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                        "This file is too large to be a kubeconfig; the previous configuration is unchanged.")).build();
+            }
+            io.fabric8.kubernetes.api.model.Config kubeconfig = parseKubeconfig(uploaded);
+            if (kubeconfig == null) {
+                return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                        "This file is not a valid kubeconfig; the previous configuration is unchanged.")).build();
+            }
+            java.util.List<String> contextNames = kubeconfig.getContexts() == null ? java.util.List.of()
+                    : kubeconfig.getContexts().stream().map(io.fabric8.kubernetes.api.model.NamedContext::getName)
+                        .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toList());
             // Use a static filename since it's no longer provided by the request
-            File configurationFile = configurationService.saveKubeconfigFile(fileInputStream, "kubeconfig.yaml");
+            File configurationFile = configurationService.saveKubeconfigFile(new java.io.ByteArrayInputStream(uploaded), "kubeconfig.yaml");
 
             LOG.info("Kubeconfig successfully saved to {}", configurationFile.getAbsolutePath());
             LOG.info("Configuring Apache Ambari View Backend CA bundle");
             final String webhookName = "keytab-webhook"; // must match your Helm values prefix
 
-            // Reinitialize K8s client now that kubeconfig is saved
-            this.getKubernetesService().reloadClientIfConfigured();
+            // A context chosen for the previous kubeconfig may not exist in this one: fall back to the new file's
+            // current-context (the operator is then offered the context list) instead of failing to connect.
+            String selectedContext = configurationService.getSelectedContext();
+            if (selectedContext != null && !selectedContext.isBlank() && !contextNames.contains(selectedContext)) {
+                LOG.info("/cluster/config: selected context '{}' is not in the new kubeconfig; using its current-context",
+                        selectedContext);
+                configurationService.saveSelectedContext(null);
+                selectedContext = null;
+            }
+            // Rebuild the client from the kubeconfig just saved. A plain reload keeps an existing client, so a
+            // view that was already connected would go on using the previous account until Ambari restarts.
+            Response notConnected = reconnect("The kubeconfig was saved");
+            if (notConnected != null) {
+                boolean contextNotChosenYet = selectedContext == null || selectedContext.isBlank();
+                if (contextNotChosenYet && contextNames.size() > 1
+                        && notConnected.getStatus() == Response.Status.SERVICE_UNAVAILABLE.getStatusCode()) {
+                    // A kubeconfig with several contexts often has a current-context pointing elsewhere (another
+                    // cluster, a local one). Keep it and let the operator choose the context; that choice reconnects.
+                    Object reason = ((Map<?, ?>) notConnected.getEntity()).get("error");
+                    return Response.ok(Map.of(
+                            "message", "Configuration saved.",
+                            "warning", reason + " The kubeconfig has " + contextNames.size()
+                                    + " contexts: choose the one to use.")).build();
+                }
+                return notConnected;
+            }
             // The keytab webhook prerequisites (its namespace, mTLS Secrets, CA bundle) only matter in the
             // WEBHOOK Kerberos injection mode. In the default PRE_PROVISIONED mode nothing uses them, and on
             // OpenShift sites where namespaces cannot be created on the fly preparing them made the upload
@@ -208,6 +246,60 @@ public class KubeService {
         }
     }
 
+    /** Upper bound for an uploaded kubeconfig; real ones are a few kilobytes. */
+    private static final int MAX_KUBECONFIG_BYTES = 1024 * 1024;
+
+    /**
+     * The uploaded bytes as a kubeconfig, or {@code null} when they are not one. Any YAML maps onto the Config model,
+     * so the document must also declare {@code kind: Config} and at least one cluster.
+     */
+    private static io.fabric8.kubernetes.api.model.Config parseKubeconfig(byte[] bytes) {
+        try {
+            Object parsed = io.fabric8.kubernetes.client.utils.Serialization.unmarshal(
+                    new String(bytes, java.nio.charset.StandardCharsets.UTF_8), io.fabric8.kubernetes.api.model.Config.class);
+            if (!(parsed instanceof io.fabric8.kubernetes.api.model.Config c)
+                    || !"Config".equals(c.getKind())
+                    || c.getClusters() == null || c.getClusters().isEmpty()) {
+                return null;
+            }
+            return c;
+        } catch (RuntimeException e) {
+            LOG.warn("/cluster/config: uploaded file is not a kubeconfig: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Rebuilds the Kubernetes client from the saved configuration and checks, with one API call, that it reaches the
+     * cluster. Building a client never contacts the cluster, so without the check a kubeconfig pointing nowhere or
+     * holding rejected credentials would be reported as working.
+     *
+     * @param saved what was saved, to start the error message with (e.g. "The kubeconfig was saved")
+     * @return {@code null} when connected; otherwise the response to return: 400 when no client can be built from the
+     *         configuration, 503 when the cluster cannot be reached or rejects the credentials
+     */
+    private Response reconnect(String saved) {
+        boolean built;
+        try {
+            built = this.getKubernetesService().forceReloadClient();
+        } catch (Exception e) {
+            LOG.warn("Kubernetes client rebuild failed: {}", e.toString());
+            built = false;
+        }
+        if (!built) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    saved + ", but KDPS could not build a connection from it. Check that the kubeconfig is valid "
+                            + "(details in the Ambari server log).")).build();
+        }
+        org.apache.ambari.view.k8s.model.ConnectionHealth health = this.getKubernetesService().pingCluster();
+        if (!health.isConnected()) {
+            LOG.warn("{}, but the cluster check failed: {}", saved, health.getMessage());
+            return Response.status(Response.Status.SERVICE_UNAVAILABLE).entity(Collections.singletonMap("error",
+                    saved + ", but KDPS could not connect with it: " + health.getMessage())).build();
+        }
+        return null;
+    }
+
     /**
      * List the contexts available in the uploaded kubeconfig so the operator can choose which
      * cluster/context this view instance targets.
@@ -237,11 +329,23 @@ public class KubeService {
         new AuthHelper(viewContext).checkConfigurationPermission();
         String context = body == null ? null : body.get("context");
         LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
-        this.getConfigService().saveSelectedContext(context);
+        java.util.List<java.util.Map<String, Object>> available;
         try {
-            this.getKubernetesService().reloadClientIfConfigured();
-        } catch (Exception e) {
-            LOG.warn("/cluster/context: client reload after context selection failed: {}", e.toString());
+            available = this.getKubernetesService().listAvailableContexts();
+        } catch (RuntimeException e) {
+            LOG.warn("/cluster/context: the saved kubeconfig cannot be read: {}", e.toString());
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    "The saved kubeconfig cannot be read; upload it again.")).build();
+        }
+        if (context != null && !context.isBlank() && available.stream().noneMatch(c -> context.equals(c.get("name")))) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    "Context '" + context + "' is not in the uploaded kubeconfig.")).build();
+        }
+        this.getConfigService().saveSelectedContext(context);
+        Response notConnected = reconnect(
+                "Context '" + (context == null || context.isBlank() ? "current-context" : context) + "' was saved");
+        if (notConnected != null) {
+            return notConnected;
         }
         return Response.ok(Collections.singletonMap(
                 "message", "Context set to: " + (context == null || context.isBlank() ? "current-context" : context))).build();

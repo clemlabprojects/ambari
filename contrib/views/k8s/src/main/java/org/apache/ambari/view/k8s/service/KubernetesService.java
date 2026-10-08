@@ -569,6 +569,11 @@ public class KubernetesService {
                         + "(UNAUTHENTICATED): {}", e.getMessage());
                 return ConnectionHealth.unauthenticated(e.getMessage());
             }
+            if (e.getCode() == 403 && e.getMessage() != null && e.getMessage().contains("User \"system:anonymous\"")) {
+                // No credentials were accepted: the API server fell back to the anonymous user.
+                LOG.warn("pingCluster: the cluster treated the request as anonymous (UNAUTHENTICATED): {}", e.getMessage());
+                return ConnectionHealth.unauthenticated(e.getMessage());
+            }
             if (e.getCode() == 403) {
                 LOG.debug("pingCluster: token authenticated but forbidden to list namespaces (treated as CONNECTED).");
                 return ConnectionHealth.connected();
@@ -3494,6 +3499,10 @@ public class KubernetesService {
             }
             this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
             this.isConfigured = true;
+            // Cached answers about the previous cluster (a new kubeconfig or context can point elsewhere).
+            this.externalSecretsApiVersion = null;
+            this.statsCache.invalidateAll();
+            this.serviceCache.invalidateAll();
             this.prometheusClientCache.clear();
             this.openShiftDetectionCache.set(null);
             this.monitoringTokenCache.set(null);
