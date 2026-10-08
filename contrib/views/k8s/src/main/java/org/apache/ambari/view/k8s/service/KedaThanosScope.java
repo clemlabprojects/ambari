@@ -1,0 +1,90 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.ambari.view.k8s.service;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * How KEDA autoscaling triggers read OpenShift's built-in monitoring.
+ *
+ * <p>The Thanos querier serves two ports. The cluster port ({@value #CLUSTER_PORT}) answers any query, so its
+ * token must be bound to the {@code cluster-monitoring-view} ClusterRole, a cluster right. The tenancy port
+ * ({@value #TENANCY_PORT}) answers only for the namespace passed with each query, and authorizes the token with a
+ * "get pods" check in that namespace, which a Role inside the project grants. KDPS uses the cluster port when the
+ * connected account may create ClusterRoleBindings and the tenancy port otherwise; the latter is the setup Red Hat
+ * documents for the Custom Metrics Autoscaler.
+ */
+public final class KedaThanosScope {
+
+    /** Thanos querier port answering any query (needs cluster-monitoring-view). */
+    public static final String CLUSTER_PORT = ":9091";
+    /** Thanos querier port answering per namespace (needs "get pods" in that namespace). */
+    public static final String TENANCY_PORT = ":9092";
+
+    private KedaThanosScope() {
+    }
+
+    /**
+     * Points the chart's OpenShift KEDA triggers ({@code server.keda.triggers}) at the tenancy port for
+     * {@code namespace}: each trigger whose {@code metadata.serverAddress} is the Thanos querier's cluster port gets
+     * the tenancy port and {@code metadata.namespace}. Other triggers are left alone.
+     *
+     * @param values    chart values, modified in place
+     * @param namespace the release namespace the queries are restricted to
+     * @return how many triggers were changed
+     */
+    @SuppressWarnings("unchecked")
+    public static int scopeTriggersToNamespace(Map<String, Object> values, String namespace) {
+        if (values == null || namespace == null || namespace.isBlank()) return 0;
+        Object server = values.get("server");
+        Object keda = server instanceof Map<?, ?> s ? s.get("keda") : null;
+        Object triggers = keda instanceof Map<?, ?> k ? k.get("triggers") : null;
+        if (!(triggers instanceof List<?> list)) return 0;
+        int changed = 0;
+        for (Object t : list) {
+            if (!(t instanceof Map<?, ?> trigger) || !(trigger.get("metadata") instanceof Map<?, ?> m)) continue;
+            Map<String, Object> metadata = (Map<String, Object>) m;
+            Object address = metadata.get("serverAddress");
+            if (address instanceof String a && a.contains("thanos-querier") && a.contains(CLUSTER_PORT)) {
+                metadata.put("serverAddress", a.replace(CLUSTER_PORT, TENANCY_PORT));
+                metadata.put("namespace", namespace);
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Whether the chart values turn on the KEDA TriggerAuthentication (bearer token read from a Secret), i.e. the
+     * triggers read OpenShift monitoring and need a monitoring token.
+     */
+    public static boolean triggerAuthenticationEnabled(Map<String, Object> values) {
+        Object server = values == null ? null : values.get("server");
+        Object keda = server instanceof Map<?, ?> s ? s.get("keda") : null;
+        Object auth = keda instanceof Map<?, ?> k ? k.get("triggerAuthentication") : null;
+        return auth instanceof Map<?, ?> a && Boolean.parseBoolean(String.valueOf(a.get("enabled")));
+    }
+
+    /** Whether the chart values create Prometheus ServiceMonitors ({@code serviceMonitor.enabled}). */
+    public static boolean serviceMonitorsEnabled(Map<String, Object> values) {
+        Object sm = values == null ? null : values.get("serviceMonitor");
+        return sm instanceof Map<?, ?> m && Boolean.parseBoolean(String.valueOf(m.get("enabled")));
+    }
+}
