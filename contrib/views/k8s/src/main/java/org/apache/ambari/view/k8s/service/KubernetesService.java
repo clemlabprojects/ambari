@@ -2574,6 +2574,11 @@ public class KubernetesService {
                 if (hasToken || "kubernetes.io/service-account-token".equals(existing.getType())) {
                     try {
                         ensureKedaTenancyRole(namespace, saName + "-thanos-tenancy");
+                        // A release first deployed by a project-limited account has no cluster binding; when an
+                        // account allowed to create one deploys it with cluster-port triggers, add the binding.
+                        if (!projectScoped && canBindClusterRoles()) {
+                            ensureMonitoringViewBinding(namespace, saName, "kdps-monview-" + namespace + "-" + saName);
+                        }
                     } catch (Exception e) {
                         LOG.warn("Could not bring the KEDA/Thanos tenancy Role {}/{}-thanos-tenancy up to date: {}",
                                 namespace, saName, e.toString());
@@ -2638,26 +2643,9 @@ public class KubernetesService {
                                 .build()).create();
                 LOG.info("Created KEDA monitoring service account {}/{}", namespace, saName);
             }
-            if (!projectScoped && client.rbac().clusterRoleBindings().withName(crbName).get() == null) {
-                client.rbac().clusterRoleBindings().resource(
-                        new ClusterRoleBindingBuilder()
-                                .withNewMetadata().withName(crbName).endMetadata()
-                                .withNewRoleRef()
-                                    .withApiGroup("rbac.authorization.k8s.io")
-                                    .withKind("ClusterRole")
-                                    .withName(MONITORING_VIEWER_CLUSTER_ROLE)
-                                .endRoleRef()
-                                .addNewSubject()
-                                    .withKind("ServiceAccount").withName(saName).withNamespace(namespace)
-                                .endSubject()
-                                .build()).create();
-                LOG.info("Bound {}/{} to {} via ClusterRoleBinding {}",
-                        namespace, saName, MONITORING_VIEWER_CLUSTER_ROLE, crbName);
+            if (!projectScoped) {
+                ensureMonitoringViewBinding(namespace, saName, crbName);
             }
-            // The thanos-querier tenancy port (:9092) authorizes every query with a "get pods" check in the
-            // namespace passed as the tenancy scope, against the core API group and metrics.k8s.io (the proxy
-            // answers 403 "verb=get, resource=pods" without the latter). The Role Red Hat documents for the Custom
-            // Metrics Autoscaler grants both; a Role left by an earlier deploy without the second rule is updated.
             ensureKedaTenancyRole(namespace, tenancyRoleName);
             if (client.rbac().roleBindings().inNamespace(namespace).withName(tenancyRoleName).get() == null) {
                 client.rbac().roleBindings().inNamespace(namespace).resource(
@@ -2690,6 +2678,26 @@ public class KubernetesService {
         } catch (Exception e) {
             return "Failed to provision the KEDA/Thanos monitoring token in namespace '" + namespace + "': " + e.getMessage();
         }
+    }
+
+    /** Binds the KEDA monitoring service account to {@code cluster-monitoring-view} unless it already is. */
+    private void ensureMonitoringViewBinding(String namespace, String saName, String crbName) {
+        if (client.rbac().clusterRoleBindings().withName(crbName).get() != null) {
+            return;
+        }
+        client.rbac().clusterRoleBindings().resource(
+                new ClusterRoleBindingBuilder()
+                        .withNewMetadata().withName(crbName).endMetadata()
+                        .withNewRoleRef()
+                            .withApiGroup("rbac.authorization.k8s.io")
+                            .withKind("ClusterRole")
+                            .withName(MONITORING_VIEWER_CLUSTER_ROLE)
+                        .endRoleRef()
+                        .addNewSubject()
+                            .withKind("ServiceAccount").withName(saName).withNamespace(namespace)
+                        .endSubject()
+                        .build()).create();
+        LOG.info("Bound {}/{} to {} via ClusterRoleBinding {}", namespace, saName, MONITORING_VIEWER_CLUSTER_ROLE, crbName);
     }
 
     /**
