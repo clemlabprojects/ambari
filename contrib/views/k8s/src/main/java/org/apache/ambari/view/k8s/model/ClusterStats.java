@@ -41,7 +41,16 @@ public class ClusterStats {
     private HelmStat helm;
 
     @JsonProperty("source")
-    private String source; // metrics source identifier (prometheus, metrics-server, unknown)
+    private String source; // metrics source identifier (prometheus, metrics-server, pod-metrics, unknown)
+
+    /** "cluster", or "projects" when the figures cover only the projects the account may use. */
+    @JsonProperty("scope")
+    private String scope = "cluster";
+
+
+    /** For the "projects" scope: how many projects' usage was read. */
+    @JsonProperty("projects")
+    private Integer projects;
 
     // Default constructor for JSON deserialization
     public ClusterStats() {
@@ -59,12 +68,37 @@ public class ClusterStats {
         this.source = source;
     }
 
+    /**
+     * Marks the figures as covering only the projects the account may use, and records what each resource is
+     * measured against (quota, requests or none).
+     *
+     * @param projects     how many projects' usage was read
+     * @param cpuBasis     what CPU is measured against
+     * @param memoryBasis  what memory is measured against
+     * @param podsBasis    what the pod count is measured against
+     */
+    public void setProjectScope(int projects, String cpuBasis, String memoryBasis, String podsBasis) {
+        this.scope = "projects";
+        this.projects = projects;
+        if (cpu != null) cpu.basis = cpuBasis;
+        if (memory != null) memory.basis = memoryBasis;
+        if (pods != null) pods.basis = podsBasis;
+    }
+
+    public String getScope() { return scope; }
+    public Integer getProjects() { return projects; }
+
     public static class ResourceStat {
         @JsonProperty("used")
         private double used;
         
         @JsonProperty("total")
         private double total;
+
+        /** For the "projects" scope: what {@code total} is (quota, requests or none). Absent otherwise. */
+        @JsonProperty("basis")
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String basis;
 
         public ResourceStat() {
         }
@@ -76,6 +110,7 @@ public class ClusterStats {
 
         public double getUsed() { return used; }
         public double getTotal() { return total; }
+        public String getBasis() { return basis; }
     }
 
     public static class HelmStat {

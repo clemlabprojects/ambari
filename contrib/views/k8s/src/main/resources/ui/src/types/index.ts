@@ -73,12 +73,19 @@ export interface ClusterNode {
     memoryUsage: number; // 0 to 1
 }
 
+/** One dashboard figure; `basis` (project scope only) says what `total` is. */
+export interface UsageFigure { used: number; total: number; basis?: 'quota' | 'requests' | 'none' }
+
 export interface ClusterStats {
-  cpu: { used: number; total: number };
-  memory: { used: number; total: number };
-  pods: { used: number; total: number };
+  cpu: UsageFigure;
+  memory: UsageFigure;
+  pods: UsageFigure;
   nodes: { used: number; total: number };
   helm: { deployed: number; pending: number; failed: number; total: number };
+  /** "projects" when the account may not read the whole cluster: the figures cover the projects it may use. */
+  scope?: 'cluster' | 'projects';
+  /** For the "projects" scope: how many projects were measured. */
+  projects?: number;
 }
 
 // NOUVEAUX TYPES

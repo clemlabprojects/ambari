@@ -776,6 +776,27 @@ public class KubernetesService {
             }
         }
         
+        // An account limited to its own projects reads neither node metrics nor cluster-wide monitoring: show the
+        // usage of its projects, measured against what they are allotted, rather than N/A.
+        ProjectUsage.Result projectUsage = null;
+        if (!metricsFound.get() && namespaceScope.isRefused(NamespaceScope.Resource.PODS)) {
+            List<Pod> running = podItems.stream()
+                    .filter(pod -> pod.getStatus() != null && "Running".equalsIgnoreCase(pod.getStatus().getPhase()))
+                    .collect(Collectors.toList());
+            try {
+                projectUsage = ProjectUsage.measure(client, namespaceScope.namespacesToWalk(), running);
+            } catch (RuntimeException e) {
+                LOG.warn("Could not measure the usage of this account's projects: {}", e.toString());
+            }
+            if (projectUsage != null) {
+                usedCpuTotal = projectUsage.cpu().used();
+                usedMemoryTotal = projectUsage.memory().used();
+                totalCpuCapacity = projectUsage.cpu().total();
+                totalMemoryCapacity = projectUsage.memory().total();
+                metricsFound.set(true);
+                metricsSource.set("pod-metrics");
+            }
+        }
         if (!metricsFound.get()) {
             usedCpuTotal = -1;
             usedMemoryTotal = -1;
@@ -787,7 +808,13 @@ public class KubernetesService {
         // of all pod objects — on OpenShift the latter includes thousands of Completed/Failed pods and is
         // meaningless as a denominator. Fall back to the object count only if capacity is unavailable.
         double podDenominator = totalPodCapacity > 0 ? totalPodCapacity : podItems.size();
-        ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(runningPods.size(), podDenominator);
+        if (projectUsage != null) {
+            // Node pod capacity says nothing about a project's allotment: use its pod quota, else its pods.
+            podDenominator = projectUsage.pods().basis() == ProjectUsage.Basis.QUOTA ? projectUsage.pods().total() : podItems.size();
+        }
+        ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(
+                // Project scope: count the pods of the projects measured, the same ones the pod total covers.
+                projectUsage != null ? projectUsage.pods().used() : runningPods.size(), podDenominator);
         ClusterStats.ResourceStat nodeStatistics = new ClusterStats.ResourceStat(readyNodesCount, nodeList.getItems().size());
         
         // Helm stats (best-effort): list releases using the helm client. If it fails, keep zeros.
@@ -820,6 +847,10 @@ public class KubernetesService {
 
         ClusterStats result = new ClusterStats(cpuStatistics, memoryStatistics, podStatistics, nodeStatistics, helmStatistics);
         result.setSource(metricsSource.get());
+        if (projectUsage != null) {
+            result.setProjectScope(projectUsage.projectsMeasured(), projectUsage.cpu().basis().label(),
+                    projectUsage.memory().basis().label(), projectUsage.pods().basis().label());
+        }
         statsCache.put("clusterStats", result);
         return result;
     }

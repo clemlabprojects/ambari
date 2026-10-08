@@ -73,7 +73,19 @@ const DashboardPage: React.FC = () => {
     // Backend emits used < 0 (a sentinel) when no metrics source is available (e.g. OpenShift with no
     // reachable/authorized Thanos and no metrics-server). Render "N/A" rather than a bogus negative %.
     const metricUnavailable = (m?: { used: number; total: number }) => !m || m.used < 0 || !isFinite(m.used);
-    const capTile = (label: string, value: React.ReactNode, ratio: number, target: string) => {
+    const projectScope = stats?.scope === 'projects';
+    const basisLabel = (b?: string) => (b === 'quota' ? 'quota' : b === 'requests' ? 'requested' : '');
+    const amount = (n: number) => (n >= 10 ? n.toFixed(0) : n.toFixed(n >= 1 ? 1 : 2));
+    // Project scope: absolute figures with what they are measured against, so nobody reads them as cluster capacity.
+    const projectHint = (m: { used: number; total: number; basis?: string }, unit: string) =>
+        m.total > 0 ? `${amount(m.used)} of ${amount(m.total)} ${unit} · ${basisLabel(m.basis)}` : `${amount(m.used)} ${unit} used`;
+    const nodesHidden = projectScope && !!stats && stats.nodes.total === 0;
+    const usageValue = (m: { used: number; total: number }, unit: string) => {
+        if (metricUnavailable(m)) return 'N/A';
+        if (projectScope && !m.total) return `${amount(m.used)} ${unit}`;
+        return `${pct(m)}%`;
+    };
+    const capTile = (label: string, value: React.ReactNode, ratio: number, target: string, hint?: string) => {
         const r = Math.max(0, Math.min(1, isFinite(ratio) ? ratio : 0));
         const warn = r > 0.85;
         return (
@@ -88,6 +100,7 @@ const DashboardPage: React.FC = () => {
                 <div className="kdps-kpi-label">{label}</div>
                 <div className={warn ? 'kdps-kpi-value kdps-kpi-warn' : 'kdps-kpi-value'}>{value}</div>
                 <div className={warn ? 'kdps-kpi-bar warn' : 'kdps-kpi-bar'}><span style={{ width: `${Math.round(r * 100)}%` }} /></div>
+                {hint && <div className="kdps-kpi-hint" style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>{hint}</div>}
             </div>
         );
     };
@@ -141,12 +154,23 @@ const DashboardPage: React.FC = () => {
                 }
               />
             )}
+            {stats && projectScope && (
+              <Paragraph type="secondary" style={{ marginBottom: -8 }}>
+                CPU, memory and pods cover the {stats.projects ?? ''} project{stats.projects === 1 ? '' : 's'} this
+                account can use, measured against their quotas where every project sets one, otherwise against what
+                their pods request. Cluster-wide usage needs cluster monitoring rights.
+              </Paragraph>
+            )}
             {stats && (
               <div className="kdps-kpis">
-                {capTile('Nodes Ready', `${stats.nodes.used}/${stats.nodes.total}`, stats.nodes.total ? stats.nodes.used / stats.nodes.total : 0, '/nodes')}
-                {capTile('CPU', metricUnavailable(stats.cpu) ? 'N/A' : `${pct(stats.cpu)}%`, metricUnavailable(stats.cpu) ? 0 : (stats.cpu.total ? stats.cpu.used / stats.cpu.total : 0), '/nodes')}
-                {capTile('Memory', metricUnavailable(stats.memory) ? 'N/A' : `${pct(stats.memory)}%`, metricUnavailable(stats.memory) ? 0 : (stats.memory.total ? stats.memory.used / stats.memory.total : 0), '/nodes')}
-                {capTile('Pods', `${stats.pods.used}/${stats.pods.total}`, stats.pods.total ? stats.pods.used / stats.pods.total : 0, '/workloads')}
+                {capTile('Nodes Ready', nodesHidden ? 'N/A' : `${stats.nodes.used}/${stats.nodes.total}`, stats.nodes.total ? stats.nodes.used / stats.nodes.total : 0, '/nodes',
+                         nodesHidden ? 'not visible to this account' : undefined)}
+                {capTile(projectScope ? 'CPU · your projects' : 'CPU', usageValue(stats.cpu, 'cores'), metricUnavailable(stats.cpu) ? 0 : (stats.cpu.total ? stats.cpu.used / stats.cpu.total : 0), '/nodes',
+                         projectScope && !metricUnavailable(stats.cpu) ? projectHint(stats.cpu, 'cores') : undefined)}
+                {capTile(projectScope ? 'Memory · your projects' : 'Memory', usageValue(stats.memory, 'GiB'), metricUnavailable(stats.memory) ? 0 : (stats.memory.total ? stats.memory.used / stats.memory.total : 0), '/nodes',
+                         projectScope && !metricUnavailable(stats.memory) ? projectHint(stats.memory, 'GiB') : undefined)}
+                {capTile(projectScope ? 'Pods · your projects' : 'Pods', `${stats.pods.used}/${stats.pods.total}`, stats.pods.total ? stats.pods.used / stats.pods.total : 0, '/workloads',
+                         projectScope && stats.pods.basis === 'quota' ? 'running · of quota' : projectScope ? 'running · of all pods' : undefined)}
               </div>
             )}
             <Row gutter={[24, 24]}>

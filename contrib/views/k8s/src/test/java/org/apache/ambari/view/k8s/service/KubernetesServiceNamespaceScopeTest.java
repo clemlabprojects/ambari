@@ -100,4 +100,33 @@ class KubernetesServiceNamespaceScopeTest {
 
     assertTrue(svc.crdExists("scaledobjects.keda.sh"));
   }
+
+  @Test
+  void dashboardShowsTheUsageOfTheAccountsProjectsWhenClusterMetricsAreRefused() {
+    forbidden("/api/v1/nodes");
+    forbidden("/api/v1/pods");
+    forbidden("/apis/metrics.k8s.io/v1beta1/nodes");
+    server.expect().get().withPath("/api/v1/namespaces/team-a/pods").andReturn(200,
+        "{\"kind\":\"PodList\",\"apiVersion\":\"v1\",\"metadata\":{},\"items\":[{\"metadata\":{\"name\":\"p\",\"namespace\":\"team-a\"},"
+            + "\"spec\":{\"containers\":[{\"name\":\"c\"}]},\"status\":{\"phase\":\"Running\"}}]}").always();
+    server.expect().get().withPath("/apis/metrics.k8s.io/v1beta1/namespaces/team-a/pods").andReturn(200,
+        "{\"kind\":\"PodMetricsList\",\"apiVersion\":\"metrics.k8s.io/v1beta1\",\"metadata\":{},\"items\":[{\"metadata\":{\"name\":\"p\",\"namespace\":\"team-a\"},"
+            + "\"timestamp\":\"2026-10-08T13:00:00Z\",\"window\":\"15s\",\"containers\":[{\"name\":\"c\",\"usage\":{\"cpu\":\"500m\",\"memory\":\"1Gi\"}}]}]}").always();
+    server.expect().get().withPath("/api/v1/namespaces/team-a/resourcequotas").andReturn(200,
+        "{\"kind\":\"ResourceQuotaList\",\"apiVersion\":\"v1\",\"metadata\":{},\"items\":[{\"metadata\":{\"name\":\"q\"},"
+            + "\"spec\":{\"hard\":{\"limits.cpu\":\"2\",\"limits.memory\":\"4Gi\",\"pods\":\"10\"}}}]}").always();
+
+    org.apache.ambari.view.k8s.model.ClusterStats stats = svc.getClusterStats(true);
+
+    assertEquals("projects", stats.getScope());
+    assertEquals(1, stats.getProjects());
+    assertEquals(0.5, stats.getCpu().getUsed(), 1e-9);
+    assertEquals(2.0, stats.getCpu().getTotal(), 1e-9);
+    assertEquals("quota", stats.getCpu().getBasis());
+    assertEquals(1.0, stats.getMemory().getUsed(), 1e-9);
+    assertEquals(4.0, stats.getMemory().getTotal(), 1e-9);
+    assertEquals("quota", stats.getMemory().getBasis());
+    assertEquals(1.0, stats.getPods().getUsed());
+    assertEquals(10.0, stats.getPods().getTotal(), "pod quota, not node capacity");
+  }
 }
