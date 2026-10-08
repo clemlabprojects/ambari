@@ -128,8 +128,10 @@ public class NamespaceScope {
     }
 
     /**
-     * Runs a walk's per-namespace calls in parallel on {@code executor}, failing the whole listing if it has not
-     * finished within {@code timeout}.
+     * Runs a walk's per-namespace calls in parallel on {@code executor}. Namespaces that have not answered within
+     * {@code timeout} of the start of the walk (including time queued behind other walks on a shared executor) are
+     * left out with a warning, so one slow namespace or a busy executor yields a partial listing, not a failure.
+     * A call blocked inside native code cannot be interrupted and keeps its thread until it returns.
      */
     public static final class Parallel {
         final ExecutorService executor;
@@ -281,8 +283,8 @@ public class NamespaceScope {
      * @param perNamespace the same listing for one namespace
      * @param isRefusal    whether a failure is a refusal for lack of rights
      * @param parallel     how to run the walk in parallel, or {@code null} to walk one namespace at a time
-     * @return the combined items, cluster order or namespace order
-     * @throws IllegalStateException when a parallel walk exceeds its deadline
+     * @return the combined items, cluster order or namespace order; with {@code parallel}, without the namespaces
+     *         that did not answer before the deadline
      */
     public <T> List<T> listAcrossNamespaces(Resource resource, Supplier<List<T>> clusterWide,
                                             Function<String, List<T>> perNamespace,
@@ -333,15 +335,18 @@ public class NamespaceScope {
         }
         long deadline = System.nanoTime() + parallel.timeout.toNanos();
         List<T> out = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
         try {
-            for (Future<List<T>> f : futures) {
-                out.addAll(f.get(Math.max(0L, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
+            for (int i = 0; i < futures.size(); i++) {
+                Future<List<T>> f = futures.get(i);
+                try {
+                    // Past the deadline, get(0) still returns a result that is already there.
+                    out.addAll(f.get(Math.max(0L, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
+                } catch (TimeoutException e) {
+                    f.cancel(true); // frees the pool if the call has not started yet
+                    skipped.add(namespaces.get(i));
+                }
             }
-            return out;
-        } catch (TimeoutException e) {
-            futures.forEach(f -> f.cancel(true));
-            throw new IllegalStateException("Listing " + resource.apiName() + " in " + namespaces.size()
-                    + " namespaces did not finish within " + parallel.timeout.getSeconds() + " s", e);
         } catch (ExecutionException e) {
             futures.forEach(f -> f.cancel(true));
             Throwable cause = e.getCause();
@@ -359,6 +364,12 @@ public class NamespaceScope {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while listing " + resource.apiName(), e);
         }
+        if (!skipped.isEmpty()) {
+            LOG.warn("Listing {}: {} of {} namespace(s) did not answer within {} s and are left out: {}",
+                    resource.apiName(), skipped.size(), namespaces.size(), parallel.timeout.getSeconds(),
+                    skipped.size() <= 20 ? skipped : skipped.subList(0, 20) + " ...");
+        }
+        return out;
     }
 
     /**
@@ -380,7 +391,7 @@ public class NamespaceScope {
             source = listProjectsOrNull();
         }
         if (source == null) {
-            source = listNamespaces();
+            source = listNamespaces(false);
         }
         List<String> names = Collections.unmodifiableList(source.stream()
                 .map(n -> n.name)
@@ -402,6 +413,10 @@ public class NamespaceScope {
      * @return namespace descriptions
      */
     public List<KubeNamespace> listNamespaces() {
+        return listNamespaces(true);
+    }
+
+    private List<KubeNamespace> listNamespaces(boolean tryProjects) {
         final long gen = generation.get();
         RefusalKey key = new RefusalKey(Resource.NAMESPACES, null);
         if (!isRefused(key)) {
@@ -416,7 +431,7 @@ public class NamespaceScope {
                 recordRefusal(gen, key, e);
             }
         }
-        if (openShift.getAsBoolean()) {
+        if (tryProjects && openShift.getAsBoolean()) {
             List<KubeNamespace> projects = listProjectsOrNull();
             if (projects != null) {
                 return projects;

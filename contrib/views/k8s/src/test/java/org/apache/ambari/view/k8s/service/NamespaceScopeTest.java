@@ -298,12 +298,12 @@ class NamespaceScopeTest {
   }
 
   @Test
-  void parallelWalkFailsWhenItExceedsItsDeadline() throws Exception {
+  void parallelWalkLeavesOutNamespacesThatMissTheDeadline() {
     forbidden("/api/v1/namespaces", 1);
     projects();
     java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
     try {
-      IllegalStateException e = assertThrows(IllegalStateException.class, () -> scope.listAcrossNamespaces(Resource.SECRETS,
+      List<String> listed = scope.listAcrossNamespaces(Resource.SECRETS,
           () -> { throw new KubernetesClientException("x", 403, null); },
           ns -> {
             if (ns.equals("team-b")) {
@@ -311,11 +311,42 @@ class NamespaceScopeTest {
             }
             return List.of(ns);
           },
-          NamespaceScope::isForbidden, new NamespaceScope.Parallel(pool, java.time.Duration.ofMillis(300))));
-      assertTrue(e.getMessage().contains("did not finish within"), e.getMessage());
+          NamespaceScope::isForbidden, new NamespaceScope.Parallel(pool, java.time.Duration.ofMillis(300)));
+      assertEquals(List.of("team-a"), listed, "the namespace that answered is kept, the slow one is left out");
     } finally {
       pool.shutdownNow();
     }
+  }
+
+  @Test
+  void parallelWalkDeadlineCountsTimeQueuedBehindOtherWork() throws Exception {
+    forbidden("/api/v1/namespaces", 1);
+    projects();
+    java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+    java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+    pool.submit(() -> { release.await(); return null; }); // another walk holds the only thread
+    try {
+      List<String> listed = scope.listAcrossNamespaces(Resource.SECRETS,
+          () -> { throw new KubernetesClientException("x", 403, null); },
+          List::of,
+          NamespaceScope::isForbidden, new NamespaceScope.Parallel(pool, java.time.Duration.ofMillis(200)));
+      assertEquals(List.of(), listed, "nothing answered in time: an empty listing, not a hung request");
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
+  }
+
+  @Test
+  void aWalkListsTheProjectsOnlyOnce() {
+    forbidden("/api/v1/namespaces", 1);
+    server.expect().get().withPath("/apis/project.openshift.io/v1/projects").andReturn(403, new StatusBuilder()
+        .withCode(403).withReason("Forbidden").withMessage("projects is forbidden: User \"u\" cannot list").build()).always();
+    known = List.of("apps");
+    int start = server.getRequestCount();
+
+    assertEquals(List.of("apps"), scope.namespacesToWalk());
+    assertEquals(start + 2, server.getRequestCount(), "one project listing and one namespace listing");
   }
 
   @Test

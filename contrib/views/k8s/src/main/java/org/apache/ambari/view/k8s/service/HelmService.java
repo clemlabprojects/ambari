@@ -145,8 +145,9 @@ public class HelmService {
     private static final int PER_NAMESPACE_LIST_PARALLELISM = 4;
 
     /**
-     * Deadline for listing every namespace one by one. A Helm call blocked inside the native library cannot be
-     * interrupted; the deadline at least returns an error to the caller instead of holding its request thread.
+     * Deadline for listing every namespace one by one; namespaces that have not answered by then are left out of the
+     * listing (logged as a warning). A Helm call blocked inside the native library cannot be interrupted and keeps
+     * its pool thread until it returns; the deadline keeps the caller's request thread from waiting on it.
      */
     private static final Duration PER_NAMESPACE_LIST_TIMEOUT = Duration.ofSeconds(60);
 
