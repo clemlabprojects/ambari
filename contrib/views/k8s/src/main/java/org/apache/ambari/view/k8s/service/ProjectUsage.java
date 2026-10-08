@@ -44,6 +44,10 @@ import java.util.Objects;
  * limits that resource with the same kind of quota (all {@code limits.*}, or all {@code requests.*}); otherwise CPU
  * and memory are measured against what the running pods of those projects request, and pods against nothing.
  * Pods that request nothing (best-effort) count in the usage but add nothing to the requests.
+ *
+ * <p>Approximations: the pod count is of running pods while a {@code pods} quota also counts pending ones; and a
+ * quota restricted to some pods ({@code scopes} or {@code scopeSelector}, e.g. BestEffort or a priority class) is
+ * treated as covering the whole project. Project templates rarely use either.
  */
 public final class ProjectUsage {
 

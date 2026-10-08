@@ -812,7 +812,9 @@ public class KubernetesService {
             // Node pod capacity says nothing about a project's allotment: use its pod quota, else its pods.
             podDenominator = projectUsage.pods().basis() == ProjectUsage.Basis.QUOTA ? projectUsage.pods().total() : podItems.size();
         }
-        ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(runningPods.size(), podDenominator);
+        ClusterStats.ResourceStat podStatistics = new ClusterStats.ResourceStat(
+                // Project scope: count the pods of the projects measured, the same ones the pod total covers.
+                projectUsage != null ? projectUsage.pods().used() : runningPods.size(), podDenominator);
         ClusterStats.ResourceStat nodeStatistics = new ClusterStats.ResourceStat(readyNodesCount, nodeList.getItems().size());
         
         // Helm stats (best-effort): list releases using the helm client. If it fails, keep zeros.
