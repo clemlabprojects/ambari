@@ -165,6 +165,19 @@ const ConfigurationPage: React.FC = () => {
         }
     };
 
+    // The reason the server gave for a failed call: fetchJson errors read "HTTP <code> – <body>", with a JSON body.
+    const serverReason = (e: any, fallback: string): string => {
+        const text: string = e?.message || '';
+        const start = text.indexOf('{');
+        if (start >= 0) {
+            try {
+                const body = JSON.parse(text.slice(start));
+                return body?.error || body?.message || text;
+            } catch { /* not JSON: keep the text */ }
+        }
+        return text || fallback;
+    };
+
     // After a kubeconfig is uploaded, offer the operator a choice of which context (cluster) this
     // view instance should target. A single context is selected silently; multiple opens a picker.
     const promptContextSelection = React.useCallback(async () => {
@@ -183,7 +196,7 @@ const ConfigurationPage: React.FC = () => {
             setChosenContext(preferred?.name);
             setContextModalOpen(true);
         } catch (e) {
-            console.warn('Could not load kubeconfig contexts', e);
+            message.error(serverReason(e, 'Could not use the kubeconfig contexts.'));
         }
     }, [fetchData]);
 
@@ -196,7 +209,7 @@ const ConfigurationPage: React.FC = () => {
             setContextModalOpen(false);
             void fetchData(true);
         } catch (e) {
-            message.error('Failed to set the selected context.');
+            message.error(serverReason(e, 'Failed to set the selected context.'));
         } finally {
             setSavingContext(false);
         }
@@ -403,7 +416,10 @@ const ConfigurationPage: React.FC = () => {
         showUploadList: true,
         onChange(uploadInfo: any) {
             if (uploadInfo.file.status === 'done') {
-                message.success(`${uploadInfo.file.name} uploaded. Proceed to authentication or go to the dashboard.`);
+                let warning: string | undefined;
+                try { warning = JSON.parse(String(uploadInfo.file.response ?? ''))?.warning; } catch { /* plain text */ }
+                if (warning) message.warning(warning, 10);
+                else message.success(`${uploadInfo.file.name} uploaded. Proceed to authentication or go to the dashboard.`);
                 setClusterStatus('connected');
                 setCurrentStep(1);
                 setClusterStepCompleted(true);

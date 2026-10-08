@@ -166,8 +166,18 @@ public class KubeService {
             ViewConfigurationService configurationService = this.getConfigService();
 
             LOG.info("/cluster/config: Received kubeconfig upload request.");
+            // Check the file before it replaces the saved one: an unreadable upload must not break a working view.
+            byte[] uploaded = fileInputStream.readAllBytes();
+            io.fabric8.kubernetes.api.model.Config kubeconfig = parseKubeconfig(uploaded);
+            if (kubeconfig == null) {
+                return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                        "This file is not a valid kubeconfig; the previous configuration is unchanged.")).build();
+            }
+            java.util.List<String> contextNames = kubeconfig.getContexts() == null ? java.util.List.of()
+                    : kubeconfig.getContexts().stream().map(io.fabric8.kubernetes.api.model.NamedContext::getName)
+                        .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toList());
             // Use a static filename since it's no longer provided by the request
-            File configurationFile = configurationService.saveKubeconfigFile(fileInputStream, "kubeconfig.yaml");
+            File configurationFile = configurationService.saveKubeconfigFile(new java.io.ByteArrayInputStream(uploaded), "kubeconfig.yaml");
 
             LOG.info("Kubeconfig successfully saved to {}", configurationFile.getAbsolutePath());
             LOG.info("Configuring Apache Ambari View Backend CA bundle");
@@ -176,17 +186,27 @@ public class KubeService {
             // A context chosen for the previous kubeconfig may not exist in this one: fall back to the new file's
             // current-context (the operator is then offered the context list) instead of failing to connect.
             String selectedContext = configurationService.getSelectedContext();
-            if (selectedContext != null && !selectedContext.isBlank()
-                    && this.getKubernetesService().listAvailableContexts().stream()
-                        .noneMatch(c -> selectedContext.equals(c.get("name")))) {
+            if (selectedContext != null && !selectedContext.isBlank() && !contextNames.contains(selectedContext)) {
                 LOG.info("/cluster/config: selected context '{}' is not in the new kubeconfig; using its current-context",
                         selectedContext);
                 configurationService.saveSelectedContext(null);
+                selectedContext = null;
             }
             // Rebuild the client from the kubeconfig just saved. A plain reload keeps an existing client, so a
             // view that was already connected would go on using the previous account until Ambari restarts.
             Response notConnected = reconnect("The kubeconfig was saved");
             if (notConnected != null) {
+                boolean contextNotChosenYet = selectedContext == null || selectedContext.isBlank();
+                if (contextNotChosenYet && contextNames.size() > 1
+                        && notConnected.getStatus() == Response.Status.SERVICE_UNAVAILABLE.getStatusCode()) {
+                    // A kubeconfig with several contexts often has a current-context pointing elsewhere (another
+                    // cluster, a local one). Keep it and let the operator choose the context; that choice reconnects.
+                    Object reason = ((Map<?, ?>) notConnected.getEntity()).get("error");
+                    return Response.ok(Map.of(
+                            "message", "Configuration saved.",
+                            "warning", reason + " The kubeconfig has " + contextNames.size()
+                                    + " contexts: choose the one to use.")).build();
+                }
                 return notConnected;
             }
             // The keytab webhook prerequisites (its namespace, mTLS Secrets, CA bundle) only matter in the
@@ -219,6 +239,18 @@ public class KubeService {
         } catch (IOException e) {
             LOG.error("Error while saving uploaded kubeconfig file", e);
             return Response.serverError().entity("Error while saving the file.").build();
+        }
+    }
+
+    /** The uploaded bytes as a kubeconfig, or {@code null} when they are not one. */
+    private static io.fabric8.kubernetes.api.model.Config parseKubeconfig(byte[] bytes) {
+        try {
+            Object parsed = io.fabric8.kubernetes.client.utils.Serialization.unmarshal(
+                    new String(bytes, java.nio.charset.StandardCharsets.UTF_8), io.fabric8.kubernetes.api.model.Config.class);
+            return parsed instanceof io.fabric8.kubernetes.api.model.Config c ? c : null;
+        } catch (RuntimeException e) {
+            LOG.warn("/cluster/config: uploaded file is not a kubeconfig: {}", e.toString());
+            return null;
         }
     }
 
@@ -282,8 +314,15 @@ public class KubeService {
         new AuthHelper(viewContext).checkConfigurationPermission();
         String context = body == null ? null : body.get("context");
         LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
-        if (context != null && !context.isBlank()
-                && this.getKubernetesService().listAvailableContexts().stream().noneMatch(c -> context.equals(c.get("name")))) {
+        java.util.List<java.util.Map<String, Object>> available;
+        try {
+            available = this.getKubernetesService().listAvailableContexts();
+        } catch (RuntimeException e) {
+            LOG.warn("/cluster/context: the saved kubeconfig cannot be read: {}", e.toString());
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    "The saved kubeconfig cannot be read; upload it again.")).build();
+        }
+        if (context != null && !context.isBlank() && available.stream().noneMatch(c -> context.equals(c.get("name")))) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
                     "Context '" + context + "' is not in the uploaded kubeconfig.")).build();
         }
