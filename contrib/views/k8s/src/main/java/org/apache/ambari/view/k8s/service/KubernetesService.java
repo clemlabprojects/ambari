@@ -3226,8 +3226,12 @@ public class KubernetesService {
                 + " -o yaml | grep -A5 finalizers` — common culprits are pending CRD instances or admission webhooks.");
     }
 
-    /** How long a replaced client stays open so that calls already running on it can finish. */
-    static final long RETIRED_CLIENT_GRACE_SECONDS = 60;
+    /**
+     * How long a replaced client stays open so that calls already running on it can finish. Longer than the longest
+     * call made with the client (commands run inside pods during deploys allow up to 120 s); an idle client costs
+     * little.
+     */
+    static final long RETIRED_CLIENT_GRACE_SECONDS = 300;
 
     /** Closes replaced clients once their grace period is over. */
     private static final java.util.concurrent.ScheduledExecutorService CLIENT_RETIREMENT =
@@ -6065,7 +6069,7 @@ public class KubernetesService {
     public static void shutdownStaticExecutors() {
         LOG.info("Shutting down KubernetesService static executor pools");
         HelmService.shutdownExecutor();
-        CLIENT_RETIREMENT.shutdown(); // pending closes are dropped: the JVM is going away
+        CLIENT_RETIREMENT.shutdownNow(); // the JVM is going away: replaced clients need no orderly close
         
         if (METRICS_POOL != null) {
             METRICS_POOL.shutdown();
