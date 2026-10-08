@@ -167,7 +167,11 @@ public class KubeService {
 
             LOG.info("/cluster/config: Received kubeconfig upload request.");
             // Check the file before it replaces the saved one: an unreadable upload must not break a working view.
-            byte[] uploaded = fileInputStream.readAllBytes();
+            byte[] uploaded = fileInputStream.readNBytes(MAX_KUBECONFIG_BYTES + 1);
+            if (uploaded.length > MAX_KUBECONFIG_BYTES) {
+                return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                        "This file is too large to be a kubeconfig; the previous configuration is unchanged.")).build();
+            }
             io.fabric8.kubernetes.api.model.Config kubeconfig = parseKubeconfig(uploaded);
             if (kubeconfig == null) {
                 return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
@@ -242,12 +246,23 @@ public class KubeService {
         }
     }
 
-    /** The uploaded bytes as a kubeconfig, or {@code null} when they are not one. */
+    /** Upper bound for an uploaded kubeconfig; real ones are a few kilobytes. */
+    private static final int MAX_KUBECONFIG_BYTES = 1024 * 1024;
+
+    /**
+     * The uploaded bytes as a kubeconfig, or {@code null} when they are not one. Any YAML maps onto the Config model,
+     * so the document must also declare {@code kind: Config} and at least one cluster.
+     */
     private static io.fabric8.kubernetes.api.model.Config parseKubeconfig(byte[] bytes) {
         try {
             Object parsed = io.fabric8.kubernetes.client.utils.Serialization.unmarshal(
                     new String(bytes, java.nio.charset.StandardCharsets.UTF_8), io.fabric8.kubernetes.api.model.Config.class);
-            return parsed instanceof io.fabric8.kubernetes.api.model.Config c ? c : null;
+            if (!(parsed instanceof io.fabric8.kubernetes.api.model.Config c)
+                    || !"Config".equals(c.getKind())
+                    || c.getClusters() == null || c.getClusters().isEmpty()) {
+                return null;
+            }
+            return c;
         } catch (RuntimeException e) {
             LOG.warn("/cluster/config: uploaded file is not a kubeconfig: {}", e.toString());
             return null;

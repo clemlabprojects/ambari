@@ -420,7 +420,8 @@ const ConfigurationPage: React.FC = () => {
                 try { warning = JSON.parse(String(uploadInfo.file.response ?? ''))?.warning; } catch { /* plain text */ }
                 if (warning) message.warning(warning, 10);
                 else message.success(`${uploadInfo.file.name} uploaded. Proceed to authentication or go to the dashboard.`);
-                setClusterStatus('connected');
+                // With a warning the file is saved but not yet connected: the context choice that follows connects.
+                if (!warning) setClusterStatus('connected');
                 setCurrentStep(1);
                 setClusterStepCompleted(true);
                 void fetchData(true);

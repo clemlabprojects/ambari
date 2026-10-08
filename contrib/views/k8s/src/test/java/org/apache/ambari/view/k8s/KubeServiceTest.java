@@ -93,7 +93,7 @@ class KubeServiceTest {
     return api;
   }
 
-  private static final String KUBECONFIG = "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n";
+  private static final String KUBECONFIG = kubeconfigWithContexts("only");
 
   private Response upload(KubeService api) {
     return upload(api, KUBECONFIG);
@@ -255,5 +255,28 @@ class KubeServiceTest {
     Response r = api.selectKubeconfigContext(Map.of("context", "x"));
     assertEquals(400, r.getStatus());
     assertEquals("The saved kubeconfig cannot be read; upload it again.", error(r));
+  }
+
+  @Test
+  void otherYamlIsNotTakenForAKubeconfig(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+
+    Response values = upload(api, "replicaCount: 2\nimage:\n  tag: latest\n");
+    Response secret = upload(api, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: x\n");
+    Response noCluster = upload(api, "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n");
+    assertEquals(400, values.getStatus());
+    assertEquals(400, secret.getStatus());
+    assertEquals(400, noCluster.getStatus());
+    verifyNoInteractions(k8s);
+  }
+
+  @Test
+  void oversizedUploadIsRefused(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+
+    Response r = upload(api, "# " + "x".repeat(1024 * 1024 + 10));
+    assertEquals(400, r.getStatus());
+    assertTrue(error(r).contains("too large"), error(r));
+    verifyNoInteractions(k8s);
   }
 }
