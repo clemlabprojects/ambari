@@ -33,9 +33,33 @@ angular.module('ambariAdminConsole')
    * the view is absent or not visible, so a stock Ambari is unaffected.
    */
   $scope.kdpsViewUrl = null;
+
+  /** Compares dotted view versions ("1.0.0.10" > "1.0.0.9"); same rule as ambari-web's compareViewVersions. */
+  function compareViewVersions(a, b) {
+    var pa = String(a || '').split('.'), pb = String(b || '').split('.');
+    var n = Math.max(pa.length, pb.length);
+    for (var i = 0; i < n; i++) {
+      var sa = pa[i] || '0', sb = pb[i] || '0';
+      var na = parseInt(sa, 10), nb = parseInt(sb, 10);
+      var bothNumeric = String(na) === sa && String(nb) === sb;
+      if (bothNumeric) {
+        if (na !== nb) {
+          return na - nb;
+        }
+      } else if (sa !== sb) {
+        return sa < sb ? -1 : 1;
+      }
+    }
+    return 0;
+  }
+
   $http.get(Settings.baseUrl + '/views/K8S-VIEW?fields=versions/instances/ViewInstanceInfo')
     .then(function (resp) {
-      var versions = (resp.data && resp.data.versions) || [];
+      // Several versions can be deployed at once (an older jar left after an upgrade): open the newest, as the
+      // Ambari dashboard's KDPS button does, so a version bump never sends users to a stale instance.
+      var versions = ((resp.data && resp.data.versions) || []).slice().sort(function (a, b) {
+        return compareViewVersions((b.ViewVersionInfo || {}).version, (a.ViewVersionInfo || {}).version);
+      });
       for (var i = 0; i < versions.length; i++) {
         var instances = versions[i].instances || [];
         for (var j = 0; j < instances.length; j++) {
