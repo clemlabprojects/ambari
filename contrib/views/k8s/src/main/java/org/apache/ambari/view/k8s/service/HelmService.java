@@ -127,6 +127,23 @@ public class HelmService {
         return releases;
     }
 
+    /**
+     * Whether Helm should create the release namespace ({@code --create-namespace}). Only when it does not exist:
+     * Helm sends the creation request even for an existing namespace, and an account limited to its own projects is
+     * refused on rights before existence is considered, failing every install into a pre-provisioned project.
+     */
+    private boolean helmShouldCreateNamespace(String namespace) {
+        if (namespace == null || namespace.isBlank()) {
+            return true;
+        }
+        try {
+            return namespaceScope.get().namespaceMissing(namespace);
+        } catch (RuntimeException e) {
+            LOG.debug("Namespace check unavailable, letting Helm create {} if needed: {}", namespace, e.toString());
+            return true;
+        }
+    }
+
     /** Helm's own order for "list in all namespaces": by release name, then namespace. */
     private static final Comparator<Release> RELEASE_ORDER = Comparator
             .comparing(Release::getName, Comparator.nullsLast(Comparator.naturalOrder()))
@@ -407,6 +424,7 @@ public class HelmService {
                 LOG.info("Release doesn't exist → install: chartRef={}, ns={}, name={}, version={}, dryRun={}", chartRef, namespace, releaseName, versionOpt, dryRun);
                 LOG.info("Passing ars: chartWithVersionArg='{}', releaseName='{}', namespace='{}', kubeconfig='{}', timeoutSec={}, wait={}, atomic={}, dryRun={}'",
                         chartWithVersionArg, releaseName, namespace, (kubeconfig != null ? "[PROVIDED]" : "[NULL]"), timeoutSec, wait, atomic, dryRun);
+                final boolean createNamespace = helmShouldCreateNamespace(namespace);
                 // Log an equivalent helm CLI for debugging/audit (values shown as map if present)
                 {
                     List<String> parts = new ArrayList<>();
@@ -427,7 +445,7 @@ public class HelmService {
 
                     parts.add("--namespace");
                     parts.add(q.apply(namespace));
-                    parts.add("--create-namespace");
+                    if (createNamespace) parts.add("--create-namespace");
 
                     if (wait) parts.add("--wait");
                     if (atomic) parts.add("--atomic");
@@ -471,7 +489,7 @@ public class HelmService {
                         kubeconfig,
                         finalValues,
                         timeoutSec,
-                        /*createNs*/ true,
+                        /*createNs*/ createNamespace,
                         /*wait*/ wait,
                         /*atomic*/ atomic,
                         /*dryRun*/ dryRun
@@ -543,7 +561,7 @@ public class HelmService {
                             kubeconfig,
                             finalValues,
                             timeoutSec,
-                            /*createNs*/ true,
+                            /*createNs*/ helmShouldCreateNamespace(namespace),
                             /*wait*/ wait,
                             /*atomic*/ atomic,
                             /*dryRun*/ dryRun
