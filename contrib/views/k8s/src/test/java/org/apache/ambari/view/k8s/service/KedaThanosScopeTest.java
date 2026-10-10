@@ -254,4 +254,15 @@ class KedaThanosScopeTest {
     ((Map<String, Object>) ((Map<String, Object>) v.get("server")).get("keda")).put("enabled", true);
     assertNull(KedaThanosScope.autoscalingWithoutMetrics(v), "a chart without ServiceMonitor settings is not judged");
   }
+
+  @Test
+  void roleSettingsOverrideTheTopLevelServiceMonitorSwitch() {
+    assertTrue(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor",
+        Map.of("enabled", false, "coordinator", Map.of("enabled", true)))), "the chart renders the coordinator's");
+    assertFalse(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor",
+        Map.of("enabled", false, "coordinator", Map.of("enabled", false), "worker", Map.of("enabled", false)))));
+    assertTrue(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor", Map.of("enabled", true, "worker", Map.of()))));
+    assertFalse(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor",
+        Map.of("enabled", true, "coordinator", Map.of("enabled", false), "worker", Map.of("enabled", false)))));
+  }
 }

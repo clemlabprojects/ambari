@@ -1077,7 +1077,10 @@
         {
           "path": "serviceMonitor.coordinator.enabled",
           "op": "set",
-          "value": true
+          "from": {
+            "type": "form",
+            "field": "serviceMonitor.enabled"
+          }
         },
         {
           "path": "serviceMonitor.coordinator.endpoints[]",
@@ -1094,7 +1097,10 @@
         {
           "path": "serviceMonitor.worker.enabled",
           "op": "set",
-          "value": true
+          "from": {
+            "type": "form",
+            "field": "serviceMonitor.enabled"
+          }
         },
         {
           "path": "serviceMonitor.worker.endpoints[]",

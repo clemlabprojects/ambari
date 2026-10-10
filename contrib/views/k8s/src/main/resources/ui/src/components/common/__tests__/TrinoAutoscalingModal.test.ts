@@ -26,9 +26,9 @@ describe('worker scaling of a deployed release', () => {
   });
 
   it('turning it on turns metrics collection back on, which the autoscaler reads', () => {
-    const next = valuesWithScaling({ server: {}, serviceMonitor: { enabled: false, interval: '30s' } },
+    const next = valuesWithScaling({ server: {}, serviceMonitor: { enabled: false, interval: '30s', coordinator: { enabled: false } } },
       { enabled: true, workers: 2, minWorkers: 1, maxWorkers: 4 });
-    expect(next.serviceMonitor).toEqual({ enabled: true, interval: '30s' });
+    expect(next.serviceMonitor).toEqual({ enabled: true, interval: '30s', coordinator: { enabled: true } });
   });
 
   it('turning it on sets the bounds', () => {
@@ -56,6 +56,11 @@ describe('Trino wizard autoscaling fields', () => {
     expect(monitorFields.map((g: any) => g.capability).sort()).toEqual(['kubernetes', 'openshift']);
     const smEnable = svc.bindings.find((b: any) => b.name === 'service-monitor-enable');
     expect(smEnable.targets.map((t: any) => t.path)).not.toContain('serviceMonitor.enabled');
+    // the chart lets the role settings override the switch: they must follow it
+    for (const role of ['coordinator', 'worker']) {
+      const target = smEnable.targets.find((t: any) => t.path === `serviceMonitor.${role}.enabled`);
+      expect(target.from).toEqual({ type: 'form', field: 'serviceMonitor.enabled' });
+    }
   });
 
   it('no binding forces autoscaling on anymore, and KEDA is installed only when it is on', () => {

@@ -114,8 +114,7 @@ public final class KedaThanosScope {
      */
     public static String autoscalingWithoutMetrics(Map<String, Object> values) {
         Object sm = values == null ? null : values.get("serviceMonitor");
-        boolean metricsOff = sm instanceof Map<?, ?> m && m.containsKey("enabled")
-                && !Boolean.parseBoolean(String.valueOf(m.get("enabled")));
+        boolean metricsOff = sm instanceof Map<?, ?> m && m.containsKey("enabled") && !serviceMonitorsEnabled(values);
         if (kedaEnabled(values) && metricsOff) {
             return "Worker autoscaling needs the service's metrics, but metrics collection (ServiceMonitor) is off. "
                     + "Turn metrics collection on, or turn worker autoscaling off.";
@@ -123,9 +122,21 @@ public final class KedaThanosScope {
         return null;
     }
 
-    /** Whether the chart values create Prometheus ServiceMonitors ({@code serviceMonitor.enabled}). */
+    /**
+     * Whether the chart values create Prometheus ServiceMonitors: {@code serviceMonitor.enabled}, overridden per role
+     * by {@code serviceMonitor.coordinator.enabled} / {@code serviceMonitor.worker.enabled} (the chart merges the role
+     * settings over the top-level ones).
+     */
     public static boolean serviceMonitorsEnabled(Map<String, Object> values) {
         Object sm = values == null ? null : values.get("serviceMonitor");
-        return sm instanceof Map<?, ?> m && Boolean.parseBoolean(String.valueOf(m.get("enabled")));
+        if (!(sm instanceof Map<?, ?> m)) return false;
+        boolean top = Boolean.parseBoolean(String.valueOf(m.get("enabled")));
+        for (String role : new String[]{"coordinator", "worker"}) {
+            Object r = m.get(role);
+            boolean roleOn = r instanceof Map<?, ?> rm && rm.containsKey("enabled")
+                    ? Boolean.parseBoolean(String.valueOf(rm.get("enabled"))) : top;
+            if (roleOn) return true;
+        }
+        return false;
     }
 }
