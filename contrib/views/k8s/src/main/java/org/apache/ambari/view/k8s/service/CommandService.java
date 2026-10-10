@@ -5639,6 +5639,21 @@ public class CommandService {
                             continue;
                         }
                     }
+                    // Reuse a Prometheus already running, whatever namespace or release name it was installed under,
+                    // instead of a second kube-prometheus-stack competing with its operator.
+                    if (asBoolean(depSkipMap.get("skipIfPrometheusPresent"), false)) {
+                        List<PrometheusDiscovery.Instance> running = this.kubernetesService.listPrometheusInstances();
+                        if (!running.isEmpty()) {
+                            PrometheusDiscovery.Instance first = running.get(0);
+                            LOG.info("Skipping dependency '{}' — {} Prometheus instance(s) already running (e.g. {}/{}).",
+                                    dependencyReleaseName, running.size(), first.namespace(), first.name());
+                            this.commandPlanFactory.createDependencySatisfiedCommand(
+                                    rootCommand, dependencyReleaseName, depSkipMap,
+                                    "Skipped — Prometheus " + first.namespace() + "/" + first.name()
+                                            + " is already running; reusing it.");
+                            continue;
+                        }
+                    }
                 }
 
                 if (skipIfReleaseExists && dependencyReleaseName != null && dependencyNamespace != null) {

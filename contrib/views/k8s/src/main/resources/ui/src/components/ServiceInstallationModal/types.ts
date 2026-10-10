@@ -9,7 +9,8 @@ export type BindingTarget =
       op?: 'set' | 'merge';
       value?: any;
       from?: { type: 'mountPath'; mountKey: string; suffix?: string }
-          | { type: 'form'; field: string; suffix?: string };
+          // format 'labels': the form holds "key=value, key2=value2"; the target receives { key: value, ... }
+          | { type: 'form'; field: string; suffix?: string; format?: 'labels' };
     };
 
 export type BindingSpec = BindingSpecBase & { targets?: BindingTarget[] };

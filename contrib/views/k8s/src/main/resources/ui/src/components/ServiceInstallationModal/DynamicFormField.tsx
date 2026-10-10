@@ -17,7 +17,7 @@
  */
 
 import React from 'react';
-import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography } from 'antd';
+import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography, message } from 'antd';
 import type { FormField, ExternalAuthTargetFormField } from '../../types/ServiceTypes';
 import ServiceSelect from './ServiceSelect';
 import TrinoCatalogSelect from './TrinoCatalogSelect';
@@ -25,6 +25,7 @@ import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
 import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
 import { FieldSyncContext } from './fieldSync';
+import { formatLabels } from './bindings';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
@@ -166,10 +167,15 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
               if (parsed?.namespace || parsed?.release) {
                 form.setFieldsValue({
                   monitoring: {
+                    ...(form.getFieldValue('monitoring') || {}),
                     namespace: parsed.namespace,
                     release: parsed.release,
+                    url: parsed.url || '',
+                    serviceMonitorLabels: formatLabels(parsed.serviceMonitorLabels),
                   },
                 });
+                // e.g. a Prometheus that only reads ServiceMonitors from its own namespace
+                if (parsed.warning) message.warning(parsed.warning, 8);
               }
             } catch (e) {
               // ignore parse errors

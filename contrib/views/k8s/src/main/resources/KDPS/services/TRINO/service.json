@@ -168,6 +168,7 @@
       "chart": "kube-prometheus-stack",
       "chartVersion": "78.3.2",
       "skipIfReleaseExists": true,
+      "skipIfPrometheusPresent": true,
       "skipOnOpenShift": true,
       "crds": [
         "servicemonitors.monitoring.coreos.com"
@@ -548,7 +549,8 @@
     },
     {
       "name": "prometheus.serverAddress",
-      "template": "http://${monitoring.release}-prometheus.${monitoring.namespace}.svc:9090"
+      "template": "http://${monitoring.release}-prometheus.${monitoring.namespace}.svc:9090",
+      "overrideField": "monitoring.url"
     },
     {
       "comment": "OpenShift: worker autoscaling reads metrics from the platform's built-in (user-workload) monitoring via the thanos-querier CLUSTER endpoint (:9091). The KEDA SA is bound to cluster-monitoring-view, so :9091 is the correct port (the :9092 tenancy port returns HTTP 400 for a cluster-view token and needs a per-request namespace param KEDA does not send). Verified on CRC: :9091 + bearer token returns the trino_* metrics. On vanilla K8s the kube-prometheus-stack address above is used instead.",
@@ -1133,6 +1135,15 @@
           "from": {
             "type": "form",
             "field": "monitoring.release"
+          }
+        },
+        {
+          "path": "serviceMonitor.labels",
+          "op": "merge",
+          "from": {
+            "type": "form",
+            "field": "monitoring.serviceMonitorLabels",
+            "format": "labels"
           }
         }
       ]
@@ -1826,7 +1837,7 @@
           "label": "Discover monitoring stack",
           "type": "monitoring-discovery",
           "excludeFromValues": true,
-          "help": "Auto-fill monitoring namespace and release from installed kube-prometheus-stack."
+          "help": "Finds the Prometheus already running on the cluster (any namespace, any release name) and fills the fields below from it."
         },
         {
           "name": "monitoring.namespace",
@@ -1839,7 +1850,15 @@
           "label": "Monitoring release (Helm)",
           "type": "string",
           "defaultValue": "kube-prometheus-stack",
-          "help": "Utilisé pour construire l'URL du Prometheus interne."
+          "help": "Release of the Prometheus stack: builds the Prometheus address when none is given below, and is put on the ServiceMonitors as their release label."
+        },
+        {
+          "name": "monitoring.url",
+          "label": "Prometheus address",
+          "type": "string",
+          "excludeFromValues": true,
+          "defaultValue": "",
+          "help": "Address the autoscaler queries, filled by discovery. Leave blank to use http://<release>-prometheus.<namespace>.svc:9090."
         },
         {
           "name": "serviceMonitor.enabled",
@@ -1854,10 +1873,12 @@
           "defaultValue": "30s"
         },
         {
-          "name": "serviceMonitor.labels.release",
-          "label": "Prometheus selector label value",
+          "name": "monitoring.serviceMonitorLabels",
+          "label": "ServiceMonitor labels",
           "type": "string",
-          "defaultValue": ""
+          "excludeFromValues": true,
+          "defaultValue": "",
+          "help": "Labels the Prometheus selects ServiceMonitors by, as key=value pairs separated by commas. Filled by discovery."
         }
       ]
     },

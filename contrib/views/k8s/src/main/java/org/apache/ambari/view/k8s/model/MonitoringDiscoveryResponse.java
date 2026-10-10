@@ -27,6 +27,10 @@ public class MonitoringDiscoveryResponse {
     public String url;
     public String state;
     public String message;
+    /** Labels a ServiceMonitor must carry for the discovered Prometheus to scrape it. */
+    public java.util.Map<String, String> serviceMonitorLabels;
+    /** Why the discovered Prometheus may not scrape a new service, or {@code null}. */
+    public String warning;
 
     public MonitoringDiscoveryResponse(String namespace, String release, String url) {
         this(namespace, release, url, null, null);

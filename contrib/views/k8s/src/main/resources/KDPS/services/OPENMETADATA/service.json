@@ -91,6 +91,7 @@
       "chart": "kube-prometheus-stack",
       "chartVersion": "78.3.2",
       "skipIfReleaseExists": true,
+      "skipIfPrometheusPresent": true,
       "skipOnOpenShift": true,
       "crds": [
         "servicemonitors.monitoring.coreos.com"
@@ -929,6 +930,15 @@
           "from": {
             "type": "var",
             "name": "monitoringRelease"
+          }
+        },
+        {
+          "path": "serviceMonitor.labels",
+          "op": "merge",
+          "from": {
+            "type": "form",
+            "field": "monitoring.serviceMonitorLabels",
+            "format": "labels"
           }
         },
         {
@@ -1996,7 +2006,7 @@
           "label": "Discover monitoring stack",
           "type": "monitoring-discovery",
           "excludeFromValues": true,
-          "help": "Auto-fill monitoring namespace and release from installed kube-prometheus-stack."
+          "help": "Finds the Prometheus already running on the cluster (any namespace, any release name) and fills the fields below from it."
         },
         {
           "name": "monitoring.namespace",
@@ -2009,6 +2019,14 @@
           "label": "Monitoring release (Helm)",
           "type": "string",
           "defaultValue": "kube-prometheus-stack"
+        },
+        {
+          "name": "monitoring.serviceMonitorLabels",
+          "label": "ServiceMonitor labels",
+          "type": "string",
+          "excludeFromValues": true,
+          "defaultValue": "",
+          "help": "Labels the Prometheus selects ServiceMonitors by, as key=value pairs separated by commas. Filled by discovery."
         },
         {
           "name": "serviceMonitor.enabled",

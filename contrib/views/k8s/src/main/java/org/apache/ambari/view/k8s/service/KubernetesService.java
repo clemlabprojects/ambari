@@ -207,6 +207,15 @@ public class KubernetesService {
     // Monitoring bootstrap defaults
     private static final String DEFAULT_MONITORING_RELEASE = "kube-prometheus-stack";
     private static final String DEFAULT_MONITORING_NAMESPACE = "monitoring";
+    private static final String PROMETHEUS_CRD = "prometheuses.monitoring.coreos.com";
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext PROMETHEUS_RDC =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup("monitoring.coreos.com")
+                    .withVersion("v1")
+                    .withKind("Prometheus")
+                    .withPlural("prometheuses")
+                    .withNamespaced(true)
+                    .build();
     private static final String DEFAULT_MONITORING_CHART = "kube-prometheus-stack";
     private static final String MONITORING_DEFAULT_REPO_FALLBACK_ID = "monitoring-default";
     private static final String MONITORING_DEFAULT_REPO_FALLBACK_NAME = "Monitoring repository";
@@ -1036,7 +1045,12 @@ public class KubernetesService {
     /**
      * Value class for discovered monitoring stack info.
      */
-    public record MonitoringInfo(String namespace, String release, String url) {}
+    public record MonitoringInfo(String namespace, String release, String url,
+                                 Map<String, String> serviceMonitorLabels, String warning) {
+        public MonitoringInfo(String namespace, String release, String url) {
+            this(namespace, release, url, Map.of(), null);
+        }
+    }
     public static class MonitoringSettings {
         public boolean autoBootstrap = true;
         public boolean preferPrometheus = true;
@@ -1225,6 +1239,16 @@ public class KubernetesService {
             LOG.warn("Monitoring discovery: failed to read persisted Prometheus URL: {}", e.getMessage());
         }
 
+        // Any Prometheus run by the Prometheus operator, whatever namespace or release name it was installed under.
+        Optional<PrometheusDiscovery.Instance> instance = PrometheusDiscovery.pick(listPrometheusInstances(), ns);
+        if (instance.isPresent()) {
+            PrometheusDiscovery.Instance found = instance.get();
+            LOG.info("Monitoring discovery: found Prometheus {}/{} (url={}, ServiceMonitor labels={})",
+                    found.namespace(), found.name(), found.url(), found.serviceMonitorLabels());
+            return new MonitoringInfo(found.namespace(), found.release(), found.url(), found.serviceMonitorLabels(),
+                    found.scrapeWarning());
+        }
+
         String svcName = release + "-prometheus";
         try {
             var svc = client.services().inNamespace(ns).withName(svcName).get();
@@ -1239,8 +1263,35 @@ public class KubernetesService {
             LOG.info("Monitoring discovery: found {} in namespace {} (url={})", svcName, ns, url);
             return new MonitoringInfo(ns, release, url);
         } catch (Exception e) {
-            LOG.warn("Monitoring discovery failed: {}", e.getMessage());
+            logDiscoveryFailure("Monitoring discovery", e);
             return null;
+        }
+    }
+
+    /**
+     * The Prometheus instances run by the Prometheus operator that this account can see, in any namespace.
+     *
+     * @return the instances; empty when the operator is not installed or nothing is readable
+     */
+    public List<PrometheusDiscovery.Instance> listPrometheusInstances() {
+        if (client == null) {
+            return List.of();
+        }
+        try {
+            if (!crdExists(PROMETHEUS_CRD)) {
+                return List.of();
+            }
+            var op = client.genericKubernetesResources(PROMETHEUS_RDC);
+            return namespaceScope.listAcrossNamespaces(NamespaceScope.Resource.PROMETHEUSES,
+                            () -> op.inAnyNamespace().list().getItems(),
+                            namespace -> op.inNamespace(namespace).list().getItems())
+                    .stream()
+                    .map(PrometheusDiscovery::fromResource)
+                    .flatMap(Optional::stream)
+                    .toList();
+        } catch (Exception e) {
+            logDiscoveryFailure("listPrometheusInstances", e);
+            return List.of();
         }
     }
 

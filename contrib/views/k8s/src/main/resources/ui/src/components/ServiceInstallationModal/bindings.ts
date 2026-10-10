@@ -184,7 +184,9 @@ export type VariableSpec =
     // "true for anything that is NOT binary" (http / all / unresolved) — the safe default branch.
     // Declare an `equals` var AFTER the variable it references (phase-1 resolution is in array order).
     | { name: string; from: { type: 'equals'; var: string; value: string; negate?: boolean; caseInsensitive?: boolean } }
-    | { name: string; template: string };
+    // `overrideField`: when that form field is non-blank its value wins over the template (e.g. a Prometheus
+    // address filled by discovery overrides the address built from namespace and release).
+    | { name: string; template: string; overrideField?: string };
 
 /**
  * Builds a dictionary of variables (key-value pairs) based on charts.json definitions.
@@ -263,7 +265,8 @@ export const buildVarContext = (
       const composed: Record<string, any> = {};
       deepMerge(composed, formVals || {});
       deepMerge(composed, ctx); // ctx overrides formVals if names collide
-      const val = interpolate(v.template, composed);
+      const override = v.overrideField ? getAtStr(formVals, v.overrideField) : undefined;
+      const val = nonBlank(override) ? String(override).trim() : interpolate(v.template, composed);
       setAtStr(ctx, v.name, val);
     }
   });
@@ -309,6 +312,10 @@ export function valueFromTargetSource(
   // failure mode otherwise).
   if (t.from.type === 'form') {
     const v = getAtStr(formVals, t.from.field);
+    if ((t.from as any).format === 'labels') {
+      const labels = parseLabels(v);
+      return Object.keys(labels).length ? labels : undefined;
+    }
     if (t.from.suffix) {
       return (v == null ? '' : String(v)) + t.from.suffix;
     }
@@ -358,6 +365,23 @@ export function valueFromTargetSource(
    TARGET PATCH GENERATION
    These functions apply the logic defined in charts.json "bindings" to create the final YAML.
    ============================================================================================== */
+
+/** Parses "key=value, key2=value2" (commas or new lines) into a label map; entries without "=" are ignored. */
+export const parseLabels = (raw: any): Record<string, string> => {
+  const labels: Record<string, string> = {};
+  if (raw == null) return labels;
+  for (const part of String(raw).split(/[,\n]/)) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    if (key) labels[key] = part.slice(eq + 1).trim();
+  }
+  return labels;
+};
+
+/** Formats a label map as "key=value, key2=value2" (the inverse of {@link parseLabels}). */
+export const formatLabels = (labels: Record<string, string> | undefined | null): string =>
+  Object.entries(labels || {}).map(([k, v]) => `${k}=${v}`).join(', ');
 
 /** `skipIfVarEmpty` gate: skip when the referenced var is empty. Accepts a single var name or an
  *  array (skip if ANY is empty — i.e. all must be non-empty for the target/binding to apply). */
