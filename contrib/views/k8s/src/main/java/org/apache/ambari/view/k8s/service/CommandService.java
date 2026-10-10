@@ -5576,121 +5576,24 @@ public class CommandService {
             }
             for (Map.Entry<String, Object> dependencyEntry : dependenciesToProcess.entrySet()) {
                 Object dependencySpec = dependencyEntry.getValue();
-                boolean skipIfReleaseExists = false;
-                String dependencyNamespace = null;
-                // Propagate injection mode to dependency steps so they can skip webhook label work.
+                String dependencyReleaseName = dependencyEntry.getKey();
                 if (dependencySpec instanceof Map) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> dependencySpecMap = (Map<String, Object>) dependencySpec;
+                    // Propagate injection mode to dependency steps so they can skip webhook label work.
                     dependencySpecMap.put("kerberosInjectionMode", kerberosInjectionMode);
                     if (kerberosDetectionAvailable) {
                         dependencySpecMap.put("kerberosClusterEnabled", kerberosEnabled);
                     }
-                    skipIfReleaseExists = asBoolean(dependencySpecMap.get("skipIfReleaseExists"), false);
-                    // Let the operator choose where a fresh dependency install lands (and where the
-                    // skipIfReleaseExists check looks) via a form field, instead of a hardcoded namespace.
-                    // e.g. KEDA declares namespaceFromForm=keda.namespace so a cluster whose operators put
-                    // KEDA somewhere other than "keda" is honoured. Falls back to the static namespace.
-                    String depNsFromForm = resolveStringValue(dependencySpecMap.get("namespaceFromForm"), null);
-                    if (depNsFromForm != null && !depNsFromForm.isBlank() && request.getFormValues() != null) {
-                        String chosen = stringValue(ConfigResolutionService.getByDottedPath(request.getFormValues(), depNsFromForm));
-                        if (chosen != null && !chosen.isBlank()) {
-                            dependencySpecMap.put("namespace", chosen);
-                        }
-                    }
-                    dependencyNamespace = resolveStringValue(dependencySpecMap.get("namespace"), null);
-                }
-
-                String dependencyReleaseName = dependencyEntry.getKey();
-
-                // OpenShift: skip dependencies flagged skipOnOpenShift (e.g. kube-prometheus-stack, which
-                // conflicts with the platform's built-in Prometheus operator — same monitoring.coreos.com
-                // CRDs). Trino still autoscales via KEDA against the built-in (user-workload) monitoring.
-                if (dependencySpec instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> depSkipMap = (Map<String, Object>) dependencySpec;
-                    if (asBoolean(depSkipMap.get("skipOnOpenShift"), false) && this.kubernetesService.isOpenShiftCluster()) {
-                        LOG.info("Skipping dependency '{}' on OpenShift (skipOnOpenShift=true)", dependencyReleaseName);
+                    // Where a fresh install lands (and where skipIfReleaseExists looks), e.g. keda.namespace.
+                    DependencyRules.applyNamespaceFromForm(dependencySpecMap, request.getFormValues());
+                    String skipped = DependencyRules.skipReason(dependencyReleaseName, dependencySpecMap, request,
+                            this.kubernetesService, this::dependencyReleaseExists);
+                    if (skipped != null) {
                         this.commandPlanFactory.createDependencySatisfiedCommand(
-                                rootCommand, dependencyReleaseName, depSkipMap,
-                                "Skipped on OpenShift — the platform's built-in monitoring stack is used instead.");
+                                rootCommand, dependencyReleaseName, dependencySpecMap, skipped);
                         continue;
                     }
-                    // A dependency only some settings need, e.g. KEDA only when worker autoscaling is on.
-                    String onlyWhenValueTrue = resolveStringValue(depSkipMap.get("onlyWhenValueTrue"), null);
-                    if (onlyWhenValueTrue != null && !onlyWhenValueTrue.isBlank() && !Boolean.parseBoolean(
-                            String.valueOf(ConfigResolutionService.getByDottedPath(
-                                    request.getValues() == null ? Collections.emptyMap() : request.getValues(),
-                                    onlyWhenValueTrue)))) {
-                        LOG.info("Skipping dependency '{}' — {} is not true for this release.",
-                                dependencyReleaseName, onlyWhenValueTrue);
-                        this.commandPlanFactory.createDependencySatisfiedCommand(
-                                rootCommand, dependencyReleaseName, depSkipMap,
-                                "Skipped — not needed with these settings (" + onlyWhenValueTrue + " is off).");
-                        continue;
-                    }
-                    // Reuse an operator already on the cluster, detected by CRD presence rather than a
-                    // release-name-in-a-fixed-namespace guess. e.g. KEDA declares
-                    // skipIfCrdExists=scaledobjects.keda.sh, so an existing KEDA is honoured whatever
-                    // namespace/release the initial operators used (incl. the OpenShift Custom Metrics
-                    // Autoscaler) and KDPS never installs a conflicting one.
-                    String skipIfCrdExists = resolveStringValue(depSkipMap.get("skipIfCrdExists"), null);
-                    if (skipIfCrdExists != null && !skipIfCrdExists.isBlank()) {
-                        boolean crdPresent = false;
-                        try {
-                            crdPresent = this.kubernetesService.crdExists(skipIfCrdExists);
-                        } catch (Exception crdEx) {
-                            LOG.warn("skipIfCrdExists check for dependency '{}' ({}) failed; proceeding with install: {}",
-                                    dependencyReleaseName, skipIfCrdExists, crdEx.toString());
-                        }
-                        if (crdPresent) {
-                            LOG.info("Skipping dependency '{}' — CRD '{}' is already served (operator present on the cluster).",
-                                    dependencyReleaseName, skipIfCrdExists);
-                            this.commandPlanFactory.createDependencySatisfiedCommand(
-                                    rootCommand, dependencyReleaseName, depSkipMap,
-                                    "Skipped — an existing operator serving '" + skipIfCrdExists + "' was found; reusing it.");
-                            continue;
-                        }
-                    }
-                    // Reuse a Prometheus already running, whatever namespace or release name it was installed under,
-                    // instead of a second kube-prometheus-stack competing with its operator.
-                    // Only when the deploy actually queries it: a Prometheus elsewhere is no use to an autoscaler
-                    // still pointed at the default kube-prometheus-stack address.
-                    if (asBoolean(depSkipMap.get("skipIfPrometheusPresent"), false)) {
-                        String deployAddress = KedaThanosScope.firstTriggerAddress(request.getValues());
-                        Optional<PrometheusDiscovery.Instance> reused = PrometheusDiscovery.reusableFor(
-                                this.kubernetesService.listPrometheusInstances(), deployAddress);
-                        if (reused.isPresent()) {
-                            PrometheusDiscovery.Instance found = reused.get();
-                            LOG.info("Skipping dependency '{}' — Prometheus {}/{} is already running at {}.",
-                                    dependencyReleaseName, found.namespace(), found.name(), found.url());
-                            this.commandPlanFactory.createDependencySatisfiedCommand(
-                                    rootCommand, dependencyReleaseName, depSkipMap,
-                                    "Skipped — Prometheus " + found.namespace() + "/" + found.name()
-                                            + " is already running; reusing it.");
-                            continue;
-                        }
-                    }
-                }
-
-                if (skipIfReleaseExists && dependencyReleaseName != null && dependencyNamespace != null) {
-                    if (dependencyReleaseExists(dependencyNamespace, dependencyReleaseName)) {
-                        String reason = "Dependency already installed as Helm release '" + dependencyReleaseName
-                                + "' in namespace '" + dependencyNamespace + "'";
-                        LOG.info("Skipping dependency install because release exists: {} in {}", dependencyReleaseName, dependencyNamespace);
-                        if (dependencySpec instanceof Map) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> dependencySpecMap = (Map<String, Object>) dependencySpec;
-                            this.commandPlanFactory.createDependencySatisfiedCommand(
-                                    rootCommand,
-                                    dependencyReleaseName,
-                                    dependencySpecMap,
-                                    reason
-                            );
-                        }
-                        continue;
-                    }
-                    LOG.info("Dependency {} not found in {}; proceeding with install", dependencyReleaseName, dependencyNamespace);
                 }
                 LOG.info("Processing dependency: {} ", dependencyEntry.getKey());
                 this.commandPlanFactory.createDependencyCommands(
