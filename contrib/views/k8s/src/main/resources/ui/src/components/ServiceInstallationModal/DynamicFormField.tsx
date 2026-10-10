@@ -26,6 +26,7 @@ import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTarge
 import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
 import { FieldSyncContext } from './fieldSync';
 import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery';
+import OpenShiftMonitoringNotice from './OpenShiftMonitoringNotice';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
@@ -88,6 +89,9 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       ? true
       : condition.operator === 'non-empty'
           ? watchedValue != null && String(watchedValue).trim().length > 0
+          : condition.operator === 'empty'
+          // e.g. a field only needed when discovery found nothing
+          ? watchedValue == null || String(watchedValue).trim().length === 0
           : Array.isArray(condition.value)
               ? condition.value.includes(watchedValue)
               : watchedValue === condition.value;
@@ -161,10 +165,13 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       return (
         <ServiceSelect
           field={field as any}
-          onValueSelect={(val) => {
+          onValueSelect={(val, auto) => {
             const parsed = parseDiscoveryChoice(val);
+            const current = form.getFieldValue('monitoring') || {};
+            // An automatic choice never replaces an address already set (e.g. the deployed one, on upgrade).
+            if (auto && current.url) return;
             if (parsed?.namespace || parsed?.release) {
-              form.setFieldsValue({ monitoring: monitoringFieldsFromDiscovery(parsed, form.getFieldValue('monitoring')) });
+              form.setFieldsValue({ monitoring: monitoringFieldsFromDiscovery(parsed, current) });
               syncFields?.();
               // e.g. a Prometheus that only reads ServiceMonitors from its own namespace
               if (parsed.warning) message.warning(parsed.warning, 8);
@@ -193,6 +200,8 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           }}
         />
       );
+    case 'openshift-monitoring-notice':
+      return <OpenShiftMonitoringNotice />;
     case 'context-resolved': {
       const f = field as any;
       // No value resolved from the context. For a MANAGED context this means the capability

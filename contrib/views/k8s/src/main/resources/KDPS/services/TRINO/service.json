@@ -1808,7 +1808,7 @@
     },
     {
       "name": "releaseName",
-      "label": "Nom du Release",
+      "label": "Release name",
       "type": "string",
       "required": true
     },
@@ -1824,7 +1824,21 @@
       "label": "Nom logique (nameOverride)",
       "type": "string",
       "defaultValue": "clemlab-trino",
-      "help": "Sera concaténé au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
+      "help": "Appended to the release name to form the full name (e.g. <release>-clemlab-trino)."
+    },
+    {
+      "name": "monitoringOpenShift",
+      "label": "Monitoring",
+      "type": "group",
+      "capability": "openshift",
+      "fields": [
+        {
+          "name": "monitoring.openshiftNotice",
+          "label": "OpenShift monitoring",
+          "type": "openshift-monitoring-notice",
+          "excludeFromValues": true
+        }
+      ]
     },
     {
       "name": "monitoringGeneric",
@@ -1837,19 +1851,29 @@
           "label": "Discover monitoring stack",
           "type": "monitoring-discovery",
           "excludeFromValues": true,
+          "autoSelectSingle": true,
           "help": "Finds the Prometheus already running on the cluster (any namespace, any release name) and fills the fields below from it."
         },
         {
           "name": "monitoring.namespace",
           "label": "Monitoring namespace",
           "type": "string",
-          "defaultValue": "monitoring"
+          "defaultValue": "monitoring",
+          "condition": {
+            "field": "monitoring.discovery",
+            "operator": "empty"
+          },
+          "help": "Namespace of the Prometheus stack, or where KDPS installs one when none is found."
         },
         {
           "name": "monitoring.release",
           "label": "Monitoring release (Helm)",
           "type": "string",
           "defaultValue": "kube-prometheus-stack",
+          "condition": {
+            "field": "monitoring.discovery",
+            "operator": "empty"
+          },
           "help": "Release of the Prometheus stack: builds the Prometheus address when none is given below, and is put on the ServiceMonitors as their release label."
         },
         {
@@ -1892,7 +1916,8 @@
           "label": "Discover KEDA",
           "type": "keda-discovery",
           "excludeFromValues": true,
-          "help": "Detect an existing KEDA operator on the cluster (incl. the OpenShift Custom Metrics Autoscaler) so worker autoscaling reuses it instead of installing a conflicting one. Auto-fills the namespace below."
+          "autoSelectSingle": true,
+          "help": "Finds the KEDA operator already on the cluster, which worker autoscaling then uses. When none is found, KDPS installs KEDA in the namespace below."
         },
         {
           "name": "keda.namespace",
@@ -1900,38 +1925,34 @@
           "type": "string",
           "excludeFromValues": true,
           "defaultValue": "keda",
-          "help": "Namespace of the KEDA operator. Used to locate an existing install (skip) or to place a fresh one. Left at the default only matters when KDPS installs KEDA itself."
-        },
-        {
-          "name": "keda.release",
-          "label": "KEDA release (Helm)",
-          "type": "string",
-          "excludeFromValues": true,
-          "defaultValue": "keda",
-          "help": "Helm release name of an existing KEDA, when Helm-installed. Informational for OLM/OpenShift operators."
+          "condition": {
+            "field": "keda.discovery",
+            "operator": "empty"
+          },
+          "help": "Namespace KDPS installs KEDA into, as no KEDA operator was found."
         }
       ]
     },
     {
       "name": "networkAccess",
-      "label": "Accès Réseau (Service Trino)",
+      "label": "Network access (Trino service)",
       "type": "group",
       "fields": [
         {
           "name": "service.enabled",
-          "label": "Activer l'accès interne (ClusterIP)",
+          "label": "Enable internal access (ClusterIP)",
           "type": "boolean",
           "defaultValue": true
         },
         {
           "name": "nodePort.enabled",
-          "label": "Activer l'accès externe (NodePort)",
+          "label": "Enable external access (NodePort)",
           "type": "boolean",
           "defaultValue": false
         },
         {
           "name": "nodePort.port",
-          "label": "Port du Nœud (Optionnel)",
+          "label": "Node port (optional)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -1942,14 +1963,14 @@
     },
     {
       "name": "security",
-      "label": "Sécurité interne",
+      "label": "Internal security",
       "type": "group",
       "fields": [
         {
           "name": "internalSharedSecret",
           "label": "Shared secret interne",
           "type": "password",
-          "help": "Valeur utilisée pour internal-communication.shared-secret afin de sécuriser les communications internes Trino."
+          "help": "Value of internal-communication.shared-secret, which secures communication between Trino nodes."
         }
       ]
     },
@@ -1960,10 +1981,10 @@
       "fields": [
         {
           "name": "webUi.enabled",
-          "label": "Activer l'interface Web",
+          "label": "Enable the web UI",
           "type": "boolean",
           "defaultValue": true,
-          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par défaut)."
+          "help": "Sets web-ui.enabled in Trino (the UI is available by default)."
         }
       ]
     },
@@ -2255,15 +2276,15 @@
       "fields": [
         {
           "name": "tls.https.enabled",
-          "label": "Activer HTTPS interne",
+          "label": "Enable internal HTTPS",
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
-          "help": "Activé par défaut : Trino termine lui-même le TLS (keystore signé par l'autorité interne). La Route OpenShift passe alors en passthrough et les clients internes (Superset, dbt, OpenMetadata) doivent utiliser https sur le port HTTPS. Désactiver ne laisse le TLS qu'en bordure : le trafic authentifié, jeton compris, traverse le réseau des pods en clair."
+          "help": "On by default: Trino terminates TLS itself (keystore signed by the internal CA). The OpenShift Route then uses passthrough, and internal clients (Superset, dbt, OpenMetadata) must use https on the HTTPS port. Turned off, TLS stops at the edge: authenticated traffic, tokens included, crosses the pod network in clear text."
         },
         {
           "name": "tls.https.autoGenerate",
-          "label": "Auto-générer le keystore",
+          "label": "Generate the keystore",
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
@@ -2271,7 +2292,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Si activé, Ambari génère un certificat signé par la CA interne et un Secret Kubernetes."
+          "help": "When on, Ambari issues a certificate signed by its internal CA and stores it in a Kubernetes Secret."
         },
         {
           "name": "tls.https.port",
@@ -2288,7 +2309,7 @@
           "name": "tls.https.secretName",
           "label": "Secret keystore (optionnel)",
           "type": "string",
-          "help": "Nom du Secret qui contiendra le keystore. Vide → <release>-https.",
+          "help": "Name of the Secret that holds the keystore. Blank: <release>-https.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -2297,7 +2318,7 @@
         },
         {
           "name": "tls.https.keystoreKey",
-          "label": "Clé du keystore dans le Secret",
+          "label": "Keystore key in the Secret",
           "type": "string",
           "defaultValue": "truststore.jks",
           "excludeFromValues": true,
@@ -2311,7 +2332,7 @@
           "label": "Mot de passe keystore",
           "type": "password",
           "defaultValue": "",
-          "help": "Laisser vide pour génération aléatoire.",
+          "help": "Leave blank to generate a random one.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -2320,7 +2341,7 @@
         },
         {
           "name": "tls.https.mountPath",
-          "label": "Chemin monté du keystore",
+          "label": "Keystore mount path",
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
@@ -2331,7 +2352,7 @@
         },
         {
           "name": "tls.https.keystorePath",
-          "label": "Chemin utilisé par Trino",
+          "label": "Path used by Trino",
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
@@ -2339,11 +2360,11 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Valeur injectée dans server.config.https.keystore.path."
+          "help": "Value set as server.config.https.keystore.path."
         },
         {
           "name": "tls.https.keystoreType",
-          "label": "Format du keystore (JKS/PKCS12/PEM)",
+          "label": "Keystore format (JKS/PKCS12/PEM)",
           "type": "select",
           "defaultValue": "PKCS12",
           "options": [
@@ -2365,42 +2386,42 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Choisissez le format de stockage du certificat serveur. PEM crée tls.crt/tls.key/ca.crt."
+          "help": "Storage format of the server certificate. PEM creates tls.crt/tls.key/ca.crt."
         }
       ]
     },
     {
       "name": "coordinatorResources",
-      "label": "Ressources du Coordinateur",
+      "label": "Coordinator resources",
       "type": "group",
       "fields": [
         {
           "name": "coordinator.resources.requests.cpu",
-          "label": "CPU Demandé",
+          "label": "CPU request",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "coordinator.resources.requests.memory",
-          "label": "Mémoire Demandée",
+          "label": "Memory request",
           "type": "string",
           "defaultValue": "4Gi"
         },
         {
           "name": "coordinator.resources.limits.cpu",
-          "label": "CPU Limite",
+          "label": "CPU limit",
           "type": "string",
           "defaultValue": "2"
         },
         {
           "name": "coordinator.resources.limits.memory",
-          "label": "Mémoire Limite",
+          "label": "Memory limit",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
           "name": "coordinator.config.nodeProperties.node\\.data-dir",
-          "label": "Répertoire de données (Coordinateur)",
+          "label": "Data directory (coordinator)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -2408,42 +2429,42 @@
     },
     {
       "name": "workerResources",
-      "label": "Ressources des Workers",
+      "label": "Worker resources",
       "type": "group",
       "fields": [
         {
           "name": "worker.replicas",
-          "label": "Nombre de Workers",
+          "label": "Number of workers",
           "type": "number",
           "defaultValue": 3
         },
         {
           "name": "worker.resources.requests.cpu",
-          "label": "CPU Demandé / Worker",
+          "label": "CPU request per worker",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "worker.resources.requests.memory",
-          "label": "Mémoire Demandée / Worker",
+          "label": "Memory request per worker",
           "type": "string",
           "defaultValue": "4Gi"
         },
         {
           "name": "worker.resources.limits.cpu",
-          "label": "CPU Limite / Worker",
+          "label": "CPU limit per worker",
           "type": "string",
           "defaultValue": "2"
         },
         {
           "name": "worker.resources.limits.memory",
-          "label": "Mémoire Limite / Worker",
+          "label": "Memory limit per worker",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
           "name": "worker.config.nodeProperties.node\\.data-dir",
-          "label": "Répertoire de données (Worker)",
+          "label": "Data directory (worker)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -2456,19 +2477,19 @@
       "fields": [
         {
           "name": "requiredWorkers.window",
-          "label": "Fenêtre (required workers)",
+          "label": "Window (required workers)",
           "type": "string",
           "defaultValue": "30s"
         },
         {
           "name": "requiredWorkers.threshold",
-          "label": "Seuil (required workers)",
+          "label": "Threshold (required workers)",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "queuedQueries.threshold",
-          "label": "Seuil (queued queries)",
+          "label": "Threshold (queued queries)",
           "type": "string",
           "defaultValue": "5"
         },
@@ -2480,7 +2501,7 @@
         },
         {
           "name": "runningQueries.threshold",
-          "label": "Seuil (running queries)",
+          "label": "Threshold (running queries)",
           "type": "string",
           "defaultValue": "10"
         },
@@ -2492,13 +2513,13 @@
         },
         {
           "name": "heap.threshold",
-          "label": "Seuil (%) Heap",
+          "label": "Threshold (heap %)",
           "type": "string",
           "defaultValue": "70"
         },
         {
           "name": "heap.activation",
-          "label": "Activation (%) Heap",
+          "label": "Activation (heap %)",
           "type": "string",
           "defaultValue": "40"
         }
@@ -2517,13 +2538,13 @@
         },
         {
           "name": "jmx.configPath",
-          "label": "Chemin config YAML",
+          "label": "Config YAML path",
           "type": "string",
           "defaultValue": "/opt/java_metrics/config.yaml"
         },
         {
           "name": "jmx.jarPath",
-          "label": "Chemin jar javaagent",
+          "label": "Java agent jar path",
           "type": "string",
           "defaultValue": "/usr/lib/trino/lib/jmx_prometheus_javaagent.jar"
         }
@@ -2531,7 +2552,7 @@
     },
     {
       "name": "acls",
-      "label": "Contrôle d'accès (Service Trino)",
+      "label": "Access control (Trino service)",
       "type": "group",
       "fields": [
         {
@@ -2579,7 +2600,7 @@
         },
         {
           "name": "nodePort.port",
-          "label": "Port du Nœud (Optionnel)",
+          "label": "Node port (optional)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -2632,21 +2653,21 @@
           "label": "Hadoop LDAP group mapping",
           "type": "group",
           "collapsed": true,
-          "help": "Active la résolution des groupes Hadoop via un annuaire LDAP/FreeIPA. Indispensable pour que les politiques Ranger basées sur les groupes (banque_*, assurance_*, etc.) s'appliquent aux requêtes Trino (le conteneur Trino ne contient pas de SSSD). Voir HADOOP-LDAP-GROUP-MAPPING.md.",
+          "help": "Resolves Hadoop groups from an LDAP/FreeIPA directory. Needed for group-based Ranger policies to apply to Trino queries (the Trino container has no SSSD). See HADOOP-LDAP-GROUP-MAPPING.md.",
       "fields": [
         {
           "name": "hadoopConf.groupMapping.enabled",
-          "label": "Activer le mapping LDAP",
+          "label": "Enable LDAP group mapping",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Si activé, un init container fusionne les propriétés LdapGroupsMapping dans core-site.xml au démarrage du pod. Nécessite chart Trino >= 1.43.0."
+          "help": "When on, an init container merges the LdapGroupsMapping properties into core-site.xml when the pod starts. Needs Trino chart 1.43.0 or later."
         },
         {
           "name": "hadoopConf.groupMapping.ldap.url",
           "label": "URL LDAP",
           "type": "string",
           "defaultValue": "",
-          "help": "Endpoint LDAP/IPA. Ex: ldap://admin01.dev01.hadoop.clemlab.com:389. Pour LDAPS utiliser ldaps://...:636 et vérifier que le CA est présent dans le truststore Trino.",
+          "help": "LDAP/IPA endpoint, e.g. ldap://ipa.example.com:389. For LDAPS use ldaps://...:636 and make sure the CA is in Trino's truststore.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2655,10 +2676,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.bindUser",
-          "label": "Utilisateur de bind",
+          "label": "Bind user",
           "type": "string",
           "defaultValue": "",
-          "help": "DN du compte de service utilisé pour interroger l'annuaire (IPA cache memberOf en lecture anonyme — un bind authentifié est requis). Ex: uid=hadoop-group-mapping,cn=users,cn=accounts,dc=dev01,dc=hadoop,dc=clemlab,dc=com",
+          "help": "DN of the service account that queries the directory (IPA hides memberOf from anonymous reads, so an authenticated bind is required), e.g. uid=hadoop-group-mapping,cn=users,cn=accounts,dc=example,dc=com",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2667,10 +2688,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.bindPasswordSecret.name",
-          "label": "Nom du Secret contenant le mot de passe",
+          "label": "Secret holding the password",
           "type": "string",
           "defaultValue": "",
-          "help": "Nom d'un Kubernetes Secret du namespace cible (à créer préalablement) qui contient le mot de passe du compte de bind. Le chart monte ce Secret sur /etc/hadoop/ldap-bind/password en lecture seule.",
+          "help": "Kubernetes Secret in the target namespace (create it beforehand) holding the bind account's password. The chart mounts it read-only at /etc/hadoop/ldap-bind/password.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2679,10 +2700,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.bindPasswordSecret.key",
-          "label": "Clé dans le Secret",
+          "label": "Key in the Secret",
           "type": "string",
           "defaultValue": "password",
-          "help": "Clé du Secret qui contient effectivement le mot de passe (par défaut 'password').",
+          "help": "Key of the Secret that holds the password (default 'password').",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2693,7 +2714,7 @@
           "label": "Base DN de recherche",
           "type": "string",
           "defaultValue": "",
-          "help": "Racine de recherche pour les utilisateurs et les groupes. Ex (FreeIPA): cn=accounts,dc=dev01,dc=hadoop,dc=clemlab,dc=com",
+          "help": "Search base for users and groups, e.g. (FreeIPA) cn=accounts,dc=example,dc=com",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2702,10 +2723,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.userSearchFilter",
-          "label": "Filtre utilisateur (avancé)",
+          "label": "User filter (advanced)",
           "type": "string",
           "defaultValue": "(&(objectClass=person)(uid={0}))",
-          "help": "{0} est substitué par le nom de l'utilisateur. Ne pas modifier sauf annuaire non-IPA.",
+          "help": "{0} is replaced by the user name. Change it only for a non-IPA directory.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2713,10 +2734,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.groupSearchFilter",
-          "label": "Filtre groupe (avancé)",
+          "label": "Group filter (advanced)",
           "type": "string",
           "defaultValue": "(objectClass=posixGroup)",
-          "help": "Filtre LDAP pour énumérer les groupes. Compatible avec FreeIPA/RHIDM par défaut.",
+          "help": "LDAP filter that lists the groups. The default works with FreeIPA/RHIDM.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2724,10 +2745,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.memberAttr",
-          "label": "Attribut membre (avancé)",
+          "label": "Member attribute (advanced)",
           "type": "string",
           "defaultValue": "member",
-          "help": "Attribut LDAP qui contient les DN des membres du groupe. FreeIPA = 'member'.",
+          "help": "LDAP attribute holding the DNs of a group's members. FreeIPA: 'member'.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2735,10 +2756,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.cacheSeconds",
-          "label": "Cache positif (secondes, avancé)",
+          "label": "Group cache (seconds, advanced)",
           "type": "number",
           "defaultValue": 300,
-          "help": "Durée de mise en cache des résolutions de groupes côté Hadoop client.",
+          "help": "How long the Hadoop client caches resolved groups.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2746,10 +2767,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.negativeCacheSeconds",
-          "label": "Cache négatif (secondes, avancé)",
+          "label": "Negative cache (seconds, advanced)",
           "type": "number",
           "defaultValue": 30,
-          "help": "Durée de mise en cache des utilisateurs sans groupe (évite de marteler LDAP).",
+          "help": "How long users without groups are cached (spares the directory).",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true

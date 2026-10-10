@@ -482,6 +482,9 @@ public class DiscoveryResource {
             found.warning = info.warning();
             // Only an in-cluster address may go into the deploy (an Ambari-property URL is for the view itself).
             found.queryUrl = info.inCluster() ? info.url() : null;
+            if (kubernetesService.isOpenShiftCluster()) {
+                found.userWorkloadMonitoring = kubernetesService.userWorkloadMonitoringEnabled();
+            }
             return Response.ok(found).build();
         } catch (Exception e) {
             LOG.error("Failed to discover monitoring stack", e);

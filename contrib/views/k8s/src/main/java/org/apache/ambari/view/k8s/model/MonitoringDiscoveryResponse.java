@@ -31,6 +31,8 @@ public class MonitoringDiscoveryResponse {
     public java.util.Map<String, String> serviceMonitorLabels;
     /** In-cluster address a deployed autoscaler can query, or {@code null} when only an external one is known. */
     public String queryUrl;
+    /** OpenShift: whether user workload monitoring is on; {@code null} when unknown (not readable, or not OpenShift). */
+    public Boolean userWorkloadMonitoring;
     /** Why the discovered Prometheus may not scrape a new service, or {@code null}. */
     public String warning;
 

@@ -1355,6 +1355,39 @@ public class KubernetesService {
         return info;
     }
 
+    /**
+     * Whether OpenShift's user workload monitoring is on, i.e. whether ServiceMonitors in user projects are scraped
+     * (cluster-monitoring-config, {@code enableUserWorkload}). Most project-limited accounts may not read it.
+     *
+     * @return TRUE or FALSE; FALSE when the setting was never made; {@code null} when it cannot be read
+     */
+    public Boolean userWorkloadMonitoringEnabled() {
+        if (client == null || !isOpenShift(client)) {
+            return null;
+        }
+        try {
+            var cm = client.configMaps().inNamespace("openshift-monitoring").withName("cluster-monitoring-config").get();
+            return cm == null || cm.getData() == null ? Boolean.FALSE : userWorkloadEnabled(cm.getData().get("config.yaml"));
+        } catch (Exception e) {
+            logDiscoveryFailure("Read cluster-monitoring-config", e);
+            return null;
+        }
+    }
+
+    /** {@code enableUserWorkload} from cluster-monitoring-config's config.yaml; FALSE when absent or unreadable. */
+    static Boolean userWorkloadEnabled(String configYaml) {
+        if (configYaml == null || configYaml.isBlank()) {
+            return Boolean.FALSE;
+        }
+        try {
+            Map<?, ?> config = new com.fasterxml.jackson.databind.ObjectMapper(
+                    new com.fasterxml.jackson.dataformat.yaml.YAMLFactory()).readValue(configYaml, Map.class);
+            return config != null && Boolean.parseBoolean(String.valueOf(config.get("enableUserWorkload")));
+        } catch (Exception e) {
+            return Boolean.FALSE;
+        }
+    }
+
     private MonitoringInfo discoverOpenShiftMonitoring() {
         if (!isOpenShift(client)) return null;
         String url = viewContext.getAmbariProperty("openshift.thanos.url");

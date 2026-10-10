@@ -2006,6 +2006,7 @@
           "label": "Discover monitoring stack",
           "type": "monitoring-discovery",
           "excludeFromValues": true,
+          "autoSelectSingle": true,
           "help": "Finds the Prometheus already running on the cluster (any namespace, any release name) and fills the fields below from it."
         },
         {
