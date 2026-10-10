@@ -498,15 +498,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // through Flux is kept even though it is now "on the cluster": Flux installed it.
                     // "Manages" = published on the base branch, not merely present in the local workspace.
                     Path depFile = depDir.resolve(firstNonBlank((String) depSpec.get("releaseName"), depKey) + "-helmrelease.yaml");
-                    // (the base branch, or the working branch this release pushes to, e.g. a generated flux-* one)
-                    boolean managedHere = gitClient.existsOnBaseBranch(depFile)
-                            || gitClient.existsOnRemoteBranch(depFile, branch);
+                    // (the base branch; in direct-commit mode also the working branch this release pushes to, which
+                    // Flux reads; never a PR branch, which is not reconciled until merged)
+                    Boolean onBase = gitClient.publishedOn(depFile, baseBranch);
+                    Boolean onWorking = "PR_MODE".equalsIgnoreCase(git.getCommitMode()) ? Boolean.FALSE
+                            : gitClient.publishedOn(depFile, branch);
+                    boolean managedHere = Boolean.TRUE.equals(onBase) || Boolean.TRUE.equals(onWorking);
                     String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context);
                     if (skipped != null) {
                         // A published file is left in place: the operator it installs (KEDA, the keytab webhook) is
                         // shared, and other releases may rely on it. One never published (e.g. in a still-open PR
-                        // branch) is removed, so merging it cannot install a second copy.
-                        if (!managedHere) {
+                        // branch) is removed, so merging it cannot install a second copy. When the lookup failed,
+                        // nothing is deleted.
+                        if (!managedHere && onBase != null && onWorking != null) {
                             gitClient.deletePath(depFile);
                         }
                         logFluxInfo(namespace, release, "automation", "Dependency %s not written: %s", depKey, skipped);

@@ -152,5 +152,10 @@ class GitClientTest {
         org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")));
         org.junit.jupiter.api.Assertions.assertFalse(client.existsOnRemoteBranch(Path.of("README.md"), "never-pushed"));
         org.junit.jupiter.api.Assertions.assertFalse(client.existsOnRemoteBranch(Path.of("README.md"), null));
+        org.junit.jupiter.api.Assertions.assertEquals(Boolean.TRUE, client.publishedOn(Path.of("README.md"), BRANCH));
+
+        GitClient noRepo = new GitClient(tmp.resolve("not-a-repo"), url, BRANCH, null);
+        org.junit.jupiter.api.Assertions.assertNull(noRepo.publishedOn(Path.of("README.md"), BRANCH),
+                "unreadable: unknown, so the caller deletes nothing");
     }
 }

@@ -281,26 +281,34 @@ public class GitClient {
      * @param branch   remote branch name; false when it was never pushed
      */
     public boolean existsOnRemoteBranch(Path relative, String branch) {
+        return Boolean.TRUE.equals(publishedOn(relative, branch));
+    }
+
+    /**
+     * Whether a file exists on {@code origin/<branch>}: TRUE or FALSE (also FALSE when the branch was never pushed),
+     * {@code null} when the repository could not be read.
+     */
+    public Boolean publishedOn(Path relative, String branch) {
         if (branch == null || branch.isBlank()) {
-            return false;
+            return Boolean.FALSE;
         }
         String path;
         try {
             path = workspace.relativize(resolveSafe(relative)).toString().replace('\\', '/');
         } catch (IOException outside) {
-            return false;
+            return Boolean.FALSE;
         }
         try (Git git = Git.open(workspace.toFile())) {
             org.eclipse.jgit.lib.ObjectId tree = git.getRepository().resolve("refs/remotes/origin/" + branch + "^{tree}");
             if (tree == null) {
-                return false;
+                return Boolean.FALSE;
             }
             try (org.eclipse.jgit.treewalk.TreeWalk walk = org.eclipse.jgit.treewalk.TreeWalk.forPath(git.getRepository(), path, tree)) {
                 return walk != null;
             }
         } catch (Exception e) {
             LOG.warn("Could not look up {} on origin/{}: {}", path, branch, e.toString());
-            return false;
+            return null;
         }
     }
 
