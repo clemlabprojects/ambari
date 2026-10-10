@@ -169,6 +169,7 @@
       "chartVersion": "78.3.2",
       "skipIfReleaseExists": true,
       "skipIfPrometheusPresent": true,
+      "namespaceFromForm": "monitoring.namespace",
       "skipOnOpenShift": true,
       "crds": [
         "servicemonitors.monitoring.coreos.com"
@@ -1821,7 +1822,7 @@
     },
     {
       "name": "nameOverride",
-      "label": "Nom logique (nameOverride)",
+      "label": "Name override",
       "type": "string",
       "defaultValue": "clemlab-trino",
       "help": "Appended to the release name to form the full name (e.g. <release>-clemlab-trino)."
@@ -1968,7 +1969,7 @@
       "fields": [
         {
           "name": "internalSharedSecret",
-          "label": "Shared secret interne",
+          "label": "Internal shared secret",
           "type": "password",
           "help": "Value of internal-communication.shared-secret, which secures communication between Trino nodes."
         }
@@ -2271,7 +2272,7 @@
     },
     {
       "name": "httpsInternal",
-      "label": "HTTPS interne (keystore auto)",
+      "label": "Internal HTTPS (generated keystore)",
       "type": "group",
       "fields": [
         {
@@ -2307,7 +2308,7 @@
         },
         {
           "name": "tls.https.secretName",
-          "label": "Secret keystore (optionnel)",
+          "label": "Keystore Secret (optional)",
           "type": "string",
           "help": "Name of the Secret that holds the keystore. Blank: <release>-https.",
           "excludeFromValues": true,
@@ -2329,7 +2330,7 @@
         },
         {
           "name": "tls.https.password",
-          "label": "Mot de passe keystore",
+          "label": "Keystore password",
           "type": "password",
           "defaultValue": "",
           "help": "Leave blank to generate a random one.",
@@ -2664,7 +2665,7 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.url",
-          "label": "URL LDAP",
+          "label": "LDAP URL",
           "type": "string",
           "defaultValue": "",
           "help": "LDAP/IPA endpoint, e.g. ldap://ipa.example.com:389. For LDAPS use ldaps://...:636 and make sure the CA is in Trino's truststore.",
@@ -2711,7 +2712,7 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.baseDn",
-          "label": "Base DN de recherche",
+          "label": "Search base DN",
           "type": "string",
           "defaultValue": "",
           "help": "Search base for users and groups, e.g. (FreeIPA) cn=accounts,dc=example,dc=com",

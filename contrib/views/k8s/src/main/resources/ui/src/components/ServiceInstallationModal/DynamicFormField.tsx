@@ -168,8 +168,8 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           onValueSelect={(val, auto) => {
             const parsed = parseDiscoveryChoice(val);
             const current = form.getFieldValue('monitoring') || {};
-            // An automatic choice never replaces an address already set (e.g. the deployed one, on upgrade).
-            if (auto && current.url) return;
+            // An automatic choice never replaces an address the operator already set.
+            if (auto && current.url) return false;
             if (parsed?.namespace || parsed?.release) {
               form.setFieldsValue({ monitoring: monitoringFieldsFromDiscovery(parsed, current) });
               syncFields?.();
@@ -192,7 +192,6 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
                 keda: {
                   ...(form.getFieldValue('keda') || {}),
                   ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
-                  ...(parsed.release ? { release: parsed.release } : {}),
                 },
               });
               syncFields?.();

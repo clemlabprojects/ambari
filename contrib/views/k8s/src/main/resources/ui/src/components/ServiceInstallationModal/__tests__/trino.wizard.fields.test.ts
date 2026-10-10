@@ -27,6 +27,10 @@ describe('Trino wizard fields', () => {
     expect(field('monitoringGeneric', 'monitoring.serviceMonitorLabels').condition).toBeUndefined();
   });
 
+  it('KDPS installs the Prometheus stack in the namespace the form names, as for KEDA', () => {
+    expect(svc.dependencies['kube-prometheus-stack'].namespaceFromForm).toBe('monitoring.namespace');
+  });
+
   it('the Prometheus and KEDA groups are plain-Kubernetes only; OpenShift gets the monitoring notice', () => {
     expect(group('monitoringGeneric').capability).toBe('kubernetes');
     expect(group('autoscalingGeneric').capability).toBe('kubernetes');
@@ -42,7 +46,8 @@ describe('Trino wizard fields', () => {
       if (Array.isArray(f.fields)) walk(f.fields);
     });
     walk(svc.form);
-    const french = texts.filter(t => /[éèêàçù]|\b(Seuil|Chemin|Nombre|Limite|Activer|Nom du)\b/.test(t));
+    const french = texts.filter(t =>
+      /[éèêàçù]|\b(Seuil|Chemin|Nombre|Limite|Activer|Nom|interne|optionnel|Mot de passe|recherche|logique|Fichier)\b/.test(t));
     expect(french).toEqual([]);
   });
 });
