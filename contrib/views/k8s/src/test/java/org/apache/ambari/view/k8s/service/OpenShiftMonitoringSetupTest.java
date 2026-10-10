@@ -43,6 +43,7 @@ class OpenShiftMonitoringSetupTest {
     Map<String, Object> trigger = new LinkedHashMap<>();
     trigger.put("metadata", new LinkedHashMap<>(Map.of("serverAddress", "https://thanos-querier.openshift-monitoring.svc:9091")));
     Map<String, Object> keda = new LinkedHashMap<>();
+    keda.put("enabled", true);
     keda.put("triggers", new ArrayList<>(List.of(trigger)));
     keda.put("triggerAuthentication", Map.of("enabled", true, "secretName", "trino-thanos-token"));
     Map<String, Object> values = new LinkedHashMap<>();
@@ -112,5 +113,21 @@ class OpenShiftMonitoringSetupTest {
 
     IllegalStateException e = assertThrows(IllegalStateException.class, () -> OpenShiftMonitoringSetup.prepare(k8s, req));
     assertTrue(e.getMessage().contains("ask an admin to run"), e.getMessage());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void autoscalingOffNeedsNoMonitoringTokenButServiceMonitorsStillNeedTheGrant() {
+    ((Map<String, Object>) ((Map<String, Object>) req.getValues().get("server")).get("keda")).put("enabled", false);
+    when(k8s.isOpenShiftCluster()).thenReturn(true);
+    when(k8s.canBindClusterRoles()).thenReturn(false);
+    when(k8s.canI(eq("create"), eq("monitoring.coreos.com"), eq("servicemonitors"), isNull(), eq("team-a"))).thenReturn(true);
+
+    assertFalse(OpenShiftMonitoringSetup.scopeAutoscalingToProject(k8s, req));
+    OpenShiftMonitoringSetup.prepare(k8s, req);
+    verify(k8s, never()).ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean());
+
+    when(k8s.canI(eq("create"), eq("monitoring.coreos.com"), eq("servicemonitors"), isNull(), eq("team-a"))).thenReturn(false);
+    assertThrows(IllegalStateException.class, () -> OpenShiftMonitoringSetup.prepare(k8s, req));
   }
 }

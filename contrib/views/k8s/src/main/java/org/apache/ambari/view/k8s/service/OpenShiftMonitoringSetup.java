@@ -45,6 +45,7 @@ public final class OpenShiftMonitoringSetup {
     /** Whether the KEDA triggers of this deploy read the project's monitoring only (Thanos tenancy port). */
     static boolean usesProjectScope(KubernetesService kubernetesService, HelmDeployRequest request) {
         return kubernetesService.isOpenShiftCluster()
+                && KedaThanosScope.kedaEnabled(request.getValues())
                 && KedaThanosScope.triggerAuthenticationEnabled(request.getValues())
                 && !kubernetesService.canBindClusterRoles();
     }
@@ -85,7 +86,8 @@ public final class OpenShiftMonitoringSetup {
                     + "the service's metrics, which autoscaling reads). Ask the platform team to grant it, per project:\n"
                     + "  oc policy add-role-to-user monitoring-edit <account KDPS connects with> -n " + request.getNamespace());
         }
-        if (!KedaThanosScope.triggerAuthenticationEnabled(values)) {
+        // Autoscaling off: no autoscaler, so no monitoring token.
+        if (!KedaThanosScope.kedaEnabled(values) || !KedaThanosScope.triggerAuthenticationEnabled(values)) {
             return;
         }
         String tokenSecretName = tokenSecretName(values);

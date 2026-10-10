@@ -5616,6 +5616,19 @@ public class CommandService {
                                 "Skipped on OpenShift — the platform's built-in monitoring stack is used instead.");
                         continue;
                     }
+                    // A dependency only some settings need, e.g. KEDA only when worker autoscaling is on.
+                    String onlyWhenValueTrue = resolveStringValue(depSkipMap.get("onlyWhenValueTrue"), null);
+                    if (onlyWhenValueTrue != null && !onlyWhenValueTrue.isBlank() && !Boolean.parseBoolean(
+                            String.valueOf(ConfigResolutionService.getByDottedPath(
+                                    request.getValues() == null ? Collections.emptyMap() : request.getValues(),
+                                    onlyWhenValueTrue)))) {
+                        LOG.info("Skipping dependency '{}' — {} is not true for this release.",
+                                dependencyReleaseName, onlyWhenValueTrue);
+                        this.commandPlanFactory.createDependencySatisfiedCommand(
+                                rootCommand, dependencyReleaseName, depSkipMap,
+                                "Skipped — not needed with these settings (" + onlyWhenValueTrue + " is off).");
+                        continue;
+                    }
                     // Reuse an operator already on the cluster, detected by CRD presence rather than a
                     // release-name-in-a-fixed-namespace guess. e.g. KEDA declares
                     // skipIfCrdExists=scaledobjects.keda.sh, so an existing KEDA is honoured whatever

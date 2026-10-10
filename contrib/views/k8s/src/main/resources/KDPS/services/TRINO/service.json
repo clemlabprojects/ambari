@@ -151,6 +151,7 @@
       "imageGlobalRegistryProperty": "global.image.registry",
       "namespace": "keda",
       "namespaceFromForm": "keda.namespace",
+      "onlyWhenValueTrue": "server.keda.enabled",
       "skipIfReleaseExists": true,
       "skipIfCrdExists": "scaledobjects.keda.sh",
       "skipOnOpenShift": true,
@@ -1042,22 +1043,8 @@
     },
     {
       "name": "keda-enable",
+      "comment": "server.keda.enabled, minReplicaCount and maxReplicaCount are wizard fields (Autoscaling group).",
       "targets": [
-        {
-          "path": "server.keda.enabled",
-          "op": "set",
-          "value": true
-        },
-        {
-          "path": "server.keda.minReplicaCount",
-          "op": "set",
-          "value": 1
-        },
-        {
-          "path": "server.keda.maxReplicaCount",
-          "op": "set",
-          "value": 10
-        },
         {
           "path": "server.keda.pollingInterval",
           "op": "set",
@@ -1911,6 +1898,10 @@
       "label": "Autoscaling (KEDA)",
       "type": "group",
       "capability": "kubernetes",
+      "condition": {
+        "field": "server.keda.enabled",
+        "value": true
+      },
       "fields": [
         {
           "name": "keda.discovery",
@@ -2434,10 +2425,15 @@
       "type": "group",
       "fields": [
         {
-          "name": "worker.replicas",
+          "name": "server.workers",
           "label": "Number of workers",
           "type": "number",
-          "defaultValue": 3
+          "defaultValue": 3,
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": false
+          },
+          "help": "Fixed number of workers, used when worker autoscaling is off."
         },
         {
           "name": "worker.resources.requests.cpu",
@@ -2477,49 +2473,108 @@
       "type": "group",
       "fields": [
         {
+          "name": "server.keda.enabled",
+          "label": "Worker autoscaling",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "Adds and removes workers with the load (KEDA). Off: a fixed number of workers (Worker resources)."
+        },
+        {
+          "name": "server.keda.minReplicaCount",
+          "label": "Minimum workers",
+          "type": "number",
+          "defaultValue": 1,
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "server.keda.maxReplicaCount",
+          "label": "Maximum workers",
+          "type": "number",
+          "defaultValue": 10,
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          }
+        },
+        {
           "name": "requiredWorkers.window",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Window (required workers)",
           "type": "string",
           "defaultValue": "30s"
         },
         {
           "name": "requiredWorkers.threshold",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Threshold (required workers)",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "queuedQueries.threshold",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Threshold (queued queries)",
           "type": "string",
           "defaultValue": "5"
         },
         {
           "name": "queuedQueries.activation",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Activation (queued queries)",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "runningQueries.threshold",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Threshold (running queries)",
           "type": "string",
           "defaultValue": "10"
         },
         {
           "name": "runningQueries.activation",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Activation (running queries)",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "heap.threshold",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Threshold (heap %)",
           "type": "string",
           "defaultValue": "70"
         },
         {
           "name": "heap.activation",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Activation (heap %)",
           "type": "string",
           "defaultValue": "40"

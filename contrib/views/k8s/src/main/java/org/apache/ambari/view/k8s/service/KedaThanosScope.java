@@ -71,6 +71,13 @@ public final class KedaThanosScope {
         return changed;
     }
 
+    /** Whether the chart values turn worker autoscaling on ({@code server.keda.enabled}). */
+    public static boolean kedaEnabled(Map<String, Object> values) {
+        Object server = values == null ? null : values.get("server");
+        Object keda = server instanceof Map<?, ?> s ? s.get("keda") : null;
+        return keda instanceof Map<?, ?> k && Boolean.parseBoolean(String.valueOf(k.get("enabled")));
+    }
+
     /**
      * Whether the chart values turn on the KEDA TriggerAuthentication (bearer token read from a Secret), i.e. the
      * triggers read OpenShift monitoring and need a monitoring token.
