@@ -45,7 +45,9 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.ServiceAccount;
 import io.fabric8.kubernetes.api.model.ServiceAccountBuilder;
+import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceList;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Status;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequest;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequestBuilder;
@@ -1046,9 +1048,9 @@ public class KubernetesService {
      * Value class for discovered monitoring stack info.
      */
     public record MonitoringInfo(String namespace, String release, String url,
-                                 Map<String, String> serviceMonitorLabels, String warning) {
+                                 Map<String, String> serviceMonitorLabels, String warning, boolean inCluster) {
         public MonitoringInfo(String namespace, String release, String url) {
-            this(namespace, release, url, Map.of(), null);
+            this(namespace, release, url, Map.of(), null, false);
         }
     }
     public static class MonitoringSettings {
@@ -1240,13 +1242,15 @@ public class KubernetesService {
         }
 
         // Any Prometheus run by the Prometheus operator, whatever namespace or release name it was installed under.
-        Optional<PrometheusDiscovery.Instance> instance = PrometheusDiscovery.pick(listPrometheusInstances(), ns);
+        // Not on OpenShift: its own monitoring stack is used there (see discoverAndHealMonitoringState).
+        Optional<PrometheusDiscovery.Instance> instance = isOpenShift(client) ? Optional.empty()
+                : PrometheusDiscovery.pick(listPrometheusInstances(), ns);
         if (instance.isPresent()) {
             PrometheusDiscovery.Instance found = instance.get();
             LOG.info("Monitoring discovery: found Prometheus {}/{} (url={}, ServiceMonitor labels={})",
                     found.namespace(), found.name(), found.url(), found.serviceMonitorLabels());
             return new MonitoringInfo(found.namespace(), found.release(), found.url(), found.serviceMonitorLabels(),
-                    found.scrapeWarning());
+                    found.scrapeWarning(), true);
         }
 
         String svcName = release + "-prometheus";
@@ -1261,10 +1265,20 @@ public class KubernetesService {
                     : 9090;
             String url = "http://" + svcName + "." + ns + ".svc:" + port;
             LOG.info("Monitoring discovery: found {} in namespace {} (url={})", svcName, ns, url);
-            return new MonitoringInfo(ns, release, url);
+            return new MonitoringInfo(ns, release, url, Map.of("release", release), null, true);
         } catch (Exception e) {
             logDiscoveryFailure("Monitoring discovery", e);
             return null;
+        }
+    }
+
+    /** The Services of a namespace, or none when they cannot be read (the caller then keeps its fallback). */
+    private List<Service> servicesOrEmpty(String namespace) {
+        try {
+            return client.services().inNamespace(namespace).list().getItems();
+        } catch (Exception e) {
+            logDiscoveryFailure("list services in " + namespace, e);
+            return List.of();
         }
     }
 
@@ -1282,13 +1296,18 @@ public class KubernetesService {
                 return List.of();
             }
             var op = client.genericKubernetesResources(PROMETHEUS_RDC);
-            return namespaceScope.listAcrossNamespaces(NamespaceScope.Resource.PROMETHEUSES,
-                            () -> op.inAnyNamespace().list().getItems(),
-                            namespace -> op.inNamespace(namespace).list().getItems())
-                    .stream()
-                    .map(PrometheusDiscovery::fromResource)
-                    .flatMap(Optional::stream)
-                    .toList();
+            List<GenericKubernetesResource> resources = namespaceScope.listAcrossNamespaces(
+                    NamespaceScope.Resource.PROMETHEUSES,
+                    () -> op.inAnyNamespace().list().getItems(),
+                    namespace -> op.inNamespace(namespace).list().getItems());
+            Map<String, List<Service>> servicesByNamespace = new HashMap<>();
+            List<PrometheusDiscovery.Instance> instances = new ArrayList<>();
+            for (GenericKubernetesResource resource : resources) {
+                PrometheusDiscovery.fromResource(resource).ifPresent(found -> instances.add(
+                        PrometheusDiscovery.withOwnService(found, resource,
+                                servicesByNamespace.computeIfAbsent(found.namespace(), this::servicesOrEmpty))));
+            }
+            return instances;
         } catch (Exception e) {
             logDiscoveryFailure("listPrometheusInstances", e);
             return List.of();

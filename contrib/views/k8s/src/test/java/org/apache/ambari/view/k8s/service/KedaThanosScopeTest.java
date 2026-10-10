@@ -229,4 +229,14 @@ class KedaThanosScopeTest {
     assertNotNull(update, "the Role of an existing release is brought up to date: " + calls);
     assertTrue(update.contains("metrics.k8s.io"), update);
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void theQueriedAddressIsTheFirstTriggersOne() {
+    assertEquals("http://p.mon.svc:9090",
+        KedaThanosScope.firstTriggerAddress(values(trigger("http://p.mon.svc:9090"), trigger("http://other:9090"))));
+    assertNull(KedaThanosScope.firstTriggerAddress(values()));
+    assertNull(KedaThanosScope.firstTriggerAddress(Map.of()));
+    assertNull(KedaThanosScope.firstTriggerAddress(null));
+  }
 }

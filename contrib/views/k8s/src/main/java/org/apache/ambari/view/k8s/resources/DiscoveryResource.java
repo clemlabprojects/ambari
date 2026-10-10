@@ -480,6 +480,8 @@ public class DiscoveryResource {
             MonitoringDiscoveryResponse found = new MonitoringDiscoveryResponse(info.namespace(), info.release(), info.url(), state, message);
             found.serviceMonitorLabels = info.serviceMonitorLabels();
             found.warning = info.warning();
+            // Only an in-cluster address may go into the deploy (an Ambari-property URL is for the view itself).
+            found.queryUrl = info.inCluster() ? info.url() : null;
             return Response.ok(found).build();
         } catch (Exception e) {
             LOG.error("Failed to discover monitoring stack", e);

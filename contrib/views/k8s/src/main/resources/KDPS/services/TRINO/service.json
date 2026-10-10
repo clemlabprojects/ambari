@@ -1856,7 +1856,6 @@
           "name": "monitoring.url",
           "label": "Prometheus address",
           "type": "string",
-          "excludeFromValues": true,
           "defaultValue": "",
           "help": "Address the autoscaler queries, filled by discovery. Leave blank to use http://<release>-prometheus.<namespace>.svc:9090."
         },

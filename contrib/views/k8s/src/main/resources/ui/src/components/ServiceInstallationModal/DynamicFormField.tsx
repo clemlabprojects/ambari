@@ -25,7 +25,7 @@ import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
 import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
 import { FieldSyncContext } from './fieldSync';
-import { formatLabels } from './bindings';
+import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
@@ -162,23 +162,12 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         <ServiceSelect
           field={field as any}
           onValueSelect={(val) => {
-            try {
-              const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-              if (parsed?.namespace || parsed?.release) {
-                form.setFieldsValue({
-                  monitoring: {
-                    ...(form.getFieldValue('monitoring') || {}),
-                    namespace: parsed.namespace,
-                    release: parsed.release,
-                    url: parsed.url || '',
-                    serviceMonitorLabels: formatLabels(parsed.serviceMonitorLabels),
-                  },
-                });
-                // e.g. a Prometheus that only reads ServiceMonitors from its own namespace
-                if (parsed.warning) message.warning(parsed.warning, 8);
-              }
-            } catch (e) {
-              // ignore parse errors
+            const parsed = parseDiscoveryChoice(val);
+            if (parsed?.namespace || parsed?.release) {
+              form.setFieldsValue({ monitoring: monitoringFieldsFromDiscovery(parsed, form.getFieldValue('monitoring')) });
+              syncFields?.();
+              // e.g. a Prometheus that only reads ServiceMonitors from its own namespace
+              if (parsed.warning) message.warning(parsed.warning, 8);
             }
           }}
         />
@@ -188,21 +177,18 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         <ServiceSelect
           field={field as any}
           onValueSelect={(val) => {
-            try {
-              const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-              // Auto-fill the KEDA namespace (and release when Helm-installed) from the detected operator
-              // so a reused install is honoured and the skip check looks in the right place.
-              if (parsed?.namespace || parsed?.release) {
-                form.setFieldsValue({
-                  keda: {
-                    ...(form.getFieldValue('keda') || {}),
-                    ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
-                    ...(parsed.release ? { release: parsed.release } : {}),
-                  },
-                });
-              }
-            } catch (e) {
-              // ignore parse errors
+            const parsed = parseDiscoveryChoice(val);
+            // Auto-fill the KEDA namespace (and release when Helm-installed) from the detected operator
+            // so a reused install is honoured and the skip check looks in the right place.
+            if (parsed?.namespace || parsed?.release) {
+              form.setFieldsValue({
+                keda: {
+                  ...(form.getFieldValue('keda') || {}),
+                  ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+                  ...(parsed.release ? { release: parsed.release } : {}),
+                },
+              });
+              syncFields?.();
             }
           }}
         />

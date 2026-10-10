@@ -82,6 +82,25 @@ public final class KedaThanosScope {
         return auth instanceof Map<?, ?> a && Boolean.parseBoolean(String.valueOf(a.get("enabled")));
     }
 
+    /**
+     * The Prometheus address the chart's KEDA triggers query ({@code server.keda.triggers[].metadata.serverAddress}).
+     *
+     * @return the first trigger's address, or {@code null} when there is none
+     */
+    public static String firstTriggerAddress(Map<String, Object> values) {
+        Object server = values == null ? null : values.get("server");
+        Object keda = server instanceof Map<?, ?> s ? s.get("keda") : null;
+        Object triggers = keda instanceof Map<?, ?> k ? k.get("triggers") : null;
+        if (!(triggers instanceof List<?> list)) return null;
+        for (Object t : list) {
+            if (t instanceof Map<?, ?> trigger && trigger.get("metadata") instanceof Map<?, ?> m
+                    && m.get("serverAddress") instanceof String address && !address.isBlank()) {
+                return address;
+            }
+        }
+        return null;
+    }
+
     /** Whether the chart values create Prometheus ServiceMonitors ({@code serviceMonitor.enabled}). */
     public static boolean serviceMonitorsEnabled(Map<String, Object> values) {
         Object sm = values == null ? null : values.get("serviceMonitor");

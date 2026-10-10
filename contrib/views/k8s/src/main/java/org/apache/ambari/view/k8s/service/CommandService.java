@@ -5641,15 +5641,19 @@ public class CommandService {
                     }
                     // Reuse a Prometheus already running, whatever namespace or release name it was installed under,
                     // instead of a second kube-prometheus-stack competing with its operator.
+                    // Only when the deploy actually queries it: a Prometheus elsewhere is no use to an autoscaler
+                    // still pointed at the default kube-prometheus-stack address.
                     if (asBoolean(depSkipMap.get("skipIfPrometheusPresent"), false)) {
-                        List<PrometheusDiscovery.Instance> running = this.kubernetesService.listPrometheusInstances();
-                        if (!running.isEmpty()) {
-                            PrometheusDiscovery.Instance first = running.get(0);
-                            LOG.info("Skipping dependency '{}' — {} Prometheus instance(s) already running (e.g. {}/{}).",
-                                    dependencyReleaseName, running.size(), first.namespace(), first.name());
+                        String deployAddress = KedaThanosScope.firstTriggerAddress(request.getValues());
+                        Optional<PrometheusDiscovery.Instance> reused = PrometheusDiscovery.reusableFor(
+                                this.kubernetesService.listPrometheusInstances(), deployAddress);
+                        if (reused.isPresent()) {
+                            PrometheusDiscovery.Instance found = reused.get();
+                            LOG.info("Skipping dependency '{}' — Prometheus {}/{} is already running at {}.",
+                                    dependencyReleaseName, found.namespace(), found.name(), found.url());
                             this.commandPlanFactory.createDependencySatisfiedCommand(
                                     rootCommand, dependencyReleaseName, depSkipMap,
-                                    "Skipped — Prometheus " + first.namespace() + "/" + first.name()
+                                    "Skipped — Prometheus " + found.namespace() + "/" + found.name()
                                             + " is already running; reusing it.");
                             continue;
                         }

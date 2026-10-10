@@ -668,7 +668,7 @@ export const getClusterServices = async (serviceType: string): Promise<ClusterSe
  * Discover monitoring stack (kube-prometheus-stack) and return namespace/release.
  */
 export const getMonitoringDiscovery = async (): Promise<{
-  namespace: string; release: string; url?: string;
+  namespace: string; release: string; url?: string; queryUrl?: string;
   serviceMonitorLabels?: Record<string, string>; warning?: string;
 }> => {
   const response = await fetch(`${API_BASE_URL}/discovery/monitoring/prometheus`, { credentials: 'include' });

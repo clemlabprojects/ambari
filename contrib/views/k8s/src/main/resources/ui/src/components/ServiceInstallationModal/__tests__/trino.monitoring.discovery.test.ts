@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildVarContext, applyBindingTargets, parseLabels, formatLabels } from '../bindings';
+import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from '../discovery';
 
 /**
  * AMBARI-726 — a Prometheus found by discovery (any namespace, any release name) drives the Trino wiring: its
@@ -54,5 +55,35 @@ describe('Trino monitoring wiring', () => {
     const values: any = {};
     applyBindingTargets(values, labelBinding, {}, f, 'trino', buildVarContext(svc.variables, f, {}, {}, 'kubernetes'));
     expect(values.serviceMonitor.labels).toEqual({ release: 'kube-prometheus-stack' });
+  });
+});
+
+describe('discovery picker', () => {
+  const found = {
+    namespace: 'observability', release: 'obs',
+    url: 'https://prometheus.example.com', queryUrl: 'http://obs-kube-prometheus-prometheus.observability.svc:9090',
+    serviceMonitorLabels: { release: 'obs' },
+  };
+
+  it('accepts the option value or the whole option', () => {
+    expect(parseDiscoveryChoice(JSON.stringify(found))).toEqual(found);
+    expect(parseDiscoveryChoice({ label: 'obs (observability)', value: JSON.stringify(found) })).toEqual(found);
+    expect(parseDiscoveryChoice('not json')).toBeUndefined();
+    expect(parseDiscoveryChoice(undefined)).toBeUndefined();
+  });
+
+  it('fills the in-cluster address, never the external one, and keeps the other monitoring fields', () => {
+    expect(monitoringFieldsFromDiscovery(found, { interval: '30s' })).toEqual({
+      interval: '30s', namespace: 'observability', release: 'obs',
+      url: 'http://obs-kube-prometheus-prometheus.observability.svc:9090', serviceMonitorLabels: 'release=obs',
+    });
+    expect(monitoringFieldsFromDiscovery({ ...found, queryUrl: undefined }).url).toBe('');
+  });
+
+  it('keeps the address in the deployed values, so an upgrade still queries the same Prometheus', () => {
+    const fields = svc.form.flatMap((g: any) => g.fields || []);
+    const url = fields.find((f: any) => f.name === 'monitoring.url');
+    expect(url).toBeDefined();
+    expect(url.excludeFromValues).toBeFalsy();
   });
 });
