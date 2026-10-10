@@ -137,4 +137,20 @@ class GitClientTest {
         assertTrue(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")));
         org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("../outside")));
     }
+
+    @Test
+    void aFilePublishedOnTheWorkingBranchIsSeenThere(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        client.checkoutBranch("flux-123");
+        client.writeFile(Path.of("deps/keda-helmrelease.yaml"), "kind: HelmRelease\n");
+        assertNotNull(client.commitAndPush("on the working branch"));
+        client.sync();
+
+        assertTrue(client.existsOnRemoteBranch(Path.of("deps/keda-helmrelease.yaml"), "flux-123"));
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")));
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnRemoteBranch(Path.of("README.md"), "never-pushed"));
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnRemoteBranch(Path.of("README.md"), null));
+    }
 }

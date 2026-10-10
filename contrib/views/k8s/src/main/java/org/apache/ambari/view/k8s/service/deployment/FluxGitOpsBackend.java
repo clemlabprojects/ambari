@@ -498,11 +498,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // through Flux is kept even though it is now "on the cluster": Flux installed it.
                     // "Manages" = published on the base branch, not merely present in the local workspace.
                     Path depFile = depDir.resolve(firstNonBlank((String) depSpec.get("releaseName"), depKey) + "-helmrelease.yaml");
-                    boolean managedHere = gitClient.existsOnBaseBranch(depFile);
+                    // (the base branch, or the working branch this release pushes to, e.g. a generated flux-* one)
+                    boolean managedHere = gitClient.existsOnBaseBranch(depFile)
+                            || gitClient.existsOnRemoteBranch(depFile, branch);
                     String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context);
                     if (skipped != null) {
-                        // A file written by an earlier deploy is left in place: the operator it installs (KEDA, the
-                        // keytab webhook) is shared, and other releases may rely on it.
+                        // A published file is left in place: the operator it installs (KEDA, the keytab webhook) is
+                        // shared, and other releases may rely on it. One never published (e.g. in a still-open PR
+                        // branch) is removed, so merging it cannot install a second copy.
+                        if (!managedHere) {
+                            gitClient.deletePath(depFile);
+                        }
                         logFluxInfo(namespace, release, "automation", "Dependency %s not written: %s", depKey, skipped);
                         continue;
                     }
@@ -1499,6 +1505,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             int code = new ProcessBuilder("git", "reset", "--hard", "HEAD")
                     .directory(repoDir.toFile())
                     .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                     .start()
                     .waitFor();
             if (code != 0) LOG.warn("git reset --hard failed (exit {}) in {}", code, repoDir);
@@ -1506,6 +1513,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             code = new ProcessBuilder("git", "clean", "-fd")
                     .directory(repoDir.toFile())
                     .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                     .start()
                     .waitFor();
             if (code != 0) LOG.warn("git clean -fd failed (exit {}) in {}", code, repoDir);

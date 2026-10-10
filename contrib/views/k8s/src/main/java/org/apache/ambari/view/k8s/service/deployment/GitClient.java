@@ -271,6 +271,19 @@ public class GitClient {
      * @param relative path relative to the repo root
      */
     public boolean existsOnBaseBranch(Path relative) {
+        return existsOnRemoteBranch(relative, baseBranch);
+    }
+
+    /**
+     * Whether a file exists on {@code origin/<branch>} as last fetched.
+     *
+     * @param relative path relative to the repo root
+     * @param branch   remote branch name; false when it was never pushed
+     */
+    public boolean existsOnRemoteBranch(Path relative, String branch) {
+        if (branch == null || branch.isBlank()) {
+            return false;
+        }
         String path;
         try {
             path = workspace.relativize(resolveSafe(relative)).toString().replace('\\', '/');
@@ -278,7 +291,7 @@ public class GitClient {
             return false;
         }
         try (Git git = Git.open(workspace.toFile())) {
-            org.eclipse.jgit.lib.ObjectId tree = git.getRepository().resolve("refs/remotes/origin/" + baseBranch + "^{tree}");
+            org.eclipse.jgit.lib.ObjectId tree = git.getRepository().resolve("refs/remotes/origin/" + branch + "^{tree}");
             if (tree == null) {
                 return false;
             }
@@ -286,7 +299,7 @@ public class GitClient {
                 return walk != null;
             }
         } catch (Exception e) {
-            LOG.warn("Could not look up {} on origin/{}: {}", path, baseBranch, e.toString());
+            LOG.warn("Could not look up {} on origin/{}: {}", path, branch, e.toString());
             return false;
         }
     }
