@@ -115,7 +115,10 @@ public final class KedaThanosScope {
     public static String autoscalingWithoutMetrics(Map<String, Object> values) {
         // Every autoscaling query reads coordinator metrics (queued/running queries, required workers).
         Object sm = values == null ? null : values.get("serviceMonitor");
-        boolean metricsOff = sm instanceof Map<?, ?> m && m.containsKey("enabled") && !roleMonitored(m, "coordinator");
+        // Judged only when the values set it (top level or coordinator): a chart without these settings is left alone.
+        boolean metricsOff = sm instanceof Map<?, ?> m
+                && (m.containsKey("enabled") || (m.get("coordinator") instanceof Map<?, ?> c && c.containsKey("enabled")))
+                && !roleMonitored(m, "coordinator");
         if (kedaEnabled(values) && metricsOff) {
             return "Worker autoscaling needs the service's metrics, but metrics collection (ServiceMonitor) is off. "
                     + "Turn metrics collection on, or turn worker autoscaling off.";
