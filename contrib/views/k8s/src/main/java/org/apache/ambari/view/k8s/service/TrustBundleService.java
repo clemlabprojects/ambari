@@ -184,14 +184,38 @@ public class TrustBundleService {
         return new TrustMaterial(certs, caPem, jks, jksPassword, sources);
     }
 
-    /** The truststore password already stored in the release's Secret, or {@code null} when there is none. */
-    private char[] existingPassword(String namespace, String secretName) {
+    private io.fabric8.kubernetes.api.model.Secret secretOrNull(String namespace, String secretName) {
         try {
-            return passwordFromSecret(kubernetesService.getSecret(namespace, secretName));
+            return kubernetesService.getSecret(namespace, secretName);
         } catch (Exception e) {
-            LOG.debug("trust-bundle: no reusable password in {}/{}: {}", namespace, secretName, e.toString());
+            LOG.debug("trust-bundle: cannot read {}/{}: {}", namespace, secretName, e.toString());
             return null;
         }
+    }
+
+    /**
+     * The password of a truststore Secret this view wrote for exactly these CAs, or {@code null}: a Secret from
+     * elsewhere, or one holding other CAs, gets a fresh password.
+     *
+     * @param secret the release's existing truststore Secret, may be null
+     * @param caPem  the CA bundle about to be written
+     */
+    static char[] reusablePassword(io.fabric8.kubernetes.api.model.Secret secret, String caPem) {
+        if (secret == null || secret.getMetadata() == null || secret.getData() == null
+                || secret.getMetadata().getAnnotations() == null
+                || !"ambari-k8s-view".equals(secret.getMetadata().getAnnotations().get("managed-by"))) {
+            return null;
+        }
+        String storedCa = secret.getData().get("ca.crt");
+        try {
+            if (storedCa == null || caPem == null
+                    || !new String(Base64.getDecoder().decode(storedCa.trim()), StandardCharsets.UTF_8).equals(caPem)) {
+                return null;
+            }
+        } catch (IllegalArgumentException notBase64) {
+            return null;
+        }
+        return passwordFromSecret(secret);
     }
 
     /** The {@code truststore.password} of a truststore Secret, or {@code null} when absent, blank or unreadable. */
@@ -220,11 +244,16 @@ public class TrustBundleService {
      */
     public ProvisionResult provisionReleaseTruststore(String namespace, String releaseName, List<String> truststoreRefs) {
         String secretName = releaseName + "-truststore";
-        // Keep the password of an earlier deploy: it ends up in the service configuration, so a new one would restart
-        // every pod on each redeploy even when nothing else changed.
-        TrustMaterial material = assemble(truststoreRefs, existingPassword(namespace, secretName));
+        TrustMaterial material = assemble(truststoreRefs);
         if (material.certs().isEmpty()) {
             return new ProvisionResult(false, null, Map.of(), 0);
+        }
+        // Same CAs as the Secret this view wrote last time: keep its password. The password ends up in the service
+        // configuration, so a new one restarts every pod; with changed CAs that restart is wanted (the JKS is mounted
+        // as a file the pods only read at start), so a fresh password is kept then.
+        char[] previous = reusablePassword(secretOrNull(namespace, secretName), material.caPem());
+        if (previous != null) {
+            material = assemble(truststoreRefs, previous);
         }
         Map<String, byte[]> data = new LinkedHashMap<>();
         data.put("truststore.jks", material.jks());

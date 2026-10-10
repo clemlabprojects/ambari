@@ -48,4 +48,23 @@ class TrustBundlePasswordTest {
     assertNull(TrustBundleService.passwordFromSecret(secret("   ")));
     assertNull(TrustBundleService.passwordFromSecret(new SecretBuilder().addToData("truststore.password", "%%not-base64%%").build()));
   }
+
+  private static Secret written(String password, String caPem, String managedBy) {
+    SecretBuilder b = new SecretBuilder().withNewMetadata().withName("trino-truststore")
+        .addToAnnotations(managedBy == null ? java.util.Map.of() : java.util.Map.of("managed-by", managedBy)).endMetadata()
+        .addToData("truststore.password", Base64.getEncoder().encodeToString(password.getBytes(StandardCharsets.UTF_8)))
+        .addToData("ca.crt", Base64.getEncoder().encodeToString(caPem.getBytes(StandardCharsets.UTF_8)));
+    return b.build();
+  }
+
+  @Test
+  void thePasswordIsKeptOnlyForTheSameCasInASecretThisViewWrote() {
+    String ca = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n";
+    assertArrayEquals("p1".toCharArray(), TrustBundleService.reusablePassword(written("p1", ca, "ambari-k8s-view"), ca));
+    assertNull(TrustBundleService.reusablePassword(written("p1", ca, "ambari-k8s-view"), ca + "BBB"),
+        "changed CAs: a fresh password, so the pods restart and load them");
+    assertNull(TrustBundleService.reusablePassword(written("changeit", ca, "someone-else"), ca));
+    assertNull(TrustBundleService.reusablePassword(written("changeit", ca, null), ca));
+    assertNull(TrustBundleService.reusablePassword(null, ca));
+  }
 }
