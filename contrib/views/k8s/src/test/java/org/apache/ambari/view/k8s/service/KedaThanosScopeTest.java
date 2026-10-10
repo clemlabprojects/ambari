@@ -265,4 +265,12 @@ class KedaThanosScopeTest {
     assertFalse(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor",
         Map.of("enabled", true, "coordinator", Map.of("enabled", false), "worker", Map.of("enabled", false)))));
   }
+
+  @Test
+  void autoscalingNeedsTheCoordinatorMetricsInParticular() {
+    Map<String, Object> keda = new LinkedHashMap<>(Map.of("enabled", true));
+    Map<String, Object> v = new LinkedHashMap<>(Map.of("server", Map.of("keda", keda),
+        "serviceMonitor", Map.of("enabled", true, "coordinator", Map.of("enabled", false), "worker", Map.of("enabled", true))));
+    assertNotNull(KedaThanosScope.autoscalingWithoutMetrics(v), "worker metrics alone cannot drive the autoscaler");
+  }
 }

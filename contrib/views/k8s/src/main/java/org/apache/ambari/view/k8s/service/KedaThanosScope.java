@@ -113,8 +113,9 @@ public final class KedaThanosScope {
      * Prometheus collect, so turning them off (explicitly) while autoscaling is on would leave it blind.
      */
     public static String autoscalingWithoutMetrics(Map<String, Object> values) {
+        // Every autoscaling query reads coordinator metrics (queued/running queries, required workers).
         Object sm = values == null ? null : values.get("serviceMonitor");
-        boolean metricsOff = sm instanceof Map<?, ?> m && m.containsKey("enabled") && !serviceMonitorsEnabled(values);
+        boolean metricsOff = sm instanceof Map<?, ?> m && m.containsKey("enabled") && !roleMonitored(m, "coordinator");
         if (kedaEnabled(values) && metricsOff) {
             return "Worker autoscaling needs the service's metrics, but metrics collection (ServiceMonitor) is off. "
                     + "Turn metrics collection on, or turn worker autoscaling off.";
@@ -129,14 +130,13 @@ public final class KedaThanosScope {
      */
     public static boolean serviceMonitorsEnabled(Map<String, Object> values) {
         Object sm = values == null ? null : values.get("serviceMonitor");
-        if (!(sm instanceof Map<?, ?> m)) return false;
-        boolean top = Boolean.parseBoolean(String.valueOf(m.get("enabled")));
-        for (String role : new String[]{"coordinator", "worker"}) {
-            Object r = m.get(role);
-            boolean roleOn = r instanceof Map<?, ?> rm && rm.containsKey("enabled")
-                    ? Boolean.parseBoolean(String.valueOf(rm.get("enabled"))) : top;
-            if (roleOn) return true;
-        }
-        return false;
+        return sm instanceof Map<?, ?> m && (roleMonitored(m, "coordinator") || roleMonitored(m, "worker"));
+    }
+
+    /** Whether the chart creates the role's ServiceMonitor: its own {@code enabled}, else the top-level one. */
+    private static boolean roleMonitored(Map<?, ?> serviceMonitor, String role) {
+        Object r = serviceMonitor.get(role);
+        Object enabled = r instanceof Map<?, ?> rm && rm.containsKey("enabled") ? rm.get("enabled") : serviceMonitor.get("enabled");
+        return Boolean.parseBoolean(String.valueOf(enabled));
     }
 }
