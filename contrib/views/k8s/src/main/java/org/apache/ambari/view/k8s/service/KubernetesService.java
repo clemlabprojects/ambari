@@ -2196,7 +2196,10 @@ public class KubernetesService {
                 }
             }
         } catch (Exception e) {
-            LOG.warn("OpenShift detection via API groups failed (treating as vanilla k8s): {}", e.toString());
+            // Not remembered: a transient failure (expired token, network) must not make every later request treat an
+            // OpenShift cluster as plain Kubernetes. The next call asks again.
+            LOG.warn("OpenShift detection via API groups failed (treating as vanilla k8s for this request): {}", e.toString());
+            return false;
         }
         LOG.info("OpenShift detection: cluster {} OpenShift (*.openshift.io API group present={}).",
                 result ? "IS" : "is NOT", result);
