@@ -74,6 +74,18 @@ public final class DependencyRules {
      */
     public static String skipReason(String name, Map<String, Object> spec, HelmDeployRequest request,
                                     KubernetesService k8s, BiPredicate<String, String> releaseExists) {
+        String reason = settingsSkipReason(name, spec, request, k8s);
+        return reason != null ? reason : reuseSkipReason(name, spec, request, k8s, releaseExists);
+    }
+
+    /**
+     * The rules that depend on the platform and the release's settings only ({@code skipOnOpenShift},
+     * {@code onlyWhenValueTrue}).
+     *
+     * @return the reason shown to the operator, or {@code null}
+     */
+    public static String settingsSkipReason(String name, Map<String, Object> spec, HelmDeployRequest request,
+                                            KubernetesService k8s) {
         if (flag(spec, "skipOnOpenShift") && k8s.isOpenShiftCluster()) {
             LOG.info("Skipping dependency '{}' on OpenShift (skipOnOpenShift=true)", name);
             return "Skipped on OpenShift — the platform's built-in stack is used instead.";
@@ -86,6 +98,17 @@ public final class DependencyRules {
                 return "Skipped — not needed with these settings (" + onlyWhenValueTrue + " is off).";
             }
         }
+        return null;
+    }
+
+    /**
+     * The rules that reuse what is already on the cluster ({@code skipIfCrdExists}, {@code skipIfPrometheusPresent},
+     * {@code skipIfReleaseExists}).
+     *
+     * @return the reason shown to the operator, or {@code null}
+     */
+    public static String reuseSkipReason(String name, Map<String, Object> spec, HelmDeployRequest request,
+                                         KubernetesService k8s, BiPredicate<String, String> releaseExists) {
         // An operator already on the cluster, detected by its CRD whatever namespace or release it came from (e.g.
         // KEDA, including the OpenShift Custom Metrics Autoscaler): never install a second, conflicting one.
         String crd = text(spec, "skipIfCrdExists");

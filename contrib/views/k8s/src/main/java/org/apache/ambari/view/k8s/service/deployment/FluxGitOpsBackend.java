@@ -187,13 +187,22 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * Why a dependency is not written to Git for this deploy, or {@code null}: the keytab webhook outside the WEBHOOK
      * Kerberos injection mode, then the rules direct deploys apply ({@link DependencyRules}).
      */
-    private String gitOpsSkipReason(String name, Map<String, Object> spec, HelmDeployRequest request) {
-        if ("kerberos-keytab-mutating-webhook".equals(name)
-                && !"WEBHOOK".equals(CommandService.resolveKerberosInjectionMode(viewContext))) {
-            return "Skipped — the keytab webhook is only used in the WEBHOOK Kerberos injection mode.";
+    private String gitOpsSkipReason(String name, Map<String, Object> spec, HelmDeployRequest request,
+                                    boolean managedHere, DeploymentContext context) {
+        if ("kerberos-keytab-mutating-webhook".equals(name)) {
+            if (!"WEBHOOK".equals(CommandService.resolveKerberosInjectionMode(viewContext))) {
+                return "Skipped — the keytab webhook is only used in the WEBHOOK Kerberos injection mode.";
+            }
+            if (followsAmbariKerberos(request) && Boolean.FALSE.equals(ambariClusterKerberos(context))) {
+                return "Skipped — Kerberos is disabled on the cluster.";
+            }
         }
         DependencyRules.applyNamespaceFromForm(spec, request.getFormValues());
-        return DependencyRules.skipReason(name, spec, request, kubernetesService, this::helmReleaseExists);
+        String reason = DependencyRules.settingsSkipReason(name, spec, request, kubernetesService);
+        if (reason != null || managedHere) {
+            return reason;
+        }
+        return DependencyRules.reuseSkipReason(name, spec, request, kubernetesService, this::helmReleaseExists);
     }
 
     /** Whether a Helm release of that name is installed in the namespace. */
@@ -485,10 +494,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         continue;
                     }
                     // The same dependencies as a direct deploy: none on OpenShift that the platform provides, none
-                    // that the settings do not need, none already on the cluster.
-                    String skipped = gitOpsSkipReason(depKey, depSpec, request);
+                    // that the settings do not need, none already on the cluster. One this release already manages
+                    // through Flux is kept even though it is now "on the cluster": Flux installed it.
+                    Path depFile = depDir.resolve(firstNonBlank((String) depSpec.get("releaseName"), depKey) + "-helmrelease.yaml");
+                    boolean managedHere = Files.exists(repoDir.resolve(depFile));
+                    String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context);
                     if (skipped != null) {
                         logFluxInfo(namespace, release, "automation", "Dependency %s not written: %s", depKey, skipped);
+                        if (managedHere) {
+                            // e.g. autoscaling turned off: Flux removes the dependency it installed for this release.
+                            gitClient.deletePath(depFile);
+                        }
                         continue;
                     }
 

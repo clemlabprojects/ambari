@@ -98,4 +98,14 @@ class DependencyRulesTest {
         when(k8s.listPrometheusInstances()).thenReturn(List.of());
         assertNull(DependencyRules.skipReason("kube-prometheus-stack", spec("skipIfPrometheusPresent", true), request, k8s, (n, r) -> false));
     }
+
+    @Test
+    void aDependencyAlreadyManagedThroughGitOpsOnlyFollowsTheSettingsRules() {
+        when(k8s.crdExists("scaledobjects.keda.sh")).thenReturn(true);
+        Map<String, Object> keda = spec("skipIfCrdExists", "scaledobjects.keda.sh", "onlyWhenValueTrue", "server.keda.enabled");
+        assertNull(DependencyRules.settingsSkipReason("keda", keda, request, k8s),
+                "the KEDA Flux installed for this release is on the cluster, but stays");
+        assertNotNull(DependencyRules.reuseSkipReason("keda", keda, request, k8s, (n, r) -> false));
+        assertNotNull(DependencyRules.skipReason("keda", keda, request, k8s, (n, r) -> false));
+    }
 }
