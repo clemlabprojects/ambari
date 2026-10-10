@@ -276,6 +276,9 @@ const HelmReleasesPage: React.FC = () => {
       namespace: release.namespace,
       values,
       version: release.version,
+      // The context the release was deployed against: without it Ranger, Kerberos and Hadoop config steps would
+      // use the local Ambari instead of an external context.
+      formValues: release.platformContextId ? { platformContextId: release.platformContextId } : undefined,
       serviceKey: release.serviceKey,
       securityProfile: release.securityProfile,
       repoId: release.repoId,

@@ -297,7 +297,8 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     case 'number':
       return (
         <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
-          <InputNumber style={{ width: '100%' }} disabled={disabledProp} />
+          <InputNumber style={{ width: '100%' }} disabled={disabledProp}
+            min={(field as any).min} max={(field as any).max} />
         </Form.Item>
       );
     case 'boolean':

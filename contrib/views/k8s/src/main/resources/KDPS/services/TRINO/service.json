@@ -2426,6 +2426,7 @@
       "fields": [
         {
           "name": "server.workers",
+          "min": 1,
           "label": "Number of workers",
           "type": "number",
           "defaultValue": 3,
@@ -2433,7 +2434,7 @@
             "field": "server.keda.enabled",
             "value": false
           },
-          "help": "Fixed number of workers, used when worker autoscaling is off."
+          "help": "Fixed number of workers (at least 1), used when worker autoscaling is off."
         },
         {
           "name": "worker.resources.requests.cpu",
@@ -2481,6 +2482,7 @@
         },
         {
           "name": "server.keda.minReplicaCount",
+          "min": 0,
           "label": "Minimum workers",
           "type": "number",
           "defaultValue": 1,
@@ -2491,9 +2493,11 @@
         },
         {
           "name": "server.keda.maxReplicaCount",
+          "min": 1,
           "label": "Maximum workers",
           "type": "number",
           "defaultValue": 10,
+          "help": "Must be at least the minimum.",
           "condition": {
             "field": "server.keda.enabled",
             "value": true

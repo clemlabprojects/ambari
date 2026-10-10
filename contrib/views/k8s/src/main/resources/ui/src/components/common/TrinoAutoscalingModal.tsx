@@ -28,12 +28,16 @@ export interface TrinoScaling {
   maxWorkers: number;
 }
 
+/** Whether values read from a release can be redeployed: an empty answer would wipe its configuration. */
+export const usableReleaseValues = (v: any): boolean =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0;
+
 /** Reads the worker scaling from a release's values (chart defaults where unset). */
 export const scalingFromValues = (values: any): TrinoScaling => {
   const keda = values?.server?.keda || {};
   return {
     enabled: keda.enabled === true || keda.enabled === 'true',
-    workers: Number(values?.server?.workers ?? 3),
+    workers: Number(values?.server?.workers ?? 2),
     minWorkers: Number(keda.minReplicaCount ?? 1),
     maxWorkers: Number(keda.maxReplicaCount ?? 10),
   };
@@ -72,7 +76,14 @@ const TrinoAutoscalingModal: React.FC<Props> = ({ release, onClose, onApply }) =
     setValues(null); setScaling(null); setError(null);
     if (!release) return;
     getReleaseValues(release.namespace, release.name)
-      .then((v: any) => { setValues(v || {}); setScaling(scalingFromValues(v)); })
+      .then((v: any) => {
+        // No values would mean redeploying the release with nothing but its scaling: refuse rather than wipe it.
+        if (!usableReleaseValues(v)) {
+          setError('The deployed values of this release could not be read, so it cannot be redeployed from here.');
+          return;
+        }
+        setValues(v); setScaling(scalingFromValues(v));
+      })
       .catch((e: any) => setError(e?.message || 'Could not read the release values'));
   }, [release]);
 
@@ -81,6 +92,10 @@ const TrinoAutoscalingModal: React.FC<Props> = ({ release, onClose, onApply }) =
     setError(null);
     if (scaling.enabled && scaling.minWorkers > scaling.maxWorkers) {
       setError('The minimum number of workers is above the maximum.');
+      return;
+    }
+    if (scaling.enabled && values?.server?.autoscaling?.enabled) {
+      setError('This release uses the chart\'s own autoscaler (server.autoscaling); turn that off before using KEDA.');
       return;
     }
     setBusy(true);
@@ -131,11 +146,12 @@ const TrinoAutoscalingModal: React.FC<Props> = ({ release, onClose, onApply }) =
             </>
           ) : (
             <Form.Item label="Number of workers" help="Workers run at this fixed count once the autoscaler is removed.">
-              <InputNumber min={0} value={scaling.workers} onChange={(v) => setScaling({ ...scaling, workers: Number(v ?? 0) })} />
+              <InputNumber min={1} value={scaling.workers} onChange={(v) => setScaling({ ...scaling, workers: Math.max(1, Number(v ?? 1)) })} />
             </Form.Item>
           )}
           <Typography.Text type="secondary">
-            Applying redeploys the release with its current chart version and values; only the worker scaling changes.
+            Applying redeploys the release with its deployed values and chart version, changing only the worker scaling.
+            Truststores chosen at install time are not remembered: the release is redeployed with the default ones.
           </Typography.Text>
         </Form>
       )}

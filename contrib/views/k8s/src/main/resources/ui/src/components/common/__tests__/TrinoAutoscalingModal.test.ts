@@ -1,13 +1,18 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { scalingFromValues, valuesWithScaling } from '../TrinoAutoscalingModal';
+import { scalingFromValues, usableReleaseValues, valuesWithScaling } from '../TrinoAutoscalingModal';
 
 /** AMBARI-728 — worker autoscaling can be turned on or off, at install and on a deployed Trino release. */
 describe('worker scaling of a deployed release', () => {
+  it('refuses to redeploy from values that could not be read', () => {
+    for (const v of [null, undefined, {}, [], 'x']) expect(usableReleaseValues(v)).toBe(false);
+    expect(usableReleaseValues({ server: {} })).toBe(true);
+  });
+
   it('reads the deployed scaling, chart defaults where unset', () => {
     expect(scalingFromValues({ server: { keda: { enabled: true, minReplicaCount: 2, maxReplicaCount: 8 }, workers: 4 } }))
       .toEqual({ enabled: true, workers: 4, minWorkers: 2, maxWorkers: 8 });
-    expect(scalingFromValues({})).toEqual({ enabled: false, workers: 3, minWorkers: 1, maxWorkers: 10 });
+    expect(scalingFromValues({})).toEqual({ enabled: false, workers: 2, minWorkers: 1, maxWorkers: 10 });
   });
 
   it('turning it off sets the fixed worker count and leaves everything else as deployed', () => {
