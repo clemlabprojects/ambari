@@ -25,6 +25,12 @@ describe('worker scaling of a deployed release', () => {
     expect(deployed.server.keda.enabled).toBe(true);
   });
 
+  it('turning it on turns metrics collection back on, which the autoscaler reads', () => {
+    const next = valuesWithScaling({ server: {}, serviceMonitor: { enabled: false, interval: '30s' } },
+      { enabled: true, workers: 2, minWorkers: 1, maxWorkers: 4 });
+    expect(next.serviceMonitor).toEqual({ enabled: true, interval: '30s' });
+  });
+
   it('turning it on sets the bounds', () => {
     const next = valuesWithScaling({ server: { workers: 3 } }, { enabled: true, workers: 3, minWorkers: 2, maxWorkers: 6 });
     expect(next.server.keda).toEqual({ enabled: true, minReplicaCount: 2, maxReplicaCount: 6 });
@@ -43,6 +49,13 @@ describe('Trino wizard autoscaling fields', () => {
     }
     expect(field('server.workers').condition).toEqual({ field: 'server.keda.enabled', value: false });
     expect(field('worker.replicas')).toBeUndefined();
+  });
+
+  it('metrics collection is a switch on both platforms, and no binding forces it on', () => {
+    const monitorFields = svc.form.filter((g: any) => (g.fields || []).some((f: any) => f.name === 'serviceMonitor.enabled'));
+    expect(monitorFields.map((g: any) => g.capability).sort()).toEqual(['kubernetes', 'openshift']);
+    const smEnable = svc.bindings.find((b: any) => b.name === 'service-monitor-enable');
+    expect(smEnable.targets.map((t: any) => t.path)).not.toContain('serviceMonitor.enabled');
   });
 
   it('no binding forces autoscaling on anymore, and KEDA is installed only when it is on', () => {

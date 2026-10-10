@@ -52,6 +52,8 @@ export const valuesWithScaling = (values: any, scaling: TrinoScaling): any => {
   if (scaling.enabled) {
     next.server.keda.minReplicaCount = scaling.minWorkers;
     next.server.keda.maxReplicaCount = scaling.maxWorkers;
+    // The autoscaler reads the metrics the ServiceMonitors collect.
+    if (next.serviceMonitor && next.serviceMonitor.enabled === false) next.serviceMonitor.enabled = true;
   } else {
     next.server.workers = scaling.workers;
   }

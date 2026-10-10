@@ -1059,12 +1059,8 @@
     },
     {
       "name": "service-monitor-enable",
+      "comment": "serviceMonitor.enabled is the 'Collect metrics' wizard field.",
       "targets": [
-        {
-          "path": "serviceMonitor.enabled",
-          "op": "set",
-          "value": true
-        },
         {
           "path": "serviceMonitor.apiVersion",
           "op": "set",
@@ -1825,6 +1821,13 @@
           "label": "OpenShift monitoring",
           "type": "openshift-monitoring-notice",
           "excludeFromValues": true
+        },
+        {
+          "name": "serviceMonitor.enabled",
+          "label": "Collect metrics (ServiceMonitor)",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "Lets OpenShift monitoring scrape Trino; needs the monitoring-edit role in the project. Required by worker autoscaling: turn autoscaling off to turn this off."
         }
       ]
     },
@@ -1873,9 +1876,10 @@
         },
         {
           "name": "serviceMonitor.enabled",
-          "label": "Expose ServiceMonitor",
+          "label": "Collect metrics (ServiceMonitor)",
           "type": "boolean",
-          "defaultValue": true
+          "defaultValue": true,
+          "help": "Lets Prometheus scrape Trino. Required by worker autoscaling."
         },
         {
           "name": "serviceMonitor.interval",

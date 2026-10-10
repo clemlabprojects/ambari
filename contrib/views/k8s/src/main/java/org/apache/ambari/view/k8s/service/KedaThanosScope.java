@@ -108,6 +108,21 @@ public final class KedaThanosScope {
         return null;
     }
 
+    /**
+     * Why these values cannot autoscale, or {@code null}: the autoscaler reads the metrics the ServiceMonitors make
+     * Prometheus collect, so turning them off (explicitly) while autoscaling is on would leave it blind.
+     */
+    public static String autoscalingWithoutMetrics(Map<String, Object> values) {
+        Object sm = values == null ? null : values.get("serviceMonitor");
+        boolean metricsOff = sm instanceof Map<?, ?> m && m.containsKey("enabled")
+                && !Boolean.parseBoolean(String.valueOf(m.get("enabled")));
+        if (kedaEnabled(values) && metricsOff) {
+            return "Worker autoscaling needs the service's metrics, but metrics collection (ServiceMonitor) is off. "
+                    + "Turn metrics collection on, or turn worker autoscaling off.";
+        }
+        return null;
+    }
+
     /** Whether the chart values create Prometheus ServiceMonitors ({@code serviceMonitor.enabled}). */
     public static boolean serviceMonitorsEnabled(Map<String, Object> values) {
         Object sm = values == null ? null : values.get("serviceMonitor");

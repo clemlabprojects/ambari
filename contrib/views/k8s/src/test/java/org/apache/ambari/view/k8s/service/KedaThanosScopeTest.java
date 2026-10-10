@@ -239,4 +239,19 @@ class KedaThanosScopeTest {
     assertNull(KedaThanosScope.firstTriggerAddress(Map.of()));
     assertNull(KedaThanosScope.firstTriggerAddress(null));
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void autoscalingIsRefusedWithoutMetrics() {
+    Map<String, Object> v = values(trigger("http://p.mon.svc:9090"));
+    ((Map<String, Object>) ((Map<String, Object>) v.get("server")).get("keda")).put("enabled", true);
+    assertNull(KedaThanosScope.autoscalingWithoutMetrics(v), "metrics on");
+    v.put("serviceMonitor", new LinkedHashMap<>(Map.of("enabled", false)));
+    assertTrue(KedaThanosScope.autoscalingWithoutMetrics(v).contains("metrics collection"));
+    ((Map<String, Object>) ((Map<String, Object>) v.get("server")).get("keda")).put("enabled", false);
+    assertNull(KedaThanosScope.autoscalingWithoutMetrics(v), "fixed-size Trino without metrics is fine");
+    v.remove("serviceMonitor");
+    ((Map<String, Object>) ((Map<String, Object>) v.get("server")).get("keda")).put("enabled", true);
+    assertNull(KedaThanosScope.autoscalingWithoutMetrics(v), "a chart without ServiceMonitor settings is not judged");
+  }
 }

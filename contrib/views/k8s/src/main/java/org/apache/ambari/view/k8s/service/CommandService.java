@@ -4205,6 +4205,10 @@ public class CommandService {
         // OpenShift KEDA autoscaling: point the triggers at the release's project when the account may not grant
         // cluster-wide monitoring access. Here, so every deployment mode saves the same values.
         OpenShiftMonitoringSetup.scopeAutoscalingToProject(kubernetesService, request);
+        String autoscalingProblem = KedaThanosScope.autoscalingWithoutMetrics(request.getValues());
+        if (autoscalingProblem != null) {
+            throw new IllegalArgumentException(autoscalingProblem);
+        }
 
         // Fail-fast on a Terminating namespace. The backends create the namespace
         // anyway as part of the helm install, but they do so several steps into
