@@ -34,7 +34,8 @@ public class HelmReleaseDTO {
 
     public boolean managedByUi;
     public String serviceKey;
-    public java.util.Map<String, java.util.Map<String, String>> catalogRefs; // reusable Trino catalogs attached: name -> {id, hash}
+    public java.util.Map<String, java.util.Map<String, String>> catalogRefs;
+    public java.util.List<String> truststoreRefs; // truststores selected for the release (null: never recorded) // reusable Trino catalogs attached: name -> {id, hash}
     public String platformContextId; // KDPS context the release was deployed against (for Upgrade/Config preselect)
     public String repoId;
     public String chartRef;

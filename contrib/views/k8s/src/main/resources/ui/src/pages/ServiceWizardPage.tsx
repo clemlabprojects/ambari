@@ -154,6 +154,9 @@ const ServiceWizardPage: React.FC = () => {
               if (upgradeState.securityProfile) {
                 initial.securityProfile = upgradeState.securityProfile;
               }
+              if (Array.isArray(upgradeState.truststoreRefs)) {
+                initial.truststoreRefs = upgradeState.truststoreRefs;
+              }
               // Re-select the KDPS context the release was deployed against so context bindings resolve
               // against the right target on upgrade, instead of the ambari-managed default seeded above.
               // Guard on existence: if that context was since deleted, keep the default rather than
@@ -951,9 +954,10 @@ const ServiceWizardPage: React.FC = () => {
               // Only send securityProfile if user explicitly picked one.
               securityProfile: (installValues as any)?.securityProfile || undefined,
               // Managed truststores selected to trust in this release (defaults are always merged
-              // server-side). Names come from the Truststores tab.
-              truststoreRefs: ((installValues as any)?.truststoreRefs && (installValues as any).truststoreRefs.length)
-                ? (installValues as any).truststoreRefs : undefined,
+              // server-side). Names come from the Truststores tab. Always sent, empty included: the
+              // backend records the choice and reuses it when the release is redeployed without one.
+              truststoreRefs: Array.isArray((installValues as any)?.truststoreRefs)
+                ? (installValues as any).truststoreRefs : [],
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
               git: (installValues as any)?.git || undefined,
               // Snapshot of raw form state (envelope keys stripped) so backend can read

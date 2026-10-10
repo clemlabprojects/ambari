@@ -151,7 +151,6 @@ const TrinoAutoscalingModal: React.FC<Props> = ({ release, onClose, onApply }) =
           )}
           <Typography.Text type="secondary">
             Applying redeploys the release with its deployed values and chart version, changing only the worker scaling.
-            Truststores chosen at install time are not remembered: the release is redeployed with the default ones.
           </Typography.Text>
         </Form>
       )}

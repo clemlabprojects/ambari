@@ -718,6 +718,8 @@ const HelmReleasesPage: React.FC = () => {
                 platformContextId: record.platformContextId,
                 // Reusable Trino catalogs attached at deploy time, so Upgrade/Config re-selects them.
                 catalogRefs: record.catalogRefs,
+                // Truststores selected at deploy time, so Upgrade/Config re-selects them.
+                truststoreRefs: record.truststoreRefs,
               },
             });
           }

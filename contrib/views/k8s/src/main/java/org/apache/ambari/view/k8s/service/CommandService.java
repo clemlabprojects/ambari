@@ -4191,6 +4191,17 @@ public class CommandService {
         // submit with a readable message instead of leaving a half-planned command.
         applyTrinoBaseIngestion(request);
 
+        // Truststores: a redeploy that names none (resync, security refresh, autoscaling change) keeps the release's.
+        if (request.getTruststoreRefs() == null) {
+            try {
+                request.setTruststoreRefs(new ReleaseMetadataService(ctx).truststoreRefs(
+                        request.getNamespace(), request.getReleaseName()));
+            } catch (Exception e) {
+                LOG.warn("Could not read the recorded truststores of {}/{}: {}", request.getNamespace(),
+                        request.getReleaseName(), e.toString());
+            }
+        }
+
         // OpenShift KEDA autoscaling: point the triggers at the release's project when the account may not grant
         // cluster-wide monitoring access. Here, so every deployment mode saves the same values.
         OpenShiftMonitoringSetup.scopeAutoscalingToProject(kubernetesService, request);
@@ -5468,6 +5479,8 @@ public class CommandService {
                 metadataService.recordCatalogRefs(request.getNamespace(), request.getReleaseName(),
                         stringValue(params.get("_catalogRefsJson")));
             }
+            metadataService.recordTruststoreRefs(request.getNamespace(), request.getReleaseName(),
+                    request.getTruststoreRefs());
         } catch (Exception ex) {
             LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }

@@ -828,6 +828,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     prNumber,
                     prState
             );
+            releaseMetadataService.recordTruststoreRefs(namespace, release, request.getTruststoreRefs());
         } catch (Exception ex) {
             LOG.warn("Failed to persist Flux metadata for {}/{}: {}", namespace, release, ex.toString());
         }
