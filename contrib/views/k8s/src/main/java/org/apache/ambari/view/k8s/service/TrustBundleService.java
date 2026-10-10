@@ -92,6 +92,13 @@ public class TrustBundleService {
      *                       truststores flagged default are always included regardless of this list
      */
     public TrustMaterial assemble(List<String> truststoreRefs) {
+        return assemble(truststoreRefs, null);
+    }
+
+    /**
+     * Same as {@link #assemble(List)}, protecting the JKS with {@code password} when given (a fresh one otherwise).
+     */
+    TrustMaterial assemble(List<String> truststoreRefs, char[] password) {
         List<X509Certificate> certs = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         List<String> sources = new ArrayList<>();
@@ -170,10 +177,35 @@ public class TrustBundleService {
         }
 
         String caPem = WebHookConfigurationService.toPemBundle(certs);
-        char[] jksPassword = UUID.randomUUID().toString().replace("-", "").toCharArray();
+        char[] jksPassword = password != null && password.length > 0 ? password
+                : UUID.randomUUID().toString().replace("-", "").toCharArray();
         byte[] jks = WebHookConfigurationService.buildJksFromCerts(certs, jksPassword);
         LOG.info("trust-bundle: assembled {} CA certificate(s) [{}]", certs.size(), String.join(",", sources));
         return new TrustMaterial(certs, caPem, jks, jksPassword, sources);
+    }
+
+    /** The truststore password already stored in the release's Secret, or {@code null} when there is none. */
+    private char[] existingPassword(String namespace, String secretName) {
+        try {
+            return passwordFromSecret(kubernetesService.getSecret(namespace, secretName));
+        } catch (Exception e) {
+            LOG.debug("trust-bundle: no reusable password in {}/{}: {}", namespace, secretName, e.toString());
+            return null;
+        }
+    }
+
+    /** The {@code truststore.password} of a truststore Secret, or {@code null} when absent, blank or unreadable. */
+    static char[] passwordFromSecret(io.fabric8.kubernetes.api.model.Secret secret) {
+        String encoded = secret == null || secret.getData() == null ? null : secret.getData().get("truststore.password");
+        if (encoded == null || encoded.isBlank()) {
+            return null;
+        }
+        try {
+            String password = new String(Base64.getDecoder().decode(encoded.trim()), StandardCharsets.UTF_8).trim();
+            return password.isEmpty() ? null : password.toCharArray();
+        } catch (IllegalArgumentException notBase64) {
+            return null;
+        }
     }
 
     /** Convenience for callers that only need the PEM bundle (e.g. a per-service ca.crt). */
@@ -187,11 +219,13 @@ public class TrustBundleService {
      * be assembled at all.
      */
     public ProvisionResult provisionReleaseTruststore(String namespace, String releaseName, List<String> truststoreRefs) {
-        TrustMaterial material = assemble(truststoreRefs);
+        String secretName = releaseName + "-truststore";
+        // Keep the password of an earlier deploy: it ends up in the service configuration, so a new one would restart
+        // every pod on each redeploy even when nothing else changed.
+        TrustMaterial material = assemble(truststoreRefs, existingPassword(namespace, secretName));
         if (material.certs().isEmpty()) {
             return new ProvisionResult(false, null, Map.of(), 0);
         }
-        String secretName = releaseName + "-truststore";
         Map<String, byte[]> data = new LinkedHashMap<>();
         data.put("truststore.jks", material.jks());
         data.put("truststore.password", new String(material.jksPassword()).getBytes(StandardCharsets.UTF_8));
