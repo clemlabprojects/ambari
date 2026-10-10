@@ -496,15 +496,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // The same dependencies as a direct deploy: none on OpenShift that the platform provides, none
                     // that the settings do not need, none already on the cluster. One this release already manages
                     // through Flux is kept even though it is now "on the cluster": Flux installed it.
+                    // "Manages" = published on the base branch, not merely present in the local workspace.
                     Path depFile = depDir.resolve(firstNonBlank((String) depSpec.get("releaseName"), depKey) + "-helmrelease.yaml");
-                    boolean managedHere = Files.exists(repoDir.resolve(depFile));
+                    boolean managedHere = gitClient.existsOnBaseBranch(depFile);
                     String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context);
                     if (skipped != null) {
+                        // A file written by an earlier deploy is left in place: the operator it installs (KEDA, the
+                        // keytab webhook) is shared, and other releases may rely on it.
                         logFluxInfo(namespace, release, "automation", "Dependency %s not written: %s", depKey, skipped);
-                        if (managedHere) {
-                            // e.g. autoscaling turned off: Flux removes the dependency it installed for this release.
-                            gitClient.deletePath(depFile);
-                        }
                         continue;
                     }
 
@@ -1503,6 +1502,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     .start()
                     .waitFor();
             if (code != 0) LOG.warn("git reset --hard failed (exit {}) in {}", code, repoDir);
+            // Files written for the failed deploy and never committed would otherwise linger into the next one.
+            code = new ProcessBuilder("git", "clean", "-fd")
+                    .directory(repoDir.toFile())
+                    .redirectErrorStream(true)
+                    .start()
+                    .waitFor();
+            if (code != 0) LOG.warn("git clean -fd failed (exit {}) in {}", code, repoDir);
         } catch (Exception ex) {
             LOG.warn("Could not reset workspace {} after failure: {}", repoDir, ex.getMessage());
         }

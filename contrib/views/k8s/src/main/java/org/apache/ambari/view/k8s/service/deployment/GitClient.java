@@ -264,6 +264,33 @@ public class GitClient {
         }
     }
 
+    /**
+     * Whether a file exists on the remote base branch as last fetched ({@code origin/<baseBranch>}), whatever the local
+     * branch or uncommitted files hold: what is actually published.
+     *
+     * @param relative path relative to the repo root
+     */
+    public boolean existsOnBaseBranch(Path relative) {
+        String path;
+        try {
+            path = workspace.relativize(resolveSafe(relative)).toString().replace('\\', '/');
+        } catch (IOException outside) {
+            return false;
+        }
+        try (Git git = Git.open(workspace.toFile())) {
+            org.eclipse.jgit.lib.ObjectId tree = git.getRepository().resolve("refs/remotes/origin/" + baseBranch + "^{tree}");
+            if (tree == null) {
+                return false;
+            }
+            try (org.eclipse.jgit.treewalk.TreeWalk walk = org.eclipse.jgit.treewalk.TreeWalk.forPath(git.getRepository(), path, tree)) {
+                return walk != null;
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not look up {} on origin/{}: {}", path, baseBranch, e.toString());
+            return false;
+        }
+    }
+
     /** Remove a path (file or directory) relative to repo root. */
     public void deletePath(Path relative) throws IOException {
         Path abs = resolveSafe(relative);

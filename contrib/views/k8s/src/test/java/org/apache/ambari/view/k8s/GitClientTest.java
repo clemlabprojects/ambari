@@ -117,4 +117,24 @@ class GitClientTest {
     org.junit.jupiter.api.Assertions.assertNull(credentialsFor("ssh://git@git.example.com/a/b.git", "t0k"));
     org.junit.jupiter.api.Assertions.assertNull(credentialsFor("https://git.example.com/a/b.git", ""));
   }
+
+    @Test
+    void onlyWhatTheBaseBranchPublishesCountsAsExisting(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        assertTrue(client.existsOnBaseBranch(Path.of("README.md")));
+
+        client.writeFile(Path.of("deps/keda-helmrelease.yaml"), "kind: HelmRelease\n");
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")),
+                "written but not published");
+        client.commitWithoutPush("local only");
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")),
+                "committed but not pushed");
+        client.writeFile(Path.of("deps/other.yaml"), "x: 1\n");
+        assertNotNull(client.commitAndPush("publish"), "pushes both commits");
+        client.sync();
+        assertTrue(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")));
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("../outside")));
+    }
 }
