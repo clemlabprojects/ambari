@@ -165,6 +165,9 @@ public class KubernetesService {
     private final AtomicReference<String> lastPrometheusProxyUrlLogged = new AtomicReference<>(null);
     // Cached OpenShift-vs-vanilla-k8s detection for the current client; reset on client reload.
     private final AtomicReference<Boolean> openShiftDetectionCache = new AtomicReference<>(null);
+    /** After a failed OpenShift check, when to ask again (epoch ms). */
+    private final java.util.concurrent.atomic.AtomicLong openShiftDetectionRetryAt = new java.util.concurrent.atomic.AtomicLong();
+    static final long OPENSHIFT_DETECTION_RETRY_MS = 30_000L;
     // Namespace-by-namespace fallback for accounts limited to their own projects; reads this.client on every call.
     private final NamespaceScope namespaceScope = new NamespaceScope(
             () -> this.client, this::isOpenShiftCluster, this::knownNamespaceNames,
@@ -2169,6 +2172,11 @@ public class KubernetesService {
     }
 
     /** Public accessor: whether the connected cluster is OpenShift (API-group probe, cached). */
+    /** Tests: ends the retry window after a failed OpenShift check. */
+    void expireOpenShiftDetectionRetryForTest() {
+        openShiftDetectionRetryAt.set(0);
+    }
+
     public boolean isOpenShiftCluster() {
         return client != null && isOpenShift(client);
     }
@@ -2183,6 +2191,10 @@ public class KubernetesService {
         if (cached != null) {
             return cached;
         }
+        // A recent failure: answer "not OpenShift" again without another request until the retry window ends.
+        if (System.currentTimeMillis() < openShiftDetectionRetryAt.get()) {
+            return false;
+        }
         boolean result = false;
         try {
             io.fabric8.kubernetes.api.model.APIGroupList apiGroups = client.getApiGroups();
@@ -2196,9 +2208,12 @@ public class KubernetesService {
                 }
             }
         } catch (Exception e) {
-            // Not remembered: a transient failure (expired token, network) must not make every later request treat an
-            // OpenShift cluster as plain Kubernetes. The next call asks again.
-            LOG.warn("OpenShift detection via API groups failed (treating as vanilla k8s for this request): {}", e.toString());
+            // Not remembered as an answer: a transient failure (expired token, network) must not make every later
+            // request treat an OpenShift cluster as plain Kubernetes. Asked again after a short window, so a cluster
+            // that keeps failing is not queried (and logged) on every request.
+            openShiftDetectionRetryAt.set(System.currentTimeMillis() + OPENSHIFT_DETECTION_RETRY_MS);
+            LOG.warn("OpenShift detection via API groups failed (treating as vanilla k8s for {} s): {}",
+                    OPENSHIFT_DETECTION_RETRY_MS / 1000, e.toString());
             return false;
         }
         LOG.info("OpenShift detection: cluster {} OpenShift (*.openshift.io API group present={}).",
@@ -3415,6 +3430,7 @@ public class KubernetesService {
         this.serviceCache.invalidateAll();
         this.prometheusClientCache.clear();
         this.openShiftDetectionCache.set(null);
+        this.openShiftDetectionRetryAt.set(0);
         this.monitoringTokenCache.set(null);
         this.namespaceScope.reset();
         try {

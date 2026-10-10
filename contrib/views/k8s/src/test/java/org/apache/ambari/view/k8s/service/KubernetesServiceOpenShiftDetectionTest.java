@@ -60,8 +60,12 @@ class KubernetesServiceOpenShiftDetectionTest {
         .thenThrow(new KubernetesClientException("Unauthorized", 401, null))
         .thenReturn(openShiftGroups());
 
-    assertFalse(svc.isOpenShiftCluster(), "no answer: treated as plain Kubernetes for this request only");
-    assertTrue(svc.isOpenShiftCluster(), "asked again, and OpenShift is found");
+    assertFalse(svc.isOpenShiftCluster(), "no answer: treated as plain Kubernetes for now");
+    assertFalse(svc.isOpenShiftCluster(), "within the retry window: no new request");
+    verify(client, times(1)).getApiGroups();
+
+    svc.expireOpenShiftDetectionRetryForTest();
+    assertTrue(svc.isOpenShiftCluster(), "asked again after the window, and OpenShift is found");
     assertTrue(svc.isOpenShiftCluster());
     verify(client, times(2)).getApiGroups();
   }
