@@ -869,18 +869,9 @@ public class HelmService {
     }
 
 
+    /** Types an override like {@code helm --set} ({@link HelmSetValues}). */
     private Object parseValue(String rawValue) {
-        if (rawValue == null) return null;
-        String t = rawValue.trim();
-        if ("true".equalsIgnoreCase(t) || "false".equalsIgnoreCase(t)) {
-            return Boolean.valueOf(t);
-        }
-        try {
-            if (t.contains(".")) return Double.valueOf(t);
-            return Integer.valueOf(t);
-        } catch (NumberFormatException ignored) {
-            return rawValue;
-        }
+        return HelmSetValues.typed(rawValue);
     }
 
 

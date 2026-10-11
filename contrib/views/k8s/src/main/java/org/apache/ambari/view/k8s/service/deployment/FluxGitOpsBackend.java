@@ -1924,28 +1924,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
     }
 
-    /** A whole number as {@code helm --set} reads one: no sign but minus, no leading zero. */
-    private static final java.util.regex.Pattern SET_INTEGER = java.util.regex.Pattern.compile("-?(0|[1-9][0-9]*)");
-
     /**
-     * Types an override value the way {@code helm --set} does: true/false become booleans and whole numbers without a
-     * leading zero become integers; everything else ("1.10", "0123", "476.1.3.2.0") stays text. Left as text,
-     * "false" would be truthy in the chart templates.
+     * Types an override value the way {@code helm --set} does, like direct deploys ({@code HelmSetValues}). Left as
+     * text, "false" would be truthy in the chart templates.
      */
     static Object parseScalar(String raw) {
-        if (raw == null) return null;
-        if ("true".equals(raw) || "false".equals(raw)) {
-            return Boolean.valueOf(raw);
-        }
-        if (SET_INTEGER.matcher(raw).matches()) {
-            try {
-                long n = Long.parseLong(raw);
-                return n == (int) n ? (Object) (int) n : (Object) n;
-            } catch (NumberFormatException tooLong) {
-                return raw;
-            }
-        }
-        return raw;
+        return org.apache.ambari.view.k8s.service.HelmSetValues.typed(raw);
     }
 
     /** Match a path segment with an optional list-index suffix, e.g. {@code customCAs[0]}. */
