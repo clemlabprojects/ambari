@@ -85,6 +85,8 @@ public final class HelmSetValues {
             java.util.regex.Pattern.compile("\"\\\\u0000kdps-text:(?:[^\"\\\\]|\\\\.)*\"");
 
     private static volatile java.util.Set<String> passwordFields;
+    private static final java.util.concurrent.atomic.AtomicBoolean warnedUnreadable =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     /** The security profile fields of type password, read once from KDPS/globals/security.json. */
     static java.util.Set<String> passwordFields() {
@@ -107,9 +109,11 @@ public final class HelmSetValues {
             passwordFields = fields;
             return fields;
         } catch (Exception e) {
-            // Not remembered, so a later deploy tries again; meanwhile nothing is marked.
-            org.slf4j.LoggerFactory.getLogger(HelmSetValues.class)
-                    .warn("Could not read the password fields of KDPS/globals/security.json: {}", e.toString());
+            // Not remembered, so a later deploy tries again; meanwhile nothing is marked. Warned once.
+            if (warnedUnreadable.compareAndSet(false, true)) {
+                org.slf4j.LoggerFactory.getLogger(HelmSetValues.class)
+                        .warn("Could not read the password fields of KDPS/globals/security.json: {}", e.toString());
+            }
             return java.util.Set.of();
         }
     }
