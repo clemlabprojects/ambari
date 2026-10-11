@@ -239,4 +239,45 @@ class KedaThanosScopeTest {
     assertNull(KedaThanosScope.firstTriggerAddress(Map.of()));
     assertNull(KedaThanosScope.firstTriggerAddress(null));
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void autoscalingIsRefusedWithoutMetrics() {
+    Map<String, Object> v = values(trigger("http://p.mon.svc:9090"));
+    ((Map<String, Object>) ((Map<String, Object>) v.get("server")).get("keda")).put("enabled", true);
+    assertNull(KedaThanosScope.autoscalingWithoutMetrics(v), "metrics on");
+    v.put("serviceMonitor", new LinkedHashMap<>(Map.of("enabled", false)));
+    assertTrue(KedaThanosScope.autoscalingWithoutMetrics(v).contains("metrics collection"));
+    ((Map<String, Object>) ((Map<String, Object>) v.get("server")).get("keda")).put("enabled", false);
+    assertNull(KedaThanosScope.autoscalingWithoutMetrics(v), "fixed-size Trino without metrics is fine");
+    v.remove("serviceMonitor");
+    ((Map<String, Object>) ((Map<String, Object>) v.get("server")).get("keda")).put("enabled", true);
+    assertNull(KedaThanosScope.autoscalingWithoutMetrics(v), "a chart without ServiceMonitor settings is not judged");
+  }
+
+  @Test
+  void roleSettingsOverrideTheTopLevelServiceMonitorSwitch() {
+    assertTrue(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor",
+        Map.of("enabled", false, "coordinator", Map.of("enabled", true)))), "the chart renders the coordinator's");
+    assertFalse(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor",
+        Map.of("enabled", false, "coordinator", Map.of("enabled", false), "worker", Map.of("enabled", false)))));
+    assertTrue(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor", Map.of("enabled", true, "worker", Map.of()))));
+    assertFalse(KedaThanosScope.serviceMonitorsEnabled(Map.of("serviceMonitor",
+        Map.of("enabled", true, "coordinator", Map.of("enabled", false), "worker", Map.of("enabled", false)))));
+  }
+
+  @Test
+  void autoscalingNeedsTheCoordinatorMetricsInParticular() {
+    Map<String, Object> keda = new LinkedHashMap<>(Map.of("enabled", true));
+    Map<String, Object> v = new LinkedHashMap<>(Map.of("server", Map.of("keda", keda),
+        "serviceMonitor", Map.of("enabled", true, "coordinator", Map.of("enabled", false), "worker", Map.of("enabled", true))));
+    assertNotNull(KedaThanosScope.autoscalingWithoutMetrics(v), "worker metrics alone cannot drive the autoscaler");
+  }
+
+  @Test
+  void aCoordinatorSettingAloneIsJudgedToo() {
+    Map<String, Object> v = new LinkedHashMap<>(Map.of("server", Map.of("keda", Map.of("enabled", true)),
+        "serviceMonitor", Map.of("coordinator", Map.of("enabled", false))));
+    assertNotNull(KedaThanosScope.autoscalingWithoutMetrics(v));
+  }
 }
