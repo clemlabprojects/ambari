@@ -144,7 +144,21 @@ public class FluxGitOpsBackendTest {
         assertEquals("a code keeps its leading zero", "0123", FluxGitOpsBackend.parseScalar("0123"));
         assertEquals("476.1.3.2.0-37", FluxGitOpsBackend.parseScalar("476.1.3.2.0-37"));
         assertEquals("1.0e3", FluxGitOpsBackend.parseScalar("1.0e3"));
-        assertEquals("False", FluxGitOpsBackend.parseScalar("False"));
+        assertEquals("booleans in any case, like helm --set", Boolean.FALSE, FluxGitOpsBackend.parseScalar("False"));
         assertEquals("99999999999999999999", FluxGitOpsBackend.parseScalar("99999999999999999999"));
+    }
+
+    @Test
+    public void aPasswordReachesTheGitOpsValuesAsText() {
+        Map<String, Object> values = new LinkedHashMap<>();
+        Map<String, String> overrides = new LinkedHashMap<>();
+        overrides.put("auth.ldap.bindPassword",
+                org.apache.ambari.view.k8s.service.HelmSetValues.textIfSecret("ldap.bindPassword", "12345"));
+
+        FluxGitOpsBackend.applyOverridesToValues(values, overrides);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ldap = (Map<String, Object>) ((Map<String, Object>) values.get("auth")).get("ldap");
+        assertEquals("12345", ldap.get("bindPassword"));
     }
 }

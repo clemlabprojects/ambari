@@ -476,7 +476,8 @@ public class HelmService {
                     String cmdLine = String.join(" ", parts);
                     LOG.info("Equivalent helm command: {}", cmdLine);
                     if (finalValues != null && !finalValues.isEmpty()) {
-                        LOG.info("Helm values (map): {}", finalValues);
+                        // Keys only: the values hold the release's passwords (LDAP bind, OIDC client secret).
+                        LOG.info("Helm values (top-level keys): {}", finalValues.keySet());
                     }
                 }
                 return helmClient.install(
@@ -869,18 +870,9 @@ public class HelmService {
     }
 
 
+    /** Types an override like {@code helm --set} ({@link HelmSetValues}). */
     private Object parseValue(String rawValue) {
-        if (rawValue == null) return null;
-        String t = rawValue.trim();
-        if ("true".equalsIgnoreCase(t) || "false".equalsIgnoreCase(t)) {
-            return Boolean.valueOf(t);
-        }
-        try {
-            if (t.contains(".")) return Double.valueOf(t);
-            return Integer.valueOf(t);
-        } catch (NumberFormatException ignored) {
-            return rawValue;
-        }
+        return HelmSetValues.typed(rawValue);
     }
 
 
