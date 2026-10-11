@@ -108,9 +108,38 @@ public final class KedaThanosScope {
         return null;
     }
 
-    /** Whether the chart values create Prometheus ServiceMonitors ({@code serviceMonitor.enabled}). */
+    /**
+     * Why these values cannot autoscale, or {@code null}: the autoscaler reads the metrics the ServiceMonitors make
+     * Prometheus collect, so turning them off (explicitly) while autoscaling is on would leave it blind.
+     */
+    public static String autoscalingWithoutMetrics(Map<String, Object> values) {
+        // Every autoscaling query reads coordinator metrics (queued/running queries, required workers).
+        Object sm = values == null ? null : values.get("serviceMonitor");
+        // Judged only when the values set it (top level or coordinator): a chart without these settings is left alone.
+        boolean metricsOff = sm instanceof Map<?, ?> m
+                && (m.containsKey("enabled") || (m.get("coordinator") instanceof Map<?, ?> c && c.containsKey("enabled")))
+                && !roleMonitored(m, "coordinator");
+        if (kedaEnabled(values) && metricsOff) {
+            return "Worker autoscaling needs the service's metrics, but metrics collection (ServiceMonitor) is off. "
+                    + "Turn metrics collection on, or turn worker autoscaling off.";
+        }
+        return null;
+    }
+
+    /**
+     * Whether the chart values create Prometheus ServiceMonitors: {@code serviceMonitor.enabled}, overridden per role
+     * by {@code serviceMonitor.coordinator.enabled} / {@code serviceMonitor.worker.enabled} (the chart merges the role
+     * settings over the top-level ones).
+     */
     public static boolean serviceMonitorsEnabled(Map<String, Object> values) {
         Object sm = values == null ? null : values.get("serviceMonitor");
-        return sm instanceof Map<?, ?> m && Boolean.parseBoolean(String.valueOf(m.get("enabled")));
+        return sm instanceof Map<?, ?> m && (roleMonitored(m, "coordinator") || roleMonitored(m, "worker"));
+    }
+
+    /** Whether the chart creates the role's ServiceMonitor: its own {@code enabled}, else the top-level one. */
+    private static boolean roleMonitored(Map<?, ?> serviceMonitor, String role) {
+        Object r = serviceMonitor.get(role);
+        Object enabled = r instanceof Map<?, ?> rm && rm.containsKey("enabled") ? rm.get("enabled") : serviceMonitor.get("enabled");
+        return Boolean.parseBoolean(String.valueOf(enabled));
     }
 }

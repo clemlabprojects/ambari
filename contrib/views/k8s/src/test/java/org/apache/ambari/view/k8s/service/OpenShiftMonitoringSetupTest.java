@@ -130,4 +130,16 @@ class OpenShiftMonitoringSetupTest {
     when(k8s.canI(eq("create"), eq("monitoring.coreos.com"), eq("servicemonitors"), isNull(), eq("team-a"))).thenReturn(false);
     assertThrows(IllegalStateException.class, () -> OpenShiftMonitoringSetup.prepare(k8s, req));
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void metricsOffWithAutoscalingOffNeedsNoMonitoringGrant() {
+    ((Map<String, Object>) ((Map<String, Object>) req.getValues().get("server")).get("keda")).put("enabled", false);
+    req.getValues().put("serviceMonitor", Map.of("enabled", false));
+    when(k8s.isOpenShiftCluster()).thenReturn(true);
+    when(k8s.canI(any(), any(), any(), any(), any())).thenReturn(false);
+
+    assertDoesNotThrow(() -> OpenShiftMonitoringSetup.prepare(k8s, req));
+    verify(k8s, never()).ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean());
+  }
 }
