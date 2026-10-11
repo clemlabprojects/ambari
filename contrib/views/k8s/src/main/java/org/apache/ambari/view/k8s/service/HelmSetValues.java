@@ -91,7 +91,10 @@ public final class HelmSetValues {
                     });
                 }
             } catch (Exception e) {
-                // Unreadable definition: nothing is marked, values are typed as before.
+                // Not remembered, so the next deploy tries again; meanwhile nothing is marked.
+                org.slf4j.LoggerFactory.getLogger(HelmSetValues.class)
+                        .warn("Could not read the password fields of KDPS/globals/security.json: {}", e.toString());
+                return java.util.Set.copyOf(found);
             }
             fields = java.util.Set.copyOf(found);
             passwordFields = fields;

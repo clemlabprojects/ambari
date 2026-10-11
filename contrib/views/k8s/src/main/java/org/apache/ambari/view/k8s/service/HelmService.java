@@ -476,7 +476,8 @@ public class HelmService {
                     String cmdLine = String.join(" ", parts);
                     LOG.info("Equivalent helm command: {}", cmdLine);
                     if (finalValues != null && !finalValues.isEmpty()) {
-                        LOG.info("Helm values (map): {}", finalValues);
+                        // Keys only: the values hold the release's passwords (LDAP bind, OIDC client secret).
+                        LOG.info("Helm values (top-level keys): {}", finalValues.keySet());
                     }
                 }
                 return helmClient.install(
