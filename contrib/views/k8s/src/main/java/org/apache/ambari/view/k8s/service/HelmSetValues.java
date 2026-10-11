@@ -53,18 +53,50 @@ public final class HelmSetValues {
     }
 
     /**
-     * The value, kept as text when {@code field} names a password or a secret (its last segment contains "password",
-     * "passwd" or "secret", any case), else unchanged.
+     * The value, kept as text when {@code field} is a password in the security profile definition
+     * ({@code type: "password"} in KDPS/globals/security.json, e.g. {@code ldap.bindPassword}), else unchanged.
      *
-     * @param field the setting's source field (e.g. {@code ldap.bindPassword})
+     * @param field the security profile field the value comes from
      * @param value the value
      */
     public static String textIfSecret(String field, String value) {
-        if (field == null || value == null) {
-            return value;
+        return field != null && value != null && passwordFields().contains(field) ? asText(value) : value;
+    }
+
+    /** Hides the secrets {@link #textIfSecret} marked in a JSON text (e.g. command parameters about to be logged). */
+    public static String redactJson(String json) {
+        return json == null ? null : MARKED_JSON_STRING.matcher(json).replaceAll("\"<hidden>\"");
+    }
+
+    /** A JSON string whose content starts with the marker, as Gson writes it ({@code \\u0000} escaped). */
+    private static final java.util.regex.Pattern MARKED_JSON_STRING =
+            java.util.regex.Pattern.compile("\"\\\\u0000kdps-text:(?:[^\"\\\\]|\\\\.)*\"");
+
+    private static volatile java.util.Set<String> passwordFields;
+
+    /** The security profile fields of type password, read once from KDPS/globals/security.json. */
+    static java.util.Set<String> passwordFields() {
+        java.util.Set<String> fields = passwordFields;
+        if (fields == null) {
+            java.util.Set<String> found = new java.util.HashSet<>();
+            try (java.io.InputStream in = HelmSetValues.class.getClassLoader()
+                    .getResourceAsStream("KDPS/globals/security.json")) {
+                if (in != null) {
+                    com.fasterxml.jackson.databind.JsonNode props =
+                            new com.fasterxml.jackson.databind.ObjectMapper().readTree(in).path("properties");
+                    props.forEach(p -> {
+                        if ("password".equals(p.path("type").asText()) && !p.path("name").asText().isBlank()) {
+                            found.add(p.path("name").asText());
+                        }
+                    });
+                }
+            } catch (Exception e) {
+                // Unreadable definition: nothing is marked, values are typed as before.
+            }
+            fields = java.util.Set.copyOf(found);
+            passwordFields = fields;
         }
-        String last = field.substring(field.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
-        return last.contains("password") || last.contains("passwd") || last.contains("secret") ? asText(value) : value;
+        return fields;
     }
 
     /**

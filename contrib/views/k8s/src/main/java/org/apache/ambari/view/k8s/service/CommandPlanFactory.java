@@ -392,7 +392,7 @@ public class CommandPlanFactory {
                         LOG.info("Crd: {} should be installed in the namespace: {} for the dependency: {} ", crd, chartNamespace, dependencyName);
 
 
-                        LOG.info("Dependency CRD command params are: {} ",dependencyCrdCheck.getParamsJson());
+                        LOG.info("Dependency CRD command params are: {} ", HelmSetValues.redactJson(dependencyCrdCheck.getParamsJson()));
                         CommandStatusEntity dependencyCrdCheckStatus = new CommandStatusEntity();
                         dependencyCrdCheckStatus.setId(id+"-status");
                         dependencyCrdCheckStatus.setAttempt(0);
@@ -582,7 +582,7 @@ public class CommandPlanFactory {
 
             helmChartDryRunCmd.setParamsJson(gson.toJson(params));
 
-            LOG.info("Dependency DryRun command params are: {} ",helmChartDryRunCmd.getParamsJson());
+            LOG.info("Dependency DryRun command params are: {} ", HelmSetValues.redactJson(helmChartDryRunCmd.getParamsJson()));
             CommandStatusEntity helmChartDryRunCmdStatus = new CommandStatusEntity();
             helmChartDryRunCmdStatus.setId(id+"-status");
             helmChartDryRunCmdStatus.setAttempt(0);

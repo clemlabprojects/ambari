@@ -76,4 +76,23 @@ class HelmSetValuesTest {
     assertEquals(" 1.10 ", HelmSetValues.typed(" 1.10 "));
     assertEquals(0, HelmSetValues.typed("-0"), "-0 is the integer 0, like Helm");
   }
+
+  @Test
+  void onlyPasswordFieldsOfTheSecurityProfileAreMarked() {
+    assertTrue(HelmSetValues.passwordFields().containsAll(java.util.Set.of("ldap.bindPassword", "ldap.adBindPassword", "oidc.clientSecret")));
+    assertEquals("ca-secret", HelmSetValues.textIfSecret("oidc.caSecret", "ca-secret"), "a Secret name, not a secret");
+    assertEquals("truststore.password", HelmSetValues.textIfSecret("tls.truststorePasswordKey", "truststore.password"));
+  }
+
+  @Test
+  void markedValuesAreHiddenInLoggedJson() {
+    java.util.Map<String, Object> params = new java.util.LinkedHashMap<>();
+    params.put("_ov", java.util.Map.of("ldap.bindPassword", HelmSetValues.textIfSecret("ldap.bindPassword", "s3cr\"et\\x"),
+        "ldap.url", "ldap://ipa"));
+    String json = new com.google.gson.Gson().toJson(params);
+    String logged = HelmSetValues.redactJson(json);
+    assertFalse(logged.contains("s3cr"), logged);
+    assertTrue(logged.contains("\"<hidden>\"") && logged.contains("ldap://ipa"), logged);
+    assertNull(HelmSetValues.redactJson(null));
+  }
 }

@@ -5539,7 +5539,7 @@ public class CommandService {
 
         rootCommand.setParamsJson(gson.toJson(params));
         rootCommand.setChildListJson(gson.toJson(childCommands));
-        LOG.info("Root Command params are: {} ",rootCommand.getParamsJson());
+        LOG.info("Root Command params are: {} ", HelmSetValues.redactJson(rootCommand.getParamsJson()));
         store(rootCommand);
         /**
          *  2. checking dependencies
@@ -6541,7 +6541,7 @@ public class CommandService {
         s.updatedAt = eStatus.getUpdatedAt();
         s.percent = cachedPercentage(e);
         LOG.info("Getting status information for command with id: {} ", s.id);
-        LOG.debug("Params are: {} ", e.getParamsJson());
+        LOG.debug("Params are: {} ", HelmSetValues.redactJson(e.getParamsJson()));
 
         int stepIndex = java.util.Optional.ofNullable(resolveParamsJson(e))
                 .map(JsonParser::parseString)
@@ -7126,7 +7126,7 @@ public class CommandService {
 
             String repoId = (String) rootParams.get("repoId");
             LOG.info("Using repoId: {} for step execution", repoId);
-            LOG.debug("Child Command params are: {} ", child.getParamsJson());
+            LOG.debug("Child Command params are: {} ", HelmSetValues.redactJson(child.getParamsJson()));
             switch (CommandType.valueOf(child.getType())) {
                 case HELM_REPO_LOGIN -> {
                     LOG.info("Performing helm repo login for repoId: {} ", repoId);
