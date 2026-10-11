@@ -7879,7 +7879,7 @@ public class CommandService {
                             String val = String.valueOf(e.getValue());
                             if (!helmPath.isEmpty()) {
                                 overrideProperties.put(helmPath, val);
-                                LOG.info("Applying explicit override {} -> {}", helmPath, val);
+                                LOG.info("Applying explicit override {} -> {}", helmPath, HelmSetValues.forLog(val));
                             }
                         }
                     }
@@ -7890,7 +7890,7 @@ public class CommandService {
 //                            String val = overrideValues.get(name);
 //                            if (helmPath != null && !helmPath.isBlank() && val != null) {
 //                                overrideProperties.put(helmPath, val);
-//                                LOG.info("Applying explicit override {} -> {}", helmPath, val);
+//                                LOG.info("Applying explicit override {} -> {}", helmPath, HelmSetValues.forLog(val));
 //                            }
 //                        } else {
 //                            LOG.warn("Ignoring override '{}' because matching _v is missing", name);
@@ -7975,7 +7975,7 @@ public class CommandService {
                             String val = String.valueOf(e.getValue());
                             if (!helmPath.isEmpty()) {
                                 overrideProperties.put(helmPath, val);
-                                LOG.info("Applying explicit override {} -> {}", helmPath, val);
+                                LOG.info("Applying explicit override {} -> {}", helmPath, HelmSetValues.forLog(val));
                             }
                         }
                     }
@@ -8129,7 +8129,7 @@ public class CommandService {
                             String val = String.valueOf(e.getValue());
                             if (!helmPath.isEmpty()) {
                                 overrideProperties.put(helmPath, val);
-                                LOG.info("Applying explicit override {} -> {}", helmPath, val);
+                                LOG.info("Applying explicit override {} -> {}", helmPath, HelmSetValues.forLog(val));
                             }
                         }
                     }
@@ -12462,7 +12462,7 @@ public class CommandService {
             if (val == null) continue;
             String strVal = String.valueOf(val);
             if (strVal.isBlank()) continue;
-            CommandUtils.addOverride(params, helmPath, strVal);
+            CommandUtils.addOverride(params, helmPath, HelmSetValues.textIfSecret(fromPath, strVal));
             if ("global.security.auth.mode".equals(helmPath)) {
                 LOG.info("Security profile cascade: set {}='{}' from selected profile (mode='{}')",
                         helmPath, strVal, cfg.mode);
@@ -12477,7 +12477,7 @@ public class CommandService {
             if (val == null) continue;
             String strVal = String.valueOf(val);
             if (strVal.isBlank()) continue;
-            CommandUtils.addOverride(params, helmPath, strVal);
+            CommandUtils.addOverride(params, helmPath, HelmSetValues.textIfSecret(fromPath, strVal));
         }
 
         if (cfg.extraProperties != null && !cfg.extraProperties.isEmpty()) {

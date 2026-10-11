@@ -1809,7 +1809,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             if (val == null) continue;
             String strVal = String.valueOf(val);
             if (strVal.isBlank()) continue;
-            addOverride(overrides, entry.getValue(), strVal);
+            addOverride(overrides, entry.getValue(),
+                    org.apache.ambari.view.k8s.service.HelmSetValues.textIfSecret(entry.getKey(), strVal));
         }
         // TLS mappings
         for (Map.Entry<String, String> entry : tlsMapping.entrySet()) {
@@ -1817,7 +1818,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             if (val == null) continue;
             String strVal = String.valueOf(val);
             if (strVal.isBlank()) continue;
-            addOverride(overrides, entry.getValue(), strVal);
+            addOverride(overrides, entry.getValue(),
+                    org.apache.ambari.view.k8s.service.HelmSetValues.textIfSecret(entry.getKey(), strVal));
         }
         // Extra properties
         if (cfg.extraProperties != null) {

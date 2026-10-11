@@ -58,4 +58,22 @@ class HelmSetValuesTest {
     assertNull(HelmSetValues.typed("NULL"));
     assertNull(HelmSetValues.typed(null));
   }
+
+  @Test
+  void passwordsAndSecretsStayTextAndAreHiddenInLogs() {
+    for (String password : new String[]{"12345", "true", "null", "1.10", " spaced "}) {
+      String marked = HelmSetValues.textIfSecret("ldap.bindPassword", password);
+      assertEquals(password, HelmSetValues.typed(marked), password);
+      assertEquals("<hidden>", HelmSetValues.forLog(marked));
+    }
+    assertEquals("007", HelmSetValues.typed(HelmSetValues.textIfSecret("oidc.clientSecret", "007")));
+    assertEquals(Boolean.TRUE, HelmSetValues.typed(HelmSetValues.textIfSecret("ldap.enabled", "true")), "not a secret");
+    assertEquals("ldap://x", HelmSetValues.forLog(HelmSetValues.textIfSecret("ldap.url", "ldap://x")));
+  }
+
+  @Test
+  void textValuesKeepTheirSpaces() {
+    assertEquals(" 1.10 ", HelmSetValues.typed(" 1.10 "));
+    assertEquals(0, HelmSetValues.typed("-0"), "-0 is the integer 0, like Helm");
+  }
 }
