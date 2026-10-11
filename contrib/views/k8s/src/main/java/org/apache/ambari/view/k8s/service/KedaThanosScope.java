@@ -71,6 +71,13 @@ public final class KedaThanosScope {
         return changed;
     }
 
+    /** Whether the chart values turn worker autoscaling on ({@code server.keda.enabled}). */
+    public static boolean kedaEnabled(Map<String, Object> values) {
+        Object server = values == null ? null : values.get("server");
+        Object keda = server instanceof Map<?, ?> s ? s.get("keda") : null;
+        return keda instanceof Map<?, ?> k && Boolean.parseBoolean(String.valueOf(k.get("enabled")));
+    }
+
     /**
      * Whether the chart values turn on the KEDA TriggerAuthentication (bearer token read from a Secret), i.e. the
      * triggers read OpenShift monitoring and need a monitoring token.
@@ -80,6 +87,25 @@ public final class KedaThanosScope {
         Object keda = server instanceof Map<?, ?> s ? s.get("keda") : null;
         Object auth = keda instanceof Map<?, ?> k ? k.get("triggerAuthentication") : null;
         return auth instanceof Map<?, ?> a && Boolean.parseBoolean(String.valueOf(a.get("enabled")));
+    }
+
+    /**
+     * The Prometheus address the chart's KEDA triggers query ({@code server.keda.triggers[].metadata.serverAddress}).
+     *
+     * @return the first trigger's address, or {@code null} when there is none
+     */
+    public static String firstTriggerAddress(Map<String, Object> values) {
+        Object server = values == null ? null : values.get("server");
+        Object keda = server instanceof Map<?, ?> s ? s.get("keda") : null;
+        Object triggers = keda instanceof Map<?, ?> k ? k.get("triggers") : null;
+        if (!(triggers instanceof List<?> list)) return null;
+        for (Object t : list) {
+            if (t instanceof Map<?, ?> trigger && trigger.get("metadata") instanceof Map<?, ?> m
+                    && m.get("serverAddress") instanceof String address && !address.isBlank()) {
+                return address;
+            }
+        }
+        return null;
     }
 
     /** Whether the chart values create Prometheus ServiceMonitors ({@code serviceMonitor.enabled}). */

@@ -109,7 +109,8 @@ public class K8sReleaseEntity extends BaseModel {
     private String securityProfileHash;
 
     // ---------------------------------------------------------------------------------------
-    // Git (Flux GitOps) metadata — ONE persisted column holding a small JSON object instead of
+    // Small per-release metadata (the Flux GitOps attributes and the selected truststores) — ONE persisted column
+    // holding a small JSON object. Started as the git metadata column, instead of
     // nine separate columns. Ambari's DataStore forces every String property to 3000 chars against
     // a 65000-per-entity total, i.e. a hard ceiling of 21 String properties; nine flat git columns
     // consumed almost half the budget for metadata only FLUX_GITOPS releases ever set. Folding them
@@ -338,6 +339,33 @@ public class K8sReleaseEntity extends BaseModel {
             this.gitMetaJson = meta.isEmpty() ? null : MAPPER.writeValueAsString(meta);
         } catch (Exception e) {
             // Should not happen for a Map<String,String>; keep the previous JSON rather than corrupting it.
+        }
+    }
+
+    /**
+     * Truststores selected for the release in the deploy wizard (null when none was ever recorded). Kept in the
+     * metadata JSON rather than a column of its own: a new column changes the entity, which needs a view version bump.
+     */
+    public java.util.List<String> getTruststoreRefs() {
+        String json = gitMeta().get("truststoreRefs");
+        if (json == null) {
+            return null;
+        }
+        try {
+            java.util.List<String> refs = new java.util.ArrayList<>();
+            MAPPER.readTree(json).forEach(n -> refs.add(n.asText()));
+            return refs;
+        } catch (Exception malformed) {
+            return null;
+        }
+    }
+
+    /** Records the selected truststores; an empty list means "none" (the defaults only), null forgets the choice. */
+    public void setTruststoreRefs(java.util.List<String> refs) {
+        try {
+            putGitMeta("truststoreRefs", refs == null ? null : MAPPER.writeValueAsString(refs));
+        } catch (Exception e) {
+            // A list of strings always serialises; keep the previous value otherwise.
         }
     }
 

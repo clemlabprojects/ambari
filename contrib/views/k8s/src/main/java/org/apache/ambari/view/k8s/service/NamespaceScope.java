@@ -104,7 +104,8 @@ public class NamespaceScope {
         INGRESSES("ingresses"),
         ROUTES("routes"),
         SERVICES("services"),
-        SECRET_STORES("secretstores");
+        SECRET_STORES("secretstores"),
+        PROMETHEUSES("prometheuses");
 
         private final String apiName;
 

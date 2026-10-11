@@ -477,7 +477,15 @@ public class DiscoveryResource {
                 // Bootstrap in progress or not started — return stored state so UI shows RUNNING/FAILED badge.
                 return Response.ok(new MonitoringDiscoveryResponse(null, null, null, state, message)).build();
             }
-            return Response.ok(new MonitoringDiscoveryResponse(info.namespace(), info.release(), info.url(), state, message)).build();
+            MonitoringDiscoveryResponse found = new MonitoringDiscoveryResponse(info.namespace(), info.release(), info.url(), state, message);
+            found.serviceMonitorLabels = info.serviceMonitorLabels();
+            found.warning = info.warning();
+            // Only an in-cluster address may go into the deploy (an Ambari-property URL is for the view itself).
+            found.queryUrl = info.inCluster() ? info.url() : null;
+            if (kubernetesService.isOpenShiftCluster()) {
+                found.userWorkloadMonitoring = kubernetesService.userWorkloadMonitoringEnabled();
+            }
+            return Response.ok(found).build();
         } catch (Exception e) {
             LOG.error("Failed to discover monitoring stack", e);
             return Response.serverError().entity(Collections.singletonMap("error", e.getMessage())).build();

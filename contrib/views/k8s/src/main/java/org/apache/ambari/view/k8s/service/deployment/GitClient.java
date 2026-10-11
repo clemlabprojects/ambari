@@ -264,6 +264,54 @@ public class GitClient {
         }
     }
 
+    /**
+     * Whether a file exists on the remote base branch as last fetched ({@code origin/<baseBranch>}), whatever the local
+     * branch or uncommitted files hold: what is actually published.
+     *
+     * @param relative path relative to the repo root
+     */
+    public boolean existsOnBaseBranch(Path relative) {
+        return existsOnRemoteBranch(relative, baseBranch);
+    }
+
+    /**
+     * Whether a file exists on {@code origin/<branch>} as last fetched.
+     *
+     * @param relative path relative to the repo root
+     * @param branch   remote branch name; false when it was never pushed
+     */
+    public boolean existsOnRemoteBranch(Path relative, String branch) {
+        return Boolean.TRUE.equals(publishedOn(relative, branch));
+    }
+
+    /**
+     * Whether a file exists on {@code origin/<branch>}: TRUE or FALSE (also FALSE when the branch was never pushed),
+     * {@code null} when the repository could not be read.
+     */
+    public Boolean publishedOn(Path relative, String branch) {
+        if (branch == null || branch.isBlank()) {
+            return Boolean.FALSE;
+        }
+        String path;
+        try {
+            path = workspace.relativize(resolveSafe(relative)).toString().replace('\\', '/');
+        } catch (IOException outside) {
+            return Boolean.FALSE;
+        }
+        try (Git git = Git.open(workspace.toFile())) {
+            org.eclipse.jgit.lib.ObjectId tree = git.getRepository().resolve("refs/remotes/origin/" + branch + "^{tree}");
+            if (tree == null) {
+                return Boolean.FALSE;
+            }
+            try (org.eclipse.jgit.treewalk.TreeWalk walk = org.eclipse.jgit.treewalk.TreeWalk.forPath(git.getRepository(), path, tree)) {
+                return walk != null;
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not look up {} on origin/{}: {}", path, branch, e.toString());
+            return null;
+        }
+    }
+
     /** Remove a path (file or directory) relative to repo root. */
     public void deletePath(Path relative) throws IOException {
         Path abs = resolveSafe(relative);

@@ -39,6 +39,7 @@ import { untar } from 'js-untar';
 
 import VolumeEditor from './VolumeEditor';
 import DynamicFormField from './DynamicFormField';
+import { UpgradeModeContext } from './fieldSync';
 import type { BindingSpec } from './types';
 import {
   makeTargetsPatch,
@@ -1453,9 +1454,11 @@ const handleServiceChange = (value: string) => {
             />
           )}
 
-          {applyAuthCascadeToFields(currentService.form, currentServiceCascade).map((field: FormField) => (
-            <DynamicFormField key={field.name} field={field} />
-          ))}
+          <UpgradeModeContext.Provider value={mode === 'upgrade'}>
+            {applyAuthCascadeToFields(currentService.form, currentServiceCascade).map((field: FormField) => (
+              <DynamicFormField key={field.name} field={field} />
+            ))}
+          </UpgradeModeContext.Provider>
         </>
       ) : (
         // installMode === 'direct' → no dynamic form; let user provide chart and we load values.yaml

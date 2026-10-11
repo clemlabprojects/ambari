@@ -154,6 +154,9 @@ const ServiceWizardPage: React.FC = () => {
               if (upgradeState.securityProfile) {
                 initial.securityProfile = upgradeState.securityProfile;
               }
+              if (Array.isArray(upgradeState.truststoreRefs)) {
+                initial.truststoreRefs = upgradeState.truststoreRefs;
+              }
               // Re-select the KDPS context the release was deployed against so context bindings resolve
               // against the right target on upgrade, instead of the ambari-managed default seeded above.
               // Guard on existence: if that context was since deleted, keep the default rather than
@@ -951,9 +954,10 @@ const ServiceWizardPage: React.FC = () => {
               // Only send securityProfile if user explicitly picked one.
               securityProfile: (installValues as any)?.securityProfile || undefined,
               // Managed truststores selected to trust in this release (defaults are always merged
-              // server-side). Names come from the Truststores tab.
-              truststoreRefs: ((installValues as any)?.truststoreRefs && (installValues as any).truststoreRefs.length)
-                ? (installValues as any).truststoreRefs : undefined,
+              // server-side). Names come from the Truststores tab. Always sent, empty included: the
+              // backend records the choice and reuses it when the release is redeployed without one.
+              truststoreRefs: Array.isArray((installValues as any)?.truststoreRefs)
+                ? (installValues as any).truststoreRefs : [],
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
               git: (installValues as any)?.git || undefined,
               // Snapshot of raw form state (envelope keys stripped) so backend can read
@@ -1002,11 +1006,11 @@ const ServiceWizardPage: React.FC = () => {
     return [
       { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
-      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} /> },
+      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} upgrade={!!isUpgrade} /> },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
       { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} contextLabel={resolvedSel ? `${resolvedSel.name}${resolvedSel.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` : undefined} /> },
     ];
-  }, [def, installValues, repos, configs, configOverrides]);
+  }, [def, installValues, repos, configs, configOverrides, isUpgrade]);
 
   // Disable Next if any password field reports invalid (empty, unconfirmed, or
   // mismatched). PropertyRenderer pushes the boolean validity here via its

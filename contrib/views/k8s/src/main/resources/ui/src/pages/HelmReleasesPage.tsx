@@ -37,6 +37,7 @@ import { serviceIcon } from '../assets/services';
 
 import TrinoCatalogsModal from '../components/common/TrinoCatalogsModal';
 import RangerPolicyModal from '../components/common/RangerPolicyModal';
+import TrinoAutoscalingModal from '../components/common/TrinoAutoscalingModal';
 import './Page.css';
 
 const { Title, Text } = Typography;
@@ -68,6 +69,7 @@ const HelmReleasesPage: React.FC = () => {
     { pods: [], deployments: [], loading: false });
   const [historyModalRelease, setHistoryModalRelease] = useState<HelmRelease | null>(null);
   const [catalogsRelease, setCatalogsRelease] = useState<HelmRelease | null>(null);
+  const [autoscalingRelease, setAutoscalingRelease] = useState<HelmRelease | null>(null);
   const [policyRelease, setPolicyRelease] = useState<HelmRelease | null>(null);
 
   // When the detail modal opens, pull the release's live pods + deployments (by the Helm instance
@@ -262,6 +264,33 @@ const HelmReleasesPage: React.FC = () => {
         hide();
       }
     };
+
+  /**
+   * Redeploys a release with new values at its current chart version, tracked in the operations drawer.
+   * Used by the worker autoscaling action.
+   */
+  const redeployWithValues = async (release: HelmRelease, values: any) => {
+    const response = await submitHelmDeploy({
+      chart: release.chartRef || release.chart,
+      releaseName: release.name,
+      namespace: release.namespace,
+      values,
+      version: release.version,
+      // The context the release was deployed against: without it Ranger, Kerberos and Hadoop config steps would
+      // use the local Ambari instead of an external context.
+      formValues: release.platformContextId ? { platformContextId: release.platformContextId } : undefined,
+      serviceKey: release.serviceKey,
+      securityProfile: release.securityProfile,
+      repoId: release.repoId,
+      deploymentMode: release.deploymentMode,
+      git: gitOptionsForRelease(release)
+    } as any);
+    if (response?.id) {
+      setWatchedCommandId(response.id);
+      setIsCommandDrawerOpen(true);
+    }
+    message.success('Redeploy started');
+  };
 
   /**
    * Re-sync a release (or trigger a restart) by re-submitting current values.
@@ -654,6 +683,11 @@ const HelmReleasesPage: React.FC = () => {
           icon: <SafetyCertificateOutlined />,
           label: 'Ranger policy…',
           onClick: () => setPolicyRelease(record),
+        }, {
+          key: 'autoscaling',
+          icon: <SyncOutlined />,
+          label: 'Worker autoscaling…',
+          onClick: () => setAutoscalingRelease(record),
         }] : []),
         {
           key: 'update',
@@ -684,6 +718,8 @@ const HelmReleasesPage: React.FC = () => {
                 platformContextId: record.platformContextId,
                 // Reusable Trino catalogs attached at deploy time, so Upgrade/Config re-selects them.
                 catalogRefs: record.catalogRefs,
+                // Truststores selected at deploy time, so Upgrade/Config re-selects them.
+                truststoreRefs: record.truststoreRefs,
               },
             });
           }
@@ -1270,6 +1306,7 @@ const HelmReleasesPage: React.FC = () => {
 
             <TrinoCatalogsModal release={catalogsRelease} onClose={() => setCatalogsRelease(null)} />
             <RangerPolicyModal release={policyRelease} onClose={() => setPolicyRelease(null)} />
+            <TrinoAutoscalingModal release={autoscalingRelease} onClose={() => setAutoscalingRelease(null)} onApply={redeployWithValues} />
             <Modal
               title={`Revision history — ${historyModalRelease?.namespace || ''}/${historyModalRelease?.name || ''}`}
               open={!!historyModalRelease}

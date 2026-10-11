@@ -17,7 +17,7 @@
  */
 
 import React from 'react';
-import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography } from 'antd';
+import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography, message } from 'antd';
 import type { FormField, ExternalAuthTargetFormField } from '../../types/ServiceTypes';
 import ServiceSelect from './ServiceSelect';
 import TrinoCatalogSelect from './TrinoCatalogSelect';
@@ -25,6 +25,8 @@ import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
 import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
 import { FieldSyncContext } from './fieldSync';
+import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery';
+import OpenShiftMonitoringNotice from './OpenShiftMonitoringNotice';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
@@ -87,6 +89,9 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       ? true
       : condition.operator === 'non-empty'
           ? watchedValue != null && String(watchedValue).trim().length > 0
+          : condition.operator === 'empty'
+          // e.g. a field only needed when discovery found nothing
+          ? watchedValue == null || String(watchedValue).trim().length === 0
           : Array.isArray(condition.value)
               ? condition.value.includes(watchedValue)
               : watchedValue === condition.value;
@@ -160,19 +165,16 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       return (
         <ServiceSelect
           field={field as any}
-          onValueSelect={(val) => {
-            try {
-              const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-              if (parsed?.namespace || parsed?.release) {
-                form.setFieldsValue({
-                  monitoring: {
-                    namespace: parsed.namespace,
-                    release: parsed.release,
-                  },
-                });
-              }
-            } catch (e) {
-              // ignore parse errors
+          onValueSelect={(val, auto) => {
+            const parsed = parseDiscoveryChoice(val);
+            const current = form.getFieldValue('monitoring') || {};
+            // An automatic choice never replaces an address the operator already set.
+            if (auto && current.url) return false;
+            if (parsed?.namespace || parsed?.release) {
+              form.setFieldsValue({ monitoring: monitoringFieldsFromDiscovery(parsed, current) });
+              syncFields?.();
+              // e.g. a Prometheus that only reads ServiceMonitors from its own namespace
+              if (parsed.warning) message.warning(parsed.warning, 8);
             }
           }}
         />
@@ -182,25 +184,23 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         <ServiceSelect
           field={field as any}
           onValueSelect={(val) => {
-            try {
-              const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-              // Auto-fill the KEDA namespace (and release when Helm-installed) from the detected operator
-              // so a reused install is honoured and the skip check looks in the right place.
-              if (parsed?.namespace || parsed?.release) {
-                form.setFieldsValue({
-                  keda: {
-                    ...(form.getFieldValue('keda') || {}),
-                    ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
-                    ...(parsed.release ? { release: parsed.release } : {}),
-                  },
-                });
-              }
-            } catch (e) {
-              // ignore parse errors
+            const parsed = parseDiscoveryChoice(val);
+            // Auto-fill the KEDA namespace (and release when Helm-installed) from the detected operator
+            // so a reused install is honoured and the skip check looks in the right place.
+            if (parsed?.namespace || parsed?.release) {
+              form.setFieldsValue({
+                keda: {
+                  ...(form.getFieldValue('keda') || {}),
+                  ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+                },
+              });
+              syncFields?.();
             }
           }}
         />
       );
+    case 'openshift-monitoring-notice':
+      return <OpenShiftMonitoringNotice />;
     case 'context-resolved': {
       const f = field as any;
       // No value resolved from the context. For a MANAGED context this means the capability
@@ -297,7 +297,8 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     case 'number':
       return (
         <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
-          <InputNumber style={{ width: '100%' }} disabled={disabledProp} />
+          <InputNumber style={{ width: '100%' }} disabled={disabledProp}
+            min={(field as any).min} max={(field as any).max} />
         </Form.Item>
       );
     case 'boolean':

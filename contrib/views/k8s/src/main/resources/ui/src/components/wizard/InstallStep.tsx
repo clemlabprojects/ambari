@@ -22,7 +22,7 @@ import DynamicFormField from '../ServiceInstallationModal/DynamicFormField';
 import VolumeEditor from '../ServiceInstallationModal/VolumeEditor';
 import { resolveAuthCascade, applyAuthCascadeToFields } from '../ServiceInstallationModal';
 import { ExternalAuthTargetsContext, ContextLinkedFieldsContext, ResolvedContextValuesContext, type ResolvedContextInfo } from '../ServiceInstallationModal/ExternalAuthTargetsContext';
-import { FieldSyncContext } from '../ServiceInstallationModal/fieldSync';
+import { FieldSyncContext, UpgradeModeContext } from '../ServiceInstallationModal/fieldSync';
 
 interface InstallStepProps {
   definition: any;
@@ -32,6 +32,8 @@ interface InstallStepProps {
   repos?: any[];
   securityProfiles?: Record<string, any>;
   resolvedContext?: ResolvedContextInfo | null;
+  /** Upgrading a deployed release (discovery must not replace its values). */
+  upgrade?: boolean;
 }
 
 const InstallStep: React.FC<InstallStepProps> = ({
@@ -42,6 +44,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
   repos = [],
   securityProfiles = {},
   resolvedContext,
+  upgrade = false,
 }) => {
   const [form] = Form.useForm();
 
@@ -250,6 +253,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
     <ResolvedContextValuesContext.Provider value={resolvedContext || undefined}>
     <ContextLinkedFieldsContext.Provider value={contextLinkedFields}>
     <FieldSyncContext.Provider value={onValuesChange}>
+    <UpgradeModeContext.Provider value={upgrade}>
         <Form form={form} size="large" layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
         {mode === 'storage' ? (
           <>
@@ -293,6 +297,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
           </>
         )}
     </Form>
+    </UpgradeModeContext.Provider>
         </FieldSyncContext.Provider>
     </ContextLinkedFieldsContext.Provider>
     </ResolvedContextValuesContext.Provider>

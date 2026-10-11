@@ -45,7 +45,9 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.ServiceAccount;
 import io.fabric8.kubernetes.api.model.ServiceAccountBuilder;
+import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceList;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Status;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequest;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequestBuilder;
@@ -207,6 +209,15 @@ public class KubernetesService {
     // Monitoring bootstrap defaults
     private static final String DEFAULT_MONITORING_RELEASE = "kube-prometheus-stack";
     private static final String DEFAULT_MONITORING_NAMESPACE = "monitoring";
+    private static final String PROMETHEUS_CRD = "prometheuses.monitoring.coreos.com";
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext PROMETHEUS_RDC =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup("monitoring.coreos.com")
+                    .withVersion("v1")
+                    .withKind("Prometheus")
+                    .withPlural("prometheuses")
+                    .withNamespaced(true)
+                    .build();
     private static final String DEFAULT_MONITORING_CHART = "kube-prometheus-stack";
     private static final String MONITORING_DEFAULT_REPO_FALLBACK_ID = "monitoring-default";
     private static final String MONITORING_DEFAULT_REPO_FALLBACK_NAME = "Monitoring repository";
@@ -1036,7 +1047,12 @@ public class KubernetesService {
     /**
      * Value class for discovered monitoring stack info.
      */
-    public record MonitoringInfo(String namespace, String release, String url) {}
+    public record MonitoringInfo(String namespace, String release, String url,
+                                 Map<String, String> serviceMonitorLabels, String warning, boolean inCluster) {
+        public MonitoringInfo(String namespace, String release, String url) {
+            this(namespace, release, url, Map.of(), null, false);
+        }
+    }
     public static class MonitoringSettings {
         public boolean autoBootstrap = true;
         public boolean preferPrometheus = true;
@@ -1225,6 +1241,18 @@ public class KubernetesService {
             LOG.warn("Monitoring discovery: failed to read persisted Prometheus URL: {}", e.getMessage());
         }
 
+        // Any Prometheus run by the Prometheus operator, whatever namespace or release name it was installed under.
+        // Not on OpenShift: its own monitoring stack is used there (see discoverAndHealMonitoringState).
+        Optional<PrometheusDiscovery.Instance> instance = isOpenShift(client) ? Optional.empty()
+                : PrometheusDiscovery.pick(listPrometheusInstances(), ns);
+        if (instance.isPresent()) {
+            PrometheusDiscovery.Instance found = instance.get();
+            LOG.info("Monitoring discovery: found Prometheus {}/{} (url={}, ServiceMonitor labels={})",
+                    found.namespace(), found.name(), found.url(), found.serviceMonitorLabels());
+            return new MonitoringInfo(found.namespace(), found.release(), found.url(), found.serviceMonitorLabels(),
+                    found.scrapeWarning(), true);
+        }
+
         String svcName = release + "-prometheus";
         try {
             var svc = client.services().inNamespace(ns).withName(svcName).get();
@@ -1237,10 +1265,52 @@ public class KubernetesService {
                     : 9090;
             String url = "http://" + svcName + "." + ns + ".svc:" + port;
             LOG.info("Monitoring discovery: found {} in namespace {} (url={})", svcName, ns, url);
-            return new MonitoringInfo(ns, release, url);
+            return new MonitoringInfo(ns, release, url, Map.of("release", release), null, true);
         } catch (Exception e) {
-            LOG.warn("Monitoring discovery failed: {}", e.getMessage());
+            logDiscoveryFailure("Monitoring discovery", e);
             return null;
+        }
+    }
+
+    /** The Services of a namespace, or none when they cannot be read (the caller then keeps its fallback). */
+    private List<Service> servicesOrEmpty(String namespace) {
+        try {
+            return client.services().inNamespace(namespace).list().getItems();
+        } catch (Exception e) {
+            logDiscoveryFailure("list services in " + namespace, e);
+            return List.of();
+        }
+    }
+
+    /**
+     * The Prometheus instances run by the Prometheus operator that this account can see, in any namespace.
+     *
+     * @return the instances; empty when the operator is not installed or nothing is readable
+     */
+    public List<PrometheusDiscovery.Instance> listPrometheusInstances() {
+        if (client == null) {
+            return List.of();
+        }
+        try {
+            if (!crdExists(PROMETHEUS_CRD)) {
+                return List.of();
+            }
+            var op = client.genericKubernetesResources(PROMETHEUS_RDC);
+            List<GenericKubernetesResource> resources = namespaceScope.listAcrossNamespaces(
+                    NamespaceScope.Resource.PROMETHEUSES,
+                    () -> op.inAnyNamespace().list().getItems(),
+                    namespace -> op.inNamespace(namespace).list().getItems());
+            Map<String, List<Service>> servicesByNamespace = new HashMap<>();
+            List<PrometheusDiscovery.Instance> instances = new ArrayList<>();
+            for (GenericKubernetesResource resource : resources) {
+                PrometheusDiscovery.fromResource(resource).ifPresent(found -> instances.add(
+                        PrometheusDiscovery.withOwnService(found, resource,
+                                servicesByNamespace.computeIfAbsent(found.namespace(), this::servicesOrEmpty))));
+            }
+            return instances;
+        } catch (Exception e) {
+            logDiscoveryFailure("listPrometheusInstances", e);
+            return List.of();
         }
     }
 
@@ -1283,6 +1353,39 @@ public class KubernetesService {
             }
         }
         return info;
+    }
+
+    /**
+     * Whether OpenShift's user workload monitoring is on, i.e. whether ServiceMonitors in user projects are scraped
+     * (cluster-monitoring-config, {@code enableUserWorkload}). Most project-limited accounts may not read it.
+     *
+     * @return TRUE or FALSE; FALSE when the setting was never made; {@code null} when it cannot be read
+     */
+    public Boolean userWorkloadMonitoringEnabled() {
+        if (client == null || !isOpenShift(client)) {
+            return null;
+        }
+        try {
+            var cm = client.configMaps().inNamespace("openshift-monitoring").withName("cluster-monitoring-config").get();
+            return cm == null || cm.getData() == null ? Boolean.FALSE : userWorkloadEnabled(cm.getData().get("config.yaml"));
+        } catch (Exception e) {
+            logDiscoveryFailure("Read cluster-monitoring-config", e);
+            return null;
+        }
+    }
+
+    /** {@code enableUserWorkload} from cluster-monitoring-config's config.yaml; FALSE when absent or unreadable. */
+    static Boolean userWorkloadEnabled(String configYaml) {
+        if (configYaml == null || configYaml.isBlank()) {
+            return Boolean.FALSE;
+        }
+        try {
+            Map<?, ?> config = new com.fasterxml.jackson.databind.ObjectMapper(
+                    new com.fasterxml.jackson.dataformat.yaml.YAMLFactory()).readValue(configYaml, Map.class);
+            return config != null && Boolean.parseBoolean(String.valueOf(config.get("enableUserWorkload")));
+        } catch (Exception e) {
+            return Boolean.FALSE;
+        }
     }
 
     private MonitoringInfo discoverOpenShiftMonitoring() {
