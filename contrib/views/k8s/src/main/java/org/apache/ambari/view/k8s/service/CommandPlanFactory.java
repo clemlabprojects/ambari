@@ -1113,7 +1113,7 @@ public class CommandPlanFactory {
 
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("repoId", repoId);
-        LOG.info("HelmRepoLogin params are: {} ",params);
+        LOG.info("HelmRepoLogin params are: {} ", HelmSetValues.redactJson(new com.google.gson.Gson().toJson(params)));
         helmRepoLogin.setParamsJson(gson.toJson(params));
 
         CommandStatusEntity cmdStatus = new CommandStatusEntity();

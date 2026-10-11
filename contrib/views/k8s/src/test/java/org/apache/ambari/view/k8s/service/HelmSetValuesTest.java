@@ -95,4 +95,14 @@ class HelmSetValuesTest {
     assertTrue(logged.contains("\"<hidden>\"") && logged.contains("ldap://ipa"), logged);
     assertNull(HelmSetValues.redactJson(null));
   }
+
+  @Test
+  void stringsUnderSecretKeysAreHiddenToo() {
+    String json = new com.google.gson.Gson().toJson(java.util.Map.of(
+        "oidcExternalClientSecret", "abc\"def", "repoPassword", "pw", "secretName", "my-secret",
+        "truststorePasswordKey", "truststore.password", "nested", java.util.Map.of("apiToken", "t0k")));
+    String logged = HelmSetValues.redactJson(json);
+    for (String leaked : new String[]{"abc", "\"pw\"", "t0k"}) assertFalse(logged.contains(leaked), logged);
+    assertTrue(logged.contains("my-secret") && logged.contains("truststore.password"), "names and keys stay visible: " + logged);
+  }
 }

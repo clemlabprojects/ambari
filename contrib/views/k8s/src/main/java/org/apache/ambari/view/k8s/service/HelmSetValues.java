@@ -63,10 +63,22 @@ public final class HelmSetValues {
         return field != null && value != null && passwordFields().contains(field) ? asText(value) : value;
     }
 
-    /** Hides the secrets {@link #textIfSecret} marked in a JSON text (e.g. command parameters about to be logged). */
+    /**
+     * Hides secrets in a JSON text about to be logged (e.g. command parameters): the values {@link #textIfSecret}
+     * marked, and any string under a key ending in password, passwd, secret or token (e.g.
+     * {@code oidcExternalClientSecret}).
+     */
     public static String redactJson(String json) {
-        return json == null ? null : MARKED_JSON_STRING.matcher(json).replaceAll("\"<hidden>\"");
+        if (json == null) {
+            return null;
+        }
+        String hidden = MARKED_JSON_STRING.matcher(json).replaceAll("\"<hidden>\"");
+        return SECRET_KEY_JSON_STRING.matcher(hidden).replaceAll("$1\"<hidden>\"");
     }
+
+    /** A JSON string value under a key ending in password/passwd/secret/token, any case. */
+    private static final java.util.regex.Pattern SECRET_KEY_JSON_STRING = java.util.regex.Pattern.compile(
+            "(\"[^\"\\\\]*(?i:password|passwd|secret|token)\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"");
 
     /** A JSON string whose content starts with the marker, as Gson writes it ({@code \\u0000} escaped). */
     private static final java.util.regex.Pattern MARKED_JSON_STRING =
@@ -77,29 +89,29 @@ public final class HelmSetValues {
     /** The security profile fields of type password, read once from KDPS/globals/security.json. */
     static java.util.Set<String> passwordFields() {
         java.util.Set<String> fields = passwordFields;
-        if (fields == null) {
-            java.util.Set<String> found = new java.util.HashSet<>();
-            try (java.io.InputStream in = HelmSetValues.class.getClassLoader()
-                    .getResourceAsStream("KDPS/globals/security.json")) {
-                if (in != null) {
-                    com.fasterxml.jackson.databind.JsonNode props =
-                            new com.fasterxml.jackson.databind.ObjectMapper().readTree(in).path("properties");
-                    props.forEach(p -> {
-                        if ("password".equals(p.path("type").asText()) && !p.path("name").asText().isBlank()) {
-                            found.add(p.path("name").asText());
-                        }
-                    });
-                }
-            } catch (Exception e) {
-                // Not remembered, so the next deploy tries again; meanwhile nothing is marked.
-                org.slf4j.LoggerFactory.getLogger(HelmSetValues.class)
-                        .warn("Could not read the password fields of KDPS/globals/security.json: {}", e.toString());
-                return java.util.Set.copyOf(found);
+        if (fields != null) {
+            return fields;
+        }
+        try (java.io.InputStream in = HelmSetValues.class.getClassLoader()
+                .getResourceAsStream("KDPS/globals/security.json")) {
+            if (in == null) {
+                throw new java.io.FileNotFoundException("not on the classpath");
             }
+            java.util.Set<String> found = new java.util.HashSet<>();
+            new com.fasterxml.jackson.databind.ObjectMapper().readTree(in).path("properties").forEach(p -> {
+                if ("password".equals(p.path("type").asText()) && !p.path("name").asText().isBlank()) {
+                    found.add(p.path("name").asText());
+                }
+            });
             fields = java.util.Set.copyOf(found);
             passwordFields = fields;
+            return fields;
+        } catch (Exception e) {
+            // Not remembered, so a later deploy tries again; meanwhile nothing is marked.
+            org.slf4j.LoggerFactory.getLogger(HelmSetValues.class)
+                    .warn("Could not read the password fields of KDPS/globals/security.json: {}", e.toString());
+            return java.util.Set.of();
         }
-        return fields;
     }
 
     /**
