@@ -226,6 +226,23 @@ public class CommandService {
     // operation is ALSO tee'd into that step's own log — giving each sub-step its own logs in the UI.
     private final ThreadLocal<String> activeStepLogId = new ThreadLocal<>();
 
+    /**
+     * Records a step's JSON result on its status and copies the result's {@code warnings} (a list of
+     * sentences) into the command log, where the operator reads: a step that warns still succeeds.
+     */
+    private void recordStepResult(String commandId, CommandStatusEntity childSt, String result) {
+        if (result == null) return;
+        childSt.setResultJson(result);
+        try {
+            Object warnings = gson.fromJson(result, Map.class).get("warnings");
+            if (warnings instanceof List<?> list) {
+                list.forEach(w -> appendCommandLog(commandId, "WARNING: " + w));
+            }
+        } catch (RuntimeException e) {
+            LOG.debug("Step result of {} is not a JSON object with warnings: {}", commandId, e.toString());
+        }
+    }
+
     private void appendCommandLog(String commandId, String message) {
         try {
             commandLogService.append(commandId, message);
@@ -2523,6 +2540,18 @@ public class CommandService {
      * (OPENMETADATA — OM is a tag SOURCE, not a Ranger plugin consumer) work
      * cleanly: no spurious "Ranger plugin settings missing" warning, no need to
      * fake a plugin-settings block.
+     *
+     * <p>The service supporting TagSync is not the operator asking for it: the step registers only
+     * when the release's values turn the switch on ({@code enabled_helm_prop}). The wizard sends the
+     * Ranger block for every release attached to a platform context, so without this check every
+     * such deploy reconfigured and restarted the cluster's Ranger TagSync. Read from the values,
+     * not the form, so API and GitOps deploys are held to the same switch.
+     *
+     * <p>With the switch off, on a platform KDPS configures, the step is still queued as a check
+     * ({@code _tagSyncCheckOnly}) that only reads {@code ranger-tagsync-site}. Earlier KDPS versions
+     * registered OpenMetadata on every such deploy whatever the switch said, turning the Atlas tag
+     * source off and storing the bot token in clear; their releases carry no switch value, so they
+     * all deploy with it off now, and this check is where their operators hear about it.
      */
     void planRangerTagSyncSources(CommandEntity rootCommand,
                                   List<String> childCommandsIgnored,
@@ -2542,12 +2571,101 @@ public class CommandService {
                     request.getReleaseName());
             return;
         }
+        Map<String, Object> stepParams = params;
+        if (!isTagSyncSwitchOn(request.getValues(), tagSyncSettingsSpec)) {
+            String contextId = stringValue(params.get("_platformContextId"));
+            if (!platformContextWritable(contextId)) {
+                LOG.info("Ranger TagSync is off for release {} ('{}' is not true) and KDPS does not configure platform"
+                                + " context '{}'; nothing to register or check.",
+                        request.getReleaseName(), tagSyncEnabledPath(tagSyncSettingsSpec), contextId);
+                return;
+            }
+            LOG.info("Ranger TagSync is off for release {} ('{}' is not true); the cluster's Ranger TagSync is only"
+                    + " checked, not changed.", request.getReleaseName(), tagSyncEnabledPath(tagSyncSettingsSpec));
+            stepParams = new LinkedHashMap<>(params);
+            stepParams.put("_tagSyncCheckOnly", true);
+        }
         // Persist settings into params so the runtime handler (registerRangerTagSyncSource)
         // can read endpoint helm path, fernet Secret name template, OM bot wiring, etc.
-        params.put("_tagSyncSettings", tagSyncSettingsSpec);
+        stepParams.put("_tagSyncSettings", tagSyncSettingsSpec);
 
         // Defer to the plan factory to walk ranger-tagsync-source entries.
-        this.commandPlanFactory.createRangerTagSyncRegister(rootCommand, rangerSpec, params);
+        this.commandPlanFactory.createRangerTagSyncRegister(rootCommand, rangerSpec, stepParams);
+    }
+
+    /** Values path of the release's "Enable Ranger TagSync" switch, from {@code ranger-tagsync-settings}. */
+    static String tagSyncEnabledPath(Map<String, Object> settings) {
+        Object path = settings == null ? null : settings.get("enabled_helm_prop");
+        return path == null || String.valueOf(path).isBlank() ? "ranger.tagSync.enabled" : String.valueOf(path).trim();
+    }
+
+    /** Whether the release's values turn Ranger TagSync on; anything but {@code true} means off. */
+    static boolean isTagSyncSwitchOn(Map<String, Object> values, Map<String, Object> settings) {
+        if (values == null || values.isEmpty()) return false;
+        Object raw = ConfigResolutionService.getByDottedPath(values, tagSyncEnabledPath(settings));
+        return raw != null && "true".equalsIgnoreCase(String.valueOf(raw).trim());
+    }
+
+    /**
+     * Says why a release that turns Ranger TagSync on cannot have it, before anything is installed,
+     * or null when there is nothing to say (TagSync off, not supported by the service, or ready).
+     *
+     * <p>The registration runs after the install: it reads the OpenMetadata bot token through the
+     * bundled Airflow and hands Ranger TagSync the OpenMetadata API address. Without either, the
+     * release used to install and the deploy then ended FAILED at "Ranger: register TagSync source",
+     * skipping the steps after it.
+     */
+    static String describeTagSyncPrerequisiteProblem(HelmDeployRequest request) {
+        if (request == null || request.getRanger() == null || request.getValues() == null) return null;
+        Map<String, Object> settings = request.getRanger().get("ranger-tagsync-settings");
+        if (settings == null || settings.isEmpty()) return null;
+        if (!isTagSyncSwitchOn(request.getValues(), settings)) return null;
+
+        List<String> missing = new ArrayList<>();
+        Object airflowPath = settings.getOrDefault("airflow_enabled_helm_prop", "dependencies.enabled");
+        Object airflowOn = ConfigResolutionService.getByDottedPath(request.getValues(), String.valueOf(airflowPath));
+        if (airflowOn == null || !"true".equalsIgnoreCase(String.valueOf(airflowOn).trim())) {
+            missing.add("the bundled Airflow is not deployed ('Deploy bundled Airflow'), and KDPS reads the"
+                    + " OpenMetadata bot token through it");
+        }
+        Object endpointPath = settings.getOrDefault("endpoint_helm_prop", "ranger.tagSync.endpoint");
+        Object endpoint = ConfigResolutionService.getByDottedPath(request.getValues(), String.valueOf(endpointPath));
+        if (endpoint == null || String.valueOf(endpoint).isBlank()) {
+            missing.add("Ranger TagSync has no OpenMetadata API address to call: turn the ingress on with a host"
+                    + " name, or fill 'OM API endpoint as seen from Ranger TagSync'");
+        }
+        if (missing.isEmpty()) return null;
+        return "Ranger TagSync is turned on for this release, but " + String.join("; and ", missing)
+                + ". Fix this, or turn 'Enable Ranger TagSync' off.";
+    }
+
+    /**
+     * {@link #describeTagSyncPrerequisiteProblem} for a deploy that will run the registration, else
+     * null. Only a direct Helm deploy plans it (a GitOps deploy never does), and it is skipped at run
+     * time for a platform context KDPS may not configure (auto-configuration turned off, see
+     * {@code remoteConfigGate}). Refusing those deploys asked for an Airflow nothing would use.
+     */
+    String tagSyncSubmitProblem(HelmDeployRequest request) {
+        String problem = describeTagSyncPrerequisiteProblem(request);
+        if (problem == null) return null;
+        if (DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(String.valueOf(request.getDeploymentMode()).trim())) {
+            LOG.info("Release {}: Ranger TagSync is on, but a GitOps deploy does not register it; not refused: {}",
+                    request.getReleaseName(), problem);
+            return null;
+        }
+        String contextId = stringValue(ConfigResolutionService.getByDottedPath(
+                request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap(), "platformContextId"));
+        if (!platformContextWritable(contextId)) {
+            LOG.info("Release {}: Ranger TagSync is on, but auto-configuration is off for platform context '{}', so the"
+                    + " registration is skipped; not refused: {}", request.getReleaseName(), contextId, problem);
+            return null;
+        }
+        return problem;
+    }
+
+    /** Whether KDPS writes to the platform of this context (see {@link ContextService#writesToPlatform(String)}). */
+    boolean platformContextWritable(String contextId) {
+        return new ContextService(ctx).writesToPlatform(contextId);
     }
 
     /**
@@ -3902,6 +4020,15 @@ public class CommandService {
                             + " has no ranger-tagsync-settings block — nothing to replay.");
         }
         rootParams.put("_tagSyncSettings", tagSyncSettingsSpec);
+        // The operator asked for this registration explicitly: the step runs even when the release
+        // has Ranger TagSync turned off, and says so, where a deploy would skip it.
+        rootParams.put("_tagSyncReplay", true);
+        // The release's own platform context decides whose Ranger TagSync is configured: without it
+        // the step falls back to the default context and would write this cluster's
+        // ranger-tagsync-site for a release attached to an external platform.
+        if (releaseMetadata.getPlatformContextId() != null && !releaseMetadata.getPlatformContextId().isBlank()) {
+            rootParams.put("_platformContextId", releaseMetadata.getPlatformContextId());
+        }
 
         // Initialize root with an empty child list before the plan-factory appends.
         rootCommand.setParamsJson(gson.toJson(rootParams));
@@ -3937,7 +4064,7 @@ public class CommandService {
     /**
      * Replay the OpenMetadata Atlas-federation registration for a deployed release.
      * Queues a single {@link CommandType#OM_ATLAS_FEDERATION_REGISTER} child whose
-     * body reads the current release values, mints a fresh Unlimited JWT, and
+     * body reads the current release values and the bot's current JWT, and
      * upserts the four OM REST entities. The pre-flight check rejects the request
      * early if the release isn't OPENMETADATA or has {@code atlasFederation.enabled=false}.
      *
@@ -4463,6 +4590,13 @@ public class CommandService {
         // mapping into the values BEFORE anything is persisted, so a bad selection fails the
         // submit with a readable message instead of leaving a half-planned command.
         applyTrinoBaseIngestion(request);
+
+        // Ranger TagSync switched on: refuse now what the post-install registration would fail on.
+        // After applyTrinoBaseIngestion, which may write the TagSync mapping into the same values.
+        String tagSyncProblem = tagSyncSubmitProblem(request);
+        if (tagSyncProblem != null) {
+            throw new IllegalArgumentException(tagSyncProblem);
+        }
 
         // Truststores: a redeploy that names none (resync, security refresh, autoscaling change) keeps the release's.
         if (request.getTruststoreRefs() == null) {
@@ -6156,7 +6290,7 @@ public class CommandService {
             // depend on the chart's pods, so it stays pre-helm.
             //
             // TagSync source registration is intentionally NOT called here — the
-            // step body needs a Running airflow scheduler pod to mint the OM
+            // step body needs a Running airflow scheduler pod to read the OM
             // ingestion-bot JWT, which only exists after the helm install
             // completes. planRangerTagSyncSources is called from the post-deploy
             // block below (after createRealChartInstallationCommands), where
@@ -6641,9 +6775,10 @@ public class CommandService {
 
                     // Ranger TagSync source registration runs post-deploy because the
                     // OM_RANGER_TAGSYNC_REGISTER step body exec-s into an airflow
-                    // scheduler pod to mint the OM bot JWT — the pod doesn't exist
-                    // until the helm install completes. Gating + plumbing of
-                    // _tagSyncSettings into params happens inside planRangerTagSyncSources.
+                    // scheduler pod to read the OM bot JWT — the pod doesn't exist
+                    // until the helm install completes. Gating (register, check only, or
+                    // nothing) + plumbing of _tagSyncSettings into params happens inside
+                    // planRangerTagSyncSources.
                     if (request.getRanger() != null) {
                         // Thread the selected platform context into params so the TagSync step
                         // resolves Ranger ownership (managed vs external) from the context — the
@@ -8377,24 +8512,18 @@ public class CommandService {
                 }
                 case OM_RANGER_TAGSYNC_REGISTER -> {
                     if (!remoteConfigGate(childParams, "Ranger TagSync source registration", childSt, id)) {
-                        String result = registerRangerTagSyncSource(childParams);
-                        if (result != null) childSt.setResultJson(result);
+                        recordStepResult(id, childSt, registerRangerTagSyncSource(childParams));
                     }
                 }
                 case OM_ATLAS_FEDERATION_REGISTER -> {
                     if (!remoteConfigGate(childParams, "Atlas federation provisioning", childSt, id)) {
-                        String result = registerOmAtlasFederation(childParams);
-                        if (result != null) childSt.setResultJson(result);
+                        recordStepResult(id, childSt, registerOmAtlasFederation(childParams));
                     }
                 }
-                case OM_HIVE_BASE_INGESTION_REGISTER -> {
-                    String result = registerOmHiveBaseIngestion(childParams);
-                    if (result != null) childSt.setResultJson(result);
-                }
-                case OM_TRINO_BASE_INGESTION_REGISTER -> {
-                    String result = registerOmTrinoBaseIngestion(childParams);
-                    if (result != null) childSt.setResultJson(result);
-                }
+                case OM_HIVE_BASE_INGESTION_REGISTER ->
+                    recordStepResult(id, childSt, registerOmHiveBaseIngestion(childParams));
+                case OM_TRINO_BASE_INGESTION_REGISTER ->
+                    recordStepResult(id, childSt, registerOmTrinoBaseIngestion(childParams));
                 case ATLAS_USER_PROVISION_OM -> {
                     if (!remoteConfigGate(childParams, "Atlas federation user provisioning", childSt, id)) {
                         String result = provisionAtlasUserForOm(childParams);
@@ -10097,9 +10226,9 @@ public class CommandService {
      * JWT). The returned map is suitable for handing to
      * {@link AmbariActionClient#updateClusterConfig(String, String, Map, String)}.
      *
-     * <p>Idempotency is handled by {@code updateClusterConfig} (it compares against
-     * current desired-config and skips the PUT if nothing changed); this method just
-     * computes the desired-state delta.
+     * <p>Idempotency is handled by {@link #writeTagSyncSite} and {@code updateClusterConfig}
+     * (they compare against the current desired config, the token through its digest, and skip
+     * the PUT if nothing changed); this method just computes the desired-state delta.
      *
      * @param spec              the service.json ranger entry (must have {@code type:
      *                          "ranger-tagsync-source"}; other types raise IAE)
@@ -10144,18 +10273,7 @@ public class CommandService {
         if (omEndpoint == null || omEndpoint.isBlank()) throw new IllegalArgumentException("omEndpoint is required");
         if (jwt == null || jwt.isBlank()) throw new IllegalArgumentException("jwt is required");
 
-        // The "source key" is the token Ranger's TagSynchronizer uses as the <name> in
-        // `ranger.tagsync.source.<name>.*`. It MUST be the name the concrete TagSource
-        // implementation reads its own config under: OpenmetadataRESTTagSource hard-codes the
-        // prefix `ranger.tagsync.source.openmetadatarest.*` (see TagSyncConfig), so the endpoint
-        // and token MUST live under `openmetadatarest`, not the service.json entry name. Honor an
-        // explicit `source_key` from the spec, else default to the built-in `openmetadatarest`
-        // (NOT entryKey — using the entry name e.g. "ranger-openmetadata-tagsync" makes the impl
-        // report "OpenmetadataEndpoint not specified" because it never reads that prefix).
-        Object sourceKeyOverride = spec.get("source_key");
-        String sourceKey = (sourceKeyOverride != null && !String.valueOf(sourceKeyOverride).isBlank())
-                ? String.valueOf(sourceKeyOverride)
-                : "openmetadatarest";
+        String sourceKey = tagSyncSourceKey(spec);
 
         Map<String, String> props = new LinkedHashMap<>();
         // ----- per-source endpoint + auth + class -----
@@ -10175,9 +10293,10 @@ public class CommandService {
         // silently skipped ("TagSync is not configured for any tag-sources"). `ranger.tagsync.sources`
         // is NOT read by this TagSynchronizer, so the enable flag — not the CSV — is what matters.
         props.put("ranger.tagsync.source." + sourceKey, "true");
-        // Turn OFF the default Atlas (Kafka) source: it's enabled by default and, with no Atlas
-        // Kafka wired, loops "Failed to initialize TAG source atlas" and can crowd out our source.
-        props.put("ranger.tagsync.source.atlas", "false");
+        // The Atlas source (ranger.tagsync.source.atlas) is deliberately left as the cluster has it.
+        // Turning it off here cut Atlas classifications off from Ranger on every cluster that relies
+        // on them (tag-based masking and deny policies stopped covering newly tagged data); an
+        // operator without Atlas turns it off in Ambari themselves.
 
         // ----- service-name mapper: maps OM database-service name → Ranger service name -----
         // Without a mapping, OpenmetadataResourceMapper (RANGER-4978) targets the Ranger service
@@ -10219,6 +10338,232 @@ public class CommandService {
         props.put("ranger.tagsync.sources", String.join(",", sources));
 
         return props;
+    }
+
+    /**
+     * The token Ranger's TagSynchronizer uses as the {@code <name>} in
+     * {@code ranger.tagsync.source.<name>.*}. It MUST be the name the concrete TagSource
+     * implementation reads its own config under: OpenmetadataRESTTagSource hard-codes the
+     * prefix {@code ranger.tagsync.source.openmetadatarest.*} (see TagSyncConfig), so the endpoint
+     * and token MUST live under {@code openmetadatarest}, not the service.json entry name. Honor an
+     * explicit {@code source_key} from the spec, else default to the built-in {@code openmetadatarest}
+     * (NOT the entry name — "ranger-openmetadata-tagsync" makes the impl report
+     * "OpenmetadataEndpoint not specified" because it never reads that prefix).
+     */
+    static String tagSyncSourceKey(Map<String, Object> spec) {
+        Object sourceKeyOverride = spec == null ? null : spec.get("source_key");
+        return (sourceKeyOverride != null && !String.valueOf(sourceKeyOverride).isBlank())
+                ? String.valueOf(sourceKeyOverride)
+                : "openmetadatarest";
+    }
+
+    /** Ambari config type the Ranger TagSync daemon is configured from. */
+    static final String TAGSYNC_SITE = "ranger-tagsync-site";
+
+    /**
+     * Adds the digest of the source's token to {@code props} and drops the token itself when the
+     * cluster already stores that same token.
+     *
+     * <p>The token is stored as a password property, which Ambari masks on every read, so the
+     * stored value can never be compared with the new one. Its SHA-256 is stored beside it under
+     * {@code <token key>.sha256} (Ranger ignores the key: a source is only discovered from
+     * {@code ranger.tagsync.source.<name>}) and compared instead. A token whose digest is unchanged
+     * is left out of the write, so a redeploy that changes nothing writes no config version and
+     * does not restart Ranger TagSync.
+     *
+     * @param props    the delta from {@link #buildTagSyncRangerSiteOverrides}
+     * @param tokenKey the key holding the token in {@code props}
+     * @param current  the current {@code ranger-tagsync-site} properties (password values masked)
+     * @return a new ordered map; {@code props} is not modified
+     */
+    static Map<String, String> withTagSyncTokenDigest(Map<String, String> props,
+                                                       String tokenKey,
+                                                       Map<String, String> current) {
+        Map<String, String> out = new LinkedHashMap<>(props);
+        String token = out.get(tokenKey);
+        if (token == null || token.isBlank()) return out;
+        String digest = sha256Hex(token.getBytes(StandardCharsets.UTF_8));
+        out.put(tokenKey + ".sha256", digest);
+        String stored = current == null ? null : current.get(tokenKey);
+        if (current != null && digest.equals(current.get(tokenKey + ".sha256")) && stored != null && !stored.isBlank()) {
+            out.remove(tokenKey);
+        }
+        return out;
+    }
+
+    /**
+     * Registers the TagSync source in the cluster's {@code ranger-tagsync-site} through Ambari and
+     * says whether a new config version was written, in which case Ranger TagSync must be restarted.
+     * The bot token is stored as a password property (masked in Ambari's API, UI and config history)
+     * and is only sent when it changed (see {@link #withTagSyncTokenDigest}). Ambari still hands the
+     * real value to the Ranger TagSync host, where the Ranger service script moves it into a credential
+     * store and renders it blank in {@code ranger-tagsync-site.xml}.
+     */
+    static boolean writeTagSyncSite(AmbariActionClient ambari,
+                                    String cluster,
+                                    Map<String, Object> spec,
+                                    String entryKey,
+                                    String omEndpoint,
+                                    String jwt,
+                                    String tagSuffix) throws Exception {
+        AmbariActionClient.DesiredConfig current = ambari.getDesiredConfig(cluster, TAGSYNC_SITE);
+        Map<String, String> props = buildTagSyncRangerSiteOverrides(spec, entryKey, omEndpoint, jwt,
+                current.properties().get("ranger.tagsync.sources"));
+        String tokenKey = tagSyncTokenKey(spec);
+        Map<String, String> delta = withTagSyncTokenDigest(props, tokenKey, current.properties());
+        return ambari.updateClusterConfig(cluster, TAGSYNC_SITE, delta, Set.of(tokenKey), tagSuffix);
+    }
+
+    /** Key of the source's bot token in {@code ranger-tagsync-site}. */
+    static String tagSyncTokenKey(Map<String, Object> spec) {
+        return "ranger.tagsync.source." + tagSyncSourceKey(spec) + ".token";
+    }
+
+    /** Whether Ambari stores {@code key} of this config as a password (masked in its API and UI). */
+    private static boolean isPasswordProperty(AmbariActionClient.DesiredConfig config, String key) {
+        return "true".equals(config.attributes().getOrDefault("password", Map.of()).get(key));
+    }
+
+    /**
+     * A warning when the cluster holds this same token in clear, or null. Earlier KDPS versions wrote
+     * it without the password attribute: masking it now does not reach the earlier config versions,
+     * which Ambari keeps readable in its configuration history, and the token stays valid there until
+     * it expires or is regenerated (OpenMetadata then accepts only the new one).
+     */
+    static String clearTokenWarning(AmbariActionClient.DesiredConfig current, String tokenKey, String jwt) {
+        String stored = current.properties().get(tokenKey);
+        if (isPasswordProperty(current, tokenKey) || stored == null || !stored.equals(jwt)) return null;
+        return "An earlier KDPS version stored the OpenMetadata ingestion-bot token in clear in ranger-tagsync-site,"
+                + " and that token is still valid: anyone who can read Ambari's configuration history can use it until"
+                + " it expires. KDPS now stores it as a password property. "
+                + org.apache.ambari.view.k8s.service.om.OmBotJwtClient.REGENERATE_HINT
+                + ", so that the old copies stop working, "
+                + org.apache.ambari.view.k8s.service.om.OmBotJwtClient.AFTER_REGENERATE_HINT + ".";
+    }
+
+    /**
+     * A warning when the cluster's Atlas tag source is turned off while Atlas is installed, or null.
+     * Earlier KDPS versions turned it off on every OpenMetadata registration, and Atlas classifications
+     * have not reached Ranger since. KDPS no longer touches the property, so it does not turn it back
+     * on either: an operator may have turned it off on purpose.
+     */
+    static String atlasSourceOffWarning(AmbariActionClient ambari, String cluster, Map<String, String> current) {
+        if (!"false".equalsIgnoreCase(String.valueOf(current.get("ranger.tagsync.source.atlas")).trim())) return null;
+        try {
+            if (ambari.getComponentHosts(cluster, "ATLAS", "ATLAS_SERVER").isEmpty()) return null;
+        } catch (Exception e) {
+            // Ambari answers 404 for a service the cluster does not have: no Atlas, nothing lost.
+            LOG.debug("OM_RANGER_TAGSYNC_REGISTER: no Atlas server found on cluster '{}': {}", cluster, e.toString());
+            return null;
+        }
+        return "ranger.tagsync.source.atlas is false in ranger-tagsync-site although Atlas is installed, so Atlas"
+                + " classifications (PII and others) do not reach Ranger and tag-based policies do not cover newly"
+                + " tagged data. Earlier KDPS versions turned it off when registering OpenMetadata. Unless that is"
+                + " intended, set it to true in Ambari (Ranger > Configs > Advanced ranger-tagsync-site) and restart"
+                + " Ranger TagSync.";
+    }
+
+    /**
+     * What the cluster's {@code ranger-tagsync-site} holds that the operator of a release with Ranger
+     * TagSync turned off must hear about, read without changing anything and without asking
+     * OpenMetadata for the bot token. Earlier KDPS versions registered OpenMetadata on every deploy
+     * whatever the switch said: they turned the Atlas tag source off and stored a bot token that never
+     * expires in clear. Those releases all deploy with the switch off now (they carry no value for
+     * it), so this is where their operators learn about it.
+     */
+    static List<String> switchedOffTagSyncWarnings(AmbariActionClient ambari,
+                                                   String cluster,
+                                                   Map<String, Object> spec,
+                                                   Instant now) throws Exception {
+        AmbariActionClient.DesiredConfig current = ambari.getDesiredConfig(cluster, TAGSYNC_SITE);
+        List<String> warnings = new ArrayList<>();
+        String atlasOff = atlasSourceOffWarning(ambari, cluster, current.properties());
+        if (atlasOff != null) warnings.add(atlasOff);
+
+        String sourceFlag = "ranger.tagsync.source." + tagSyncSourceKey(spec);
+        if (!"true".equalsIgnoreCase(String.valueOf(current.properties().get(sourceFlag)).trim())) return warnings;
+        String endpoint = current.properties().get(sourceFlag + ".endpoint");
+        String registered = "OpenMetadata is registered as a tag source of Ranger TagSync in ranger-tagsync-site"
+                + (endpoint == null || endpoint.isBlank() ? "" : " (" + endpoint + ")")
+                + ", and Ranger TagSync is turned off for this release: KDPS leaves that registration as it is and"
+                + " no longer updates it.";
+        String clearToken = storedClearTokenWarning(current, tagSyncTokenKey(spec), now);
+        warnings.add(registered + " " + (clearToken != null ? clearToken
+                : "If it is no longer wanted, remove the OpenMetadata source from ranger-tagsync-site in Ambari; to"
+                        + " keep it up to date, turn 'Enable Ranger TagSync' on with Upgrade / Config."));
+        return warnings;
+    }
+
+    /**
+     * A warning when {@code ranger-tagsync-site} holds a bot token in clear that may still be valid,
+     * or null. Read without OpenMetadata, so the token counts as valid unless its own expiry passed.
+     */
+    static String storedClearTokenWarning(AmbariActionClient.DesiredConfig current, String tokenKey, Instant now) {
+        String stored = current.properties().get(tokenKey);
+        if (stored == null || stored.isBlank() || isPasswordProperty(current, tokenKey)) return null;
+        Instant expiresAt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.expiryOf(stored);
+        if (expiresAt != null && !expiresAt.isAfter(now)) return null;
+        return "It holds the OpenMetadata ingestion-bot token in clear, "
+                + (expiresAt == null ? "one that never expires" : "valid until " + expiresAt)
+                + ": unless the bot's token was regenerated since, anyone who can read Ambari's configuration (its"
+                + " history included) can call OpenMetadata as the bot. "
+                + org.apache.ambari.view.k8s.service.om.OmBotJwtClient.REGENERATE_HINT
+                + ", so that OpenMetadata refuses the copies in Ambari. Then either turn 'Enable Ranger TagSync' on"
+                + " with Upgrade / Config, which stores the new token as a password property, or remove the"
+                + " OpenMetadata source from ranger-tagsync-site in Ambari; and "
+                + org.apache.ambari.view.k8s.service.om.OmBotJwtClient.PIPELINES_HINT + ".";
+    }
+
+    /**
+     * Restarts Ranger TagSync when this run wrote {@code ranger-tagsync-site}, and only then.
+     *
+     * <p>Ambari keeps a single "restart required" flag per component, which a change to any config
+     * type Ranger TagSync reads sets (ranger-tagsync-site, atlas-tagsync-ssl, tagsync-log4j, ...)
+     * and a restart clears; it does not say which changes the restart is waiting for. A run that
+     * wrote nothing therefore cannot tell a restart of its own that failed from an administrator's
+     * change left for a maintenance window, and restarting would apply the latter: the pending
+     * restart is reported in {@code warnings} instead, so the run does not report the source active
+     * in silence while Ranger TagSync may still run without it.
+     *
+     * @return the Ambari request id of the restart, or null when Ranger TagSync was not restarted
+     * @throws IllegalStateException when the restart does not complete within {@code timeout}
+     */
+    static Integer restartTagSyncIfNeeded(AmbariActionClient ambari,
+                                          String cluster,
+                                          String entryKey,
+                                          boolean wrote,
+                                          String tagSuffix,
+                                          List<String> warnings,
+                                          java.time.Duration timeout) throws Exception {
+        if (!wrote) {
+            if (!ambari.componentRestartRequired(cluster, "RANGER", "RANGER_TAGSYNC")) {
+                LOG.info("ranger-tagsync-site already had source '{}'; skipping Ranger TagSync restart", entryKey);
+                return null;
+            }
+            String tag = ambari.getDesiredConfig(cluster, TAGSYNC_SITE).tag();
+            warnings.add(AmbariActionClient.isConfigTagWrittenWith(tag, tagSuffix)
+                    ? "Ranger TagSync is waiting for a restart in Ambari, and its ranger-tagsync-site is the one KDPS"
+                            + " wrote for this release: if the restart KDPS made then did not complete, Ranger TagSync"
+                            + " does not run the OpenMetadata source yet. KDPS does not restart it now, since Ambari does"
+                            + " not say which changes the restart is waiting for and some may not be KDPS's. Restart Ranger"
+                            + " TagSync in Ambari when convenient."
+                    : "Ranger TagSync has configuration changes waiting for a restart in Ambari that KDPS did"
+                            + " not make, so KDPS leaves that restart to you. Until Ranger TagSync restarts, it may not run"
+                            + " the OpenMetadata source.");
+            LOG.info("Ranger TagSync is waiting for a restart (ranger-tagsync-site {}); not restarting it for changes"
+                    + " this run did not make", tag);
+            return null;
+        }
+        int reqId = ambari.submitComponentRestart(cluster, "RANGER", "RANGER_TAGSYNC",
+                "KDPS: restart Ranger TagSync after registering source '" + entryKey + "'");
+        if (!ambari.waitUntilComplete(reqId, timeout.toSeconds(), java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Ranger TagSync restart did not complete (Ambari requestId=" + reqId
+                    + "). ranger-tagsync-site already holds the OpenMetadata source: restart Ranger TagSync in Ambari"
+                    + " once it can start. Running the deployment again does not restart it, since KDPS restarts"
+                    + " Ranger TagSync only right after changing its configuration.");
+        }
+        LOG.info("Ranger TagSync restarted; source '{}' is now active", entryKey);
+        return reqId;
     }
 
     /**
@@ -10270,9 +10615,19 @@ public class CommandService {
      *       integration honest about its limits instead of silently doing nothing.</li>
      * </ul>
      *
+     * <p>The release's "Enable Ranger TagSync" switch is checked again here. During a deploy a
+     * release with the switch off only gets {@link #checkTagSyncSite} (nothing is read from
+     * OpenMetadata and the cluster is not changed); the operator's explicit "Re-register Ranger
+     * TagSync source" action ({@code _tagSyncReplay}) still registers, with a warning in its result.
+     *
+     * <p>A bot token that never expires is registered with a warning (see
+     * {@link org.apache.ambari.view.k8s.service.om.OmBotJwtClient#neverExpiresWarning}); an expired
+     * one is refused.
+     *
      * @return a small JSON payload to record on the command's status; never null
-     * @throws Exception when any required input is missing or an Ambari call fails
-     *                   (only on the Ambari-managed branch)
+     * @throws Exception when any required input is missing, the token cannot be read or has
+     *                   expired, or an Ambari call fails (only on the
+     *                   Ambari-managed branch)
      */
     @SuppressWarnings("unchecked")
     String registerRangerTagSyncSource(Map<String, Object> childParams) throws Exception {
@@ -10306,6 +10661,20 @@ public class CommandService {
             LOG.info("OM_RANGER_TAGSYNC_REGISTER: read live helm release values for {}/{} ({} keys)",
                     namespace, releaseName, values.size());
         }
+        boolean replay = "true".equalsIgnoreCase(String.valueOf(childParams.get("_tagSyncReplay")));
+        String replayNote = null;
+        if (!isTagSyncSwitchOn(values, settings)) {
+            String switchOff = "Ranger TagSync is turned off for " + namespace + "/" + releaseName + " ('"
+                    + tagSyncEnabledPath(settings) + "' is not true).";
+            if (!replay) {
+                LOG.info("OM_RANGER_TAGSYNC_REGISTER: {} The cluster's Ranger TagSync is only checked, not changed.",
+                        switchOff);
+                return checkTagSyncSite(childParams, spec, switchOff);
+            }
+            replayNote = switchOff + " The source is registered because it was asked for explicitly; the next"
+                    + " deployment of the release leaves it in place but no longer updates it.";
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", replayNote);
+        }
         String endpointHelmPath = String.valueOf(spec.getOrDefault(
                 "endpoint_helm_prop",
                 settings.getOrDefault("endpoint_helm_prop", "ranger.tagSync.endpoint")));
@@ -10315,48 +10684,6 @@ public class CommandService {
             throw new IllegalStateException("Could not resolve OM endpoint at helm path '" + endpointHelmPath
                     + "' — the operator must enable Ranger TagSync and provide an endpoint in the wizard.");
         }
-
-        // ----- Mint a fresh Unlimited-TTL JWT for OM's ingestion-bot via the
-        // OM-deps airflow scheduler pod. The previous design read the JWT from a
-        // K8s Secret that a helm hook Job populated; chart 1.13.5 deletes that
-        // Job (and the Secret), so the Ambari step now mints the JWT itself.
-        // See OmBotJwtClient for the why-exec-not-JDBC rationale.
-        //
-        // Fernet Secret coordinates come from settings (chart-specific) with sensible
-        // defaults — release-name templated since the Secret is per-release.
-        String fernetSecretNameTpl = String.valueOf(
-                settings.getOrDefault("fernet_secret_name_template", "{{releaseName}}-fernet"));
-        String fernetSecretName = fernetSecretNameTpl.replace("{{releaseName}}", releaseName);
-        String fernetSecretKey = String.valueOf(settings.getOrDefault("fernet_secret_key", "fernet-key"));
-        String fernetKey = null;
-        try {
-            io.fabric8.kubernetes.api.model.Secret fernetSec =
-                    this.kubernetesService.getSecret(namespace, fernetSecretName);
-            if (fernetSec != null && fernetSec.getData() != null
-                    && fernetSec.getData().containsKey(fernetSecretKey)) {
-                fernetKey = new String(
-                        java.util.Base64.getDecoder().decode(fernetSec.getData().get(fernetSecretKey)),
-                        java.nio.charset.StandardCharsets.UTF_8).trim();
-            }
-        } catch (Exception ex) {
-            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read '{}/{}' Secret key '{}', falling back to chart default: {}",
-                    namespace, fernetSecretName, fernetSecretKey, ex.toString());
-        }
-        // OM service host + port from settings (chart-specific). Default: just the
-        // release name + 8585 (matches OM chart's `<release>` Service name).
-        String omSvcTpl = String.valueOf(settings.getOrDefault("om_service_template", "{{releaseName}}"));
-        String omSvc = omSvcTpl.replace("{{releaseName}}", releaseName);
-        Object omPortRaw = settings.get("om_port");
-        Integer omPort = (omPortRaw instanceof Number) ? ((Number) omPortRaw).intValue() :
-                (omPortRaw != null && !String.valueOf(omPortRaw).isBlank() ? Integer.parseInt(String.valueOf(omPortRaw)) : Integer.valueOf(8585));
-        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
-                this.kubernetesService.getClient(),
-                namespace,
-                releaseName,
-                fernetKey,
-                omSvc,
-                omPort,
-                java.time.Duration.ofSeconds(120));
 
         // ----- Branch on Ranger ownership via the selected Platform Context -----
         // The per-service Ranger discovery fields were removed (feedback: TagSync must
@@ -10388,15 +10715,60 @@ public class CommandService {
             }
         }
 
-        // Always compute the property delta — both branches need it. Don't pass currentSources
-        // on the external branch (we can't read the foreign cluster's config).
-        String currentSources = external
-                ? null
-                : new AmbariActionClient(ctx,
-                        java.net.URI.create((String) childParams.get("_baseUri")).resolve("/api/v1").toString(),
-                        cluster,
-                        AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders")))
-                                .getDesiredConfigProperty(cluster, "ranger-tagsync-site", "ranger.tagsync.sources");
+        // ----- Ambari-managed Ranger: read what Ranger TagSync runs with before the token, so what it
+        // says about the cluster (the Atlas tag source turned off) still reaches the operator when the
+        // token is refused or cannot be read.
+        List<String> warnings = new ArrayList<>();
+        AmbariActionClient ambari = null;
+        AmbariActionClient.DesiredConfig currentSite = null;
+        if (!external) {
+            if (cluster == null || cluster.isBlank()) {
+                throw new IllegalStateException("Missing _cluster in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
+            }
+            String baseUriStr = (String) childParams.get("_baseUri");
+            if (baseUriStr == null || baseUriStr.isBlank()) {
+                throw new IllegalStateException("Missing _baseUri in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
+            }
+            String ambariApiBase = java.net.URI.create(baseUriStr).resolve("/api/v1").toString();
+            Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+            ambari = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
+            currentSite = ambari.getDesiredConfig(cluster, TAGSYNC_SITE);
+            String atlasOff = atlasSourceOffWarning(ambari, cluster, currentSite.properties());
+            if (atlasOff != null) {
+                warnings.add(atlasOff);
+                LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", atlasOff);
+            }
+        }
+
+        // ----- Read the OM ingestion-bot's current JWT through the OM-deps airflow scheduler pod.
+        // OpenMetadata only accepts the token it stores for the bot, and only an OpenMetadata
+        // administrator can replace it, so KDPS hands Ranger TagSync the current one (see
+        // OmBotJwtClient).
+        org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken;
+        try {
+            botToken = readOmBotToken(namespace, releaseName, settings);
+        } catch (IllegalStateException e) {
+            throw withWarnings(e, warnings);
+        }
+        String jwt = botToken.jwt();
+        if (currentSite != null) {
+            String clearToken = clearTokenWarning(currentSite, tagSyncTokenKey(spec), jwt);
+            if (clearToken != null) warnings.add(clearToken);
+        }
+        // OpenMetadata 1.12 creates the bot with a token that never expires and does not let KDPS
+        // rotate it: it is handed over with a warning that says how to replace it with one that expires.
+        String neverExpires = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.neverExpiresWarning(botToken);
+        if (neverExpires != null) {
+            warnings.add(neverExpires);
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", neverExpires);
+        }
+        if (replayNote != null) warnings.add(0, replayNote);
+        String lifetimeWarning = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.lifetimeWarning(botToken, Instant.now());
+        if (lifetimeWarning != null) {
+            warnings.add(lifetimeWarning);
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", lifetimeWarning);
+        }
+
         // The service.json entry is static; the OM-service → Ranger-service mapping lives in the
         // release's helm values (wizard fields rangerTagSyncTrinoServiceFqn /
         // rangerTagSyncRangerTrinoService → ranger.tagSync.*). Copy it into the spec so the
@@ -10415,10 +10787,12 @@ public class CommandService {
                     + "target '<OM service>_trino' and uploads will fail with HTTP 400 unless a mapping is set.",
                     namespace, releaseName);
         }
-        Map<String, String> propsToSet = buildTagSyncRangerSiteOverrides(effectiveSpec, entryKey, omEndpoint, jwt, currentSources);
+        String tokenExpiresAt = String.valueOf(botToken.expiresAt());
 
         if (external) {
-            // No Ambari mutation, no restart. Surface what the operator must apply.
+            // No Ambari mutation, no restart. Surface what the operator must apply. We can't read the
+            // foreign cluster's config, so no current sources to merge with.
+            Map<String, String> propsToSet = buildTagSyncRangerSiteOverrides(effectiveSpec, entryKey, omEndpoint, jwt, null);
             String snippet = renderTagSyncXmlSnippet(propsToSet);
             LOG.info("OM_RANGER_TAGSYNC_REGISTER (external) source='{}' rangerUrl='{}' authMode='{}' "
                             + "— rendered {} props to snippet (see command status JSON / deploy log). "
@@ -10435,38 +10809,23 @@ public class CommandService {
             if (!externalRangerSecretName.isEmpty()) result.put("credsSecretName", externalRangerSecretName);
             result.put("xmlSnippet", snippet);
             result.put("propertiesCount", propsToSet.size());
+            result.put("tokenExpiresAt", tokenExpiresAt);
+            if (!warnings.isEmpty()) result.put("warnings", warnings);
             return gson.toJson(result);
         }
 
-        // ----- Ambari-managed Ranger path (current behavior, regression-safe) -----
-        if (cluster == null || cluster.isBlank()) {
-            throw new IllegalStateException("Missing _cluster in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
-        }
-        String baseUriStr = (String) childParams.get("_baseUri");
-        if (baseUriStr == null || baseUriStr.isBlank()) {
-            throw new IllegalStateException("Missing _baseUri in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
-        }
-        java.net.URI baseUri = java.net.URI.create(baseUriStr);
-        String ambariApiBase = baseUri.resolve("/api/v1").toString();
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-        var ambari = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
-
-        LOG.info("OM_RANGER_TAGSYNC_REGISTER (Ambari-managed): writing {} props to ranger-tagsync-site for source '{}' on cluster '{}'",
-                propsToSet.size(), entryKey, cluster);
-        boolean wrote = ambari.updateClusterConfig(cluster, "ranger-tagsync-site", propsToSet, "om-tagsync-" + releaseName);
-
-        Integer restartReqId = null;
-        if (wrote) {
-            int reqId = ambari.submitComponentRestart(cluster, "RANGER", "RANGER_TAGSYNC",
-                    "KDPS: restart Ranger TagSync after registering source '" + entryKey + "'");
-            restartReqId = reqId;
-            boolean ok = ambari.waitUntilComplete(reqId, 600L, java.util.concurrent.TimeUnit.SECONDS);
-            if (!ok) {
-                throw new IllegalStateException("Ranger TagSync restart did not complete (Ambari requestId=" + reqId + ")");
-            }
-            LOG.info("Ranger TagSync restarted; source '{}' is now active", entryKey);
-        } else {
-            LOG.info("ranger-tagsync-site already had source '{}'; skipping Ranger TagSync restart", entryKey);
+        // ----- Ambari-managed Ranger path -----
+        LOG.info("OM_RANGER_TAGSYNC_REGISTER (Ambari-managed): registering source '{}' in ranger-tagsync-site on cluster '{}'",
+                entryKey, cluster);
+        String tagSuffix = "om-tagsync-" + releaseName;
+        boolean wrote;
+        Integer restartReqId;
+        try {
+            wrote = writeTagSyncSite(ambari, cluster, effectiveSpec, entryKey, omEndpoint, jwt, tagSuffix);
+            restartReqId = restartTagSyncIfNeeded(ambari, cluster, entryKey, wrote, tagSuffix, warnings,
+                    java.time.Duration.ofSeconds(600));
+        } catch (IllegalStateException e) {
+            throw withWarnings(e, warnings);
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -10474,12 +10833,94 @@ public class CommandService {
         result.put("sourceKey", entryKey);
         result.put("configChanged", wrote);
         if (restartReqId != null) result.put("restartRequestId", restartReqId);
+        result.put("tokenExpiresAt", tokenExpiresAt);
+        if (!warnings.isEmpty()) result.put("warnings", warnings);
         return gson.toJson(result);
     }
 
     /**
-     * Body of the {@code OM_ATLAS_FEDERATION_REGISTER} step. Mints an Unlimited-TTL
-     * JWT for the OM ingestion-bot, then calls OM REST four times to set up the
+     * {@code e} with {@code warnings} added to its message, so a step that fails still reports what
+     * it found on the cluster (the step's warnings otherwise only reach its result).
+     */
+    static IllegalStateException withWarnings(IllegalStateException e, List<String> warnings) {
+        if (warnings == null || warnings.isEmpty()) return e;
+        return new IllegalStateException(e.getMessage() + " Also: " + String.join(" ", warnings), e);
+    }
+
+    /**
+     * The OpenMetadata ingestion-bot's current token, read through the release's Airflow scheduler
+     * pod with the release's Fernet key. Fernet Secret coordinates come from settings
+     * (chart-specific) with sensible defaults — release-name templated since the Secret is
+     * per-release; the chart default key is used when the Secret cannot be read.
+     */
+    org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken readOmBotToken(String namespace,
+                                                                                  String releaseName,
+                                                                                  Map<String, Object> settings) throws Exception {
+        String fernetSecretNameTpl = String.valueOf(
+                settings.getOrDefault("fernet_secret_name_template", "{{releaseName}}-fernet"));
+        String fernetSecretName = fernetSecretNameTpl.replace("{{releaseName}}", releaseName);
+        String fernetSecretKey = String.valueOf(settings.getOrDefault("fernet_secret_key", "fernet-key"));
+        String fernetKey = null;
+        try {
+            io.fabric8.kubernetes.api.model.Secret fernetSec =
+                    this.kubernetesService.getSecret(namespace, fernetSecretName);
+            if (fernetSec != null && fernetSec.getData() != null
+                    && fernetSec.getData().containsKey(fernetSecretKey)) {
+                fernetKey = new String(
+                        java.util.Base64.getDecoder().decode(fernetSec.getData().get(fernetSecretKey)),
+                        java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+        } catch (Exception ex) {
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read '{}/{}' Secret key '{}', falling back to chart default: {}",
+                    namespace, fernetSecretName, fernetSecretKey, ex.toString());
+        }
+        return org.apache.ambari.view.k8s.service.om.OmBotJwtClient.readBotToken(
+                this.kubernetesService.getClient(),
+                namespace,
+                releaseName,
+                fernetKey,
+                java.time.Duration.ofSeconds(120));
+    }
+
+    /**
+     * Body of the step for a release with Ranger TagSync turned off (queued as a check, see
+     * {@link #planRangerTagSyncSources}): reads the cluster's {@code ranger-tagsync-site} and reports
+     * what {@link #switchedOffTagSyncWarnings} finds. It changes nothing: no token is read from
+     * OpenMetadata, nothing is written and Ranger TagSync is not restarted. It never fails the
+     * deploy either: what it cannot read, it logs.
+     */
+    String checkTagSyncSite(Map<String, Object> childParams, Map<String, Object> spec, String switchOff) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("skipped", true);
+        result.put("reason", switchOff);
+        String cluster = stringValue(childParams.get("_cluster"));
+        String baseUriStr = stringValue(childParams.get("_baseUri"));
+        if (cluster.isBlank() || baseUriStr.isBlank()) return gson.toJson(result);
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        if (rc != null && "EXTERNAL".equalsIgnoreCase(stringValue(rc.getKind()))) {
+            // An external platform's Ranger TagSync is configured by its operator (KDPS only ever rendered a
+            // snippet for it): this cluster's ranger-tagsync-site says nothing about it.
+            return gson.toJson(result);
+        }
+        try {
+            AmbariActionClient ambari = new AmbariActionClient(ctx,
+                    java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster,
+                    AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders")));
+            List<String> warnings = switchedOffTagSyncWarnings(ambari, cluster, spec, Instant.now());
+            if (!warnings.isEmpty()) {
+                result.put("warnings", warnings);
+                warnings.forEach(w -> LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", w));
+            }
+        } catch (Exception e) {
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read ranger-tagsync-site on cluster '{}' to check it: {}",
+                    cluster, e.toString());
+        }
+        return gson.toJson(result);
+    }
+
+    /**
+     * Body of the {@code OM_ATLAS_FEDERATION_REGISTER} step. Reads the OM
+     * ingestion-bot's current JWT, then calls OM REST four times to set up the
      * federation: {@code metadataServices} (Atlas), {@code databaseServices}
      * (CustomDatabase landing zone), {@code ingestionPipelines} (metadata pipeline
      * with the operator-chosen schedule), and a {@code trigger} POST to start the
@@ -10498,7 +10939,7 @@ public class CommandService {
      * ({@code _platformContextId} / {@code _cluster} / {@code _baseUri} / {@code _callerHeaders}).
      * Returns null on failure (callers fall back to legacy form values).
      */
-    private org.apache.ambari.view.k8s.model.ResolvedContext resolvePlatformContextForStep(
+    org.apache.ambari.view.k8s.model.ResolvedContext resolvePlatformContextForStep(
             Map<String, Object> childParams) {
         try {
             String cluster = (String) childParams.get("_cluster");
@@ -10698,7 +11139,7 @@ public class CommandService {
             LOG.info("OM_ATLAS_FEDERATION_REGISTER: atlasFederation.databaseServiceNames is blank — targeting '{}'", hiveSvc);
         }
 
-        // Mint the JWT (chart-default Fernet unless the operator's <release>-fernet
+        // Read the bot's JWT (chart-default Fernet unless the operator's <release>-fernet
         // Secret carries an override).
         String fernetKey = null;
         try {
@@ -10714,10 +11155,12 @@ public class CommandService {
             LOG.warn("OM_ATLAS_FEDERATION_REGISTER: could not read '{}/{}-fernet' Secret, falling back to chart default: {}",
                     namespace, releaseName, ex.toString());
         }
-        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
-                this.kubernetesService.getClient(),
-                namespace, releaseName, fernetKey,
-                java.time.Duration.ofSeconds(120));
+        org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken =
+                org.apache.ambari.view.k8s.service.om.OmBotJwtClient.readBotToken(
+                        this.kubernetesService.getClient(),
+                        namespace, releaseName, fernetKey,
+                        java.time.Duration.ofSeconds(120));
+        String jwt = botToken.jwt();
 
         org.apache.ambari.view.k8s.service.om.OmAtlasFederationClient.Result result =
                 org.apache.ambari.view.k8s.service.om.OmAtlasFederationClient.register(
@@ -10733,12 +11176,13 @@ public class CommandService {
         resultMap.put("pipelineId", result.pipelineId);
         resultMap.put("deployStatus", result.deployStatus);
         resultMap.put("triggerStatus", result.triggerStatus);
+        putBotTokenLifetimeWarning(resultMap, botToken);
         return gson.toJson(resultMap);
     }
 
     /**
      * Body of the {@code OM_HIVE_BASE_INGESTION_REGISTER} step — layer 1 of
-     * Atlas+Hive federation. Mints an Unlimited-TTL JWT for the OM ingestion-bot,
+     * Atlas+Hive federation. Reads the OM ingestion-bot's current JWT,
      * then calls OM REST to create the Hive DatabaseService (e.g. {@code hive-clemlab}),
      * a metadata ingestion pipeline, deploys it (generates the Airflow DAG) and
      * triggers the first run. The Atlas federation step (queued after this) then
@@ -10864,7 +11308,7 @@ public class CommandService {
             grantHiveRangerReadForOmIngestion(childParams, rc, namespace, releaseName);
         }
 
-        // Mint the JWT (chart-default Fernet unless the operator's <release>-fernet override exists).
+        // Read the bot's JWT (chart-default Fernet unless the operator's <release>-fernet override exists).
         String fernetKey = null;
         try {
             io.fabric8.kubernetes.api.model.Secret fernetSec =
@@ -10879,10 +11323,12 @@ public class CommandService {
             LOG.warn("OM_HIVE_BASE_INGESTION_REGISTER: could not read '{}/{}-fernet' Secret, using chart default: {}",
                     namespace, releaseName, ex.toString());
         }
-        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
-                this.kubernetesService.getClient(),
-                namespace, releaseName, fernetKey,
-                java.time.Duration.ofSeconds(120));
+        org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken =
+                org.apache.ambari.view.k8s.service.om.OmBotJwtClient.readBotToken(
+                        this.kubernetesService.getClient(),
+                        namespace, releaseName, fernetKey,
+                        java.time.Duration.ofSeconds(120));
+        String jwt = botToken.jwt();
 
         org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.Result result =
                 org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.register(
@@ -10901,6 +11347,7 @@ public class CommandService {
         resultMap.put("pipelineId", result.pipelineId);
         resultMap.put("deployStatus", result.deployStatus);
         resultMap.put("triggerStatus", result.triggerStatus);
+        putBotTokenLifetimeWarning(resultMap, botToken);
         return gson.toJson(resultMap);
     }
 
@@ -11098,8 +11545,10 @@ public class CommandService {
             LOG.warn("OM_TRINO_BASE_INGESTION_REGISTER: could not read '{}/{}-fernet' Secret, using chart default: {}",
                     namespace, releaseName, ex.toString());
         }
-        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
-                this.kubernetesService.getClient(), namespace, releaseName, fernetKey, java.time.Duration.ofSeconds(120));
+        org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken =
+                org.apache.ambari.view.k8s.service.om.OmBotJwtClient.readBotToken(
+                        this.kubernetesService.getClient(), namespace, releaseName, fernetKey, java.time.Duration.ofSeconds(120));
+        String jwt = botToken.jwt();
         org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.Result result =
                 org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.register(
                         this.kubernetesService.getClient(), namespace, releaseName, jwt,
@@ -11120,7 +11569,22 @@ public class CommandService {
         resultMap.put("trinoRelease", trinoRelease);
         resultMap.put("hostPort", hostPort);
         resultMap.put("rangerTrinoServiceName", rangerRepo);
+        putBotTokenLifetimeWarning(resultMap, botToken);
         return gson.toJson(resultMap);
+    }
+
+    /**
+     * Adds the bot token's renewal warning to a step result, when it is due. Every OpenMetadata step
+     * reports it, not only the TagSync registration: the pipelines these steps deploy run with the
+     * same token and stop when it expires.
+     */
+    static void putBotTokenLifetimeWarning(Map<String, Object> resultMap,
+                                           org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken) {
+        String lifetimeWarning = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.lifetimeWarning(botToken, Instant.now());
+        if (lifetimeWarning != null) {
+            resultMap.put("warnings", List.of(lifetimeWarning));
+            LOG.warn("{}", lifetimeWarning);
+        }
     }
 
     /**

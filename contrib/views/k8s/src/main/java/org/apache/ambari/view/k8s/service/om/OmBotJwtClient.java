@@ -18,6 +18,9 @@
 
 package org.apache.ambari.view.k8s.service.om;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.ExecListener;
@@ -27,16 +30,35 @@ import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Mints the OpenMetadata ingestion-bot's JWT with {@code JWTTokenExpiry: "Unlimited"}
- * and returns the new token. Used by both the Ranger TagSync source registration
- * ({@code OM_RANGER_TAGSYNC_REGISTER}) and the Atlas federation registration
- * ({@code OM_ATLAS_FEDERATION_REGISTER}) Ambari operations — they both need a
- * non-expiring JWT to call OM REST as the bot.
+ * Reads the OpenMetadata ingestion-bot's current JWT. Used by the Ranger TagSync source
+ * registration ({@code OM_RANGER_TAGSYNC_REGISTER}), the Atlas federation registration
+ * ({@code OM_ATLAS_FEDERATION_REGISTER}) and the base-ingestion registrations — they all call OM
+ * REST as the bot, and Ranger TagSync keeps the token to poll OM.
+ *
+ * <p><b>Why read, and never mint?</b> OpenMetadata accepts a bot token only when it is the one
+ * stored for the bot ("The given token does not match the current bot's token"), so every holder
+ * must use that token. Replacing it is reserved to an OpenMetadata administrator
+ * ({@code PUT /users/generateToken/{id}}); the bot cannot do it with its own token (a personal
+ * access token is refused for bots, and a PATCH of its authentication mechanism is discarded).
+ * Asking for a new token on every run therefore never rotated anything. The token's lifetime is
+ * the one an administrator chose in OpenMetadata (Settings &gt; Bots); KDPS reports it, warns before
+ * it runs out, refuses an expired one, and hands the current token to every consumer, so
+ * regenerating it in OpenMetadata and re-running the step is how it is rotated.
+ *
+ * <p>A holder that keeps the token (Ranger TagSync stores it in its configuration) only gets one
+ * that expires (see {@link #neverExpiresWarning}). OpenMetadata creates the bot with a token that never
+ * expires, so an administrator regenerates it once with an expiry before Ranger TagSync can use it.
+ * The bot is shared: its token is also what every OpenMetadata ingestion pipeline runs with, so
+ * every message about its lifetime says that all of them stop when it expires, and how to hand the
+ * regenerated token to each ({@link #EXPIRY_IMPACT}, {@link #AFTER_REGENERATE_HINT}).
  *
  * <p><b>Why exec-in-pod and not JDBC?</b>
  * OM's bot JWT is stored Fernet-encrypted in {@code user_entity.json} in OM's
@@ -47,9 +69,8 @@ import java.util.concurrent.TimeUnit;
  *   <li>Port-forward + JDBC + Fernet-Java decryption in the Ambari process.
  *       Cleaner in theory but adds two new failure modes (port-forward stream
  *       interruption, JDBC reconnect handling).</li>
- *   <li>Reach OM REST through the ingress URL, but OM exposes no endpoint to
- *       read the bot's stored JWT — only to rotate it once you have a valid
- *       admin/bot JWT to authenticate the call.</li>
+ *   <li>Reach OM REST through the ingress URL, but OM exposes the bot's token only
+ *       to an administrator.</li>
  *   <li>Exec into a pod that already has the postgres password + Fernet key
  *       mounted (the airflow scheduler pod ships with {@code python3},
  *       {@code psql}, and {@code cryptography} preinstalled in our bigtop image).
@@ -72,21 +93,54 @@ public final class OmBotJwtClient {
      *  the OpenMetadata helm chart's default fernet-key value. */
     public static final String DEFAULT_FERNET_KEY = "jJ/9sz0g0OHxsfxOoSfdFdmk3ysNmPRnH3TUAbz3IHA=";
 
+    /** How long before its expiry a token is reported as due for renewal. */
+    public static final Duration RENEWAL_NOTICE = Duration.ofDays(30);
+
+    /** Where an administrator regenerates the token, named in every message that asks for it. */
+    public static final String REGENERATE_HINT =
+            "Regenerate it in OpenMetadata (Settings > Bots > ingestion-bot), choosing an expiry";
+
     /**
-     * Resolves the new Unlimited JWT for the {@code ingestion-bot} user in OM.
-     * The flow runs entirely inside an airflow scheduler pod via K8s exec:
-     * <ol>
-     *   <li>Read encrypted JWT from {@code user_entity.json} in OM PostgreSQL</li>
-     *   <li>Strip the {@code fernet:} prefix, Fernet-decrypt with the chart's
-     *       Fernet key to get the current (short-lived) JWT</li>
-     *   <li>PUT {@code /api/v1/users/security/token} on OM REST with
-     *       {@code JWTTokenExpiry: "Unlimited"} and the current JWT as Bearer.
-     *       OM regenerates the JWT and returns the new value.</li>
-     *   <li>Print the new JWT to stdout (captured by the exec stream)</li>
-     * </ol>
+     * What stops when the token expires. Ranger TagSync is not its only holder: OpenMetadata deploys
+     * every ingestion pipeline with the bot's token, the ones KDPS registers included.
+     */
+    public static final String EXPIRY_IMPACT =
+            "The ingestion-bot is the identity of every OpenMetadata ingestion pipeline (the Hive and Trino"
+            + " ingestion and the Atlas federation KDPS sets up included) as well as of Ranger TagSync's"
+            + " OpenMetadata source: when its token expires, all of them stop until it is regenerated.";
+
+    /**
+     * How the ingestion pipelines get a regenerated token: OpenMetadata puts the bot's token into a
+     * pipeline when it deploys it, so the ones deployed before keep the old token until redeployed.
+     */
+    public static final String PIPELINES_HINT =
+            "run the release's 'Re-register Hive ingestion', 'Re-register Trino ingestion' and 'Re-register"
+            + " Atlas federation' actions (those the Releases page shows) so OpenMetadata redeploys its ingestion"
+            + " pipelines with the new token, and redeploy any other ingestion pipeline from OpenMetadata";
+
+    /** What to run once the token is regenerated, so that every holder gets the new one. */
+    public static final String AFTER_REGENERATE_HINT =
+            "then run 'Re-register Ranger TagSync source' on the release so Ranger TagSync gets the new token, and "
+            + PIPELINES_HINT;
+
+    /**
+     * The bot's token and when it expires.
      *
-     * The script writes warnings to stderr so the caller's log gets diagnostics
-     * even when the result is consumed verbatim.
+     * @param jwt       the token, as OpenMetadata stores it for the bot
+     * @param expiresAt its {@code exp} claim, or {@code null} when it never expires
+     */
+    public record BotToken(String jwt, Instant expiresAt) {
+        @Override
+        public String toString() {
+            // Never let the token reach a log line through string concatenation.
+            return "BotToken[expiresAt=" + (expiresAt == null ? "never" : expiresAt) + "]";
+        }
+    }
+
+    /**
+     * Reads the {@code ingestion-bot}'s current JWT. The flow runs entirely inside an airflow
+     * scheduler pod via K8s exec: read the encrypted JWT from {@code user_entity.json} in OM
+     * PostgreSQL, strip the {@code fernet:} prefix and decrypt it with the chart's Fernet key.
      *
      * @param client K8s client the view holds for the deploy
      * @param namespace release namespace
@@ -94,38 +148,19 @@ public final class OmBotJwtClient {
      * @param fernetKey Fernet key string (32-byte URL-safe base64); falls back to
      *                  {@link #DEFAULT_FERNET_KEY} when null/blank
      * @param timeout how long to wait for the exec to complete
-     * @return the new Unlimited-TTL JWT
-     * @throws IllegalStateException on any failure — message includes captured stderr
+     * @return the current token and its expiry
+     * @throws IllegalStateException on any failure (message includes captured stderr), or when the
+     *                               token has expired
      */
-    public static String mintUnlimitedJwt(KubernetesClient client,
-                                          String namespace,
-                                          String release,
-                                          String fernetKey,
-                                          java.time.Duration timeout) throws Exception {
-        return mintUnlimitedJwt(client, namespace, release, fernetKey, null, null, timeout);
-    }
-
-    /**
-     * Same as {@link #mintUnlimitedJwt(KubernetesClient, String, String, String, java.time.Duration)}
-     * but with explicit OM service host + port — used when the chart's OM Service
-     * doesn't follow the {@code <release>-openmetadata} convention. Resolved from
-     * the {@code ranger-tagsync-settings.om_service_template} +
-     * {@code om_port} fields.
-     */
-    public static String mintUnlimitedJwt(KubernetesClient client,
-                                          String namespace,
-                                          String release,
-                                          String fernetKey,
-                                          String omServiceName,
-                                          Integer omPort,
-                                          java.time.Duration timeout) throws Exception {
+    public static BotToken readBotToken(KubernetesClient client,
+                                        String namespace,
+                                        String release,
+                                        String fernetKey,
+                                        Duration timeout) throws Exception {
         if (client == null) throw new IllegalArgumentException("client is required");
         if (namespace == null || namespace.isBlank()) throw new IllegalArgumentException("namespace is required");
         if (release == null || release.isBlank()) throw new IllegalArgumentException("release is required");
         String key = (fernetKey == null || fernetKey.isBlank()) ? DEFAULT_FERNET_KEY : fernetKey;
-        // OM Service name + port — settings-driven, defaulting to release name on port 8585.
-        String svc = (omServiceName == null || omServiceName.isBlank()) ? release : omServiceName;
-        int port = omPort == null ? 8585 : omPort;
 
         // Find an airflow scheduler pod (the upstream chart labels them
         // tier=airflow, component=scheduler). Restrict by release prefix so we
@@ -143,21 +178,20 @@ public final class OmBotJwtClient {
                                 + "' in namespace '" + namespace + "'. Make sure dependencies.enabled=true and the deploy reached the scheduler-ready phase."));
 
         String podName = target.getMetadata().getName();
-        LOG.info("OmBotJwtClient: exec into pod '{}' to mint Unlimited bot JWT", podName);
+        LOG.info("OmBotJwtClient: exec into pod '{}' to read the ingestion-bot token", podName);
 
-        // Build the exec script. PGPASSWORD comes from /var/run/secrets/postgresql
-        // OR from an env var the airflow container already has (the OM-deps chart
-        // mounts the password via the airflow DB connection Secret). The script
-        // falls back to the standard env-var locations.
+        // PGPASSWORD comes from /opt/airflow/secrets/postgresql-password OR from an env var the
+        // airflow container already has (the OM-deps chart mounts the password via the airflow DB
+        // connection Secret).
         String script =
             "set -eu\n" +
             "python3 - <<'PY'\n" +
-            "import os, sys, re, json, subprocess, urllib.request, ssl\n" +
+            "import os, sys, re, subprocess\n" +
             "from cryptography.fernet import Fernet\n" +
-            "# 1. Read the encrypted JWT from postgres. We use the OM main postgres,\n" +
-            "#    not airflow_db; the scheduler pod's env points at airflow_db, so\n" +
-            "#    override host + db here using the OM convention <release>-postgresql\n" +
-            "#    + openmetadata_db.\n" +
+            "# Read the encrypted JWT from postgres. We use the OM main postgres,\n" +
+            "# not airflow_db; the scheduler pod's env points at airflow_db, so\n" +
+            "# override host + db here using the OM convention <release>-postgresql\n" +
+            "# + openmetadata_db.\n" +
             "release = os.environ['OM_RELEASE']\n" +
             "pghost = release + '-postgresql'\n" +
             "pgport = '5432'\n" +
@@ -171,39 +205,7 @@ public final class OmBotJwtClient {
             "if not raw:\n" +
             "    print('ingestion-bot has no JWT yet', file=sys.stderr); sys.exit(1)\n" +
             "ct = re.sub(r'^fernet:', '', raw)\n" +
-            "jwt = Fernet(os.environ['OM_FERNET_KEY'].encode()).decrypt(ct.encode()).decode()\n" +
-            "# 2. Rotate to Unlimited via OM REST. The service name + port come\n" +
-            "#    from ranger-tagsync-settings (chart-specific); the OM main\n" +
-            "#    chart names its Service `<release>` (not `<release>-openmetadata`),\n" +
-            "#    so the default templating yields the right hostname.\n" +
-            "om = 'http://' + os.environ['OM_SVC_HOST'] + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ['OM_PORT']\n" +
-            "req = urllib.request.Request(om + '/api/v1/users/security/token',\n" +
-            "    data=json.dumps({'JWTTokenExpiry': 'Unlimited'}).encode(),\n" +
-            "    headers={'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json'},\n" +
-            "    method='PUT')\n" +
-            "try:\n" +
-            "    resp = urllib.request.urlopen(req, timeout=20)\n" +
-            "    body = json.loads(resp.read())\n" +
-            "    new_jwt = body.get('JWTToken') or jwt\n" +
-            "    print(new_jwt)\n" +
-            "except Exception as e:\n" +
-            "    print('JWT rotate via PUT failed: ' + str(e) + ' — falling back to PATCH', file=sys.stderr)\n" +
-            "    # Fallback: PATCH the user entity directly with the new TTL.\n" +
-            "    req = urllib.request.Request(om + '/api/v1/users/name/ingestion-bot',\n" +
-            "        headers={'Authorization': 'Bearer ' + jwt}, method='GET')\n" +
-            "    bot = json.loads(urllib.request.urlopen(req, timeout=10).read())\n" +
-            "    bot_id = bot['id']\n" +
-            "    patch = [{'op':'replace','path':'/authenticationMechanism/config/JWTTokenExpiry','value':'Unlimited'}]\n" +
-            "    req = urllib.request.Request(om + '/api/v1/users/' + bot_id,\n" +
-            "        data=json.dumps(patch).encode(),\n" +
-            "        headers={'Authorization': 'Bearer ' + jwt,'Content-Type': 'application/json-patch+json'},\n" +
-            "        method='PATCH')\n" +
-            "    urllib.request.urlopen(req, timeout=15)\n" +
-            "    # Re-read the regenerated JWT from postgres\n" +
-            "    raw2 = subprocess.check_output(['psql','-h',pghost,'-p',pgport,'-U',pguser,'-d','openmetadata_db','-tA','-c',q],\n" +
-            "        env={**os.environ,'PGPASSWORD':pgpass}).decode().strip()\n" +
-            "    ct2 = re.sub(r'^fernet:', '', raw2)\n" +
-            "    print(Fernet(os.environ['OM_FERNET_KEY'].encode()).decrypt(ct2.encode()).decode())\n" +
+            "print(Fernet(os.environ['OM_FERNET_KEY'].encode()).decrypt(ct.encode()).decode())\n" +
             "PY\n";
 
         ByteArrayOutputStream stdout = new ByteArrayOutputStream();
@@ -221,10 +223,7 @@ public final class OmBotJwtClient {
                 })
                 .exec("bash", "-c",
                         "OM_RELEASE=" + shellQuote(release) +
-                        " OM_NAMESPACE=" + shellQuote(namespace) +
                         " OM_FERNET_KEY=" + shellQuote(key) +
-                        " OM_SVC_HOST=" + shellQuote(svc) +
-                        " OM_PORT=" + shellQuote(String.valueOf(port)) +
                         " bash -c " + shellQuote(script))) {
             boolean finished = done.await(timeoutMs, TimeUnit.MILLISECONDS);
             if (!finished) {
@@ -239,8 +238,7 @@ public final class OmBotJwtClient {
             throw new IllegalStateException(
                     "OmBotJwtClient: exec produced no JWT on stdout. stderr=" + stderr.toString(StandardCharsets.UTF_8));
         }
-        // The new JWT is the LAST line of stdout (the script also writes
-        // warnings via prints before the final result on the fallback path).
+        // The JWT is the LAST line of stdout, after anything the image prints on start.
         String[] lines = out.split("\\R");
         String jwt = lines[lines.length - 1].trim();
         if (!jwt.startsWith("ey")) {
@@ -252,9 +250,76 @@ public final class OmBotJwtClient {
                             + (jwt.length() > 40 ? jwt.substring(0, 40) + "..." : jwt) + "'. Full stderr: "
                             + stderr.toString(StandardCharsets.UTF_8));
         }
-        LOG.info("OmBotJwtClient: minted Unlimited-TTL JWT (length={}) for OM bot in '{}'/'{}'",
-                jwt.length(), namespace, release);
-        return jwt;
+        BotToken token = new BotToken(jwt, expiryOf(jwt));
+        requireUsable(token, Instant.now());
+        LOG.info("OmBotJwtClient: read the ingestion-bot token (length={}, expires {}) in '{}'/'{}'",
+                jwt.length(), token.expiresAt() == null ? "never" : token.expiresAt(), namespace, release);
+        return token;
+    }
+
+    /**
+     * The {@code exp} claim of a JWT, or {@code null} when it has none (OpenMetadata's
+     * "Unlimited" tokens) or the token cannot be decoded.
+     */
+    public static Instant expiryOf(String jwt) {
+        if (jwt == null) return null;
+        String[] parts = jwt.split("\\.");
+        if (parts.length < 2) return null;
+        try {
+            String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+            JsonElement root = JsonParser.parseString(payload);
+            if (!root.isJsonObject()) return null;
+            JsonObject claims = root.getAsJsonObject();
+            JsonElement exp = claims.get("exp");
+            if (exp == null || exp.isJsonNull() || !exp.isJsonPrimitive()) return null;
+            return Instant.ofEpochSecond(exp.getAsLong());
+        } catch (RuntimeException e) {
+            LOG.debug("OmBotJwtClient: could not read the expiry of the bot token: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Refuses a token that has expired: every caller would fail on it with a bare HTTP 401, and
+     * Ranger TagSync would silently stop receiving tags. An administrator has to regenerate it.
+     */
+    static void requireUsable(BotToken token, Instant now) {
+        if (token.expiresAt() != null && !token.expiresAt().isAfter(now)) {
+            throw new IllegalStateException("The OpenMetadata ingestion-bot token expired on " + token.expiresAt()
+                    + ", so OpenMetadata refuses it. " + EXPIRY_IMPACT + " " + REGENERATE_HINT + ", "
+                    + AFTER_REGENERATE_HINT + ".");
+        }
+    }
+
+    /**
+     * The warning for a token that never expires, or {@code null} for one that expires. OpenMetadata
+     * creates the bot with such a token and does not let KDPS rotate it, so it is handed over (Ranger
+     * TagSync keeps it in a credential store, not in its configuration file) and the operator is told
+     * how to replace it with one that expires.
+     */
+    public static String neverExpiresWarning(BotToken token) {
+        if (token == null || token.expiresAt() != null) return null;
+        return "The OpenMetadata ingestion-bot token never expires (OpenMetadata creates the bot that way)."
+                + " Ranger TagSync keeps it in a credential store; anyone who obtains a copy, including the copies"
+                + " earlier KDPS versions left in clear in Ambari's configuration history, could call OpenMetadata"
+                + " as the bot for good. To limit that, " + REGENERATE_HINT + " (for example 90 days), "
+                + AFTER_REGENERATE_HINT + ". The old token then stops working. " + EXPIRY_IMPACT
+                + " Renew it the same way before it expires (KDPS's OpenMetadata steps warn once less than "
+                + RENEWAL_NOTICE.toDays() + " days are left).";
+    }
+
+    /**
+     * What an operator should know about the token's lifetime, or {@code null} when nothing: a token
+     * that expires within {@link #RENEWAL_NOTICE} (one that never expires is reported by
+     * {@link #neverExpiresWarning}).
+     */
+    public static String lifetimeWarning(BotToken token, Instant now) {
+        if (token == null || token.expiresAt() == null) return null;
+        if (token.expiresAt().isBefore(now.plus(RENEWAL_NOTICE))) {
+            return "The OpenMetadata ingestion-bot token expires on " + token.expiresAt() + ". " + EXPIRY_IMPACT
+                    + " " + REGENERATE_HINT + ", " + AFTER_REGENERATE_HINT + ".";
+        }
+        return null;
     }
 
     /** Single-quote a string for safe interpolation inside {@code bash -c '...'}. */

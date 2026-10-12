@@ -106,13 +106,13 @@ public enum CommandType {
 
     /**
      * Registers OpenMetadata as a tag source in the ODP Ranger TagSync component.
-     * Mints an Unlimited-TTL JWT for the OM ingestion-bot (via the OmBotJwtClient
-     * exec-in-pod helper), writes the JWT + source endpoint + source class into
-     * Ambari's {@code ranger-tagsync-site} stack config, then triggers a Ranger
-     * TagSync component restart so the new source is picked up.
+     * Reads the OM ingestion-bot's current JWT (via the OmBotJwtClient exec-in-pod
+     * helper), writes the JWT (as a password property) + source endpoint + source
+     * class into Ambari's {@code ranger-tagsync-site} stack config, then triggers a
+     * Ranger TagSync component restart when that config changed.
      *
-     * <p>This step is OM-specific because the JWT-minting path uses OM's
-     * Fernet-encrypted user_entity table + OM REST. Future TagSync source types
+     * <p>This step is OM-specific because the JWT path uses OM's
+     * Fernet-encrypted user_entity table. Future TagSync source types
      * (Atlas-as-source, Hive metastore tags, etc.) would need their own
      * service-specific enums.
      *
@@ -135,7 +135,7 @@ public enum CommandType {
      * Replaces the helm post-install hook Job previously shipped in the OM
      * chart. The step:
      * <ol>
-     *   <li>Mints an Unlimited-TTL JWT for the OM ingestion-bot via
+     *   <li>Reads the OM ingestion-bot's current JWT via
      *       {@code OmBotJwtClient}</li>
      *   <li>PUTs {@code /api/v1/services/metadataServices} on OM REST with
      *       the Atlas connection (URL + credentials Secret + database service

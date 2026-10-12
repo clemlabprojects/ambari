@@ -35,6 +35,7 @@ import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { serviceIcon } from '../assets/services';
+import { getAtStr } from '../components/ServiceInstallationModal/bindings';
 
 import TrinoCatalogsModal from '../components/common/TrinoCatalogsModal';
 import RangerPolicyModal from '../components/common/RangerPolicyModal';
@@ -340,9 +341,35 @@ const HelmReleasesPage: React.FC = () => {
    * Replay an arbitrary service.json-declared post-deploy action. The action
    * carries its own endpoint suffix (e.g. {@code actions/om-atlas-federation}),
    * so adding a new replayable step is purely a service.json change — no UI
-   * code touches when a new service surfaces one.
+   * code touches when a new service surfaces one. An action declaring `warnUnlessValueTrue` first
+   * asks the operator to confirm when that value of the deployed release is not true (e.g.
+   * re-registering Ranger TagSync on a release that has it turned off).
    */
   const triggerServiceReplayableAction = async (release: HelmRelease, action: ReplayableAction) => {
+    const warning = action.warnUnlessValueTrue;
+    if (warning?.path) {
+      let values: any = null;
+      try {
+        values = await getReleaseValues(release.namespace, release.name);
+      } catch {
+        // Values unreadable: run without the question; the step reports the switch state itself.
+      }
+      const current = values ? getAtStr(values, warning.path) : true;
+      if (current !== true && current !== 'true') {
+        Modal.confirm({
+          title: `${action.label}?`,
+          content: warning.message,
+          okText: 'Run anyway',
+          cancelText: 'Cancel',
+          onOk: () => runServiceReplayableAction(release, action),
+        });
+        return;
+      }
+    }
+    await runServiceReplayableAction(release, action);
+  };
+
+  const runServiceReplayableAction = async (release: HelmRelease, action: ReplayableAction) => {
     const hide = message.loading(`${action.label} for ${release.name}...`, 0);
     try {
       const response = await triggerReplayableAction(release.namespace, release.name, action.endpoint);

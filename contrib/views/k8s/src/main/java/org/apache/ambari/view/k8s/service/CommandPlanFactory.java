@@ -711,12 +711,12 @@ public class CommandPlanFactory {
      * Plans one {@code OM_RANGER_TAGSYNC_REGISTER} child command per
      * {@code type: "ranger-tagsync-source"} entry in the service.json {@code ranger} block.
      *
-     * <p>The step body mints the OM ingestion-bot JWT by exec-ing into the
+     * <p>The step body reads the OM ingestion-bot JWT by exec-ing into the
      * airflow scheduler pod, then writes the source's endpoint/JWT/class into
      * Ambari's {@code ranger-tagsync-site} config and triggers a Ranger TagSync
      * component restart so the source is picked up.
      *
-     * <p><b>Plan ordering matters:</b> because the JWT-mint exec needs a Running
+     * <p><b>Plan ordering matters:</b> because the JWT exec needs a Running
      * airflow scheduler pod, callers MUST queue this AFTER
      * {@link #createRealChartInstallationCommands} (post-deploy), not before.
      * Self-managing {@code rootCommand.childListJson} (same pattern as
@@ -726,6 +726,10 @@ public class CommandPlanFactory {
      *
      * <p>Idempotency comes from the step body — re-running with the same source
      * name detects no diff and skips the config write + restart.
+     *
+     * <p>A release with Ranger TagSync turned off gets the same step as a check
+     * ({@code _tagSyncCheckOnly} in {@code params}): it only reads the cluster's
+     * {@code ranger-tagsync-site}, and its title says so.
      *
      * @param rootCommand   parent command this step hangs off
      * @param rangerRequest the service.json {@code ranger} map (key → entry spec)
@@ -761,7 +765,9 @@ public class CommandPlanFactory {
             stepParams.put("_tagSyncSpec", spec);
 
             CommandEntity tagSyncCmd = new CommandEntity();
-            tagSyncCmd.setTitle("Ranger: register TagSync source '" + entry.getKey() + "'");
+            tagSyncCmd.setTitle("true".equalsIgnoreCase(String.valueOf(params.get("_tagSyncCheckOnly")))
+                    ? "Ranger: check TagSync configuration"
+                    : "Ranger: register TagSync source '" + entry.getKey() + "'");
             tagSyncCmd.setId(id);
             tagSyncCmd.setType(CommandType.OM_RANGER_TAGSYNC_REGISTER.name());
             tagSyncCmd.setViewInstance(ctx.getInstanceName());
@@ -971,7 +977,7 @@ public class CommandPlanFactory {
      * deploy-time form values toggled {@code atlasFederation.enabled} on.
      *
      * <p>The runtime body reads the Atlas connection params from the materialised
-     * helm values, mints an Unlimited JWT via the airflow scheduler pod, and
+     * helm values, reads the bot JWT via the airflow scheduler pod, and
      * drives the four OM REST calls. The plan factory just queues the work — all
      * value lookup happens at execute time so a reapply picks up the current
      * release values rather than a snapshot of the original deploy.

@@ -62,7 +62,7 @@ import java.util.concurrent.TimeUnit;
  * already has python3 + urllib + a direct ClusterIP route to OM is simpler
  * and more reliable than threading certs through {@code java.net.HttpClient}
  * + trust store config in the view. See {@link OmBotJwtClient} for the same
- * decision applied to the JWT-mint step.
+ * decision applied to reading the bot JWT.
  */
 public final class OmAtlasFederationClient {
 
@@ -94,8 +94,8 @@ public final class OmAtlasFederationClient {
      * @param client K8s client the view holds for the deploy
      * @param namespace release namespace
      * @param release helm release name
-     * @param jwt Unlimited-TTL JWT for OM's ingestion-bot
-     *            (typically obtained via {@link OmBotJwtClient#mintUnlimitedJwt})
+     * @param jwt JWT of OM's ingestion-bot
+     *            (typically obtained via {@link OmBotJwtClient#readBotToken})
      * @param atlasHostPort Atlas REST endpoint, e.g. {@code http://atlas.host:21000}
      * @param atlasUsername Atlas bot account
      * @param atlasPassword Atlas bot password (used in cleartext via env var

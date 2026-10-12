@@ -123,6 +123,32 @@ public class ContextService {
         return repo.findById(id);
     }
 
+    /**
+     * Whether the deploy steps that write to a context's platform (Ranger repositories, TagSync
+     * sources, Atlas federation) run for it, from the stored context alone: always for the managed
+     * cluster and for a context that cannot be read, otherwise unless the operator turned
+     * {@code autoConfigureRemote} off. The rule the steps apply at run time to the resolved context,
+     * without the live discovery of {@link #resolve}, so a submit can apply it up front.
+     */
+    public boolean writesToPlatform(String contextId) {
+        if (contextId == null || contextId.isBlank() || DEFAULT_CONTEXT_ID.equals(contextId)
+                || NO_CONTEXT_ID.equals(contextId)) {
+            return true;
+        }
+        try {
+            return writesToPlatform(repo.findById(contextId));
+        } catch (Exception e) {
+            LOG.warn("ContextService.writesToPlatform: could not read context '{}' ({})", contextId, e.toString());
+            return true;
+        }
+    }
+
+    /** {@link #writesToPlatform(String)} for a stored context; null stands for the managed default. */
+    static boolean writesToPlatform(KdpsContextEntity entity) {
+        if (entity == null || entity.getKind() == null || KIND_MANAGED.equals(entity.getKind())) return true;
+        return !"false".equalsIgnoreCase(str(parseConfig(entity.getConfigJson()).get("autoConfigureRemote")));
+    }
+
     /** Synthesize the virtual MANAGED default context (never persisted). */
     private KdpsContextEntity managedDefault(String clusterName) {
         KdpsContextEntity ctx = new KdpsContextEntity();
@@ -1188,7 +1214,7 @@ public class ContextService {
         }
     }
 
-    private Map<String, Object> parseConfig(String json) {
+    private static Map<String, Object> parseConfig(String json) {
         if (json == null || json.isBlank()) {
             return new LinkedHashMap<>();
         }

@@ -222,4 +222,14 @@ public class StackServiceDef {
      * "when":"atlasFederation.enabled"}}. Generalizes the previously-bespoke ranger/atlas gates.
      */
     public List<Map<String, Object>> platformOps;
+
+    /**
+     * Post-deploy steps the operator can run again from the release's row on the Releases page,
+     * e.g. {@code {"key":"om-ranger-tagsync","label":"Re-register Ranger TagSync source",
+     * "endpoint":"actions/om-ranger-tagsync"}}. An entry may ask the operator to confirm first with
+     * {@code "warnUnlessValueTrue": {"path": "<values path>", "message": "..."}} when that value of
+     * the deployed release is not {@code true}. Declared here so the definition the UI receives keeps
+     * them: properties this class does not declare are dropped when service.json is read.
+     */
+    public List<Map<String, Object>> replayableActions;
 }

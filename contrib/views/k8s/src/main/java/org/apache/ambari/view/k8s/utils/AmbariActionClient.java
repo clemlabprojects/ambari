@@ -1530,6 +1530,21 @@ public class AmbariActionClient {
         }
     }
     /**
+     * The desired version of one Ambari config type: its tag, its properties and their attributes
+     * ({@code final}, {@code password}, ...), keyed by attribute name then property name.
+     *
+     * <p>Ambari masks the value of every password property in a GET (stack password types and
+     * custom properties marked {@code password}) as {@code SECRET:<type>:<version>:<key>}. Such a
+     * value can only be sent back as is when the PUT also marks the key as a password, which is
+     * why the attributes travel with the properties.
+     */
+    public record DesiredConfig(String tag,
+                                Map<String, String> properties,
+                                Map<String, Map<String, String>> attributes) {
+        static final DesiredConfig EMPTY = new DesiredConfig(null, Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    /**
      * Fetches the full properties map for the current desired configuration
      * of the given Ambari config {@code type} (e.g., "core-site", "hdfs-site").
      *
@@ -1543,6 +1558,19 @@ public class AmbariActionClient {
      * @throws Exception on transport or parsing errors
      */
     public Map<String, String> getDesiredConfigProperties(String cluster, String type) throws Exception {
+        return getDesiredConfig(cluster, type).properties();
+    }
+
+    /**
+     * Same lookup as {@link #getDesiredConfigProperties}, but also returns the desired tag and the
+     * properties' attributes, which a writer must send back to keep them.
+     *
+     * @param cluster the Ambari cluster name
+     * @param type the Ambari config type (e.g., "ranger-tagsync-site")
+     * @return the desired config; empty (never null) when the type has no desired version
+     * @throws Exception on transport or parsing errors
+     */
+    public DesiredConfig getDesiredConfig(String cluster, String type) throws Exception {
         Objects.requireNonNull(cluster, "cluster");
         Objects.requireNonNull(type, "type");
 
@@ -1561,7 +1589,7 @@ public class AmbariActionClient {
 
         if (desiredCfgs == null || !desiredCfgs.has(type)) {
             LOG.info("No desired config found for type '{}' on cluster '{}'", type, cluster);
-            return Collections.emptyMap();
+            return DesiredConfig.EMPTY;
         }
 
         String tag = desiredCfgs.getAsJsonObject(type).get("tag").getAsString();
@@ -1578,23 +1606,48 @@ public class AmbariActionClient {
         JsonArray items = rootCfg.getAsJsonArray("items");
         if (items == null || items.size() == 0) {
             LOG.info("Configuration items empty for type '{}' (tag='{}') on cluster '{}'", type, tag, cluster);
-            return Collections.emptyMap();
+            return new DesiredConfig(tag, Collections.emptyMap(), Collections.emptyMap());
         }
 
         JsonObject cfg0 = items.get(0).getAsJsonObject();
         JsonObject props = cfg0.getAsJsonObject("properties");
+        Map<String, String> result = new LinkedHashMap<>();
         if (props == null || props.entrySet().isEmpty()) {
             LOG.info("No properties present for type '{}' (tag='{}') on cluster '{}'", type, tag, cluster);
-            return Collections.emptyMap();
+        } else {
+            for (Map.Entry<String, com.google.gson.JsonElement> e : props.entrySet()) {
+                result.put(e.getKey(), e.getValue() == null || e.getValue().isJsonNull() ? null : e.getValue().getAsString());
+            }
         }
 
-        Map<String, String> result = new LinkedHashMap<>(props.entrySet().size());
-        for (Map.Entry<String, com.google.gson.JsonElement> e : props.entrySet()) {
-            result.put(e.getKey(), e.getValue() == null || e.getValue().isJsonNull() ? null : e.getValue().getAsString());
+        Map<String, Map<String, String>> attributes = new LinkedHashMap<>();
+        JsonObject attrs = cfg0.getAsJsonObject("properties_attributes");
+        if (attrs != null) {
+            for (Map.Entry<String, com.google.gson.JsonElement> byName : attrs.entrySet()) {
+                if (byName.getValue() == null || !byName.getValue().isJsonObject()) continue;
+                Map<String, String> perKey = new LinkedHashMap<>();
+                for (Map.Entry<String, com.google.gson.JsonElement> e : byName.getValue().getAsJsonObject().entrySet()) {
+                    if (e.getValue() != null && e.getValue().isJsonPrimitive()) perKey.put(e.getKey(), e.getValue().getAsString());
+                }
+                attributes.put(byName.getKey(), Collections.unmodifiableMap(perKey));
+            }
         }
 
         LOG.debug("Loaded {} properties for type '{}' (tag='{}') on cluster '{}'", result.size(), type, tag, cluster);
-        return Collections.unmodifiableMap(result);
+        return new DesiredConfig(tag, Collections.unmodifiableMap(result), Collections.unmodifiableMap(attributes));
+    }
+
+    /** The suffix {@link #updateClusterConfig} ends a tag it writes with. */
+    private static String configTagSuffix(String tagSuffix) {
+        return (tagSuffix == null || tagSuffix.isBlank()) ? "kdps" : tagSuffix.replaceAll("[^A-Za-z0-9._-]", "-");
+    }
+
+    /**
+     * Whether {@code tag} names a config version {@link #updateClusterConfig} wrote with
+     * {@code tagSuffix}, i.e. whether the desired version is still the one a caller wrote.
+     */
+    public static boolean isConfigTagWrittenWith(String tag, String tagSuffix) {
+        return tag != null && tag.endsWith("-" + configTagSuffix(tagSuffix));
     }
 
     /**
@@ -1621,15 +1674,43 @@ public class AmbariActionClient {
                                        String type,
                                        Map<String, String> propsToSet,
                                        String tagSuffix) throws Exception {
+        return updateClusterConfig(cluster, type, propsToSet, Collections.emptySet(), tagSuffix);
+    }
+
+    /**
+     * {@link #updateClusterConfig(String, String, Map, String)} that also stores the keys in
+     * {@code passwordKeys} as password properties, so Ambari masks them in its API, its UI and the
+     * config history instead of showing them in clear.
+     *
+     * <p>The attributes the config already has are sent back with it. Without them a PUT drops the
+     * {@code final} flags and, worse, stores the masked {@code SECRET:...} reference of a custom
+     * password property as its literal value.
+     *
+     * <p>A password key's current value is masked, so it can never be compared: passing one always
+     * writes a new version. A caller that wants an unchanged secret to be a no-op leaves it out of
+     * {@code propsToSet} when it knows the stored value is the same.
+     *
+     * @param passwordKeys keys of {@code propsToSet} to store as password properties; never null
+     * @return {@code true} when a new tag was written, {@code false} when no diff
+     */
+    public boolean updateClusterConfig(String cluster,
+                                       String type,
+                                       Map<String, String> propsToSet,
+                                       Set<String> passwordKeys,
+                                       String tagSuffix) throws Exception {
         Objects.requireNonNull(cluster, "cluster");
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(propsToSet, "propsToSet");
+        Objects.requireNonNull(passwordKeys, "passwordKeys");
         if (propsToSet.isEmpty()) {
             LOG.debug("updateClusterConfig: empty propsToSet for type '{}', no-op", type);
             return false;
         }
 
-        Map<String, String> current = new LinkedHashMap<>(getDesiredConfigProperties(cluster, type));
+        DesiredConfig desired = getDesiredConfig(cluster, type);
+        Map<String, String> current = new LinkedHashMap<>(desired.properties());
+        Map<String, Map<String, String>> attributes = new LinkedHashMap<>();
+        desired.attributes().forEach((name, perKey) -> attributes.put(name, new LinkedHashMap<>(perKey)));
         // Detect a real diff. An empty/null value is a delete request.
         boolean changed = false;
         for (Map.Entry<String, String> e : propsToSet.entrySet()) {
@@ -1639,10 +1720,21 @@ public class AmbariActionClient {
             if (v == null || v.isEmpty()) {
                 if (current.containsKey(k)) {
                     current.remove(k);
+                    attributes.values().forEach(perKey -> perKey.remove(k));
                     changed = true;
                 }
             } else if (!v.equals(current.get(k))) {
                 current.put(k, v);
+                changed = true;
+            }
+        }
+        // A secret written before it was declared one (stored in clear) is re-marked even when its
+        // value did not change.
+        for (String k : passwordKeys) {
+            if (!current.containsKey(k)) continue;
+            Map<String, String> passwords = attributes.computeIfAbsent("password", n -> new LinkedHashMap<>());
+            if (!"true".equals(passwords.get(k))) {
+                passwords.put(k, "true");
                 changed = true;
             }
         }
@@ -1651,20 +1743,30 @@ public class AmbariActionClient {
             return false;
         }
 
-        String safeSuffix = (tagSuffix == null || tagSuffix.isBlank()) ? "kdps" : tagSuffix.replaceAll("[^A-Za-z0-9._-]", "-");
-        String newTag = "version-" + System.currentTimeMillis() + "-" + safeSuffix;
+        String newTag = "version-" + System.currentTimeMillis() + "-" + configTagSuffix(tagSuffix);
 
-        // Build the desired PUT body: {"Clusters":{"desired_config":{"type":"...","tag":"...","properties":{...}}}}
+        // Build the desired PUT body:
+        // {"Clusters":{"desired_config":{"type":"...","tag":"...","properties":{...},"properties_attributes":{...}}}}
         JsonObject propsJson = new JsonObject();
         for (Map.Entry<String, String> e : current.entrySet()) {
             propsJson.addProperty(e.getKey(), e.getValue() == null ? "" : e.getValue());
         }
-        JsonObject desired = new JsonObject();
-        desired.addProperty("type", type);
-        desired.addProperty("tag", newTag);
-        desired.add("properties", propsJson);
+        JsonObject desiredJson = new JsonObject();
+        desiredJson.addProperty("type", type);
+        desiredJson.addProperty("tag", newTag);
+        desiredJson.add("properties", propsJson);
+        JsonObject attrsJson = new JsonObject();
+        for (Map.Entry<String, Map<String, String>> byName : attributes.entrySet()) {
+            if (byName.getValue().isEmpty()) continue;
+            JsonObject perKey = new JsonObject();
+            byName.getValue().forEach(perKey::addProperty);
+            attrsJson.add(byName.getKey(), perKey);
+        }
+        if (attrsJson.size() > 0) {
+            desiredJson.add("properties_attributes", attrsJson);
+        }
         JsonObject clusters = new JsonObject();
-        clusters.add("desired_config", desired);
+        clusters.add("desired_config", desiredJson);
         JsonObject root = new JsonObject();
         root.add("Clusters", clusters);
 

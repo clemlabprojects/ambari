@@ -95,8 +95,8 @@ public final class OmBaseIngestionClient {
      * @param client       K8s client the view holds for the deploy
      * @param namespace    release namespace
      * @param release      helm release name
-     * @param jwt          Unlimited-TTL JWT for OM's ingestion-bot
-     *                     (see {@link OmBotJwtClient#mintUnlimitedJwt})
+     * @param jwt          JWT of OM's ingestion-bot
+     *                     (see {@link OmBotJwtClient#readBotToken})
      * @param serviceName  the OM DatabaseService name to create — this is the
      *                     name Atlas federation's {@code databaseServiceName}
      *                     must reference (e.g. {@code hive-clemlab})

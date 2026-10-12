@@ -44,6 +44,8 @@ Other field properties:
 - `required`: Boolean validation.
 - `defaultValue`: Initial value.
 - `excludeFromValues`: If true, the field value is **not** sent to Helm; use for helper/lookup fields.
+- `seedFromValue`: For an `excludeFromValues` field whose effect is a chart value (a switch or an input that bindings copy into the values): the values path holding it, e.g. `"ranger.tagSync.enabled"`. On an upgrade the wizard fills the field from the deployed release's value at that path instead of the field's default, and the auto-enable defaults leave it alone, also when the release has no value there (it then runs the chart default), so an unchanged upgrade re-sends what runs.
+- `seedUnlessEquals`: With `seedFromValue`, a `${path}` template of the value the chart gets when the field is blank (e.g. `"https://${ingress.host}/api"`). A deployed value equal to it is not copied, so the field stays blank and the derived value keeps following its inputs.
 - `condition`: `{ "field": "<otherField>", "value": <expected> }` to show/hide.
 - `capability`: On a field or a `group`, shows it on one platform only: `"kubernetes"` (anything but a confirmed
   OpenShift cluster) or `"openshift"` (only once the cluster is confirmed to be OpenShift). On the other platform the
@@ -148,6 +150,8 @@ Use `dependencies` for pre-install components (e.g., webhooks). The backend will
 ## Ranger
 `ranger` object is parsed by the backend to inject Ranger-related overrides (service/user/policy configs). Keep the structure intact; the backend merges it during deployment.
 
+A `ranger-tagsync-settings` entry marks a service that can register itself as a Ranger TagSync source (OpenMetadata). The registration runs only when the release's values turn it on at `enabled_helm_prop`: the wizard sends the `ranger` block for every release attached to a platform context, so the block alone never means "register". With the switch off, on a platform KDPS configures, the deploy still runs the step as a check ("Ranger: check TagSync configuration") that only reads `ranger-tagsync-site` and warns about what earlier KDPS versions left there (the Atlas tag source turned off while Atlas is installed, an OpenMetadata source with a bot token stored in clear); it writes nothing and restarts nothing. With the switch on, a deploy is refused before Helm runs unless the values at `airflow_enabled_helm_prop` are `true` and `endpoint_helm_prop` is set. The check is skipped when the registration would not run: a GitOps deploy, or a platform context with auto-configuration off. The registration never changes the cluster's other tag sources (Atlas included; it warns when the Atlas source is off while Atlas is installed, also when it cannot go on), only hands over an OpenMetadata bot token that expires, and stores it as a password property (Ambari's Ranger service then keeps it on the Ranger TagSync host in a credential store, not in `ranger-tagsync-site.xml`, which Ranger TagSync prints in its log on each start). A bot token that never expires makes a deploy skip the registration with a warning, so the steps after it still run; the explicit re-register action fails on it. It writes only when something changed, and restarts Ranger TagSync only right after it wrote: Ambari does not say which configuration change a pending restart is for, so a pending restart is reported, not made.
+
 ## Dynamic values and required ConfigMaps
 - `dynamicValues`: lets you generate values server-side based on templating/external discovery.
 - `requiredConfigMaps`: instructs the backend to create/update ConfigMaps before deploy.
@@ -158,6 +162,11 @@ Use `dependencies` for pre-install components (e.g., webhooks). The backend will
 
 ## Excluding helper fields from values
 Any field with `excludeFromValues: true` is not sent to Helm. Use this for lookups (service-select, monitoring discovery) and helper inputs. Bindings should reference the desired variable or a sibling field that you populate from the helper.
+
+A variable reads such a field by its own name (`"from": {"type": "form", "field": "<field name>"}`), not by the chart path the binding writes to: the form state holds the field under its name. Give it a `seedFromValue` when a binding copies it into the values, or an upgrade shows the default and overwrites what runs.
+
+## Replayable actions
+`replayableActions` lists post-deploy steps the operator can run again from the release row on the Releases page (`key`, `label`, `endpoint`). Add `"warnUnlessValueTrue": {"path": "<values path>", "message": "..."}` to ask the operator to confirm first when that value of the deployed release is not `true` (e.g. re-registering Ranger TagSync on a release that has it turned off).
 
 ## Common patterns
 - **Conditional display:** Use `condition` to hide/show fields based on another field’s value.

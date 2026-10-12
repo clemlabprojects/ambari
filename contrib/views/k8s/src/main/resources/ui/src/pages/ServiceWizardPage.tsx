@@ -29,6 +29,7 @@ import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
 import { deepMerge } from '../components/ServiceInstallationModal/bindings';
+import { seedFieldsFromRelease } from '../components/ServiceInstallationModal/seedFromRelease';
 import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
 import { applyFormDefaults, buildChartValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
@@ -97,6 +98,10 @@ const ServiceWizardPage: React.FC = () => {
 
   const upgradeState = (location.state as any)?.mode === 'upgrade' ? (location.state as any) : undefined;
   const isUpgrade = !!upgradeState;
+  // Fields an upgrade seeds from the deployed release (service.json `seedFromValue`), filled or left at
+  // the default the chart runs when the release has no value. They show what runs, so the auto-enable
+  // defaults below must not switch them.
+  const seededFromReleaseRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!serviceName) return;
@@ -277,6 +282,10 @@ const ServiceWizardPage: React.FC = () => {
                     initial.ingress = initial.ingress || {};
                     initial.ingress.host = deployedHost;
                   }
+                  // Form-only fields standing for a chart value (e.g. 'Enable Ranger TagSync') start
+                  // from the deployed value, not their default. After the host back-map: a seed may
+                  // compare against the address derived from it.
+                  seededFromReleaseRef.current = new Set(seedFieldsFromRelease(svcDef?.form, initial));
                 } else {
                   throw new Error('empty values');
                 }
@@ -695,7 +704,8 @@ const ServiceWizardPage: React.FC = () => {
     };
     const ctxId = selectedCtxId || 'default';
     const toEnable = collect((def as any).form || [])
-      .filter((f) => provides(f.autoEnableWhenContext) && !autoEnabledRef.current.has(`${ctxId}:${f.name}`));
+      .filter((f) => provides(f.autoEnableWhenContext) && !autoEnabledRef.current.has(`${ctxId}:${f.name}`)
+        && !seededFromReleaseRef.current.has(f.name));
     if (!toEnable.length) return;
     setInstallValues((prev: any) => {
       const next = { ...prev };
@@ -730,7 +740,8 @@ const ServiceWizardPage: React.FC = () => {
       return out;
     };
     const allFields = collect((def as any).form || []);
-    const toEnable = allFields.filter((f) => provides(f.autoEnableWhenCapability) && !capAutoEnabledRef.current.has(f.name));
+    const toEnable = allFields.filter((f) => provides(f.autoEnableWhenCapability) && !capAutoEnabledRef.current.has(f.name)
+      && !seededFromReleaseRef.current.has(f.name));
     if (!toEnable.length) return;
     const classFields = ['ingress.ingressClassName', 'ingress.className'];
     const declared = new Set<string>();

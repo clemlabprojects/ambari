@@ -381,56 +381,74 @@
       "name": "rangerTagSyncEnabled",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.enabled"
+        "field": "rangerTagSyncEnabled"
       }
     },
     {
       "name": "rangerTagSyncToken",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.token"
+        "field": "rangerTagSyncToken"
       }
     },
     {
       "name": "rangerTagSyncEndpoint",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.endpoint"
+        "field": "rangerTagSyncEndpoint"
       }
     },
     {
       "name": "rangerTagSyncTrinoServiceFqn",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.trinoIngestionServiceFqn"
+        "field": "rangerTagSyncTrinoServiceFqn"
       }
     },
     {
       "name": "rangerTagSyncRangerTrinoService",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.rangerTrinoServiceName"
+        "field": "rangerTagSyncRangerTrinoService"
       }
     },
     {
       "name": "rangerTagSyncDownloadInterval",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.downloadIntervalMillis"
+        "field": "rangerTagSyncDownloadInterval"
       }
     },
     {
       "name": "rangerTagSyncBatchSize",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.entitiesBatchSize"
+        "field": "rangerTagSyncBatchSize"
       }
     },
     {
       "name": "rangerTagSyncComponentType",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.componentTableType"
+        "field": "rangerTagSyncComponentType"
+      }
+    },
+    {
+      "comment": "'true' while the 'Enable Ranger TagSync' switch is off. Declared after rangerTagSyncEnabled, which it reads.",
+      "name": "rangerTagSyncDisabled",
+      "from": {
+        "type": "equals",
+        "var": "rangerTagSyncEnabled",
+        "value": "true",
+        "negate": true
+      }
+    },
+    {
+      "comment": "The release's current chart value: on an upgrade the deployed values are part of the form state, on a first install it is unset.",
+      "name": "rangerTagSyncDeployedEnabled",
+      "from": {
+        "type": "form",
+        "field": "ranger.tagSync.enabled"
       }
     },
     {
@@ -962,8 +980,9 @@
       ]
     },
     {
+      "comment": "OpenMetadata API address handed to Ranger TagSync, derived from the ingress host. Only with the switch on: the post-install registration reads it, and a release with TagSync off must not carry one.",
       "name": "ranger-tagsync-endpoint-from-ingress",
-      "skipIfVarEmpty": "ingressHost",
+      "skipIfVarEmpty": ["rangerTagSyncEnabled", "ingressHost"],
       "targets": [
         {
           "path": "ranger.tagSync.endpoint",
@@ -975,6 +994,21 @@
       ]
     },
     {
+      "comment": "Operator override of the address above. Declared after it so that it wins; skipped when blank so the derived address stays.",
+      "name": "ranger-tagsync-endpoint-override",
+      "skipIfVarEmpty": ["rangerTagSyncEnabled", "rangerTagSyncEndpoint"],
+      "targets": [
+        {
+          "path": "ranger.tagSync.endpoint",
+          "from": {
+            "type": "var",
+            "name": "rangerTagSyncEndpoint"
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Each optional target is skipped when its field is blank, so a blank field never overwrites a value (the chart default, the deployed value, or the Trino mapping KDPS writes for Trino base ingestion).",
       "name": "ranger-tagsync-config",
       "skipIfVarEmpty": "rangerTagSyncEnabled",
       "targets": [
@@ -987,6 +1021,7 @@
         },
         {
           "path": "ranger.tagSync.trinoIngestionServiceFqn",
+          "skipIfVarEmpty": "rangerTagSyncTrinoServiceFqn",
           "from": {
             "type": "var",
             "name": "rangerTagSyncTrinoServiceFqn"
@@ -994,6 +1029,7 @@
         },
         {
           "path": "ranger.tagSync.rangerTrinoServiceName",
+          "skipIfVarEmpty": "rangerTagSyncRangerTrinoService",
           "from": {
             "type": "var",
             "name": "rangerTagSyncRangerTrinoService"
@@ -1001,6 +1037,7 @@
         },
         {
           "path": "ranger.tagSync.downloadIntervalMillis",
+          "skipIfVarEmpty": "rangerTagSyncDownloadInterval",
           "from": {
             "type": "var",
             "name": "rangerTagSyncDownloadInterval"
@@ -1008,6 +1045,7 @@
         },
         {
           "path": "ranger.tagSync.entitiesBatchSize",
+          "skipIfVarEmpty": "rangerTagSyncBatchSize",
           "from": {
             "type": "var",
             "name": "rangerTagSyncBatchSize"
@@ -1015,6 +1053,7 @@
         },
         {
           "path": "ranger.tagSync.componentTableType",
+          "skipIfVarEmpty": "rangerTagSyncComponentType",
           "from": {
             "type": "var",
             "name": "rangerTagSyncComponentType"
@@ -1033,6 +1072,17 @@
             "type": "template",
             "template": "tagsync-token"
           }
+        }
+      ]
+    },
+    {
+      "comment": "Switch turned off on a release that has TagSync on (an upgrade: the deployed values are in the form state). Writes false explicitly, or the deployed true would be re-sent. A first install with the switch off gets no ranger.tagSync value at all.",
+      "name": "ranger-tagsync-off",
+      "skipIfVarEmpty": ["rangerTagSyncDisabled", "rangerTagSyncDeployedEnabled"],
+      "targets": [
+        {
+          "path": "ranger.tagSync.enabled",
+          "value": false
         }
       ]
     },
@@ -1800,7 +1850,7 @@
       "name": "rangerTagSync",
       "label": "Ranger TagSync",
       "type": "group",
-      "help": "Wires OpenMetadata as a Ranger TagSync source (RANGER-4978). Tags applied to tables/columns in OpenMetadata are propagated to Ranger and enforced on Trino queries.",
+      "help": "Wires OpenMetadata as a Ranger TagSync source (RANGER-4978). Tags applied to tables/columns in OpenMetadata are propagated to Ranger and enforced on Trino queries. Ranger TagSync keeps its other tag sources, Atlas included.",
       "fields": [
         {
           "name": "rangerTagSyncEnabled",
@@ -1809,7 +1859,8 @@
           "defaultValue": false,
           "excludeFromValues": true,
           "autoEnableWhenContext": ["ranger", "atlas"],
-          "help": "Creates the ranger-tagsync-site ConfigMap consumed by the Ranger TagSync daemon on master03 so it pulls OM tags. Auto-enabled only when the selected Platform Context exposes BOTH Ranger and Atlas (a tag source and a tag store); the JWT + Trino service wiring below then auto-fill. Toggle off if you don't want tag propagation."
+          "seedFromValue": "ranger.tagSync.enabled",
+          "help": "Registers OpenMetadata as a tag source of the platform's Ranger TagSync after the install, then restarts Ranger TagSync once so it pulls OpenMetadata tags. Needs 'Deploy bundled Airflow', an OpenMetadata API address Ranger TagSync can reach (the ingress host, or the override below), and an ingestion-bot token that expires (see 'OM bot JWT' below): until there is one, the deploy skips the registration with a warning. That token is also what every OpenMetadata ingestion pipeline runs with, so its expiry stops ingestion too. Auto-enabled only when the selected Platform Context exposes BOTH Ranger and Atlas (a tag source and a tag store). Off: KDPS does not change the platform's Ranger TagSync; it only reports what it finds there that needs attention (the Atlas tag source turned off, a bot token stored in clear)."
         },
         {
           "name": "rangerTagSyncToken",
@@ -1817,7 +1868,7 @@
           "type": "password",
           "required": false,
           "excludeFromValues": true,
-          "help": "Leave empty: the post-install Job fetches the ingestion-bot JWT from OM postgres (Fernet-decrypted) and writes it to the Secret referenced below. The bootstrap Job also sets the bot's JWTTokenExpiry to 'Unlimited' so the token doesn't expire and break TagSync after 7 days.",
+          "help": "Leave empty: KDPS reads the OpenMetadata ingestion-bot token itself and stores it in Ranger TagSync's configuration as a password property: Ambari masks it, and on the Ranger TagSync host keeps it in a credential store rather than in the configuration file. KDPS only hands over a token that expires, and OpenMetadata creates the bot with one that never does: after the first install, regenerate it in OpenMetadata (Settings > Bots > ingestion-bot) with an expiry (for example 90 days). The ingestion-bot is also the identity of every OpenMetadata ingestion pipeline (the Hive and Trino ingestion and the Atlas federation included): when its token expires, all ingestion stops, not only Ranger TagSync. After each regeneration, run the release's 'Re-register Ranger TagSync source', 'Re-register Hive ingestion', 'Re-register Trino ingestion' and 'Re-register Atlas federation' actions (those the Releases page shows) so Ranger TagSync gets the new token and OpenMetadata redeploys the pipelines with it, and redeploy any other pipeline from OpenMetadata. Renew it before it expires: KDPS's OpenMetadata steps warn once less than 30 days are left.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1841,6 +1892,8 @@
           "type": "string",
           "excludeFromValues": true,
           "help": "Defaults to 'https://<ingressHost>/api' when ingress is on. Override if TagSync reaches OM via a different host (DMZ, in-cluster Service URL, etc.).",
+          "seedFromValue": "ranger.tagSync.endpoint",
+          "seedUnlessEquals": "https://${ingress.host}/api",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1852,6 +1905,7 @@
           "type": "string",
           "excludeFromValues": true,
           "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. With 'Enable Trino base ingestion' on, KDPS sets it to the OM Trino service it registers (trino-<release> unless you named it) and your value is overridden. Without Trino base ingestion, type the OM service name explicitly.",
+          "seedFromValue": "ranger.tagSync.trinoIngestionServiceFqn",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1863,12 +1917,13 @@
           "label": "Ranger service that receives the tags",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the Ranger service of type 'trino' that receives the tags. Auto-discovered from Ranger; usually 'trino-trino-ns'. Default 'trino-trino-ns' matches the standard Trino k8s release. With 'Enable Trino base ingestion' on, KDPS sets this to the registered Trino release's Ranger repo (ranger.serviceName, default <release>-<namespace>; your value is overridden).",
+          "help": "Name of the Ranger service of type 'trino' that receives the tags: the Trino release's Ranger repository (ranger.serviceName, by default <release>-<namespace>). With 'Enable Trino base ingestion' on, KDPS fills it from the registered Trino release and your value is overridden. Without it, type the Ranger service name; left blank, no mapping is written and Ranger rejects the tags.",
+          "seedFromValue": "ranger.tagSync.rangerTrinoServiceName",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
           },
-          "defaultValue": "trino-trino-ns"
+          "defaultValue": ""
         },
         {
           "name": "rangerTagSyncComponentType",
@@ -1877,6 +1932,7 @@
           "defaultValue": "trino",
           "excludeFromValues": true,
           "help": "Leave 'trino' unless connecting a non-Trino tag source.",
+          "seedFromValue": "ranger.tagSync.componentTableType",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1889,6 +1945,7 @@
           "defaultValue": 230000,
           "excludeFromValues": true,
           "help": "Default 230s. Lower → tags propagate faster, more load on OM.",
+          "seedFromValue": "ranger.tagSync.downloadIntervalMillis",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1901,6 +1958,7 @@
           "defaultValue": 10000,
           "excludeFromValues": true,
           "help": "Default 10000. Raise for catalogs >100k entities.",
+          "seedFromValue": "ranger.tagSync.entitiesBatchSize",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -2392,14 +2450,13 @@
   ],
   "ranger": {
     "ranger-tagsync-settings": {
-      "_description": "Chart-wide TagSync wiring — mirrors the role of ranger-plugin-settings for the plugin side. Drives planRangerTagSyncSources gating AND the OM_RANGER_TAGSYNC_REGISTER runtime handler (endpoint helm path, fernet Secret coordinates, OM REST shape, bot username). Per-source entries below carry identity-only fields.",
+      "_description": "Chart-wide TagSync wiring — mirrors the role of ranger-plugin-settings for the plugin side. Drives planRangerTagSyncSources gating (the registration runs only when the values at enabled_helm_prop are true; otherwise the step only reads ranger-tagsync-site and reports what it finds), the submit-time check that the Airflow at airflow_enabled_helm_prop is deployed and the endpoint at endpoint_helm_prop is set, AND the OM_RANGER_TAGSYNC_REGISTER runtime handler (endpoint helm path, fernet Secret coordinates, bot username). Per-source entries below carry identity-only fields.",
       "type": "ranger-tagsync-settings",
       "endpoint_helm_prop": "ranger.tagSync.endpoint",
       "enabled_helm_prop": "ranger.tagSync.enabled",
+      "airflow_enabled_helm_prop": "dependencies.enabled",
       "fernet_secret_name_template": "{{releaseName}}-fernet",
       "fernet_secret_key": "fernet-key",
-      "om_service_template": "{{releaseName}}",
-      "om_port": 8585,
       "bot_username": "ingestion-bot"
     },
     "ranger-openmetadata-tagsync": {
@@ -2489,7 +2546,11 @@
       "key": "om-ranger-tagsync",
       "label": "Re-register Ranger TagSync source",
       "endpoint": "actions/om-ranger-tagsync",
-      "_description": "Reruns the OM→Ranger TagSync source registration. Visible on the release row when service.json declares a ranger-tagsync-source entry."
+      "warnUnlessValueTrue": {
+        "path": "ranger.tagSync.enabled",
+        "message": "Ranger TagSync is turned off for this release. Re-registering still adds OpenMetadata as a tag source of the platform's Ranger TagSync (restarting it when its configuration changes), and later deployments of the release will not update that registration. To keep it, turn 'Enable Ranger TagSync' on with Upgrade / Config instead."
+      },
+      "_description": "Reruns the OM→Ranger TagSync source registration. Visible on the release row when service.json declares a ranger-tagsync-source entry. Asks for confirmation when the release has Ranger TagSync turned off."
     },
     {
       "key": "om-atlas-federation",

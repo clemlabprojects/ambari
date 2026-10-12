@@ -164,6 +164,8 @@ export interface ReplayableAction {
   label: string;
   endpoint: string;
   skipIfValueEmpty?: string;
+  /** Ask the operator to confirm when this value of the deployed release is not true. */
+  warnUnlessValueTrue?: { path: string; message: string };
 }
 
 export interface StackServiceDef {

@@ -73,6 +73,23 @@ class FormFieldTest {
     }
   }
 
+  @Test
+  void openMetadataTagSyncFieldsKeepTheirUpgradeSeeds() throws Exception {
+    // Same failure mode as targetHost/targetPort: an undeclared property never reaches the wizard,
+    // which would then show the TagSync switch off on every upgrade of a release that has it on.
+    try (InputStream in = getClass().getResourceAsStream("/KDPS/services/OPENMETADATA/service.json")) {
+      assertNotNull(in, "OPENMETADATA/service.json must be on the classpath");
+      JsonNode root = mapper.readTree(in);
+
+      FormField toggle = mapper.treeToValue(findFieldByName(root.get("form"), "rangerTagSyncEnabled"), FormField.class);
+      assertEquals("ranger.tagSync.enabled", toggle.seedFromValue);
+
+      FormField endpoint = mapper.treeToValue(findFieldByName(root.get("form"), "rangerTagSyncEndpoint"), FormField.class);
+      assertEquals("ranger.tagSync.endpoint", endpoint.seedFromValue);
+      assertEquals("https://${ingress.host}/api", endpoint.seedUnlessEquals);
+    }
+  }
+
   /** Depth-first search for a field by name, descending into group fields (their nested "fields"). */
   private JsonNode findFieldByName(JsonNode fields, String name) {
     if (fields == null || !fields.isArray()) {

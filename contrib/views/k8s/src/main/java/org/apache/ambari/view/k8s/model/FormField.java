@@ -109,6 +109,21 @@ public class FormField {
      */
     public boolean keepWhenHidden;
 
+    /**
+     * For a field kept out of the chart values ({@code excludeFromValues}) whose effect is a chart
+     * value: the values path that holds it (e.g. {@code ranger.tagSync.enabled}). On an upgrade the
+     * wizard fills the field from the deployed release's value at that path, so the form shows what
+     * runs instead of the field's default and re-submitting it changes nothing.
+     */
+    public String seedFromValue;
+
+    /**
+     * With {@link #seedFromValue}: a {@code ${path}} template of the value the chart gets when the
+     * field is left blank (e.g. {@code https://${ingress.host}/api}). When the deployed value equals
+     * it, the field stays blank, so the derived value keeps following its inputs.
+     */
+    public String seedUnlessEquals;
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Option {
         public String label;
