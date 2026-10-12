@@ -22,6 +22,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
@@ -38,11 +39,11 @@ import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.StaticallyInject;
 import org.apache.ambari.server.api.resources.ResourceInstance;
 import org.apache.ambari.server.controller.spi.Resource;
-import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.apache.ambari.server.security.authorization.AuthorizationHelper;
 import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.serveraction.kerberos.AdhocKeytabPayloadStore;
+import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.commons.lang.StringUtils;
 
@@ -52,9 +53,16 @@ import com.google.inject.Inject;
  * POST /api/v1/clusters/{cluster}/adhoc_keytab
  * Enqueues a pollable Ambari Request that runs GenerateAdhocKeytabServerAction.
  * No custom-action XML is used; the action is referenced by CLASS name.
+ * <p/>
+ * Issuing, reading and acknowledging a keytab all require the authorization to manage the
+ * cluster's Kerberos setup.
  */
 @StaticallyInject
 public class AdhocKeytabService extends BaseService {
+
+  private static final Set<RoleAuthorization> REQUIRED_AUTHORIZATIONS =
+      EnumSet.of(RoleAuthorization.CLUSTER_TOGGLE_KERBEROS);
+
   private final String clusterName;
 
   @Inject
@@ -82,20 +90,11 @@ public class AdhocKeytabService extends BaseService {
   @ApiIgnore
   @Path("payloads/{payloadRef}/read")
   @Produces(MediaType.TEXT_PLAIN)
-  public Response readPayload(@PathParam("payloadRef") String payloadRef)
-      throws AmbariException, AuthorizationException {
-    if (StringUtils.isBlank(clusterName)) {
-      return Response.status(Response.Status.NOT_FOUND)
-          .type(MediaType.TEXT_PLAIN_TYPE)
-          .entity("Cluster not found")
-          .build();
+  public Response readPayload(@PathParam("payloadRef") String payloadRef) throws AmbariException {
+    Response refusal = refusePayloadAccess();
+    if (refusal != null) {
+      return refusal;
     }
-
-    Long clusterResourceId = clusters.getCluster(clusterName).getResourceId();
-    AuthorizationHelper.verifyAuthorization(
-        ResourceType.CLUSTER,
-        clusterResourceId,
-        EnumSet.of(RoleAuthorization.CLUSTER_TOGGLE_KERBEROS));
 
     Optional<String> payloadBase64 = adhocKeytabPayloadStore.readPayload(clusterName, payloadRef);
     if (payloadBase64.isEmpty()) {
@@ -111,23 +110,44 @@ public class AdhocKeytabService extends BaseService {
   @POST
   @ApiIgnore
   @Path("payloads/{payloadRef}/ack")
-  public Response ackPayload(@PathParam("payloadRef") String payloadRef)
-      throws AmbariException, AuthorizationException {
-    if (StringUtils.isBlank(clusterName)) {
+  public Response ackPayload(@PathParam("payloadRef") String payloadRef) throws AmbariException {
+    Response refusal = refusePayloadAccess();
+    if (refusal != null) {
+      return refusal;
+    }
+
+    adhocKeytabPayloadStore.ackPayload(clusterName, payloadRef);
+    return Response.noContent().build();
+  }
+
+  /**
+   * Answers 404 for an unknown cluster and 403 for a caller without the authorization, or null when
+   * the payload may be accessed. The refusal is returned rather than thrown because an exception
+   * leaving a JAX-RS method is not turned into a 403.
+   */
+  private Response refusePayloadAccess() {
+    Cluster cluster = null;
+    if (StringUtils.isNotBlank(clusterName)) {
+      try {
+        cluster = clusters.getCluster(clusterName);
+      } catch (AmbariException e) {
+        // Answered below as an unknown cluster.
+      }
+    }
+    if (cluster == null) {
       return Response.status(Response.Status.NOT_FOUND)
           .type(MediaType.TEXT_PLAIN_TYPE)
           .entity("Cluster not found")
           .build();
     }
 
-    Long clusterResourceId = clusters.getCluster(clusterName).getResourceId();
-    AuthorizationHelper.verifyAuthorization(
-        ResourceType.CLUSTER,
-        clusterResourceId,
-        EnumSet.of(RoleAuthorization.CLUSTER_TOGGLE_KERBEROS));
-
-    adhocKeytabPayloadStore.ackPayload(clusterName, payloadRef);
-    return Response.noContent().build();
+    if (!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, cluster.getResourceId(), REQUIRED_AUTHORIZATIONS)) {
+      return Response.status(Response.Status.FORBIDDEN)
+          .type(MediaType.TEXT_PLAIN_TYPE)
+          .entity("You are not authorized to access the ad-hoc keytabs of cluster '" + clusterName + "'.")
+          .build();
+    }
+    return null;
   }
 
   private ResourceInstance createResource() {

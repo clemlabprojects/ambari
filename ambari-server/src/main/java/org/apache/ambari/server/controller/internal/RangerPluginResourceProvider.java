@@ -23,6 +23,7 @@ import static org.apache.ambari.server.controller.KerberosHelperImpl.BASE_LOG_DI
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -50,12 +51,14 @@ import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
+import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.serveraction.ranger.CreateRangerServiceServerAction;
 import org.apache.ambari.server.serveraction.ranger.UpsertRangerUserServerAction;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostServerActionEvent;
 import org.apache.commons.lang.StringUtils;
+import org.springframework.security.core.Authentication;
 
 import com.google.gson.Gson;
 import com.google.inject.Inject;
@@ -125,6 +128,13 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
         KEY_PROPERTY_IDS = Collections.unmodifiableMap(keyPropertyIds);
     }
 
+    /**
+     * Creating a Ranger repository or user acts on Ranger with the administrator credentials Ambari
+     * holds for the cluster, so it is reserved to cluster administrators.
+     */
+    private static final Set<RoleAuthorization> REQUIRED_CREATE_AUTHORIZATIONS =
+            EnumSet.of(RoleAuthorization.CLUSTER_TOGGLE_KERBEROS);
+
     private static final Gson GSON = new Gson();
 
     @Inject
@@ -143,6 +153,7 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
         this.managementController = controller;
         this.clusters = controller.getClusters();
         this.actionManager = controller.getActionManager();
+        setRequiredCreateAuthorizations(REQUIRED_CREATE_AUTHORIZATIONS);
     }
 
     @Override
@@ -161,7 +172,13 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
     }
 
     @Override
-    public RequestStatus createResources(Request request)
+    protected boolean isAuthorizedToCreateResources(Authentication authentication, Request request) {
+        return isAuthorizedOnRequestedClusters(authentication, request,
+                RangerPluginResourceProvider::clusterNameOf, getRequiredCreateAuthorizations());
+    }
+
+    @Override
+    protected RequestStatus createResourcesAuthorized(Request request)
             throws SystemException, UnsupportedPropertyException,
             ResourceAlreadyExistsException, NoSuchParentResourceException {
 
@@ -173,9 +190,7 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
         RequestStatusResponse statusResponse = null;
 
         for (Map<String, Object> properties : items) {
-            String clusterName          = firstNonBlank(
-                    stringValue(properties.get(PROPERTY_CLUSTER_NAME)),
-                    stringValue(properties.get(PROPERTY_CLUSTER_NAME_NS)));
+            String clusterName          = clusterNameOf(properties);
             String rangerRepositoryName = firstNonBlank(
                     stringValue(properties.get(PROPERTY_REPOSITORY_NAME)),
                     stringValue(properties.get(PROPERTY_REPOSITORY_NAME_NS)));
@@ -367,6 +382,16 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
     }
 
     // helpers, still boring
+
+    /**
+     * The cluster a request item acts on. Authorization and the operation both resolve it here so
+     * that the permission check is made on the cluster that is really touched.
+     */
+    private static String clusterNameOf(Map<String, Object> properties) {
+        return firstNonBlank(
+                stringValue(properties.get(PROPERTY_CLUSTER_NAME)),
+                stringValue(properties.get(PROPERTY_CLUSTER_NAME_NS)));
+    }
 
     private static String stringValue(Object value) {
         return value == null ? null : String.valueOf(value);

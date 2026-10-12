@@ -23,6 +23,7 @@ import static org.apache.ambari.server.controller.KerberosHelperImpl.BASE_LOG_DI
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -50,18 +51,28 @@ import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
-import org.apache.ambari.server.security.authorization.AuthorizationHelper;
-import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.security.authorization.RoleAuthorization;
+import org.apache.ambari.server.serveraction.kerberos.AdhocKeytabPrincipalPolicy;
 import org.apache.ambari.server.serveraction.kerberos.GenerateAdhocKeytabServerAction;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostServerActionEvent;
 import org.apache.commons.lang.StringUtils;
+import org.springframework.security.core.Authentication;
 
 import com.google.gson.Gson;
 import com.google.inject.Inject;
+import com.google.inject.Provider;
 
+/**
+ * Resource provider for {@code POST /api/v1/clusters/{cluster}/adhoc_keytab}.
+ *
+ * <p>Schedules {@link GenerateAdhocKeytabServerAction}, which creates the principal in the cluster's
+ * KDC if needed and stores its keytab for a single read. Only cluster administrators may ask for it,
+ * and only for principals {@link AdhocKeytabPrincipalPolicy} accepts for the Kubernetes namespace
+ * the request names as the keytab's destination: never one of the identities the cluster itself
+ * relies on.
+ */
 @StaticallyInject
 public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvider {
 
@@ -69,6 +80,8 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
     private static final String PROP_CLUSTER_NAME_NS   = "Clusters/cluster_name";
     private static final String PROP_PRINCIPAL         = "principal";
     private static final String PROP_PRINCIPAL_NS      = "AdhocKeytab/principal";
+    private static final String PROP_NAMESPACE         = "namespace";
+    private static final String PROP_NAMESPACE_NS      = "AdhocKeytab/namespace";
     private static final String PROP_KDC_TYPE          = "kdc_type";
     private static final String PROP_KDC_TYPE_NS       = "AdhocKeytab/kdc_type";
     private static final String PROP_DEFAULT_REALM     = "default_realm";
@@ -86,6 +99,7 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
         Collections.addAll(p,
                 PROP_CLUSTER_NAME, PROP_CLUSTER_NAME_NS,
                 PROP_PRINCIPAL, PROP_PRINCIPAL_NS,
+                PROP_NAMESPACE, PROP_NAMESPACE_NS,
                 PROP_KDC_TYPE, PROP_KDC_TYPE_NS,
                 PROP_DEFAULT_REALM, PROP_DEFAULT_REALM_NS,
                 PROP_TIMEOUT, PROP_TIMEOUT_NS,
@@ -98,6 +112,13 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
         KEY_PROPERTY_IDS = Collections.unmodifiableMap(k);
     }
 
+    /**
+     * Issuing a keytab hands out a Kerberos identity created with the KDC administrator credentials
+     * Ambari holds, so it requires the same authorization as managing the cluster's Kerberos setup.
+     */
+    private static final Set<RoleAuthorization> REQUIRED_CREATE_AUTHORIZATIONS =
+            EnumSet.of(RoleAuthorization.CLUSTER_TOGGLE_KERBEROS);
+
     private static final Gson GSON = new Gson();
 
     @Inject
@@ -105,6 +126,13 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
 
     @Inject
     private static RequestFactory requestFactory;
+
+    /**
+     * Resolved on first use: the policy reaches the Kerberos helper, which cannot be built while the
+     * injector that performs static injection is still being created.
+     */
+    @Inject
+    private static Provider<AdhocKeytabPrincipalPolicy> principalPolicy;
 
     private final AmbariManagementController amc;
     private final Clusters clusters;
@@ -116,6 +144,7 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
         this.amc = controller;
         this.clusters = controller.getClusters();
         this.actionManager = controller.getActionManager();
+        setRequiredCreateAuthorizations(REQUIRED_CREATE_AUTHORIZATIONS);
     }
 
     @Override
@@ -134,7 +163,13 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
     }
 
     @Override
-    public RequestStatus createResources(Request request)
+    protected boolean isAuthorizedToCreateResources(Authentication authentication, Request request) {
+        return isAuthorizedOnRequestedClusters(authentication, request,
+                AdhocKeytabResourceProvider::clusterNameOf, getRequiredCreateAuthorizations());
+    }
+
+    @Override
+    protected RequestStatus createResourcesAuthorized(Request request)
             throws SystemException, UnsupportedPropertyException,
             ResourceAlreadyExistsException, NoSuchParentResourceException {
 
@@ -144,13 +179,23 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
             throw new SystemException("No properties supplied");
         }
 
+        // Every principal is checked before the first keytab is scheduled, so a request mixing an
+        // accepted and a refused principal does nothing at all. This stays outside the catch-all
+        // below so that a refusal answers 403 (or 400 when malformed) instead of a server error.
+        for (Map<String, Object> props : items) {
+            final String clusterName = clusterNameOf(props);
+            final String principal   = principalOf(props);
+            if (StringUtils.isBlank(clusterName)) throw new SystemException("cluster_name is required");
+            if (StringUtils.isBlank(principal))   throw new SystemException("principal is required");
+            principalPolicy.get().verify(clusterOf(clusterName), principal,
+                    firstNonBlank(str(props.get(PROP_NAMESPACE)), str(props.get(PROP_NAMESPACE_NS))));
+        }
+
         List<Long> requestIds = new ArrayList<>();
 
         for (Map<String, Object> props : items) {
-            final String clusterName  = firstNonBlank(str(props.get(PROP_CLUSTER_NAME)),
-                    str(props.get(PROP_CLUSTER_NAME_NS)));
-            final String principal    = firstNonBlank(str(props.get(PROP_PRINCIPAL)),
-                    str(props.get(PROP_PRINCIPAL_NS)));
+            final String clusterName  = clusterNameOf(props);
+            final String principal    = principalOf(props);
             final String kdcType      = firstNonBlank(str(props.get(PROP_KDC_TYPE)),
                     str(props.get(PROP_KDC_TYPE_NS)));
             final String defaultRealm = firstNonBlank(str(props.get(PROP_DEFAULT_REALM)),
@@ -165,15 +210,9 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
                     asInt(props.get(PROP_TIMEOUT_NS)),
                     600);
 
-            if (StringUtils.isBlank(clusterName)) throw new SystemException("cluster_name is required");
-            if (StringUtils.isBlank(principal))   throw new SystemException("principal is required");
+            final Cluster cluster = clusterOf(clusterName);
 
             try {
-                final Cluster cluster = clusters.getCluster(clusterName);
-                AuthorizationHelper.verifyAuthorization(
-                        ResourceType.CLUSTER,
-                        cluster.getResourceId(),
-                        java.util.EnumSet.of(RoleAuthorization.CLUSTER_TOGGLE_KERBEROS));
                 final long requestId = actionManager.getNextRequestId();
 
                 // Stage-level params
@@ -229,8 +268,6 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
                 response = new RequestStatusResponse(requestId);
                 requestIds.add(requestId);
 
-            } catch (AmbariException e) {
-                throw new SystemException("Cluster not found: " + clusterName, e);
             } catch (Exception e) {
                 throw new SystemException("Failed to enqueue adhoc keytab for '" + principal + "': " + e.getMessage(), e);
             }
@@ -256,6 +293,27 @@ public class AdhocKeytabResourceProvider extends AbstractControllerResourceProvi
 
 
     // helpers
+
+    /**
+     * The cluster a request item acts on. Authorization and the operation both resolve it here so
+     * that the permission check is made on the cluster that is really touched.
+     */
+    private static String clusterNameOf(Map<String, Object> props) {
+        return firstNonBlank(str(props.get(PROP_CLUSTER_NAME)), str(props.get(PROP_CLUSTER_NAME_NS)));
+    }
+
+    private static String principalOf(Map<String, Object> props) {
+        return firstNonBlank(str(props.get(PROP_PRINCIPAL)), str(props.get(PROP_PRINCIPAL_NS)));
+    }
+
+    private Cluster clusterOf(String clusterName) throws SystemException {
+        try {
+            return clusters.getCluster(clusterName);
+        } catch (AmbariException e) {
+            throw new SystemException("Cluster not found: " + clusterName, e);
+        }
+    }
+
     private static String str(Object o) { return o == null ? null : String.valueOf(o); }
     private static String firstNonBlank(String... vals) { for (String v : vals) if (StringUtils.isNotBlank(v)) return v; return null; }
     private static Integer asInt(Object o) {

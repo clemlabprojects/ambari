@@ -171,7 +171,7 @@
           "type": "string",
           "defaultValue": "jupyterhub",
           "excludeFromValues": true,
-          "help": "First component of the JupyterHub Kerberos service principal — produces '<this>/<kerberosHostFqdn>@<realm>'. MUST match the principal name your KDC administrator provisioned for JupyterHub (the same name that appears in the 'kerberos' section of this service.json as serviceName). The renewer sidecar uses this principal + the matched keytab to perform S4U2Self impersonation against the cluster's Hadoop services."
+          "help": "First component of the JupyterHub Kerberos service principal — produces '<this>/<kerberosHostFqdn>@<realm>'. MUST match the principal name your KDC administrator provisioned for JupyterHub (the same name that appears in the 'kerberos' section of this service.json as serviceName). The renewer sidecar uses this principal + the matched keytab to perform S4U2Self impersonation against the cluster's Hadoop services. Ambari issues the keytab only when this name is listed in kerberos.adhoc.keytab.service.names in ambari.properties (jupyterhub is listed by default) or the whole principal is allowed with kerberos.adhoc.keytab.allowed.principals."
         },
         {
           "name": "kerberosHostFqdn",
@@ -179,8 +179,8 @@
           "type": "string",
           "required": true,
           "excludeFromValues": true,
-          "placeholder": "jupyterhub.dev21.hadoop.clemlab.com",
-          "help": "Host component of the JupyterHub service principal — fills the slash-host slot in '<principalName>/<this>@<realm>'. FreeIPA 4.12+ enforces FQDN syntax on service principals (short forms are rejected), so this must be a fully-qualified name. It is NOT used for DNS resolution: pick any FQDN you've provisioned in FreeIPA via ipa service-add (or via the jupyterhub_hosts setting of the ansible role). The renewer sidecar uses this as the host part of its kinit -k principal, and Ambari issues the keytab for the same name."
+          "placeholder": "jupyterhub.<namespace>.k8s",
+          "help": "Host component of the JupyterHub service principal — fills the slash-host slot in '<principalName>/<this>@<realm>'. FreeIPA 4.12+ enforces FQDN syntax on service principals (short forms are rejected), so this must be a fully-qualified name. It is NOT used for DNS resolution: pick any FQDN you've provisioned in FreeIPA via ipa service-add (or via the jupyterhub_hosts setting of the ansible role). The renewer sidecar uses this as the host part of its kinit -k principal, and Ambari issues the keytab for the same name. Ambari only issues it when the name carries this release's namespace right before a Kubernetes DNS suffix (for example jupyterhub.<namespace>.k8s or jupyterhub.<namespace>.svc.cluster.local), unless an Ambari administrator allowed the principal with kerberos.adhoc.keytab.allowed.principals in ambari.properties."
         },
         {
           "name": "allowPrivateIpEgress",

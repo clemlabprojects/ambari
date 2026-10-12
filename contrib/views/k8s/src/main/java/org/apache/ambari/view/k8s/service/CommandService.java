@@ -8978,8 +8978,11 @@ public class CommandService {
                     // Client that talks to Ambari’s REST API with the caller session
                     var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
                     LOG.info("submitting principal request creation {} to ambari server", principalFqdn);
+                    // The namespace receiving the Secret goes along: Ambari only issues a keytab for a
+                    // principal named after it, whichever path (deploy, regeneration, webhook) asked.
                     int reqId = ambariActionClient.submitGenerateAdhocKeytab(
                             principalFqdn,
+                            (String) childParams.get("namespace"),
                             kdcType,
                             defaultRealm,
                             timeoutSeconds,

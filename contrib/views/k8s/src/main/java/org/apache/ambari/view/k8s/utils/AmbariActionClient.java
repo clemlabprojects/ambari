@@ -117,13 +117,45 @@ public class AmbariActionClient {
         this.initializeMainConfigurations();
     }
 
+    /**
+     * Asks Ambari to issue a keytab for a principal and returns the Ambari request id.
+     * {@code namespace} is the Kubernetes namespace whose Secret receives the keytab: Ambari only
+     * issues keytabs for principals named after that namespace.
+     */
     public int submitGenerateAdhocKeytab(
             String principal,
+            String namespace,         // namespace of the Secret receiving the keytab
             String kdcType,           // e.g. "IPA" or null
             String defaultRealm,      // e.g. "DEV21.HADOOP.CLEMLAB.COM" or null
             Integer timeoutSeconds,   // e.g. 600 or null
             String context            // e.g. "Generate ad-hoc keytab ..." or null
     ) throws Exception {
+        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/adhoc_keytab";
+        String payload = adhocKeytabRequestBody(clusterName, principal, namespace, kdcType, defaultRealm,
+                timeoutSeconds, context).toString();
+
+        try (InputStream is = stream.readFrom(
+                url,
+                "POST",
+                payload,
+                withStdHeaders(Map.of("Content-Type", "application/json"))
+        )) {
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject ro = o.getAsJsonObject("Requests");
+            if (ro == null || !ro.has("id")) {
+                throw new IllegalStateException("Unexpected response for adhoc keytab submission: " + json);
+            }
+            return ro.get("id").getAsInt();
+        }
+    }
+
+    /**
+     * The body of {@code POST /clusters/{cluster}/adhoc_keytab}, with the namespaced properties the
+     * Ambari resource provider expects.
+     */
+    static JsonObject adhocKeytabRequestBody(String clusterName, String principal, String namespace, String kdcType,
+                                             String defaultRealm, Integer timeoutSeconds, String context) {
         JsonObject root = new JsonObject();
 
         // RequestInfo block
@@ -145,28 +177,12 @@ public class AmbariActionClient {
         JsonObject body = new JsonObject();
         body.addProperty("Clusters/cluster_name", clusterName);
         body.addProperty("AdhocKeytab/principal", principal);
+        body.addProperty("AdhocKeytab/namespace", namespace);
         if (kdcType != null)      body.addProperty("AdhocKeytab/kdc_type", kdcType);
         if (defaultRealm != null) body.addProperty("AdhocKeytab/default_realm", defaultRealm);
         if (timeoutSeconds != null) body.addProperty("AdhocKeytab/timeout", timeoutSeconds);
         root.add("Body", body);
-
-        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/adhoc_keytab";
-        String payload = root.toString();
-
-        try (InputStream is = stream.readFrom(
-                url,
-                "POST",
-                payload,
-                withStdHeaders(Map.of("Content-Type", "application/json"))
-        )) {
-            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
-            JsonObject ro = o.getAsJsonObject("Requests");
-            if (ro == null || !ro.has("id")) {
-                throw new IllegalStateException("Unexpected response for adhoc keytab submission: " + json);
-            }
-            return ro.get("id").getAsInt();
-        }
+        return root;
     }
 
     /**
