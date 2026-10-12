@@ -26,6 +26,7 @@ useful rather than odd.
 | `postgresql` (client) | Schema load and the readiness check in the entrypoint |
 | `helm` | KDPS shells out to the binary rather than embedding a Helm library |
 | `git` | The GitOps deployment mode |
+| `procps-ng` | `ps`, which `ambari-server stop`, `status`, `restart` and the `setup-*` commands use to find the running server |
 | `ambari-server` | From the repository the release build published, with only the admin and KDPS views kept |
 
 No agent, no stack RPMs, no `ambari-server setup` prompts: setup runs silently at build time, and the
@@ -66,9 +67,9 @@ Each image build publishes its build context next to the image:
 https://archive.clemlab.com/ambari-kdps-image/<release>-<build>/ambari-kdps-image-context-<version>.tar.gz
 ```
 
-It holds this directory (Dockerfile, entrypoint, OpenShift patch, build script) and a `BUILD-INFO` file
-with the exact arguments Clemlab used. Everything the build downloads is a build argument, so the image
-can be rebuilt from the customer's own mirrors without reaching the Internet:
+It holds this directory (Dockerfile, entrypoint, OpenShift patch, build script, image test) and a
+`BUILD-INFO` file with the exact arguments Clemlab used. Everything the build downloads is a build
+argument, so the image can be rebuilt from the customer's own mirrors without reaching the Internet:
 
 | Argument | Default | Customer mirror |
 |---|---|---|
@@ -101,6 +102,12 @@ builds the RPMs; this one consumes them, and needs to be re-runnable on its own 
 changes — a UBI CVE refresh, a newer helm, an updated view jar. Both agents are expected to be logged
 in to Harbor already, which is how the ODP image stages work.
 
+Before pushing, `build-image.sh` runs `test-image.sh` on the image it has just built: it checks that
+`ambari-server status` and `stop` work, that the entrypoint stops the server cleanly on SIGTERM (and
+kills it only after `AMBARI_STOP_TIMEOUT`), and that the audit log reaches the container's output.
+The server is replaced by a stand-in for this, so it takes under a minute and needs no database. Run
+it by hand with `./test-image.sh <image>`.
+
 ## Running
 
 ### Environment
@@ -112,11 +119,28 @@ in to Harbor already, which is how the ODP image stages work.
 | `AMBARI_DB_PORT` | `5432` | |
 | `AMBARI_DB_NAME` | `ambari` | |
 | `AMBARI_DB_USER` | `ambari` | |
+| `AMBARI_STOP_TIMEOUT` | `50` | Seconds the server gets to stop on SIGTERM before it is killed. Keep it below the pod's `terminationGracePeriodSeconds` |
 
 The entrypoint waits for Postgres, configures the server against it, loads the DDL only if the
 `clusters` table is absent, copies any jar found in `/opt/ambari-views` into the server's views
 directory, and then starts the server. Every step is idempotent: the pod will be restarted,
 rescheduled and rolled, and each start has to converge rather than assume a fresh database.
+
+### Stopping
+
+On SIGTERM the entrypoint signals the server's JVM and waits up to `AMBARI_STOP_TIMEOUT` seconds
+for it to exit, then kills it. That is what lets the server's shutdown hooks run: the KDPS view lets
+the work in progress finish and Jetty closes its connections. The pod's
+`terminationGracePeriodSeconds` must be longer than `AMBARI_STOP_TIMEOUT`, or Kubernetes kills the
+container first; the `ambari` chart sets 90 and 50.
+
+### Logs
+
+The container's output carries `ambari-server.log` and the security audit log,
+`ambari-audit.log` (sign-ins, refused access, changes to users, groups and privileges). Audit lines
+are prefixed with `[ambari-audit] ` so the cluster's log collection can route them on their own. The
+files under `/var/log/ambari-server` live in the container and go with it unless a volume is mounted
+there: the pod logs, collected by the cluster's log stack, are the record.
 
 ### OpenShift
 

@@ -52,12 +52,16 @@ LABEL org.opencontainers.image.title="Ambari (standalone) with the KDPS view" \
       org.opencontainers.image.vendor="Clemlab" \
       org.opencontainers.image.base.name="${BASE_IMAGE}:${UBI_VERSION}"
 
+# procps-ng: ambari-server stop, status, restart and the setup-* commands find the running server with
+# ps. The RPM does not require it and UBI does not ship it; without it those commands fail with
+# "No such file or directory: 'ps'" whenever the server is running.
 RUN dnf install -y --setopt=install_weak_deps=False \
         ${JAVA_PACKAGE} \
         python3 python3-pip \
         postgresql \
         openssl ca-certificates \
         tar gzip git \
+        procps-ng \
     && dnf clean all && rm -rf /var/cache/dnf \
     && pip3 install --no-cache-dir distro
 

@@ -952,7 +952,6 @@ chmod +x "${OUT_DIR}/load.sh"
                     <include>kube-prometheus-stack-77.5.0-crds.yaml</include>
                     <include>kube-prometheus-stack-78.3.2-crds.yaml</include>
                     <include>view.xml</include>
-                    <include>view.log4j.properties</include>
                     <include>webhooks</include>
                     <include>*.json</include>
                     <include>KDPS/**</include>

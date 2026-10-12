@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Builds and pushes the standalone Ambari + KDPS image.
+# Builds and pushes the standalone Ambari + KDPS image. A native build is checked with test-image.sh
+# before it is pushed.
 #
 # Native per-architecture build by default, the same convention the ODP images follow: each
 # agent builds only its own architecture and pushes an arch-suffixed tag, so nothing runs
@@ -87,6 +88,9 @@ case "$PLATFORMS" in
     TARGET_IMAGE="${HARBOR}/${PROJECT}/${IMAGE_NAME}:${IMG_TAG}"
     echo "Building ${TARGET_IMAGE} for ${PLATFORMS}" >&2
     docker build ${BUILD_ARGS} -t "${TARGET_IMAGE}" .
+    # How the image starts and stops is what keeps the server's shutdown clean and its audit log in
+    # the pod logs; check it before anyone can pull the image.
+    ./test-image.sh "${TARGET_IMAGE}"
     docker push "${TARGET_IMAGE}"
     ;;
 esac

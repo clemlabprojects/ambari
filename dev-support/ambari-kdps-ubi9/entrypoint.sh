@@ -30,6 +30,64 @@ DB_PASSWORD="${AMBARI_DB_PASSWORD:?AMBARI_DB_PASSWORD is required}"
 
 log() { echo "[entrypoint] $*" >&2; }
 
+LOG_DIR=/var/log/ambari-server
+LOG="${LOG_DIR}/ambari-server.log"
+AUDIT_LOG="${LOG_DIR}/ambari-audit.log"
+PIDFILE=/var/run/ambari-server/ambari-server.pid
+
+# How long the server gets to stop on its own before it is killed. Kubernetes kills the container
+# terminationGracePeriodSeconds after asking it to stop, so this has to stay below that.
+STOP_TIMEOUT="${AMBARI_STOP_TIMEOUT:-50}"
+case "${STOP_TIMEOUT}" in
+  ''|*[!0-9]*) log "AMBARI_STOP_TIMEOUT must be a number of seconds, not '${STOP_TIMEOUT}'; using 50"; STOP_TIMEOUT=50 ;;
+esac
+
+# The processes copying the server's log and its audit log to the container's output.
+TAIL_PID=""
+AUDIT_PID=""
+
+# Give the copies a moment to print what the server wrote last -- on a stop, that is the shutdown
+# itself -- then end them. tail checks the files once a second on the container's own filesystem
+# (it cannot be notified of changes on an overlay), hence two.
+stop_followers() {
+  if [ -n "${TAIL_PID}${AUDIT_PID}" ]; then
+    sleep 2
+    kill ${TAIL_PID} ${AUDIT_PID} 2>/dev/null || true
+  fi
+}
+
+# This script is PID 1: the moment it exits, the kernel kills everything left in the container, the
+# JVM included, and the JVM's shutdown hooks never run. So on SIGTERM it signals the JVM itself and
+# waits for it to go. That SIGTERM is what lets the KDPS view finish the work in progress and Jetty
+# close its connections; nothing else passes the pod's signal on, because the server runs in a
+# process group of its own. "ambari-server stop" is not used: it allows a fixed 30 seconds, and when
+# it fails -- it always did while the image had no ps -- nothing stops the JVM before this script
+# exits.
+terminate() {
+  trap '' TERM INT
+  log "stopping the server"
+  local pid
+  pid="$(cat "${PIDFILE}" 2>/dev/null || true)"
+  if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+    kill -TERM "${pid}" 2>/dev/null || true
+    for _ in $(seq 1 "${STOP_TIMEOUT}"); do
+      kill -0 "${pid}" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "${pid}" 2>/dev/null; then
+      log "the server is still running after ${STOP_TIMEOUT}s; killing it"
+      kill -KILL "${pid}" 2>/dev/null || true
+    else
+      log "the server has stopped"
+    fi
+  fi
+  stop_followers
+  exit 0
+}
+# Installed before any of the start-up work: bash running as PID 1 ignores a SIGTERM it has no trap
+# for, so a pod deleted while it is still starting would otherwise sit out its whole grace period.
+trap terminate TERM INT
+
 # OpenShift assigns an arbitrary UID that has no passwd entry, and Ambari's python code calls
 # getpwuid() during setup. Giving the UID a name through nss_wrapper is the usual remedy; without
 # it the server fails with a KeyError long before anything useful happens.
@@ -125,6 +183,20 @@ if [ -d /opt/ambari-views ] && compgen -G "/opt/ambari-views/*.jar" >/dev/null; 
   cp -f /opt/ambari-views/*.jar /var/lib/ambari-server/resources/views/
 fi
 
+# The audit log -- sign-ins, refused access, changes to users, groups and privileges -- has a file of
+# its own and never reaches ambari-server.log, and the container's filesystem goes with the
+# container. Copy it to the container's output, where the cluster's log collection picks it up, with
+# every line tagged so it can be routed apart from the server log. The copy starts where the file
+# ends before the server starts: nothing this server writes is missed, and lines an earlier container
+# already sent, kept on a logs volume, are not sent twice. That point is measured here rather than
+# left to "tail -n 0", which starts wherever the file ends when tail gets round to opening it -- on a
+# busy node, after the server's first lines. -F follows the file across rotation, reading each new
+# file from its start.
+touch "${AUDIT_LOG}" 2>/dev/null || true
+AUDIT_FROM=$(( $(stat -c %s "${AUDIT_LOG}" 2>/dev/null || echo 0) + 1 ))
+tail -c "+${AUDIT_FROM}" -F "${AUDIT_LOG}" > >(sed -u 's/^/[ambari-audit] /') &
+AUDIT_PID=$!
+
 # ambari-server start daemonises and returns, so the container needs something to hold PID 1 and a
 # way to notice the server dying. Tail the log, and exit when the server process is gone so the pod
 # restarts rather than sitting there looking healthy with nothing running.
@@ -133,32 +205,32 @@ log "starting the server"
 # server's own log, goes with it -- so the pod logs would show the failure and none of the reason.
 if ! ambari-server start --skip-database-check </dev/null; then
   log "the server did not come up. Its log, which this container is about to take with it:"
-  tail -n 200 /var/log/ambari-server/ambari-server.log 2>/dev/null || true
-  tail -n 60 /var/log/ambari-server/ambari-server.out 2>/dev/null || true
+  tail -n 200 "${LOG}" 2>/dev/null || true
+  tail -n 60 "${LOG_DIR}/ambari-server.out" 2>/dev/null || true
+  stop_followers
   exit 1
 fi
 
-LOG=/var/log/ambari-server/ambari-server.log
-PIDFILE=/var/run/ambari-server/ambari-server.pid
 for _ in $(seq 1 30); do [ -f "$LOG" ] && break; sleep 1; done
-
-terminate() { log "stopping the server"; ambari-server stop >/dev/null 2>&1 || true; exit 0; }
-trap terminate TERM INT
 
 tail -F "$LOG" &
 TAIL_PID=$!
 
-# Watch the process, not "ambari-server status": that command decides the server is gone whenever
-# it cannot read something it expects to own, which under an arbitrary UID means it says the server
-# is gone while the server is serving.
+# Watch the process itself rather than run "ambari-server status" every few seconds: that starts a
+# Python interpreter and reads the server's configuration each time, to learn whether one PID is
+# alive. (status does work in this image, for an operator in "oc exec": it needs ps, which is why
+# procps-ng is installed.)
 while :; do
   SERVER_PID="$(cat "${PIDFILE}" 2>/dev/null || true)"
   if [ -z "${SERVER_PID}" ] || ! kill -0 "${SERVER_PID}" 2>/dev/null; then
     break
   fi
-  sleep 10
+  # In the background and waited for, because bash runs a trap only once the command in the
+  # foreground has finished: a plain "sleep 10" would hold the stop up by as much as ten seconds.
+  sleep 10 &
+  wait $!
 done
 
 log "the server is no longer running; exiting so the pod is restarted"
-kill "${TAIL_PID}" 2>/dev/null || true
+stop_followers
 exit 1
