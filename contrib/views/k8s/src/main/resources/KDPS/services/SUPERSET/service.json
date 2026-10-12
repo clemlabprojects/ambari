@@ -1159,6 +1159,7 @@
           "label": "Ingress class",
           "type": "string",
           "capability": "kubernetes",
+          "keepWhenHidden": true,
           "required": true,
           "defaultValue": "nginx",
           "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller.",

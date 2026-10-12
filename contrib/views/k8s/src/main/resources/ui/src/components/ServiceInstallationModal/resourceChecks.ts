@@ -23,10 +23,15 @@ export type FormFieldDef = {
   name?: string;
   label?: string;
   type?: string;
+  defaultValue?: unknown;
   fields?: FormFieldDef[];
   resourceCheck?: ResourceCheck;
   omitWhenBlank?: boolean;
   excludeFromValues?: boolean;
+  /** What the cluster needs for the field (or group) to be shown, e.g. `kubernetes` (see fieldCapabilityAvailable). */
+  capability?: string;
+  /** Still sent where `capability` hides it: the wizard fills it in, or the chart uses it on both platforms. */
+  keepWhenHidden?: boolean;
 };
 
 /**

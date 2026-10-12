@@ -93,6 +93,22 @@ public class FormField {
      */
     public boolean omitWhenBlank;
 
+    /**
+     * Platform or cluster capability a field, or a whole group, needs to be shown: {@code "kubernetes"} (anything but
+     * a confirmed OpenShift cluster) or {@code "openshift"}, e.g. the nginx Ingress settings or the kube-prometheus
+     * monitoring group, which mean nothing on the other platform. The wizard hides such a field and leaves its value
+     * out of the chart values (see {@link #keepWhenHidden}), so a hidden default never reaches the chart. Read by the
+     * UI only, declared here for the same reason as {@link #resourceCheck}.
+     */
+    public String capability;
+
+    /**
+     * When true, the wizard still sends the value of this field on a platform where {@link #capability} hides it: for
+     * a field the wizard fills in by itself, such as the ingress class it detects on the cluster, or a value the chart
+     * uses on both platforms. Read by the UI only.
+     */
+    public boolean keepWhenHidden;
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Option {
         public String label;

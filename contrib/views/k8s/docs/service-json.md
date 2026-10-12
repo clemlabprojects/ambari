@@ -45,6 +45,13 @@ Other field properties:
 - `defaultValue`: Initial value.
 - `excludeFromValues`: If true, the field value is **not** sent to Helm; use for helper/lookup fields.
 - `condition`: `{ "field": "<otherField>", "value": <expected> }` to show/hide.
+- `capability`: On a field or a `group`, shows it on one platform only: `"kubernetes"` (anything but a confirmed
+  OpenShift cluster) or `"openshift"` (only once the cluster is confirmed to be OpenShift). On the other platform the
+  field is hidden and its value, default included, is left out of the Helm values. Bindings still read it, and a
+  binding may still set the same path (OpenMetadata turns its ServiceMonitor on for OpenShift that way). A path that a
+  field shown on the platform declares as well is kept.
+- `keepWhenHidden`: With `capability`, still sends the value where the field is hidden: for a field the wizard fills
+  in by itself (the ingress class it detects), or a value the chart uses on both platforms (Trino's scrape interval).
 - `options`: For `select`.
 - `placeholder`: Hint shown in an empty `string` field.
 - `omitWhenBlank`: If true and the field is left blank, the key is left out of the Helm values so the chart's own

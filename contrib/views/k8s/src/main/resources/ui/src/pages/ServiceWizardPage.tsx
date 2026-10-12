@@ -30,7 +30,7 @@ import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
 import { deepMerge } from '../components/ServiceInstallationModal/bindings';
 import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
-import { buildChartValues } from '../components/ServiceInstallationModal/chartValues';
+import { applyFormDefaults, buildChartValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -171,22 +171,7 @@ const ServiceWizardPage: React.FC = () => {
                   'no longer exists; leaving the default selected.');
               }
             }
-            const applyDefaults = (fields: any[], target: any) => {
-              fields.forEach(f => {
-                if (f.type === 'group' && Array.isArray((f as any).fields)) {
-                  applyDefaults((f as any).fields, target);
-                } else if ((f as any).defaultValue !== undefined) {
-                  const parts = f.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
-                  let cur = target;
-                  for (let i = 0; i < parts.length - 1; i++) {
-                    cur[parts[i]] = cur[parts[i]] || {};
-                    cur = cur[parts[i]];
-                  }
-                  cur[parts[parts.length - 1]] = (f as any).defaultValue;
-                }
-              });
-            };
-            if (Array.isArray(svcDef?.form)) applyDefaults(svcDef.form, initial);
+            if (Array.isArray(svcDef?.form)) applyFormDefaults(svcDef.form, initial);
             // Seed mount defaults from service definition (if any).
             // These defaults mirror the mounts section in service.json so the user sees a prefilled volume editor.
             if (Array.isArray((svcDef as any)?.mounts) && (svcDef as any).mounts.length > 0) {

@@ -97,14 +97,41 @@ class StackDefinitionServiceTest {
     assertEquals(Boolean.FALSE, request.get("omitWhenBlank"));
   }
 
+  /**
+   * The wizard hides the settings of the other platform, and leaves their values out of the chart values, from the
+   * {@code capability} of a field or group. Without it on the model, the kube-prometheus monitoring group of
+   * OpenMetadata showed on OpenShift and its "monitoring" namespace was sent to the chart.
+   */
+  @Test
+  void platformCapabilitiesReachTheWizard() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    Map<String, Object> served = mapper.readValue(
+        mapper.writeValueAsString(svc.getServiceDefinition("OPENMETADATA")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+    assertEquals("kubernetes", formGroup(served, "monitoringGeneric").get("capability"));
+    assertEquals("openshift", formGroup(served, "openshiftOptions").get("capability"));
+    assertEquals(Boolean.TRUE, formField(served, "monitoringGeneric", "monitoring.namespace").get("excludeFromValues"));
+    assertEquals(Boolean.TRUE, formField(served, "monitoringGeneric", "monitoring.release").get("excludeFromValues"));
+
+    Map<String, Object> ingressClass = formField(served, "ingressConfig", "ingress.ingressClassName");
+    assertEquals("kubernetes", ingressClass.get("capability"));
+    assertEquals(Boolean.TRUE, ingressClass.get("keepWhenHidden"));
+    assertEquals(Boolean.FALSE, formField(served, "ingressConfig", "ingress.host").get("keepWhenHidden"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> formGroup(Map<String, Object> def, String group) {
+    for (Object g : (List<Object>) def.get("form")) {
+      if (group.equals(((Map<String, Object>) g).get("name"))) return (Map<String, Object>) g;
+    }
+    throw new AssertionError("no group " + group);
+  }
+
   @SuppressWarnings("unchecked")
   private static Map<String, Object> formField(Map<String, Object> def, String group, String name) {
-    for (Object g : (List<Object>) def.get("form")) {
-      Map<String, Object> groupMap = (Map<String, Object>) g;
-      if (!group.equals(groupMap.get("name"))) continue;
-      for (Object f : (List<Object>) groupMap.get("fields")) {
-        if (name.equals(((Map<String, Object>) f).get("name"))) return (Map<String, Object>) f;
-      }
+    for (Object f : (List<Object>) formGroup(def, group).get("fields")) {
+      if (name.equals(((Map<String, Object>) f).get("name"))) return (Map<String, Object>) f;
     }
     throw new AssertionError("no field " + name + " in group " + group);
   }

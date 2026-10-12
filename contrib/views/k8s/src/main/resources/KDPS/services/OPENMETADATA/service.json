@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.33",
+  "version": "1.13.34",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",
@@ -312,13 +312,6 @@
       "from": {
         "type": "form",
         "field": "security.principalDomain"
-      }
-    },
-    {
-      "name": "monitoringNamespace",
-      "from": {
-        "type": "form",
-        "field": "monitoring.namespace"
       }
     },
     {
@@ -921,8 +914,9 @@
       ]
     },
     {
+      "comment": "Plain Kubernetes: label the ServiceMonitor for the kube-prometheus-stack release that should scrape it, plus the labels its Prometheus selects by (found by discovery). The chart always creates the ServiceMonitor in the release namespace. Gated on isVanillaK8s as well, so an OpenShift ServiceMonitor never gets the kube-prometheus 'release' label, even though the hidden Monitoring group keeps its default release name.",
       "name": "service-monitor-enable",
-      "skipIfVarEmpty": "monitoringRelease",
+      "skipIfVarEmpty": ["monitoringRelease", "isVanillaK8s"],
       "targets": [
         {
           "path": "serviceMonitor.labels.release",
@@ -940,19 +934,11 @@
             "field": "monitoring.serviceMonitorLabels",
             "format": "labels"
           }
-        },
-        {
-          "path": "serviceMonitor.namespace",
-          "op": "set",
-          "from": {
-            "type": "var",
-            "name": "monitoringNamespace"
-          }
         }
       ]
     },
     {
-      "comment": "OpenShift: the self-managed kube-prometheus-stack is skipped (dependency skipOnOpenShift), so the platform's built-in monitoring scrapes OpenMetadata instead. The normal 'service-monitor-enable' binding is gated on monitoringRelease (the discovered self-managed release) which is empty on OpenShift, so we force serviceMonitor.enabled here: the chart emits a ServiceMonitor (port admin, path /prometheus, in the release namespace, no kube-prometheus 'release' label) that OpenShift User-Workload-Monitoring picks up. Gated on isOpenShift so vanilla k8s is unaffected.",
+      "comment": "OpenShift: the self-managed kube-prometheus-stack is skipped (dependency skipOnOpenShift), so the platform's user-workload monitoring scrapes OpenMetadata instead. The Monitoring group, 'Expose ServiceMonitor' included, is hidden on OpenShift, so serviceMonitor.enabled is forced here. The chart then creates the ServiceMonitor (port admin, path /prometheus) in the release namespace, which is the project user-workload monitoring reads and the one the deploy preflight checks the account may write to. It carries no kube-prometheus 'release' label, because 'service-monitor-enable' is gated on isVanillaK8s. Gated on isOpenShift so vanilla k8s is unaffected.",
       "name": "service-monitor-openshift",
       "skipIfVarEmpty": "isOpenShift",
       "targets": [
@@ -2013,13 +1999,17 @@
           "name": "monitoring.namespace",
           "label": "Monitoring namespace",
           "type": "string",
-          "defaultValue": "monitoring"
+          "excludeFromValues": true,
+          "defaultValue": "monitoring",
+          "help": "Where the Prometheus stack runs. The ServiceMonitor itself is always created in the release namespace."
         },
         {
           "name": "monitoring.release",
           "label": "Monitoring release (Helm)",
           "type": "string",
-          "defaultValue": "kube-prometheus-stack"
+          "excludeFromValues": true,
+          "defaultValue": "kube-prometheus-stack",
+          "help": "Helm release of the kube-prometheus-stack that should scrape OpenMetadata. Set as the 'release' label of the ServiceMonitor."
         },
         {
           "name": "monitoring.serviceMonitorLabels",
@@ -2057,6 +2047,7 @@
           "required": true,
           "defaultValue": "nginx",
           "capability": "kubernetes",
+          "keepWhenHidden": true,
           "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller. Hidden on OpenShift, where the HAProxy Router (Route) owns routing rather than an nginx Ingress class.",
           "condition": {
             "field": "ingress.enabled",
