@@ -74,6 +74,41 @@ class StackDefinitionServiceTest {
         "configurations/*.json must be enumerated, not limited to <svc>-env.json/<svc>-files.json");
   }
 
+  /**
+   * The wizard reads the form from the /services JSON, which is this class's model serialized back. A form
+   * property the model does not declare is dropped on the way, so the Trino heap check would silently vanish.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void trinoResourceChecksReachTheWizard() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    Map<String, Object> served = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("TRINO")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+    Map<String, Object> heap = formField(served, "workerResources", "worker.jvm.maxHeapSize");
+    assertEquals(Boolean.TRUE, heap.get("omitWhenBlank"));
+    assertEquals("75% of the memory limit", heap.get("placeholder"));
+    assertEquals(Map.of("kind", "javaHeap", "limitField", "worker.resources.limits.memory",
+        "blankSizedByChartFrom", "1.43.15"), heap.get("resourceCheck"));
+
+    Map<String, Object> request = formField(served, "coordinatorResources", "coordinator.resources.requests.memory");
+    assertEquals(Map.of("kind", "memoryRequest", "limitField", "coordinator.resources.limits.memory"),
+        request.get("resourceCheck"));
+    assertEquals(Boolean.FALSE, request.get("omitWhenBlank"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> formField(Map<String, Object> def, String group, String name) {
+    for (Object g : (List<Object>) def.get("form")) {
+      Map<String, Object> groupMap = (Map<String, Object>) g;
+      if (!group.equals(groupMap.get("name"))) continue;
+      for (Object f : (List<Object>) groupMap.get("fields")) {
+        if (name.equals(((Map<String, Object>) f).get("name"))) return (Map<String, Object>) f;
+      }
+    }
+    throw new AssertionError("no field " + name + " in group " + group);
+  }
+
   @Test
   void listResourceChildrenSeesServiceDirectories() {
     List<String> children = svc.listResourceChildren("KDPS/services");

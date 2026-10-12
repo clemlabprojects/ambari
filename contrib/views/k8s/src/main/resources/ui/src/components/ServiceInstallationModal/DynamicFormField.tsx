@@ -27,9 +27,14 @@ import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
 import { FieldSyncContext } from './fieldSync';
 import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery';
 import OpenShiftMonitoringNotice from './OpenShiftMonitoringNotice';
+import { resourceCheckError } from './resourceChecks';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
+
+/** Form path of a field name; an escaped dot ("node\\.data-dir") stays inside its segment. */
+const toNameParts = (name: string): string[] =>
+  name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
 
 const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = ({ field, upgradeMode }) => {
   const form = Form.useFormInstance();
@@ -50,7 +55,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   }];
   const isLocked = upgradeMode && (field.name === 'releaseName' || field.name === 'namespace');
   const disabledProp = (field as any).disabled || isLocked;
-  const nameParts = field.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
+  const nameParts = toNameParts(field.name);
   // Cluster capabilities (cert-manager / external-secrets / OpenShift) drive the
   // adaptive filtering of select options below. We call the hook unconditionally
   // so React's rule-of-hooks holds regardless of field type.
@@ -331,11 +336,26 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         </Form.Item>
       );
     case 'string':
-    default:
+    default: {
+      // `resourceCheck`: compare the value with the limit in another field (e.g. a Java heap against the pod memory
+      // limit), re-checked whenever that limit changes. Its help goes under the input: antd's `help` would hide
+      // the check's error message.
+      const check = field.resourceCheck;
+      const limitParts = check?.limitField ? toNameParts(check.limitField) : undefined;
+      const checkRules = check && limitParts ? [{
+        validator: (_rule: unknown, value: unknown) => {
+          const error = resourceCheckError(check, value, form.getFieldValue(limitParts));
+          return error ? Promise.reject(new Error(error)) : Promise.resolve();
+        },
+      }] : [];
+      const helpProps = limitParts
+        ? { extra: field.help, dependencies: [limitParts] }
+        : { help: field.help };
       return (
-        <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
+        <Form.Item name={nameParts} label={field.label} rules={[...rules, ...checkRules]} {...helpProps}>
           <Input
             disabled={disabledProp}
+            placeholder={field.placeholder}
             onChange={(e) => {
               // For Hive override, also populate the base metastore field so bindings pick it up.
               if (field.name === 'ui_hive_metastore_uri_override') {
@@ -345,6 +365,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           />
         </Form.Item>
       );
+    }
   }
 };
 

@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.14",
+  "version": "1.43.15",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -1024,6 +1024,20 @@
           "from": {
             "type": "template",
             "template": "${kerberos.worker.mountPath}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "init-container-resources",
+      "comment": "Kubernetes counts init containers when it sets the pod QoS class: the chart's own init containers get requests equal to limits so the coordinator and workers stay Guaranteed.",
+      "targets": [
+        {
+          "path": "initContainerResources",
+          "op": "set",
+          "value": {
+            "requests": { "cpu": "100m", "memory": "128Mi" },
+            "limits": { "cpu": "100m", "memory": "128Mi" }
           }
         }
       ]
@@ -2401,13 +2415,17 @@
           "name": "coordinator.resources.requests.cpu",
           "label": "CPU request",
           "type": "string",
-          "defaultValue": "1"
+          "defaultValue": "2",
+          "help": "Same as the CPU limit by default. Cannot be higher than the limit.",
+          "resourceCheck": { "kind": "cpuRequest", "limitField": "coordinator.resources.limits.cpu" }
         },
         {
           "name": "coordinator.resources.requests.memory",
           "label": "Memory request",
           "type": "string",
-          "defaultValue": "4Gi"
+          "defaultValue": "8Gi",
+          "help": "Same as the memory limit by default, so Kubernetes reserves the memory and gives the pod the Guaranteed QoS class: it is not among the first pods evicted when the node runs short of memory. Requests count against the project quota. Cannot be higher than the limit.",
+          "resourceCheck": { "kind": "memoryRequest", "limitField": "coordinator.resources.limits.memory" }
         },
         {
           "name": "coordinator.resources.limits.cpu",
@@ -2420,6 +2438,16 @@
           "label": "Memory limit",
           "type": "string",
           "defaultValue": "8Gi"
+        },
+        {
+          "name": "coordinator.jvm.maxHeapSize",
+          "label": "Java heap size (optional)",
+          "type": "string",
+          "defaultValue": "",
+          "placeholder": "75% of the memory limit",
+          "omitWhenBlank": true,
+          "help": "Leave blank to give Java 75% of the memory limit (6G for 8Gi); the heap then follows the limit when you change it. To set it yourself, use the Java format (for example 6G or 6144M) and keep it at 70-80% of the memory limit: Java also needs memory outside the heap, and the pod is killed when it goes over the limit.",
+          "resourceCheck": { "kind": "javaHeap", "limitField": "coordinator.resources.limits.memory", "blankSizedByChartFrom": "1.43.15" }
         },
         {
           "name": "coordinator.config.nodeProperties.node\\.data-dir",
@@ -2450,13 +2478,17 @@
           "name": "worker.resources.requests.cpu",
           "label": "CPU request per worker",
           "type": "string",
-          "defaultValue": "1"
+          "defaultValue": "2",
+          "help": "Same as the CPU limit by default. Cannot be higher than the limit.",
+          "resourceCheck": { "kind": "cpuRequest", "limitField": "worker.resources.limits.cpu" }
         },
         {
           "name": "worker.resources.requests.memory",
           "label": "Memory request per worker",
           "type": "string",
-          "defaultValue": "4Gi"
+          "defaultValue": "8Gi",
+          "help": "Same as the memory limit by default, so Kubernetes reserves the memory and gives each worker the Guaranteed QoS class: workers are not among the first pods evicted when the node runs short of memory. Requests count against the project quota, for every worker autoscaling adds. Cannot be higher than the limit.",
+          "resourceCheck": { "kind": "memoryRequest", "limitField": "worker.resources.limits.memory" }
         },
         {
           "name": "worker.resources.limits.cpu",
@@ -2469,6 +2501,16 @@
           "label": "Memory limit per worker",
           "type": "string",
           "defaultValue": "8Gi"
+        },
+        {
+          "name": "worker.jvm.maxHeapSize",
+          "label": "Java heap size per worker (optional)",
+          "type": "string",
+          "defaultValue": "",
+          "placeholder": "75% of the memory limit",
+          "omitWhenBlank": true,
+          "help": "Leave blank to give Java 75% of the memory limit (6G for 8Gi); the heap then follows the limit when you change it. To set it yourself, use the Java format (for example 6G or 6144M) and keep it at 70-80% of the memory limit: Java also needs memory outside the heap, and the pod is killed when it goes over the limit.",
+          "resourceCheck": { "kind": "javaHeap", "limitField": "worker.resources.limits.memory", "blankSizedByChartFrom": "1.43.15" }
         },
         {
           "name": "worker.config.nodeProperties.node\\.data-dir",

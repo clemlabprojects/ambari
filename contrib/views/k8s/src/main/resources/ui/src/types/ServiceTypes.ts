@@ -9,6 +9,26 @@ export interface FormFieldBase {
    * external keytab Secret once a CDP/EXTERNAL context's Hive resolves to Kerberos.
    */
   requiredWhenContext?: { field: string; equals: string };
+  /** Compares the value with the limit in another field before the deploy (see resourceChecks.ts). */
+  resourceCheck?: ResourceCheck;
+  /** Left blank, the key is left out of the chart values so the chart's own default applies. */
+  omitWhenBlank?: boolean;
+  /** Hint shown in an empty text field. */
+  placeholder?: string;
+}
+/**
+ * A value that must stay under a limit held by another field (`limitField`):
+ * - `javaHeap`: a Java heap size that must stay well below the pod memory limit (blank is allowed);
+ * - `memoryRequest` / `cpuRequest`: a Kubernetes request that cannot be higher than its limit.
+ */
+export interface ResourceCheck {
+  kind: 'javaHeap' | 'memoryRequest' | 'cpuRequest';
+  limitField: string;
+  /**
+   * `javaHeap` only: the first chart version that sizes a blank heap from the memory limit itself. Deploying an
+   * older chart, the wizard sends 75% of the limit for a blank heap instead (see blankValues.ts).
+   */
+  blankSizedByChartFrom?: string;
 }
 export interface StandardFormField extends FormFieldBase {
   type: 'string' | 'number' | 'boolean' | 'select';

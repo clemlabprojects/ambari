@@ -46,6 +46,24 @@ Other field properties:
 - `excludeFromValues`: If true, the field value is **not** sent to Helm; use for helper/lookup fields.
 - `condition`: `{ "field": "<otherField>", "value": <expected> }` to show/hide.
 - `options`: For `select`.
+- `placeholder`: Hint shown in an empty `string` field.
+- `omitWhenBlank`: If true and the field is left blank, the key is left out of the Helm values so the chart's own
+  default applies, instead of sending an empty string an older chart may not understand.
+- `resourceCheck`: `{ "kind": "javaHeap" | "memoryRequest" | "cpuRequest", "limitField": "<otherField>" }` compares
+  the value with the limit held by another field. `javaHeap` refuses a Java heap size Java cannot read (`6Gi`,
+  `5.5G`) or one of 85% of the memory limit or more (blank passes); `memoryRequest` / `cpuRequest` refuse a value
+  that is not a Kubernetes quantity or is higher than its limit. The field shows the error inline and the wizard
+  refuses the deploy, YAML editor included, until it is fixed. The field's `help` is shown under the input.
+  A `javaHeap` check can add `"blankSizedByChartFrom": "<chart version>"`, the first chart version that sizes a
+  blank heap from the memory limit itself. When the deploy targets an older chart (Upgrade / Config keeps the
+  release's chart version, or a Version override names an older one) or a version the wizard cannot read, a blank
+  heap is sent as 75% of the memory limit instead of being left to that chart's own fixed default.
+  Blank values are resolved on the final values, after the YAML editor is merged: a key cleared in the editor
+  (`""` or `key:`) is treated like a blank field, and a heap filled in is sized from the memory limit actually sent.
+  As a last guard, the deploy is refused if an empty heap would still reach a chart older than that version.
+
+The backend model (`model/FormField.java`) must declare every property the wizard reads: properties it does not
+declare are dropped from the `/services` JSON and never reach the UI.
 
 ### Example (monitoring + Hive override)
 ```json

@@ -28,8 +28,10 @@ import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
-import { applyBindingTargets, buildVarContext, deleteAtStr, deepMerge } from '../components/ServiceInstallationModal/bindings';
+import { deepMerge } from '../components/ServiceInstallationModal/bindings';
 import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
+import { buildChartValues } from '../components/ServiceInstallationModal/chartValues';
+import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
@@ -450,41 +452,30 @@ const ServiceWizardPage: React.FC = () => {
   // an install with different inputs: the form drives the payload, and the editor overrides it only
   // when the operator actually edits it.
 
-  // --- helpers ---
-  const getExcludedPaths = (fields: any[]): string[] => {
-    let paths: string[] = [];
-    fields.forEach(f => {
-      if ((f as any).excludeFromValues) paths.push(f.name);
-      if (f.type === 'group' && (f as any).fields) {
-        paths = [...paths, ...getExcludedPaths((f as any).fields)];
-      }
-    });
-    return paths;
-  };
+  // The chart version the deploy asks for. Version precedence: the "Version (override)" field wins over the
+  // service.json catalog default. In upgrade mode it is pre-filled with the deployed version (so a config-only
+  // upgrade keeps the running chart version); type e.g. 0.12.39 to bump the chart in place.
+  const targetChartVersion = (): string =>
+    (installValues?.version && String(installValues.version).trim())
+      || ((def as any)?.version ? String((def as any).version) : '');
+
+  // The chart values built from the wizard (see buildChartValues), with the YAML editor merged over them when
+  // `editorValues` is given.
+  const chartValues = (editorValues: Record<string, any> | null) => buildChartValues({
+    form: Array.isArray(def?.form) ? def.form : undefined,
+    bindings: (def as any)?.bindings,
+    variables: (def as any)?.variables,
+    formValues: installValues,
+    resolvedFields: resolvedSel?.resolvedFields,
+    platform,
+    editorValues,
+    chartVersion: targetChartVersion(),
+  });
 
   const previewYaml = useMemo(() => {
     if (!def) return '';
     try {
-      const merged = JSON.parse(JSON.stringify(installValues || {}));
-
-      // Apply bindings same way as the modal. resolvedSel.resolvedFields feeds `context` variables.
-      const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {}, platform);
-      applyBindingTargets(merged, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
-
-      // Drop fields that should not end up in values.yaml
-      if (Array.isArray(def.form)) {
-        getExcludedPaths(def.form).forEach(p => deleteAtStr(merged, p));
-      }
-      // Mirror buildFinalValues' envelope-key strip so the preview shows what
-      // the chart will actually receive (otherwise users see top-level
-      // releaseName/namespace/etc that wouldn't actually be sent).
-      ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-       'releaseName','namespace','securityProfile','deploymentMode','git',
-       'kerberos','tls','oidc'].forEach(k => {
-         delete (merged as any)[k];
-       });
-
-      return yaml.stringify(merged, { aliasDuplicateObjects: false });
+      return yaml.stringify(chartValues(null), { aliasDuplicateObjects: false });
     } catch (e) {
       return '# (preview unavailable)';
     }
@@ -547,44 +538,10 @@ const ServiceWizardPage: React.FC = () => {
     return out;
   };
 
-  const buildFinalValues = () => {
-    // Start from form values
-    const base = JSON.parse(JSON.stringify(installValues || {}));
-
-    // Apply bindings same way as preview. resolvedSel.resolvedFields feeds `context` variables.
-    const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {}, platform);
-    applyBindingTargets(base, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
-
-    // Drop fields that should not end up in values.yaml
-    if (Array.isArray(def?.form)) {
-      getExcludedPaths(def.form).forEach(p => deleteAtStr(base, p));
-    }
-
-    // Drop wizard envelope keys — these are wizard state / request meta and
-    // get sent as top-level fields on the submitHelmDeploy payload. Strict
-    // chart schemas (Z2JH/JupyterHub, future) reject any additionalProperties
-    // at the root of values.yaml, so anything left here would fail the
-    // helm dry-run with errors like "Additional property releaseName is not allowed".
-    // kerberos/tls/oidc are seeded into installValues by the def-load effect
-    // (see line ~189) so they can be passed back as their own top-level request
-    // fields (request.kerberos / request.tls / request.oidc). They are NOT chart
-    // values — Z2JH/JupyterHub's strict schema rejects them at the root with
-    // "Additional property kerberos is not allowed". Strip them along with the
-    // other wizard envelope keys.
-    ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-     'releaseName','namespace','securityProfile','deploymentMode','git',
-     'kerberos','tls','oidc'].forEach(k => {
-       delete (base as any)[k];
-     });
-
-    // Hand-written YAML wins, but only once the operator has actually typed in the editor
-    // (isDirtyRef) — merely opening it must not freeze a stale snapshot over the form. Merge deeply:
-    // a shallow spread would let an edit to one key of a block drop every sibling the form produced.
-    if (editMode && isDirtyRef.current && parsedRef.current && !parseError) {
-      deepMerge(base, parsedRef.current);
-    }
-    return base;
-  };
+  // Hand-written YAML wins, but only once the operator has actually typed in the editor (isDirtyRef): merely opening
+  // it must not freeze a stale snapshot over the form.
+  const buildFinalValues = () =>
+    chartValues(editMode && isDirtyRef.current && parsedRef.current && !parseError ? parsedRef.current : null);
 
   /**
    * Pre-submit validation: catch mode-specific missing fields BEFORE the deploy fires.
@@ -826,14 +783,17 @@ const ServiceWizardPage: React.FC = () => {
       setSubmitting(true);
       try {
           const finalValues = buildFinalValues();
+          // Checked on what is about to be sent, YAML editor included: a request above its limit is refused by
+          // Kubernetes, and a Java heap too close to the memory limit gets the pods killed once they are busy.
+          const resourceErrors = resourceCheckErrors(def?.form, finalValues, targetChartVersion());
+          if (resourceErrors.length) {
+            resourceErrors.forEach(error => message.error(error, 10));
+            return;
+          }
           const chartRef = (installValues.chartOverride && String(installValues.chartOverride).trim()) || def.chart;
           const params = new URLSearchParams();
           if (installValues.repoId) params.set('repoId', installValues.repoId as string);
-          // Version precedence: the "Version (override)" field wins over the service.json catalog
-          // default. In upgrade mode this is pre-filled with the deployed version (so a config-only
-          // upgrade keeps the running chart version); type e.g. 0.12.39 to bump the chart in place.
-          const versionOverride = (installValues.version && String(installValues.version).trim())
-            || ((def as any)?.version ? String((def as any).version) : '');
+          const versionOverride = targetChartVersion();
           if (versionOverride) params.set('version', versionOverride);
 
           const { id } = await submitHelmDeploy({

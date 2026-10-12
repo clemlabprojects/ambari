@@ -77,6 +77,22 @@ public class FormField {
     // Simple condition support: { field, value }
     public Map<String, Object> condition;
 
+    /**
+     * Wizard-side check of a resource value against the limit it must stay under:
+     * {@code { "kind": "javaHeap" | "memoryRequest" | "cpuRequest", "limitField": "<form field>" }}.
+     * The wizard refuses, for example, a Java heap too close to the pod memory limit, or a request
+     * above its limit, before anything is deployed. Read by the UI only; it must be declared here
+     * because properties this class does not declare never reach the UI.
+     */
+    public Map<String, Object> resourceCheck;
+
+    /**
+     * When true and the field is left blank, the wizard leaves the key out of the chart values so
+     * the chart's own default applies, instead of sending an empty string an older chart might not
+     * understand. Read by the UI only, declared here for the same reason as {@link #resourceCheck}.
+     */
+    public boolean omitWhenBlank;
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Option {
         public String label;

@@ -50,6 +50,7 @@ import {
   buildVarContext,
 } from './bindings';
 import { useCapabilities } from './capabilities';
+import { applyBlankValues } from './blankValues';
 
 import type { UploadFile } from 'antd/es/upload/interface';
 
@@ -587,10 +588,11 @@ const handleServiceChange = (value: string) => {
       delete mergedValues.tls;
       delete mergedValues.oidc;
 
-      // 4. Remove fields marked as excludeFromValues in charts.json
+      // 4. Remove fields marked as excludeFromValues in charts.json, and resolve blank ones for the chart version
       if (svcAny?.form) {
         const excluded = getExcludedPaths(svcAny.form);
         excluded.forEach(path => deleteAtStr(mergedValues, path));
+        applyBlankValues(svcAny.form, mergedValues, raw.version || svcAny.version);
       }
 
       return yaml.stringify(mergedValues, { aliasDuplicateObjects: false });
@@ -914,6 +916,7 @@ const handleServiceChange = (value: string) => {
         if (currentService?.form) {
             const excluded = getExcludedPaths(currentService.form);
             excluded.forEach(path => deleteAtStr(mergedValues, path));
+            applyBlankValues(currentService.form, mergedValues, version || currentService.version);
         }
         // Envelope keys (wizard meta / request top-levels) that strict chart
         // schemas reject as additionalProperties. Kept in sync with the
