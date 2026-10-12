@@ -840,6 +840,9 @@ const ServiceWizardPage: React.FC = () => {
               chart: chartRef,
               releaseName: installValues.releaseName,
               namespace: installValues.namespace,
+              // In the body as well as the query: the GitOps backend writes them into the HelmRelease.
+              repoId: (installValues.repoId as string) || undefined,
+              version: versionOverride || undefined,
               values: finalValues, 
               // Send Step 3 data to backend
               stackConfigOverrides: configOverrides,

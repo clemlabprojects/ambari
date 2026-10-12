@@ -261,6 +261,66 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return renderHelmRepository(repoId, repo.getType(), repo.getUrl(), repo.getAuthMode());
     }
 
+    /** Whether a KDPS chart repository is an OCI registry. */
+    private boolean isOciRepository(String repoId) {
+        HelmRepoEntity repo = new HelmRepositoryService(viewContext).get(repoId);
+        return repo != null && "OCI".equalsIgnoreCase(repo.getType());
+    }
+
+    /**
+     * The chart name as the Flux source knows it. An HTTP repository indexes its charts by bare name, so the
+     * {@code <repo>/<chart>} form of a service definition (Helm's local repository alias) becomes {@code <chart>}.
+     * An OCI registry keeps the path below the registry URL, which is where a direct deploy pulls the chart from,
+     * without a tag: the version is pinned separately.
+     *
+     * @param chart     the chart reference of the deploy
+     * @param ociSource whether the chart comes from an OCI registry
+     * @return the {@code spec.chart.spec.chart} value
+     */
+    static String chartNameInSource(String chart, boolean ociSource) {
+        if (chart == null) return null;
+        String name = chart.trim();
+        int slash = name.lastIndexOf('/');
+        if (!ociSource) {
+            return name.substring(slash + 1);
+        }
+        int colon = name.lastIndexOf(':');
+        return colon > slash ? name.substring(0, colon) : name;
+    }
+
+    /**
+     * The chart version written to the HelmRelease: the one this deploy names, else the release's recorded one, else
+     * (first install only) the service definition's. Never "latest": Flux reads the version as a SemVer range and
+     * rejects that word, and leaving it out would move the release to the newest chart.
+     *
+     * @throws IllegalArgumentException when no version can be found
+     */
+    private String chartVersion(HelmDeployRequest request, DeploymentContext context, K8sReleaseEntity existingMeta,
+                                String serviceKey) {
+        String version = firstNonBlank(
+                CommandService.pinnedChartVersion(context != null ? context.getVersion() : null),
+                CommandService.pinnedChartVersion(request.getVersion()),
+                CommandService.pinnedChartVersion(existingMeta != null ? existingMeta.getVersion() : null),
+                existingMeta == null ? CommandService.pinnedChartVersion(catalogVersion(serviceKey)) : null);
+        if (version == null) {
+            throw new IllegalArgumentException("Select a chart version for " + request.getReleaseName() + ": a GitOps"
+                    + " deploy pins it in the HelmRelease, and none was given or recorded for this release.");
+        }
+        return version;
+    }
+
+    /** The chart version a service definition ships with, or {@code null}. */
+    private String catalogVersion(String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank()) return null;
+        try {
+            StackServiceDef def = stackDefinitionService.getServiceDefinition(serviceKey);
+            return def == null ? null : def.version;
+        } catch (Exception e) {
+            LOG.warn("Could not read the chart version of service definition {}: {}", serviceKey, e.toString());
+            return null;
+        }
+    }
+
     /** Renders a Flux HelmRepository; OCI URLs get the oci:// scheme and {@code type: oci}. */
     static String renderHelmRepository(String name, String type, String url, String authMode) {
         boolean oci = "OCI".equalsIgnoreCase(type);
@@ -292,6 +352,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         final String namespace = request.getNamespace();
         final String release = request.getReleaseName();
         final var existingMeta = releaseMetadataService.find(namespace, release);
+        // A redeploy that names no platform context stays on the release's: an external context must not inherit the
+        // local cluster's Kerberos state.
+        CommandService.defaultPlatformContext(request, existingMeta);
 
         // The branch Flux reconciles, as configured: mergeGitOptions falls back to the working branch for a redeploy
         // that names no base branch, which says nothing about where Flux reads. Null when it was never recorded.
@@ -311,12 +374,22 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         logFluxInfo(namespace, release, "apply", "Starting Flux GitOps deploy (mode=%s, repo=%s)", git.getCommitMode(), repoUrl);
 
         String baseBranch = firstNonBlank(git.getBaseBranch(), "main");
-        String repoName = firstNonBlank(request.getRepoId(), existingMeta != null ? existingMeta.getRepoId() : null, "default-repo");
+        // The chart repository and version as a direct deploy resolves them: what this deploy names, else what the
+        // release was deployed with. Written into the HelmRelease, so nothing is guessed.
+        String repoName = firstNonBlank(context != null ? context.getRepoId() : null, request.getRepoId(),
+                existingMeta != null ? existingMeta.getRepoId() : null);
+        if (repoName == null) {
+            throw new IllegalArgumentException("Select a chart repository for " + release + ": a GitOps deploy names it"
+                    + " in the HelmRelease, and none was given or recorded for this release.");
+        }
         request.setRepoId(repoName);
+        String serviceKey = firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null);
+        String version = chartVersion(request, context, existingMeta, serviceKey);
+        request.setVersion(version);
         String chart = request.getChart();
-        String version = firstNonBlank(request.getVersion(), "latest");
         // Every chart source, resolved before anything is created or committed: an unknown repository stops here.
         Map<String, String> chartSources = chartRepositoryYamls(repoName, request.getDependencies());
+        String chartInSource = chartNameInSource(chart, isOciRepository(repoName));
 
         String pathOverride = git.getPathPrefix();
         String storedPath = existingMeta != null ? existingMeta.getGitPath() : null;
@@ -531,9 +604,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         continue;
                     }
 
-                    // service.json names it chartVersion; "version" is kept for older definitions.
-                    String depVersion = firstNonBlank(stringOrNull(depSpec.get("chartVersion")),
-                            stringOrNull(depSpec.get("version")), version, "latest");
+                    // service.json names it chartVersion; "version" is kept for older definitions. Never the main
+                    // chart's version, which belongs to another chart: without one, the HelmRelease names none.
+                    String depVersion = firstNonBlank(CommandService.pinnedChartVersion(stringOrNull(depSpec.get("chartVersion"))),
+                            CommandService.pinnedChartVersion(stringOrNull(depSpec.get("version"))));
                     String depReleaseName = firstNonBlank((String) depSpec.get("releaseName"), depKey);
                     String depNamespace = firstNonBlank((String) depSpec.get("namespace"), namespace);
                     depRefs.add(new DepRef(depReleaseName, depNamespace));
@@ -583,7 +657,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     
                     // Rendered once the passwords and secrets of the deploy are known, so none of them is written
                     // to Git in the dependency's values either.
-                    pendingDeps.add(new PendingDependency(depReleaseName, depNamespace, depChart, depVersion, depRepoName,
+                    pendingDeps.add(new PendingDependency(depReleaseName, depNamespace,
+                            chartNameInSource(depChart, isOciRepository(depRepoName)), depVersion, depRepoName,
                             depValues, depDir.resolve(depReleaseName + "-helmrelease.yaml")));
                     if (!depRepoName.equals(repoName)) {
                         // A dependency from another chart repository needs its own Flux source.
@@ -593,7 +668,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     }
                     
                     logFluxInfo(namespace, release, "automation", "Added dependency HelmRelease %s/%s (chart=%s, version=%s)",
-                            depNamespace, depReleaseName, depChart, depVersion);
+                            depNamespace, depReleaseName, depChart, firstNonBlank(depVersion, "not pinned"));
                 }
             logFluxInfo(namespace, release, "automation", "Generated %s dependency HelmReleases and dependsOn", depRefs.size());
             } catch (Exception ex) {
@@ -638,6 +713,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         Boolean ambariKerberos = followsAmbariKerberos(request) ? ambariClusterKerberos(context) : null;
         String kerberosEnabled = kerberosEnabledValue(profileKerberos, ambariKerberos);
         if ("false".equals(kerberosEnabled)) {
+            // Not committed for a release that runs with Kerberos on a context nobody recorded: its pods would lose
+            // their keytab and krb5.conf.
+            String kerberosProblem = CommandService.kerberosSwitchOffProblem(kubernetesService, request);
+            if (kerberosProblem != null) {
+                throw new IllegalStateException(kerberosProblem);
+            }
             addOverride(explicitOverrides, "global.security.kerberos.enabled", "false");
         } else if ("true".equals(kerberosEnabled)) {
             String krb5ConfigMapName = (release.isBlank() ? "krb5-conf" : (release + "-krb5-conf"));
@@ -671,7 +752,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         // Passwords and secrets of this deploy, from the definitions: none of them may be written to Git.
         GitOpsSecretValues secrets = new GitOpsSecretValues();
-        String serviceKey = firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null);
         // Global stack configs / config instantiations
         try {
             // Apply bundled global configs (e.g., security-env) into values._ov via overrides
@@ -775,7 +855,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         namespace: flux-system
                 %s  values:
                 %s
-                """).formatted(FLUX_HR_API_VERSION, release, namespace, chart, version, repoName,
+                """).formatted(FLUX_HR_API_VERSION, release, namespace, chartInSource, version, repoName,
                         valuesFromYaml, valuesYaml);
 
         for (int i = 0; i < pendingDeps.size(); i++) {
@@ -2401,14 +2481,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                   chart:
                     spec:
                       chart: %s
-                      version: %s
-                      sourceRef:
+                %s      sourceRef:
                         kind: HelmRepository
                         name: %s
                         namespace: flux-system
                 %s  values:
                 %s
-                """.formatted(FLUX_HR_API_VERSION, dep.releaseName(), dep.namespace(), dep.chart(), dep.version(),
+                """.formatted(FLUX_HR_API_VERSION, dep.releaseName(), dep.namespace(), dep.chart(),
+                dep.version() == null ? "" : "      version: " + dep.version() + "\n",
                 dep.repoName(), valuesFromYaml, serializeValuesAsYaml(values));
     }
 

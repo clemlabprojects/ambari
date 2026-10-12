@@ -55,6 +55,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -230,9 +231,6 @@ public class HelmResource {
                 releaseDto.catalogRefs = org.apache.ambari.view.k8s.service.TrinoCatalogService.parseRefs(metadata.getCatalogRefsJson());
                 releaseDto.repoId = metadata.getRepoId();
                 releaseDto.chartRef = metadata.getChartRef();
-                if (metadata.getVersion() != null && !metadata.getVersion().isBlank()) {
-                    releaseDto.version = metadata.getVersion();
-                }
                 releaseDto.restartRequired =
                         currentGlobalFingerprint != null
                                 && metadata.getGlobalConfigVersion() != null
@@ -271,6 +269,12 @@ public class HelmResource {
             // Heavy work per release in parallel: status, endpoints, version.
             workerFutures.add(workerPool.submit(() -> {
                 try {
+                    // First, so a failed status or endpoint lookup still leaves the release with a version.
+                    releaseDto.version = releaseChartVersion(releaseDto.chart, releaseDto.version,
+                            () -> kubernetesService.deployedChartVersion(releaseDto.namespace, releaseDto.name),
+                            metadata != null ? metadata.getVersion() : null,
+                            metadata != null ? metadata.getDeploymentMode() : null);
+
                     // Backend-aware status lookup
                     if (metadata != null) {
                         HelmReleaseDTO refreshed = commandService.statusViaBackend(releaseDto.namespace, releaseDto.name, metadata.getDeploymentMode());
@@ -333,16 +337,6 @@ public class HelmResource {
                     if (!endpointsById.isEmpty()) {
                         releaseDto.endpoints = new ArrayList<>(endpointsById.values());
                     }
-
-                    // If the version couldn't be parsed from the `helm list` chart string, read the
-                    // DEPLOYED version straight from the release Secret's chart.metadata.version — i.e.
-                    // what is actually running on the cluster (source of truth). No remote registry
-                    // 'helm show chart' round-trip (slow + resolves the wrong thing + fails "not found"
-                    // for OCI refs) and no stale DB value.
-                    if (releaseDto.version == null || releaseDto.version.isBlank()) {
-                        releaseDto.version = kubernetesService.deployedChartVersion(
-                                releaseDto.namespace, releaseDto.name);
-                    }
                 } catch (Exception ex) {
                     LOG.warn("Async refresh failed for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
                 }
@@ -372,6 +366,45 @@ public class HelmResource {
         }
 
         return new HelmReleasesResponse(releaseList, total);
+    }
+
+    /**
+     * The chart version of a release, as the Releases page shows it and Upgrade/Config starts from. For a release
+     * deployed with Helm, the one it runs: the version {@code helm list} reports, else the one in the release's latest
+     * Helm Secret, else the one KDPS recorded at its last deploy. The record is only the last resort there: it goes
+     * stale when the chart changes outside a KDPS deploy (a Helm rollback, a resync that took the newest chart). The
+     * {@code helm list} chart string is {@code <name>-<version>} and a version may itself hold dashes, so when the
+     * parsed version disagrees with the record, the exact one is read from the Secret instead.
+     *
+     * <p>For a GitOps release, the recorded one comes first: it is the version last committed to Git, which Flux
+     * enforces, while Helm still reports the previous one until Flux reconciles or while the change waits in a pull
+     * request. Starting Upgrade/Config from Helm's would commit the previous chart back over the upgrade.
+     *
+     * @param chart                  the {@code helm list} chart string, e.g. {@code trino-1.43.14}; may be {@code null}
+     * @param listed                 the version parsed from that string; may be {@code null}
+     * @param releaseSecret          reads the version from the release's Helm Secret; may return {@code null}
+     * @param recorded               the version KDPS recorded for the release; may be {@code null}
+     * @param recordedDeploymentMode the deployment mode KDPS recorded for the release; may be {@code null}
+     * @return the chart version, or {@code null} when none is known
+     */
+    static String releaseChartVersion(String chart, String listed, Supplier<String> releaseSecret, String recorded,
+                                      String recordedDeploymentMode) {
+        String record = CommandService.pinnedChartVersion(recorded);
+        if (record != null && CommandService.chartVersionHeldInGit(recordedDeploymentMode)) {
+            return record;
+        }
+        if (record != null && chart != null && chart.endsWith("-" + record)) {
+            // Helm and the record agree, dashes included: no Secret to read.
+            return record;
+        }
+        boolean hasListed = listed != null && !listed.isBlank();
+        if (!hasListed || record != null) {
+            String exact = releaseSecret.get();
+            if (exact != null && !exact.isBlank()) {
+                return exact.trim();
+            }
+        }
+        return hasListed ? listed : record;
     }
 
     /**

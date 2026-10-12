@@ -4232,10 +4232,16 @@ public class CommandService {
         LOG.info("Submit deploy for release {} in namespace {} using deploymentMode={}",
                 request.getReleaseName(), request.getNamespace(), deploymentMode);
 
+        // A redeploy that leaves out the chart repository, the chart version or the platform context (resync,
+        // security refresh, autoscaling change, the wizard's query parameters) keeps the release's. Done first, so
+        // the version check, every backend and the recorded parameters all see the same values.
+        K8sReleaseEntity recorded = recordedRelease(request);
+        ChartSource chartSource = applyReleaseDefaults(request, repoId, version, recorded);
+
         // Apply value-path aliases and version compatibility checks before the backend
         // dispatch so every code path (direct helm, flux GitOps, dry-run preview) sees
         // the same rewritten values map.
-        applyValueAliasesAndVersionCheck(request, version);
+        applyValueAliasesAndVersionCheck(request, chartSource.version());
 
         // Operator-supplied extra catalogs. Parsed here, next to the alias rewriting and for the same
         // reason: it is the one place every backend goes through, so a deploy driven straight at the
@@ -4258,6 +4264,10 @@ public class CommandService {
             }
         }
 
+        // External Kerberos keytab: a redeploy carries no form, so it keeps the keytab the release runs with, or
+        // stops here rather than turning Kerberos off.
+        restoreExternalKeytab(request, recorded);
+
         // OpenShift KEDA autoscaling: point the triggers at the release's project when the account may not grant
         // cluster-wide monitoring access. Here, so every deployment mode saves the same values.
         OpenShiftMonitoringSetup.scopeAutoscalingToProject(kubernetesService, request);
@@ -4276,8 +4286,8 @@ public class CommandService {
         kubernetesService.createNamespace(request.getNamespace());
 
         DeploymentContext context = new DeploymentContext(
-                repoId,
-                version,
+                chartSource.repoId(),
+                chartSource.version(),
                 kubeContext,
                 commandsURL,
                 callerHeaders,
@@ -4299,6 +4309,362 @@ public class CommandService {
             LOG.error("Deployment failed for {}/{} using mode {}: {}", request.getNamespace(), request.getReleaseName(), deploymentMode, ex.toString(), ex);
             throw new RuntimeException(ex);
         }
+    }
+
+    /** The chart repository and chart version a deploy uses; either may be {@code null}. */
+    record ChartSource(String repoId, String version) {}
+
+    /** The chart value naming the Secret the release reads its Kerberos keytab from. */
+    private static final String KERBEROS_KEYTAB_SECRET_PATH = "global.security.kerberos.keytab.secretName";
+
+    /** The chart value that turns the release's Kerberos part (keytab and krb5.conf mounts) on or off. */
+    private static final String KERBEROS_ENABLED_PATH = "global.security.kerberos.enabled";
+
+    /**
+     * A chart version that pins the chart, or {@code null}. Blank pins nothing, and neither does "latest": Helm and
+     * Flux both read the version as a SemVer constraint and reject that word, and older release records may hold it.
+     *
+     * @param version a requested or recorded chart version
+     * @return the trimmed version, or {@code null}
+     */
+    public static String pinnedChartVersion(String version) {
+        if (version == null) return null;
+        String trimmed = version.trim();
+        return trimmed.isEmpty() || "latest".equalsIgnoreCase(trimmed) ? null : trimmed;
+    }
+
+    /**
+     * Whether the chart version recorded for a release is the one it is meant to run, ahead of the one Helm reports.
+     * True for a release last deployed through GitOps: its record is the version last committed to Git, which Flux
+     * enforces (it reverts a Helm rollback), while Helm still reports the previous version until Flux reconciles or
+     * while the change waits in a pull request. Taking Helm's version there would commit the previous chart back over
+     * the upgrade. A release last deployed with Helm records its version at deploy time, and Helm's is the more
+     * recent one.
+     *
+     * @param recordedDeploymentMode the deployment mode recorded for the release, may be {@code null}
+     * @return whether the recorded chart version comes first
+     */
+    public static boolean chartVersionHeldInGit(String recordedDeploymentMode) {
+        return DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(recordedDeploymentMode);
+    }
+
+    /**
+     * Puts the release's recorded platform context into a deploy request that names none, so a redeploy is routed
+     * to the same context: a release on an external context must not fall back to the local cluster's Kerberos,
+     * Ranger or Hadoop configuration.
+     *
+     * @param request  the deploy request, completed in place
+     * @param recorded the release as recorded by an earlier deploy, may be {@code null}
+     */
+    public static void defaultPlatformContext(HelmDeployRequest request, K8sReleaseEntity recorded) {
+        if (request.getPlatformContextId() != null || recorded == null) return;
+        String contextId = recorded.getPlatformContextId();
+        if (contextId == null || contextId.isBlank()) return;
+        Map<String, Object> form = request.getFormValues() == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(request.getFormValues());
+        form.put("platformContextId", contextId);
+        request.setFormValues(form);
+    }
+
+    /** The release as an earlier deploy recorded it, or {@code null} for a first install or when it cannot be read. */
+    private K8sReleaseEntity recordedRelease(HelmDeployRequest request) {
+        try {
+            return new ReleaseMetadataService(ctx).find(request.getNamespace(), request.getReleaseName());
+        } catch (Exception e) {
+            LOG.warn("Could not read the recorded release {}/{}: {}", request.getNamespace(), request.getReleaseName(),
+                    e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Completes a deploy request with what it leaves out. The chart repository and version given as query parameters
+     * (the wizard sends them that way) go into the request, so the GitOps backend, which reads the request, uses them
+     * too. A redeploy of a recorded release then keeps its chart repository, its platform context and its chart
+     * version: without a version, Helm and Flux would move the release to the newest chart, which nobody reviewed.
+     * The version kept is the one the release is meant to run: for a GitOps release, the one last committed to Git
+     * ({@link #chartVersionHeldInGit}); otherwise the one Helm reports, else the recorded one.
+     *
+     * @param request  the deploy request, completed in place
+     * @param repoId   the chart repository query parameter, may be blank
+     * @param version  the chart version query parameter, may be blank
+     * @param recorded the release as recorded by an earlier deploy, {@code null} for a first install
+     * @return the chart repository and version the backends use; a query parameter wins over the request body
+     */
+    ChartSource applyReleaseDefaults(HelmDeployRequest request, String repoId, String version, K8sReleaseEntity recorded) {
+        String queryRepoId = firstNonBlank(repoId);
+        String queryVersion = pinnedChartVersion(version);
+        if (firstNonBlank(request.getRepoId()) == null) {
+            request.setRepoId(queryRepoId);
+        }
+        if (pinnedChartVersion(request.getVersion()) == null) {
+            request.setVersion(queryVersion);
+        }
+        if (recorded != null) {
+            if (firstNonBlank(request.getRepoId()) == null) {
+                request.setRepoId(firstNonBlank(recorded.getRepoId()));
+            }
+            if (request.getVersion() == null) {
+                String recordedVersion = pinnedChartVersion(recorded.getVersion());
+                if (recordedVersion != null && chartVersionHeldInGit(recorded.getDeploymentMode())) {
+                    request.setVersion(recordedVersion);
+                } else {
+                    // What runs on the cluster first: the recorded version is stale after an upgrade made outside KDPS.
+                    String deployed = pinnedChartVersion(kubernetesService.deployedChartVersion(
+                            request.getNamespace(), request.getReleaseName()));
+                    request.setVersion(deployed != null ? deployed : recordedVersion);
+                }
+                if (request.getVersion() != null) {
+                    LOG.info("Redeploy of {}/{} names no chart version: keeping chart version {}",
+                            request.getNamespace(), request.getReleaseName(), request.getVersion());
+                }
+            }
+            defaultPlatformContext(request, recorded);
+        }
+        return new ChartSource(firstNonBlank(queryRepoId, request.getRepoId()),
+                firstNonBlank(queryVersion, pinnedChartVersion(request.getVersion())));
+    }
+
+    /**
+     * Keeps the external Kerberos keytab of a release deployed against an external platform context when a redeploy
+     * does not name it. The keytab Secret is a wizard field kept out of the chart values and not recorded on the
+     * release, so a resync, a security refresh or an autoscaling change resubmits the release without it, and the
+     * deploy would then turn Kerberos off: the pods would restart without their keytab and krb5.conf. The Secret is
+     * read back from the values the release runs with (PRE_PROVISIONED injection and its keytab Secret). The principal
+     * comes from that Secret's principal key, else from the values the release runs with, so the release keeps the
+     * identity it authenticates as.
+     *
+     * <p>Only a redeploy on the external context the release was recorded on is completed: a keytab Ambari minted for
+     * the managed context looks the same in the values, and a release moved to another context needs a keytab from
+     * that context's realm, which the deploy's own checks ask for. A service that declares no operator keytab is left
+     * to the deploy as well, since there is no keytab field to fill in.
+     *
+     * @param request  the deploy request, its form values completed in place
+     * @param recorded the release as recorded by an earlier deploy, {@code null} for a first install
+     * @throws IllegalStateException when the release ran with Kerberos and its keytab cannot be found, or when the
+     *                               values it runs with cannot be read to find out
+     */
+    void restoreExternalKeytab(HelmDeployRequest request, K8sReleaseEntity recorded) {
+        if (recorded == null || deployUsesExternalKeytab(request.getFormValues())) return;
+        String contextId = request.getPlatformContextId();
+        if (contextId == null || ContextService.DEFAULT_CONTEXT_ID.equals(contextId)
+                || !contextId.equals(stringValue(recorded.getPlatformContextId()))) {
+            return;
+        }
+        StackServiceDef def = serviceDefinition(firstNonBlank(request.getServiceKey(), recorded.getServiceKey()));
+        org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget.AuthMode keytabMode = externalKeytabMode(def);
+        if (keytabMode == null) return;
+        if (request.getFormValues() != null
+                && ConfigResolutionService.getByDottedPath(request.getFormValues(), keytabMode.secretField) != null) {
+            // The form names the keytab field and left it blank: the operator's choice, checked by the deploy itself.
+            return;
+        }
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        Map<String, Object> deployed;
+        try {
+            deployed = kubernetesService.getHelmReleaseValues(namespace, release);
+        } catch (Exception e) {
+            // Going on without knowing would deploy this external context with no keytab, which turns Kerberos off.
+            // A release with no values at all is an empty map, not an error, and goes on.
+            LOG.warn("Could not read the values of {}/{} to keep its external keytab: {}", namespace, release, e.toString());
+            throw new IllegalStateException("Could not read the values of " + release + " to keep its Kerberos keytab: "
+                    + firstNonBlank(e.getMessage(), e.toString()) + ". Try again.", e);
+        }
+        if (deployed == null || !asBoolean(ConfigResolutionService.getByDottedPath(deployed, KERBEROS_ENABLED_PATH), false)) {
+            return;
+        }
+        if (turnsKerberosOffInItsValues(request)) {
+            LOG.info("Redeploy of {}/{} turns Kerberos off in its values; no keytab to keep", namespace, release);
+            return;
+        }
+
+        String injectionMode = stringValue(ConfigResolutionService.getByDottedPath(
+                deployed, "global.security.kerberos.injectionMode"));
+        String secretName = stringValue(ConfigResolutionService.getByDottedPath(deployed, KERBEROS_KEYTAB_SECRET_PATH));
+        if (!KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(injectionMode) || secretName.isEmpty()) {
+            throw new IllegalStateException("Cannot redeploy " + release + ": it runs with Kerberos against platform"
+                    + " context '" + contextId + "', but this deploy names no external keytab and none could be found"
+                    + " in the release's values. Deploying without one would turn Kerberos off, and the pods would lose"
+                    + " their keytab and krb5.conf. Open Upgrade/Config, select the service keytab Secret in step 3,"
+                    + " and deploy again.");
+        }
+
+        io.fabric8.kubernetes.api.model.Secret secret = null;
+        boolean secretRead = false;
+        try {
+            secret = kubernetesService.getSecret(namespace, secretName);
+            secretRead = true;
+        } catch (Exception e) {
+            // The deploy reads the Secret again when it applies the keytab, and stops there if it is missing.
+            LOG.warn("Could not read keytab Secret {}/{}; looking for its principal in the release's values: {}",
+                    namespace, secretName, e.toString());
+        }
+        if (secretRead && secret == null) {
+            throw new IllegalStateException("Cannot redeploy " + release + ": it runs with Kerberos against platform"
+                    + " context '" + contextId + "' using the keytab in Secret '" + namespace + "/" + secretName
+                    + "', which no longer exists. Deploying without it would turn Kerberos off, and the pods would"
+                    + " lose their keytab and krb5.conf. Recreate the Secret (keys " + keytabMode.secretKeys
+                    + "), or select another keytab Secret in Upgrade/Config (step 3), then deploy again.");
+        }
+
+        Map<String, Object> form = request.getFormValues() == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(request.getFormValues());
+        putDotted(form, keytabMode.secretField, secretName);
+        if (keytabMode.principalField != null && !keytabMode.principalField.isBlank()) {
+            String principal = resolveExternalKeytabPrincipal(keytabMode, form, secret == null ? null : secret.getData());
+            if (principal == null && keytabMode.principalApplyTo != null) {
+                for (String path : keytabMode.principalApplyTo) {
+                    principal = firstNonBlank(stringValue(ConfigResolutionService.getByDottedPath(deployed, path)));
+                    if (principal != null) break;
+                }
+            }
+            if (principal == null) {
+                principal = catalogPrincipal(def, keytabMode.principalField, deployed);
+            }
+            if (principal != null) {
+                putDotted(form, keytabMode.principalField, principal);
+            } else {
+                // Nothing the release runs with names a principal, so nothing changes identity: the deploy resolves
+                // it as the first one did.
+                LOG.info("Neither keytab Secret {}/{} nor the values of {}/{} name a principal; redeploying without"
+                        + " an explicit one", namespace, secretName, namespace, release);
+            }
+        }
+        request.setFormValues(form);
+        LOG.info("Redeploy of {}/{} names no external keytab: keeping the one it runs with (Secret {})",
+                namespace, release, secretName);
+    }
+
+    /** Whether the deploy's own values set global.security.kerberos.enabled to false: Kerberos off on purpose. */
+    private static boolean turnsKerberosOffInItsValues(HelmDeployRequest request) {
+        Object requested = request.getValues() == null ? null
+                : ConfigResolutionService.getByDottedPath(request.getValues(), KERBEROS_ENABLED_PATH);
+        return requested != null && !asBoolean(requested, true);
+    }
+
+    /**
+     * Why a deploy must not turn the release's Kerberos off, or {@code null} when it may. Asked by the direct and the
+     * GitOps deploy before they write global.security.kerberos.enabled=false because the Ambari cluster provides no
+     * Kerberos (or Ambari manages no cluster).
+     *
+     * <p>A release with no recorded platform context (deployed before KDPS recorded it, or adopted), redeployed without
+     * naming one, follows the local Ambari cluster. If it runs with Kerberos, it was deployed against a Kerberized
+     * context nobody recorded, typically an external one with the operator's keytab: turning Kerberos off would
+     * restart its pods without their keytab and krb5.conf. A recorded or named context keeps its own rules: the
+     * managed context follows its cluster, and an external one keeps its keytab ({@link #restoreExternalKeytab}).
+     * Values that set global.security.kerberos.enabled=false turn Kerberos off on purpose and are not refused. When
+     * the values the release runs with cannot be read, the deploy is refused too: it cannot tell whether it would
+     * take Kerberos away. A release with no values (a first install) is not an error and may go on.
+     *
+     * @param kubernetesService reads the values the release runs with
+     * @param request           the deploy request, completed with the release's recorded platform context
+     * @return the reason to refuse the deploy, or {@code null}
+     */
+    public static String kerberosSwitchOffProblem(KubernetesService kubernetesService, HelmDeployRequest request) {
+        if (request.getPlatformContextId() != null || turnsKerberosOffInItsValues(request)) return null;
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        Map<String, Object> deployed;
+        try {
+            deployed = kubernetesService.getHelmReleaseValues(namespace, release);
+        } catch (Exception e) {
+            LOG.warn("Could not read the values of {}/{} to check its Kerberos state: {}", namespace, release, e.toString());
+            return "Could not read the values of " + release + " to check whether it runs with Kerberos, which this"
+                    + " deploy would turn off: " + firstNonBlank(e.getMessage(), e.toString()) + ". Try again.";
+        }
+        if (deployed == null || !asBoolean(ConfigResolutionService.getByDottedPath(deployed, KERBEROS_ENABLED_PATH), false)) {
+            return null;
+        }
+        return "Cannot redeploy " + release + ": it runs with Kerberos, but no platform context is recorded for it and"
+                + " this deploy names none, so it would follow this Ambari, which provides no Kerberos, and turn"
+                + " Kerberos off. The pods would lose their keytab and krb5.conf. Open Upgrade/Config, select the"
+                + " release's platform context (and, for an external context, its service keytab Secret in step 3),"
+                + " and deploy again. To turn Kerberos off on purpose, set global.security.kerberos.enabled=false in"
+                + " the release's values.";
+    }
+
+    /**
+     * Turns Kerberos off in a direct deploy's chart values, as neither the Ambari cluster nor the platform context
+     * provides it, unless that would silently take Kerberos away from a release that runs with it.
+     *
+     * @param request the deploy request
+     * @param params  the deploy's command parameters, the override added in place
+     * @param cluster the Ambari cluster, for the log
+     * @throws IllegalStateException when the release runs with Kerberos ({@link #kerberosSwitchOffProblem})
+     */
+    void overrideKerberosOff(HelmDeployRequest request, Map<String, Object> params, String cluster) {
+        String problem = kerberosSwitchOffProblem(kubernetesService, request);
+        if (problem != null) {
+            throw new IllegalStateException(problem);
+        }
+        CommandUtils.addOverride(params, KERBEROS_ENABLED_PATH, "false");
+        LOG.info("Kerberos is disabled on cluster {} and no context krb5.conf supplied; overriding chart values with global.security.kerberos.enabled=false", cluster);
+    }
+
+    /** The service definition, or {@code null} when there is no service key or it cannot be read. */
+    private StackServiceDef serviceDefinition(String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank()) return null;
+        try {
+            return new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+        } catch (Exception e) {
+            LOG.warn("Could not load the service definition {}: {}", serviceKey, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * The Kerberos auth mode, among the service's external targets, that mounts an operator keytab Secret as the
+     * release's keytab, or {@code null} when the service has none.
+     */
+    private static org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget.AuthMode externalKeytabMode(
+            StackServiceDef def) {
+        if (def == null || def.externalServiceTargets == null) return null;
+        for (org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget target : def.externalServiceTargets.values()) {
+            var kerberos = target == null || target.authModes == null ? null : target.authModes.get("kerberos");
+            if (kerberos != null && kerberos.secretField != null && !kerberos.secretField.isBlank()
+                    && kerberos.applyTo != null && kerberos.applyTo.containsKey(KERBEROS_KEYTAB_SECRET_PATH)) {
+                return kerberos;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The principal a release's catalogs were rendered with, read from the values it runs with: the catalog
+     * properties the service definition fills from the keytab's principal field (Trino's Hive metastore and HDFS
+     * principals), at the path the deploy writes them to, then at their base paths. An unrendered template is not a
+     * principal and is skipped.
+     *
+     * @param def            the service definition
+     * @param principalField the form field the operator types the principal in
+     * @param deployed       the values the release runs with
+     * @return the principal, or {@code null} when no catalog names one
+     */
+    private String catalogPrincipal(StackServiceDef def, String principalField, Map<String, Object> deployed) {
+        if (def == null || def.catalogEnrichments == null) return null;
+        for (Map<String, Object> enrichment : def.catalogEnrichments) {
+            if (enrichment == null || !(enrichment.get("properties") instanceof List<?> properties)) continue;
+            List<String> catalogPaths = new ArrayList<>();
+            String targetPath = resolveCatalogEnrichmentTargetPath(enrichment);
+            if (targetPath != null && !targetPath.isBlank()) catalogPaths.add(targetPath);
+            catalogPaths.addAll(resolveCatalogEnrichmentBasePaths(enrichment));
+            for (Object property : properties) {
+                if (!(property instanceof Map<?, ?> spec) || !principalField.equals(spec.get("valueFromForm"))) continue;
+                String key = resolveStringValue(spec.get("key"), null);
+                if (key == null || key.isBlank()) continue;
+                for (String path : catalogPaths) {
+                    Object catalog = ConfigResolutionService.getByDottedPath(deployed, path);
+                    if (catalog == null) continue;
+                    for (String line : parseCatalogContentToLines(String.valueOf(catalog))) {
+                        if (!key.equals(extractCatalogPropertyKey(line))) continue;
+                        String principal = extractCatalogPropertyValue(line);
+                        if (!principal.isEmpty() && !principal.contains("{{")) return principal;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -4418,7 +4784,13 @@ public class CommandService {
     }
 
     private void applyCustomCatalogs(HelmDeployRequest request) {
-        if (request.getFormValues() == null) return;
+        // A form without the custom-catalogs section (resync, security refresh, autoscaling change, a deploy driven
+        // at the API) changes nothing: the release keeps the reusable catalogs it records. The wizard always sends
+        // the section, so deselecting every catalog there still clears them.
+        if (request.getFormValues() == null
+                || ConfigResolutionService.getByDottedPath(request.getFormValues(), "customCatalogs") == null) {
+            return;
+        }
         // (1) reusable catalogs selected in the wizard (ids) -> snapshot their properties + remember refs
         Map<String, String> fromRefs = new LinkedHashMap<>();
         Map<String, Map<String, String>> refs = new LinkedHashMap<>();
@@ -5245,8 +5617,7 @@ public class CommandService {
         } else if (kerberosDetectionAvailable) {
             // Explicitly disable Kerberos in chart values when neither the Ambari cluster nor the
             // selected context provides Kerberos.
-            this.commandUtils.addOverride(params, "global.security.kerberos.enabled", "false");
-            LOG.info("Kerberos is disabled on cluster {} and no context krb5.conf supplied; overriding chart values with global.security.kerberos.enabled=false", cluster);
+            overrideKerberosOff(request, params, cluster);
         }
 
         // Build Kerberos template variables for later templating (catalog enrichments, etc.).

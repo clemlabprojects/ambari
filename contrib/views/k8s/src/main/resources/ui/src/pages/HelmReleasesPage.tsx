@@ -27,6 +27,7 @@ import { getPods, listDeployments, type DeploymentRow } from '../api/client';
 import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
+import { releaseRedeployPayload } from './releaseRedeploy';
 import type { MenuProps } from 'antd';
 import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -231,25 +232,16 @@ const HelmReleasesPage: React.FC = () => {
 
     /**
      * Re-apply the security profile for a release by re-submitting its current
-     * values. This triggers backend logic to regenerate secrets/config required
-     * by the selected profile. Command is tracked via the background ops modal
-     * when an ID is returned.
+     * values, at its current chart version and platform context. This triggers
+     * backend logic to regenerate secrets/config required by the selected
+     * profile. Command is tracked via the background ops modal when an ID is
+     * returned.
      */
     const refreshSecurityProfile = async (release: HelmRelease) => {
       const hide = message.loading('Refreshing security profile...', 0);
       try {
         const currentValues = await getReleaseValues(release.namespace, release.name);
-        const payload = {
-          chart: release.chartRef || release.chart,
-          releaseName: release.name,
-          namespace: release.namespace,
-          values: currentValues,
-          serviceKey: release.serviceKey,
-          securityProfile: release.securityProfile,
-          repoId: release.repoId,
-          deploymentMode: release.deploymentMode,
-          git: gitOptionsForRelease(release)
-        };
+        const payload = releaseRedeployPayload(release, currentValues, gitOptionsForRelease(release));
         const response = await submitHelmDeploy(payload as any);
         if (response?.id) {
           setWatchedCommandId(response.id);
@@ -270,21 +262,7 @@ const HelmReleasesPage: React.FC = () => {
    * Used by the worker autoscaling action.
    */
   const redeployWithValues = async (release: HelmRelease, values: any) => {
-    const response = await submitHelmDeploy({
-      chart: release.chartRef || release.chart,
-      releaseName: release.name,
-      namespace: release.namespace,
-      values,
-      version: release.version,
-      // The context the release was deployed against: without it Ranger, Kerberos and Hadoop config steps would
-      // use the local Ambari instead of an external context.
-      formValues: release.platformContextId ? { platformContextId: release.platformContextId } : undefined,
-      serviceKey: release.serviceKey,
-      securityProfile: release.securityProfile,
-      repoId: release.repoId,
-      deploymentMode: release.deploymentMode,
-      git: gitOptionsForRelease(release)
-    } as any);
+    const response = await submitHelmDeploy(releaseRedeployPayload(release, values, gitOptionsForRelease(release)) as any);
     if (response?.id) {
       setWatchedCommandId(response.id);
       setIsCommandDrawerOpen(true);
@@ -293,7 +271,8 @@ const HelmReleasesPage: React.FC = () => {
   };
 
   /**
-   * Re-sync a release (or trigger a restart) by re-submitting current values.
+   * Re-sync a release (or trigger a restart) by re-submitting current values, at its current chart version and
+   * platform context.
    * This is used when restartRequired or securityProfileStale flags are set.
    * The request is tracked in the background ops modal when an ID is returned.
    */
@@ -301,17 +280,7 @@ const HelmReleasesPage: React.FC = () => {
     const hide = message.loading(reason, 0);
     try {
       const currentValues = await getReleaseValues(release.namespace, release.name);
-      const payload = {
-        chart: release.chartRef || release.chart,
-        releaseName: release.name,
-        namespace: release.namespace,
-        values: currentValues,
-        serviceKey: release.serviceKey,
-        securityProfile: release.securityProfile,
-        repoId: release.repoId,
-        deploymentMode: release.deploymentMode,
-        git: gitOptionsForRelease(release)
-      };
+      const payload = releaseRedeployPayload(release, currentValues, gitOptionsForRelease(release));
       const response = await submitHelmDeploy(payload as any);
       if (response?.id) {
         setWatchedCommandId(response.id);

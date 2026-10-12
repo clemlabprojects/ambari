@@ -6279,18 +6279,20 @@ public class KubernetesService {
         try {
             // 1. Find the secret for the 'deployed' release
             // Helm secrets have labels: name=<release>, owner=helm, status=deployed
-            List<Secret> secrets = client.secrets().inNamespace(namespace)
+            // Renewed on a revoked OpenShift token: a redeploy refuses to go on when it cannot read these values.
+            String operation = "read the Helm values of " + namespace + "/" + releaseName;
+            List<Secret> secrets = executeWithAuthRetry(operation, () -> client.secrets().inNamespace(namespace)
                     .withLabel("owner", "helm")
                     .withLabel("name", releaseName)
                     .withLabel("status", "deployed")
-                    .list().getItems();
+                    .list().getItems());
 
             if (secrets.isEmpty()) {
                 // Fallback: get the latest version if status is not deployed (e.g. failed)
-                secrets = client.secrets().inNamespace(namespace)
+                secrets = executeWithAuthRetry(operation, () -> client.secrets().inNamespace(namespace)
                         .withLabel("owner", "helm")
                         .withLabel("name", releaseName)
-                        .list().getItems();
+                        .list().getItems());
 
                 if (secrets.isEmpty()) {
                     LOG.warn("No Helm release secret found for {}/{}", namespace, releaseName);

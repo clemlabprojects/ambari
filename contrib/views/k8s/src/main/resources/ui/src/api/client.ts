@@ -1332,8 +1332,9 @@ export async function submitHelmDeploy(payload: {
   ranger?: any;
   requiredConfigMaps?: any;
   dynamicValues?: any;
-  // Optional chart-version override, sent as the deploy's ?version= (helm --version). Blank ⇒ backend
-  // default (catalog/latest). For OCI charts the version MUST go here, never tagged onto the chart ref.
+  // Optional chart version, sent in the body and as the deploy's ?version= (helm --version). Blank ⇒ a
+  // redeploy keeps the version the release runs; a first install takes the newest chart (direct Helm) or the
+  // service definition's version (GitOps). For OCI charts the version MUST go here, never tagged onto the chart ref.
   version?: string;
   // Snapshot of the wizard's raw form state (envelope keys stripped) so the backend can
   // read excludeFromValues form fields when resolving service-definition variables like
