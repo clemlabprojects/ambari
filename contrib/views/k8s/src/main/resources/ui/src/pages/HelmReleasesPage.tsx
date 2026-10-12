@@ -28,6 +28,7 @@ import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import { releaseRedeployPayload } from './releaseRedeploy';
+import { offersCatalogs } from './releaseCatalogs';
 import type { MenuProps } from 'antd';
 import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -666,13 +667,14 @@ const HelmReleasesPage: React.FC = () => {
           label: 'Revision history…',
           onClick: () => { void openHistoryModal(record); },
         },
-        // Live catalog management, Trino releases only: runs on the coordinator as the operator.
-        ...((record.serviceKey || '').toUpperCase() === 'TRINO' ? [{
+        // Live catalog management, on the Trino releases where it can run: runs on the coordinator as the operator.
+        ...(offersCatalogs(record) ? [{
           key: 'catalogs',
           icon: <DatabaseOutlined />,
           label: 'Catalogs…',
           onClick: () => setCatalogsRelease(record),
-        }, {
+        }] : []),
+        ...((record.serviceKey || '').toUpperCase() === 'TRINO' ? [{
           // One Ranger policy (allow / mask / row filter) without leaving KDPS; the backend routes to
           // the Ambari server (managed context) or to the context's Ranger (external context).
           key: 'ranger-policy',

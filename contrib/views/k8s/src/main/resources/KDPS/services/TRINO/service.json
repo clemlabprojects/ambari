@@ -1464,6 +1464,12 @@
           }
         },
         {
+          "comment": "Written when internal HTTPS is off too: an upgrade starts from the release's values, which hold true when it was installed with internal HTTPS, so skipping the target above would leave HTTPS on while the options that need it are turned off (kdps-service-user-needs-https).",
+          "path": "server.config.https.enabled",
+          "skipIfVarEmpty": "tlsHttpsDisabled",
+          "value": false
+        },
+        {
           "path": "server.config.https.port",
           "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
@@ -1554,6 +1560,17 @@
         {
           "path": "additionalConfigProperties[]",
           "value": "http-server.process-forwarded=true"
+        }
+      ]
+    },
+    {
+      "comment": "'Let KDPS manage catalogs' is a password login, which Trino only accepts over HTTPS: the chart refuses it without internal HTTPS and the dry run fails. The checkbox is on by default and only hidden once internal HTTPS is off, and a hidden field still sends its value, so it is turned off here.",
+      "name": "kdps-service-user-needs-https",
+      "skipIfVarEmpty": "tlsHttpsDisabled",
+      "targets": [
+        {
+          "path": "kdps.serviceUser.enabled",
+          "value": false
         }
       ]
     },
@@ -2256,7 +2273,8 @@
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
-          "help": "On by default: Trino terminates TLS itself (keystore signed by the internal CA). The OpenShift Route then uses passthrough, and internal clients (Superset, dbt, OpenMetadata) must use https on the HTTPS port. Turned off, TLS stops at the edge: authenticated traffic, tokens included, crosses the pod network in clear text."
+          "seedFromValue": "server.config.https.enabled",
+          "help": "On by default: Trino terminates TLS itself (keystore signed by the internal CA). The OpenShift Route then uses passthrough, and internal clients (Superset, dbt, OpenMetadata) must use https on the HTTPS port. Turned off, TLS stops at the edge: authenticated traffic, tokens included, crosses the pod network in clear text, and 'Let KDPS manage catalogs' (Custom catalogs) is turned off, since Trino only accepts password logins over HTTPS."
         },
         {
           "name": "tls.https.autoGenerate",
@@ -2987,7 +3005,11 @@
           "label": "Let KDPS manage catalogs on the running Trino as the logged-in operator",
           "type": "boolean",
           "defaultValue": true,
-          "help": "Adds a dedicated Trino login for KDPS (a file password user beside your LDAP/OIDC/Kerberos setup) and grants it 'impersonate' in Ranger. The Catalogs action on the release then runs CREATE/DROP CATALOG as you, so Ranger decides what you may do. Needs chart 1.43.13 or later and Trino HTTPS (on by default)."
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          },
+          "help": "Adds a dedicated Trino login for KDPS (a file password user beside your LDAP/OIDC/Kerberos setup) and grants it 'impersonate' in Ranger. The Catalogs action on the release then runs CREATE/DROP CATALOG as you, so Ranger decides what you may do. Needs chart 1.43.13 or later and 'Enable internal HTTPS' (Internal HTTPS, on by default): Trino only accepts password logins over HTTPS, so this option is hidden and turned off while internal HTTPS is off."
         },
         {
           "name": "customCatalogs.refs",

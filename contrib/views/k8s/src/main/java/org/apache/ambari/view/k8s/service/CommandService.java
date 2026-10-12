@@ -4678,10 +4678,13 @@ public class CommandService {
         K8sReleaseEntity recorded = recordedRelease(request);
         ChartSource chartSource = applyReleaseDefaults(request, repoId, version, recorded);
 
+        // Warnings found while the deploy is submitted, written into its operation log (see logDeployWarnings).
+        List<String> warnings = new ArrayList<>();
+
         // Apply value-path aliases and version compatibility checks before the backend
         // dispatch so every code path (direct helm, flux GitOps, dry-run preview) sees
         // the same rewritten values map.
-        applyValueAliasesAndVersionCheck(request, chartSource.version());
+        applyValueAliasesAndVersionCheck(request, chartSource.version(), warnings);
 
         // Operator-supplied extra catalogs. Parsed here, next to the alias rewriting and for the same
         // reason: it is the one place every backend goes through, so a deploy driven straight at the
@@ -4690,8 +4693,7 @@ public class CommandService {
         checkCatalogCredentials(request, customCatalogs);
 
         // Secrets this deploy would still leave readable outside a Kubernetes Secret: refused when the operator can
-        // fix them in the wizard, otherwise written into the operation log (see logDeployWarnings).
-        List<String> warnings = new ArrayList<>();
+        // fix them in the wizard, otherwise written into the operation log.
         addIfPresent(warnings, checkLiteralCatalogCredentials(request, recorded));
         addIfPresent(warnings, checkSecretChartVersions(request, chartSource.version(), fromForm));
 
@@ -5242,20 +5244,13 @@ public class CommandService {
                     + " of a KDPS Trino release in this cluster (expected <service>.<namespace>.svc.cluster.local[:port]"
                     + " of a release deployed with the KDPS service user, chart >= 1.43.13). Pick a coordinator from the list.");
         }
-                // Fail at submit when the Trino release cannot serve OM: the registration needs the KDPS
-        // service user (basic auth) and HTTPS (Trino refuses password auth on plain HTTP).
+        // Fail at submit when the Trino release cannot serve OM: the registration signs in as the KDPS
+        // service user, a password login, which Trino only accepts over HTTPS.
         try {
-            Map<String, Object> tv = kubernetesService.getHelmReleaseValues(ref[0], ref[1]);
-            Object su = tv == null ? null : ConfigResolutionService.getByDottedPath(tv, "kdps.serviceUser.enabled");
-            Object https = tv == null ? null : ConfigResolutionService.getByDottedPath(tv, "server.config.https.enabled");
-            if (su == null || !"true".equalsIgnoreCase(String.valueOf(su))) {
-                throw new IllegalArgumentException("Trino base ingestion: release " + ref[0] + "/" + ref[1]
-                        + " was deployed without the KDPS service user ('Let KDPS manage catalogs', chart >= 1.43.13)."
-                        + " Upgrade that Trino release with the option on first.");
-            }
-            if (https != null && !"true".equalsIgnoreCase(String.valueOf(https))) {
-                throw new IllegalArgumentException("Trino base ingestion: release " + ref[0] + "/" + ref[1]
-                        + " has HTTPS disabled; OpenMetadata authenticates with a password, which Trino only accepts over HTTPS.");
+            String unavailable = org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.serviceUserUnavailable(
+                    kubernetesService.getHelmReleaseValues(ref[0], ref[1]), "Trino base ingestion", ref[0] + "/" + ref[1]);
+            if (unavailable != null) {
+                throw new IllegalArgumentException(unavailable);
             }
         } catch (IllegalArgumentException iae) {
             throw iae;
@@ -5642,7 +5637,7 @@ public class CommandService {
         return parsed;
     }
 
-    private void applyValueAliasesAndVersionCheck(HelmDeployRequest request, String resolvedVersion) {
+    private void applyValueAliasesAndVersionCheck(HelmDeployRequest request, String resolvedVersion, List<String> warnings) {
         if (request.getServiceKey() == null || request.getServiceKey().isBlank()) return;
         StackServiceDef def;
         try {
@@ -5665,6 +5660,10 @@ public class CommandService {
             LOG.info("Chart version {} satisfies range '{}' for {}", resolvedVersion, def.requiredChartVersion, request.getServiceKey());
         }
 
+        // ----- Trino options that need internal HTTPS
+        // Before the per-feature check: an option turned off here needs no particular chart version.
+        addIfPresent(warnings, checkServiceUserNeedsHttps(request, def));
+
         // ----- per-feature chart version check
         // A toggle whose chart-side template only exists in a later chart must not deploy silently as
         // a no-op. Enforced only when the toggle is actually on, so the service keeps a permissive
@@ -5676,8 +5675,11 @@ public class CommandService {
                 String range = fe.getValue();
                 if (togglePath == null || togglePath.isBlank() || range == null || range.isBlank()) continue;
                 if (togglePath.startsWith("_")) continue;   // "_comment" and friends: documentation, not a toggle
+                // The chart reads the values, so the form only counts for a toggle the values do not carry. A binding
+                // may turn a toggle off in the values while the form keeps its default: the wizard does so for 'Let
+                // KDPS manage catalogs' once internal HTTPS is off, and hides the checkbox.
                 Object enabled = ConfigResolutionService.getByDottedPath(request.getValues(), togglePath);
-                if (!featureOn(enabled) && request.getFormValues() != null) {
+                if (enabled == null && request.getFormValues() != null) {
                     enabled = ConfigResolutionService.getByDottedPath(request.getFormValues(), togglePath);
                 }
                 if (!featureOn(enabled)) continue;
@@ -5696,6 +5698,59 @@ public class CommandService {
 
         // ----- value path rewrites and retired values
         applyDefinitionValueRewrites(def, request.getServiceKey(), request.getValues());
+    }
+
+    /** The Trino chart value behind 'Let KDPS manage catalogs'. */
+    public static final String KDPS_SERVICE_USER_ENABLED = "kdps.serviceUser.enabled";
+
+    /** The Trino chart value behind 'Enable internal HTTPS'. */
+    public static final String TRINO_HTTPS_ENABLED = "server.config.https.enabled";
+
+    /**
+     * 'Let KDPS manage catalogs' gives KDPS a password login on Trino, and Trino only accepts password logins over
+     * HTTPS: the chart refuses the option without 'Enable internal HTTPS', and the deploy would only fail at the Helm
+     * dry run, with a message that names Helm values. The wizard turns the option off, and hides it, while internal
+     * HTTPS is off; this covers the deploys that skip the wizard's bindings (a request sent straight to the API, a
+     * browser still running an earlier version of the view).
+     * <ul>
+     *   <li>The option is on because it is the wizard's default: the deploy carries the wizard's form with the option
+     *   at its default value, and leaves HTTPS at the chart's default (off). The option is turned off, in the values
+     *   and the form, and the returned warning goes into the operation log.</li>
+     *   <li>Otherwise the request asked for both, and is refused with the wizard labels.</li>
+     * </ul>
+     * Only checked for a service that declares the option (Trino).
+     *
+     * @param def the service definition of the deploy
+     * @return the warning when the option was turned off, or {@code null}
+     * @throws IllegalArgumentException when the request turns the option on without internal HTTPS
+     */
+    static String checkServiceUserNeedsHttps(HelmDeployRequest request, StackServiceDef def) {
+        FormField option = def == null ? null : findFormField(def.form, KDPS_SERVICE_USER_ENABLED);
+        Map<String, Object> values = request.getValues();
+        if (option == null || values == null
+                || !asBoolean(ConfigResolutionService.getByDottedPath(values, KDPS_SERVICE_USER_ENABLED), false)) {
+            return null;
+        }
+        Object https = ConfigResolutionService.getByDottedPath(values, TRINO_HTTPS_ENABLED);
+        if (asBoolean(https, false)) return null;
+
+        Map<String, Object> form = request.getFormValues();
+        Object inForm = form == null ? null : ConfigResolutionService.getByDottedPath(form, KDPS_SERVICE_USER_ENABLED);
+        boolean fromDefault = https == null && asBoolean(inForm, false) && asBoolean(option.defaultValue, false);
+        if (!fromDefault) {
+            throw new IllegalArgumentException("'Let KDPS manage catalogs' (" + KDPS_SERVICE_USER_ENABLED
+                    + ") needs 'Enable internal HTTPS' (" + TRINO_HTTPS_ENABLED + "): Trino only accepts password"
+                    + " logins over HTTPS. Turn internal HTTPS on, or turn 'Let KDPS manage catalogs' off.");
+        }
+        putDotted(values, KDPS_SERVICE_USER_ENABLED, false);
+        // Keep the form in step, so nothing after this reads the option as still on.
+        putDotted(form, KDPS_SERVICE_USER_ENABLED, false);
+        String warning = "'Let KDPS manage catalogs' was turned off: it needs 'Enable internal HTTPS', which is off for"
+                + " this release (Trino only accepts password logins over HTTPS). Without it, the Catalogs action and the"
+                + " OpenMetadata Trino ingestion do not work on this release. To use them, turn internal HTTPS on in"
+                + " Upgrade/Config, then 'Let KDPS manage catalogs'.";
+        LOG.warn("{}/{}: {}", request.getNamespace(), request.getReleaseName(), warning);
+        return warning;
     }
 
     /**

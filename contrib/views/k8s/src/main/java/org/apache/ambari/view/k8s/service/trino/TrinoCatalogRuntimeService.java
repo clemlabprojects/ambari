@@ -102,11 +102,8 @@ public class TrinoCatalogRuntimeService {
         t.values = kubernetesService.getHelmReleaseValues(namespace, release);
         if (t.values == null) t.values = Collections.emptyMap();
         t.metadata = new ReleaseMetadataService(ctx).find(namespace, release);
-        Object https = ConfigResolutionService.getByDottedPath(t.values, "server.config.https.enabled");
-        if (https != null && !"true".equalsIgnoreCase(String.valueOf(https))) {
-            throw new IllegalStateException("Catalog management needs Trino HTTPS (server.config.https.enabled) — "
-                    + "Trino refuses password authentication over plain HTTP.");
-        }
+        String unavailable = serviceUserUnavailable(t.values, "Catalog management", namespace + "/" + release);
+        if (unavailable != null) throw new IllegalStateException(unavailable);
         Object port = ConfigResolutionService.getByDottedPath(t.values, "server.config.https.port");
         t.httpsPort = port == null ? 8443 : Integer.parseInt(String.valueOf(port));
         Object dyn = ConfigResolutionService.getByDottedPath(t.values, "dynamicCatalogs.enabled");
@@ -115,12 +112,6 @@ public class TrinoCatalogRuntimeService {
         t.storeDir = sd == null || String.valueOf(sd).isBlank() ? "/opt/trino/catalog-store" : String.valueOf(sd);
         Object rs = ConfigResolutionService.getByDottedPath(t.values, "ranger.serviceName");
         t.rangerService = rs == null ? null : String.valueOf(rs);
-        Object su = ConfigResolutionService.getByDottedPath(t.values, "kdps.serviceUser.enabled");
-        if (su == null || !"true".equalsIgnoreCase(String.valueOf(su))) {
-            throw new IllegalStateException("This release was deployed without the KDPS service user "
-                    + "(kdps.serviceUser.enabled). Run Upgrade/Config with 'Let KDPS manage catalogs' on, "
-                    + "chart >= 1.43.13.");
-        }
         KubernetesClient client = kubernetesService.getClient();
         // coordinator pod (Running, not terminating)
         List<Pod> pods = client.pods().inNamespace(namespace)
@@ -162,6 +153,48 @@ public class TrinoCatalogRuntimeService {
         t.serviceUser = sec.getData().containsKey("username")
                 ? new String(Base64.getDecoder().decode(sec.getData().get("username")), StandardCharsets.UTF_8) : "kdps";
         return t;
+    }
+
+    /**
+     * Whether KDPS can sign in to a Trino release as its service user, which live catalog management and the
+     * OpenMetadata Trino ingestion both do. See {@link #serviceUserUnavailable}.
+     *
+     * @param values the release's values; may be {@code null}
+     * @return {@code true} when the release runs with 'Let KDPS manage catalogs' and 'Enable internal HTTPS'
+     */
+    public static boolean serviceUserAvailable(Map<String, Object> values) {
+        return isOn(values, CommandService.TRINO_HTTPS_ENABLED) && isOn(values, CommandService.KDPS_SERVICE_USER_ENABLED);
+    }
+
+    /**
+     * Why KDPS cannot sign in to a Trino release as its service user. The release needs 'Let KDPS manage catalogs',
+     * which is a password login, and 'Enable internal HTTPS', since Trino only accepts passwords over HTTPS; the
+     * wizard hides the first until the second is on, so internal HTTPS is checked first. A value the release does not
+     * set is the chart's default, which is off for both.
+     *
+     * @param values  the release's values; may be {@code null}
+     * @param feature what needs the login, which opens the sentence (e.g. "Catalog management")
+     * @param release the release, as {@code namespace/name}
+     * @return the reason, naming the options as the wizard shows them, or {@code null} when KDPS can sign in
+     */
+    public static String serviceUserUnavailable(Map<String, Object> values, String feature, String release) {
+        if (!isOn(values, CommandService.TRINO_HTTPS_ENABLED)) {
+            return feature + " needs 'Enable internal HTTPS' and 'Let KDPS manage catalogs' on Trino release " + release
+                    + ", which runs with internal HTTPS off: the KDPS login on Trino is a password, which Trino only"
+                    + " accepts over HTTPS. In Upgrade/Config of " + release + ", turn 'Enable internal HTTPS' on, then"
+                    + " 'Let KDPS manage catalogs' (Custom catalogs).";
+        }
+        if (!isOn(values, CommandService.KDPS_SERVICE_USER_ENABLED)) {
+            return feature + " needs 'Let KDPS manage catalogs' on Trino release " + release + ", which was deployed"
+                    + " without it. Turn it on in Upgrade/Config of " + release + " (Custom catalogs, chart 1.43.13 or"
+                    + " later).";
+        }
+        return null;
+    }
+
+    private static boolean isOn(Map<String, Object> values, String path) {
+        Object v = values == null ? null : ConfigResolutionService.getByDottedPath(values, path);
+        return v != null && "true".equalsIgnoreCase(String.valueOf(v));
     }
 
     private TrinoStatementClient clientFor(Target t) {

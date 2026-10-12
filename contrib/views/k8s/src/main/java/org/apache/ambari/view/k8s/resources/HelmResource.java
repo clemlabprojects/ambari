@@ -284,6 +284,11 @@ public class HelmResource {
                             metadata != null ? metadata.getVersion() : null,
                             metadata != null ? metadata.getDeploymentMode() : null);
 
+                    // So the page offers the Catalogs action only on a Trino release where it can run.
+                    releaseDto.catalogManagement = catalogManagement(releaseDto.namespace, releaseDto.name,
+                            releaseDto.serviceKey,
+                            () -> kubernetesService.getHelmReleaseValues(releaseDto.namespace, releaseDto.name));
+
                     // Backend-aware status lookup
                     if (metadata != null) {
                         HelmReleaseDTO refreshed = commandService.statusViaBackend(releaseDto.namespace, releaseDto.name, metadata.getDeploymentMode());
@@ -414,6 +419,31 @@ public class HelmResource {
             }
         }
         return hasListed ? listed : record;
+    }
+
+    /**
+     * Whether the Catalogs action can run on a release, for the Releases page to offer it: a Trino release deployed
+     * with 'Let KDPS manage catalogs' and 'Enable internal HTTPS' (see
+     * {@link org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService#serviceUserAvailable}). A release
+     * deployed with internal HTTPS off never has the first. Only a Trino release's values are read.
+     *
+     * @param namespace  the release namespace, for the log
+     * @param name       the release name, for the log
+     * @param serviceKey the service KDPS recorded for the release; may be {@code null}
+     * @param values     reads the release's values
+     * @return whether the action can run, or {@code null} when the release is not Trino or its values cannot be read,
+     *         in which case the page still offers the action and the action says what is missing
+     */
+    static Boolean catalogManagement(String namespace, String name, String serviceKey,
+                                     Supplier<Map<String, Object>> values) {
+        if (!"TRINO".equalsIgnoreCase(serviceKey)) return null;
+        try {
+            return org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.serviceUserAvailable(values.get());
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the values of Trino release {}/{} for its Catalogs action: {}", namespace, name,
+                    e.toString());
+            return null;
+        }
     }
 
     /**

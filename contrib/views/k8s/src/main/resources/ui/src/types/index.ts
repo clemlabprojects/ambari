@@ -31,6 +31,7 @@ export interface HelmRelease {
   serviceKey?: string;   // ex: "trino", "prometheus"
   platformContextId?: string; // KDPS context the release was deployed against (Upgrade/Config preselect)
   catalogRefs?: Record<string, { id: string; hash: string }>; // reusable Trino catalogs attached at deploy time (name -> ref)
+  catalogManagement?: boolean | null; // Trino: false when the Catalogs action cannot run (no 'Let KDPS manage catalogs' or no internal HTTPS)
   truststoreRefs?: string[]; // truststores selected at deploy time (absent: never recorded)
   repoId?: string;
   chartRef?: string;

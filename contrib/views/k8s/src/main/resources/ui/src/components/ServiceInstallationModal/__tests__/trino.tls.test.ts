@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { buildVarContext, applyBindingTargets } from '../bindings';
+import { buildVarContext, applyBindingTargets, deepMerge } from '../bindings';
+import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../chartValues';
+import { seedFieldsFromRelease } from '../seedFromRelease';
 import { buildTlsPayload } from '../tlsPayload';
 
 /**
@@ -77,7 +79,9 @@ describe('TRINO service.json — TLS on the coordinator', () => {
   it('TLS off falls back to edge termination, and only then trusts the router', () => {
     const v = render(seededTls('trino', { enabled: false }));
     expect(v.additionalConfigProperties).toContain('http-server.process-forwarded=true');
-    expect(v.server?.config?.https?.enabled).toBeUndefined();
+    // Said explicitly, not left to the chart default: an upgrade starts from values that may hold true.
+    expect(v.server.config.https.enabled).toBe(false);
+    expect(v.server.config.https.keystore).toBeUndefined();
   });
 
   it('does not repoint the CA truststore at this release\'s own keystore', () => {
@@ -121,5 +125,87 @@ describe('TRINO service.json — TLS payload the server provisions from', () => 
     const specs = [{ ...def.tls[0], defaults: { ...def.tls[0].defaults, passwordSecretName: 'shared-https-pass' } }];
     const payload = buildTlsPayload(specs, form(seededTls('trino', { secretName: 'corp-trino-ks' })));
     expect(payload.https.passwordSecretName).toBe('shared-https-pass');
+  });
+});
+
+describe('TRINO service.json — "Let KDPS manage catalogs" needs internal HTTPS', () => {
+  // The chart refuses kdps.serviceUser.enabled without server.config.https.enabled (Trino only accepts password logins
+  // over HTTPS), and the option is on by default. Built the way the wizard builds the deploy, from every field's
+  // default, with all the bindings and variables of the definition.
+  const field = (group: string, name: string) =>
+    def.form.find((g: any) => g.name === group).fields.find((f: any) => f.name === name);
+
+  const chartValues = (form: any) => buildChartValues({
+    form: def.form, bindings: def.bindings, variables: def.variables, formValues: form,
+    platform: 'kubernetes', chartVersion: def.version, retiredValues: def.retiredValues,
+  });
+
+  function wizardValues(httpsEnabled: boolean) {
+    const form: any = { releaseName: 'trino', namespace: 'analytics' };
+    applyFormDefaults(def.form, form);
+    form.tls = { https: seededTls('trino', { enabled: httpsEnabled }) };
+    return chartValues(form);
+  }
+
+  /** The form Upgrade/Config opens with: the defaults, with the release's values merged over them (ServiceWizardPage). */
+  function upgradeForm(deployed: any) {
+    const form: any = { releaseName: 'trino', namespace: 'analytics' };
+    applyFormDefaults(def.form, form);
+    form.tls = { https: seededTls('trino') };
+    deepMerge(form, JSON.parse(JSON.stringify(deployed)));
+    seedFieldsFromValues(def.form, form);
+    seedFieldsFromRelease(def.form, form);
+    return form;
+  }
+
+  it('is on by default, with internal HTTPS', () => {
+    const v = wizardValues(true);
+    expect(v.kdps.serviceUser.enabled).toBe(true);
+    expect(v.server.config.https.enabled).toBe(true);
+  });
+
+  it('internal HTTPS off turns it off, although the hidden checkbox keeps its default', () => {
+    const v = wizardValues(false);
+    expect(v.kdps.serviceUser.enabled).toBe(false);
+    expect(v.server.config.https.enabled).toBe(false);
+  });
+
+  it('the checkbox is shown only with internal HTTPS, and the two help texts point at each other', () => {
+    const option = field('customCatalogs', 'kdps.serviceUser.enabled');
+    const https = field('httpsInternal', 'tls.https.enabled');
+    expect(option.defaultValue).toBe(true);
+    expect(option.condition).toEqual({ field: 'tls.https.enabled', value: true });
+    expect(option.help).toContain(`'${https.label}'`);
+    expect(https.help).toContain("'Let KDPS manage catalogs'");
+  });
+
+
+  it('Upgrade/Config: turning internal HTTPS off reaches the chart, together with the option', () => {
+    // The release's values hold server.config.https.enabled: true from the install. Skipping the binding that writes
+    // it would send that true again: HTTPS would stay on while the option is turned off.
+    const deployed = { server: { config: { https: { enabled: true } } }, kdps: { serviceUser: { enabled: true } } };
+    const form = upgradeForm(deployed);
+    expect(form.tls.https.enabled).toBe(true);
+    expect(form.kdps.serviceUser.enabled).toBe(true);
+
+    form.tls.https.enabled = false;
+    const v = chartValues(form);
+    expect(v.server.config.https.enabled).toBe(false);
+    expect(v.kdps.serviceUser.enabled).toBe(false);
+    expect(v.additionalConfigProperties).toContain('http-server.process-forwarded=true');
+  });
+
+  it('Upgrade/Config opens with the internal HTTPS setting the release runs with', () => {
+    const httpsOff = upgradeForm(wizardValues(false));
+    expect(httpsOff.tls.https.enabled).toBe(false);
+    const resent = chartValues(httpsOff);
+    expect(resent.server.config.https.enabled).toBe(false);
+    expect(resent.kdps.serviceUser.enabled).toBe(false);
+
+    const httpsOn = upgradeForm(wizardValues(true));
+    expect(httpsOn.tls.https.enabled).toBe(true);
+    const kept = chartValues(httpsOn);
+    expect(kept.server.config.https.enabled).toBe(true);
+    expect(kept.kdps.serviceUser.enabled).toBe(true);
   });
 });
