@@ -6223,6 +6223,52 @@ public class KubernetesService {
         client.secrets().inNamespace(namespace).withName(name).delete();
     }
 
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext FLUX_HELM_RELEASE_RDC =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup("helm.toolkit.fluxcd.io").withVersion("v2")
+                    .withKind("HelmRelease").withPlural("helmreleases").withNamespaced(true).build();
+
+    /**
+     * Asks Flux to reconcile a HelmRelease now, with the {@code reconcile.fluxcd.io/requestedAt} annotation, so it
+     * reads again the values it takes from Secrets ({@code spec.valuesFrom}) even though nothing changed in Git.
+     *
+     * @param namespace the HelmRelease namespace
+     * @param name      the HelmRelease name
+     * @return true when the HelmRelease was annotated, false when it is not on the cluster
+     */
+    public boolean requestFluxReconcile(String namespace, String name) {
+        checkConfiguration();
+        var helmRelease = client.genericKubernetesResources(FLUX_HELM_RELEASE_RDC).inNamespace(namespace).withName(name);
+        if (helmRelease.get() == null) {
+            return false;
+        }
+        String requestedAt = java.time.Instant.now().toString();
+        helmRelease.edit(hr -> {
+            Map<String, String> annotations = hr.getMetadata().getAnnotations() == null
+                    ? new HashMap<>() : new HashMap<>(hr.getMetadata().getAnnotations());
+            annotations.put("reconcile.fluxcd.io/requestedAt", requestedAt);
+            hr.getMetadata().setAnnotations(annotations);
+            return hr;
+        });
+        LOG.info("Requested a Flux reconcile of HelmRelease {}/{}", namespace, name);
+        return true;
+    }
+
+    /**
+     * The names of the Secrets in a namespace that carry every given label.
+     *
+     * @param namespace the namespace to look in
+     * @param labels    the labels a Secret must carry, with these values
+     */
+    public List<String> listSecretNames(String namespace, Map<String, String> labels) {
+        checkConfiguration();
+        return executeWithAuthRetry("list secrets in namespace " + namespace,
+                () -> client.secrets().inNamespace(namespace).withLabels(labels).list().getItems()).stream()
+                .filter(s -> s.getMetadata() != null && s.getMetadata().getName() != null)
+                .map(s -> s.getMetadata().getName())
+                .collect(java.util.stream.Collectors.toList());
+    }
+
     /**
      * Retrieves the user-supplied configuration (values.yaml) for a specific Helm release
      * by decoding the Kubernetes Secret managed by Helm.

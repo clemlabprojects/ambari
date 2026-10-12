@@ -119,6 +119,74 @@ class GitClientTest {
   }
 
     @Test
+    void changedFilesAreTheNewAndModifiedOnes(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\n");
+        String sha = client.commitAndPush("add trino");
+        assertEquals(sha, client.headCommit());
+        assertTrue(client.changedFiles().isEmpty());
+
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\nspec: {}\n");
+        client.writeFile(Path.of("apps/trino/dependencies/keda-helmrelease.yaml"), "kind: HelmRelease\n");
+        client.deletePath(Path.of("README.md"));
+
+        assertEquals(java.util.Set.of(Path.of("apps/trino/helmrelease.yaml"),
+                Path.of("apps/trino/dependencies/keda-helmrelease.yaml")), client.changedFiles(),
+                "a deletion writes nothing");
+        assertEquals(sha, client.headCommit(), "uncommitted files do not move HEAD");
+    }
+
+    @Test
+    void aRefusedPushFailsAndTheNextCallPushesTheCommitAlreadyMade(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        String seed = client.headCommit();
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\n");
+        // The remote cannot update its branch (another update holds the lock): it answers with a refusal, not an error.
+        Path lock = tmp.resolve("remote.git/refs/heads/" + BRANCH + ".lock");
+        Files.writeString(lock, "");
+
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, () -> client.commitAndPush("add trino"));
+        String unpushed = client.headCommit();
+        org.junit.jupiter.api.Assertions.assertNotEquals(seed, unpushed);
+        assertEquals(seed, remoteHead(tmp), "nothing landed on the remote");
+
+        Files.delete(lock);
+        assertEquals(unpushed, client.commitAndPush("add trino"), "the retry pushes the commit, not \"no changes\"");
+        assertEquals(unpushed, remoteHead(tmp));
+        org.junit.jupiter.api.Assertions.assertNull(client.commitAndPush("no-op"), "then nothing is left to push");
+    }
+
+    @Test
+    void resetToDropsACommitThatWasNotPublished(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        String before = client.headCommit();
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\n");
+        Path lock = tmp.resolve("remote.git/refs/heads/" + BRANCH + ".lock");
+        Files.writeString(lock, "");
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, () -> client.commitAndPush("add trino"));
+
+        client.resetTo(before);
+        Files.delete(lock);
+
+        assertEquals(before, client.headCommit());
+        assertTrue(Files.notExists(tmp.resolve("ws/apps/trino/helmrelease.yaml")));
+        org.junit.jupiter.api.Assertions.assertNull(client.commitAndPush("add trino"),
+                "the dropped commit is not pushed by a later call");
+    }
+
+    private static String remoteHead(Path tmp) throws Exception {
+        try (Git g = Git.open(tmp.resolve("remote.git").toFile())) {
+            return g.getRepository().resolve("refs/heads/" + BRANCH).getName();
+        }
+    }
+
+    @Test
     void onlyWhatTheBaseBranchPublishesCountsAsExisting(@TempDir Path tmp) throws Exception {
         String url = seededBareRepo(tmp);
         GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");

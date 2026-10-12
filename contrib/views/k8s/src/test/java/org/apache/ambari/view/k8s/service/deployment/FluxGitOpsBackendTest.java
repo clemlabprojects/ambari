@@ -18,7 +18,9 @@
 
 package org.apache.ambari.view.k8s.service.deployment;
 
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,6 +29,9 @@ import java.util.Map;
 import static org.junit.Assert.*;
 
 public class FluxGitOpsBackendTest {
+
+    @Rule
+    public TemporaryFolder tmp = new TemporaryFolder();
 
     @Test
     public void applyOverrides_setsNestedValues() {
@@ -146,6 +151,53 @@ public class FluxGitOpsBackendTest {
         assertEquals("1.0e3", FluxGitOpsBackend.parseScalar("1.0e3"));
         assertEquals("booleans in any case, like helm --set", Boolean.FALSE, FluxGitOpsBackend.parseScalar("False"));
         assertEquals("99999999999999999999", FluxGitOpsBackend.parseScalar("99999999999999999999"));
+    }
+
+    @Test
+    public void valuesFromReadsTheReleaseValuesSecret() {
+        assertEquals("  valuesFrom:\n  - kind: Secret\n    name: trino-kdps-values\n    valuesKey: values.yaml\n",
+                FluxGitOpsBackend.buildValuesFromYaml(GitOpsSecretValues.secretName("trino")));
+    }
+
+    @Test
+    public void theValuesSecretsOfTheRemovedHelmReleasesAreReadFromTheirManifests() throws Exception {
+        java.nio.file.Path dir = tmp.newFolder("flux-destroy").toPath();
+        java.nio.file.Files.writeString(dir.resolve("helmrelease.yaml"), """
+                apiVersion: helm.toolkit.fluxcd.io/v2
+                kind: HelmRelease
+                metadata:
+                  name: trino
+                  namespace: analytics
+                spec:
+                  valuesFrom:
+                  - kind: Secret
+                    name: trino-kdps-values
+                    valuesKey: values.yaml
+                  - kind: Secret
+                    name: operator-managed
+                    valuesKey: values.yaml
+                """);
+        java.nio.file.Files.createDirectories(dir.resolve("dependencies"));
+        java.nio.file.Files.writeString(dir.resolve("dependencies/keda-helmrelease.yaml"), """
+                kind: HelmRelease
+                metadata:
+                  name: keda
+                  namespace: keda
+                """);
+        java.nio.file.Files.writeString(dir.resolve("helmrepository.yaml"), """
+                kind: HelmRepository
+                metadata:
+                  name: charts
+                  namespace: flux-system
+                """);
+        java.nio.file.Files.writeString(dir.resolve("broken.yaml"), "kind: [unclosed");
+
+        java.util.Set<FluxGitOpsBackend.NamespacedName> secrets = FluxGitOpsBackend.valuesSecretsUnder(dir);
+
+        assertEquals("only the Secrets this view names, never one the operator referenced", java.util.Set.of(
+                new FluxGitOpsBackend.NamespacedName("analytics", "trino-kdps-values"),
+                new FluxGitOpsBackend.NamespacedName("keda", "keda-kdps-values")), secrets);
+        assertTrue(FluxGitOpsBackend.valuesSecretsUnder(dir.resolve("missing")).isEmpty());
     }
 
     @Test

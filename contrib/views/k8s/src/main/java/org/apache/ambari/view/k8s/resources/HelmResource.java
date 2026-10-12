@@ -1270,7 +1270,10 @@ public class HelmResource {
                             authTokenToUse = resolved;
                         }
                     }
-                    fluxGitOpsBackend.destroy(repoUrlToUse, branchToUse, repoPath, authTokenToUse, sshKeyToUse);
+                    // The values Secrets stay while the branch Flux reconciles still holds the release: a removal
+                    // pushed to a pull request branch is not applied until merged.
+                    fluxGitOpsBackend.destroy(repoUrlToUse, branchToUse, FluxGitOpsBackend.reconciledBranch(meta),
+                            repoPath, authTokenToUse, sshKeyToUse);
                     LOG.info("Requested Flux GitOps destroy for {}/{} (repo={}, branch={}, path={})",
                             namespace, releaseName, repoUrlToUse, branchToUse, repoPath);
                 } catch (Exception ex) {

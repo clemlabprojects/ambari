@@ -49,7 +49,17 @@ public final class HelmSetValues {
 
     /** The value for a log line: a value kept as text by {@link #textIfSecret} is a secret and is hidden. */
     public static String forLog(String value) {
-        return value != null && value.startsWith(TEXT_PREFIX) ? "<hidden>" : value;
+        return isMarkedSecret(value) ? "<hidden>" : value;
+    }
+
+    /**
+     * Whether the value was marked by {@link #textIfSecret}: it comes from a password field and must be kept out of
+     * logs and out of anything committed to Git.
+     *
+     * @param value an override value, before {@link #typed} reads it
+     */
+    public static boolean isMarkedSecret(String value) {
+        return value != null && value.startsWith(TEXT_PREFIX);
     }
 
     /**

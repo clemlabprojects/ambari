@@ -385,6 +385,18 @@ public class K8sReleaseEntity extends BaseModel {
         putGitMeta("branch", gitBranch);
     }
 
+    /**
+     * The base branch of a GitOps release, which Flux reconciles (null when never recorded). The working branch
+     * ({@link #getGitBranch}) may be another one, still to merge.
+     */
+    public String getGitBaseBranch() {
+        return gitMeta().get("baseBranch");
+    }
+
+    public void setGitBaseBranch(String gitBaseBranch) {
+        putGitMeta("baseBranch", gitBaseBranch);
+    }
+
     public String getGitRepoUrl() {
         return gitMeta().get("repoUrl");
     }

@@ -59,11 +59,13 @@ import org.apache.ambari.view.k8s.service.DependencyRules;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
+import org.apache.ambari.view.k8s.service.StackDefinitionService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest.ConfigInstantiation;
 import org.apache.ambari.view.k8s.model.stack.StackConfig;
 import org.apache.ambari.view.k8s.model.stack.StackProperty;
+import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
 import org.apache.ambari.view.k8s.utils.CommandUtils;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
@@ -72,6 +74,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Flux GitOps backend: renders HelmRelease/HelmRepository YAML, commits to Git and returns the commit SHA.
+ * Passwords and secrets never reach Git: each HelmRelease reads them from its own Secret through
+ * {@code spec.valuesFrom} (see {@link GitOpsSecretValues}).
  * Status/destroy are still minimal and should be enhanced to read HelmRelease CRs and delete manifests.
  */
 public class FluxGitOpsBackend implements DeploymentBackend {
@@ -106,6 +110,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private final ConfigResolutionService configResolutionService = new ConfigResolutionService();
     private final SecurityProfileService securityProfileService;
     private final GlobalConfigService globalConfigService = new GlobalConfigService();
+    private final StackDefinitionService stackDefinitionService = new StackDefinitionService();
 
     /**
      * @param fluxRoot root directory where manifests will be written (simulates Git workspace).
@@ -288,6 +293,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         final String release = request.getReleaseName();
         final var existingMeta = releaseMetadataService.find(namespace, release);
 
+        // The branch Flux reconciles, as configured: mergeGitOptions falls back to the working branch for a redeploy
+        // that names no base branch, which says nothing about where Flux reads. Null when it was never recorded.
+        String requestedBase = request.getGit() != null ? request.getGit().getBaseBranch() : null;
+        String configuredBase = firstNonBlank(requestedBase,
+                existingMeta != null ? existingMeta.getGitBaseBranch() : null,
+                existingMeta == null ? "main" : null);
         HelmDeployRequest.GitOptions git = mergeGitOptions(request, existingMeta);
         if (git == null || git.getRepoUrl() == null || git.getRepoUrl().isBlank()) {
             throw new IllegalArgumentException("Flux GitOps requires git.repoUrl");
@@ -475,6 +486,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // Dependencies are committed to Git alongside the main HelmRelease
         // Note: Flux will reconcile them in parallel (no explicit ordering)
         List<DepRef> depRefs = new ArrayList<>();
+        List<PendingDependency> pendingDeps = new ArrayList<>();
+        // Every file this deploy writes, searched for passwords and secrets before the commit.
+        List<Path> writtenFiles = new ArrayList<>();
         if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
             try {
                 logFluxInfo(namespace, release, "automation", "Processing %s dependencies", request.getDependencies().size());
@@ -567,34 +581,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         }
                     }
                     
-                    String depValuesYaml = serializeValuesAsYaml(depValues);
-
-                    // Create dependency HelmRelease YAML
-                    String depHrYaml = """
-                            apiVersion: %s
-                            kind: HelmRelease
-                            metadata:
-                              name: %s
-                              namespace: %s
-                            spec:
-                              interval: 5m
-                              chart:
-                                spec:
-                                  chart: %s
-                                  version: %s
-                                  sourceRef:
-                                    kind: HelmRepository
-                                    name: %s
-                                    namespace: flux-system
-                              values:
-                            %s
-                            """.formatted(FLUX_HR_API_VERSION, depReleaseName, depNamespace, depChart, depVersion, depRepoName, depValuesYaml);
-                    
-                    // Write dependency HelmRelease to Git
-                    gitClient.writeFile(depDir.resolve(depReleaseName + "-helmrelease.yaml"), depHrYaml);
+                    // Rendered once the passwords and secrets of the deploy are known, so none of them is written
+                    // to Git in the dependency's values either.
+                    pendingDeps.add(new PendingDependency(depReleaseName, depNamespace, depChart, depVersion, depRepoName,
+                            depValues, depDir.resolve(depReleaseName + "-helmrelease.yaml")));
                     if (!depRepoName.equals(repoName)) {
                         // A dependency from another chart repository needs its own Flux source.
-                        gitClient.writeFile(depDir.resolve(depRepoName + "-helmrepository.yaml"), chartSources.get(depRepoName));
+                        Path depRepoFile = depDir.resolve(depRepoName + "-helmrepository.yaml");
+                        gitClient.writeFile(depRepoFile, chartSources.get(depRepoName));
+                        writtenFiles.add(depRepoFile);
                     }
                     
                     logFluxInfo(namespace, release, "automation", "Added dependency HelmRelease %s/%s (chart=%s, version=%s)",
@@ -674,6 +669,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         } catch (Exception ex) {
             LOG.warn("Failed to provision truststore Secret: {}", ex.toString());
         }
+        // Passwords and secrets of this deploy, from the definitions: none of them may be written to Git.
+        GitOpsSecretValues secrets = new GitOpsSecretValues();
+        String serviceKey = firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null);
         // Global stack configs / config instantiations
         try {
             // Apply bundled global configs (e.g., security-env) into values._ov via overrides
@@ -685,6 +683,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         if (p.name == null || p.name.isBlank()) continue;
                         if (p.value == null || String.valueOf(p.value).isBlank()) continue;
                         addOverride(explicitOverrides, p.name, String.valueOf(p.value));
+                        secrets.addPasswordProperty(p.name, p);
                     }
                 }
             }
@@ -710,14 +709,49 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         } catch (Exception ex) {
             LOG.warn("Failed to resolve dynamic tokens for {}: {}", release, ex.toString());
         }
+        // The security profile's passwords are marked until the overrides are applied: record them first.
+        secrets.addMarkedOverrides(explicitOverrides);
         // Apply all overrides into the values map
         applyOverridesToValues(mergedValues, explicitOverrides);
         // Drop helper _ov to avoid leaking into chart values
         mergedValues.remove("_ov");
         request.setValues(mergedValues);
+        addServicePasswords(secrets, serviceKey, request, mergedValues);
+
+        boolean prMode = "PR_MODE".equalsIgnoreCase(git.getCommitMode());
+        // Only a direct commit to the branch Flux reconciles is applied as soon as it is pushed. Any other change (a pull
+        // request, a working branch still to merge, a branch whose role is unknown) must not alter the running release,
+        // yet Flux applies a change of the Secret the release reads at once.
+        boolean appliedOnCommit = !prMode && branch.equals(configuredBase);
+        // Once secret, always secret: a redeploy that re-submits the release's current values (resync, security
+        // refresh, autoscaling) carries no form, yet those values hold what Flux merged in from the values Secrets.
+        // What the Secrets hold now is recorded before anything is split.
+        StoredSecrets stored = storedSecrets(namespace, release, repoDir.resolve(targetDir).resolve("helmrelease.yaml"));
+        for (Map<String, Object> document : stored.documents()) {
+            secrets.addStoredPaths(document);
+            secrets.addStoredValues(document);
+        }
+        List<StoredSecrets> storedDeps = new ArrayList<>();
+        for (PendingDependency dep : pendingDeps) {
+            StoredSecrets depStored = storedSecrets(dep.namespace(), dep.releaseName(), repoDir.resolve(dep.file()));
+            depStored.documents().forEach(secrets::addStoredValues);
+            storedDeps.add(depStored);
+        }
+        secrets.addValuesAtPaths(mergedValues);
+
+        // Passwords and secrets go to a Secret in the release namespace, read by the HelmRelease (spec.valuesFrom).
+        // They are removed from spec.values, not blanked: Flux merges spec.values over valuesFrom.
+        GitOpsSecretValues.Split split = secrets.split(mergedValues);
+        List<ValuesSecret> valuesSecrets = new ArrayList<>();
+        String valuesFromYaml = "";
+        if (split.hasSecrets()) {
+            ValuesSecret valuesSecret = valuesSecret(namespace, release, split.secretValues(), stored, appliedOnCommit);
+            valuesSecrets.add(valuesSecret);
+            valuesFromYaml = buildValuesFromYaml(valuesSecret.name());
+        }
 
         // Serialize values as proper YAML for readable git diffs.
-        String valuesYaml = serializeValuesAsYaml(mergedValues);
+        String valuesYaml = serializeValuesAsYaml(split.publicValues());
 
         String repoYaml = chartSources.get(repoName);
 
@@ -739,43 +773,84 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         kind: HelmRepository
                         name: %s
                         namespace: flux-system
-                  values:
+                %s  values:
                 %s
-                """).formatted(FLUX_HR_API_VERSION, release, namespace, chart, version, repoName, valuesYaml);
+                """).formatted(FLUX_HR_API_VERSION, release, namespace, chart, version, repoName,
+                        valuesFromYaml, valuesYaml);
 
+        for (int i = 0; i < pendingDeps.size(); i++) {
+            PendingDependency dep = pendingDeps.get(i);
+            GitOpsSecretValues.Split depSplit = secrets.splitContaining(dep.values(), storedDeps.get(i).documents());
+            String depValuesFromYaml = "";
+            if (depSplit.hasSecrets()) {
+                ValuesSecret depSecret = valuesSecret(dep.namespace(), dep.releaseName(), depSplit.secretValues(),
+                        storedDeps.get(i), appliedOnCommit);
+                valuesSecrets.add(depSecret);
+                depValuesFromYaml = buildValuesFromYaml(depSecret.name());
+            }
+            gitClient.writeFile(dep.file(), renderDependencyHelmRelease(dep, depValuesFromYaml, depSplit.publicValues()));
+            writtenFiles.add(dep.file());
+        }
         gitClient.writeFile(targetDir.resolve("helmrepository.yaml"), repoYaml);
         gitClient.writeFile(targetDir.resolve("helmrelease.yaml"), hrYaml);
+        writtenFiles.add(targetDir.resolve("helmrepository.yaml"));
+        writtenFiles.add(targetDir.resolve("helmrelease.yaml"));
 
-        boolean prMode = "PR_MODE".equalsIgnoreCase(git.getCommitMode());
+        // Fail closed: nothing that holds a password or secret is committed, whatever wrote it there.
+        String leakingFile = fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets);
+        if (leakingFile != null) {
+            throw new IllegalStateException("GitOps deploy of " + namespace + "/" + release + " stopped: "
+                    + leakingFile + " would contain a password or secret value, so nothing was committed to Git. "
+                    + "A very short or common password can match ordinary settings; if so, choose a stronger one.");
+        }
+
+        String headBeforeCommit = gitClient.headCommit();
+        // Written before the commit, so Flux never applies a HelmRelease whose values Secret is missing.
+        List<ValuesSecret> secretsWritten = writeValuesSecrets(valuesSecrets);
+
         String commitMsg = prMode
                 ? "Flux GitOps (PR) apply " + namespace + "/" + release
                 : "Flux GitOps apply " + namespace + "/" + release;
 
-        if (!gitClient.hasChanges()) {
-            LOG.info("Flux GitOps found no changes for {}/{}; skipping commit", namespace, release);
-            return "NO_CHANGES";
-        }
-
         boolean canPush = (token != null && !token.isBlank()) || (sshKey != null && !sshKey.isBlank());
-        String commitSha;
-        if (prMode && !canPush) {
-            // PR intent without credentials: keep a local commit as a stub and surface to the operator.
-            commitSha = withGitRetry(() -> gitClient.commitWithoutPush(commitMsg), "commit(no-push)");
-            if (commitSha == null) {
+        String commitSha = null;
+        try {
+            if (gitClient.hasChanges()) {
+                if (prMode && !canPush) {
+                    // PR intent without credentials: keep a local commit as a stub and surface to the operator.
+                    String stubSha = withGitRetry(() -> gitClient.commitWithoutPush(commitMsg), "commit(no-push)");
+                    if (stubSha != null) {
+                        commitSha = "PR-STUB:" + stubSha;
+                        LOG.warn("Flux GitOps PR mode requested but no credentials provided; created local commit stub {}", commitSha);
+                    }
+                } else {
+                    commitSha = withGitRetry(() -> gitClient.commitAndPush(commitMsg), "commit/push");
+                }
+            }
+        } catch (Exception commitEx) {
+            // Nothing reached Git, so nothing of this deploy may stay ahead of it: neither the Secrets Flux would apply
+            // to the running release, nor a local commit the next deploy would take as published.
+            undoUnpublished(gitClient, headBeforeCommit, secretsWritten);
+            throw commitEx;
+        }
+        boolean committed = commitSha != null;
+        if (!committed) {
+            if (secretsWritten.isEmpty()) {
+                LOG.info("Flux GitOps found no changes for {}/{}; skipping commit", namespace, release);
                 return "NO_CHANGES";
             }
-            commitSha = "PR-STUB:" + commitSha;
-            LOG.warn("Flux GitOps PR mode requested but no credentials provided; created local commit stub {}", commitSha);
-        } else {
-            commitSha = withGitRetry(() -> gitClient.commitAndPush(commitMsg), "commit/push");
-            if (commitSha == null) {
-                return "NO_CHANGES";
+            // Only passwords or secrets changed: nothing to commit, but Flux must read the Secret again. A change not
+            // applied yet never asks for it: its Secret is read only once the change is merged.
+            if (appliedOnCommit) {
+                requestReconcile(secretsWritten);
             }
+            commitSha = firstNonBlank(gitClient.headCommit(), existingMeta != null ? existingMeta.getGitCommitSha() : null);
+            logFluxInfo(namespace, release, "apply", "Updated the passwords and secrets only; Git is unchanged at %s", commitSha);
         }
         String prUrl = null;
         String prNumber = null;
         String prState = null;
-        if (prMode) {
+        if (prMode && committed) {
             // Attempt to open a PR/MR on supported providers.
             try {
                 String prToken = token;
@@ -829,6 +904,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     prState
             );
             releaseMetadataService.recordTruststoreRefs(namespace, release, request.getTruststoreRefs());
+            releaseMetadataService.recordGitBaseBranch(namespace, release, configuredBase);
         } catch (Exception ex) {
             LOG.warn("Failed to persist Flux metadata for {}/{}: {}", namespace, release, ex.toString());
         }
@@ -1356,7 +1432,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             errors.add("Credential resolution failed: " + ex.getMessage());
         }
         try {
-            destroy(repoUrl, branch, path, token, sshKey, namespace, releaseName);
+            destroy(repoUrl, branch, reconciledBranch(meta), path, token, sshKey, namespace, releaseName);
             gitDeleted = true;
         } catch (Exception ex) {
             errors.add("Git cleanup failed: " + ex.getMessage());
@@ -1398,10 +1474,58 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Internal destroy overload that accepts namespace + releaseName so the workspace
-     * directory and lock are consistent with the apply() path for the same release.
+     * Delete rendered manifests from Git and push the change, for a release whose removal may be pushed to another
+     * branch than the one Flux reconciles (see {@link #reconciledBranch}).
+     *
+     * @param repoUrl          Git repository URL.
+     * @param branch           branch to push the removal to (will be created if absent).
+     * @param reconciledBranch branch Flux reconciles; its values Secrets are kept while it still holds the manifests,
+     *                         and always when it is null (unknown).
+     * @param repoPath         path to delete (relative to repo root).
+     * @param authToken        HTTPS token (optional).
+     * @param sshKey           SSH private key (optional).
+     */
+    public void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath, String authToken,
+                        String sshKey) throws Exception {
+        destroy(repoUrl, branch, reconciledBranch, repoPath, authToken, sshKey, null, null);
+    }
+
+    /**
+     * As {@link #destroy(String, String, String, String, String, String, String, String)}, for a removal pushed to the
+     * branch Flux reconciles.
      */
     void destroy(String repoUrl, String branch, String repoPath,
+                 String authToken, String sshKey,
+                 String namespace, String releaseName) throws Exception {
+        destroy(repoUrl, branch, (branch == null || branch.isBlank()) ? "main" : branch, repoPath, authToken, sshKey,
+                namespace, releaseName);
+    }
+
+    /**
+     * The branch Flux reconciles for a GitOps release, as far as its metadata tells: the recorded base branch; for a
+     * direct commit without one, the branch it pushes to; null for a pull request without one, whose base is unknown.
+     */
+    public static String reconciledBranch(K8sReleaseEntity meta) {
+        if (meta == null) {
+            return null;
+        }
+        if (meta.getGitBaseBranch() != null && !meta.getGitBaseBranch().isBlank()) {
+            return meta.getGitBaseBranch();
+        }
+        if ("PR_MODE".equalsIgnoreCase(meta.getGitCommitMode())) {
+            return null;
+        }
+        return (meta.getGitBranch() == null || meta.getGitBranch().isBlank()) ? "main" : meta.getGitBranch();
+    }
+
+    /**
+     * Internal destroy overload that accepts namespace + releaseName so the workspace
+     * directory and lock are consistent with the apply() path for the same release.
+     *
+     * @param reconciledBranch the branch Flux reconciles, or null when unknown: the values Secrets of the removed
+     *                         HelmReleases are deleted only once it no longer holds their manifests
+     */
+    void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath,
                  String authToken, String sshKey,
                  String namespace, String releaseName) throws Exception {
         if (repoUrl == null || repoUrl.isBlank()) {
@@ -1425,6 +1549,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         Path deletePath = validateRelative((repoPath == null || repoPath.isBlank())
                 ? Path.of("clusters/default")
                 : Path.of(repoPath));
+        // The HelmReleases removed here and their values Secrets, read while their manifests are still there.
+        java.util.Set<NamespacedName> helmReleases = helmReleasesUnder(repoDir.resolve(deletePath));
+        if (namespace != null && releaseName != null) {
+            helmReleases.add(new NamespacedName(namespace, releaseName));
+        }
+        java.util.Set<NamespacedName> valuesSecrets = valuesSecretsUnder(repoDir.resolve(deletePath));
         logFluxInfo("-", deletePath.toString(), "destroy", "Removing path %s", deletePath);
         gitClient.deletePath(deletePath);
         if (gitClient.hasChanges()) {
@@ -1432,6 +1562,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.info("Flux GitOps deleted {} on branch {} commit {}", deletePath, effectiveBranch, sha);
         } else {
             LOG.info("Flux GitOps delete skipped commit because no changes detected at {}", deletePath);
+        }
+        // Only once the removal is published where Flux reads: until then Flux keeps applying the HelmReleases that
+        // read them. A removal pushed to another branch (that of a pull request, a working branch still to merge)
+        // leaves them running from the branch Flux reconciles.
+        if (reconciledBranch == null) {
+            LOG.warn("Kept the values Secrets {}: the branch Flux reconciles is not known, so its HelmReleases may still "
+                    + "read them; delete them once the removal of {} is merged", valuesSecrets, deletePath);
+        } else if (!reconciledBranch.equals(effectiveBranch)
+                && !Boolean.FALSE.equals(gitClient.publishedOn(deletePath, reconciledBranch))) {
+            LOG.warn("Kept the values Secrets {}: {} is still on branch {}, which Flux reconciles; delete them once the "
+                    + "removal is merged there", valuesSecrets, deletePath, reconciledBranch);
+        } else {
+            deleteValuesSecrets(valuesSecrets, helmReleases);
         }
         } finally {
             workspaceLock.unlock();
@@ -1557,20 +1700,25 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private String serializeValuesAsYaml(Map<String, Object> values) {
         if (values == null || values.isEmpty()) return "{}";
         try {
-            com.fasterxml.jackson.dataformat.yaml.YAMLFactory yf =
-                com.fasterxml.jackson.dataformat.yaml.YAMLFactory.builder()
-                    .disable(com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature.WRITE_DOC_START_MARKER)
-                    .disable(com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature.SPLIT_LINES)
-                    .build();
-            String yaml = new com.fasterxml.jackson.databind.ObjectMapper(yf)
-                    .writeValueAsString(values)
-                    .trim();
+            String yaml = valuesYaml(values);
             // Indent every line by 4 spaces so the block sits correctly under "  values:"
             return "    " + yaml.replace("\n", "\n    ");
         } catch (Exception e) {
             LOG.warn("YAML serialisation failed for values map, falling back to JSON inline: {}", e.getMessage());
             return gson.toJson(values);
         }
+    }
+
+    /** The values as a YAML document, without the document start marker nor folded lines. */
+    static String valuesYaml(Map<String, Object> values) throws IOException {
+        com.fasterxml.jackson.dataformat.yaml.YAMLFactory yf =
+            com.fasterxml.jackson.dataformat.yaml.YAMLFactory.builder()
+                .disable(com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature.WRITE_DOC_START_MARKER)
+                .disable(com.fasterxml.jackson.dataformat.yaml.YAMLGenerator.Feature.SPLIT_LINES)
+                .build();
+        return new com.fasterxml.jackson.databind.ObjectMapper(yf)
+                .writeValueAsString(values)
+                .trim();
     }
 
     private String firstNonBlank(String... values) {
@@ -2071,6 +2219,457 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     }
                     cursor = elem;
                 }
+            }
+        }
+    }
+
+    /* ------------------------ Secret values helpers ------------------------ */
+
+    /** Label and value marking the objects this view creates (the same as on its other Secrets). */
+    static final String MANAGED_BY_LABEL = "managed-by";
+    static final String MANAGED_BY_VALUE = "ambari-k8s-view";
+
+    /** A namespaced object, by namespace and name. */
+    record NamespacedName(String namespace, String name) {}
+
+    /** A dependency HelmRelease, rendered once the passwords and secrets of the deploy are known. */
+    private record PendingDependency(String releaseName, String namespace, String chart, String version,
+                                     String repoName, Map<String, Object> values, Path file) {}
+
+    /** Label naming the HelmRelease a values Secret belongs to. */
+    static final String RELEASE_LABEL = "ambari.clemlab.com/release";
+
+    /**
+     * The values Secret of one HelmRelease for this deploy.
+     *
+     * @param name     the Secret the HelmRelease reads
+     * @param yaml     the values document to store in it
+     * @param previous what the Secret held before this deploy; empty when it did not exist
+     */
+    private record ValuesSecret(String namespace, String helmRelease, String name, String yaml, Optional<String> previous) {
+        boolean unchanged() {
+            return previous.map(yaml::equals).orElse(false);
+        }
+    }
+
+    /**
+     * The values Secrets of a HelmRelease before this deploy.
+     *
+     * @param referenced the values Secret its manifest in the workspace reads, or null
+     * @param payloads   the values document of each Secret read, by name; empty when the Secret does not exist
+     * @param documents  those documents read as values
+     */
+    private record StoredSecrets(String referenced, Map<String, Optional<String>> payloads,
+                                 List<Map<String, Object>> documents) {
+        Optional<String> payload(String name) {
+            return payloads.getOrDefault(name, Optional.empty());
+        }
+    }
+
+    /**
+     * Records the password fields of the service's form and stack configurations, and the values its bindings copy
+     * those form fields into. A chart deployed without a service definition has none.
+     *
+     * @param values the release's values with every override applied: a redeploy that re-submits the release's
+     *               values carries the stack configuration overrides there only
+     */
+    private void addServicePasswords(GitOpsSecretValues secrets, String serviceKey, HelmDeployRequest request,
+                                     Map<String, Object> values) {
+        if (serviceKey == null || serviceKey.isBlank()) {
+            return;
+        }
+        try {
+            StackServiceDef definition = stackDefinitionService.getServiceDefinition(serviceKey);
+            secrets.addPasswordFields(definition.form, formFields(request));
+            secrets.addPasswordCopies(definition.form, definition.variables, definition.bindings);
+        } catch (Exception ex) {
+            LOG.warn("Could not read the form of service {}: its password fields are not known: {}", serviceKey, ex.toString());
+        }
+        try {
+            List<StackConfig> configs = stackDefinitionService.getServiceConfigurations(serviceKey);
+            secrets.addPasswordConfigs(configs, request.getStackConfigOverrides());
+            secrets.addPasswordConfigs(configs, GitOpsSecretValues.configOverridesIn(values));
+        } catch (Exception ex) {
+            LOG.warn("Could not read the configurations of service {}: their password properties are not known: {}",
+                    serviceKey, ex.toString());
+        }
+    }
+
+    /**
+     * The service form as filled in. The wizard sends its TLS and Kerberos blocks in request fields of their own, not
+     * in the form values, yet they hold form fields too, such as the HTTPS keystore password.
+     */
+    static Map<String, Object> formFields(HelmDeployRequest request) {
+        Map<String, Object> fields = request.getFormValues() == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(request.getFormValues());
+        if (request.getTls() != null) {
+            fields.putIfAbsent("tls", request.getTls());
+        }
+        if (request.getKerberos() != null) {
+            fields.putIfAbsent("kerberos", request.getKerberos());
+        }
+        return fields;
+    }
+
+    /**
+     * Render the {@code valuesFrom} block of a HelmRelease spec, reading a values Secret. Flux merges
+     * {@code spec.values} over it.
+     *
+     * @param secretName the values Secret
+     */
+    static String buildValuesFromYaml(String secretName) {
+        return "  valuesFrom:\n"
+                + "  - kind: Secret\n"
+                + "    name: " + secretName + "\n"
+                + "    valuesKey: " + GitOpsSecretValues.VALUES_KEY + "\n";
+    }
+
+    /**
+     * The values Secret a HelmRelease reads for this deploy. A direct commit to the branch Flux reconciles uses the
+     * HelmRelease's own Secret. Any other change (a pull request, a working branch still to merge) must not change the
+     * running release before it is merged, yet Flux applies a change of the Secret the release reads at once: a
+     * changed document goes to a new Secret that only the committed HelmRelease reads.
+     *
+     * @param appliedOnCommit whether the commit lands on the branch Flux reconciles, in direct-commit mode
+     */
+    private ValuesSecret valuesSecret(String namespace, String helmRelease, Map<String, Object> values,
+                                      StoredSecrets stored, boolean appliedOnCommit) throws IOException {
+        String yaml = valuesYaml(values);
+        String name;
+        if (appliedOnCommit) {
+            name = GitOpsSecretValues.secretName(helmRelease);
+        } else if (stored.referenced() != null && stored.payload(stored.referenced()).map(yaml::equals).orElse(false)) {
+            name = stored.referenced();
+        } else {
+            name = GitOpsSecretValues.changeSecretName(helmRelease);
+        }
+        return new ValuesSecret(namespace, helmRelease, name, yaml, stored.payload(name));
+    }
+
+    /**
+     * The values Secrets of a HelmRelease before this deploy: the one named after it and the one its manifest in the
+     * workspace reads.
+     *
+     * @param manifest the HelmRelease manifest in the workspace, which may not exist yet
+     * @throws IllegalStateException when a Secret cannot be read while the manifest reads one: what it holds would no
+     *                               longer be known as secret
+     */
+    private StoredSecrets storedSecrets(String namespace, String helmRelease, Path manifest) {
+        String referenced = referencedValuesSecret(manifest, helmRelease);
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        names.add(GitOpsSecretValues.secretName(helmRelease));
+        if (referenced != null) {
+            names.add(referenced);
+        }
+        Map<String, Optional<String>> payloads = new LinkedHashMap<>();
+        List<Map<String, Object>> documents = new ArrayList<>();
+        for (String name : names) {
+            try {
+                Optional<String> yaml = kubernetesService.readOpaqueSecretKeyAsString(namespace, name,
+                        GitOpsSecretValues.VALUES_KEY);
+                yaml = yaml == null ? Optional.empty() : yaml;
+                payloads.put(name, yaml);
+                if (yaml.isPresent()) {
+                    documents.add(GitOpsSecretValues.readValuesYaml(yaml.get()));
+                }
+            } catch (Exception ex) {
+                if (referenced == null) {
+                    // The manifest reads no values Secret, so nothing such a Secret holds ever reached the release's
+                    // values: there is no secret to lose. A dependency in a namespace the view may not read Secrets in
+                    // (KEDA, monitoring) deploys as it did before.
+                    LOG.warn("Could not read Secret {}/{}; HelmRelease {} reads no values Secret, so none is taken "
+                            + "into account: {}", namespace, name, helmRelease, ex.toString());
+                    continue;
+                }
+                throw new IllegalStateException("GitOps deploy of " + namespace + "/" + helmRelease + " stopped: "
+                        + "could not read the Kubernetes Secret " + namespace + "/" + name + " that holds its passwords "
+                        + "and secrets, so nothing was committed to Git: " + ex.getMessage(), ex);
+            }
+        }
+        return new StoredSecrets(referenced, payloads, documents);
+    }
+
+    private String renderDependencyHelmRelease(PendingDependency dep, String valuesFromYaml, Map<String, Object> values) {
+        return """
+                apiVersion: %s
+                kind: HelmRelease
+                metadata:
+                  name: %s
+                  namespace: %s
+                spec:
+                  interval: 5m
+                  chart:
+                    spec:
+                      chart: %s
+                      version: %s
+                      sourceRef:
+                        kind: HelmRepository
+                        name: %s
+                        namespace: flux-system
+                %s  values:
+                %s
+                """.formatted(FLUX_HR_API_VERSION, dep.releaseName(), dep.namespace(), dep.chart(), dep.version(),
+                dep.repoName(), valuesFromYaml, serializeValuesAsYaml(values));
+    }
+
+    /**
+     * The first file written or changed in the Git workspace for this deploy that contains a password or secret,
+     * or {@code null}.
+     *
+     * @param repoDir      the workspace
+     * @param writtenFiles the files this deploy wrote, relative to the workspace (also those left unchanged)
+     */
+    static String fileLeakingSecrets(Path repoDir, GitClient gitClient, List<Path> writtenFiles,
+                                     GitOpsSecretValues secrets) throws IOException {
+        if (secrets.isEmpty()) {
+            return null;
+        }
+        java.util.Set<Path> files = new java.util.LinkedHashSet<>();
+        writtenFiles.forEach(f -> files.add(f.normalize()));
+        gitClient.changedFiles().forEach(f -> files.add(f.normalize()));
+        for (Path file : files) {
+            Path absolute = repoDir.resolve(file);
+            if (Files.isRegularFile(absolute)
+                    && secrets.leaksInto(new String(Files.readAllBytes(absolute), java.nio.charset.StandardCharsets.UTF_8))) {
+                return file.toString();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Creates or updates the values Secrets whose document changed: managed by this view, labelled with the
+     * HelmRelease, and watched by Flux so a change is applied without a commit. When one cannot be written, those
+     * already written are put back.
+     *
+     * @return the Secrets written
+     * @throws IllegalStateException when a Secret cannot be written; nothing is committed then
+     */
+    private List<ValuesSecret> writeValuesSecrets(List<ValuesSecret> valuesSecrets) {
+        List<ValuesSecret> written = new ArrayList<>();
+        for (ValuesSecret valuesSecret : valuesSecrets) {
+            if (valuesSecret.unchanged()) {
+                // Written again, it would only make Flux upgrade the release for nothing.
+                continue;
+            }
+            try {
+                putValuesSecret(valuesSecret.namespace(), valuesSecret.helmRelease(), valuesSecret.name(), valuesSecret.yaml());
+                written.add(valuesSecret);
+                logFluxInfo(valuesSecret.namespace(), valuesSecret.helmRelease(), "secrets",
+                        "Stored the passwords and secrets in Secret %s", valuesSecret.name());
+            } catch (Exception ex) {
+                restoreValuesSecrets(written);
+                throw new IllegalStateException("Could not store the passwords and secrets of "
+                        + valuesSecret.namespace() + "/" + valuesSecret.helmRelease() + " in the Kubernetes Secret "
+                        + valuesSecret.namespace() + "/" + valuesSecret.name() + ", so nothing was committed to Git: "
+                        + ex.getMessage(), ex);
+            }
+        }
+        return written;
+    }
+
+    private void putValuesSecret(String namespace, String helmRelease, String name, String yaml) {
+        Map<String, String> labels = Map.of(
+                MANAGED_BY_LABEL, MANAGED_BY_VALUE,
+                "app.kubernetes.io/managed-by", "kdps",
+                RELEASE_LABEL, helmRelease,
+                "reconcile.fluxcd.io/watch", "Enabled");
+        kubernetesService.createOrUpdateOpaqueSecret(namespace, name, GitOpsSecretValues.VALUES_KEY,
+                yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8), labels, null, null);
+    }
+
+    /**
+     * Puts the values Secrets written by a deploy that then failed back as they were: their previous document, or
+     * deleted when they did not exist before. Best effort.
+     */
+    private void restoreValuesSecrets(List<ValuesSecret> written) {
+        for (ValuesSecret valuesSecret : written) {
+            try {
+                if (valuesSecret.previous().isPresent()) {
+                    putValuesSecret(valuesSecret.namespace(), valuesSecret.helmRelease(), valuesSecret.name(),
+                            valuesSecret.previous().get());
+                } else {
+                    kubernetesService.deleteSecret(valuesSecret.namespace(), valuesSecret.name());
+                }
+                logFluxInfo(valuesSecret.namespace(), valuesSecret.helmRelease(), "secrets",
+                        "Put Secret %s back as it was before the failed deploy", valuesSecret.name());
+            } catch (Exception ex) {
+                logFluxWarn(valuesSecret.namespace(), valuesSecret.helmRelease(), "secrets",
+                        "Could not put Secret %s back as it was before the failed deploy: %s", valuesSecret.name(),
+                        ex.toString());
+            }
+        }
+    }
+
+    /**
+     * Undoes what a deploy did ahead of Git when its commit or push failed: the local commit, then the values Secrets
+     * it wrote. Best effort.
+     *
+     * @param headBeforeCommit the commit the workspace was on before this deploy committed
+     */
+    private void undoUnpublished(GitClient gitClient, String headBeforeCommit, List<ValuesSecret> written) {
+        try {
+            gitClient.resetTo(headBeforeCommit);
+        } catch (Exception ex) {
+            LOG.warn("Could not drop the unpublished commit from the workspace: {}", ex.toString());
+        }
+        restoreValuesSecrets(written);
+    }
+
+    /**
+     * Asks Flux to read the values Secrets again for the HelmReleases already on the cluster. Best effort: the Secrets'
+     * watch label triggers the same reconcile on recent Flux versions.
+     */
+    private void requestReconcile(List<ValuesSecret> written) {
+        for (ValuesSecret valuesSecret : written) {
+            try {
+                if (!kubernetesService.requestFluxReconcile(valuesSecret.namespace(), valuesSecret.helmRelease())) {
+                    LOG.info("HelmRelease {}/{} is not on the cluster yet: Flux reads its values Secret when it applies it",
+                            valuesSecret.namespace(), valuesSecret.helmRelease());
+                }
+            } catch (Exception ex) {
+                LOG.warn("Could not ask Flux to reconcile HelmRelease {}/{}: {}", valuesSecret.namespace(),
+                        valuesSecret.helmRelease(), ex.toString());
+            }
+        }
+    }
+
+    /**
+     * The values Secret a HelmRelease manifest reads among the HelmRelease's own ({@code <name>-kdps-values} or one of
+     * a proposed change), or null when the manifest does not exist or reads none.
+     */
+    static String referencedValuesSecret(Path manifest, String helmRelease) {
+        for (Map<?, ?> doc : helmReleaseDocuments(manifest)) {
+            Object metadata = doc.get("metadata");
+            if (metadata instanceof Map<?, ?> meta && helmRelease.equals(String.valueOf(meta.get("name")))) {
+                List<String> own = ownValuesSecrets(doc, helmRelease);
+                if (!own.isEmpty()) {
+                    return own.get(0);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The HelmReleases in a directory of the Git workspace, by namespace and name. */
+    static java.util.Set<NamespacedName> helmReleasesUnder(Path dir) {
+        java.util.Set<NamespacedName> found = new java.util.LinkedHashSet<>();
+        for (Path file : manifestsUnder(dir)) {
+            for (Map<?, ?> doc : helmReleaseDocuments(file)) {
+                Map<?, ?> metadata = (Map<?, ?>) doc.get("metadata");
+                found.add(new NamespacedName(String.valueOf(metadata.get("namespace")), String.valueOf(metadata.get("name"))));
+            }
+        }
+        return found;
+    }
+
+    /**
+     * The values Secrets of the HelmReleases in a directory of the Git workspace: the one named after each
+     * HelmRelease, and the HelmRelease's other values Secrets its {@code valuesFrom} reads.
+     */
+    static java.util.Set<NamespacedName> valuesSecretsUnder(Path dir) {
+        java.util.Set<NamespacedName> found = new java.util.LinkedHashSet<>();
+        for (Path file : manifestsUnder(dir)) {
+            for (Map<?, ?> doc : helmReleaseDocuments(file)) {
+                Map<?, ?> metadata = (Map<?, ?>) doc.get("metadata");
+                String hrNamespace = String.valueOf(metadata.get("namespace"));
+                String hrName = String.valueOf(metadata.get("name"));
+                found.add(new NamespacedName(hrNamespace, GitOpsSecretValues.secretName(hrName)));
+                ownValuesSecrets(doc, hrName).forEach(name -> found.add(new NamespacedName(hrNamespace, name)));
+            }
+        }
+        return found;
+    }
+
+    private static List<Path> manifestsUnder(Path dir) {
+        if (!Files.exists(dir)) {
+            return List.of();
+        }
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
+            return walk.filter(Files::isRegularFile)
+                    .filter(f -> f.getFileName().toString().endsWith(".yaml") || f.getFileName().toString().endsWith(".yml"))
+                    .sorted()
+                    .collect(Collectors.toList());
+        } catch (IOException ex) {
+            LOG.warn("Could not list the manifests under {}: {}", dir, ex.toString());
+            return List.of();
+        }
+    }
+
+    /** The HelmRelease documents of a manifest file that name their namespace; none when it cannot be read. */
+    private static List<Map<?, ?>> helmReleaseDocuments(Path file) {
+        List<Map<?, ?>> found = new ArrayList<>();
+        if (!Files.isRegularFile(file)) {
+            return found;
+        }
+        com.fasterxml.jackson.databind.ObjectMapper yaml =
+                new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory());
+        try (com.fasterxml.jackson.databind.MappingIterator<Object> docs = yaml.readerFor(Map.class).readValues(file.toFile())) {
+            while (docs.hasNext()) {
+                if (docs.next() instanceof Map<?, ?> doc && "HelmRelease".equals(doc.get("kind"))
+                        && doc.get("metadata") instanceof Map<?, ?> metadata
+                        && metadata.get("name") != null && metadata.get("namespace") != null) {
+                    found.add(doc);
+                }
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not read {} for its values Secrets: {}", file, ex.toString());
+        }
+        return found;
+    }
+
+    /** The Secrets a HelmRelease document reads through {@code valuesFrom} that are values Secrets of its own. */
+    private static List<String> ownValuesSecrets(Map<?, ?> helmRelease, String name) {
+        List<String> own = new ArrayList<>();
+        Object valuesFrom = helmRelease.get("spec") instanceof Map<?, ?> spec ? spec.get("valuesFrom") : null;
+        if (valuesFrom instanceof List<?> entries) {
+            for (Object entry : entries) {
+                if (entry instanceof Map<?, ?> ref && "Secret".equals(ref.get("kind")) && ref.get("name") != null
+                        && GitOpsSecretValues.isValuesSecretOf(name, String.valueOf(ref.get("name")))) {
+                    own.add(String.valueOf(ref.get("name")));
+                }
+            }
+        }
+        return own;
+    }
+
+    /**
+     * Deletes the values Secrets this view created for the removed HelmReleases: those named in their manifests, their
+     * own, and those of changes proposed for them that no manifest names any more (a pull request closed unmerged, a
+     * Secret replaced by a later change). A Secret without this view's label is left alone.
+     */
+    private void deleteValuesSecrets(java.util.Set<NamespacedName> referenced, java.util.Set<NamespacedName> helmReleases) {
+        if (kubernetesService == null) {
+            return;
+        }
+        java.util.Set<NamespacedName> secrets = new java.util.LinkedHashSet<>(referenced);
+        for (NamespacedName helmRelease : helmReleases) {
+            secrets.add(new NamespacedName(helmRelease.namespace(), GitOpsSecretValues.secretName(helmRelease.name())));
+            try {
+                kubernetesService.listSecretNames(helmRelease.namespace(),
+                                Map.of(MANAGED_BY_LABEL, MANAGED_BY_VALUE, RELEASE_LABEL, helmRelease.name())).stream()
+                        .filter(name -> GitOpsSecretValues.isValuesSecretOf(helmRelease.name(), name))
+                        .forEach(name -> secrets.add(new NamespacedName(helmRelease.namespace(), name)));
+            } catch (Exception ex) {
+                LOG.warn("Could not list the values Secrets of HelmRelease {}/{}: {}", helmRelease.namespace(),
+                        helmRelease.name(), ex.toString());
+            }
+        }
+        for (NamespacedName ref : secrets) {
+            try {
+                io.fabric8.kubernetes.api.model.Secret secret = kubernetesService.getSecret(ref.namespace(), ref.name());
+                if (secret == null) {
+                    continue;
+                }
+                Map<String, String> labels = secret.getMetadata() == null ? null : secret.getMetadata().getLabels();
+                if (labels == null || !MANAGED_BY_VALUE.equals(labels.get(MANAGED_BY_LABEL))) {
+                    LOG.warn("Secret {}/{} was not created by this view; left in place", ref.namespace(), ref.name());
+                    continue;
+                }
+                kubernetesService.deleteSecret(ref.namespace(), ref.name());
+                LOG.info("Deleted the values Secret {}/{}", ref.namespace(), ref.name());
+            } catch (Exception ex) {
+                LOG.warn("Could not delete the values Secret {}/{}: {}", ref.namespace(), ref.name(), ex.toString());
             }
         }
     }

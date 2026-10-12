@@ -229,6 +229,20 @@ public class ReleaseMetadataService {
         releaseRepository.update(e);
     }
 
+    /**
+     * Records the base branch of a GitOps release: the branch Flux reconciles, as configured. A redeploy that names no
+     * base branch still needs it to know whether its commit is applied as soon as it is pushed.
+     *
+     * @param baseBranch the configured base branch; null or blank changes nothing
+     */
+    public void recordGitBaseBranch(String namespace, String releaseName, String baseBranch) {
+        if (baseBranch == null || baseBranch.isBlank()) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || baseBranch.equals(e.getGitBaseBranch())) return;
+        e.setGitBaseBranch(baseBranch);
+        releaseRepository.update(e);
+    }
+
     /** The truststores recorded for a release, or {@code null} when no selection was ever recorded. */
     public java.util.List<String> truststoreRefs(String namespace, String releaseName) {
         K8sReleaseEntity e = find(namespace, releaseName);

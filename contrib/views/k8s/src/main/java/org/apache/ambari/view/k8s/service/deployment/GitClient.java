@@ -22,6 +22,8 @@ import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
 import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.ResetCommand;
+import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.TransportCommand;
 import org.eclipse.jgit.api.CreateBranchCommand.SetupUpstreamMode;
 import org.eclipse.jgit.api.errors.GitAPIException;
@@ -29,9 +31,11 @@ import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.CredentialsProvider;
+import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.ssh.jsch.JschConfigSessionFactory;
 import org.eclipse.jgit.transport.ssh.jsch.OpenSshConfig;
 import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.SshTransport;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.util.FS;
@@ -42,6 +46,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 
 /**
@@ -210,21 +217,66 @@ public class GitClient {
         Files.writeString(abs, content, StandardCharsets.UTF_8);
     }
 
-    /** Stage, commit, and push. Returns the commit SHA (or null if nothing changed). */
+    /**
+     * Stage, commit, and push. Returns the commit SHA (or null if nothing changed).
+     *
+     * <p>Safe to call again after a failed push: the commit made by the failed call is pushed, instead of the call
+     * finding nothing left to commit and reporting no change.
+     *
+     * @throws IOException when the push fails or the remote refuses the update
+     */
     public String commitAndPush(String message) throws IOException, InterruptedException {
         String sha = commitInternal(message);
         if (sha == null) {
-            return null;
+            if (unpushedCommit == null || !unpushedCommit.equals(headCommit())) {
+                return null;
+            }
+            sha = unpushedCommit;
         }
+        unpushedCommit = sha;
         try (Git git = Git.open(workspace.toFile())) {
             String branch = git.getRepository().getBranch();
-            configure(git.push().setRemote("origin")
+            Iterable<PushResult> results = configure(git.push().setRemote("origin")
                     .setRefSpecs(new RefSpec("HEAD:refs/heads/" + branch))).call();
+            // A refused update (not a fast-forward, a protected branch, a server hook) is reported, not thrown.
+            for (PushResult result : results) {
+                for (RemoteRefUpdate update : result.getRemoteUpdates()) {
+                    if (update.getStatus() != RemoteRefUpdate.Status.OK
+                            && update.getStatus() != RemoteRefUpdate.Status.UP_TO_DATE) {
+                        throw new IOException("git push to " + redact(repoUrl) + " (" + branch + ") was refused: "
+                                + update.getStatus() + (update.getMessage() == null ? "" : " - " + update.getMessage()));
+                    }
+                }
+            }
             LOG.info("Pushed commit {} to {} ({})", sha, repoUrl, branch);
         } catch (GitAPIException e) {
             throw new IOException("git push failed for " + repoUrl + ": " + e.getMessage(), e);
         }
+        unpushedCommit = null;
         return sha;
+    }
+
+    /** The commit of the last {@link #commitAndPush} call whose push failed, or null. */
+    private String unpushedCommit;
+
+    /**
+     * Moves the current branch back to a commit, dropping the commits and the changes made since: a commit whose
+     * push failed must not be left in the workspace, where the next deploy would take it as published.
+     *
+     * @param commit the commit to go back to; nothing is done when it is null
+     */
+    public void resetTo(String commit) throws IOException {
+        if (commit == null) {
+            return;
+        }
+        try (Git git = Git.open(workspace.toFile())) {
+            git.reset().setMode(ResetCommand.ResetType.HARD).setRef(commit).call();
+            if (!commit.equals(unpushedCommit)) {
+                unpushedCommit = null;
+            }
+        } catch (GitAPIException e) {
+            throw new IOException("git reset to " + commit + " failed: " + e.getMessage(), e);
+        }
     }
 
     /** Stage and commit without pushing (used for PR stub flows). */
@@ -261,6 +313,34 @@ public class GitClient {
             return !git.status().call().isClean();
         } catch (GitAPIException e) {
             throw new IOException("git status failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * The files the next commit would add or change (new, modified or staged; not deletions), relative to the repo
+     * root.
+     */
+    public Set<Path> changedFiles() throws IOException {
+        try (Git git = Git.open(workspace.toFile())) {
+            Status status = git.status().call();
+            Set<String> names = new TreeSet<>();
+            names.addAll(status.getUntracked());
+            names.addAll(status.getModified());
+            names.addAll(status.getAdded());
+            names.addAll(status.getChanged());
+            Set<Path> files = new LinkedHashSet<>();
+            names.forEach(name -> files.add(Path.of(name)));
+            return files;
+        } catch (GitAPIException e) {
+            throw new IOException("git status failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** The commit the workspace is on, or {@code null} when the repository has none yet. */
+    public String headCommit() throws IOException {
+        try (Git git = Git.open(workspace.toFile())) {
+            org.eclipse.jgit.lib.ObjectId head = git.getRepository().resolve("HEAD");
+            return head == null ? null : head.getName();
         }
     }
 

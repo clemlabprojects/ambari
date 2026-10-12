@@ -2909,7 +2909,7 @@
         {
           "name": "icebergCatalog.clientSecret",
           "label": "Polaris client secret",
-          "type": "string",
+          "type": "password",
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
           "help": "OAuth2 client secret of the principal above."
@@ -2957,7 +2957,7 @@
             {
               "name": "icebergCatalog.s3SecretKey",
               "label": "S3 secret key",
-              "type": "string",
+              "type": "password",
               "excludeFromValues": true,
               "help": "Secret key matching the access key above."
             }
