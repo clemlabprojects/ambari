@@ -1035,7 +1035,7 @@
       "type": "string",
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_auth_mode", "value": "oidc" },
-      "help": "Optional. The principal the Trino JWT authenticator derives from Superset's service token (jwt.principal-field, default the preferred_username claim — for a Keycloak client-credentials token that is usually 'service-account-<client-id>'). If set, KDPS auto-grants it 'impersonate' on the Trino Ranger repo. Leave blank if you prefer to grant the impersonation policy yourself (the exact principal depends on your Keycloak claim mapping)."
+      "help": "Optional. The principal the Trino JWT authenticator derives from Superset's service token (jwt.principal-field, default the preferred_username claim — for a Keycloak client-credentials token that is usually 'service-account-<client-id>'). If set, KDPS grants it 'impersonate' on Trino user '*' in the Trino Ranger repository, which Superset needs to run queries as the logged-in user. If you leave it blank, add that policy for the account in Ranger yourself (the exact principal depends on your Keycloak claim mapping): without the principal or that policy, Trino refuses every Superset query."
     },
     {
       "name": "hiveDatabase",

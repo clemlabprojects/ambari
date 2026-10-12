@@ -109,7 +109,7 @@
             "field": "trino.auth.method",
             "value": "ldap"
           },
-          "help": "Optional. Runs the queries as this user instead of the account above, so Ranger sees the real owner. Trino must allow that account to impersonate."
+          "help": "Optional. Runs the queries as this user instead of the account above, so Ranger sees the real owner. KDPS does not grant this: the account above needs an 'impersonate' policy in the Trino Ranger repository on this user (or on Trino user '*'), otherwise Trino refuses every query."
         },
         {
           "name": "trino.auth.jwtToken",

@@ -34,9 +34,13 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -59,6 +63,31 @@ public final class OmAtlasProvisioning {
 
     private static final Logger LOG = LoggerFactory.getLogger(OmAtlasProvisioning.class);
     private static final Gson GSON = new Gson();
+
+    /**
+     * Ranger's "the user making the request" macro. Named as a policy user it matches EVERY user;
+     * used as a resource value it is replaced by the requesting user, so it matches only them.
+     */
+    public static final String RANGER_USER_MACRO = "{USER}";
+
+    /** The KDPS policy that lets each Trino user run queries as themselves, and only as themselves. */
+    public static final String TRINO_SELF_IMPERSONATION_POLICY = "kdps - users impersonate only themselves";
+
+    /**
+     * The policy earlier KDPS versions created for self-impersonation. It granted {@link #RANGER_USER_MACRO}
+     * impersonation of every Trino user ({@code trinouser=*}), i.e. anyone could act as anyone.
+     */
+    public static final String LEGACY_TRINO_SELF_IMPERSONATION_POLICY = "kdps - users impersonate themselves";
+
+    /**
+     * Policies asked for per call when listing a service. Kept under Ranger's default page size
+     * ({@code ranger.db.maxrows.default}, 200) so a short page reliably means the last one.
+     */
+    private static final int POLICY_PAGE_SIZE = 100;
+
+    /** Every list of policy items a Ranger policy carries; a policy with all of them empty grants nothing. */
+    private static final String[] ALL_ITEM_KEYS = {"policyItems", "denyPolicyItems", "allowExceptions",
+            "denyExceptions", "dataMaskPolicyItems", "rowFilterPolicyItems"};
 
     /** Holds the resolved OM federation credentials (one per release). */
     public static final class Credentials {
@@ -731,6 +760,12 @@ public final class OmAtlasProvisioning {
                                                           String rangerPassword, String trinoServiceName,
                                                           String policyName, String trinoUser,
                                                           long timeoutMs) throws Exception {
+        // This grant covers every Trino user; given to a Ranger macro such as {USER}, which stands for
+        // every user, it would let anyone act as anyone.
+        if (trinoUser == null || trinoUser.isBlank() || trinoUser.startsWith("{")) {
+            throw new IllegalArgumentException("Trino impersonation of every user can only be granted to a named "
+                    + "service identity, not '" + trinoUser + "'");
+        }
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
         ensureRangerUserExists(rangerAdminUrl, basic, trinoUser);
@@ -791,6 +826,282 @@ public final class OmAtlasProvisioning {
         long id = JsonParser.parseString(readBody(conn, false)).getAsJsonObject().get("id").getAsLong();
         LOG.info("OmAtlasProvisioning: Ranger Trino impersonate policy '{}' created (id={})", policyName, id);
         return id;
+    }
+
+    /**
+     * Takes back the rule earlier KDPS versions added to a Trino repository: {@link #RANGER_USER_MACRO}
+     * granted {@code impersonate} on every Trino user ({@code trinouser=*}), which let any authenticated
+     * user run queries as any other user. The grant is removed from every access policy over exactly
+     * {@code trinouser=*} — the repository's default {@code all - trinouser} policy keeps its other
+     * items, such as the service principals that legitimately impersonate — and the
+     * {@link #LEGACY_TRINO_SELF_IMPERSONATION_POLICY} is deleted if that leaves it granting nothing.
+     *
+     * @return the number of policies changed; 0 on a repository that never carried the rule
+     */
+    public static int revokeTrinoImpersonationOfEveryone(String rangerAdminUrl, String rangerUser,
+                                                         String rangerPassword, String trinoServiceName) throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        return revokeAccessOnScope(rangerAdminUrl, basic, trinoServiceName, Map.of("trinouser", List.of("*")),
+                RANGER_USER_MACRO, "impersonate", LEGACY_TRINO_SELF_IMPERSONATION_POLICY);
+    }
+
+    /**
+     * Lets each Trino user act as themselves and nobody else: {@link #RANGER_USER_MACRO} is granted
+     * {@code impersonate} on {@code trinouser={USER}}, which Ranger resolves to the requesting user, so
+     * a Trino session whose user is the authenticated principal is authorized while a request to act
+     * as someone else is not. Table access stays governed by the operator's policies.
+     *
+     * <p>Idempotent: an existing {@link #TRINO_SELF_IMPERSONATION_POLICY} only gains the grant if it
+     * lacks it, and an operator policy that already owns {@code trinouser={USER}} receives the grant
+     * instead of a duplicate (Ranger allows one policy per resource set). A policy of that name over
+     * any other Trino users is refused rather than widened.
+     */
+    public static long ensureTrinoSelfImpersonationPolicy(String rangerAdminUrl, String rangerUser,
+                                                         String rangerPassword, String trinoServiceName,
+                                                         long timeoutMs) throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        Map<String, List<String>> scope = Map.of("trinouser", List.of(RANGER_USER_MACRO));
+
+        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, TRINO_SELF_IMPERSONATION_POLICY);
+        if (existing != null) {
+            RangerAnswer current = rangerCall("GET", rangerAdminUrl + "/service/public/v2/api/policy/" + existing, basic, null);
+            if (current.code() != 200) {
+                throw new IllegalStateException("Ranger policy GET id=" + existing + " failed: HTTP " + current.code()
+                        + " — " + current.body());
+            }
+            if (!coversExactly(JsonParser.parseString(current.body()).getAsJsonObject(), scope)) {
+                throw new IllegalStateException("Ranger policy '" + TRINO_SELF_IMPERSONATION_POLICY + "' on '"
+                        + trinoServiceName + "' covers other Trino users than each user themselves; it was left unchanged");
+            }
+            return appendAccessToPolicy(rangerAdminUrl, basic, TRINO_SELF_IMPERSONATION_POLICY, existing,
+                    RANGER_USER_MACRO, "impersonate", timeoutMs);
+        }
+
+        JsonObject p = new JsonObject();
+        p.addProperty("service", trinoServiceName);
+        p.addProperty("name", TRINO_SELF_IMPERSONATION_POLICY);
+        p.addProperty("description", "KDPS-managed: lets every authenticated user run Trino queries as themselves, "
+                + "and only as themselves.");
+        p.addProperty("isAuditEnabled", true);
+        p.addProperty("isEnabled", true);
+        p.addProperty("policyType", 0);
+        p.addProperty("policyPriority", 0);
+        JsonObject resources = new JsonObject();
+        JsonObject r = new JsonObject();
+        r.add("values", arrayOf(RANGER_USER_MACRO));
+        r.addProperty("isExcludes", false);
+        r.addProperty("isRecursive", false);
+        resources.add("trinouser", r);
+        p.add("resources", resources);
+        JsonObject item = new JsonObject();
+        item.add("users", arrayOf(RANGER_USER_MACRO));
+        item.add("groups", new JsonArray());
+        item.add("roles", new JsonArray());
+        item.add("accesses", arrayOfObjects(new String[]{"impersonate"}, "isAllowed", true));
+        item.addProperty("delegateAdmin", false);
+        JsonArray items = new JsonArray();
+        items.add(item);
+        p.add("policyItems", items);
+
+        RangerAnswer created = rangerCall("POST", rangerAdminUrl + "/service/public/v2/api/policy", basic, p);
+        if (created.code() >= 200 && created.code() < 300) {
+            long id = JsonParser.parseString(created.body()).getAsJsonObject().get("id").getAsLong();
+            LOG.info("OmAtlasProvisioning: Ranger Trino self-impersonation policy '{}' created on '{}' (id={})",
+                    TRINO_SELF_IMPERSONATION_POLICY, trinoServiceName, id);
+            return id;
+        }
+        // Ranger refuses a second policy over the same resources (error 3010) and names the one that
+        // owns them; that policy covers exactly trinouser={USER}, so the grant goes there.
+        java.util.regex.Matcher owner = java.util.regex.Pattern.compile("policy-name=\\[(.*?)\\]").matcher(created.body());
+        if (created.code() == 400 && owner.find()) {
+            Long ownerId = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, owner.group(1));
+            if (ownerId != null) {
+                return appendAccessToPolicy(rangerAdminUrl, basic, owner.group(1), ownerId,
+                        RANGER_USER_MACRO, "impersonate", timeoutMs);
+            }
+        }
+        throw new IllegalStateException("Ranger Trino self-impersonation policy create failed: HTTP " + created.code()
+                + " — " + created.body());
+    }
+
+    /**
+     * Removes {@code accessType} from {@code user} in every access policy of the service whose
+     * resources are exactly {@code scope}, and returns how many policies changed. A policy named
+     * {@code ownedPolicyName} that grants nothing afterwards is deleted rather than left empty.
+     */
+    private static int revokeAccessOnScope(String rangerAdminUrl, String basic, String serviceName,
+                                           Map<String, List<String>> scope, String user, String accessType,
+                                           String ownedPolicyName) throws Exception {
+        int changed = 0;
+        for (JsonObject policy : listServicePolicies(rangerAdminUrl, basic, serviceName)) {
+            if (!isAccessPolicy(policy) || !coversExactly(policy, scope)) continue;
+            JsonArray items = policy.has("policyItems") && policy.get("policyItems").isJsonArray()
+                    ? policy.getAsJsonArray("policyItems") : new JsonArray();
+            JsonArray kept = withoutAccess(items, user, Set.of(accessType));
+            if (kept == null) continue;
+            policy.add("policyItems", kept);
+            long policyId = policy.get("id").getAsLong();
+            String policyName = policy.has("name") ? policy.get("name").getAsString() : "";
+            String url = rangerAdminUrl + "/service/public/v2/api/policy/" + policyId;
+            if (policyName.equals(ownedPolicyName) && grantsNothing(policy)) {
+                RangerAnswer deleted = rangerCall("DELETE", url, basic, null);
+                if ((deleted.code() < 200 || deleted.code() >= 300) && deleted.code() != 404) {
+                    throw new IllegalStateException("Ranger policy delete (id=" + policyId + ") failed: HTTP "
+                            + deleted.code() + " — " + deleted.body());
+                }
+                LOG.info("OmAtlasProvisioning: deleted Ranger policy '{}' (id={}) on '{}': it granted nothing once '{}' of '{}' was removed",
+                        policyName, policyId, serviceName, accessType, user);
+            } else {
+                RangerAnswer updated = rangerCall("PUT", url, basic, policy);
+                if (updated.code() < 200 || updated.code() >= 300) {
+                    throw new IllegalStateException("Ranger policy update (id=" + policyId + ") failed: HTTP "
+                            + updated.code() + " — " + updated.body());
+                }
+                LOG.info("OmAtlasProvisioning: removed '{}' of '{}' from Ranger policy '{}' (id={}) on '{}'",
+                        accessType, user, policyName, policyId, serviceName);
+            }
+            changed++;
+        }
+        return changed;
+    }
+
+    /**
+     * Every policy of the service, read page by page. Pages are merged by policy id, so a Ranger that
+     * ignores the paging parameters and repeats a page still ends the listing.
+     */
+    private static List<JsonObject> listServicePolicies(String rangerAdminUrl, String basic, String serviceName) throws Exception {
+        Map<Long, JsonObject> byId = new LinkedHashMap<>();
+        for (int start = 0; ; start += POLICY_PAGE_SIZE) {
+            RangerAnswer page = rangerCall("GET", rangerAdminUrl + "/service/public/v2/api/service/"
+                    + pathSegmentEncode(serviceName) + "/policy?startIndex=" + start + "&pageSize=" + POLICY_PAGE_SIZE,
+                    basic, null);
+            if (page.code() != 200) {
+                throw new IllegalStateException("Listing the policies of Ranger service '" + serviceName
+                        + "' returned HTTP " + page.code() + ": " + page.body());
+            }
+            JsonArray policies = JsonParser.parseString(page.body()).getAsJsonArray();
+            int before = byId.size();
+            for (int i = 0; i < policies.size(); i++) {
+                JsonObject policy = policies.get(i).getAsJsonObject();
+                if (policy.has("id")) byId.putIfAbsent(policy.get("id").getAsLong(), policy);
+            }
+            if (policies.size() < POLICY_PAGE_SIZE || byId.size() == before) {
+                return new ArrayList<>(byId.values());
+            }
+        }
+    }
+
+    /** True for an access policy (policyType 0 or absent), the only kind a revoke edits. */
+    static boolean isAccessPolicy(JsonObject policy) {
+        return !policy.has("policyType") || policy.get("policyType").isJsonNull()
+                || policy.get("policyType").getAsInt() == 0;
+    }
+
+    /**
+     * True when the policy's resources are exactly {@code scope}: the same resource names, each with
+     * the same set of values and no exclusion. A policy over a narrower or wider set is left alone.
+     */
+    static boolean coversExactly(JsonObject policy, Map<String, List<String>> scope) {
+        if (!policy.has("resources") || !policy.get("resources").isJsonObject()) return false;
+        JsonObject resources = policy.getAsJsonObject("resources");
+        if (!resources.keySet().equals(scope.keySet())) return false;
+        for (Map.Entry<String, List<String>> e : scope.entrySet()) {
+            if (!resources.get(e.getKey()).isJsonObject()) return false;
+            JsonObject resource = resources.getAsJsonObject(e.getKey());
+            if (resource.has("isExcludes") && resource.get("isExcludes").getAsBoolean()) return false;
+            if (!stringSet(resource.get("values")).equals(new LinkedHashSet<>(e.getValue()))) return false;
+        }
+        return true;
+    }
+
+    /**
+     * The policy items once {@code revoked} accesses are taken from {@code user}, or null when no item
+     * gave that user any of them. An item shared with other principals keeps them with everything it
+     * had; the user keeps, in an item of their own, only the accesses not revoked. An item left with
+     * no principal or no access is dropped.
+     */
+    static JsonArray withoutAccess(JsonArray items, String user, Set<String> revoked) {
+        JsonArray out = new JsonArray();
+        boolean changed = false;
+        for (int i = 0; i < items.size(); i++) {
+            JsonObject item = items.get(i).getAsJsonObject();
+            Set<String> users = stringSet(item.get("users"));
+            JsonArray accesses = item.has("accesses") && item.get("accesses").isJsonArray()
+                    ? item.getAsJsonArray("accesses") : new JsonArray();
+            JsonArray rest = new JsonArray();
+            boolean grantsRevoked = false;
+            for (int k = 0; k < accesses.size(); k++) {
+                JsonObject access = accesses.get(k).getAsJsonObject();
+                if (revoked.contains(access.has("type") ? access.get("type").getAsString() : null)) {
+                    grantsRevoked = true;
+                } else {
+                    rest.add(access);
+                }
+            }
+            if (!users.contains(user) || !grantsRevoked) {
+                out.add(item);
+                continue;
+            }
+            changed = true;
+
+            Set<String> otherUsers = new LinkedHashSet<>(users);
+            otherUsers.remove(user);
+            if (!otherUsers.isEmpty() || !stringSet(item.get("groups")).isEmpty() || !stringSet(item.get("roles")).isEmpty()) {
+                JsonObject others = item.deepCopy();
+                others.add("users", arrayOf(otherUsers.toArray(new String[0])));
+                out.add(others);
+            }
+            if (rest.size() > 0) {
+                JsonObject theirs = item.deepCopy();
+                theirs.add("users", arrayOf(user));
+                theirs.add("groups", new JsonArray());
+                theirs.add("roles", new JsonArray());
+                theirs.add("accesses", rest);
+                out.add(theirs);
+            }
+        }
+        return changed ? out : null;
+    }
+
+    /** True when the policy carries no item of any kind, i.e. grants and denies nothing. */
+    static boolean grantsNothing(JsonObject policy) {
+        for (String key : ALL_ITEM_KEYS) {
+            if (policy.has(key) && policy.get(key).isJsonArray() && policy.getAsJsonArray(key).size() > 0) return false;
+        }
+        return true;
+    }
+
+    private static Set<String> stringSet(com.google.gson.JsonElement array) {
+        Set<String> out = new LinkedHashSet<>();
+        if (array != null && array.isJsonArray()) {
+            JsonArray a = array.getAsJsonArray();
+            for (int i = 0; i < a.size(); i++) {
+                if (!a.get(i).isJsonNull()) out.add(a.get(i).getAsString());
+            }
+        }
+        return out;
+    }
+
+    /** A Ranger Admin REST answer: the status and the body (the error body on a failure). */
+    private record RangerAnswer(int code, String body) {}
+
+    private static RangerAnswer rangerCall(String method, String url, String basic, JsonObject body) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        configureSsl(conn);
+        conn.setRequestMethod(method);
+        conn.setRequestProperty("Authorization", basic);
+        conn.setRequestProperty("Accept", "application/json");
+        if (body != null) {
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            try (var os = conn.getOutputStream()) {
+                os.write(GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
+            }
+        }
+        int code = conn.getResponseCode();
+        return new RangerAnswer(code, readBody(conn, code < 200 || code >= 300));
     }
 
     /**

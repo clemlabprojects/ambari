@@ -7548,9 +7548,10 @@ public class CommandService {
                     // to Trino as a SERVICE principal and impersonates the end-user (Trino session
                     // user). For Ranger to authorise that, the service principal needs 'impersonate'
                     // on the Trino Ranger repo. Declared via platformOp (op=ranger.trinoImpersonateGrant).
-                    // Only the ldap/kerberos modes authenticate as a distinct principal that must be
-                    // granted; none/tls set the session user directly and need no grant (oidc/jwt is
-                    // wired with P2). Dual routing (context REST vs Ambari server) is chosen at execute.
+                    // The ldap, kerberos and oidc modes authenticate as a distinct principal that must be
+                    // granted (for oidc, only the operator can name it); none/tls set the session user
+                    // directly and need no grant. Dual routing (context REST vs Ambari server) is chosen
+                    // at execute.
                     if (hasPlatformOp(serviceDef, "ranger.trinoImpersonateGrant")) {
                         Map<String, Object> fv = request.getFormValues() != null
                                 ? request.getFormValues() : Collections.emptyMap();
@@ -7599,6 +7600,12 @@ public class CommandService {
                                     + "(principal='{}', mode='{}', context='{}')",
                                     request.getReleaseName(), trinoPrincipal, trinoAuthMode,
                                     trinoGrantPcId.isBlank() ? "default" : trinoGrantPcId);
+                        } else if (!trinoHost.isBlank() && "oidc".equals(trinoAuthMode)) {
+                            // Nothing else lets the token's account act for the logged-in user, so every
+                            // query would be refused: the operator reads why in the deploy log.
+                            String warning = trinoOidcPrincipalMissing(request.getReleaseName());
+                            LOG.warn("ranger.trinoImpersonateGrant: {}", warning);
+                            appendCommandLog(id, "WARNING: " + warning);
                         } else if (!trinoHost.isBlank()) {
                             LOG.info("ranger.trinoImpersonateGrant: Trino host set but auth mode '{}' needs no "
                                     + "impersonation grant (or the LDAP service user is blank) — skipping for release '{}'",
@@ -8963,25 +8970,17 @@ public class CommandService {
                                 rangerRepositoryName, serviceType, directConfigs);
                         LOG.info("Ranger plugin repository '{}' (type={}) ensured via context Ranger (direct REST, service id={})",
                                 rangerRepositoryName, serviceType, svcId);
+                        TrinoImpersonationRules impersonation = null;
                         if ("trino".equalsIgnoreCase(serviceType)) {
-                            // A fresh Trino repository only lets the service user impersonate. Without
-                            // this, every authenticated person is refused with "Principal X cannot become
-                            // user X" before any table policy is consulted. Table access stays governed by
-                            // the operator's policies; this only lets a user be themselves.
-                            try {
-                                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(
-                                        repoRc.getRangerUrl(), repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
-                                        rangerRepositoryName, "kdps - users impersonate themselves", "{USER}",
-                                        java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
-                            } catch (Exception e) {
-                                LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
-                            }
+                            impersonation = restrictTrinoImpersonationViaRanger(repoRc.getRangerUrl(),
+                                    repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
+                                    rangerRepositoryName, timeoutSeconds);
                         }
                         Map<String,Object> res = new LinkedHashMap<>();
                         res.put("rangerRepositoryName", rangerRepositoryName);
                         res.put("serviceId", svcId);
                         res.put("via", "context-ranger-rest");
-                        childSt.setResultJson(gson.toJson(res));
+                        recordRangerRepositoryResult(id, childSt, rangerRepositoryName, impersonation, res);
                         break;
                     }
 
@@ -9010,20 +9009,10 @@ public class CommandService {
                         throw new IllegalStateException(
                                 "Ambari Ranger plugin repository request " + reqId + " did not complete successfully");
                     }
+                    TrinoImpersonationRules impersonation = null;
                     if ("trino".equalsIgnoreCase(serviceType)) {
-                        // Same default as the direct path, through the Ambari server this time.
-                        try {
-                            int polReq = ambariActionClient.submitRangerPolicyGrant(
-                                    rangerRepositoryName, "{USER}", "impersonate", "{\"trinouser\":[\"*\"]}",
-                                    "kdps - users impersonate themselves",
-                                    "KDPS-managed: let every authenticated user run Trino queries as themselves.",
-                                    timeoutSeconds, "KDPS: Trino self-impersonation policy on " + rangerRepositoryName);
-                            if (!ambariActionClient.waitUntilComplete(polReq, timeoutSeconds.longValue(), java.util.concurrent.TimeUnit.SECONDS)) {
-                                LOG.warn("Ranger repository '{}': self-impersonation policy request {} did not complete", rangerRepositoryName, polReq);
-                            }
-                        } catch (Exception e) {
-                            LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
-                        }
+                        // Same rules as the direct path, through the Ambari server this time.
+                        impersonation = restrictTrinoImpersonationViaAmbari(ambariActionClient, rangerRepositoryName, timeoutSeconds);
                     }
 
                     LOG.info("Ranger plugin repository '{}' configured successfully via Ambari request {}",
@@ -9033,7 +9022,7 @@ public class CommandService {
                     Map<String,Object> res = new LinkedHashMap<>();
                     res.put("rangerRepositoryName", rangerRepositoryName);
                     res.put("requestId", reqId);
-                    childSt.setResultJson(gson.toJson(res));
+                    recordRangerRepositoryResult(id, childSt, rangerRepositoryName, impersonation, res);
                   } // end remoteConfigGate guard
                 }
                 case OM_RANGER_TAGSYNC_REGISTER -> {
@@ -14423,6 +14412,190 @@ public class CommandService {
         return (cluster == null || cluster.isBlank()) ? "polaris" : cluster + "_polaris";
     }
 
+    /** Resource scope of every Trino user, as the Ambari {@code ranger_policy} action takes it. */
+    static final String TRINO_EVERY_USER_SCOPE = "{\"trinouser\":[\"*\"]}";
+
+    /** Resource scope of the requesting Trino user only: Ranger replaces the macro with that user. */
+    static final String TRINO_REQUESTING_USER_SCOPE = "{\"trinouser\":[\""
+            + org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.RANGER_USER_MACRO + "\"]}";
+
+    /**
+     * What the impersonation rules of a Trino repository came to: the warning to show when users
+     * could not be allowed to act as themselves (null when they can), and how many policies lost the
+     * every-user rule (-1 when the Ambari server did not say).
+     */
+    record TrinoImpersonationRules(String selfGrantWarning, int revokedPolicies) {}
+
+    /**
+     * Context-Ranger side of the Trino repository impersonation rules, straight against a Ranger the
+     * view holds the admin credentials of. Same rules and order as
+     * {@link #restrictTrinoImpersonationViaAmbari}.
+     */
+    static TrinoImpersonationRules restrictTrinoImpersonationViaRanger(String rangerUrl, String rangerAdminUser,
+                                                                       String rangerAdminPassword,
+                                                                       String rangerRepositoryName, int timeoutSeconds) {
+        String selfGrantWarning = null;
+        try {
+            org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureTrinoSelfImpersonationPolicy(
+                    rangerUrl, rangerAdminUser, rangerAdminPassword, rangerRepositoryName,
+                    TimeUnit.SECONDS.toMillis(timeoutSeconds));
+        } catch (Exception e) {
+            LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
+            selfGrantWarning = trinoSelfImpersonationMissing(rangerRepositoryName, reasonOf(e));
+        }
+
+        int revoked;
+        try {
+            revoked = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.revokeTrinoImpersonationOfEveryone(
+                    rangerUrl, rangerAdminUser, rangerAdminPassword, rangerRepositoryName);
+        } catch (Exception e) {
+            throw new IllegalStateException(trinoImpersonationRevokeFailure(rangerRepositoryName, e), e);
+        }
+        return new TrinoImpersonationRules(selfGrantWarning, revoked);
+    }
+
+    /**
+     * Managed-context side of the Trino repository impersonation rules, through the Ambari server
+     * (which holds the Ranger admin password). A fresh Trino repository only lets the service users
+     * impersonate, so without a rule of their own every person is refused with "Principal X cannot
+     * become user X" before any table policy is consulted: each user is allowed to impersonate
+     * themselves, and only themselves. Table access stays governed by the operator's policies.
+     *
+     * <p>Then the rule earlier versions added is taken back — the {@code {USER}} macro allowed to
+     * impersonate every Trino user, so anyone could act as anyone. The revoke runs last so that,
+     * whatever policy the grant landed in, the step never ends with that rule in place; it fails the
+     * step when it cannot be confirmed. The self grant does not: users are then refused, never
+     * over-granted, and the returned warning tells the operator so.
+     */
+    static TrinoImpersonationRules restrictTrinoImpersonationViaAmbari(AmbariActionClient ambari,
+                                                                       String rangerRepositoryName, int timeoutSeconds) {
+        String macro = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.RANGER_USER_MACRO;
+        String selfGrantWarning = null;
+        try {
+            int polReq = ambari.submitRangerPolicyGrant(
+                    rangerRepositoryName, macro, "impersonate", TRINO_REQUESTING_USER_SCOPE,
+                    org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.TRINO_SELF_IMPERSONATION_POLICY,
+                    "KDPS-managed: lets every authenticated user run Trino queries as themselves, and only as themselves.",
+                    timeoutSeconds, "KDPS: Trino self-impersonation policy on " + rangerRepositoryName);
+            if (!ambari.waitUntilComplete(polReq, timeoutSeconds, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(requestDidNotComplete(ambari, polReq));
+            }
+        } catch (Exception e) {
+            LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
+            selfGrantWarning = trinoSelfImpersonationMissing(rangerRepositoryName, reasonOf(e));
+        }
+
+        int revokeReq;
+        try {
+            revokeReq = ambari.submitRangerPolicyRevoke(
+                    rangerRepositoryName, macro, "impersonate", TRINO_EVERY_USER_SCOPE,
+                    org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.LEGACY_TRINO_SELF_IMPERSONATION_POLICY,
+                    timeoutSeconds, "KDPS: stop users acting as any other Trino user on " + rangerRepositoryName);
+            if (!ambari.waitUntilComplete(revokeReq, timeoutSeconds, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(requestDidNotComplete(ambari, revokeReq));
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException(trinoImpersonationRevokeFailure(rangerRepositoryName, e), e);
+        }
+
+        // The count only feeds the operation log; the revoke itself is already confirmed.
+        int revoked = -1;
+        try {
+            revoked = ambari.taskStructuredOut(revokeReq)
+                    .filter(out -> out.has("changedPolicies") && out.get("changedPolicies").isJsonPrimitive())
+                    .map(out -> out.get("changedPolicies").getAsInt())
+                    .orElse(-1);
+        } catch (Exception e) {
+            LOG.debug("Ranger repository '{}': revoke request {} did not say how many policies changed: {}",
+                    rangerRepositoryName, revokeReq, e.toString());
+        }
+        return new TrinoImpersonationRules(selfGrantWarning, revoked);
+    }
+
+    /** Why an Ambari request ended badly, with what its failed task answered when Ambari has it. */
+    private static String requestDidNotComplete(AmbariActionClient ambari, int requestId) {
+        String detail = ambari.failureDetail(requestId);
+        return "Ambari request " + requestId + " did not complete successfully"
+                + (detail == null || detail.isBlank() ? "" : ": " + detail);
+    }
+
+    private static String reasonOf(Exception e) {
+        return e.getMessage() == null || e.getMessage().isBlank() ? e.toString() : e.getMessage();
+    }
+
+    /**
+     * Puts what a Ranger repository step did in its operation log and result: a warning that the
+     * every-user Trino impersonation rule was removed, naming the accounts that may now be refused,
+     * and a warning when users cannot act as themselves.
+     */
+    private void recordRangerRepositoryResult(String commandId, CommandStatusEntity childSt, String rangerRepositoryName,
+                                              TrinoImpersonationRules impersonation, Map<String, Object> result) {
+        if (impersonation != null) {
+            List<String> warnings = new ArrayList<>();
+            if (impersonation.revokedPolicies() > 0) {
+                warnings.add(trinoImpersonationRevokedWarning(rangerRepositoryName, impersonation.revokedPolicies()));
+            }
+            if (impersonation.selfGrantWarning() != null) {
+                warnings.add(impersonation.selfGrantWarning());
+            }
+            if (!warnings.isEmpty()) {
+                result.put("warnings", warnings);
+            }
+        }
+        recordStepResult(commandId, childSt, gson.toJson(result));
+    }
+
+    /**
+     * Warning recorded when users could not be allowed to run Trino queries as themselves. The
+     * every-user rule is gone, so until such a policy exists only the service accounts get through.
+     */
+    static String trinoSelfImpersonationMissing(String rangerRepositoryName, String reason) {
+        return "Ranger repository '" + rangerRepositoryName + "': could not add the policy that lets each user run "
+                + "Trino queries as themselves (" + reason + "). Until the repository has an 'impersonate' policy "
+                + "on Trino user '{USER}' granted to '{USER}', Trino refuses every user who is not a service "
+                + "account (\"Principal <user> cannot become user <user>\"). Add that policy in Ranger, or fix "
+                + "the cause and deploy again.";
+    }
+
+    /** Why a Trino repository step failed when the every-user impersonation rule could not be taken back. */
+    static String trinoImpersonationRevokeFailure(String rangerRepositoryName, Exception cause) {
+        return "Could not remove the Ranger rule on repository '" + rangerRepositoryName + "' that lets any user "
+                + "run Trino queries as any other user: " + cause.getMessage()
+                + ". Remove the '{USER}' item from the 'impersonate' policy on Trino user '*' in Ranger, or fix "
+                + "the cause and deploy again.";
+    }
+
+    /**
+     * Warning recorded when an existing repository had the every-user impersonation rule. Service
+     * accounts that run queries for other users may have relied on it without a policy of their own,
+     * and their queries are refused from now on: the warning names the ones KDPS does not grant, so
+     * the operator does not have to work it out from Trino's refusals.
+     */
+    static String trinoImpersonationRevokedWarning(String rangerRepositoryName, int policies) {
+        return "Ranger repository '" + rangerRepositoryName + "': removed the rule that let any user act as any "
+                + "other Trino user (" + policies + (policies == 1 ? " policy" : " policies") + " updated). "
+                + "An account that runs queries on behalf of other users now needs its own 'impersonate' policy "
+                + "on Trino user '*' in this repository, or Trino refuses its queries (\"User <account> cannot "
+                + "impersonate user <user>\"). KDPS adds that policy for its own service user and for Superset, "
+                + "but not for a Superset that connects with OIDC and has no Trino service principal set, nor for "
+                + "the account of a dbt project that sets 'Run queries as'. Add the missing policies in Ranger, "
+                + "or set the Superset Trino service principal and deploy Superset again.";
+    }
+
+    /**
+     * Deploy warning for a release that reaches Trino with an OIDC service token but names no Trino
+     * service principal. Which account Trino sees comes from the Keycloak claim mapping, so KDPS
+     * cannot allow it to act for the logged-in user by itself.
+     */
+    static String trinoOidcPrincipalMissing(String releaseName) {
+        return "Release '" + releaseName + "' connects to Trino with an OIDC service token, but no Trino service "
+                + "principal is set, so KDPS does not allow that account to run queries as the logged-in user. "
+                + "Where Trino is governed by Ranger, every query from this release is refused (\"User <account> "
+                + "cannot impersonate user <user>\") until the Trino Ranger repository has an 'impersonate' policy "
+                + "on Trino user '*' for that account. Set 'Trino service principal (for the impersonation grant)' "
+                + "and deploy again, or add that policy in Ranger.";
+    }
+
     /**
      * Body of {@link CommandType#RANGER_POLICY_GRANT_TRINO_IMPERSONATE}: grants the deploying
      * service's Trino auth principal {@code impersonate} on the Trino Ranger service repo (resource
@@ -14442,13 +14615,19 @@ public class CommandService {
         String releaseName = (String) childParams.get("releaseName");
         String baseUriStr = (String) childParams.get("_baseUri");
 
-        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
-        String trinoService = resolveTrinoRangerServiceName(childParams, rc, cluster);
-
         String principal = stringValue(childParams.get("_principal"));
         if (principal.isBlank()) {
             throw new IllegalStateException("Missing _principal in RANGER_POLICY_GRANT_TRINO_IMPERSONATE params.");
         }
+        // The grant covers every Trino user, so it must name one service identity. A Ranger macro such
+        // as {USER} matches every user and would let anyone act as anyone.
+        if (principal.startsWith("{")) {
+            throw new IllegalStateException("'" + principal + "' cannot be allowed to impersonate every Trino user: "
+                    + "it stands for every user. Set the account the service authenticates to Trino with.");
+        }
+
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        String trinoService = resolveTrinoRangerServiceName(childParams, rc, cluster);
 
         String policyName = "kdps-" + releaseName + "-trino-impersonate";
         int timeoutSeconds = 60;
@@ -14479,7 +14658,7 @@ public class CommandService {
                 baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
         int req = ambari.submitRangerPolicyGrant(
                 trinoService, principal, "impersonate",
-                "{\"trinouser\":[\"*\"]}",
+                TRINO_EVERY_USER_SCOPE,
                 policyName,
                 "KDPS: Superset service user Trino impersonation",
                 timeoutSeconds,

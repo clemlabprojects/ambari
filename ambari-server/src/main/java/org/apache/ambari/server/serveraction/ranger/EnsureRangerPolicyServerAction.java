@@ -27,6 +27,8 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -84,7 +86,15 @@ import com.google.inject.Inject;
  *   <li>{@code policyNameHint} (required) — name to use if a new policy must be created</li>
  *   <li>{@code policyDescription} (optional)</li>
  *   <li>{@code timeoutSeconds} (optional, default 45) — propagation-poll budget</li>
+ *   <li>{@code revoke} (optional, default {@code false}) — take the access back instead of
+ *       granting it, see below</li>
  * </ul>
+ *
+ * <p>Revoke mode removes the access types from the user (and groups) in every allow policy of the
+ * service whose resources are exactly {@code resourcesJson}; whoever else a policy item names keeps
+ * what it had. A policy named {@code policyNameHint} that grants nothing afterwards is deleted, so
+ * that a later grant under that name starts from the resources it asks for rather than appending to
+ * the old, wider ones. No user or group is created in this mode.
  */
 public class EnsureRangerPolicyServerAction extends AbstractServerAction {
 
@@ -93,6 +103,16 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
     /** Parses the conflicting policy name out of Ranger's "matching resource" (code 3010) error. */
     private static final Pattern POLICY_NAME_IN_ERROR =
             Pattern.compile("policy-name=\\[(.*?)\\]");
+
+    /**
+     * Policies asked for per call when listing a service. Kept under Ranger's default page size
+     * ({@code ranger.db.maxrows.default}, 200) so a short page reliably means the last one.
+     */
+    private static final int POLICY_PAGE_SIZE = 100;
+
+    /** Every list of policy items a Ranger policy carries; a policy with all of them empty grants nothing. */
+    private static final String[] ALL_ITEM_KEYS = {"policyItems", "denyPolicyItems", "allowExceptions",
+            "denyExceptions", "dataMaskPolicyItems", "rowFilterPolicyItems"};
 
     @Inject
     private AmbariManagementController managementController;
@@ -125,6 +145,7 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
         if (accessTypes == null && spec.policyType != 0) {
             accessTypes = "select";
         }
+        boolean revoke = Boolean.parseBoolean(trimToNull(commandParameters.get("revoke")));
 
         LOG.info("EnsureRangerPolicyServerAction called: clusterName='{}', rangerServiceName='{}', "
                         + "userName='{}', accessTypes='{}', policyNameHint='{}'",
@@ -140,6 +161,7 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
                 + (spec.maskType != null ? " maskType=" + spec.maskType : "")
                 + (spec.rowFilterExpr != null ? " rowFilterExpr=" + spec.rowFilterExpr : "")
                 + (spec.groups.isEmpty() ? "" : " groups=" + spec.groups));
+        actionLog.writeStdOut("  revoke            = " + revoke);
 
         String missing = firstMissing(
                 "clusterName", clusterName,
@@ -164,6 +186,9 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
             actionLog.writeStdErr(message);
             LOG.error(message);
             return createCommandReport(0, HostRoleStatus.FAILED, "{}", actionLog.getStdOut(), message);
+        }
+        if (revoke && spec.policyType != 0) {
+            return fail("A revoke applies to access policies only (policyType=0), not policyType " + spec.policyType);
         }
 
         try {
@@ -200,6 +225,22 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
             String auth = buildBasicAuth(rangerAdminUserName, rangerAdminPassword);
             actionLog.writeStdOut("Using Ranger at " + policymgrExternalUrl
                     + " with admin user " + rangerAdminUserName);
+
+            if (revoke) {
+                int changed = revokeGrant(policymgrExternalUrl, auth, rangerServiceName, userName, spec.groups,
+                        accessTypes, resourcesJson, policyNameHint);
+                Map<String, Object> revokedOut = new HashMap<>();
+                revokedOut.put("clusterName", clusterName);
+                revokedOut.put("rangerServiceName", rangerServiceName);
+                revokedOut.put("userName", userName);
+                revokedOut.put("changedPolicies", changed);
+                String revokedMessage = "Revoked '" + accessTypes + "' on Ranger service '" + rangerServiceName
+                        + "' from " + describePrincipals(userName, spec.groups) + " in " + changed + " policies";
+                actionLog.writeStdOut(revokedMessage);
+                LOG.info(revokedMessage);
+                return createCommandReport(0, HostRoleStatus.COMPLETED,
+                        toJson(revokedOut), actionLog.getStdOut(), actionLog.getStdErr());
+            }
 
             // 1) Ensure the user exists (Ranger rejects policy items that reference unknown users).
                         if (userName != null) {
@@ -439,6 +480,212 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
                 + "') to Ranger policy id=" + policyId);
         LOG.info("Appended grant ({}, access='{}') to Ranger policy id={}", describePrincipals(userName, spec.groups),
                 accessTypes, policyId);
+    }
+
+    // ------------------------------------------------------------------
+    // Ranger policy revoke
+    // ------------------------------------------------------------------
+
+    /**
+     * Removes {@code accessTypes} from the user and groups in every allow policy of the service whose
+     * resources are exactly {@code resourcesJson}, and returns how many policies changed. A policy
+     * named {@code ownedPolicyName} that grants nothing afterwards is deleted rather than left empty.
+     * Idempotent: once nothing is left to take back, no policy is written.
+     */
+    private int revokeGrant(String baseUrl, String auth, String serviceName, String userName, List<String> groups,
+                            String accessTypes, String resourcesJson, String ownedPolicyName) throws Exception {
+        JsonObject scope = JsonParser.parseString(resourcesJson).getAsJsonObject();
+        Set<String> revoked = new HashSet<>(splitCsv(accessTypes));
+        int changed = 0;
+        for (JsonObject policy : listPolicies(baseUrl, auth, serviceName)) {
+            if (!isAccessPolicy(policy) || !coversExactly(policy, scope)) {
+                continue;
+            }
+            JsonArray items = policy.has("policyItems") && policy.get("policyItems").isJsonArray()
+                    ? policy.getAsJsonArray("policyItems") : new JsonArray();
+            JsonArray kept = withoutAccess(items, userName, groups, revoked);
+            if (kept == null) {
+                continue;
+            }
+            policy.add("policyItems", kept);
+            long policyId = policy.get("id").getAsLong();
+            String policyName = policy.has("name") ? policy.get("name").getAsString() : "";
+            String who = describePrincipals(userName, groups);
+            if (policyName.equals(ownedPolicyName) && grantsNothing(policy)) {
+                HttpResponse delete = http(baseUrl + "/service/public/v2/api/policy/" + policyId, "DELETE", auth, null);
+                if (delete.statusCode / 100 != 2 && delete.statusCode != 404) {
+                    throw new IllegalStateException("Ranger policy delete (id=" + policyId + ") failed: HTTP "
+                            + delete.statusCode + " — " + delete.body);
+                }
+                actionLog.writeStdOut("Deleted Ranger policy '" + policyName + "' (id=" + policyId
+                        + "): it granted nothing once '" + accessTypes + "' of " + who + " was removed");
+                LOG.info("Deleted Ranger policy '{}' (id={}) left empty by the revoke of '{}' from {}",
+                        policyName, policyId, accessTypes, who);
+            } else {
+                HttpResponse put = http(baseUrl + "/service/public/v2/api/policy/" + policyId, "PUT", auth,
+                        policy.toString());
+                if (put.statusCode / 100 != 2) {
+                    throw new IllegalStateException("Ranger policy update (id=" + policyId + ") failed: HTTP "
+                            + put.statusCode + " — " + put.body);
+                }
+                actionLog.writeStdOut("Removed '" + accessTypes + "' of " + who + " from Ranger policy '"
+                        + policyName + "' (id=" + policyId + ")");
+                LOG.info("Removed '{}' of {} from Ranger policy '{}' (id={})", accessTypes, who, policyName, policyId);
+            }
+            changed++;
+        }
+        return changed;
+    }
+
+    /**
+     * Every policy of the service, read page by page. Pages are merged by policy id, so a Ranger that
+     * ignores the paging parameters and repeats a page still ends the listing.
+     */
+    private List<JsonObject> listPolicies(String baseUrl, String auth, String serviceName) throws Exception {
+        Map<Long, JsonObject> byId = new LinkedHashMap<>();
+        for (int start = 0; ; start += POLICY_PAGE_SIZE) {
+            HttpResponse r = http(baseUrl + "/service/public/v2/api/service/" + pathSegmentEncode(serviceName)
+                    + "/policy?startIndex=" + start + "&pageSize=" + POLICY_PAGE_SIZE, "GET", auth, null);
+            if (r.statusCode != 200) {
+                throw new IllegalStateException("Listing the policies of Ranger service '" + serviceName
+                        + "' returned HTTP " + r.statusCode + ": " + r.body);
+            }
+            JsonArray page = JsonParser.parseString(r.body).getAsJsonArray();
+            int before = byId.size();
+            for (JsonElement e : page) {
+                JsonObject policy = e.getAsJsonObject();
+                if (policy.has("id")) {
+                    byId.putIfAbsent(policy.get("id").getAsLong(), policy);
+                }
+            }
+            if (page.size() < POLICY_PAGE_SIZE || byId.size() == before) {
+                return new ArrayList<>(byId.values());
+            }
+        }
+    }
+
+    /** True for an access policy (policyType 0 or absent), the only kind a revoke edits. */
+    static boolean isAccessPolicy(JsonObject policy) {
+        return !policy.has("policyType") || policy.get("policyType").isJsonNull()
+                || policy.get("policyType").getAsInt() == 0;
+    }
+
+    /**
+     * True when the policy's resources are exactly {@code scope}: the same resource names, each with
+     * the same set of values and no exclusion. A policy over a narrower or wider set is left alone.
+     */
+    static boolean coversExactly(JsonObject policy, JsonObject scope) {
+        if (!policy.has("resources") || !policy.get("resources").isJsonObject()) {
+            return false;
+        }
+        JsonObject resources = policy.getAsJsonObject("resources");
+        if (!resources.keySet().equals(scope.keySet())) {
+            return false;
+        }
+        for (String name : scope.keySet()) {
+            if (!resources.get(name).isJsonObject()) {
+                return false;
+            }
+            JsonObject resource = resources.getAsJsonObject(name);
+            if (resource.has("isExcludes") && resource.get("isExcludes").getAsBoolean()) {
+                return false;
+            }
+            if (!stringSet(resource.get("values")).equals(stringSet(scope.get(name)))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The policy items once {@code revoked} accesses are taken from the user and groups, or null when
+     * no item gave them any of those accesses. An item shared with other principals keeps them with
+     * everything it had; the revoked principals keep, in an item of their own, only the accesses not
+     * revoked. An item left with no principal or no access is dropped.
+     */
+    static JsonArray withoutAccess(JsonArray items, String userName, List<String> groups, Set<String> revoked) {
+        Set<String> users = userName == null ? Collections.emptySet() : Collections.singleton(userName);
+        Set<String> groupSet = groups == null ? Collections.emptySet() : new HashSet<>(groups);
+        JsonArray out = new JsonArray();
+        boolean changed = false;
+        for (JsonElement e : items) {
+            JsonObject item = e.getAsJsonObject();
+            Set<String> itemUsers = stringSet(item.get("users"));
+            Set<String> itemGroups = stringSet(item.get("groups"));
+            Set<String> hitUsers = new LinkedHashSet<>(itemUsers);
+            hitUsers.retainAll(users);
+            Set<String> hitGroups = new LinkedHashSet<>(itemGroups);
+            hitGroups.retainAll(groupSet);
+            JsonArray accesses = item.has("accesses") && item.get("accesses").isJsonArray()
+                    ? item.getAsJsonArray("accesses") : new JsonArray();
+            JsonArray rest = new JsonArray();
+            boolean grantsRevoked = false;
+            for (JsonElement a : accesses) {
+                JsonObject access = a.getAsJsonObject();
+                String type = access.has("type") ? access.get("type").getAsString() : null;
+                if (revoked.contains(type)) {
+                    grantsRevoked = true;
+                } else {
+                    rest.add(access);
+                }
+            }
+            if ((hitUsers.isEmpty() && hitGroups.isEmpty()) || !grantsRevoked) {
+                out.add(item);
+                continue;
+            }
+            changed = true;
+
+            JsonObject others = item.deepCopy();
+            Set<String> otherUsers = new LinkedHashSet<>(itemUsers);
+            otherUsers.removeAll(hitUsers);
+            Set<String> otherGroups = new LinkedHashSet<>(itemGroups);
+            otherGroups.removeAll(hitGroups);
+            others.add("users", toJsonArray(otherUsers));
+            others.add("groups", toJsonArray(otherGroups));
+            if (!otherUsers.isEmpty() || !otherGroups.isEmpty() || !stringSet(item.get("roles")).isEmpty()) {
+                out.add(others);
+            }
+
+            if (rest.size() > 0) {
+                JsonObject theirs = item.deepCopy();
+                theirs.add("users", toJsonArray(hitUsers));
+                theirs.add("groups", toJsonArray(hitGroups));
+                theirs.add("roles", new JsonArray());
+                theirs.add("accesses", rest);
+                out.add(theirs);
+            }
+        }
+        return changed ? out : null;
+    }
+
+    /** True when the policy carries no item of any kind, i.e. grants and denies nothing. */
+    static boolean grantsNothing(JsonObject policy) {
+        for (String key : ALL_ITEM_KEYS) {
+            if (policy.has(key) && policy.get(key).isJsonArray() && policy.getAsJsonArray(key).size() > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static Set<String> stringSet(JsonElement array) {
+        Set<String> out = new LinkedHashSet<>();
+        if (array != null && array.isJsonArray()) {
+            for (JsonElement v : array.getAsJsonArray()) {
+                if (v != null && !v.isJsonNull()) {
+                    out.add(v.getAsString());
+                }
+            }
+        }
+        return out;
+    }
+
+    private static JsonArray toJsonArray(Set<String> values) {
+        JsonArray out = new JsonArray();
+        for (String v : values) {
+            out.add(v);
+        }
+        return out;
     }
 
     /** Which policy array a policy type's items live in. */

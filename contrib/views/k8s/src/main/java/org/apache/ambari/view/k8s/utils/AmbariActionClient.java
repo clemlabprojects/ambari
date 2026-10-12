@@ -273,6 +273,32 @@ public class AmbariActionClient {
         }
     }
 
+    /**
+     * What the task of an Ambari request reported besides its status (its {@code structured_out}),
+     * taken from the last task when there are several. Empty when no task reported anything.
+     */
+    public Optional<JsonObject> taskStructuredOut(int requestId) throws Exception {
+        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/requests/" + requestId
+                + "/tasks?fields=Tasks/id,Tasks/structured_out";
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(Map.of()))) {
+            JsonObject o = JsonParser.parseString(new String(is.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+            JsonObject latest = null;
+            long latestId = Long.MIN_VALUE;
+            if (o.has("items") && o.get("items").isJsonArray()) {
+                for (JsonElement e : o.getAsJsonArray("items")) {
+                    JsonObject t = e.getAsJsonObject().getAsJsonObject("Tasks");
+                    if (t == null || !t.has("structured_out") || !t.get("structured_out").isJsonObject()) continue;
+                    long taskId = t.has("id") ? t.get("id").getAsLong() : 0L;
+                    if (latest == null || taskId >= latestId) {
+                        latest = t.getAsJsonObject("structured_out");
+                        latestId = taskId;
+                    }
+                }
+            }
+            return Optional.ofNullable(latest);
+        }
+    }
+
     public boolean waitUntilComplete(int requestId, long timeout, TimeUnit unit) throws Exception {
         long deadline = System.nanoTime() + unit.toNanos(timeout);
 
@@ -1280,23 +1306,73 @@ public class AmbariActionClient {
         }
         root.add("RangerPolicy", rangerPolicy);
 
+        LOG.info("Submitting Ranger policy grant for service='{}', user='{}', access='{}', policyNameHint='{}'",
+                rangerServiceName, userName, accessTypes, policyNameHint);
+        return postRangerPolicy(root, "grant");
+    }
+
+    /**
+     * Takes Ranger access back through the Ambari server ({@code POST /clusters/{c}/ranger_policy}
+     * with {@code revoke=true}). The server-side action removes {@code accessTypes} from
+     * {@code userName} in every allow policy of {@code rangerServiceName} whose resources are exactly
+     * {@code resourcesJson}, and deletes the policy named {@code ownedPolicyName} if that leaves it
+     * granting nothing. An Ambari server that does not know {@code revoke} refuses the whole request,
+     * so a revoke can never be mistaken for a grant.
+     *
+     * @return the Ambari request id to wait on with {@link #waitUntilComplete}; once it completes,
+     *         {@link #taskStructuredOut} gives {@code changedPolicies}, how many policies it changed
+     */
+    public int submitRangerPolicyRevoke(
+            String rangerServiceName,
+            String userName,
+            String accessTypes,
+            String resourcesJson,
+            String ownedPolicyName,
+            Integer timeoutSeconds,
+            String context
+    ) throws Exception {
+        Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger policy revoke");
+        Objects.requireNonNull(rangerServiceName, "rangerServiceName");
+        if (userName == null || userName.isBlank()) {
+            throw new IllegalArgumentException("userName is required for a Ranger policy revoke");
+        }
+        JsonObject root = new JsonObject();
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("context",
+                (context == null || context.isBlank()) ? "Revoke Ranger access" : context);
+        root.add("RequestInfo", requestInfo);
+
+        JsonObject rangerPolicy = new JsonObject();
+        rangerPolicy.addProperty("rangerServiceName", rangerServiceName);
+        rangerPolicy.addProperty("userName", userName);
+        rangerPolicy.addProperty("accessTypes", accessTypes);
+        rangerPolicy.addProperty("resourcesJson", resourcesJson);
+        rangerPolicy.addProperty("policyNameHint", ownedPolicyName);
+        rangerPolicy.addProperty("revoke", true);
+        if (timeoutSeconds != null) {
+            rangerPolicy.addProperty("timeoutSeconds", timeoutSeconds);
+        }
+        root.add("RangerPolicy", rangerPolicy);
+
+        LOG.info("Submitting Ranger access revoke for service='{}', user='{}', access='{}', resources={}",
+                rangerServiceName, userName, accessTypes, resourcesJson);
+        return postRangerPolicy(root, "revoke");
+    }
+
+    /** POSTs a {@code ranger_policy} request and returns the id of the Ambari request it started. */
+    private int postRangerPolicy(JsonObject root, String what) throws Exception {
         String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/ranger_policy";
-        String payload = root.toString();
-
-        LOG.info("Submitting Ranger policy grant to {} for service='{}', user='{}', access='{}', policyNameHint='{}'",
-                url, rangerServiceName, userName, accessTypes, policyNameHint);
-
         try (InputStream is = stream.readFrom(
-                url, "POST", payload, withStdHeaders(Map.of("Content-Type", "application/json")))) {
+                url, "POST", root.toString(), withStdHeaders(Map.of("Content-Type", "application/json")))) {
             String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             JsonObject o = JsonParser.parseString(json).getAsJsonObject();
             JsonObject ro = o.getAsJsonObject("Requests");
             if (ro == null || !ro.has("id")) {
-                LOG.error("Unexpected response for Ranger policy grant submission: {}", json);
-                throw new IllegalStateException("Unexpected response for Ranger policy grant submission: " + json);
+                LOG.error("Unexpected response for Ranger policy {} submission: {}", what, json);
+                throw new IllegalStateException("Unexpected response for Ranger policy " + what + " submission: " + json);
             }
             int id = ro.get("id").getAsInt();
-            LOG.info("Ranger policy grant request accepted by Ambari, request id={}", id);
+            LOG.info("Ranger policy {} request accepted by Ambari, request id={}", what, id);
             return id;
         }
     }

@@ -21,16 +21,28 @@ package org.apache.ambari.server.controller.internal;
 import static org.apache.ambari.server.controller.internal.ServerActionProviderTestFixture.CLUSTER_NAME;
 import static org.apache.ambari.server.controller.internal.ServerActionProviderTestFixture.CLUSTER_RESOURCE_ID;
 import static org.apache.ambari.server.controller.internal.ServerActionProviderTestFixture.createRequest;
+import static org.easymock.EasyMock.anyBoolean;
+import static org.easymock.EasyMock.anyObject;
+import static org.easymock.EasyMock.anyString;
+import static org.easymock.EasyMock.capture;
+import static org.easymock.EasyMock.eq;
+import static org.easymock.EasyMock.expectLastCall;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.fail;
 
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.ambari.server.Role;
+import org.apache.ambari.server.RoleCommand;
 import org.apache.ambari.server.controller.spi.RequestStatus;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.security.TestAuthenticationFactory;
 import org.apache.ambari.server.security.authorization.AuthorizationException;
+import org.apache.ambari.server.serveraction.ranger.EnsureRangerPolicyServerAction;
+import org.apache.ambari.server.state.svccomphost.ServiceComponentHostServerActionEvent;
+import org.easymock.Capture;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -118,6 +130,65 @@ public class RangerPolicyResourceProviderTest {
       assertEquals("Cluster not found: unknown", e.getMessage());
     }
     fixture.verifyScheduling();
+  }
+
+  @Test
+  public void testRevokeIsPassedToTheServerAction() throws Exception {
+    // An Ambari server that did not pass it on would grant the access the caller asked to take back.
+    Capture<Map<String, String>> commandParams = expectServerAction();
+    fixture.expectOneRequestScheduled();
+    fixture.replayAndInject(RangerPolicyResourceProvider.class, null);
+    SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator());
+
+    Map<String, Object> properties = policy(CLUSTER_NAME);
+    properties.put("RangerPolicy/revoke", "true");
+    new RangerPolicyResourceProvider(fixture.controller).createResources(createRequest(properties));
+
+    assertEquals("true", commandParams.getValue().get("revoke"));
+    fixture.verifyScheduling();
+  }
+
+  @Test
+  public void testAGrantCarriesNoRevoke() throws Exception {
+    Capture<Map<String, String>> commandParams = expectServerAction();
+    fixture.expectOneRequestScheduled();
+    fixture.replayAndInject(RangerPolicyResourceProvider.class, null);
+    SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator());
+
+    new RangerPolicyResourceProvider(fixture.controller).createResources(createRequest(policy(CLUSTER_NAME)));
+
+    assertFalse(commandParams.getValue().containsKey("revoke"));
+    fixture.verifyScheduling();
+  }
+
+  @Test
+  public void testRevokeOfAMaskIsRefusedWithoutScheduling() throws Exception {
+    fixture.replayAndInject(RangerPolicyResourceProvider.class, null);
+    SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator());
+    Map<String, Object> properties = policy(CLUSTER_NAME);
+    properties.put("RangerPolicy/revoke", "true");
+    properties.put("RangerPolicy/policyType", "1");
+    properties.put("RangerPolicy/maskType", "MASK");
+
+    try {
+      new RangerPolicyResourceProvider(fixture.controller).createResources(createRequest(properties));
+      fail("Expected a revoke of a masking policy to be refused");
+    } catch (SystemException expected) {
+      assertEquals("revoke applies to access policies only (policyType=0)", expected.getMessage());
+    }
+    fixture.verifyScheduling();
+  }
+
+  /** Captures the command parameters the provider hands to {@link EnsureRangerPolicyServerAction}. */
+  @SuppressWarnings("unchecked")
+  private Capture<Map<String, String>> expectServerAction() {
+    Capture<Map<String, String>> commandParams = Capture.newInstance();
+    fixture.stage.addServerActionCommand(eq(EnsureRangerPolicyServerAction.class.getName()), anyString(),
+        anyObject(Role.class), anyObject(RoleCommand.class), anyString(),
+        anyObject(ServiceComponentHostServerActionEvent.class), capture(commandParams), anyString(),
+        anyObject(Map.class), anyObject(Integer.class), anyBoolean(), anyBoolean());
+    expectLastCall();
+    return commandParams;
   }
 
   private void assertPolicyScheduled(Authentication authentication) throws Exception {

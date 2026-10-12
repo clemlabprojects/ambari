@@ -70,6 +70,9 @@ import com.google.inject.Inject;
  * credentials held by the Ambari server. This lets external Ambari views (e.g. the KDPS
  * k8s view) provision Ranger policies without ever handling the Ranger admin password.
  *
+ * <p>With {@code revoke} set to {@code true} the same request takes the access back instead of
+ * granting it (see {@link EnsureRangerPolicyServerAction}).
+ *
  * <p>Because the grant is made with those administrator credentials, only cluster administrators
  * of the cluster named in the request may ask for it.
  *
@@ -113,6 +116,8 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
     private static final String PROPERTY_ROW_FILTER_NS         = "RangerPolicy/rowFilterExpr";
     private static final String PROPERTY_GROUPS                = "groups";
     private static final String PROPERTY_GROUPS_NS             = "RangerPolicy/groups";
+    private static final String PROPERTY_REVOKE                = "revoke";
+    private static final String PROPERTY_REVOKE_NS             = "RangerPolicy/revoke";
 
     private static final String PROPERTY_CONTEXT               = "context";
     private static final String PROPERTY_CONTEXT_NS            = "RequestInfo/context";
@@ -137,7 +142,8 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 PROPERTY_MASK_CONDITION, PROPERTY_MASK_CONDITION_NS,
                 PROPERTY_MASK_VALUE, PROPERTY_MASK_VALUE_NS,
                 PROPERTY_ROW_FILTER, PROPERTY_ROW_FILTER_NS,
-                PROPERTY_GROUPS, PROPERTY_GROUPS_NS
+                PROPERTY_GROUPS, PROPERTY_GROUPS_NS,
+                PROPERTY_REVOKE, PROPERTY_REVOKE_NS
         );
         PROPERTY_IDS = Collections.unmodifiableSet(propertyIds);
 
@@ -255,6 +261,9 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             String groups            = firstNonBlank(
                     stringValue(properties.get(PROPERTY_GROUPS)),
                     stringValue(properties.get(PROPERTY_GROUPS_NS)));
+            boolean revoke           = Boolean.parseBoolean(firstNonBlank(
+                    stringValue(properties.get(PROPERTY_REVOKE)),
+                    stringValue(properties.get(PROPERTY_REVOKE_NS))));
             if (StringUtils.isBlank(accessTypes) && policyType != 0) {
                 accessTypes = "select";
             }
@@ -276,6 +285,9 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             }
             if (policyType == 2 && StringUtils.isBlank(rowFilterExpr)) {
                 throw new SystemException("rowFilterExpr is required for policyType=2");
+            }
+            if (revoke && policyType != 0) {
+                throw new SystemException("revoke applies to access policies only (policyType=0)");
             }
             if (StringUtils.isBlank(accessTypes)) {
                 throw new SystemException("accessTypes is required");
@@ -315,6 +327,9 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 if (StringUtils.isNotBlank(groups)) {
                     commandParameters.put("groups", groups);
                 }
+                if (revoke) {
+                    commandParameters.put("revoke", "true");
+                }
                 commandParameters.put("resourcesJson", resourcesJson);
                 commandParameters.put("policyNameHint", policyNameHint);
                 if (StringUtils.isNotBlank(policyDescription)) {
@@ -344,7 +359,7 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                         cluster.getClusterName(),
                         new ServiceComponentHostServerActionEvent(null, System.currentTimeMillis()),
                         commandParameters,
-                        "Ensure Ranger policy",
+                        revoke ? "Revoke Ranger access" : "Ensure Ranger policy",
                         managementController.findConfigurationTagsWithOverrides(cluster, null, null),
                         timeoutSeconds,
                         false,

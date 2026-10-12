@@ -23,6 +23,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
+import java.util.HashSet;
+
 import org.junit.Test;
 
 import com.google.gson.JsonArray;
@@ -166,6 +169,81 @@ public class EnsureRangerPolicyServerActionTest {
     assertEquals(0, p.get("policyType").getAsInt());
     assertEquals(1, p.getAsJsonArray("policyItems").size());
     assertEquals(0, p.getAsJsonArray("dataMaskPolicyItems").size());
+  }
+
+  @Test
+  public void withoutAccess_takesTheAccessFromTheUserOnly() {
+    JsonArray items = JsonParser.parseString(
+        "[{\"users\":[\"trino\"],\"groups\":[],\"accesses\":[{\"type\":\"impersonate\",\"isAllowed\":true}]},"
+        + "{\"users\":[\"etl\",\"{USER}\"],\"groups\":[],\"accesses\":[{\"type\":\"impersonate\",\"isAllowed\":true}]}]")
+        .getAsJsonArray();
+
+    JsonArray kept = EnsureRangerPolicyServerAction.withoutAccess(items, "{USER}",
+        EnsureRangerPolicyServerAction.splitCsv(null), new HashSet<>(Arrays.asList("impersonate")));
+
+    assertEquals(2, kept.size());
+    assertEquals("[\"trino\"]", kept.get(0).getAsJsonObject().getAsJsonArray("users").toString());
+    assertEquals("[\"etl\"]", kept.get(1).getAsJsonObject().getAsJsonArray("users").toString());
+  }
+
+  @Test
+  public void withoutAccess_keepsTheAccessesThatAreNotRevoked() {
+    JsonArray items = JsonParser.parseString(
+        "[{\"users\":[\"alice\"],\"groups\":[\"analysts\"],"
+        + "\"accesses\":[{\"type\":\"select\",\"isAllowed\":true},{\"type\":\"drop\",\"isAllowed\":true}]}]")
+        .getAsJsonArray();
+
+    JsonArray kept = EnsureRangerPolicyServerAction.withoutAccess(items, null,
+        EnsureRangerPolicyServerAction.splitCsv("analysts"), new HashSet<>(Arrays.asList("drop")));
+
+    assertEquals(2, kept.size());
+    JsonObject others = kept.get(0).getAsJsonObject();
+    assertEquals("[\"alice\"]", others.getAsJsonArray("users").toString());
+    assertEquals(0, others.getAsJsonArray("groups").size());
+    assertEquals(2, others.getAsJsonArray("accesses").size());
+    JsonObject group = kept.get(1).getAsJsonObject();
+    assertEquals("[\"analysts\"]", group.getAsJsonArray("groups").toString());
+    assertEquals(1, group.getAsJsonArray("accesses").size());
+    assertEquals("select", group.getAsJsonArray("accesses").get(0).getAsJsonObject().get("type").getAsString());
+  }
+
+  @Test
+  public void withoutAccess_isNullWhenNothingIsRevoked() {
+    JsonArray items = JsonParser.parseString(
+        "[{\"users\":[\"{USER}\"],\"accesses\":[{\"type\":\"select\",\"isAllowed\":true}]}]").getAsJsonArray();
+    assertNull(EnsureRangerPolicyServerAction.withoutAccess(items, "{USER}",
+        EnsureRangerPolicyServerAction.splitCsv(null), new HashSet<>(Arrays.asList("impersonate"))));
+  }
+
+  @Test
+  public void coversExactly_matchesTheSameValuesOnly() {
+    JsonObject everyUser = JsonParser.parseString("{\"trinouser\":[\"*\"]}").getAsJsonObject();
+    assertTrue(EnsureRangerPolicyServerAction.coversExactly(policyOver("{\"trinouser\":{\"values\":[\"*\"]}}"), everyUser));
+    assertFalse(EnsureRangerPolicyServerAction.coversExactly(
+        policyOver("{\"trinouser\":{\"values\":[\"{USER}\"]}}"), everyUser));
+    assertFalse(EnsureRangerPolicyServerAction.coversExactly(
+        policyOver("{\"trinouser\":{\"values\":[\"*\",\"bob\"]}}"), everyUser));
+    assertFalse(EnsureRangerPolicyServerAction.coversExactly(
+        policyOver("{\"trinouser\":{\"values\":[\"*\"],\"isExcludes\":true}}"), everyUser));
+    assertFalse(EnsureRangerPolicyServerAction.coversExactly(
+        policyOver("{\"catalog\":{\"values\":[\"*\"]}}"), everyUser));
+  }
+
+  @Test
+  public void grantsNothing_andIsAccessPolicy() {
+    assertTrue(EnsureRangerPolicyServerAction.grantsNothing(
+        JsonParser.parseString("{\"policyItems\":[],\"denyExceptions\":[]}").getAsJsonObject()));
+    assertFalse(EnsureRangerPolicyServerAction.grantsNothing(
+        JsonParser.parseString("{\"policyItems\":[],\"denyPolicyItems\":[{\"users\":[\"bob\"]}]}").getAsJsonObject()));
+    assertTrue(EnsureRangerPolicyServerAction.isAccessPolicy(new JsonObject()));
+    assertFalse(EnsureRangerPolicyServerAction.isAccessPolicy(
+        JsonParser.parseString("{\"policyType\":1}").getAsJsonObject()));
+  }
+
+  private static JsonObject policyOver(String resources) {
+    JsonObject p = new JsonObject();
+    p.add("resources", JsonParser.parseString(resources));
+    return p;
   }
 
   @Test
