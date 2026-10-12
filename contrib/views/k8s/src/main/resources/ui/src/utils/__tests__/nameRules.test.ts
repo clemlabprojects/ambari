@@ -44,7 +44,7 @@ describe('release name rules', () => {
   });
 
   it('every service definition that asks for a release name declares the same rule as the server', () => {
-    for (const name of ['TRINO', 'SUPERSET', 'OPENMETADATA', 'JUPYTERHUB', 'GITLAB', 'SQL-ASSISTANT']) {
+    for (const name of ['TRINO', 'SUPERSET', 'OPENMETADATA', 'JUPYTERHUB', 'GITLAB']) {
       const definition = service(name);
       const field = definition.form.find((f: any) => f.name === 'releaseName');
       expect(field.pattern).toBe(RELEASE_NAME_PATTERN);

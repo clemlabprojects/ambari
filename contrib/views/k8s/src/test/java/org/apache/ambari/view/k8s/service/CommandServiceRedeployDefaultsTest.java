@@ -480,12 +480,12 @@ class CommandServiceRedeployDefaultsTest {
 
     @Test
     void aServiceWithoutAnOperatorKeytabIsNotRefused() throws Exception {
-        // DBT turns Kerberos on from its own values and has no keytab field to restore or select.
-        recordRelease("DBT", "dbt", "cdp-prod", "0.1.8");
+        // JupyterHub runs with Kerberos from its own values and has no operator keytab field to restore or select.
+        recordRelease("JUPYTERHUB", "jupyterhub", "cdp-prod", "4.3.5");
         Map<String, Object> values = kerberizedValues(null);
         HelmDeployRequest request = resyncRequest(values);
-        request.setChart("dbt");
-        request.setServiceKey("DBT");
+        request.setChart("jupyterhub");
+        request.setServiceKey("JUPYTERHUB");
         when(k8s.getHelmReleaseValues(NS, RELEASE)).thenReturn(values);
 
         submit(request, null, null);

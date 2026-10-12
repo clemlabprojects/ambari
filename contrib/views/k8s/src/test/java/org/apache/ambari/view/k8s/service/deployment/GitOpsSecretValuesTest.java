@@ -369,9 +369,13 @@ public class GitOpsSecretValuesTest {
         assertTrue("the Polaris client secret and the S3 secret key are passwords",
                 trino.secrets().containsAll(List.of("Polaris-Secret-1", "S3-Secret-Key-2")));
 
-        GitOpsSecretValues dbt = new GitOpsSecretValues();
-        dbt.addPasswordFields(definitions.getServiceDefinition("DBT").form, null);
-        assertTrue(dbt.paths().containsAll(List.of("trino.auth.password", "trino.auth.jwtToken")));
+        GitOpsSecretValues openMetadata = new GitOpsSecretValues();
+        openMetadata.addPasswordFields(definitions.getServiceDefinition("OPENMETADATA").form,
+                map("rangerTagSyncToken", "Tag-Sync-Token-4"));
+        assertTrue(openMetadata.paths().containsAll(List.of("global.security.auth.ldap.bindPassword",
+                "baseIngestion.hivePassword")));
+        assertTrue("the TagSync token is kept out of the values, and still a secret",
+                openMetadata.secrets().contains("Tag-Sync-Token-4"));
 
         GitOpsSecretValues superset = new GitOpsSecretValues();
         superset.addPasswordFields(definitions.getServiceDefinition("SUPERSET").form,

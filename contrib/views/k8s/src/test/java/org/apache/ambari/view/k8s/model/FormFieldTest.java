@@ -94,7 +94,7 @@ class FormFieldTest {
   void everyReleaseNameFieldWarnsWithHelmsRule() throws Exception {
     // Same failure mode again: an undeclared "pattern" would never reach the wizard, which would then let any name
     // through until the server refuses it.
-    for (String service : new String[] {"TRINO", "SUPERSET", "OPENMETADATA", "JUPYTERHUB", "GITLAB", "SQL-ASSISTANT"}) {
+    for (String service : new String[] {"TRINO", "SUPERSET", "OPENMETADATA", "JUPYTERHUB", "GITLAB"}) {
       try (InputStream in = getClass().getResourceAsStream("/KDPS/services/" + service + "/service.json")) {
         assertNotNull(in, service);
         JsonNode releaseName = null;

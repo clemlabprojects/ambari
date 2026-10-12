@@ -29,6 +29,7 @@ import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import { releaseRedeployPayload } from './releaseRedeploy';
 import { offersCatalogs } from './releaseCatalogs';
+import { offeredOnPlatform } from './catalogPlatforms';
 import type { MenuProps } from 'antd';
 import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -37,6 +38,7 @@ import PermissionGuard from '../components/common/PermissionGuard';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { serviceIcon } from '../assets/services';
 import { getAtStr } from '../components/ServiceInstallationModal/bindings';
+import { useCapabilities } from '../components/ServiceInstallationModal/capabilities';
 
 import TrinoCatalogsModal from '../components/common/TrinoCatalogsModal';
 import RangerPolicyModal from '../components/common/RangerPolicyModal';
@@ -110,6 +112,14 @@ const HelmReleasesPage: React.FC = () => {
     // The background-operations count is now polled globally by the app header
     // (AppLayout), so this page no longer tracks it.
   }, []);
+
+  // The install picker is a second service catalog, so it leaves out the services that cannot run on the cluster's
+  // platform (GitLab on OpenShift), like the Catalog page. serviceDefinitions itself stays complete: the releases
+  // already deployed still need their labels and versions.
+  const capabilities = useCapabilities();
+  const offeredServiceKeys = useMemo(
+    () => Object.keys(serviceDefinitions).filter((key) => offeredOnPlatform(serviceDefinitions[key], capabilities?.platform)),
+    [serviceDefinitions, capabilities?.platform]);
 
   /**
    * Build GitOps options for a release when it is managed by Flux. This keeps
@@ -1401,12 +1411,12 @@ const HelmReleasesPage: React.FC = () => {
               width={700}
             >
               <Row gutter={[12, 12]} style={{ marginTop: 8 }}>
-                {Object.keys(serviceDefinitions).length === 0 && (
+                {offeredServiceKeys.length === 0 && (
                   <Col span={24}>
                     <Typography.Text type="secondary">No services available.</Typography.Text>
                   </Col>
                 )}
-                {Object.keys(serviceDefinitions).map((key) => {
+                {offeredServiceKeys.map((key) => {
                   const svc = serviceDefinitions[key];
                   const icon = serviceIcon(key);
                   return (

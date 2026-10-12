@@ -228,6 +228,8 @@
                   <fileset dir="${contrib-views-dir}">
                     <include name="*/target/*jar" />
                     <exclude name="k8s/target/k8s-view-*.jar" />
+                    <!-- Not part of 2.8.2.0 (contrib/views/pom.xml): a jar left by an earlier build must not ship. -->
+                    <exclude name="sql-assistant/target/*.jar" />
                     <exclude name="**/ambari-views-utils*jar" />
                     <exclude name="**/ambari-views-commons*jar" />
                     <exclude name="**/ambari-views-package*jar" />

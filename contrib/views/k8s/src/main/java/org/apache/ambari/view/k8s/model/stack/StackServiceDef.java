@@ -63,6 +63,24 @@ public class StackServiceDef {
      * Kubernetes.
      */
     public List<Map<String, Object>> openshiftScc;
+
+    /**
+     * Platforms the service can be deployed on, as the cluster capabilities name them: {@code "kubernetes"} (plain
+     * Kubernetes) and {@code "openshift"}. Absent or empty means every platform. The catalog hides a service once the
+     * cluster is known to be a platform the list leaves out, and the deploy refuses it there
+     * ({@code CommandService.checkSupportedPlatform}), so a deploy sent straight to the API or in GitOps mode is
+     * refused too. For a chart that cannot run on a platform at all, e.g. GitLab, whose upstream chart pins user IDs
+     * that OpenShift's default SCC rejects: without it the install waits for pods that are never created and fails
+     * with a timeout that does not say why.
+     */
+    public List<String> platforms;
+
+    /**
+     * What the deploy answers on a platform {@link #platforms} leaves out: why, and what to do instead. Optional; the
+     * default names the service and the platform.
+     */
+    public String unsupportedPlatformMessage;
+
     public List<Map<String, Object>> endpoints;
     public List<Map<String, Object>> mounts;
     public List<Map<String, Object>> variables;
@@ -199,7 +217,7 @@ public class StackServiceDef {
      * apply helm overrides.
      *
      * <p>No-op when null — services that don't need external integrations
-     * (e.g. SQL-ASSISTANT) simply omit the block.
+     * (e.g. GITLAB) simply omit the block.
      */
     public java.util.Map<String, ExternalServiceTarget> externalServiceTargets;
 

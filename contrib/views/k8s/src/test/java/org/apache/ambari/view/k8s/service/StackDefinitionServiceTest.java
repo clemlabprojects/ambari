@@ -65,6 +65,34 @@ class StackDefinitionServiceTest {
     assertEquals("ZZTESTCUSTOM", defs.get("ZZTESTCUSTOM").name);
   }
 
+  /**
+   * SQL Assistant and dbt are not part of this release. Every service directory is listed, catalog.json or not, so
+   * their definitions must be gone as well as their catalog entries.
+   */
+  @Test
+  void sqlAssistantAndDbtAreNotOffered() {
+    List<String> keys = svc.discoverServiceKeys();
+    assertFalse(keys.contains("SQL-ASSISTANT"), keys.toString());
+    assertFalse(keys.contains("DBT"), keys.toString());
+
+    Map<String, StackServiceDef> defs = svc.listServiceDefinitions();
+    assertFalse(defs.containsKey("SQL-ASSISTANT"), defs.keySet().toString());
+    assertFalse(defs.containsKey("DBT"), defs.keySet().toString());
+    assertTrue(defs.containsKey("GITLAB"), "GitLab is still offered, on plain Kubernetes: " + defs.keySet());
+  }
+
+  /** The catalog hides GitLab on OpenShift from the platforms its definition lists, so they must reach the UI. */
+  @Test
+  void gitLabPlatformsReachTheCatalog() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    Map<String, Object> served = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("GITLAB")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+    assertEquals(List.of("kubernetes"), served.get("platforms"));
+    assertEquals("GitLab is not supported on OpenShift in this release; register your existing Git server under Git"
+        + " Repositories.", served.get("unsupportedPlatformMessage"));
+  }
+
   @Test
   void configurationFilesAreEnumeratedNotHardcoded() {
     // Known service: both legacy-named files still load.

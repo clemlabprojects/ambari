@@ -41,7 +41,9 @@ class SensitiveFieldsTest {
         assertTrue(superset.containsAll(List.of("superset.secretKey", "ingress.tlsUpload.key", "ingress.tlsUpload.cert",
                 "hiveDb.ldapPassword", "ui_trino_svc_password")), superset.toString());
 
-        assertTrue(SensitiveFields.ofService("DBT").containsAll(List.of("trino.auth.password", "trino.auth.jwtToken")));
+        Set<String> openMetadata = SensitiveFields.ofService("OPENMETADATA");
+        assertTrue(openMetadata.containsAll(List.of("global.security.auth.ldap.bindPassword", "baseIngestion.hivePassword",
+                "rangerTagSyncToken")), openMetadata.toString());
     }
 
     @Test

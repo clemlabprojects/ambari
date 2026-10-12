@@ -4692,6 +4692,10 @@ public class CommandService {
         // manifests and their paths in Git, where nothing else would refuse a malformed one; a direct deploy keeps the
         // chart URLs and OCI references Helm resolves.
         DeployRequestValidator.validate(request, repoId, version);
+        // Refuse a service on a platform its definition does not support (GitLab on OpenShift), in every mode and
+        // before anything is prepared for it: its pods would never be admitted, and the install would only time out.
+        // The catalog already hides it there; this also covers a deploy sent straight to the API.
+        checkSupportedPlatform(request);
         // A Helm call KDPS started on the release, canceled or not, may still be running. Refuse before anything
         // is done: planning the deploy already rewrites the release's TLS and truststore Secrets and its Hadoop
         // configuration, which would change under the running call for a deploy its Helm step then refuses.
@@ -5232,6 +5236,47 @@ public class CommandService {
         }
         CommandUtils.addOverride(params, KERBEROS_ENABLED_PATH, "false");
         LOG.info("Kerberos is disabled on cluster {} and no context krb5.conf supplied; overriding chart values with global.security.kerberos.enabled=false", cluster);
+    }
+
+    /**
+     * Refuses the deploy of a service on a platform its definition leaves out of {@link StackServiceDef#platforms}.
+     * The cluster is only probed for a service that lists its platforms.
+     *
+     * @param request the deploy request
+     * @throws IllegalStateException when the cluster is a platform the service does not support
+     */
+    void checkSupportedPlatform(HelmDeployRequest request) {
+        StackServiceDef def = serviceDefinition(request.getServiceKey());
+        if (def == null || def.platforms == null || def.platforms.isEmpty()) return;
+        String problem = unsupportedPlatformProblem(def, request.getServiceKey(), kubernetesService.isOpenShiftCluster());
+        if (problem != null) {
+            LOG.warn("Deploy of {} as {}/{} refused: {}", request.getServiceKey(), request.getNamespace(),
+                    request.getReleaseName(), problem);
+            throw new IllegalStateException(problem);
+        }
+    }
+
+    /**
+     * Why a service cannot be deployed on the cluster, or {@code null} when it can: its definition lists the platforms
+     * it supports and the cluster is none of them. The answer is the definition's
+     * {@link StackServiceDef#unsupportedPlatformMessage}, else one naming the service and the platform.
+     *
+     * @param def        the service definition, {@code null} when unknown
+     * @param serviceKey the service key, named when the definition has no label
+     * @param openShift  whether the cluster is OpenShift; otherwise it is plain Kubernetes
+     * @return the reason to refuse the deploy, or {@code null}
+     */
+    static String unsupportedPlatformProblem(StackServiceDef def, String serviceKey, boolean openShift) {
+        if (def == null || def.platforms == null || def.platforms.isEmpty()) return null;
+        String platform = openShift ? "openshift" : "kubernetes";
+        for (String supported : def.platforms) {
+            if (supported != null && platform.equalsIgnoreCase(supported.trim())) return null;
+        }
+        if (def.unsupportedPlatformMessage != null && !def.unsupportedPlatformMessage.isBlank()) {
+            return def.unsupportedPlatformMessage;
+        }
+        return firstNonBlank(def.label, serviceKey, "This service") + " is not supported on "
+                + (openShift ? "OpenShift" : "plain Kubernetes") + " in this release.";
     }
 
     /** The service definition, or {@code null} when there is no service key or it cannot be read. */
