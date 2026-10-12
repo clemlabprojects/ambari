@@ -68,6 +68,12 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private volatile String token;
     private volatile long expiresAtMs;
+    /**
+     * Set when the OAuth server refused the username/password (HTTP 401), cleared by a successful login. The same
+     * password cannot succeed later, and directories lock an account after a few refused logins, so
+     * {@link #getToken()} no longer logs in once it is set: the client asks for a token on every API call.
+     */
+    private volatile boolean credentialsRefused;
 
     public OpenShiftLoginProvider(String apiUrl, String username, String password, String caData, boolean insecure) {
         this.apiUrl = apiUrl != null ? apiUrl.replaceAll("/+$", "") : null;
@@ -88,6 +94,10 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
             if (token != null && expiresAtMs - now > RENEW_BUFFER_MS) {
                 return token;
             }
+            if (credentialsRefused) {
+                LOG.debug("Not logging in again as '{}': the OAuth server refused this password.", username);
+                return token;
+            }
             try {
                 mint();
             } catch (Exception e) {
@@ -95,6 +105,14 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
             }
             return token;
         }
+    }
+
+    /**
+     * @return {@code true} when the OAuth server refused the username/password on the last login (HTTP 401), as
+     *         opposed to a login that could not be made (server unreachable, timeout, unexpected answer)
+     */
+    public boolean isCredentialsRefused() {
+        return credentialsRefused;
     }
 
     /** Force a fresh authentication (e.g. after a 401). */
@@ -128,6 +146,7 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
         HttpResponse<Void> resp = http.send(req, HttpResponse.BodyHandlers.discarding());
         int code = resp.statusCode();
         if (code == 401) {
+            credentialsRefused = true;
             throw new IllegalStateException("OpenShift rejected the username/password (401). Check credentials, "
                     + "or the cluster may not allow the password grant (browser-only IdP).");
         }
@@ -156,6 +175,7 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
         }
         this.token = accessToken;
         this.expiresAtMs = System.currentTimeMillis() + (expiresInSec * 1000L);
+        this.credentialsRefused = false;
         LOG.info("Obtained OpenShift token for user '{}' (expires in {}s).", username, expiresInSec);
     }
 

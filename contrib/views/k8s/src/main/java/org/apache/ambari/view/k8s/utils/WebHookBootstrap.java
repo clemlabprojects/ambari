@@ -25,6 +25,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.AmbariException;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.WebHookConfigurationService;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,7 +55,7 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
  *  - ensures Ambari CA exists (or creates it)
  *  - issues client mTLS cert and stores it into a Secret (webhook -> Ambari)
  *  - issues serving TLS cert for the Kubernetes Service DNS and stores it into a Secret
- *  - computes caBundle (base64 DER of Ambari CA) and persists it to instance data
+ *  - computes caBundle (base64 DER of Ambari CA) and persists it to the instance settings
  *
  * It DOES NOT install any Kubernetes resources for the webhook (no Deployment, no WebhookConfiguration).
  * Run this once on View startup; it is safe to re-run (idempotent).
@@ -83,7 +84,7 @@ public class WebHookBootstrap {
      *   k8s.view.webhooks.<webhookName>.clientMtls.secretName (default: <webhookName>-client-tls)
      *   k8s.view.webhooks.<webhookName>.serverTls.secretName  (default: <webhookName>-tls)
      *
-     * Writes (into instance data) for Helm to consume later:
+     * Writes (into the instance settings) for Helm to consume later:
      *   k8s.view.webhooks.<webhookName>.webhook.caBundle = <base64 DER of Ambari CA>
      *
      * @param ctx          Ambari ViewContext
@@ -165,9 +166,10 @@ public class WebHookBootstrap {
         try {
             String caBundle = toBase64Der(ca.caCertificatePem());
             String key = "k8s.view.webhooks." + webhookName + ".webhook.caBundle";
-            // Persist to instance-scoped store (safe to overwrite). Your Helm flow will read this back as an override.
-            ctx.putInstanceData(key, caBundle);
-            LOG.info("[webhook={}] stored caBundle into instance data key='{}' ({} bytes)", webhookName, key,
+            // Persist to the instance settings shared by every user (safe to overwrite). Your Helm flow will read
+            // this back as an override.
+            new InstanceSettings(ctx).put(key, caBundle);
+            LOG.info("[webhook={}] stored caBundle into view setting key='{}' ({} bytes)", webhookName, key,
                     (caBundle != null ? caBundle.length() : 0));
         } catch (Exception e) {
             LOG.error("[webhook={}] failed computing/persisting caBundle", webhookName, e);

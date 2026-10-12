@@ -22,11 +22,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.AmbariException;
-import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 
 import java.net.URI;
 import java.nio.file.Path;
@@ -48,13 +48,14 @@ public class HelmRepositoryService {
     private final ViewContext viewContext;
     private final HelmRepoRepo repositoryDao;
     private final HelmClient helmClient;
-    private final EncryptionService encryptionService = new EncryptionService();
+    /** Holds the repository credentials, shared by every user of the view instance. */
+    private final InstanceSettings settings;
     private final PathConfig pathConfig;
 
     /**
      * Constructs a {@code HelmRepositoryService} using the default {@link HelmClientDefault}.
      *
-     * @param ctx the Ambari view context providing configuration and instance data
+     * @param ctx the Ambari view context providing configuration and the instance settings
      */
     public HelmRepositoryService(ViewContext ctx) {
         this(ctx, new HelmClientDefault());
@@ -63,12 +64,13 @@ public class HelmRepositoryService {
     /**
      * Constructs a {@code HelmRepositoryService} with an explicit Helm client.
      *
-     * @param ctx  the Ambari view context providing configuration and instance data
+     * @param ctx  the Ambari view context providing configuration and the instance settings
      * @param helm the Helm client to use for repository operations
      */
     public HelmRepositoryService(ViewContext ctx, HelmClient helm) {
         this.viewContext = ctx;
         this.repositoryDao = new HelmRepoRepo(ctx.getDataStore());
+        this.settings = new InstanceSettings(ctx);
         this.helmClient = helm;
         this.pathConfig = new PathConfig(ctx);
         this.pathConfig.ensureDirs();
@@ -108,11 +110,8 @@ public class HelmRepositoryService {
 
         if (plainSecret != null && !plainSecret.isBlank()) {
             String secretReference = SECRET_PREFIX + entity.getId();
-            String encryptedBase64 = Base64.getEncoder().encodeToString(
-                encryptionService.encrypt(plainSecret.getBytes()));
-            viewContext.putInstanceData(secretReference, encryptedBase64);
+            settings.putSecret(secretReference, plainSecret);
             entity.setSecretRef(secretReference);
-
         }
 
         entity.setAuthInvalid(false);
@@ -147,7 +146,7 @@ public class HelmRepositoryService {
         }
         HelmRepoEntity entity = repositoryDao.findById(id);
         if (entity != null && entity.getSecretRef() != null) {
-            viewContext.removeInstanceData(entity.getSecretRef());
+            settings.remove(entity.getSecretRef());
         }
         repositoryDao.deleteById(id);
     }
@@ -170,16 +169,12 @@ public class HelmRepositoryService {
     /**
      * Decrypts and returns the plaintext credential associated with the given secret reference.
      *
-     * @param secretRef the instance-data key under which the encrypted secret is stored; may be {@code null}
+     * @param secretRef the instance-settings key under which the encrypted secret is stored; may be {@code null}
      * @return the decrypted plaintext credential, or {@code null} if the reference is blank or not found
      */
     public String readPlainSecret(String secretRef) {
         if (secretRef == null || secretRef.isBlank()) return null;
-        String base64Data = viewContext.getInstanceData(secretRef);
-        if (base64Data == null) return null;
-        byte[] cipherData = Base64.getDecoder().decode(base64Data);
-        byte[] plainData = encryptionService.decrypt(cipherData);
-        return new String(plainData);
+        return settings.getSecret(secretRef);
     }
 
     // Helm Operations

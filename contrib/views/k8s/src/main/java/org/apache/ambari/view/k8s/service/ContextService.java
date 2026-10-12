@@ -31,6 +31,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
 import org.apache.ambari.view.k8s.store.KdpsContextRepo;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
@@ -44,8 +45,9 @@ import com.google.gson.reflect.TypeToken;
  * CRUD + resolution for {@link KdpsContextEntity} platform contexts.
  *
  * <p>Secrets (e.g. an external Ranger admin password) are encrypted with
- * {@link EncryptionService} and stored in the view instance data under
- * {@code context.<id>.<name>} — never in the DataStore, never echoed back.
+ * {@link EncryptionService} and stored in the instance settings ({@link InstanceSettings}) under
+ * {@code context.<id>.<name>}, so every user of the view instance deploys with them — never in the
+ * context entity, never echoed back.
  *
  * <p>{@link #resolve} turns a stored context into a {@link ResolvedContext}: for MANAGED
  * contexts it discovers Atlas/Ranger live from Ambari (mirroring DiscoveryResource); for
@@ -83,11 +85,12 @@ public class ContextService {
 
     private final ViewContext viewContext;
     private final KdpsContextRepo repo;
-    private final EncryptionService encryptionService = new EncryptionService();
+    private final InstanceSettings settings;
 
     public ContextService(ViewContext ctx) {
         this.viewContext = ctx;
         this.repo = new KdpsContextRepo(ctx.getDataStore());
+        this.settings = new InstanceSettings(ctx);
     }
 
     // ------------------------------------------------------------------ CRUD
@@ -165,9 +168,9 @@ public class ContextService {
     /**
      * Create or update a context from a {@link ContextRequest}. The non-secret {@link
      * ContextRequest#config} map is serialized into the entity's {@code configJson}; each plaintext
-     * secret in {@link ContextRequest#secrets} is encrypted into the view instance data and its key
-     * name recorded in {@code secretKeys}. Plaintext secrets are never persisted to the DataStore
-     * nor returned. The persisted {@link KdpsContextEntity} carries only scalar columns (see that
+     * secret in {@link ContextRequest#secrets} is encrypted into the instance settings shared by every
+     * user of the view, and its key name recorded in {@code secretKeys}. Plaintext secrets are never
+     * persisted nor returned. The persisted {@link KdpsContextEntity} carries only scalar columns (see that
      * class's persistence contract).
      */
     public KdpsContextEntity save(ContextRequest request) {
@@ -227,9 +230,7 @@ public class ContextService {
                 if (name == null || name.isBlank() || plain == null || plain.isBlank()) {
                     continue;
                 }
-                String ref = SECRET_PREFIX + request.id + "." + name;
-                String enc = Base64.getEncoder().encodeToString(encryptionService.encrypt(plain.getBytes()));
-                viewContext.putInstanceData(ref, enc);
+                settings.putSecret(SECRET_PREFIX + request.id + "." + name, plain);
                 if (!keys.contains(name)) {
                     keys.add(name);
                 }
@@ -256,7 +257,7 @@ public class ContextService {
         if (entity != null && entity.getSecretKeys() != null) {
             for (String name : entity.getSecretKeys().split(",")) {
                 if (!name.isBlank()) {
-                    viewContext.removeInstanceData(SECRET_PREFIX + id + "." + name.trim());
+                    settings.remove(SECRET_PREFIX + id + "." + name.trim());
                 }
             }
         }
@@ -411,12 +412,7 @@ public class ContextService {
 
     /** Decrypt a stored secret for a context, or null if not present. */
     public String readSecret(String contextId, String name) {
-        String ref = SECRET_PREFIX + contextId + "." + name;
-        String enc = viewContext.getInstanceData(ref);
-        if (enc == null) {
-            return null;
-        }
-        return new String(encryptionService.decrypt(Base64.getDecoder().decode(enc)));
+        return settings.getSecret(SECRET_PREFIX + contextId + "." + name);
     }
 
     // ------------------------------------------------------------- resolution

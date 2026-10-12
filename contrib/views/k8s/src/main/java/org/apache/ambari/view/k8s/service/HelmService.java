@@ -66,7 +66,7 @@ public class HelmService {
     /**
      * Constructs a {@code HelmService} using the default {@link HelmClientDefault} implementation.
      *
-     * @param ctx the Ambari view context providing configuration and instance data
+     * @param ctx the Ambari view context providing configuration and the instance settings
      */
     public HelmService(ViewContext ctx) {
         this(ctx, new HelmClientDefault());
@@ -76,7 +76,7 @@ public class HelmService {
      * Constructs a {@code HelmService} with an explicit Helm client. The namespace scope is the one of the view
      * instance's {@link KubernetesService}, looked up on first use (only cluster-wide listings need it).
      *
-     * @param ctx  the Ambari view context providing configuration and instance data
+     * @param ctx  the Ambari view context providing configuration and the instance settings
      * @param helm the Helm client to delegate low-level Helm operations to
      */
     public HelmService(ViewContext ctx, HelmClient helm) {
@@ -86,7 +86,7 @@ public class HelmService {
     /**
      * Constructs a {@code HelmService} with an explicit Helm client and namespace scope.
      *
-     * @param ctx            the Ambari view context providing configuration and instance data
+     * @param ctx            the Ambari view context providing configuration and the instance settings
      * @param helm           the Helm client to delegate low-level Helm operations to
      * @param namespaceScope supplies the scope used when the account may not list releases across the cluster;
      *                       called only for cluster-wide listings

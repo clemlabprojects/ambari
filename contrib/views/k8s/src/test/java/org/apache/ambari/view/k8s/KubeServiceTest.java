@@ -21,6 +21,8 @@ package org.apache.ambari.view.k8s;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.ClusterStats;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.store.InMemoryDataStore;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -63,6 +65,33 @@ class KubeServiceTest {
         verify(k8s).getClusterStats(false);
   }
 
+  private KubeService api() throws Exception {
+    KubeService api = new KubeService();
+    api.setKubernetesService(k8s);
+    Field f = KubeService.class.getDeclaredField("viewContext");
+    f.setAccessible(true);
+    f.set(api, ctx);
+    return api;
+  }
+
+  @Test
+  void aConfiguredViewThatIsNotConnectedIsNotAnsweredAsUnconfigured() throws Exception {
+    when(k8s.getClusterStats(false)).thenThrow(new KubernetesService.NotConnectedException(
+        "KDPS is not connected to the cluster: it could not connect with the saved configuration and tries again in 30 s."));
+
+    Response r = api().getClusterStats(false);
+    // 412, or that text, makes the UI show the first-run configuration page and stop probing the connection.
+    assertEquals(503, r.getStatus());
+    assertFalse(String.valueOf(r.getEntity()).contains("not configured with a kubeconfig"));
+  }
+
+  @Test
+  void aViewThatWasNeverConfiguredIsStillAnsweredAsUnconfigured() throws Exception {
+    when(k8s.getClusterStats(false)).thenThrow(new IllegalStateException("The view is not configured with a kubeconfig."));
+
+    assertEquals(412, api().getClusterStats(false).getStatus());
+  }
+
   @Test
   void permissionsEndpointUsesAuthHelper() throws Exception {
     when(ctx.getProperties()).thenReturn(Map.of());
@@ -79,9 +108,17 @@ class KubeServiceTest {
     assertNotNull(r.getEntity());
   }
 
+  /** The kubeconfig context selected for the view instance, as every user reads it. */
+  private static final String SELECTED_CONTEXT = "kubeconfig.context";
+
+  private InstanceSettings settings() {
+    return new InstanceSettings(ctx);
+  }
+
   private KubeService apiAsViewAdmin(java.nio.file.Path workDir) throws Exception {
     when(ctx.getUsername()).thenReturn("dave");
     when(ctx.getInstanceName()).thenReturn("reload-test");
+    when(ctx.getDataStore()).thenReturn(new InMemoryDataStore());
     when(ctx.getProperties()).thenReturn(Map.of(
         "view.admin.users", "dave",
         "k8s.view.working.dir", workDir.toString()));
@@ -157,21 +194,21 @@ class KubeServiceTest {
   @Test
   void uploadDropsASelectedContextTheNewKubeconfigLacks(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
-    when(ctx.getInstanceData(anyString())).thenReturn("old-cluster");
+    settings().put(SELECTED_CONTEXT, "old-cluster");
     reconnects();
 
     assertEquals(200, upload(api, kubeconfigWithContexts("new-cluster")).getStatus());
-    verify(ctx).removeInstanceData(anyString());
+    assertNull(settings().get(SELECTED_CONTEXT));
   }
 
   @Test
   void uploadKeepsASelectedContextTheNewKubeconfigHas(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
-    when(ctx.getInstanceData(anyString())).thenReturn("same-cluster");
+    settings().put(SELECTED_CONTEXT, "same-cluster");
     reconnects();
 
     assertEquals(200, upload(api, kubeconfigWithContexts("same-cluster", "other")).getStatus());
-    verify(ctx, never()).removeInstanceData(anyString());
+    assertEquals("same-cluster", settings().get(SELECTED_CONTEXT));
   }
 
   @Test
@@ -183,7 +220,7 @@ class KubeServiceTest {
     Response r = api.selectKubeconfigContext(null, Map.of("context", "other-cluster"));
 
     assertEquals(200, r.getStatus());
-    verify(ctx).putInstanceData(anyString(), eq("other-cluster"));
+    assertEquals("other-cluster", settings().get(SELECTED_CONTEXT));
     verify(k8s).forceReloadClient();
     verify(k8s, never()).reloadClientIfConfigured();
   }
@@ -196,7 +233,7 @@ class KubeServiceTest {
     Response r = api.selectKubeconfigContext(null, Map.of("context", "missing"));
     assertEquals(400, r.getStatus());
     assertEquals("Context 'missing' is not in the uploaded kubeconfig.", error(r));
-    verify(ctx, never()).putInstanceData(anyString(), anyString());
+    assertNull(settings().get(SELECTED_CONTEXT));
     verify(k8s, never()).forceReloadClient();
   }
 
@@ -240,7 +277,7 @@ class KubeServiceTest {
   @Test
   void multiContextKubeconfigWithAChosenContextThatIsUnreachableIsReported(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
-    when(ctx.getInstanceData(anyString())).thenReturn("prod-openshift");
+    settings().put(SELECTED_CONTEXT, "prod-openshift");
     when(k8s.forceReloadClient()).thenReturn(true);
     when(k8s.pingCluster()).thenReturn(org.apache.ambari.view.k8s.model.ConnectionHealth.unreachable("connection refused"));
 
@@ -278,5 +315,23 @@ class KubeServiceTest {
     assertEquals(400, r.getStatus());
     assertTrue(error(r).contains("too large"), error(r));
     verifyNoInteractions(k8s);
+  }
+
+  @Test
+  void anOperatorFindsTheViewConfiguredByAnAdministrator(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    org.apache.ambari.view.k8s.store.PerUserViewContext view =
+        new org.apache.ambari.view.k8s.store.PerUserViewContext("configured-test", workDir);
+    java.nio.file.Path kubeconfig = java.nio.file.Files.writeString(workDir.resolve("kubeconfig.yaml.enc"), "encrypted");
+    view.as("alice");
+    new org.apache.ambari.view.k8s.service.ViewConfigurationService(view.context).saveKubeconfigPath(kubeconfig.toString());
+
+    view.as("ops1");
+    KubeService api = new KubeService();
+    api.setKubernetesService(k8s);
+    Field f = KubeService.class.getDeclaredField("viewContext");
+    f.setAccessible(true);
+    f.set(api, view.context);
+
+    assertEquals(200, api.checkIsViewConfigured(null).getStatus(), "ops1 is not sent to the configuration page");
   }
 }

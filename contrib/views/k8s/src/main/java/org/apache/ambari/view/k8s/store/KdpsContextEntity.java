@@ -34,8 +34,8 @@ import org.apache.ambari.view.k8s.store.base.BaseModel;
  *       (see {@code ContextService.managedDefault}); privileged Ranger operations are delegated
  *       to the Ambari server.</li>
  *   <li>{@code EXTERNAL} — a cluster Ambari does not manage. Non-secret connection details live
- *       in {@link #configJson}; credentials are stored encrypted in the view instance data
- *       (tracked by {@link #secretKeys}).</li>
+ *       in {@link #configJson}; credentials are stored encrypted in the instance settings
+ *       ({@link InstanceSettings}, tracked by {@link #secretKeys}).</li>
  *   <li>{@code REMOTE} — like MANAGED but discovered against a different cluster's Ambari over the
  *       network with stored credentials.</li>
  * </ul>
@@ -51,7 +51,7 @@ import org.apache.ambari.view.k8s.store.base.BaseModel;
  *       {@code hstore}) and break all context persistence;</li>
  *   <li>the inbound non-secret config map and plaintext secrets are carried on
  *       {@link org.apache.ambari.view.k8s.model.ContextRequest} (never persisted as-is) and are
- *       folded into {@link #configJson} / encrypted instance data by {@code ContextService}.</li>
+ *       folded into {@link #configJson} / encrypted instance settings by {@code ContextService}.</li>
  * </ul>
  *
  * Distinct from any kubeconfig / "kube-context" notion — this is the data-platform side.
@@ -92,7 +92,7 @@ public class KdpsContextEntity extends BaseModel {
      */
     private String configJson;
 
-    /** Comma-separated names of secrets stored (encrypted) in instance data for this context. */
+    /** Comma-separated names of secrets stored (encrypted) in the instance settings for this context. */
     @Column(length = 512)
     private String secretKeys;
 

@@ -44,6 +44,7 @@ import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentBackend;
@@ -172,7 +173,7 @@ public class CommandService {
 
     /**
      * Expose the view context for helper adapters that still need direct access to
-     * Ambari view services (filesystem, instance data, etc.).
+     * Ambari view services (filesystem, instance settings, etc.).
      *
      * @return current view context bound to this service
      */
@@ -380,7 +381,7 @@ public class CommandService {
         // the operator uploads the keytab. Operators can still opt into WEBHOOK via view settings.
         String defaultMode = KERBEROS_INJECTION_MODE_PRE_PROVISIONED;
         try {
-            String rawSettingsJson = ctx.getInstanceData(VIEW_SETTINGS_KEY);
+            String rawSettingsJson = new InstanceSettings(ctx).get(VIEW_SETTINGS_KEY);
             if (rawSettingsJson == null || rawSettingsJson.isBlank()) {
                 return defaultMode;
             }

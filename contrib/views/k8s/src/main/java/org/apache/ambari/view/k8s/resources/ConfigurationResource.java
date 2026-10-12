@@ -27,6 +27,7 @@ import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -265,7 +266,7 @@ public class ConfigurationResource {
         return Response.serverError().entity(Map.of("error", String.valueOf(e.getMessage()))).build();
     }
 
-    // -------- View Settings (instance-level) --------
+    // -------- View Settings (instance-level, shared by every user of the instance) --------
     private static final String SETTINGS_KEY = "view.settings.json";
 
     @GET
@@ -273,7 +274,7 @@ public class ConfigurationResource {
     public Response getSettings() {
         auth().checkConfigurationPermission();
         try {
-            String json = viewContext.getInstanceData(SETTINGS_KEY);
+            String json = new InstanceSettings(viewContext).get(SETTINGS_KEY);
             if (json == null || json.isBlank()) {
                 return Response.ok(Map.of()).build();
             }
@@ -291,8 +292,10 @@ public class ConfigurationResource {
         auth().checkConfigurationPermission();
         try {
             String json = objectMapper.writeValueAsString(settings);
-            viewContext.putInstanceData(SETTINGS_KEY, json);
+            new InstanceSettings(viewContext).put(SETTINGS_KEY, json);
             return Response.ok().build();
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
         } catch (Exception e) {
             LOG.error("Failed to save settings", e);
             return Response.serverError().entity(Map.of("error", e.getMessage())).build();

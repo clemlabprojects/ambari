@@ -69,6 +69,16 @@ public class ConnectionHealth {
         return new ConnectionHealth(State.UNREACHABLE, "Cluster API is unreachable. " + safe(detail));
     }
 
+    /**
+     * The view is configured, but the last attempt to connect with the saved configuration failed and another one
+     * follows. Reported as {@link State#UNREACHABLE}, so the UI shows the view disconnected and recovers on its own,
+     * instead of offering to configure it again.
+     */
+    public static ConnectionHealth notConnected(String detail) {
+        return new ConnectionHealth(State.UNREACHABLE,
+                "Not connected to the cluster with the saved configuration. " + safe(detail));
+    }
+
     /** No credentials have been stored — the view has never been configured. */
     public static ConnectionHealth unconfigured() {
         return new ConnectionHealth(State.UNCONFIGURED, "The view is not configured with any cluster credentials.");

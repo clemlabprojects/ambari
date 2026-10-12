@@ -42,7 +42,7 @@ public class ContextCapabilitySchema {
         public String name;            // field id within the capability ("<capability>.<name>")
         public String label;
         public String type = "string"; // string | password | enum | boolean
-        public boolean secret = false; // encrypted in instance data, never returned by the API
+        public boolean secret = false; // encrypted in the instance settings, never returned by the API
         /** Key the managed resolver uses to fill this field live from Ambari (null → operator-supplied). */
         public String managedResolver;
         /** Optional scope: "EXTERNAL" | "MANAGED" — null means both. */

@@ -28,8 +28,8 @@ import java.util.Map;
  * it carries the structured {@link #config} map and the plaintext {@link #secrets} map, neither of
  * which can live on the entity (Ambari's view persistence would try to map a {@code Map} property to
  * an unsupported column type). {@code ContextService} validates this request, serializes
- * {@link #config} into the entity's {@code configJson}, and encrypts {@link #secrets} into the view
- * instance data — the plaintext secrets never touch the DataStore and are never echoed back.
+ * {@link #config} into the entity's {@code configJson}, and encrypts {@link #secrets} into the instance
+ * settings shared by every user of the view — the plaintext secrets are never persisted and never echoed back.
  */
 public class ContextRequest {
 

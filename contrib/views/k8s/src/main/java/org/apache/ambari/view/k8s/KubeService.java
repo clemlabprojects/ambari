@@ -683,6 +683,12 @@ public class KubeService {
     }
 
     private Response handleError(Exception e) {
+        // Configured but not connected (the last attempt to connect failed): not the 412 "unconfigured", which makes
+        // the UI show the first-run configuration page and stop probing the connection.
+        if (e instanceof org.apache.ambari.view.k8s.service.KubernetesService.NotConnectedException) {
+            LOG.warn("Cluster call while not connected: {}", e.getMessage());
+            return Response.status(Response.Status.SERVICE_UNAVAILABLE).entity(e.getMessage()).build();
+        }
         if (e instanceof IllegalStateException) {
             LOG.warn("Attempt to access resource without configuration: {}", e.getMessage());
             return Response.status(Response.Status.PRECONDITION_FAILED).entity(e.getMessage()).build();

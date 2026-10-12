@@ -10,7 +10,7 @@
       "secretName": "regcred",
       "chart": "kerberos-keytab-mutating-webhook",
       "chartVersion": "0.1.0",
-      "imageTag": "1.0.0.8",
+      "imageTag": "1.0.0.9",
       "imageRepository": "registry.clemlab.com/clemlabprojects",
       "namespace": "ambari-mutating-webhooks",
       "imageGlobalRegistryProperty": "global.imageRegistry",

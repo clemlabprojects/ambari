@@ -21,6 +21,7 @@ package org.apache.ambari.view.k8s.resources;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import org.apache.ambari.view.k8s.model.MonitoringDiscoveryResponse;
@@ -485,8 +486,9 @@ public class DiscoveryResource {
     public Response discoverMonitoringPrometheus() {
         try {
             var info = kubernetesService.discoverAndHealMonitoringState();
-            String state = viewContext.getInstanceData("monitoring.bootstrap.state");
-            String message = viewContext.getInstanceData("monitoring.bootstrap.message");
+            InstanceSettings settings = new InstanceSettings(viewContext);
+            String state = settings.get("monitoring.bootstrap.state");
+            String message = settings.get("monitoring.bootstrap.message");
             if (info == null) {
                 // Bootstrap in progress or not started — return stored state so UI shows RUNNING/FAILED badge.
                 return Response.ok(new MonitoringDiscoveryResponse(null, null, null, state, message)).build();

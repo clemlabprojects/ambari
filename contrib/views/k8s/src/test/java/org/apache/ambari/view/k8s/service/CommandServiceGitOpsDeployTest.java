@@ -689,7 +689,9 @@ class CommandServiceGitOpsDeployTest {
     }
 
     private void kerberosInjectionMode(String mode) {
-        when(ctx.getInstanceData("view.settings.json")).thenReturn("{\"kerberos\":{\"injectionMode\":\"" + mode + "\"}}");
+        // View settings are shared by every user of the instance (AMBARI-746).
+        new org.apache.ambari.view.k8s.store.InstanceSettings(ctx)
+                .put("view.settings.json", "{\"kerberos\":{\"injectionMode\":\"" + mode + "\"}}");
     }
 
     private String planWithCommandsUrl(HelmDeployRequest request) {

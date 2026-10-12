@@ -41,7 +41,7 @@
     <ambari-admin-dir>${basedir}/../ambari-admin</ambari-admin-dir>
     <contrib-views-dir>${basedir}/../contrib/views</contrib-views-dir>
     <!-- Must match contrib/views/k8s/pom.xml <version>; bumped together with it. -->
-    <kdps.view.version>1.0.0.8</kdps.view.version>
+    <kdps.view.version>1.0.0.9</kdps.view.version>
     <resourceManagementSrcLocation>${project.basedir}/../ambari-common/src/main/python/resource_management</resourceManagementSrcLocation>
     <customActionsRoot>src/main/resources/custom_actions</customActionsRoot>
     <ambariProperties>conf/unix/ambari.properties</ambariProperties>

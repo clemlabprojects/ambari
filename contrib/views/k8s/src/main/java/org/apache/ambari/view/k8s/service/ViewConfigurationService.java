@@ -20,6 +20,7 @@ package org.apache.ambari.view.k8s.service;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,13 +43,16 @@ import java.io.OutputStream;
 import java.util.*;
 
 /**
- * Service for managing view configuration including kubeconfig file handling
+ * Service for managing view configuration including kubeconfig file handling.
+ *
+ * <p>The configuration belongs to the view instance ({@link InstanceSettings}): whoever saves it, every user of the
+ * instance and every background task connects with the same kubeconfig or OpenShift login.</p>
  */
 public class ViewConfigurationService {
     private static final Logger LOG = LoggerFactory.getLogger(ViewConfigurationService.class);
     
     private static final String KUBECONFIG_PATH_KEY = "kubeconfig.path";
-    private static final String KUBECONFIG_UPLOADED = "kubeconfig.uploaded";
+    private static final String KUBECONFIG_UPLOADED = InstanceSettings.CONFIGURED_KEY;
     private static final String KUBECONFIG_CONTEXT_KEY = "kubeconfig.context";
 
     // Auth mode: "kubeconfig" (default, uploaded file) or "openshift-login" (API URL + user/password,
@@ -60,8 +64,8 @@ public class ViewConfigurationService {
     private static final String OS_USERNAME_KEY = "openshift.username";
     private static final String OS_PASSWORD_ENC_KEY = "openshift.password.enc";
     private static final String OS_CA_KEY = "openshift.caData";
-    // A CA PEM/chain overflows the 2000-char viewinstancedata column, so it is written to a file
-    // in the working dir and only its path is kept in instance data (OS_CA_PATH_KEY).
+    // A CA PEM/chain overflows a settings value (3000 chars), so it is written to a file
+    // in the working dir and only its path is kept in the settings (OS_CA_PATH_KEY).
     private static final String OS_CA_PATH_KEY = "openshift.caPath";
     private static final String OPENSHIFT_CA_FILE = "openshift-ca.pem";
     private static final String OS_INSECURE_KEY = "openshift.insecure";
@@ -75,6 +79,7 @@ public class ViewConfigurationService {
 
     private final ViewContext viewContext;
     private final EncryptionService encryptionService;
+    private final InstanceSettings settings;
     // Cached per-instance so the minted token is reused across calls (rebuilding would drop the cache).
     private volatile OpenShiftLoginProvider openShiftLoginProvider;
 
@@ -82,12 +87,13 @@ public class ViewConfigurationService {
      * Constructs a {@code ViewConfigurationService} and validates the kubeconfig state on startup.
      * If the stored kubeconfig path no longer points to an existing file, the uploaded flag is cleared.
      *
-     * @param viewContext the Ambari view context providing instance data and properties
+     * @param viewContext the Ambari view context providing the instance settings and properties
      */
     public ViewConfigurationService(ViewContext viewContext) {
         LOG.info("Initializing ViewConfigurationService for view context: {}", viewContext.getInstanceName());
         this.viewContext = viewContext;
         this.encryptionService = new EncryptionService();
+        this.settings = new InstanceSettings(viewContext, encryptionService);
         LOG.debug("EncryptionService initialized successfully");
 
         // Point the helm-java native-library extraction at the (exec-permitted) view working dir
@@ -110,7 +116,7 @@ public class ViewConfigurationService {
                 File kubeconfigFile = new File(kubeconfigPath);
                 if (!kubeconfigFile.exists()) {
                     LOG.warn("Kubeconfig file does not exist at path: {}. Setting '{}' to false.", kubeconfigPath, KUBECONFIG_UPLOADED);
-                    viewContext.putInstanceData(KUBECONFIG_UPLOADED, "false");
+                    settings.put(KUBECONFIG_UPLOADED, "false");
                 } else {
                     LOG.info("Kubeconfig file exists at path: {}. No action needed.", kubeconfigPath);
                 }
@@ -184,29 +190,29 @@ public class ViewConfigurationService {
             throw new IOException("Failed to save kubeconfig file", e);
         } finally {
             // Save the path after successful file creation
-            LOG.debug("Attempting to save kubeconfig path to instance data");
+            LOG.debug("Attempting to save kubeconfig path to the view settings");
             try {
                 File savedFile = new File(workingDirectoryPath, new File(fileName).getName() + ".enc");
                 saveKubeconfigPath(savedFile.getAbsolutePath());
                 LOG.info("Kubeconfig file save operation completed successfully");
             } catch (Exception e) {
-                LOG.error("Error saving kubeconfig path to instance data: {}", e.getMessage(), e);
+                LOG.error("Error saving kubeconfig path to the view settings: {}", e.getMessage(), e);
             }
         }
     }
 
     /**
-     * Persists the kubeconfig file path into view instance data and marks the view as configured.
+     * Persists the kubeconfig file path into the view settings and marks the view as configured for every user.
      *
      * @param kubeconfigPath the absolute path to the encrypted kubeconfig file to store
      */
     public void saveKubeconfigPath(String kubeconfigPath) {
-        LOG.info("Attempting to save instance data. Key: '{}', Value: '{}'", KUBECONFIG_PATH_KEY, kubeconfigPath);
+        LOG.info("Attempting to save view setting. Key: '{}', Value: '{}'", KUBECONFIG_PATH_KEY, kubeconfigPath);
         try {
-            viewContext.putInstanceData(KUBECONFIG_PATH_KEY, kubeconfigPath);
+            settings.put(KUBECONFIG_PATH_KEY, kubeconfigPath);
             // Uploading a kubeconfig switches the view back to kubeconfig auth mode (away from openshift-login).
-            viewContext.putInstanceData(AUTH_MODE_KEY, AUTH_MODE_KUBECONFIG);
-            LOG.debug("Successfully called putInstanceData for key '{}'", KUBECONFIG_PATH_KEY);
+            settings.put(AUTH_MODE_KEY, AUTH_MODE_KUBECONFIG);
+            LOG.debug("Successfully saved view setting '{}'", KUBECONFIG_PATH_KEY);
             
             // Verify that the data is correctly stored by retrieving it
             String retrievedPath = getKubeconfigPath();
@@ -214,31 +220,31 @@ public class ViewConfigurationService {
                 LOG.warn("Verification failed: stored kubeconfig path does not match the provided value. Provided: '{}', Retrieved: '{}'", kubeconfigPath, retrievedPath);
             } else {
                 LOG.debug("Verification successful: stored kubeconfig path matches the provided value.");
-                viewContext.putInstanceData(KUBECONFIG_UPLOADED, "true");
-                LOG.info("Set '{}' to true in instance data.", KUBECONFIG_UPLOADED);
+                settings.put(KUBECONFIG_UPLOADED, "true");
+                LOG.info("Set '{}' to true in the view settings.", KUBECONFIG_UPLOADED);
             }
         } catch (Exception e) {
-            LOG.error("An error occurred while calling putInstanceData", e);
+            LOG.error("An error occurred while saving the kubeconfig path", e);
         }
     }
 
     /** @return the active auth mode ("kubeconfig" default, or "openshift-login"). */
     public String getAuthMode() {
-        String mode = viewContext.getInstanceData(AUTH_MODE_KEY);
+        String mode = settings.get(AUTH_MODE_KEY);
         return (mode == null || mode.isBlank()) ? AUTH_MODE_KUBECONFIG : mode;
     }
 
     /** Switch the active auth mode (e.g. back to "kubeconfig" without re-uploading). */
     public void setAuthMode(String mode) {
-        viewContext.putInstanceData(AUTH_MODE_KEY, AUTH_MODE_OPENSHIFT_LOGIN.equals(mode) ? AUTH_MODE_OPENSHIFT_LOGIN : AUTH_MODE_KUBECONFIG);
+        settings.put(AUTH_MODE_KEY, AUTH_MODE_OPENSHIFT_LOGIN.equals(mode) ? AUTH_MODE_OPENSHIFT_LOGIN : AUTH_MODE_KUBECONFIG);
         this.openShiftLoginProvider = null;
     }
 
     /** @return true if the view is configured with OpenShift username/password login. */
     public boolean isOpenShiftLogin() {
         return AUTH_MODE_OPENSHIFT_LOGIN.equals(getAuthMode())
-                && viewContext.getInstanceData(OS_API_URL_KEY) != null
-                && viewContext.getInstanceData(OS_USERNAME_KEY) != null;
+                && settings.get(OS_API_URL_KEY) != null
+                && settings.get(OS_USERNAME_KEY) != null;
     }
 
     /**
@@ -247,25 +253,23 @@ public class ViewConfigurationService {
      */
     public void saveOpenShiftLogin(String apiUrl, String username, String password, String caData, boolean insecure) {
         try {
-            viewContext.putInstanceData(OS_API_URL_KEY, apiUrl);
-            viewContext.putInstanceData(OS_USERNAME_KEY, username);
+            settings.put(OS_API_URL_KEY, apiUrl);
+            settings.put(OS_USERNAME_KEY, username);
             if (password != null && !password.isEmpty()) {
-                String enc = Base64.getEncoder().encodeToString(
-                        encryptionService.encrypt(password.getBytes(StandardCharsets.UTF_8)));
-                viewContext.putInstanceData(OS_PASSWORD_ENC_KEY, enc);
+                settings.putSecret(OS_PASSWORD_ENC_KEY, password);
             }
-            // The CA is a PEM (often a full chain) that easily exceeds the 2000-char
-            // viewinstancedata column, so persist it to a file in the working dir (like the
-            // kubeconfig) and store only the path. getOpenShiftCaData() reads it back.
+            // The CA is a PEM (often a full chain) that easily exceeds a 3000-char settings
+            // value, so persist it to a file in the working dir (like the kubeconfig) and
+            // store only the path. getOpenShiftCaData() reads it back.
             if (caData != null && !caData.isBlank()) {
-                viewContext.putInstanceData(OS_CA_PATH_KEY, saveOpenShiftCaFile(caData));
+                settings.put(OS_CA_PATH_KEY, saveOpenShiftCaFile(caData));
             } else {
-                viewContext.putInstanceData(OS_CA_PATH_KEY, "");
+                settings.put(OS_CA_PATH_KEY, "");
             }
-            viewContext.putInstanceData(OS_CA_KEY, ""); // never store the raw PEM inline (2000-char limit)
-            viewContext.putInstanceData(OS_INSECURE_KEY, Boolean.toString(insecure));
-            viewContext.putInstanceData(AUTH_MODE_KEY, AUTH_MODE_OPENSHIFT_LOGIN);
-            viewContext.putInstanceData(KUBECONFIG_UPLOADED, "true");
+            settings.put(OS_CA_KEY, ""); // never store the raw PEM inline (size limit)
+            settings.put(OS_INSECURE_KEY, Boolean.toString(insecure));
+            settings.put(AUTH_MODE_KEY, AUTH_MODE_OPENSHIFT_LOGIN);
+            settings.put(KUBECONFIG_UPLOADED, "true");
             this.openShiftLoginProvider = null; // rebuild with new creds on next use
             LOG.info("Saved OpenShift login for user '{}' at {}", username, apiUrl);
         } catch (Exception e) {
@@ -278,19 +282,16 @@ public class ViewConfigurationService {
     public synchronized OpenShiftLoginProvider getOpenShiftLoginProvider() {
         if (!isOpenShiftLogin()) return null;
         if (openShiftLoginProvider != null) return openShiftLoginProvider;
-        String apiUrl = viewContext.getInstanceData(OS_API_URL_KEY);
-        String username = viewContext.getInstanceData(OS_USERNAME_KEY);
-        String enc = viewContext.getInstanceData(OS_PASSWORD_ENC_KEY);
+        String apiUrl = settings.get(OS_API_URL_KEY);
+        String username = settings.get(OS_USERNAME_KEY);
         String password = "";
-        if (enc != null && !enc.isBlank()) {
-            try {
-                password = new String(encryptionService.decrypt(Base64.getDecoder().decode(enc)), StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                LOG.error("Failed to decrypt stored OpenShift password: {}", e.getMessage());
-            }
+        try {
+            password = Objects.requireNonNullElse(settings.getSecret(OS_PASSWORD_ENC_KEY), "");
+        } catch (Exception e) {
+            LOG.error("Failed to decrypt stored OpenShift password: {}", e.getMessage());
         }
         String caData = getOpenShiftCaData();
-        boolean insecure = Boolean.parseBoolean(viewContext.getInstanceData(OS_INSECURE_KEY));
+        boolean insecure = Boolean.parseBoolean(settings.get(OS_INSECURE_KEY));
         openShiftLoginProvider = new OpenShiftLoginProvider(apiUrl, username, password, caData, insecure);
         return openShiftLoginProvider;
     }
@@ -298,14 +299,13 @@ public class ViewConfigurationService {
     /** Persist the view-wide outbound proxy settings (password encrypted). */
     public void saveProxySettings(boolean enabled, String url, String username, String password, String noProxy) {
         try {
-            viewContext.putInstanceData(PROXY_ENABLED_KEY, Boolean.toString(enabled));
-            viewContext.putInstanceData(PROXY_URL_KEY, url == null ? "" : url);
-            viewContext.putInstanceData(PROXY_USER_KEY, username == null ? "" : username);
+            settings.put(PROXY_ENABLED_KEY, Boolean.toString(enabled));
+            settings.put(PROXY_URL_KEY, url == null ? "" : url);
+            settings.put(PROXY_USER_KEY, username == null ? "" : username);
             if (password != null && !password.isEmpty()) {
-                viewContext.putInstanceData(PROXY_PASSWORD_ENC_KEY,
-                        Base64.getEncoder().encodeToString(encryptionService.encrypt(password.getBytes(StandardCharsets.UTF_8))));
+                settings.putSecret(PROXY_PASSWORD_ENC_KEY, password);
             }
-            viewContext.putInstanceData(PROXY_NOPROXY_KEY, noProxy == null ? "" : noProxy);
+            settings.put(PROXY_NOPROXY_KEY, noProxy == null ? "" : noProxy);
             LOG.info("Saved outbound proxy settings (enabled={}, url={})", enabled, url);
         } catch (Exception e) {
             LOG.error("Failed to save proxy settings: {}", e.getMessage(), e);
@@ -313,28 +313,25 @@ public class ViewConfigurationService {
         }
     }
 
-    public boolean isProxyEnabled() { return Boolean.parseBoolean(viewContext.getInstanceData(PROXY_ENABLED_KEY)); }
-    public String getProxyUrl() { return viewContext.getInstanceData(PROXY_URL_KEY); }
-    public String getProxyUsername() { return viewContext.getInstanceData(PROXY_USER_KEY); }
-    public String getProxyNoProxy() { return viewContext.getInstanceData(PROXY_NOPROXY_KEY); }
+    public boolean isProxyEnabled() { return Boolean.parseBoolean(settings.get(PROXY_ENABLED_KEY)); }
+    public String getProxyUrl() { return settings.get(PROXY_URL_KEY); }
+    public String getProxyUsername() { return settings.get(PROXY_USER_KEY); }
+    public String getProxyNoProxy() { return settings.get(PROXY_NOPROXY_KEY); }
 
     /** Build a {@link ProxySupport} from the stored settings, keeping {@code alwaysDirect} hosts direct. */
     public ProxySupport buildProxySupport(String... alwaysDirect) {
-        String encPw = viewContext.getInstanceData(PROXY_PASSWORD_ENC_KEY);
         String password = "";
-        if (encPw != null && !encPw.isBlank()) {
-            try {
-                password = new String(encryptionService.decrypt(Base64.getDecoder().decode(encPw)), StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                LOG.warn("Failed to decrypt stored proxy password: {}", e.getMessage());
-            }
+        try {
+            password = Objects.requireNonNullElse(settings.getSecret(PROXY_PASSWORD_ENC_KEY), "");
+        } catch (Exception e) {
+            LOG.warn("Failed to decrypt stored proxy password: {}", e.getMessage());
         }
         return ProxySupport.from(getProxyUrl(), getProxyUsername(), password, getProxyNoProxy(), isProxyEnabled(), alwaysDirect);
     }
 
-    public String getOpenShiftApiUrl() { return viewContext.getInstanceData(OS_API_URL_KEY); }
+    public String getOpenShiftApiUrl() { return settings.get(OS_API_URL_KEY); }
     public String getOpenShiftCaData() {
-        String path = viewContext.getInstanceData(OS_CA_PATH_KEY);
+        String path = settings.get(OS_CA_PATH_KEY);
         if (path != null && !path.isBlank()) {
             try {
                 return AccessController.doPrivileged((PrivilegedExceptionAction<String>) () -> {
@@ -348,7 +345,7 @@ public class ViewConfigurationService {
             }
         }
         // Legacy fallback: a small CA stored inline before the file-based change.
-        String inline = viewContext.getInstanceData(OS_CA_KEY);
+        String inline = settings.get(OS_CA_KEY);
         return (inline == null || inline.isBlank()) ? null : inline;
     }
 
@@ -374,7 +371,7 @@ public class ViewConfigurationService {
             throw new RuntimeException("Failed to write OpenShift CA file", e);
         }
     }
-    public boolean isOpenShiftInsecure() { return Boolean.parseBoolean(viewContext.getInstanceData(OS_INSECURE_KEY)); }
+    public boolean isOpenShiftInsecure() { return Boolean.parseBoolean(settings.get(OS_INSECURE_KEY)); }
 
     /**
      * Synthesize a kubeconfig (with a freshly-minted token) for the stored OpenShift login. Used by the
@@ -520,10 +517,10 @@ public class ViewConfigurationService {
      * @return the kubeconfig file path, or {@code null} if not yet configured
      */
     public String getKubeconfigPath() {
-        LOG.debug("Attempting to retrieve instance data for key: '{}'", KUBECONFIG_PATH_KEY);
-        String configurationPath = viewContext.getInstanceData(KUBECONFIG_PATH_KEY);
+        LOG.debug("Attempting to retrieve view setting: '{}'", KUBECONFIG_PATH_KEY);
+        String configurationPath = settings.get(KUBECONFIG_PATH_KEY);
         if (configurationPath == null) {
-            LOG.debug("No value found for key '{}' in instance data.", KUBECONFIG_PATH_KEY);
+            LOG.debug("No value found for key '{}' in the view settings.", KUBECONFIG_PATH_KEY);
         } else {
             LOG.debug("Found value for key '{}': '{}'", KUBECONFIG_PATH_KEY, configurationPath);
         }
@@ -531,15 +528,15 @@ public class ViewConfigurationService {
     }
 
     /**
-     * Removes the stored kubeconfig path from view instance data, typically called when the stored path is stale.
+     * Removes the stored kubeconfig path from the view settings, typically called when the stored path is stale.
      */
     public void removeKubeconfigPath() {
         LOG.warn("Removing stale kubeconfig path entry. Key: '{}'", KUBECONFIG_PATH_KEY);
         try {
-            viewContext.removeInstanceData(KUBECONFIG_PATH_KEY);
-            LOG.info("Successfully removed instance data for key '{}'", KUBECONFIG_PATH_KEY);
+            settings.remove(KUBECONFIG_PATH_KEY);
+            LOG.info("Successfully removed view setting '{}'", KUBECONFIG_PATH_KEY);
         } catch (Exception e) {
-            LOG.error("An error occurred while calling removeInstanceData", e);
+            LOG.error("An error occurred while removing the kubeconfig path", e);
         }
     }
 
@@ -552,10 +549,10 @@ public class ViewConfigurationService {
     public void saveSelectedContext(String contextName) {
         try {
             if (contextName == null || contextName.isBlank()) {
-                viewContext.removeInstanceData(KUBECONFIG_CONTEXT_KEY);
+                settings.remove(KUBECONFIG_CONTEXT_KEY);
                 LOG.info("Cleared selected kubeconfig context (will use current-context).");
             } else {
-                viewContext.putInstanceData(KUBECONFIG_CONTEXT_KEY, contextName);
+                settings.put(KUBECONFIG_CONTEXT_KEY, contextName);
                 LOG.info("Saved selected kubeconfig context '{}'.", contextName);
             }
         } catch (Exception e) {
@@ -568,25 +565,26 @@ public class ViewConfigurationService {
      * kubeconfig's {@code current-context}.
      */
     public String getSelectedContext() {
-        return viewContext.getInstanceData(KUBECONFIG_CONTEXT_KEY);
+        return settings.get(KUBECONFIG_CONTEXT_KEY);
     }
 
     public void removeSelectedContext() {
         try {
-            viewContext.removeInstanceData(KUBECONFIG_CONTEXT_KEY);
+            settings.remove(KUBECONFIG_CONTEXT_KEY);
         } catch (Exception e) {
             LOG.error("Failed to remove selected kubeconfig context", e);
         }
     }
 
     /**
-     * Returns whether the view has been configured with an uploaded kubeconfig file.
+     * Returns whether the view instance has been configured with a kubeconfig or an OpenShift login, whichever user
+     * saved it.
      *
-     * @return {@code true} if a kubeconfig has been successfully uploaded and validated
+     * @return {@code true} if a kubeconfig or an OpenShift login has been saved
      */
     public boolean isConfigured() {
         LOG.debug("Checking if view is configured...");
-        String uploadedFlag = viewContext.getInstanceData(KUBECONFIG_UPLOADED);
+        String uploadedFlag = settings.get(KUBECONFIG_UPLOADED);
         boolean isConfigured = "true".equalsIgnoreCase(uploadedFlag);
         LOG.debug("isConfigured() check result: {} (flag value: {})", isConfigured, uploadedFlag);
         return isConfigured;

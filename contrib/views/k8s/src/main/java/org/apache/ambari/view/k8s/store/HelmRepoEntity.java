@@ -63,7 +63,7 @@ public class HelmRepoEntity extends BaseModel {
     private String username;
 
     @Column(length = 128)
-    private String secretRef;   // pointer in InstanceData (encrypted); never expose
+    private String secretRef;   // key of the encrypted secret in InstanceSettings; never expose
 
     @Column(length = 256)
     private String imageProject; // e.g. "clemlabprojects"

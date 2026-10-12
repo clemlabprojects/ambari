@@ -19,6 +19,7 @@
 package org.apache.ambari.view.k8s.service;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.store.InMemoryDataStore;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -43,12 +44,8 @@ class ViewConfigurationServiceTest {
     );
     when(ctx.getProperties()).thenReturn(properties);
 
-    // ---- stub InstanceData (clé/valeur) ----
-    Map<String,String> instanceData = new java.util.HashMap<>();
-    when(ctx.getInstanceData(anyString()))
-        .thenAnswer(inv -> instanceData.get(inv.getArgument(0)));
-    doAnswer(inv -> { instanceData.put(inv.getArgument(0), inv.getArgument(1)); return null; })
-        .when(ctx).putInstanceData(anyString(), anyString());
+    // ---- the view instance's settings live in its DataStore ----
+    when(ctx.getDataStore()).thenReturn(new InMemoryDataStore());
 
     ViewConfigurationService svc = new ViewConfigurationService(ctx);
 

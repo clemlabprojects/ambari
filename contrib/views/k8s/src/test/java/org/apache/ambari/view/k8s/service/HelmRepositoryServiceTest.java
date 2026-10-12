@@ -22,6 +22,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.DataStore;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
+import org.apache.ambari.view.k8s.store.KdpsSettingEntity;
 
 import org.apache.ambari.view.PersistenceException;
 
@@ -44,6 +45,7 @@ class HelmRepositoryServiceTest {
   HelmClient helm;
 
   Map<String, HelmRepoEntity> table;
+  Map<String, KdpsSettingEntity> settings;
   Map<String, String> instanceData;
 
   @BeforeEach
@@ -63,6 +65,11 @@ class HelmRepositoryServiceTest {
         .when(ds).store(any(HelmRepoEntity.class));
     doAnswer(inv -> { HelmRepoEntity e = inv.getArgument(0); table.remove(e.getId()); return null; })
         .when(ds).remove(any(HelmRepoEntity.class));
+
+    settings = new HashMap<>();
+    when(ds.find(eq(KdpsSettingEntity.class), anyString())).thenAnswer(inv -> settings.get(inv.getArgument(1)));
+    doAnswer(inv -> { KdpsSettingEntity e = inv.getArgument(0); settings.put(e.getId(), e); return null; })
+        .when(ds).store(any(KdpsSettingEntity.class));
 
     instanceData = new HashMap<>();
     when(ctx.getInstanceData(anyString())).thenAnswer(inv -> instanceData.get(inv.getArgument(0)));
@@ -105,7 +112,11 @@ class HelmRepositoryServiceTest {
 
     HelmRepoEntity stored = table.get("harbor");
     assertNotNull(stored.getSecretRef());
-    assertTrue(instanceData.containsKey(stored.getSecretRef()));
+    // Kept in the view instance's settings, shared by every user, and encrypted.
+    assertTrue(settings.containsKey(stored.getSecretRef()));
+    assertNotEquals("s3cr3t", settings.get(stored.getSecretRef()).getValue());
+    assertFalse(instanceData.containsKey(stored.getSecretRef()), "not in the saving user's own instance data");
+    assertEquals("s3cr3t", svc.readPlainSecret(stored.getSecretRef()));
   }
 
   @Test

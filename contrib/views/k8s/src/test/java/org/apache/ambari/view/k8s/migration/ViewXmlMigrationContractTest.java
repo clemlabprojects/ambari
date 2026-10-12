@@ -21,9 +21,13 @@ import java.io.File;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import org.apache.ambari.view.k8s.store.KdpsSettingEntity;
 import org.apache.ambari.view.migration.ViewDataMigrator;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,6 +67,47 @@ public class ViewXmlMigrationContractTest {
                 java.nio.file.Paths.get("src/main/resources/ui/src/api/client.ts")), java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(client.contains("/api/v1/views/K8S-VIEW/versions/" + version + "/instances/"),
                 "ui/src/api/client.ts fallback API path must use the view version " + version);
+    }
+
+    @Test
+    void theSharedInstanceSettingsArePersisted() throws Exception {
+        Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(new File("src/main/resources/view.xml"));
+        NodeList entities = doc.getElementsByTagName("entity");
+        String idProperty = null;
+        for (int i = 0; i < entities.getLength(); i++) {
+            Element entity = (Element) entities.item(i);
+            if (KdpsSettingEntity.class.getName().equals(childText(entity, "class"))) {
+                idProperty = childText(entity, "id-property");
+            }
+        }
+        assertEquals("id", idProperty, "view.xml <persistence> must declare " + KdpsSettingEntity.class.getName()
+                + ": without it the settings shared by all users cannot be saved");
+    }
+
+    @Test
+    void theJarVersionFollowsTheViewVersion() throws Exception {
+        Document viewXml = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(new File("src/main/resources/view.xml"));
+        String version = text(viewXml, "version");
+        Document pom = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(new File("pom.xml"));
+        assertEquals(version, childText(pom.getDocumentElement(), "version"), "pom.xml <version> must equal view.xml <version>");
+
+        // The server package ships k8s-view-${kdps.view.version}.jar: a stale value ships no KDPS view at all.
+        File serverPom = new File("../../../ambari-server/pom.xml");
+        if (serverPom.isFile()) {
+            Document server = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(serverPom);
+            assertEquals(version, text(server, "kdps.view.version"),
+                    "ambari-server/pom.xml <kdps.view.version> must equal view.xml <version>");
+        }
+    }
+
+    /** The text of the direct child {@code tag} of {@code parent}, or null. */
+    private static String childText(Element parent, String tag) {
+        for (Node child = parent.getFirstChild(); child != null; child = child.getNextSibling()) {
+            if (child instanceof Element && tag.equals(child.getNodeName())) {
+                return child.getTextContent().trim();
+            }
+        }
+        return null;
     }
 
     private static String text(Document doc, String tag) {

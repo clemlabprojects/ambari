@@ -67,7 +67,6 @@ import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 
-import io.fabric8.openshift.client.OpenShiftClient;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
@@ -93,6 +92,7 @@ import org.apache.ambari.view.k8s.utils.CompositeTrustManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 
 import org.springframework.util.FileCopyUtils;
 
@@ -196,6 +196,8 @@ public class KubernetesService {
     }
 
     private ViewConfigurationService configurationService;
+    /** View settings and monitoring state, shared by every user of the view instance; see {@link #settings()}. */
+    private volatile InstanceSettings instanceSettings;
 
     public static final String WEBHOOK_ENABLED_LABEL_KEY = "security.clemlab.com/webhooks-enabled";
 
@@ -268,7 +270,8 @@ public class KubernetesService {
 
     /**
      * Returns (or creates) the singleton {@code KubernetesService} for the given view instance,
-     * and schedules a one-time async monitoring bootstrap if the service is configured.
+     * and schedules a one-time async monitoring bootstrap if the service is configured. The service is
+     * kept even when it could not connect yet, so that later requests retry under its back-off.
      *
      * @param ctx the Ambari view context identifying the view instance
      * @return the shared {@code KubernetesService} for this view instance
@@ -331,102 +334,234 @@ public class KubernetesService {
     }
 
     /**
-     * Primary constructor that fully initializes the service from the stored kubeconfig.
-     * Reads and decrypts the kubeconfig, installs the cluster CA into the JVM SSL context,
-     * and builds the Kubernetes client. Marks the service as unconfigured if no valid kubeconfig is found.
+     * Primary constructor: connects from the configuration saved for the view instance (kubeconfig file or OpenShift
+     * login). It does not fail when it cannot connect (cluster or OAuth server unreachable, password refused, unreadable
+     * kubeconfig): the service then reports the view as configured but not connected, and connects on a later
+     * request, under the single attempt and back-off of {@link #connectIfConfigured()}.
      *
-     * @param viewContext the Ambari view context providing configuration properties and instance data
-     * @throws IllegalStateException if the kubeconfig file exists but cannot be read or parsed
+     * @param viewContext the Ambari view context providing configuration properties and the instance settings
      */
     public KubernetesService(ViewContext viewContext) {
-        this.configurationService = new ViewConfigurationService(viewContext);
-        String kubeconfigPath = configurationService.getKubeconfigPath();
         this.viewContext = viewContext;
+        this.configurationService = new ViewConfigurationService(viewContext);
         this.helmClient = new HelmClientDefault();
         this.repositoryService = new HelmRepositoryService(viewContext, helmClient);
         this.helmService = new HelmService(viewContext, helmClient, () -> namespaceScope);
-        
+
+        String kubeconfigPath = configurationService.getKubeconfigPath();
         boolean openShiftLogin = configurationService.isOpenShiftLogin();
         if (kubeconfigPath == null && !openShiftLogin) {
             LOG.info("View is not configured. Kubernetes client will not be initialized.");
-            this.isConfigured = false;
-            this.client = null;
+        } else if (!openShiftLogin && !new File(kubeconfigPath).exists()) {
+            LOG.warn("Stale configuration detected. Kubeconfig file not found at path: {}. Resetting configuration.", kubeconfigPath);
+            configurationService.removeKubeconfigPath(); // Auto-healing: remove stale entry
         } else {
-            if (!openShiftLogin && !new File(kubeconfigPath).exists()) {
-                LOG.warn("Stale configuration detected. Kubeconfig file not found at path: {}. Resetting configuration.", kubeconfigPath);
-                configurationService.removeKubeconfigPath(); // Auto-healing: remove stale entry
-                this.isConfigured = false;
-                this.client = null;
-            } else {
-                // Initialize Kubernetes client with kubeconfig
-                try {
-                    String kubeconfigContent;
-                    if (openShiftLogin) {
-                        // Synthesized kubeconfig carrying a freshly-minted OpenShift token (username/password login).
-                        kubeconfigContent = configurationService.getKubeconfigContents();
-                        LOG.info("Initializing Kubernetes client from OpenShift username/password login.");
-                    } else {
-                        EncryptionService encryptionService = new EncryptionService();
-                        byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
-                        byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
-                        kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
-                        LOG.info("Kubeconfig file loaded successfully from: {}", kubeconfigPath);
-                    }
-                    Config baseConfiguration = buildConfigForSelectedContext(kubeconfigContent);
-                    ConfigBuilder configurationBuilder = new ConfigBuilder(baseConfiguration);
-                    LOG.info("Kubernetes client configuration loaded from kubeconfig file.\n");
+            // Failing here would leave nothing cached for the view instance (see get()), so every request of every
+            // user would build the service again: with an OpenShift login, one password login per request.
+            connectFromSavedConfiguration();
+        }
+    }
 
-                    LOG.info("Overriding view properties from ambari.properties into system properties for Kubernetes client.");
-                    loadK8sPropsAsSystemProperties(viewContext);
-
-                    // Parse kubeconfig and trust the CA of EVERY cluster it defines (not just the
-                    // current-context's), so operations against any selected context succeed.
-                    io.fabric8.kubernetes.api.model.Config kubeconfigModel = Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
-                    java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
-                    Config finalConfiguration = configurationBuilder.build();
-
-                    if (!allClusterCaData.isEmpty()) {
-                        installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
-                    } else if (viewContext.getAmbariProperty("k8s.view.ssl.truststore.path") != null) {
-                        String trustStorePath = viewContext.getAmbariProperty("k8s.view.ssl.truststore.path");
-                        String trustStorePassword = viewContext.getAmbariProperty("k8s.view.ssl.truststore.password");
-                        LOG.info("Using TrustStore defined in ambari.properties: {}", trustStorePath);
-                        configurationBuilder.withTrustStoreFile(trustStorePath);
-                        if (trustStorePassword != null) {
-                            configurationBuilder.withTrustStorePassphrase(trustStorePassword);
-                        }
-                    } else {
-                        LOG.info("No custom SSL configuration found. Using default JVM TrustStore.");
-                    }
-
-                    if (openShiftLogin) {
-                        // Dynamic token so the long-lived client always uses a fresh token (auto-renew).
-                        finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());
-                    }
-                    this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
-
-                    if (false) { // Disabled OpenShift detection
-                        LOG.info("OpenShift cluster detected. Adapting the client.");
-                        this.client.adapt(OpenShiftClient.class);
-                    } else {
-                        LOG.info("Standard Kubernetes cluster detected.");
-                    }
-                    this.isConfigured = true;
-                    LOG.info("Kubernetes client initialized successfully.");
-                    applyProxySettings();
-
-                } catch (Exception e) {
-                    LOG.error("Failed to read the kubeconfig file at: {}", kubeconfigPath, e);
-                    throw new IllegalStateException("Failed to read the Kubernetes configuration file.", e);
-                }
-            }
+    /**
+     * Thrown by the cluster calls when the view instance is configured but has no connection to the cluster: the last
+     * attempt to connect with the saved configuration failed. It is not the "not configured" error: callers answer
+     * 503, so the UI shows the view disconnected and recovers once a later attempt connects, instead of showing the
+     * first-run configuration page to every user.
+     */
+    public static final class NotConnectedException extends IllegalStateException {
+        public NotConnectedException(String message) {
+            super(message);
         }
     }
 
     private void checkConfiguration() {
+        connectIfConfigured();
         if (!isConfigured) {
+            if (hasSavedConfiguration()) {
+                throw new NotConnectedException(savedLoginRefused
+                        ? "KDPS is not connected to the cluster: the cluster refused the saved OpenShift username and "
+                                + "password. To avoid locking the account, KDPS does not log in with them again until "
+                                + "an administrator saves the OpenShift login again on the Cluster settings page."
+                        : "KDPS is not connected to the cluster: it could not connect with the saved configuration and "
+                                + "tries again " + nextAttemptIn() + ".");
+            }
             throw new IllegalStateException("The view is not configured with a kubeconfig.");
         }
+    }
+
+    /**
+     * Whether a configuration was saved for the view instance, connected or not. A service built around a given client
+     * has none. When the saved configuration cannot be read, the view is taken as configured: it is then reported
+     * disconnected, which the UI recovers from, rather than unconfigured, which shows the first-run configuration page.
+     */
+    private boolean hasSavedConfiguration() {
+        ViewConfigurationService configuration = this.configurationService;
+        if (configuration == null || viewContext == null) {
+            return false;
+        }
+        try {
+            return configuration.isConfigured();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the saved configuration: {}", e.toString());
+            return true;
+        }
+    }
+
+    /** After a failed attempt to connect from the saved configuration, when to try again (epoch ms). */
+    private final java.util.concurrent.atomic.AtomicLong connectRetryAt = new java.util.concurrent.atomic.AtomicLong();
+    /** Failed attempts in a row since the service last connected or the configuration was saved; guarded by {@code this}. */
+    private int connectFailures;
+    /**
+     * The OAuth server refused the saved OpenShift username and password. The same password cannot succeed later and
+     * every refused login counts towards the directory's lockout, so no attempt is made until the configuration is
+     * saved again ({@link #forceReloadClient()}).
+     */
+    private volatile boolean savedLoginRefused;
+    /** Wait after the first failed attempt; it doubles after each further failure, up to {@link #CONNECT_RETRY_MAX_MS}. */
+    static final long CONNECT_RETRY_MS = 30_000L;
+    static final long CONNECT_RETRY_MAX_MS = 15 * 60_000L;
+    /** Clock of the connection back-off; replaced by tests only. */
+    java.util.function.LongSupplier connectClock = System::currentTimeMillis;
+
+    /**
+     * Connects from the saved configuration when this service has no client although the view instance is
+     * configured. The service is built once per view instance by whichever request comes first: after an Ambari
+     * restart that may be a request made while the cluster could not be reached, or before anyone had saved a
+     * configuration. Without this the view stayed unconfigured for every user until someone saved the configuration
+     * again. The configuration is shared by all users ({@link InstanceSettings}), so it does not matter whose
+     * request or background task gets here first.
+     *
+     * <p>Only one attempt runs at a time. With an OpenShift login every attempt is a password login, and directories
+     * lock an account after a few refused ones, so: requests that arrive during an attempt (the dashboard sends several
+     * at once) wait for it and use its outcome instead of each logging in again in turn; after a failed attempt, the
+     * first one made while building the service included, the next one waits {@link #CONNECT_RETRY_MS}, twice as long
+     * after each further failure ({@link #connectRetryDelayMs}); and once the OAuth server has refused the password,
+     * no attempt is made at all until the configuration is saved again. Waiting rather than giving up at once also
+     * means those requests get the connection when the attempt succeeds, instead of reporting the view as not
+     * connected.
+     */
+    private void connectIfConfigured() {
+        if (client != null && isConfigured) {
+            return;
+        }
+        ViewConfigurationService configuration = this.configurationService;
+        if (configuration == null || viewContext == null) {
+            return; // built around a given client
+        }
+        if (savedLoginRefused || connectClock.getAsLong() < connectRetryAt.get()) {
+            return;
+        }
+        boolean configured;
+        try {
+            configured = configuration.isConfigured();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the saved configuration: {}", e.toString());
+            connectRetryAt.set(connectClock.getAsLong() + CONNECT_RETRY_MS);
+            return;
+        }
+        if (configured) {
+            connectFromSavedConfiguration();
+        }
+    }
+
+    /**
+     * One attempt to connect from the saved configuration, unless the attempt this call waited for has connected, or
+     * failed and its wait is not over. Its outcome is recorded by {@link #rebuildClient()}.
+     */
+    private void connectFromSavedConfiguration() {
+        // The same monitor as forceReloadClient(), so a save or a token renewal never builds a client alongside.
+        synchronized (this) {
+            if (client != null && isConfigured) {
+                return;
+            }
+            if (savedLoginRefused || connectClock.getAsLong() < connectRetryAt.get()) {
+                return;
+            }
+            LOG.info("The view instance is configured but not connected; connecting from the saved configuration.");
+            try {
+                reloadClientIfConfigured();
+            } catch (RuntimeException e) {
+                LOG.warn("Could not connect from the saved configuration: {}", e.toString());
+                recordConnectFailure();
+            }
+        }
+    }
+
+    /**
+     * Records a failed attempt to connect: stops the attempts when the OAuth server refused the saved password,
+     * otherwise sets when the next one may be made. Called holding {@code this}.
+     */
+    private void recordConnectFailure() {
+        if (savedLoginWasRefused()) {
+            savedLoginRefused = true;
+            LOG.warn("The cluster refused the saved OpenShift username and password. KDPS will not log in with them "
+                    + "again until the OpenShift login is saved again on the Cluster settings page.");
+            return;
+        }
+        connectFailures = Math.min(connectFailures + 1, 32);
+        long wait = connectRetryDelayMs(connectFailures);
+        LOG.warn("Not connected to the cluster; the next attempt is in {} s at the earliest.", wait / 1000);
+        connectRetryAt.set(connectClock.getAsLong() + wait);
+    }
+
+    /** Lets the next attempt to connect run at once; called holding {@code this}. */
+    private void resetConnectBackOff() {
+        connectFailures = 0;
+        connectRetryAt.set(0);
+        savedLoginRefused = false;
+    }
+
+    /**
+     * The wait before the next attempt to connect after {@code failures} failed attempts in a row: 30 s, then
+     * doubled after each further failure, never more than {@link #CONNECT_RETRY_MAX_MS}.
+     *
+     * @param failures failed attempts in a row, at least 1
+     * @return the wait in milliseconds
+     */
+    static long connectRetryDelayMs(int failures) {
+        long wait = CONNECT_RETRY_MS;
+        for (int i = 1; i < failures && wait < CONNECT_RETRY_MAX_MS; i++) {
+            wait *= 2;
+        }
+        return Math.min(wait, CONNECT_RETRY_MAX_MS);
+    }
+
+    /** "in N s" until the next attempt to connect, or "shortly" when it may run now. */
+    private String nextAttemptIn() {
+        long wait = connectRetryAt.get() - connectClock.getAsLong();
+        return wait > 0 ? "in " + ((wait + 999) / 1000) + " s" : "shortly";
+    }
+
+    /**
+     * Whether the OAuth server refused the saved OpenShift username and password on the last login, as opposed to a
+     * login that could not be made (server unreachable, timeout). Reads the provider of the configuration the last
+     * attempt used.
+     */
+    private boolean savedLoginWasRefused() {
+        ViewConfigurationService configuration = this.configurationService;
+        if (configuration == null) {
+            return false;
+        }
+        try {
+            if (!configuration.isOpenShiftLogin()) {
+                return false;
+            }
+            OpenShiftLoginProvider provider = configuration.getOpenShiftLoginProvider();
+            return provider != null && provider.isCredentialsRefused();
+        } catch (RuntimeException e) {
+            LOG.debug("Could not tell whether the saved OpenShift login was refused: {}", e.toString());
+            return false;
+        }
+    }
+
+    /** The settings of the view instance, shared by every user; created on first use. */
+    private InstanceSettings settings() {
+        InstanceSettings current = instanceSettings;
+        if (current == null) {
+            current = new InstanceSettings(viewContext);
+            instanceSettings = current;
+        }
+        return current;
     }
 
     /**
@@ -501,9 +636,8 @@ public class KubernetesService {
      * otherwise notice until the token's expiry timestamp passed.
      *
      * <p>Re-authentication is only possible in the {@code openshift-login} auth mode, where the view
-     * holds the username/password and can mint a brand-new token via
-     * {@link OpenShiftLoginProvider#refresh()} followed by {@link #forceReloadClient()} (which rebuilds
-     * the fabric8 client so the new token is actually used). For a statically uploaded kubeconfig whose
+     * holds the username/password: {@link #forceReloadClient()} rebuilds the fabric8 client with a new
+     * token provider, which logs in once for a brand-new token. For a statically uploaded kubeconfig whose
      * token cannot be renewed, the original 401 is rethrown so callers can surface a
      * "disconnected / re-login required" state rather than silently failing.
      *
@@ -534,8 +668,14 @@ public class KubernetesService {
             synchronized (authRenewLock) {
                 // Several requests refused at the same moment: the first renews, the others find a new client
                 // and just retry with it (outside the lock), instead of each minting a token and building a client.
-                if (this.client != null && this.client != clientUsed) {
+                KubernetesClient current = this.client;
+                if (current != null && current != clientUsed) {
                     LOG.info("Credentials were renewed meanwhile — retrying '{}' with the new client.", operation);
+                } else if (current == null) {
+                    // Another request's renewal failed meanwhile. Logging in again would only add a refused login
+                    // towards the account's lockout; the next attempt follows the back-off of connectIfConfigured().
+                    LOG.warn("Credentials could not be renewed for another request; not retrying '{}'.", operation);
+                    throw e;
                 } else {
                     renewCredentials(operation, e);
                 }
@@ -545,7 +685,9 @@ public class KubernetesService {
     }
 
     /**
-     * Mints a new token through the OpenShift login and rebuilds the client; called under {@code authRenewLock}.
+     * Rebuilds the client, which logs in once through the saved OpenShift login for a new token; called under
+     * {@code authRenewLock}. When the login fails, the client is dropped and the back-off of
+     * {@link #connectIfConfigured()} applies, so a refused password is not tried again on the next request.
      *
      * @param operation the refused call, for the logs
      * @param refusal   the original 401, rethrown when the renewal fails
@@ -553,7 +695,8 @@ public class KubernetesService {
     private void renewCredentials(String operation, KubernetesClientException refusal) {
         LOG.info("Auth mode is 'openshift-login' — attempting to re-authenticate and retry '{}' once.", operation);
         try {
-            configurationService.getOpenShiftLoginProvider().refresh();
+            // No separate refresh() first: the rebuilt client gets a new token provider, which logs in anyway, and
+            // a second login would double the refused logins when the password was changed.
             boolean reloaded = forceReloadClient();
             if (!reloaded) {
                 LOG.error("Client reload after re-authentication reported not-configured; cannot retry '{}'.", operation);
@@ -584,15 +727,28 @@ public class KubernetesService {
      *       a 403 still proves the token authenticated; it is merely not allowed to list namespaces.</li>
      *   <li>HTTP 401 (even after a renew attempt) → {@link ConnectionHealth#unauthenticated(String)}.</li>
      *   <li>anything else (timeout, TLS, connection refused) → {@link ConnectionHealth#unreachable(String)}.</li>
+     *   <li>view configured but not connected, because the last attempt to connect with the saved configuration
+     *       failed → {@link ConnectionHealth#notConnected(String)}, or {@link ConnectionHealth#unauthenticated(String)}
+     *       when the cluster refused the saved OpenShift password.</li>
      *   <li>view never configured → {@link ConnectionHealth#unconfigured()}.</li>
      * </ul>
      *
      * @return a {@link ConnectionHealth} describing the live state of the cluster connection
      */
     public ConnectionHealth pingCluster() {
+        connectIfConfigured();
         if (!isConfigured || client == null) {
-            LOG.debug("pingCluster: view is not configured; reporting UNCONFIGURED.");
-            return ConnectionHealth.unconfigured();
+            if (!hasSavedConfiguration()) {
+                LOG.debug("pingCluster: view is not configured; reporting UNCONFIGURED.");
+                return ConnectionHealth.unconfigured();
+            }
+            if (savedLoginRefused) {
+                LOG.debug("pingCluster: the saved OpenShift login was refused; reporting UNAUTHENTICATED.");
+                return ConnectionHealth.unauthenticated("KDPS does not log in with the refused password again, "
+                        + "so that the account is not locked.");
+            }
+            LOG.debug("pingCluster: view is configured but not connected; reporting UNREACHABLE.");
+            return ConnectionHealth.notConnected("KDPS tries again " + nextAttemptIn() + ".");
         }
         try {
             // Cheapest authenticated round-trip that reliably distinguishes 401 (bad token) from
@@ -1100,7 +1256,7 @@ public class KubernetesService {
 
     private MonitoringSettings loadMonitoringSettings() {
         try {
-            String json = viewContext.getInstanceData(SETTINGS_KEY);
+            String json = settings().get(SETTINGS_KEY);
             if (json != null && !json.isBlank()) {
                 // Some clients persisted {"monitoring": {...}}; unwrap if present
                 Map<String,Object> raw = objectMapper.readValue(json, Map.class);
@@ -1126,9 +1282,11 @@ public class KubernetesService {
 
     private void updateMonitoringBootstrapState(String state, String message) {
         try {
-            viewContext.putInstanceData("monitoring.bootstrap.state", state);
+            settings().put("monitoring.bootstrap.state", state);
             if (message != null) {
-                viewContext.putInstanceData("monitoring.bootstrap.message", message);
+                // A long failure (a whole Helm error) must not cost the state its message: keep what fits.
+                settings().put("monitoring.bootstrap.message", message.length() > InstanceSettings.MAX_VALUE_LENGTH
+                        ? message.substring(0, InstanceSettings.MAX_VALUE_LENGTH) : message);
             }
         } catch (Exception e) {
             LOG.warn("Failed to persist monitoring bootstrap state {}: {}", state, e.getMessage());
@@ -1250,7 +1408,7 @@ public class KubernetesService {
         }
         // Persisted override set by the view itself (e.g., after bootstrap enabling ingress/NodePort)
         try {
-            String persistedUrl = viewContext.getInstanceData("monitoring.prometheus.url");
+            String persistedUrl = settings().get("monitoring.prometheus.url");
             if (persistedUrl != null && !persistedUrl.isBlank()) {
                 LOG.info("Monitoring discovery: using persisted Prometheus URL {}", persistedUrl);
                 return new MonitoringInfo(ns, release, persistedUrl.trim());
@@ -1344,7 +1502,7 @@ public class KubernetesService {
         // to COMPLETED and never surface a private-stack bootstrap failure on the dashboard.
         if (isOpenShift(client)) {
             try {
-                String storedState = viewContext.getInstanceData("monitoring.bootstrap.state");
+                String storedState = settings().get("monitoring.bootstrap.state");
                 if (!"COMPLETED".equals(storedState) && !"SKIPPED".equals(storedState)) {
                     updateMonitoringBootstrapState("COMPLETED", "Using OpenShift built-in monitoring (openshift-monitoring)");
                 }
@@ -1360,7 +1518,7 @@ public class KubernetesService {
         MonitoringInfo info = discoverMonitoringPrometheus();
         if (info != null) {
             try {
-                String storedState = viewContext.getInstanceData("monitoring.bootstrap.state");
+                String storedState = settings().get("monitoring.bootstrap.state");
                 if (!"COMPLETED".equals(storedState)) {
                     LOG.info("Monitoring service found healthy; healing bootstrap state from '{}' to COMPLETED", storedState);
                     updateMonitoringBootstrapState("COMPLETED",
@@ -1529,7 +1687,7 @@ public class KubernetesService {
         if (repoId == null || repoId.isBlank()) {
             // Prefer persisted user choice if available
             try {
-                String persistedRepoId = viewContext.getInstanceData("monitoring.repoId");
+                String persistedRepoId = settings().get("monitoring.repoId");
                 if (persistedRepoId != null && !persistedRepoId.isBlank()) {
                     repoId = persistedRepoId;
                 }
@@ -1555,9 +1713,9 @@ public class KubernetesService {
             String promServiceName = release + "-prometheus";
             var promSvc = client.services().inNamespace(ns).withName(promServiceName).get();
             if (promSvc == null) {
-                LOG.info("Monitoring service {} not found in namespace {}. Clearing cached monitoring instance data to allow re-bootstrap.", promServiceName, ns);
-                viewContext.removeInstanceData("monitoring.prometheus.url");
-                viewContext.removeInstanceData("monitoring.repoId");
+                LOG.info("Monitoring service {} not found in namespace {}. Clearing cached monitoring settings to allow re-bootstrap.", promServiceName, ns);
+                settings().remove("monitoring.prometheus.url");
+                settings().remove("monitoring.repoId");
             }
         } catch (Exception ex) {
             LOG.warn("Failed to verify monitoring service existence, proceeding anyway: {}", ex.toString());
@@ -1580,8 +1738,8 @@ public class KubernetesService {
                 LOG.warn("Pre-uninstall for force monitoring reinstall failed (ignored): {}", uninstEx.toString());
             }
             try {
-                viewContext.removeInstanceData("monitoring.prometheus.url");
-                viewContext.removeInstanceData("monitoring.repoId");
+                settings().remove("monitoring.prometheus.url");
+                settings().remove("monitoring.repoId");
             } catch (Exception ignored) { /* best-effort */ }
         }
 
@@ -1683,9 +1841,9 @@ public class KubernetesService {
             return null;
         }
         try {
-            viewContext.putInstanceData("monitoring.repoId", repoId);
+            settings().put("monitoring.repoId", repoId);
             if (promExposure != null && promExposure.url() != null && !promExposure.url().isBlank()) {
-                viewContext.putInstanceData("monitoring.prometheus.url", promExposure.url());
+                settings().put("monitoring.prometheus.url", promExposure.url());
                 LOG.info("Persisted Prometheus URL override for future discovery: {}", promExposure.url());
             }
         } catch (Exception ex) {
@@ -1971,12 +2129,12 @@ public class KubernetesService {
     }
 
     /**
-     * Clears cached monitoring instance data so that a subsequent bootstrap is forced.
+     * Clears cached monitoring settings so that a subsequent bootstrap is forced.
      */
     public void resetMonitoringCache() {
         try {
-            viewContext.removeInstanceData("monitoring.prometheus.url");
-            viewContext.removeInstanceData("monitoring.repoId");
+            settings().remove("monitoring.prometheus.url");
+            settings().remove("monitoring.repoId");
             updateMonitoringBootstrapState("RESET", "Monitoring cache cleared; next install will bootstrap");
             LOG.info("Monitoring cache cleared (prometheus.url and repoId).");
         } catch (Exception ex) {
@@ -3498,11 +3656,13 @@ public class KubernetesService {
 
     /**
      * Rebuilds the client from the currently saved configuration, even if one already exists (new kubeconfig,
-     * another context, OpenShift login, token renewal).
+     * another context, OpenShift login, token renewal). It runs at once, whatever failed before: the configuration
+     * was just saved, so a refused password or the wait after failed attempts no longer applies.
      *
      * @return {@code true} when a client was built
      */
     public synchronized boolean forceReloadClient() {
+        resetConnectBackOff();
         return rebuildClient();
     }
 
@@ -3521,9 +3681,10 @@ public class KubernetesService {
     /**
      * Builds a client from the saved configuration and only then swaps it in, so calls made meanwhile keep using the
      * previous client instead of finding the view unconfigured. The previous client is closed after
-     * {@link #retiredClientGraceSeconds}. When no client can be built, the view becomes unconfigured: keeping the
-     * previous connection would leave it talking to an account the saved configuration no longer names (Helm reads
-     * the saved kubeconfig on every call).
+     * {@link #retiredClientGraceSeconds}. When no client can be built, the view is left without a connection: keeping
+     * the previous one would leave it talking to an account the saved configuration no longer names (Helm reads the
+     * saved kubeconfig on every call). The outcome sets the back-off of {@link #connectIfConfigured()}. Called holding
+     * {@code this}.
      */
     private boolean rebuildClient() {
         KubernetesClient previous = this.client;
@@ -3538,10 +3699,12 @@ public class KubernetesService {
             this.isConfigured = false;
             this.client = null;
             retire(previous);
+            recordConnectFailure();
             return false;
         }
         this.client = fresh;
         this.isConfigured = true;
+        resetConnectBackOff();
         // Cached answers about the previous cluster (a new kubeconfig or context can point elsewhere).
         this.externalSecretsApiVersion = null;
         this.statsCache.invalidateAll();
@@ -4333,11 +4496,13 @@ public class KubernetesService {
     }
 
     /**
-     * Returns the underlying {@link KubernetesClient} for advanced or direct API access.
+     * Returns the underlying {@link KubernetesClient} for advanced or direct API access, connecting first from the
+     * saved configuration when the view instance is configured but not connected yet.
      *
-     * @return the Kubernetes client, or {@code null} if the service is not yet configured
+     * @return the Kubernetes client, or {@code null} if the service is not configured or not connected
      */
     public KubernetesClient getClient() {
+        connectIfConfigured();
         return client;
     }
 
