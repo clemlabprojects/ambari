@@ -1221,6 +1221,30 @@ public class CommandPlanFactory {
                                                String caMode,
                                                String caName,
                                                Integer validityDays) {
+        return appendIngressTlsSelfSignStep(cmd, releaseName, namespace, secretName, ingressHost, extraSans, caMode,
+                caName, validityDays, false, false);
+    }
+
+    /**
+     * Append an {@link CommandType#INGRESS_TLS_SELFSIGN} step, as
+     * {@link #appendIngressTlsSelfSignStep(CommandEntity, String, String, String, String, java.util.List, String, String, Integer)},
+     * saying what to do with a Secret that already exists.
+     *
+     * @param replaceExisting whether a Secret KDPS did not mint may be written over (the operator confirmed it)
+     * @param keepValidLeaf   whether a leaf KDPS minted with the same CA and names, still valid, is kept as it is
+     *                        instead of being re-minted (a deploy keeps it; "Renew TLS" does not)
+     */
+    public String appendIngressTlsSelfSignStep(CommandEntity cmd,
+                                               String releaseName,
+                                               String namespace,
+                                               String secretName,
+                                               String ingressHost,
+                                               java.util.List<String> extraSans,
+                                               String caMode,
+                                               String caName,
+                                               Integer validityDays,
+                                               boolean replaceExisting,
+                                               boolean keepValidLeaf) {
         String subId = UUID.randomUUID().toString();
         String id = cmd.getId() + "-tls-" + subId;
         final String now = Instant.now().toString();
@@ -1239,6 +1263,8 @@ public class CommandPlanFactory {
         params.put("ca", caMode);
         if (caName != null) params.put("caName", caName);
         if (validityDays != null) params.put("validityDays", validityDays);
+        if (replaceExisting) params.put("replaceExisting", true);
+        if (keepValidLeaf) params.put("keepValidLeaf", true);
         step.setParamsJson(gson.toJson(params));
 
         CommandStatusEntity status = new CommandStatusEntity();

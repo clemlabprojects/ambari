@@ -149,6 +149,29 @@ class StackDefinitionServiceTest {
   }
 
   /**
+   * "Keep current certificate" is offered on Upgrade/Config only. Its {@code upgradeOnly} flag is read by the wizard
+   * alone, so it must survive the round trip through the model: without it a first install would offer to keep a
+   * certificate that does not exist, and send no certificate at all.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void theKeepCurrentCertificateOptionReachesTheWizardAsUpgradeOnly() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    for (String service : List.of("TRINO", "SUPERSET", "OPENMETADATA")) {
+      Map<String, Object> served = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition(service)),
+          new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+      List<Map<String, Object>> options =
+          (List<Map<String, Object>>) formField(served, "ingressConfig", "ingress.tlsMode").get("options");
+      Map<String, Object> keep = options.stream().filter(o -> "keepCurrent".equals(o.get("value"))).findFirst()
+          .orElseThrow(() -> new AssertionError(service + " offers no 'Keep current certificate'"));
+      assertEquals(Boolean.TRUE, keep.get("upgradeOnly"), service);
+      assertEquals("Keep current certificate", keep.get("label"), service);
+      assertTrue(options.stream().filter(o -> !"keepCurrent".equals(o.get("value")))
+          .noneMatch(o -> Boolean.TRUE.equals(o.get("upgradeOnly"))), service + ": the install modes stay offered");
+    }
+  }
+
+  /**
    * The Superset SECRET_KEY is kept out of the values and in extraSecretEnv: an upgrade fills the field back from
    * there (seedFromValues) and drops the copy an earlier deploy left in extraEnv (retiredValues). The Trino catalog
    * credential Secrets are picked several at a time (multiple). All three are read by the wizard only, so they must

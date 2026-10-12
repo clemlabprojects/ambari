@@ -25,6 +25,7 @@ import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.CommandLogService;
+import org.apache.ambari.view.k8s.service.IngressTlsSecretGuard;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
@@ -104,7 +105,8 @@ public class CommandResource {
    * @param headers    incoming request headers forwarded for Ambari authentication
    * @param ui         request URI info used to construct the command status URL
    * @return HTTP 202 with the command {@code id}, 400 on invalid input, or 409 while a Helm operation or a GitOps
-   *         operation on the release is still running
+   *         operation on the release is still running, or when the deploy's ingress certificate would replace an
+   *         existing Secret KDPS did not issue and {@code replaceExistingTls} is not set (code and Secret in the body)
    */
   @POST
   @Path("/helm/deploy")
@@ -128,6 +130,8 @@ public class CommandResource {
       return Response.status(Response.Status.CONFLICT)
               .entity(Map.of("error", busy.getMessage()))
               .build();
+    } catch (IngressTlsSecretGuard.ReplacementNotConfirmedException unconfirmed) {
+      return tlsReplacementNotConfirmed(unconfirmed);
     } catch (IllegalArgumentException | IllegalStateException validation) {
       LOG.warn("submitDeploy rejected (400): {}", validation.getMessage());
       return Response.status(Response.Status.BAD_REQUEST)
@@ -147,6 +151,9 @@ public class CommandResource {
                 .entity(Map.of("error", cause.getMessage()))
                 .build();
       }
+      if (cause instanceof IngressTlsSecretGuard.ReplacementNotConfirmedException unconfirmed) {
+        return tlsReplacementNotConfirmed(unconfirmed);
+      }
       if (cause instanceof IllegalArgumentException || cause instanceof IllegalStateException) {
         LOG.warn("submitDeploy rejected (400, unwrapped): {}", cause.getMessage());
         return Response.status(Response.Status.BAD_REQUEST)
@@ -155,6 +162,22 @@ public class CommandResource {
       }
       throw re;
     }
+  }
+
+  /**
+   * The answer to a deploy refused because its ingress certificate would replace an existing Secret KDPS did not
+   * issue: 409, with a code and the Secret, so the wizard can ask the operator and deploy again with
+   * {@code replaceExistingTls}.
+   */
+  private static Response tlsReplacementNotConfirmed(IngressTlsSecretGuard.ReplacementNotConfirmedException e) {
+    LOG.warn("submitDeploy refused (409, ingress TLS Secret replacement not confirmed): {}", e.getMessage());
+    return Response.status(Response.Status.CONFLICT)
+            .entity(Map.of(
+                    "error", e.getMessage(),
+                    "code", IngressTlsSecretGuard.ReplacementNotConfirmedException.CODE,
+                    "namespace", e.getNamespace(),
+                    "secretName", e.getSecretName()))
+            .build();
   }
 
   /**

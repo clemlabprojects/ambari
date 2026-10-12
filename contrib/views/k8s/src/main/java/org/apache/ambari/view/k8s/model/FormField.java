@@ -159,5 +159,11 @@ public class FormField {
          * Backend ignores this field (Jackson tolerates it via @JsonIgnoreProperties).
          */
         public String capability;
+        /**
+         * Offered on Upgrade/Config of a deployed release only, e.g. the "Keep current certificate" TLS mode, which
+         * has nothing to keep on a first install. Read by the UI only; declared here because properties this class
+         * does not declare never reach the UI.
+         */
+        public boolean upgradeOnly;
     }
 }

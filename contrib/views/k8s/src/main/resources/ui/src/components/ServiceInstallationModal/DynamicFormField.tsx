@@ -24,7 +24,7 @@ import TrinoCatalogSelect from './TrinoCatalogSelect';
 import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
 import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
-import { FieldSyncContext } from './fieldSync';
+import { FieldSyncContext, UpgradeModeContext } from './fieldSync';
 import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery';
 import OpenShiftMonitoringNotice from './OpenShiftMonitoringNotice';
 import { resourceCheckError } from './resourceChecks';
@@ -61,6 +61,9 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   // adaptive filtering of select options below. We call the hook unconditionally
   // so React's rule-of-hooks holds regardless of field type.
   const caps = useCapabilities();
+  // Upgrade/Config of a deployed release: select options marked `upgradeOnly` (e.g. "Keep current certificate")
+  // only make sense there.
+  const upgrading = React.useContext(UpgradeModeContext);
   // When this field is a `requiresContext.when` trigger (e.g. atlasFederation.enabled), wrap it
   // in a subtle accent + cue so the operator sees it depends on the selected Platform Context.
   const linked = useIsContextLinked(field.name);
@@ -291,7 +294,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
               // wizard hides modes whose backing operator isn't installed. Until the
               // capabilities probe returns we render everything (fail-open) so the form
               // doesn't briefly appear empty on first paint.
-              .filter((opt: any) => capabilityAvailable(opt.capability))
+              .filter((opt: any) => capabilityAvailable(opt.capability) && (upgrading || !opt.upgradeOnly))
               .map((opt: any) => (
                 <Option key={opt.value} value={opt.value}>
                   {opt.label}

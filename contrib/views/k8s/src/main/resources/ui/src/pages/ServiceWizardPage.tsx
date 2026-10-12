@@ -23,7 +23,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 
-import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
+import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getReleaseTlsState, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
@@ -34,6 +34,7 @@ import { useCapabilities, fieldCapabilityAvailable } from '../components/Service
 import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
 import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPayload';
+import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecretReplacement, describeIngressTlsChange, ingressTlsChange, ingressTlsNotice, keptCertificateHostProblem, KEEP_CURRENT_TLS, offersKeepCurrentTls, securityProfileIngress, seedKeepCurrentTls, unconfirmedTlsReplacement, upgradeChartFormValues, type CurrentIngressTls } from '../components/ServiceInstallationModal/ingressTls';
 import { deployFormValues } from './deployFormValues';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -104,6 +105,11 @@ const ServiceWizardPage: React.FC = () => {
   // the default the chart runs when the release has no value. They show what runs, so the auto-enable
   // defaults below must not switch them.
   const seededFromReleaseRef = useRef<Set<string>>(new Set());
+  // Upgrade/Config: the certificate the release's Ingress serves now (from its TLS state), which the wizard keeps
+  // unless the operator chooses another TLS mode.
+  const [currentIngressTls, setCurrentIngressTls] = useState<CurrentIngressTls | null>(null);
+  // Services whose ingress certificate the operator picks in the wizard (a TLS mode field offering to keep it).
+  const upgradesIngressTls = isUpgrade && offersKeepCurrentTls(def?.form);
 
   useEffect(() => {
     if (!serviceName) return;
@@ -290,6 +296,16 @@ const ServiceWizardPage: React.FC = () => {
                   // from the deployed value, not their default. After the host back-map: a seed may
                   // compare against the address derived from it.
                   seededFromReleaseRef.current = new Set(seedFieldsFromRelease(svcDef?.form, initial));
+                  // The TLS mode is not in the values, so the field would show its default ("Sign with Ambari
+                  // Internal CA") and the upgrade would replace the release's certificate with a testing one.
+                  // Start on "Keep current certificate" instead, and say which certificate that is (an Ingress
+                  // serving plain HTTP starts on "None": there is no certificate to keep).
+                  if (seedKeepCurrentTls(svcDef?.form, initial, deployed)) {
+                    const deployedTlsSecret = deployed?.ingress?.tlsSecret ? String(deployed.ingress.tlsSecret) : undefined;
+                    getReleaseTlsState(initial.namespace, initial.releaseName)
+                      .then((entries) => setCurrentIngressTls(describeCurrentIngressTls(entries, deployedTlsSecret)))
+                      .catch(() => setCurrentIngressTls(null));
+                  }
                 } else {
                   throw new Error('empty values');
                 }
@@ -417,25 +433,15 @@ const ServiceWizardPage: React.FC = () => {
   //
   // requireIngress is independent: it controls only the ingress.enabled auto-flip.
   // Backward compat: legacy `requireTls: false` is still honoured for one cycle.
+  // On Upgrade/Config, "Keep current certificate" of a release serving plain HTTP keeps
+  // no certificate, so it counts as "None" here (see securityProfileIngress).
   useEffect(() => {
     if (!installValues) return;
-    const profileName = (installValues as any)?.securityProfile;
-    if (!profileName) return;
-    const coupling = (def as any)?.securityCoupling || {};
-    const requireIngress = coupling.requireIngress !== false;
-    const tlsProvisioning = String(coupling.tlsProvisioning
-      ?? (coupling.requireTls === false ? 'chart-managed' : 'k8s-view'));
-    const viewOwnsTls = tlsProvisioning === 'k8s-view';
-    const minTlsMode = coupling.minTlsMode || 'signedByAmbariCA';
-    const ingress = (installValues as any)?.ingress || {};
-    const needsEnable = requireIngress && ingress.enabled !== true;
-    const needsTls = viewOwnsTls && (!ingress.tlsMode || ingress.tlsMode === 'none');
-    if (!needsEnable && !needsTls) return;
+    const required = securityProfileIngress((def as any)?.securityCoupling, installValues);
+    if (!required) return;
     setInstallValues((prev: any) => {
       const next = { ...(prev || {}) };
-      next.ingress = { ...(next.ingress || {}) };
-      if (needsEnable) next.ingress.enabled = true;
-      if (needsTls) next.ingress.tlsMode = minTlsMode;
+      next.ingress = { ...(next.ingress || {}), ...required };
       return next;
     });
   }, [def, (installValues as any)?.securityProfile, (installValues as any)?.ingress?.enabled, (installValues as any)?.ingress?.tlsMode]);
@@ -463,7 +469,8 @@ const ServiceWizardPage: React.FC = () => {
     form: Array.isArray(def?.form) ? def.form : undefined,
     bindings: (def as any)?.bindings,
     variables: (def as any)?.variables,
-    formValues: installValues,
+    // On an upgrade that replaces the ingress certificate, the deployed ingress.tls wiring starts over.
+    formValues: upgradeChartFormValues(installValues, isUpgrade),
     resolvedFields: resolvedSel?.resolvedFields,
     platform,
     editorValues,
@@ -518,6 +525,10 @@ const ServiceWizardPage: React.FC = () => {
     const tlsMode: string | undefined = (installValues as any)?.ingress?.tlsMode;
     const ingressEnabled = (installValues as any)?.ingress?.enabled;
     if (!ingressEnabled) return null;
+    // Keeping the certificate while the hostname changes: the certificate must be valid for the new hostname too.
+    const hostProblem = upgradesIngressTls ? keptCertificateHostProblem(installValues, currentIngressTls) : null;
+    if (hostProblem) return hostProblem;
+    if (tlsMode === KEEP_CURRENT_TLS) return null;
     if (tlsMode === 'signedByClusterIssuer') {
       const issuerName = (installValues as any)?.ingress?.certManager?.issuerName;
       if (!issuerName) {
@@ -538,7 +549,9 @@ const ServiceWizardPage: React.FC = () => {
     }
     if (tlsMode === 'uploadLeaf') {
       const up = (installValues as any)?.ingress?.tlsUpload || {};
-      if (!up.cert || !up.key) {
+      // On an upgrade, nothing pasted keeps the certificate uploaded earlier.
+      const keepsUploaded = isUpgrade && !up.cert && !up.key;
+      if ((!up.cert || !up.key) && !keepsUploaded) {
         return 'TLS mode "Upload cert + key" needs both PEM cert and PEM key.';
       }
     }
@@ -739,7 +752,11 @@ const ServiceWizardPage: React.FC = () => {
   // pre-deploy restart-confirmation modal (true = let KDPS restart Atlas to activate the OM
   // federation user; false = skip the restart, operator restarts manually). It is threaded to the
   // backend via formValues._atlasRestartAuthorized and only affects the Atlas-federation path.
-  const doDeploy = async (atlasRestartAuthorized: boolean = true) => {
+  //
+  // `replaceExistingTls` is set once the operator confirmed that the deploy replaces the ingress certificate Secret:
+  // only then may the server overwrite a Secret it did not mint (an uploaded or brought certificate). Upgrade/Config
+  // asks before it submits; an install asks when the server refuses for an existing Secret.
+  const doDeploy = async (atlasRestartAuthorized: boolean = true, replaceExistingTls: boolean = false) => {
       const validationError = validateTlsPayload();
       if (validationError) {
         message.error(validationError);
@@ -804,81 +821,10 @@ const ServiceWizardPage: React.FC = () => {
               dynamicValues: (def as any)?.dynamicValues || null,
               tls: buildTlsPayload((def as any)?.tls, installValues),
               kerberos: (installValues as any)?.kerberos || undefined,
-              // Translate ingress.tlsMode (form select) into the wire payload the backend
-              // expects. Mirrors ServiceInstallationModal/index.tsx so the wizard and the
-              // modal share one truth:
-              //   uploadLeaf                  → ingressTlsUpload   { secretName, certPem, keyPem }
-              //   signedByAmbariCA            → ingressTlsSelfSign  { mode: ambariInternal, ... }
-              //   signedByCompanyCA           → ingressTlsSelfSign  { mode: companyUploaded, caName, ... }
-              //   signedByClusterIssuer       → ingressTlsCertManager { issuerName, durationHours, ... }
-              //   sourcedFromExternalSecret   → ingressTlsExternalSecret { secretStoreName, remoteKey, ... }
-              //   bringYourOwn                → nothing (values already carry ingress.tlsSecret)
-              ...((): { ingressTlsUpload?: any; ingressTlsSelfSign?: any; ingressTlsCertManager?: any; ingressTlsExternalSecret?: any } => {
-                const tlsMode: string | undefined = (installValues as any)?.ingress?.tlsMode;
-                if (tlsMode === 'uploadLeaf') {
-                  const up = (installValues as any)?.ingress?.tlsUpload || {};
-                  if (!up.cert || !up.key) return {};
-                  return {
-                    ingressTlsUpload: {
-                      secretName: up.secretName || `${installValues.releaseName}-ingress-tls`,
-                      certPem: up.cert,
-                      keyPem: up.key,
-                    },
-                  };
-                }
-                if (tlsMode === 'signedByAmbariCA' || tlsMode === 'signedByCompanyCA') {
-                  const selfSign = (installValues as any)?.ingress?.tlsSelfSign || {};
-                  const validityDays = parseInt(selfSign.validityDays, 10);
-                  return {
-                    ingressTlsSelfSign: {
-                      mode: tlsMode === 'signedByAmbariCA' ? 'ambariInternal' : 'companyUploaded',
-                      secretName: `${installValues.releaseName}-ingress-tls`,
-                      ingressHost: (installValues as any)?.ingress?.host,
-                      validityDays: Number.isFinite(validityDays) ? validityDays : 90,
-                      ...(tlsMode === 'signedByCompanyCA' ? { caName: selfSign.caName } : {}),
-                    },
-                  };
-                }
-                if (tlsMode === 'signedByClusterIssuer') {
-                  const cm = (installValues as any)?.ingress?.certManager || {};
-                  const validityDays = parseInt(cm.validityDays, 10);
-                  const trim = (v: any) => (v && String(v).trim() ? String(v).trim() : undefined);
-                  // O and OU accept multiple comma-separated values → emitted as repeated DN elements
-                  // (e.g. OU=dept,OU=team). This covers CAs that require an extra OU like "Team" using
-                  // only standard cert-manager subject fields — no LiteralCertificateSubject gate needed.
-                  const csv = (v: any) => {
-                    const parts = String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
-                    return parts.length ? parts : undefined;
-                  };
-                  return {
-                    ingressTlsCertManager: {
-                      issuerName: cm.issuerName,
-                      issuerKind: cm.issuerKind || 'ClusterIssuer',
-                      secretName: `${installValues.releaseName}-ingress-tls`,
-                      ingressHost: (installValues as any)?.ingress?.host,
-                      durationHours: (Number.isFinite(validityDays) ? validityDays : 90) * 24,
-                      commonName: trim(cm.commonName),
-                      organizations: csv(cm.organization),
-                      organizationalUnits: csv(cm.organizationalUnit),
-                      literalSubject: trim(cm.literalSubject),
-                    },
-                  };
-                }
-                if (tlsMode === 'sourcedFromExternalSecret') {
-                  const es = (installValues as any)?.ingress?.externalSecret || {};
-                  return {
-                    ingressTlsExternalSecret: {
-                      secretStoreName: es.secretStoreName,
-                      secretStoreKind: es.secretStoreKind || 'ClusterSecretStore',
-                      remoteKey: es.remoteKey,
-                      refreshInterval: es.refreshInterval || '1h',
-                      secretName: `${installValues.releaseName}-ingress-tls`,
-                      ingressHost: (installValues as any)?.ingress?.host,
-                    },
-                  };
-                }
-                return {};
-              })(),
+              // The ingress certificate (see buildIngressTlsPayload): nothing for "Keep current certificate",
+              // so the deployed ingress.tls stays as it is.
+              ...buildIngressTlsPayload(installValues),
+              ...(replaceExistingTls ? { replaceExistingTls: true } : {}),
               // Only send securityProfile if user explicitly picked one.
               securityProfile: (installValues as any)?.securityProfile || undefined,
               // Managed truststores selected to trust in this release (defaults are always merged
@@ -898,6 +844,27 @@ const ServiceWizardPage: React.FC = () => {
       setLastCommandId(id);
       setShowOpsModal(true);
   } catch(e: any) {
+      // The ingress certificate would replace an existing Secret KDPS did not issue: on a first install, mostly the
+      // one an earlier install of the release left behind. Say which, and deploy again once the operator confirms.
+      const existingSecret = replaceExistingTls ? null : unconfirmedTlsReplacement(e);
+      if (existingSecret) {
+        Modal.confirm({
+          title: `Replace the existing Secret ${existingSecret.secretName}?`,
+          icon: <SafetyCertificateOutlined />,
+          content: (
+            <div>
+              {describeExistingSecretReplacement(existingSecret, installValues).map((line, i) => (
+                <p key={i} style={{ marginBottom: 8 }}>{line}</p>
+              ))}
+            </div>
+          ),
+          okText: 'Replace the certificate',
+          okButtonProps: { danger: true },
+          cancelText: 'Cancel',
+          onOk: () => { void doDeploy(atlasRestartAuthorized, true); },
+        });
+        return;
+      }
       message.error("Deploy failed: " + e.message);
       } finally {
           setSubmitting(false);
@@ -912,19 +879,56 @@ const ServiceWizardPage: React.FC = () => {
   const atlasFederationOn = !!((installValues as any)?.atlasFederation?.enabled);
   const handleDeploy = () => {
       if (atlasFederationOn && !isUpgrade) { setAtlasRestartModalOpen(true); return; }
+      // An upgrade that replaces the release's ingress certificate says which Secret goes, and goes ahead only once
+      // the operator confirmed it.
+      const tlsChange = upgradesIngressTls ? ingressTlsChange(installValues, currentIngressTls) : null;
+      if (tlsChange) {
+        const validationError = validateTlsPayload();
+        if (validationError) { message.error(validationError); return; }
+        if (tlsChange.refusal) { message.error(tlsChange.refusal, 10); return; }
+        Modal.confirm({
+          title: `Replace the ingress certificate of ${installValues.releaseName}?`,
+          icon: <SafetyCertificateOutlined />,
+          content: (
+            <div>
+              {describeIngressTlsChange(tlsChange, installValues, currentIngressTls).map((line, i) => (
+                <p key={i} style={{ marginBottom: 8 }}>{line}</p>
+              ))}
+            </div>
+          ),
+          okText: 'Replace the certificate',
+          okButtonProps: { danger: true },
+          cancelText: 'Cancel',
+          onOk: () => { void doDeploy(true, true); },
+        });
+        return;
+      }
       void doDeploy(true);
   };
+
+  // Upgrade/Config: which ingress certificate the release keeps, or what the chosen TLS mode replaces.
+  const ingressTlsInfo = ingressTlsNotice(installValues, currentIngressTls, upgradesIngressTls);
+  const ingressTlsAlert = ingressTlsInfo ? (
+    <Alert style={{ marginBottom: 12 }} type={ingressTlsInfo.type} showIcon icon={<SafetyCertificateOutlined />}
+      message={ingressTlsInfo.title}
+      description={ingressTlsInfo.lines.map((line, i) => <div key={i}>{line}</div>)} />
+  ) : null;
 
   const steps = React.useMemo(() => {
     if (!def) return [];
     return [
       { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
-      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} upgrade={!!isUpgrade} /> },
+      { title: 'Chart Settings', content: (
+        <>
+          {ingressTlsAlert}
+          <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} upgrade={!!isUpgrade} />
+        </>
+      ) },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
       { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} contextLabel={resolvedSel ? `${resolvedSel.name}${resolvedSel.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` : undefined} /> },
     ];
-  }, [def, installValues, repos, configs, configOverrides, isUpgrade]);
+  }, [def, installValues, repos, configs, configOverrides, isUpgrade, currentIngressTls]);
 
   // Disable Next if any password field reports invalid (empty, unconfirmed, or
   // mismatched). PropertyRenderer pushes the boolean validity here via its

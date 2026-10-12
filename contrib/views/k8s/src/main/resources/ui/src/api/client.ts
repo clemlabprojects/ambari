@@ -1254,6 +1254,12 @@ export interface ReleaseTlsEntry {
   serial?: string;
   sans?: string[];
   error?: string;
+  /** k8s-view-self-signed only: the CA the leaf was minted with (ambariInternal | companyUploaded). */
+  caMode?: string;
+  /** k8s-view-self-signed with a company CA: its registry name, lowercased and sanitized as a label. */
+  caName?: string;
+  /** external only: KDPS wrote this Secret from a certificate and key uploaded at deploy time. */
+  uploaded?: boolean;
 }
 export const getReleaseTlsState = async (namespace: string, releaseName: string): Promise<ReleaseTlsEntry[]> => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/tls`;
@@ -1426,6 +1432,12 @@ export async function submitHelmDeploy(payload: {
   mounts?: any;
   tls?: any;
   ingressTlsUpload?: any;
+  ingressTlsSelfSign?: any;
+  ingressTlsCertManager?: any;
+  ingressTlsExternalSecret?: any;
+  // Lets the ingress certificate above overwrite a Secret KDPS did not mint (an uploaded or the operator's own
+  // certificate). Sent only once the operator confirmed the replacement; never overrides cert-manager or ESO.
+  replaceExistingTls?: boolean;
   dependencies?: any;
   ranger?: any;
   requiredConfigMaps?: any;
@@ -1458,13 +1470,23 @@ export async function submitHelmDeploy(payload: {
     // (e.g. "Chart version 1.13.1 does not match the range '>=1.13.2'") and
     // the operator only sees "Submit failed: 400" which is useless.
     let detail = '';
+    let body: any = null;
     try {
-      const body: any = await response.clone().json();
+      body = await response.clone().json();
       detail = body?.error ? `: ${body.error}` : '';
     } catch {
       try { detail = `: ${await response.text()}`; } catch { /* keep empty */ }
     }
-    throw new Error(`Submit failed: ${response.status}${detail}`);
+    const err = new Error(`Submit failed: ${response.status}${detail}`);
+    (err as any).status = response.status;
+    // A refusal the wizard can resolve by asking the operator (an existing ingress certificate Secret to replace)
+    // carries its code and the Secret it names.
+    if (body?.code) {
+      (err as any).code = body.code;
+      (err as any).namespace = body.namespace;
+      (err as any).secretName = body.secretName;
+    }
+    throw err;
   }
   return response.json() as Promise<{id: string}>;
 }

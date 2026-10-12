@@ -4269,6 +4269,52 @@ public class CommandService {
         return commandId;
     }
 
+    /** The ingress TLS Secret an {@code ingressTlsUpload} or {@code ingressTlsSelfSign} payload writes. */
+    private static String ingressTlsSecretName(Map<String, Object> payload, HelmDeployRequest request) {
+        Object name = payload.get("secretName");
+        return name == null || String.valueOf(name).isBlank()
+                ? request.getReleaseName() + "-ingress-tls" : String.valueOf(name).trim();
+    }
+
+    /**
+     * Refuses a deploy whose uploaded or self-signed ingress certificate would overwrite a Secret KDPS may not
+     * replace (see {@link IngressTlsSecretGuard}): one it did not mint, unless the request sets
+     * {@code replaceExistingTls}, and one kept by cert-manager or the External Secrets Operator, always. An upload of
+     * the certificate and key the Secret already holds replaces nothing and passes.
+     *
+     * @throws IllegalStateException naming the Secret and what the operator can do
+     */
+    void checkIngressTlsSecretsReplaceable(HelmDeployRequest request) {
+        String namespace = request.getNamespace();
+        Map<String, Object> upload = request.getIngressTlsUpload();
+        if (upload != null && !upload.isEmpty()) {
+            String certPem = String.valueOf(upload.getOrDefault("certPem", ""));
+            String keyPem = String.valueOf(upload.getOrDefault("keyPem", ""));
+            if (!certPem.isBlank() && !keyPem.isBlank()) {
+                String secretName = ingressTlsSecretName(upload, request);
+                var existing = kubernetesService.getSecret(namespace, secretName);
+                if (!holdsTlsPair(existing, certPem, keyPem)) {
+                    IngressTlsSecretGuard.checkReplaceable(existing, namespace, secretName,
+                            request.isReplaceExistingTls());
+                }
+            }
+        }
+        Map<String, Object> selfSign = request.getIngressTlsSelfSign();
+        if (selfSign != null && !selfSign.isEmpty()) {
+            String secretName = ingressTlsSecretName(selfSign, request);
+            IngressTlsSecretGuard.checkReplaceable(kubernetesService.getSecret(namespace, secretName), namespace,
+                    secretName, request.isReplaceExistingTls());
+        }
+    }
+
+    /** Whether the Secret already holds exactly this certificate and key (as KubernetesService writes them). */
+    private static boolean holdsTlsPair(io.fabric8.kubernetes.api.model.Secret secret, String certPem, String keyPem) {
+        Map<String, String> data = secret == null ? null : secret.getData();
+        if (data == null) return false;
+        return java.util.Base64.getEncoder().encodeToString(certPem.getBytes()).equals(data.get("tls.crt"))
+                && java.util.Base64.getEncoder().encodeToString(keyPem.getBytes()).equals(data.get("tls.key"));
+    }
+
     /**
      * Re-issue TLS leaf certificates for every host of a running release, regardless of which
      * provisioning system issued the existing Secret. Dispatches per source:
@@ -6503,6 +6549,9 @@ public class CommandService {
             throw new IllegalStateException(missingAmbariPermission);
         }
 
+        // Refused before anything is written: the ingress certificate this deploy would overwrite may be the
+        // production one. The INGRESS_TLS_SELFSIGN step checks again when it runs.
+        checkIngressTlsSecretsReplaceable(request);
         if (request.getTls() != null && !request.getTls().isEmpty()) {
             // The wizard resolves tls[].dnsTemplates at submit time; an API-driven deploy may not.
             // Fill them in here too, because the fallback SAN (<release>.<namespace>.svc) matches
@@ -6515,21 +6564,26 @@ public class CommandService {
         // Create ingress TLS Secret upfront if provided by the request (company CA or user-provided cert).
         if (request.getIngressTlsUpload() != null && !request.getIngressTlsUpload().isEmpty()) {
             Map<String, Object> ingressTlsUpload = request.getIngressTlsUpload();
-            String secretName = String.valueOf(ingressTlsUpload.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
+            String secretName = ingressTlsSecretName(ingressTlsUpload, request);
             String certPem = String.valueOf(ingressTlsUpload.getOrDefault("certPem", ""));
             String keyPem = String.valueOf(ingressTlsUpload.getOrDefault("keyPem", ""));
             if (!certPem.isBlank() && !keyPem.isBlank()) {
-                LOG.info("Creating/updating ingress TLS secret '{}' in namespace '{}' for release '{}' (ingress TLS upload present)", secretName, request.getNamespace(), request.getReleaseName());
-                LOG.info("Ingress TLS secret creation input: cert length={} chars, key length={} chars", certPem.length(), keyPem.length());
-                LOG.info("Ingress TLS secret creation labels/annotations not provided; using defaults");
-                kubernetesService.createOrUpdateTlsSecret(
-                        request.getNamespace(),
-                        secretName,
-                        certPem.getBytes(),
-                        keyPem.getBytes(),
-                        null,
-                        null
-                );
+                if (holdsTlsPair(kubernetesService.getSecret(request.getNamespace(), secretName), certPem, keyPem)) {
+                    LOG.info("Ingress TLS secret '{}/{}' already holds the uploaded certificate and key; left as it is",
+                            request.getNamespace(), secretName);
+                } else {
+                    LOG.info("Creating/updating ingress TLS secret '{}' in namespace '{}' for release '{}' (ingress TLS upload present)", secretName, request.getNamespace(), request.getReleaseName());
+                    LOG.info("Ingress TLS secret creation input: cert length={} chars, key length={} chars", certPem.length(), keyPem.length());
+                    LOG.info("Ingress TLS secret creation labels/annotations not provided; using defaults");
+                    kubernetesService.createOrUpdateTlsSecret(
+                            request.getNamespace(),
+                            secretName,
+                            certPem.getBytes(),
+                            keyPem.getBytes(),
+                            null,
+                            null
+                    );
+                }
                 // Inject the standard ingress.tls[0] list shape every KDPS chart understands.
                 // We don't rely on the UI's `ingress-setup` binding here because that binding
                 // is gated on a form field (`ingress.tlsSecret`) that is only populated in the
@@ -6560,8 +6614,7 @@ public class CommandService {
         if (ingressTlsSelfSign != null && !ingressTlsSelfSign.isEmpty()) {
             String mode = String.valueOf(ingressTlsSelfSign.getOrDefault("mode", "ambariInternal"));
             String caName = (String) ingressTlsSelfSign.get("caName");
-            String secretName = String.valueOf(ingressTlsSelfSign.getOrDefault(
-                    "secretName", request.getReleaseName() + "-ingress-tls"));
+            String secretName = ingressTlsSecretName(ingressTlsSelfSign, request);
             // Default the host to whatever ingress.host the form provided (resolved earlier via values).
             String ingressHost = (String) ingressTlsSelfSign.get("ingressHost");
             if (ingressHost == null || ingressHost.isBlank()) {
@@ -6585,6 +6638,8 @@ public class CommandService {
             if (ingressHost == null || ingressHost.isBlank()) {
                 LOG.warn("INGRESS_TLS_SELFSIGN requested but no ingress.host found; skipping");
             } else {
+                // A redeploy that asks for the certificate already there keeps it as it is (same CA, same names,
+                // still valid): the Secret, and what clients see, only change when something actually has to.
                 String stepId = this.commandPlanFactory.appendIngressTlsSelfSignStep(
                         rootCommand,
                         request.getReleaseName(),
@@ -6594,7 +6649,9 @@ public class CommandService {
                         extraSans,
                         mode,
                         caName,
-                        validityDays
+                        validityDays,
+                        request.isReplaceExistingTls(),
+                        true
                 );
                 childCommands.add(stepId);
                 // Write the canonical list shape (ingress.tls[0]) so the chart's
@@ -9805,10 +9862,21 @@ public class CommandService {
                     if (caName != null) labels.put("ambari.clemlab.com/ca-name",
                             caName.toLowerCase().replaceAll("[^a-z0-9._-]", "-"));
 
-                    var result = webHookCfg.issueIngressTlsSecret(namespace, secretName, ingressHost,
-                            extraSans, validityDays, ca, labels);
-                    appendCommandLog(id, "INGRESS_TLS_SELFSIGN: wrote " + namespace + "/" + secretName +
-                            " (cert chars=" + result.certificatePem().length() + ", key chars=" + result.privateKeyPem().length() + ")");
+                    // Refuses a Secret KDPS did not mint unless the operator confirmed its replacement, and one kept
+                    // by cert-manager or the External Secrets Operator always (IngressTlsSecretGuard).
+                    var outcome = webHookCfg.issueIngressTlsSecret(namespace, secretName, ingressHost,
+                            extraSans, validityDays, ca, labels,
+                            asBoolean(childParams.get("replaceExisting"), false),
+                            asBoolean(childParams.get("keepValidLeaf"), false));
+                    if (outcome.kept()) {
+                        appendCommandLog(id, "INGRESS_TLS_SELFSIGN: kept " + namespace + "/" + secretName
+                                + ": its certificate is already from this CA for " + ingressHost + " and valid until "
+                                + outcome.notAfter() + ". Use Renew TLS to issue a new one.");
+                    } else {
+                        var result = outcome.material();
+                        appendCommandLog(id, "INGRESS_TLS_SELFSIGN: wrote " + namespace + "/" + secretName +
+                                " (cert chars=" + result.certificatePem().length() + ", key chars=" + result.privateKeyPem().length() + ")");
+                    }
                 }
                 case INGRESS_TLS_CERTMANAGER -> {
                     // Two operations supported via the `operation` param:

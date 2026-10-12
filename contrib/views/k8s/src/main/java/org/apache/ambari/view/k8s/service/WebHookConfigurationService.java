@@ -81,6 +81,9 @@ public class WebHookConfigurationService {
     private static final int DEFAULT_CA_VALIDITY_DAYS      = 3650; // ~10 years
     private static final int DEFAULT_CLIENT_VALIDITY_DAYS  = 360;  // ~12 months
 
+    /** An ingress leaf with fewer days left than this is re-minted by a redeploy rather than kept. */
+    static final int INGRESS_LEAF_MIN_DAYS_LEFT = 30;
+
     private final ViewContext viewContext;
     private final KubernetesService kubernetesService;
     private final ViewConfigurationService configurationService;
@@ -864,6 +867,9 @@ public class WebHookConfigurationService {
      * {@link #ensureAmbariCertificateAuthority()}, for an admin-uploaded company
      * CA use {@link #loadUploadedCertificateAuthority(String, String)}.
      *
+     * <p>Only a Secret KDPS minted itself is written over (see {@link IngressTlsSecretGuard}), and a new leaf is
+     * always minted, as "Renew TLS" wants.
+     *
      * @param namespace      target namespace
      * @param secretName     Secret name to create / replace (typically {@code <release>-ingress-tls})
      * @param ingressHost    primary DNS name (becomes CN + first SAN entry)
@@ -871,6 +877,7 @@ public class WebHookConfigurationService {
      * @param validityDays   leaf validity (clamped to 1..825 to comply with the CA/Browser Forum cap)
      * @param ca             the signing CA material
      * @param additionalLabels extra labels applied to the Secret (audit / managed-by)
+     * @throws IllegalStateException when the Secret exists and KDPS did not mint it
      */
     public ServerKeystoreMaterial issueIngressTlsSecret(String namespace,
                                                         String secretName,
@@ -879,6 +886,32 @@ public class WebHookConfigurationService {
                                                         Integer validityDays,
                                                         CertificateAuthorityMaterial ca,
                                                         Map<String, String> additionalLabels) {
+        return issueIngressTlsSecret(namespace, secretName, ingressHost, extraSans, validityDays, ca,
+                additionalLabels, false, false).material();
+    }
+
+    /**
+     * Mint a leaf TLS certificate for an ingress host into a {@code kubernetes.io/tls} Secret, as
+     * {@link #issueIngressTlsSecret(String, String, String, List, Integer, CertificateAuthorityMaterial, Map)}, with
+     * two choices for a Secret that already exists.
+     *
+     * @param replaceExisting whether a Secret KDPS did not mint may be written over: the operator confirmed it. One
+     *                        kept by cert-manager or the External Secrets Operator never is.
+     * @param keepValidLeaf   whether a leaf KDPS minted with the same CA, for every requested name and with more than
+     *                        {@link #INGRESS_LEAF_MIN_DAYS_LEFT} days left, is kept as it is instead of being re-minted:
+     *                        a redeploy then leaves the Secret, and the certificate clients see, unchanged
+     * @return the certificate the Secret holds, and whether it was kept
+     * @throws IllegalStateException when the Secret must be left as it is (see {@link IngressTlsSecretGuard})
+     */
+    public IngressTlsOutcome issueIngressTlsSecret(String namespace,
+                                                   String secretName,
+                                                   String ingressHost,
+                                                   List<String> extraSans,
+                                                   Integer validityDays,
+                                                   CertificateAuthorityMaterial ca,
+                                                   Map<String, String> additionalLabels,
+                                                   boolean replaceExisting,
+                                                   boolean keepValidLeaf) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(secretName, "secretName");
         Objects.requireNonNull(ingressHost, "ingressHost");
@@ -894,6 +927,27 @@ public class WebHookConfigurationService {
         if (extraSans != null) {
             for (String s : extraSans) {
                 if (s != null && !s.isBlank() && !sans.contains(s)) sans.add(s);
+            }
+        }
+
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("managed-by", "ambari-k8s-view");
+        labels.put(IngressTlsSecretGuard.ISSUER_LABEL, "self-signed");
+        if (additionalLabels != null) labels.putAll(additionalLabels);
+
+        // Checked before anything is minted: a refused Secret must stay exactly as it is.
+        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
+        IngressTlsSecretGuard.checkReplaceable(existing, namespace, secretName, replaceExisting);
+        if (keepValidLeaf && existing != null) {
+            X509Certificate current = currentIngressLeaf(existing, labels, sans, ca);
+            if (current != null) {
+                LOG.info("Kept ingress TLS Secret '{}/{}': its leaf is from the same CA, covers {} and is valid"
+                        + " until {}", namespace, secretName, sans, current.getNotAfter().toInstant());
+                Map<String, String> data = existing.getData();
+                return new IngressTlsOutcome(new ServerKeystoreMaterial(
+                        decodeUtf8(data.get("tls.crt")), decodeUtf8(data.get("tls.key")),
+                        data.containsKey("ca.crt") ? decodeUtf8(data.get("ca.crt")) : ca.caCertificatePem(),
+                        new byte[0]), true, current.getNotAfter().toInstant());
             }
         }
 
@@ -925,11 +979,6 @@ public class WebHookConfigurationService {
         // without needing the CA pre-installed.
         String chainPem = leafCertPem + ca.caCertificatePem();
 
-        Map<String, String> labels = new LinkedHashMap<>();
-        labels.put("managed-by", "ambari-k8s-view");
-        labels.put("ambari.clemlab.com/tls-issuer", "self-signed");
-        if (additionalLabels != null) labels.putAll(additionalLabels);
-
         Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("ambari.clemlab.com/tls-issued-at", Instant.now().toString());
         annotations.put("ambari.clemlab.com/tls-not-after", leafCert.getNotAfter().toInstant().toString());
@@ -952,7 +1001,6 @@ public class WebHookConfigurationService {
                 .addToData("ca.crt",  base64(ca.caCertificatePem()))
                 .build();
 
-        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
         if (existing == null) {
             kubernetesClient().secrets().inNamespace(namespace).resource(desired).create();
             LOG.info("Created ingress TLS Secret '{}/{}' for host '{}', serial={}, notAfter={}",
@@ -965,7 +1013,59 @@ public class WebHookConfigurationService {
                     leafCert.getNotAfter().toInstant());
         }
 
-        return new ServerKeystoreMaterial(leafCertPem, leafKeyPem, ca.caCertificatePem(), new byte[0]);
+        return new IngressTlsOutcome(
+                new ServerKeystoreMaterial(leafCertPem, leafKeyPem, ca.caCertificatePem(), new byte[0]),
+                false, leafCert.getNotAfter().toInstant());
+    }
+
+    /**
+     * The leaf of {@code existing} when a redeploy can keep it: KDPS minted it with the CA the deploy asks for (same
+     * {@code ca-mode} and {@code ca-name} labels, and signed by {@code ca}), it names every DNS name of {@code sans},
+     * and it is valid for more than {@link #INGRESS_LEAF_MIN_DAYS_LEFT} days. Null when it must be re-minted.
+     */
+    private static X509Certificate currentIngressLeaf(Secret existing,
+                                                      Map<String, String> requestedLabels,
+                                                      List<String> sans,
+                                                      CertificateAuthorityMaterial ca) {
+        if (!IngressTlsSecretGuard.mintedByView(existing)) return null;
+        Map<String, String> labels = existing.getMetadata().getLabels();
+        for (String key : List.of("ambari.clemlab.com/ca-mode", "ambari.clemlab.com/ca-name")) {
+            if (!Objects.equals(labels.get(key), requestedLabels.get(key))) return null;
+        }
+        Map<String, String> data = existing.getData();
+        if (data == null || data.get("tls.crt") == null || data.get("tls.key") == null) return null;
+        try {
+            Collection<? extends Certificate> chain = java.security.cert.CertificateFactory.getInstance("X.509")
+                    .generateCertificates(new java.io.ByteArrayInputStream(getDecoder().decode(data.get("tls.crt"))));
+            if (chain.isEmpty()) return null;
+            // The first certificate of the chain is the leaf (the CA follows it).
+            X509Certificate leaf = (X509Certificate) chain.iterator().next();
+            leaf.verify(parseCertificateFromPem(ca.caCertificatePem()).getPublicKey());
+            leaf.checkValidity();
+            if (expiresBefore(leaf, INGRESS_LEAF_MIN_DAYS_LEFT)) return null;
+            Set<String> names = new HashSet<>();
+            Collection<List<?>> altNames = leaf.getSubjectAlternativeNames();
+            if (altNames != null) {
+                for (List<?> altName : altNames) {
+                    if (altName.size() > 1 && Integer.valueOf(2).equals(altName.get(0))) {
+                        names.add(String.valueOf(altName.get(1)).toLowerCase(Locale.ROOT));
+                    }
+                }
+            }
+            for (String san : sans) {
+                if (!names.contains(san.toLowerCase(Locale.ROOT))) return null;
+            }
+            return leaf;
+        } catch (Exception e) {
+            // Not signed by this CA, expired, or unreadable: mint a new one.
+            LOG.info("Ingress TLS leaf in Secret '{}/{}' is re-minted: {}", existing.getMetadata().getNamespace(),
+                    existing.getMetadata().getName(), e.toString());
+            return null;
+        }
+    }
+
+    private static String decodeUtf8(String base64Value) {
+        return new String(getDecoder().decode(base64Value), StandardCharsets.UTF_8);
     }
 
     /**
@@ -1024,6 +1124,15 @@ public class WebHookConfigurationService {
                                          String privateKeyPem,
                                          String caCertificatePem,
                                          byte[] keystoreBytes) {}
+
+    /**
+     * What {@link #issueIngressTlsSecret} left in the ingress TLS Secret.
+     *
+     * @param material the certificate chain, key and CA the Secret holds
+     * @param kept     true when the leaf already there was kept, false when a new one was minted
+     * @param notAfter when the leaf expires
+     */
+    public record IngressTlsOutcome(ServerKeystoreMaterial material, boolean kept, Instant notAfter) {}
 
 
     // Load a KeyStore (JKS or PKCS12) from disk.

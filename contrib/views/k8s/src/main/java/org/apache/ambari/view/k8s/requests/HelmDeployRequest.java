@@ -114,6 +114,13 @@ public class HelmDeployRequest {
     //   refreshInterval  ESO refresh cadence (default "1h")
     private Map<String, Object> ingressTlsExternalSecret;
 
+    // Whether the ingress TLS Secret named by ingressTlsUpload or ingressTlsSelfSign may be written over when it
+    // already exists and KDPS did not mint it (an uploaded corporate certificate, the operator's own Secret). Off by
+    // default, so a redeploy never replaces a production certificate by accident: the wizard sets it only after the
+    // operator confirmed the replacement. A Secret kept by cert-manager or the External Secrets Operator is never
+    // written over, whatever this says.
+    private boolean replaceExistingTls;
+
     // Snapshot of the wizard's raw form state with envelope keys stripped. Needed so the
     // server can read form fields that were declared excludeFromValues — e.g. JupyterHub's
     // jupyterHost. Those fields are stripped from request.values by the wizard before
@@ -524,6 +531,15 @@ public class HelmDeployRequest {
                 this.ingressTlsExternalSecret = s.isBlank() ? null : OM.readValue(s, Map.class);
             }
         } catch (Exception ignore) { this.ingressTlsExternalSecret = null; }
+    }
+
+    /** @see #replaceExistingTls */
+    public boolean isReplaceExistingTls() {
+        return replaceExistingTls;
+    }
+
+    public void setReplaceExistingTls(boolean replaceExistingTls) {
+        this.replaceExistingTls = replaceExistingTls;
     }
 
     /** @see #formValues */

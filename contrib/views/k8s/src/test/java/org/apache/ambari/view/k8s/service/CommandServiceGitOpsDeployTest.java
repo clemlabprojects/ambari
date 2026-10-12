@@ -650,6 +650,28 @@ class CommandServiceGitOpsDeployTest {
     }
 
     @Test
+    void anUploadOverACertificateKdpsDidNotIssueIsRefusedBeforeAnythingIsWrittenUnlessConfirmed() {
+        // The release's Secret holds a certificate the operator brought: no label of a leaf KDPS minted.
+        io.fabric8.kubernetes.api.model.Secret operatorOwn = new io.fabric8.kubernetes.api.model.SecretBuilder()
+                .withNewMetadata().withName(rel + "-ingress-tls").withNamespace(NS).endMetadata()
+                .withType("kubernetes.io/tls").addToData("tls.crt", "Y29ycA==").addToData("tls.key", "a2V5")
+                .build();
+        when(k8s.getSecret(NS, rel + "-ingress-tls")).thenReturn(operatorOwn);
+
+        for (boolean gitOps : new boolean[]{false, true}) {
+            HelmDeployRequest request = request(gitOps ? "FLUX_GITOPS" : "DIRECT_HELM", "main");
+            IllegalStateException refused = assertThrows(IllegalStateException.class, () -> plan(request, gitOps));
+            assertTrue(refused.getMessage().contains(NS + "/" + rel + "-ingress-tls"), refused.getMessage());
+        }
+        verify(k8s, never()).createOrUpdateTlsSecret(anyString(), anyString(), any(), any(), any(), any());
+
+        HelmDeployRequest confirmed = request("DIRECT_HELM", "main");
+        confirmed.setReplaceExistingTls(true);
+        plan(confirmed, false);
+        verify(k8s).createOrUpdateTlsSecret(eq(NS), eq(rel + "-ingress-tls"), any(), any(), any(), any());
+    }
+
+    @Test
     void aGitOpsDeployThatCouldNotBeCommittedIsRefusedBeforeAnythingIsPrepared() {
         HelmDeployRequest noCredentials = request("FLUX_GITOPS", "main");
         noCredentials.getGit().setRepoUrl("https://git.example.org/platform/gitops.git");

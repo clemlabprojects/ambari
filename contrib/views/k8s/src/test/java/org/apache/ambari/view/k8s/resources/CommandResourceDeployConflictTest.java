@@ -23,6 +23,7 @@ import org.apache.ambari.view.ViewDefinition;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.service.CommandService;
+import org.apache.ambari.view.k8s.service.IngressTlsSecretGuard;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import org.junit.jupiter.api.AfterEach;
@@ -41,13 +42,16 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
  * A deploy submitted while another GitOps operation holds the release's Git workspace is answered 409, as one
- * submitted while a Helm operation runs on the release: the operator retries once the other one has finished.
+ * submitted while a Helm operation runs on the release: the operator retries once the other one has finished. So is
+ * a deploy whose ingress certificate would replace an existing Secret KDPS did not issue: the wizard asks the operator
+ * and deploys again, which it can only do when the answer names that Secret.
  */
 class CommandResourceDeployConflictTest {
 
@@ -88,6 +92,39 @@ class CommandResourceDeployConflictTest {
     Response response = operator().submitDeploy(new HelmDeployRequest(), null, null, null, headers(), uriInfo());
 
     assertEquals(409, response.getStatus());
+  }
+
+  @Test
+  void anUnconfirmedReplacementOfAnIngressCertificateAnswers409WithTheSecret() throws Exception {
+    IngressTlsSecretGuard.ReplacementNotConfirmedException unconfirmed =
+        new IngressTlsSecretGuard.ReplacementNotConfirmedException("analytics", "trino-ingress-tls",
+            "The ingress certificate Secret analytics/trino-ingress-tls already exists and was not issued by KDPS");
+    // Thrown by the plan, so it reaches the resource wrapped by the deploy backend.
+    when(commands.submitDeploy(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(new RuntimeException(unconfirmed))
+        .thenThrow(unconfirmed);
+
+    for (int i = 0; i < 2; i++) {
+      Response response = operator().submitDeploy(new HelmDeployRequest(), null, null, null, headers(), uriInfo());
+
+      assertEquals(409, response.getStatus());
+      Map<?, ?> body = (Map<?, ?>) response.getEntity();
+      assertEquals("INGRESS_TLS_REPLACEMENT_NOT_CONFIRMED", body.get("code"));
+      assertEquals("analytics", body.get("namespace"));
+      assertEquals("trino-ingress-tls", body.get("secretName"));
+      assertEquals(unconfirmed.getMessage(), body.get("error"));
+    }
+  }
+
+  @Test
+  void aCertificateKeptByCertManagerIsStillA400ThatNoConfirmationLifts() throws Exception {
+    when(commands.submitDeploy(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(new RuntimeException(new IllegalStateException("managed by cert-manager")));
+
+    Response response = operator().submitDeploy(new HelmDeployRequest(), null, null, null, headers(), uriInfo());
+
+    assertEquals(400, response.getStatus());
+    assertNull(((Map<?, ?>) response.getEntity()).get("code"));
   }
 
   // ------------------------------------------------------------------------------------------------------------
