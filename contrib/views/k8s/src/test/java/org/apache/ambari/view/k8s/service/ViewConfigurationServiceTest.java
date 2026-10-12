@@ -21,9 +21,13 @@ package org.apache.ambari.view.k8s.service;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.store.InMemoryDataStore;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -57,5 +61,39 @@ class ViewConfigurationServiceTest {
 
     assertEquals(yaml, svc.getKubeconfigContents()); // OK
     assertNotNull(svc.getKubeconfigPath());          // OK
+  }
+
+  @TempDir
+  Path workDir;
+
+  private ViewConfigurationService serviceIn(Path dir) {
+    ViewContext ctx = mock(ViewContext.class);
+    when(ctx.getProperties()).thenReturn(Map.of("k8s.view.working.dir", dir.toString()));
+    when(ctx.getDataStore()).thenReturn(new InMemoryDataStore());
+    return new ViewConfigurationService(ctx);
+  }
+
+  @Test
+  void cachedValuesAreEncryptedInAnOwnerOnlyFile() throws Exception {
+    ViewConfigurationService svc = serviceIn(workDir);
+    String values = "{\"superset\":{\"secretKey\":\"Flask-Secret-751\"}}";
+
+    String path = svc.writeCacheFile("values-op-1", values);
+
+    Path file = Path.of(path);
+    assertEquals(workDir.resolve("cache"), file.getParent());
+    assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
+    assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file.getParent())));
+    assertFalse(Files.readString(file).contains("Flask-Secret-751"), "encrypted on disk");
+    assertEquals(values, svc.readCacheFile(path));
+  }
+
+  @Test
+  void valuesCachedInClearByAnEarlierVersionAreStillRead() throws Exception {
+    ViewConfigurationService svc = serviceIn(workDir);
+    Path cache = Files.createDirectories(workDir.resolve("cache"));
+    Path legacy = Files.writeString(cache.resolve("values-op-0.json"), "{\"replicaCount\":2}");
+
+    assertEquals("{\"replicaCount\":2}", svc.readCacheFile(legacy.toString()));
   }
 }

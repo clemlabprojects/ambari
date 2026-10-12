@@ -65,9 +65,6 @@ import javax.ws.rs.core.MultivaluedMap;
 import java.lang.reflect.Type;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.KeyStore;
@@ -86,6 +83,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.Collection;
 import java.util.Comparator;
@@ -149,6 +147,8 @@ public class CommandService {
     private final WebHookConfigurationService webHookConfigurationService;
     private final CommandLogService commandLogService;
     private final FluxGitOpsBackend fluxGitOpsBackend;
+    /** Deletes the parameter and values files of operations that no longer need them. */
+    private final OperationFilesRetention operationFiles;
     /**
      * Prepares the keytab webhook's namespace, certificates and Ambari user before the webhook is installed;
      * package-private so tests, which have no Ambari, can replace it.
@@ -215,6 +215,15 @@ public class CommandService {
         this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), new GitOpsPlanBackend(this, fluxGitOpsBackend));
         this.deploymentBackends.put(DeploymentMode.DIRECT_HELM.name(), new HelmDirectBackend(this));
         recoverOrphanedCommands();
+        // In the background: the first sweep after an upgrade encrypts every file kept by the earlier version.
+        this.operationFiles = new OperationFilesRetention(ctx, dataStore);
+        this.workers.submit(() -> {
+            try {
+                operationFiles.sweep(Instant.now());
+            } catch (RuntimeException e) {
+                LOG.warn("Could not apply the retention of operation files: {}", e.toString());
+            }
+        });
         LOG.info("CommandService initialized for {}. Consider adding DB indexes on command.id, command_status_id, created_at and pruning terminal commands periodically to keep polling fast.", ctx.getInstanceName());
     }
 
@@ -1327,12 +1336,16 @@ public class CommandService {
     /**
      * Append only the OIDC_CREATE_SECRET step for an external OIDC profile where the admin
      * pre-supplied clientId/clientSecret in the security profile (no Keycloak registration needed).
+     * The client secret stays in the profile: the step reads it there when it runs
+     * ({@link #externalOidcClientSecret}), so it is never kept with the step's parameters.
+     *
+     * @param securityProfile the security profile holding the client secret
      */
     private void appendOidcExternalSecretStep(CommandEntity rootCommand,
                                               List<String> childCommandIds,
                                               Map<String, Object> rootParams,
                                               String externalClientId,
-                                              String externalClientSecret,
+                                              String securityProfile,
                                               String externalIssuerUrl,
                                               String secretName,
                                               String oidcEntryKey,
@@ -1345,7 +1358,7 @@ public class CommandService {
         createParams.put("oidcSecretName", secretName);
         createParams.put("oidcEntryKey", oidcEntryKey);
         createParams.put("oidcExternalClientId", externalClientId != null ? externalClientId : "");
-        createParams.put("oidcExternalClientSecret", externalClientSecret != null ? externalClientSecret : "");
+        createParams.put(OIDC_EXTERNAL_PROFILE_PARAM, securityProfile != null ? securityProfile : "");
         if (externalIssuerUrl != null && !externalIssuerUrl.isBlank()) {
             createParams.put("oidcExternalIssuerUrl", externalIssuerUrl);
         }
@@ -1377,6 +1390,32 @@ public class CommandService {
         childCommandIds.add(createSecretCmdId);
 
         LOG.info("Added external OIDC secret step for entry {}: createSecretId={}", oidcEntryKey, createSecretCmdId);
+    }
+
+    /** Step parameter naming the security profile whose external OIDC client secret the step writes. */
+    static final String OIDC_EXTERNAL_PROFILE_PARAM = "oidcExternalProfile";
+
+    /**
+     * The client secret an OIDC_CREATE_SECRET step writes for an external OIDC provider, read from the security
+     * profile when the step runs: it is not kept with the step's parameters. A step planned by an earlier version
+     * still carries it there and uses that.
+     *
+     * @param childParams the step's parameters
+     * @return the client secret, empty when the profile has none
+     * @throws IllegalStateException when the profile no longer exists or no longer has an OIDC configuration
+     */
+    String externalOidcClientSecret(Map<String, Object> childParams) {
+        if (childParams.containsKey("oidcExternalClientSecret")) {
+            return (String) childParams.get("oidcExternalClientSecret");
+        }
+        String profile = stringValue(childParams.get(OIDC_EXTERNAL_PROFILE_PARAM));
+        SecurityConfigDTO cfg = profile.isBlank() ? null : loadSecurityConfig(profile);
+        if (cfg == null || cfg.oidc == null) {
+            throw new IllegalStateException("The OIDC client secret of this deploy is read from the security profile '"
+                    + profile + "', which no longer exists or no longer configures OIDC. Restore the profile and"
+                    + " resume the operation, or deploy again with another profile.");
+        }
+        return cfg.oidc.clientSecret != null ? cfg.oidc.clientSecret : "";
     }
 
     /**
@@ -1468,7 +1507,8 @@ public class CommandService {
         String valuesPath = resolveStringValue(params.get("valuesPath"), null);
         if (valuesPath != null) {
             try {
-                String json = java.nio.file.Files.readString(java.nio.file.Paths.get(valuesPath));
+                // Through the cache, which decrypts the file.
+                String json = this.kubernetesService.getConfigurationService().readCacheFile(valuesPath);
                 chartValues = gson.fromJson(json, new com.google.gson.reflect.TypeToken<Map<String, Object>>(){}.getType());
             } catch (Exception ex) {
                 LOG.warn("resolveServiceVariablesFromParams: could not load chart values from {}: {}", valuesPath, ex.toString());
@@ -6824,7 +6864,14 @@ public class CommandService {
 
         rootCommand.setParamsJson(gson.toJson(params));
         rootCommand.setChildListJson(gson.toJson(childCommands));
-        LOG.info("Root Command params are: {} ", HelmSetValues.redactJson(rootCommand.getParamsJson()));
+        // Only a summary at INFO: the parameters carry the wizard's form and the security profile's secrets.
+        LOG.info("Planned operation {}: release {}/{}, chart {} {}, mode {}, parameters {}", rootCommand.getId(),
+                request.getNamespace(), request.getReleaseName(), request.getChart(), version,
+                gitOps ? DeploymentMode.FLUX_GITOPS.name() : DeploymentMode.DIRECT_HELM.name(),
+                new TreeSet<>(params.keySet()));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Root Command params are: {} ", HelmSetValues.redactJson(rootCommand.getParamsJson()));
+        }
         store(rootCommand);
         /**
          *  2. checking dependencies
@@ -7031,7 +7078,6 @@ public class CommandService {
                         && securityCfg.oidc != null
                         && "external".equalsIgnoreCase(securityCfg.oidc.source);
                 String externalClientId     = oidcIsExternal && securityCfg.oidc.clientId     != null ? securityCfg.oidc.clientId     : null;
-                String externalClientSecret = oidcIsExternal && securityCfg.oidc.clientSecret != null ? securityCfg.oidc.clientSecret : null;
                 String externalIssuerUrl    = oidcIsExternal && securityCfg.oidc.issuerUrl    != null ? securityCfg.oidc.issuerUrl    : null;
 
                 boolean oidcStepsAdded = false;
@@ -7077,7 +7123,7 @@ public class CommandService {
                     if (oidcIsExternal) {
                         // External OIDC: no Keycloak registration — write the secret directly from profile credentials
                         appendOidcExternalSecretStep(rootCommand, childCommands, params,
-                                externalClientId, externalClientSecret, externalIssuerUrl,
+                                externalClientId, resolvedSecurityProfile, externalIssuerUrl,
                                 secretName, entryKey, vaultPath, extraOidcParams);
                     } else {
                         // Internal OIDC: register client in Keycloak, then create secret
@@ -7831,7 +7877,9 @@ public class CommandService {
         s.percent = cachedPercentage(e);
         s.result = operationResult(e, eStatus);
         LOG.info("Getting status information for command with id: {} ", s.id);
-        LOG.debug("Params are: {} ", HelmSetValues.redactJson(e.getParamsJson()));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Params are: {} ", HelmSetValues.redactJson(e.getParamsJson()));
+        }
 
         int stepIndex = java.util.Optional.ofNullable(resolveParamsJson(e))
                 .map(JsonParser::parseString)
@@ -8128,6 +8176,12 @@ public class CommandService {
             throw new IllegalStateException("Only a failed operation can be resumed (current state: "
                     + rootSt.getState() + ").");
         }
+        String savedParams = CommandUtils.resolveParamsPayload(root.getParamsJson());
+        if (savedParams == null || CommandParamsStore.wasRemoved(savedParams)) {
+            throw new IllegalStateException("The saved settings of this operation are no longer available: they are"
+                    + " deleted some time after a failed operation ends (or could not be decrypted), so it cannot be"
+                    + " resumed. Run the operation again.");
+        }
 
         List<String> childIds;
         try {
@@ -8206,7 +8260,7 @@ public class CommandService {
 
     /**
      * Replace a command's persisted {@code _callerHeaders} with fresh (already-persistable) values,
-     * preserving the storage form (inline JSON vs {@code @@file:} externalized). Only touches
+     * kept like any other parameters (see {@link CommandParamsStore}). Only touches
      * commands that already carry {@code _callerHeaders} (i.e. Ambari-callback steps); others are
      * left untouched. Best-effort — logs and continues on any failure.
      */
@@ -8219,16 +8273,9 @@ public class CommandService {
             Map<String, Object> p = gson.fromJson(raw, mapType);
             if (p == null || !p.containsKey("_callerHeaders")) return; // only steps that authenticate to Ambari
             p.put("_callerHeaders", freshHeaders);
-            String updated = gson.toJson(p);
-            String pj = cmd.getParamsJson();
-            if (pj != null && pj.startsWith("@@file:")) {
-                java.nio.file.Path fp = java.nio.file.Path.of(pj.substring("@@file:".length()));
-                java.nio.file.Files.writeString(fp, updated, java.nio.charset.StandardCharsets.UTF_8);
-                // keep the @@file: reference unchanged
-            } else {
-                cmd.setParamsJson(updated);
-                store(cmd);
-            }
+            // Written back through store(): the same file, encrypted and owner-only like on the first write.
+            cmd.setParamsJson(gson.toJson(p));
+            store(cmd);
             LOG.info("Refreshed caller auth for command {} on resume", cmd.getId());
         } catch (Exception e) {
             LOG.warn("Could not refresh caller headers for command {}: {}", cmd.getId(), e.toString());
@@ -8321,6 +8368,7 @@ public class CommandService {
             LOG.info("[{}] No child steps defined, marking as SUCCEEDED", id);
             succeed(rootSt, "No steps to execute.");
             refreshCurrentStepSnapshot(root);
+            operationFiles.purgeIfSucceeded(id);
             return;
         }
 
@@ -8388,6 +8436,8 @@ public class CommandService {
             refreshEndpointSnapshotFromLive(root, rootParams);
             succeed(rootSt, "All steps completed.");
             refreshCurrentStepSnapshot(root);
+            // Nothing can resume it any more: its parameters and cached values, which hold its secrets, go.
+            operationFiles.purgeIfSucceeded(id);
             return;
         }
 
@@ -8447,7 +8497,9 @@ public class CommandService {
 
             String repoId = (String) rootParams.get("repoId");
             LOG.info("Using repoId: {} for step execution", repoId);
-            LOG.debug("Child Command params are: {} ", HelmSetValues.redactJson(child.getParamsJson()));
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Child Command params are: {} ", HelmSetValues.redactJson(rawChildParams));
+            }
             // Set by a step whose outcome says more than "Done", and by one after which the operation ends.
             String stepDoneMessage = null;
             String operationEndMessage = null;
@@ -10185,7 +10237,7 @@ public class CommandService {
                     String issuerUrl;
                     if (childParams.containsKey("oidcExternalClientId")) {
                         clientId     = (String) childParams.get("oidcExternalClientId");
-                        clientSecret = (String) childParams.get("oidcExternalClientSecret");
+                        clientSecret = externalOidcClientSecret(childParams);
                         issuerUrl    = (String) childParams.get("oidcExternalIssuerUrl");
                         if (clientId == null || clientId.isBlank()) {
                             throw new IllegalStateException("External OIDC: oidcExternalClientId is empty");
@@ -11198,20 +11250,10 @@ public class CommandService {
     private void store(CommandEntity e) {
         try {
             String rawParams = e.getParamsJson();
-            if (rawParams != null && !rawParams.startsWith("@@file:")) {
-                // Always externalize params to a file for predictability and to avoid datastore limits.
-                try {
-                    ViewConfigurationService cfg = new ViewConfigurationService(ctx);
-                    String base = cfg.getConfigurationDirectoryPath();
-                    Path paramsDir = Paths.get(base, "params");
-                    Files.createDirectories(paramsDir);
-                    Path filePath = paramsDir.resolve(e.getId() + "-params.json");
-                    Files.writeString(filePath, rawParams, StandardCharsets.UTF_8);
-                    e.setParamsJson("@@file:" + filePath.toString());
-                    LOG.info("Persisting params for command {} to file {}", e.getId(), filePath);
-                } catch (Exception ioEx) {
-                    LOG.warn("Could not externalize paramsJson for {}: {}", e.getId(), ioEx.toString());
-                }
+            if (rawParams != null && !CommandParamsStore.isFileReference(rawParams)) {
+                // Always externalize params to a file for predictability and to avoid datastore limits: encrypted,
+                // owner-only, without the form's secrets no step reads (see CommandParamsStore).
+                e.setParamsJson(CommandParamsStore.persist(ctx, e.getId(), rawParams));
             }
             dataStore.store(e);
         } catch (PersistenceException ex) {
@@ -13031,10 +13073,10 @@ public class CommandService {
                         + "principal='{}' service='{}' (managed context)", principal, atlasRepo);
             } else {
                 // EXTERNAL context → the view calls Ranger Admin REST directly with the
-                // context's stored URL + credentials.
+                // context's stored URL + credentials. The password stays in the context's encrypted
+                // store: the step reads it there when it runs (rangerAdminPasswordForStep).
                 stepParams.put("_rangerUrl", rc.getRangerUrl());
                 stepParams.put("_rangerAdminUsername", rc.getRangerAdminUsername());
-                stepParams.put("_rangerAdminPassword", rc.getRangerAdminPassword());
                 stepParams.put("_atlasAuthMode", authMode);
                 this.commandPlanFactory.createRangerPolicyCreateAtlasOmRead(rootCommand, stepParams);
                 LOG.info("Atlas federation dispatch: queued RANGER_POLICY_CREATE_ATLAS_OM_READ "
@@ -13414,10 +13456,28 @@ public class CommandService {
     }
 
     /**
+     * The Ranger admin password of the step's external platform context, read from the context's encrypted store
+     * when the step runs: it is not kept with the step's parameters. A step planned by an earlier version still
+     * carries it there and uses that.
+     *
+     * @param childParams the step's parameters ({@code _platformContextId} names the context)
+     * @return the password, empty when the context has none or cannot be resolved
+     */
+    String rangerAdminPasswordForStep(Map<String, Object> childParams) {
+        String legacy = stringValue(childParams.get("_rangerAdminPassword"));
+        if (!legacy.isBlank()) {
+            return legacy;
+        }
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        return rc == null ? "" : stringValue(rc.getRangerAdminPassword());
+    }
+
+    /**
      * Body of {@code RANGER_POLICY_CREATE_ATLAS_OM_READ} — the EXTERNAL-context path.
      * The Ranger Admin URL + credentials come from the resolved external context
-     * (params {@code _rangerUrl} / {@code _rangerAdminUsername} / {@code _rangerAdminPassword}),
-     * since an external cluster has no {@code ranger-env} on this Ambari to read. Delegates
+     * (params {@code _rangerUrl} / {@code _rangerAdminUsername}, the password from the context
+     * itself, see {@link #rangerAdminPasswordForStep}), since an external cluster has no
+     * {@code ranger-env} on this Ambari to read. Delegates
      * to {@code OmAtlasProvisioning.createOrFindAtlasReadPolicy} (idempotent grant + poll).
      *
      * <p>MANAGED contexts never reach here — they use {@code RANGER_POLICY_GRANT_VIA_AMBARI},
@@ -13431,11 +13491,11 @@ public class CommandService {
 
         String rangerUrl  = stringValue(childParams.get("_rangerUrl"));
         String rangerUser = stringValue(childParams.get("_rangerAdminUsername"));
-        String rangerPass = stringValue(childParams.get("_rangerAdminPassword"));
+        String rangerPass = rangerAdminPasswordForStep(childParams);
         if (rangerUrl.isBlank() || rangerUser.isBlank() || rangerPass.isBlank()) {
             throw new IllegalStateException(
-                    "External-context Ranger grant requires _rangerUrl + _rangerAdminUsername + "
-                    + "_rangerAdminPassword in step params (set on the EXTERNAL platform context). "
+                    "External-context Ranger grant requires the Ranger URL, admin user and admin password "
+                    + "of the EXTERNAL platform context; set them on the context. "
                     + "A MANAGED context should use RANGER_POLICY_GRANT_VIA_AMBARI instead.");
         }
 

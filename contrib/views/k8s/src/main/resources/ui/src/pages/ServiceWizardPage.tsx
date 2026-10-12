@@ -34,6 +34,7 @@ import { useCapabilities, fieldCapabilityAvailable } from '../components/Service
 import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
 import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPayload';
+import { deployFormValues } from './deployFormValues';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
@@ -891,21 +892,7 @@ const ServiceWizardPage: React.FC = () => {
               // excludeFromValues form fields when rendering OIDC redirectUriTemplate etc.
               // Without this, JupyterHub's "{{jupyterHost}}" renders empty server-side and
               // Keycloak rejects the client registration with HTTP 400 invalid_input.
-              formValues: ((): Record<string, any> => {
-                const snap = JSON.parse(JSON.stringify(installValues || {}));
-                // Strip wizard envelope/meta keys + the def-seeded blocks that
-                // are passed in their own request fields. formValues is for
-                // server-side template rendering of form-field values; nested
-                // def-seeded objects (kerberos/tls/oidc) aren't form input.
-                ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-                 'deploymentMode','git',
-                 'kerberos','tls','oidc'].forEach(k => { delete snap[k]; });
-                // ② Operator's Atlas-restart authorization from the pre-deploy confirmation modal.
-                // The ATLAS_USER_PROVISION_OM step reads this; "false" makes it write the federation
-                // user but skip the Atlas restart (the operator restarts manually). Default authorized.
-                snap._atlasRestartAuthorized = String(atlasRestartAuthorized);
-                return snap;
-              })(),
+              formValues: deployFormValues(installValues, atlasRestartAuthorized),
           }, params);
       message.success('Deployment request submitted');
       setLastCommandId(id);

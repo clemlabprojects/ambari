@@ -44,6 +44,13 @@ class GitClientTest {
     private String seededBareRepo(Path tmp) throws Exception {
         Path bare = tmp.resolve("remote.git");
         Git.init().setBare(true).setInitialBranch(BRANCH).setDirectory(bare.toFile()).call().close();
+        // No background gc after a push: it would still hold gc.log.lock when the temp directory is removed.
+        try (Git bareGit = Git.open(bare.toFile())) {
+            org.eclipse.jgit.lib.StoredConfig bareConfig = bareGit.getRepository().getConfig();
+            bareConfig.setInt("gc", null, "auto", 0);
+            bareConfig.setBoolean("receive", null, "autogc", false);
+            bareConfig.save();
+        }
         String url = bare.toUri().toString();
         Path seed = tmp.resolve("seed");
         try (Git g = Git.cloneRepository().setURI(url).setDirectory(seed.toFile()).call()) {

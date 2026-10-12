@@ -74,58 +74,104 @@ public final class HelmSetValues {
     }
 
     /**
-     * Hides secrets in a JSON text about to be logged (e.g. command parameters): the values {@link #textIfSecret}
-     * marked, and any string under a key ending in password, passwd, secret, token, sshKey or privateKey (e.g.
-     * {@code oidcExternalClientSecret}, the {@code sshKey} of a GitOps deploy's Git options).
+     * Hides secrets in a JSON text about to be logged (e.g. command parameters):
+     * <ul>
+     *   <li>the whole {@code formValues} subtree, the wizard's form as filled in, which carries every password and
+     *       pasted key the operator typed;</li>
+     *   <li>the values {@link #textIfSecret} marked;</li>
+     *   <li>any string that contains a PEM private key, whatever its key;</li>
+     *   <li>any string or number under a key ending in password, passwd, secret, token, secretKey, accessKey,
+     *       accessKeyId, privateKey, sshKey, apiKey, credential(s) or keytab, or under the key {@code key} (e.g.
+     *       {@code oidcExternalClientSecret}, the {@code sshKey} of a GitOps deploy's Git options).</li>
+     * </ul>
+     * Names stay readable: {@code secretName} or {@code truststorePasswordKey} hold the name of a Secret or of one of
+     * its keys, not a secret. A text that is not a JSON object or array is hidden by the same rules, matched on the
+     * text.
      */
     public static String redactJson(String json) {
         if (json == null) {
             return null;
         }
-        String hidden = MARKED_JSON_STRING.matcher(json).replaceAll("\"<hidden>\"");
-        return SECRET_KEY_JSON_STRING.matcher(hidden).replaceAll("$1\"<hidden>\"");
+        com.google.gson.JsonElement tree;
+        try {
+            tree = com.google.gson.JsonParser.parseString(json);
+        } catch (RuntimeException notJson) {
+            tree = null;
+        }
+        if (tree == null || !(tree.isJsonObject() || tree.isJsonArray())) {
+            return redactText(json);
+        }
+        return LOG_GSON.toJson(redacted(null, tree));
     }
 
-    /** A JSON string value under a key ending in password/passwd/secret/token/sshKey/privateKey, any case. */
+    /** Hidden form values and secrets are replaced by this text. */
+    private static final String HIDDEN = "<hidden>";
+    /** Keeps {@code <hidden>} readable: Gson escapes {@code <} and {@code >} by default. */
+    private static final com.google.gson.Gson LOG_GSON =
+            new com.google.gson.GsonBuilder().disableHtmlEscaping().serializeNulls().create();
+
+    /** A key whose value is a secret, any case. */
+    private static final java.util.regex.Pattern SECRET_KEY = java.util.regex.Pattern.compile(
+            "(?i)key|.*(password|passwd|secret|token|secretkey|accesskey|accesskeyid|privatekey|sshkey|apikey"
+                    + "|credentials?|keytab)");
+
+    private static com.google.gson.JsonElement redacted(String key, com.google.gson.JsonElement element) {
+        if (element.isJsonObject()) {
+            com.google.gson.JsonObject out = new com.google.gson.JsonObject();
+            for (java.util.Map.Entry<String, com.google.gson.JsonElement> e : element.getAsJsonObject().entrySet()) {
+                out.add(e.getKey(), "formValues".equals(e.getKey())
+                        ? new com.google.gson.JsonPrimitive(HIDDEN) : redacted(e.getKey(), e.getValue()));
+            }
+            return out;
+        }
+        if (element.isJsonArray()) {
+            com.google.gson.JsonArray out = new com.google.gson.JsonArray();
+            element.getAsJsonArray().forEach(item -> out.add(redacted(key, item)));
+            return out;
+        }
+        if (element.isJsonPrimitive()) {
+            com.google.gson.JsonPrimitive value = element.getAsJsonPrimitive();
+            boolean secretKey = key != null && SECRET_KEY.matcher(key).matches();
+            if (value.isString() && (secretKey || isMarkedSecret(value.getAsString())
+                    || containsPrivateKey(value.getAsString()))) {
+                return new com.google.gson.JsonPrimitive(HIDDEN);
+            }
+            if (value.isNumber() && secretKey) {
+                return new com.google.gson.JsonPrimitive(HIDDEN);
+            }
+        }
+        return element;
+    }
+
+    /** Whether the text holds a PEM private key (PKCS#8, RSA, EC, OpenSSH...). */
+    static boolean containsPrivateKey(String text) {
+        int begin = text == null ? -1 : text.indexOf("-----BEGIN");
+        return begin >= 0 && text.indexOf("PRIVATE KEY", begin) > 0;
+    }
+
+    /** The same rules on a text that is not JSON: matched on the text. */
+    private static String redactText(String text) {
+        String hidden = MARKED_JSON_STRING.matcher(text).replaceAll("\"" + HIDDEN + "\"");
+        hidden = PRIVATE_KEY_PEM.matcher(hidden).replaceAll(HIDDEN);
+        return SECRET_KEY_JSON_STRING.matcher(hidden).replaceAll("$1\"" + HIDDEN + "\"");
+    }
+
+    /** A JSON string value under a secret key ({@link #SECRET_KEY}), any case. */
     private static final java.util.regex.Pattern SECRET_KEY_JSON_STRING = java.util.regex.Pattern.compile(
-            "(\"[^\"\\\\]*(?i:password|passwd|secret|token|sshkey|privatekey)\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"");
+            "(\"(?i:key|[^\"\\\\]*(?:password|passwd|secret|token|secretkey|accesskey|accesskeyid|privatekey"
+                    + "|sshkey|apikey|credentials?|keytab))\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"");
 
     /** A JSON string whose content starts with the marker, as Gson writes it ({@code \\u0000} escaped). */
     private static final java.util.regex.Pattern MARKED_JSON_STRING =
             java.util.regex.Pattern.compile("\"\\\\u0000kdps-text:(?:[^\"\\\\]|\\\\.)*\"");
 
-    private static volatile java.util.Set<String> passwordFields;
-    private static final java.util.concurrent.atomic.AtomicBoolean warnedUnreadable =
-            new java.util.concurrent.atomic.AtomicBoolean();
+    /** A PEM private key, up to its end line (or the end of the text when it is cut). */
+    private static final java.util.regex.Pattern PRIVATE_KEY_PEM = java.util.regex.Pattern.compile(
+            "-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)");
 
-    /** The security profile fields of type password, read once from KDPS/globals/security.json. */
+    /** The security profile fields of type password ({@link SensitiveFields#ofSecurityProfile}). */
     static java.util.Set<String> passwordFields() {
-        java.util.Set<String> fields = passwordFields;
-        if (fields != null) {
-            return fields;
-        }
-        try (java.io.InputStream in = HelmSetValues.class.getClassLoader()
-                .getResourceAsStream("KDPS/globals/security.json")) {
-            if (in == null) {
-                throw new java.io.FileNotFoundException("not on the classpath");
-            }
-            java.util.Set<String> found = new java.util.HashSet<>();
-            new com.fasterxml.jackson.databind.ObjectMapper().readTree(in).path("properties").forEach(p -> {
-                if ("password".equals(p.path("type").asText()) && !p.path("name").asText().isBlank()) {
-                    found.add(p.path("name").asText());
-                }
-            });
-            fields = java.util.Set.copyOf(found);
-            passwordFields = fields;
-            return fields;
-        } catch (Exception e) {
-            // Not remembered, so a later deploy tries again; meanwhile nothing is marked. Warned once.
-            if (warnedUnreadable.compareAndSet(false, true)) {
-                org.slf4j.LoggerFactory.getLogger(HelmSetValues.class)
-                        .warn("Could not read the password fields of KDPS/globals/security.json: {}", e.toString());
-            }
-            return java.util.Set.of();
-        }
+        return SensitiveFields.ofSecurityProfile();
     }
 
     /**

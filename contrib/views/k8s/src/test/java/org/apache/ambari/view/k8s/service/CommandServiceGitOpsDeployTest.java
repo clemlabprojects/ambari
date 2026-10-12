@@ -105,6 +105,13 @@ class CommandServiceGitOpsDeployTest {
     void setUp() throws Exception {
         bareRepo = tmp.resolve("remote.git");
         Git.init().setBare(true).setInitialBranch("main").setDirectory(bareRepo.toFile()).call().close();
+        // No background gc after a push: it would still hold gc.log.lock when the temp directory is removed.
+        try (Git bare = Git.open(bareRepo.toFile())) {
+            org.eclipse.jgit.lib.StoredConfig bareConfig = bare.getRepository().getConfig();
+            bareConfig.setInt("gc", null, "auto", 0);
+            bareConfig.setBoolean("receive", null, "autogc", false);
+            bareConfig.save();
+        }
         repoUrl = bareRepo.toUri().toString();
         Path seed = Files.createDirectories(tmp.resolve("seed"));
         try (Git g = Git.cloneRepository().setURI(repoUrl).setDirectory(seed.toFile()).call()) {
@@ -962,6 +969,121 @@ class CommandServiceGitOpsDeployTest {
         awaitEnd(id);
         assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.FLUX_WAIT_READY));
         assertNotNull(published("main", releaseDir() + "/helmrelease.yaml"));
+    }
+
+    // ------------------------------------------------------------------------------------------------ secrets at rest
+
+    private static final String APP_SECRET = "App-Secret-Key-751";
+    private static final String FORM_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nMIIE-form-751\n-----END PRIVATE KEY-----";
+    private static final String ACCESS_KEY = "AKIA-751";
+    private static final String OIDC_SECRET = "Oidc-Client-Secret-751";
+
+    /** The wizard's form of the test service holding secrets: a password, a pasted private key, a sensitive text. */
+    private Map<String, Object> secretsForm() {
+        Map<String, Object> form = new LinkedHashMap<>();
+        form.put("app", new LinkedHashMap<>(Map.of("secretKey", APP_SECRET)));
+        form.put("ingress", new LinkedHashMap<>(Map.of("host", "zz.example.org",
+                "tlsUpload", new LinkedHashMap<>(Map.of("key", FORM_PRIVATE_KEY)))));
+        form.put("storage", new LinkedHashMap<>(Map.of("accessKey", ACCESS_KEY)));
+        return form;
+    }
+
+    /** The operation and its steps. */
+    private List<String> commandIds(String rootId) {
+        List<String> ids = new ArrayList<>(List.of(rootId));
+        ids.addAll(stepIds(rootId));
+        return ids;
+    }
+
+    private Path paramsFile(String commandId) {
+        String stored = dataStore.find(CommandEntity.class, commandId).getParamsJson();
+        assertTrue(stored.startsWith("@@file:"), commandId + ": " + stored);
+        return Path.of(stored.substring("@@file:".length()));
+    }
+
+    @Test
+    void theParametersOfAPlannedDeployAreOwnerOnlyEncryptedAndKeepNoFormSecretThatNoStepReads() throws Exception {
+        HelmDeployRequest request = request("DIRECT_HELM", "main");
+        request.setServiceKey("ZZTESTSECRETS");
+        request.setFormValues(secretsForm());
+
+        String id = plan(request, false);
+
+        for (String commandId : commandIds(id)) {
+            Path file = paramsFile(commandId);
+            assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
+            String onDisk = Files.readString(file);
+            for (String secret : List.of(BIND_PASSWORD, APP_SECRET, "MIIE-form-751", ACCESS_KEY)) {
+                assertFalse(onDisk.contains(secret), secret + " on disk for " + commandId);
+            }
+            String params = CommandUtils.resolveParamsPayload(dataStore.find(CommandEntity.class, commandId).getParamsJson());
+            for (String secret : List.of(APP_SECRET, "MIIE-form-751", ACCESS_KEY)) {
+                assertFalse(params.contains(secret), secret + " kept for " + commandId);
+            }
+        }
+        assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(
+                Files.getPosixFilePermissions(paramsFile(id).getParent())));
+        Map<String, Object> root = paramsOf(dataStore.find(CommandEntity.class, id));
+        assertTrue(String.valueOf(root.get("_ov")).contains(BIND_PASSWORD), "the Helm install still gets the profile's password");
+        assertEquals("zz.example.org", ((Map<?, ?>) ((Map<?, ?>) root.get("formValues")).get("ingress")).get("host"));
+    }
+
+    @Test
+    void aFailedOperationWithEncryptedParametersIsResumedAndItsFilesGoOnceItSucceeds() throws Exception {
+        SecurityProfileEntity sso = new SecurityProfileEntity();
+        sso.setId("corp-sso");
+        sso.setViewInstance(ctx.getInstanceName());
+        sso.setProfileJson("{\"mode\":\"oidc\",\"oidc\":{\"source\":\"external\",\"clientId\":\"zz-client\","
+                + "\"clientSecret\":\"" + OIDC_SECRET + "\",\"issuerUrl\":\"https://sso.example.org/realms/corp\"}}");
+        dataStore.store(sso);
+        fluxAppliesTheCommit("False", "InstallFailed", "Helm install failed: exceeded quota");
+        HelmDeployRequest request = request("FLUX_GITOPS", "main");
+        request.setServiceKey("ZZTESTSECRETS");
+        request.setSecurityProfile("corp-sso");
+        request.setFormValues(secretsForm());
+        String id = plan(request, true);
+        assertFalse(paramsOf(step(id, CommandType.OIDC_CREATE_SECRET)).containsKey("oidcExternalClientSecret"),
+                "the step reads the client secret from the profile when it runs");
+
+        assertEquals(CommandState.FAILED.name(), run(id).getState());
+
+        verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-oidc-client"), argThat((Map<String, byte[]> data) ->
+                OIDC_SECRET.equals(new String(data.get("client_secret"), StandardCharsets.UTF_8))));
+        List<Path> files = new ArrayList<>();
+        for (String commandId : commandIds(id)) {
+            Path file = paramsFile(commandId);
+            files.add(file);
+            String onDisk = Files.readString(file);
+            assertFalse(onDisk.contains(OIDC_SECRET) || onDisk.contains(APP_SECRET), "encrypted: " + commandId);
+        }
+
+        fluxInstallsTheReleaseWhenAskedToTryAgain();
+        service.resume(id, null);
+        CommandStatusEntity end = awaitEnd(id);
+
+        assertEquals(CommandState.SUCCEEDED.name(), end.getState(), end.getMessage());
+        for (Path file : files) {
+            assertFalse(Files.exists(file), "deleted once the operation succeeded: " + file);
+        }
+        for (String commandId : commandIds(id)) {
+            assertEquals(Map.of("_removed", true), paramsOf(dataStore.find(CommandEntity.class, commandId)), commandId);
+        }
+        assertEquals(100, service.getStatus(id).percent);
+    }
+
+    @Test
+    void anOperationWhoseParametersWereDeletedIsNotResumed() throws Exception {
+        fluxAppliesTheCommit("False", "InstallFailed", "Helm install failed: exceeded quota");
+        String id = plan(request("FLUX_GITOPS", "main"), true);
+        assertEquals(CommandState.FAILED.name(), run(id).getState());
+        CommandEntity root = dataStore.find(CommandEntity.class, id);
+        root.setParamsJson("{\"_removed\":true}");
+        dataStore.store(root);
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class, () -> service.resume(id, null));
+
+        assertTrue(refused.getMessage().startsWith("The saved settings of this operation are no longer available"),
+                refused.getMessage());
     }
 
     /** Keeps entities by class and id, like the view's data store. */

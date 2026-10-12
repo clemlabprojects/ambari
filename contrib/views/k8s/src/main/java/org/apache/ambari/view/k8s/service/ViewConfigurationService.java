@@ -19,8 +19,10 @@
 package org.apache.ambari.view.k8s.service;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
 import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
+import org.apache.ambari.view.k8s.utils.OwnerOnlyFiles;
 import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +32,6 @@ import java.nio.file.Paths;
 import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.nio.file.StandardOpenOption;
 import java.security.PrivilegedExceptionAction;
 import java.security.AccessController;
 
@@ -601,13 +602,37 @@ public class ViewConfigurationService {
         String workingDirectoryPath = viewContext.getProperties().get("k8s.view.working.dir");
 
         if (workingDirectoryPath == null || workingDirectoryPath.trim().isEmpty()) {
-            workingDirectoryPath = defaultWorkDir();
+            workingDirectoryPath = defaultWorkDir(viewContext);
             LOG.warn("Working directory property 'k8s.view.working.dir' is not set. Using default for this view version: {}", workingDirectoryPath);
         } else {
             LOG.info("Using configured working directory: {}", workingDirectoryPath);
         }
 
         return workingDirectoryPath;
+    }
+
+    /**
+     * The working directory of a view instance, as {@link #getConfigurationDirectoryPath}, for code that only needs
+     * the path: building this service reads the master key and the instance settings.
+     *
+     * @param viewContext the view instance
+     * @return the absolute path to the view's working directory
+     */
+    public static String workingDirectory(ViewContext viewContext) {
+        Map<String, String> properties = viewContext.getProperties();
+        String workingDirectoryPath = properties == null ? null : properties.get("k8s.view.working.dir");
+        return workingDirectoryPath == null || workingDirectoryPath.trim().isEmpty()
+                ? defaultWorkDir(viewContext) : workingDirectoryPath;
+    }
+
+    /**
+     * The directory of the cached chart values of a view instance ({@link #writeCacheFile}), whether it exists or not.
+     *
+     * @param viewContext the view instance
+     * @return its path
+     */
+    public static Path cacheDirectory(ViewContext viewContext) {
+        return Paths.get(workingDirectory(viewContext), CACHE_DIR_NAME);
     }
     
     /**
@@ -626,7 +651,7 @@ public class ViewConfigurationService {
      * Configurable via the {@code k8s.view.working.dir} view instance property.
      * Default: {@code /var/lib/ambari-server/resources/views/k8s-view-data/<instanceName>}
      */
-    private String defaultWorkDir() {
+    private static String defaultWorkDir(ViewContext viewContext) {
         String instanceName = viewContext.getInstanceName() != null ? viewContext.getInstanceName() : "default";
         return "/var/lib/ambari-server/resources/views/k8s-view-data/" + instanceName;
     }
@@ -644,16 +669,17 @@ public class ViewConfigurationService {
                 public String run() throws IOException {
                     LOG.debug("Executing getCacheDirectoryPath in privileged context");
                     
+                    // The cached values hold the passwords and keys of deploys: only the account running Ambari
+                    // may list or read them.
                     File cache = new File(base, CACHE_DIR_NAME);
                     if (!cache.exists()) {
                         LOG.info("Cache directory does not exist; attempting to create: {}", cache.getAbsolutePath());
-                        if (!cache.mkdirs()) {
-                            LOG.error("Failed to create cache directory: {}", cache.getAbsolutePath());
-                            throw new IllegalStateException("Cannot create cache dir: " + cache.getAbsolutePath());
-                        }
-                        LOG.info("Cache directory created: {}", cache.getAbsolutePath());
-                    } else {
-                        LOG.debug("Cache directory already exists: {}", cache.getAbsolutePath());
+                    }
+                    try {
+                        OwnerOnlyFiles.directory(cache.toPath());
+                    } catch (IOException e) {
+                        LOG.error("Failed to create cache directory: {}", cache.getAbsolutePath());
+                        throw new IllegalStateException("Cannot create cache dir: " + cache.getAbsolutePath(), e);
                     }
                     return cache.getAbsolutePath();
                 }
@@ -664,7 +690,11 @@ public class ViewConfigurationService {
         }
     }
 
-    /** Writes plain text to a unique file in the cache and returns the ABSOLUTE PATH. */
+    /**
+     * Writes a text to a new file in the cache and returns the ABSOLUTE PATH. The text, chart values that may hold
+     * passwords and keys, is encrypted with Ambari's master key ({@link EncryptedEnvelope}) and the file is
+     * {@code 0600}; {@link #readCacheFile} gives it back.
+     */
     public String writeCacheFile(String prefix, String content) {
         LOG.debug("writeCacheFile(prefix={}, contentLength={}) called", prefix, content == null ? 0 : content.length());
         Objects.requireNonNull(content, "content");
@@ -680,15 +710,9 @@ public class ViewConfigurationService {
                     
                     File f = new File(getCacheDirectoryPath(), fileName);
                     LOG.info("Preparing to write cache file: {}", f.getAbsolutePath());
-                    
-                    Files.writeString(f.toPath(), content, StandardCharsets.UTF_8,
-                            StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-                    
-                    // best-effort restrictive perms
-                    boolean rSet = f.setReadable(true, true);
-                    boolean wSet = f.setWritable(true, true);
-                    LOG.debug("File permissions set: readable={}, writable={}", rSet, wSet);
-                    LOG.info("Successfully wrote {} bytes to cache file {}", content.getBytes(StandardCharsets.UTF_8).length, f.getAbsolutePath());
+
+                    OwnerOnlyFiles.write(f.toPath(), EncryptedEnvelope.sealToJson(content));
+                    LOG.info("Successfully wrote {} bytes (encrypted) to cache file {}", content.getBytes(StandardCharsets.UTF_8).length, f.getAbsolutePath());
                     
                     return f.getAbsolutePath();
                 }
@@ -702,7 +726,10 @@ public class ViewConfigurationService {
         }
     }
 
-    /** Reads a JSON file into a String. */
+    /**
+     * Reads a file of the cache into a String: the text {@link #writeCacheFile} encrypted, or a file written before
+     * the cache was encrypted as it is.
+     */
     public String readCacheFile(String absolutePath) {
         LOG.debug("readCacheFile({}) called", absolutePath);
         requirePathInsideCache(absolutePath);
@@ -713,7 +740,7 @@ public class ViewConfigurationService {
                 public String run() throws IOException {
                     LOG.debug("Executing readCacheFile in privileged context");
                     
-                    String s = Files.readString(Paths.get(absolutePath), StandardCharsets.UTF_8);
+                    String s = EncryptedEnvelope.openIfSealed(Files.readString(Paths.get(absolutePath), StandardCharsets.UTF_8));
                     LOG.info("Read {} chars from cache file {}", s.length(), absolutePath);
                     return s;
                 }

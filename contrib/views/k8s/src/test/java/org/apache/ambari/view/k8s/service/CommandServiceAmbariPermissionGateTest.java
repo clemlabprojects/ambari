@@ -82,6 +82,7 @@ class CommandServiceAmbariPermissionGateTest {
   private final KubernetesService k8s = mock(KubernetesService.class);
   private final DataStore store = mock(DataStore.class);
   private final List<String> ambariCalls = new ArrayList<>();
+  private final List<CommandService> services = new ArrayList<>();
   private List<String> opsAuthorizations = CLUSTER_USER;
   private ViewContext ctx;
   private Path workDir;
@@ -107,6 +108,8 @@ class CommandServiceAmbariPermissionGateTest {
 
   @AfterEach
   void tearDown() throws Exception {
+    // Lets the background work a service starts with finish before the working directory is deleted.
+    services.forEach(CommandService::shutdown);
     instances().remove(INSTANCE);
   }
 
@@ -233,7 +236,7 @@ class CommandServiceAmbariPermissionGateTest {
     saved.put("repo-1", repo);
     MultivaluedHashMap<String, String> adminHeaders = new MultivaluedHashMap<>();
     adminHeaders.putSingle("Cookie", "AMBARISESSIONID=admin-session");
-    CommandService service = withChartValues(new CommandService(ctx), Map.of("openmetadata", Map.of()));
+    CommandService service = withChartValues(newService(), Map.of("openmetadata", Map.of()));
 
     // The Ranger TagSync registration is only planned after the plan is stored; ops may not modify configurations.
     IllegalStateException refused = assertThrows(IllegalStateException.class,
@@ -337,7 +340,13 @@ class CommandServiceAmbariPermissionGateTest {
   }
 
   private void deploy(HelmDeployRequest request) {
-    deploy(new CommandService(ctx), request);
+    deploy(newService(), request);
+  }
+
+  private CommandService newService() {
+    CommandService service = new CommandService(ctx);
+    services.add(service);
+    return service;
   }
 
   private static void deploy(CommandService service, HelmDeployRequest request) {

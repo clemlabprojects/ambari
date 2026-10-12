@@ -35,6 +35,12 @@ public class FormField {
     public Object defaultValue;
     public String help;
     public boolean excludeFromValues;
+    /**
+     * Marks a text field that holds a secret although it is not typed as a password, e.g. an S3 access key or
+     * free-text properties that may carry a connection password. Like a password or pasted content, its value is kept
+     * out of the logs and out of what the view keeps of a deploy (see {@code SensitiveFields}).
+     */
+    public boolean sensitive;
     public String serviceType; // for service-select / discovery backed fields
     public String discoveryType; // e.g. monitoring-discovery
     /**

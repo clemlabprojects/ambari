@@ -23,6 +23,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
+import org.apache.ambari.view.k8s.service.CommandParamsStore;
 import org.apache.ambari.view.k8s.service.CommandPlanFactory;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.store.CommandEntity;
@@ -35,7 +36,6 @@ import java.lang.reflect.Type;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.*;
 
 public class CommandUtils {
@@ -390,30 +390,14 @@ public class CommandUtils {
 
     /**
      * Resolves a params payload, optionally loading it from a file reference.
-     * When paramsJson is stored as "@@file:/absolute/path", the file contents are returned.
+     * When paramsJson is stored as "@@file:/absolute/path", the file contents are returned; encrypted parameters are
+     * decrypted (see {@link CommandParamsStore}).
      *
      * @param raw raw paramsJson value from the entity
-     * @return resolved JSON string (file contents) or the raw value when not a file reference
+     * @return resolved JSON string, or {@code null} when the file is gone or cannot be decrypted
      */
     public static String resolveParamsPayload(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        final String prefix = "@@file:";
-        if (raw.startsWith(prefix)) {
-            String path = raw.substring(prefix.length());
-            try {
-                return Files.readString(Paths.get(path), StandardCharsets.UTF_8);
-            } catch (java.nio.file.NoSuchFileException missing) {
-                // Older commands may point to files deleted during upgrade/cleanup; degrade gracefully.
-                LOG.info("Params payload file missing (likely purged): {}", path);
-                return null;
-            } catch (Exception ex) {
-                LOG.warn("Failed to read params payload from {}: {}", path, ex.toString());
-                return null;
-            }
-        }
-        return raw;
+        return CommandParamsStore.read(raw);
     }
 
 

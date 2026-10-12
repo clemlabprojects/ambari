@@ -33,10 +33,6 @@ import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
 
 import org.apache.ambari.view.k8s.utils.CommandUtils;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1371,19 +1367,9 @@ public class CommandPlanFactory {
             if (e instanceof CommandEntity) {
                 CommandEntity cmd = (CommandEntity) e;
                 String rawParams = cmd.getParamsJson();
-                if (rawParams != null && !rawParams.startsWith("@@file:")) {
-                    try {
-                        ViewConfigurationService cfg = new ViewConfigurationService(ctx);
-                        String base = cfg.getConfigurationDirectoryPath();
-                        Path paramsDir = Paths.get(base, "params");
-                        Files.createDirectories(paramsDir);
-                        Path filePath = paramsDir.resolve(cmd.getId() + "-params.json");
-                        Files.writeString(filePath, rawParams, StandardCharsets.UTF_8);
-                        cmd.setParamsJson("@@file:" + filePath.toString());
-                        LOG.info("Persisting params for command {} to file {}", cmd.getId(), filePath);
-                    } catch (Exception ioEx) {
-                        LOG.warn("Could not externalize paramsJson for {}: {}", cmd.getId(), ioEx.toString());
-                    }
+                if (rawParams != null && !CommandParamsStore.isFileReference(rawParams)) {
+                    // Encrypted, owner-only, without the form's secrets no step reads (see CommandParamsStore).
+                    cmd.setParamsJson(CommandParamsStore.persist(ctx, cmd.getId(), rawParams));
                 }
                 dataStore.store(cmd);
             } else {

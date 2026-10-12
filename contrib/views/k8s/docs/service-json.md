@@ -61,6 +61,9 @@ Other field properties:
 - `required`: Boolean validation.
 - `defaultValue`: Initial value.
 - `excludeFromValues`: If true, the field value is **not** sent to Helm; use for helper/lookup fields.
+- `sensitive`: For a text field that holds a secret without being typed `password` (an S3 access key, free-text
+  properties that may carry a connection password). Like a `password` or `content` field (a pasted file such as a TLS
+  private key), its value is never logged and is not kept with the deploy's operation once it is planned.
 - `seedFromValue`: For an `excludeFromValues` field whose effect is a chart value (a switch or an input that bindings copy into the values): the values path holding it, e.g. `"ranger.tagSync.enabled"`. On an upgrade the wizard fills the field from the deployed release's value at that path instead of the field's default, and the auto-enable defaults leave it alone, also when the release has no value there (it then runs the chart default), so an unchanged upgrade re-sends what runs.
 - `seedUnlessEquals`: With `seedFromValue`, a `${path}` template of the value the chart gets when the field is blank (e.g. `"https://${ingress.host}/api"`). A deployed value equal to it is not copied, so the field stays blank and the derived value keeps following its inputs.
 - `seedFromValues`: Value paths an upgrade fills the field from when it is blank, first non-blank wins. For an

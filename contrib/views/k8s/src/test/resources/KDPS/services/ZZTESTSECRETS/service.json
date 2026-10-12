@@ -1,0 +1,29 @@
+{
+  "label": "ZZ Test Secrets (test only, NOT in catalog.json)",
+  "chart": "example/zz-test-secrets",
+  "version": "0.0.1",
+  "oidc": [
+    {
+      "key": "app",
+      "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+      "secretNameTemplate": "{{releaseName}}-oidc-client",
+      "redirectUriTemplate": "https://zz.example.org/oauth",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "enabled": true
+    }
+  ],
+  "form": [
+    { "name": "app.secretKey", "label": "Secret key", "type": "password" },
+    { "name": "ingress.host", "label": "Host", "type": "string" },
+    { "name": "ingress.tlsUpload.key", "label": "Private key", "type": "content", "excludeFromValues": true },
+    {
+      "name": "storage",
+      "label": "Object storage",
+      "type": "group",
+      "fields": [
+        { "name": "storage.accessKey", "label": "Access key", "type": "string", "sensitive": true, "excludeFromValues": true }
+      ]
+    }
+  ]
+}

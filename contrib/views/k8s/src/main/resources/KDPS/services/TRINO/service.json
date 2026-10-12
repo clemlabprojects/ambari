@@ -2912,6 +2912,7 @@
           "name": "icebergCatalog.clientSecret",
           "label": "Polaris client secret",
           "type": "password",
+          "sensitive": true,
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
           "help": "OAuth2 client secret of the principal above."
@@ -2953,6 +2954,7 @@
               "name": "icebergCatalog.s3AccessKey",
               "label": "S3 access key",
               "type": "string",
+              "sensitive": true,
               "excludeFromValues": true,
               "help": "Static S3 access key. Stored in a chart-managed Kubernetes Secret and referenced as ${ENV:ICEBERG_S3_ACCESS_KEY}."
             },
@@ -2960,6 +2962,7 @@
               "name": "icebergCatalog.s3SecretKey",
               "label": "S3 secret key",
               "type": "password",
+              "sensitive": true,
               "excludeFromValues": true,
               "help": "Secret key matching the access key above."
             }
@@ -2998,6 +3001,7 @@
           "name": "customCatalogs.text",
           "label": "Additional Trino catalogs",
           "type": "textarea",
+          "sensitive": true,
           "rows": 12,
           "excludeFromValues": true,
           "defaultValue": "",

@@ -21,7 +21,7 @@ package org.apache.ambari.view.k8s.utils;
 import com.google.gson.*;
 import org.apache.ambari.view.URLStreamProvider;
 import org.apache.ambari.view.ViewContext;
-import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -93,10 +93,6 @@ public class AmbariActionClient {
 
     private static final Logger LOG = LoggerFactory.getLogger(AmbariActionClient.class);
     private static final Gson GSON = new Gson();
-    private static final EncryptionService HEADER_ENCRYPTION = new EncryptionService();
-    private static final String PERSISTED_HEADERS_FORMAT_KEY = "_format";
-    private static final String PERSISTED_HEADERS_FORMAT_ENCRYPTED = "encrypted-v1";
-    private static final String PERSISTED_HEADERS_PAYLOAD_KEY = "payload";
     public record AdhocKeytabPayloadMetadata(String payloadRef, String payloadSha256, Integer kvno, Boolean created) {}
 
     public AmbariActionClient(ViewContext ctx, String ambariApiBase, String clusterName, Map<String,String> defaultHeaders) {
@@ -737,16 +733,12 @@ public class AmbariActionClient {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> decodePersistedHeaders(Map<String, Object> persisted) {
-        Object format = persisted.get(PERSISTED_HEADERS_FORMAT_KEY);
-        Object payload = persisted.get(PERSISTED_HEADERS_PAYLOAD_KEY);
-        if (!PERSISTED_HEADERS_FORMAT_ENCRYPTED.equals(format) || !(payload instanceof String payloadString) || payloadString.isBlank()) {
+        if (!EncryptedEnvelope.isEnvelope(persisted) || ((String) persisted.get(EncryptedEnvelope.PAYLOAD_KEY)).isBlank()) {
             return persisted;
         }
 
         try {
-            byte[] encrypted = Base64.getDecoder().decode(payloadString);
-            String decrypted = new String(HEADER_ENCRYPTION.decrypt(encrypted), StandardCharsets.UTF_8);
-            return GSON.fromJson(decrypted, Map.class);
+            return GSON.fromJson(EncryptedEnvelope.open(persisted), Map.class);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to decode persisted Ambari auth headers", e);
         }
@@ -1048,14 +1040,7 @@ public class AmbariActionClient {
             return Map.of();
         }
 
-        String payloadJson = GSON.toJson(out);
-        String encryptedPayload = Base64.getEncoder().encodeToString(
-                HEADER_ENCRYPTION.encrypt(payloadJson.getBytes(StandardCharsets.UTF_8))
-        );
-
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put(PERSISTED_HEADERS_FORMAT_KEY, PERSISTED_HEADERS_FORMAT_ENCRYPTED);
-        envelope.put(PERSISTED_HEADERS_PAYLOAD_KEY, encryptedPayload);
+        Map<String, Object> envelope = EncryptedEnvelope.seal(GSON.toJson(out));
 
         try {
             LoggerFactory.getLogger(CommandService.class)

@@ -52,7 +52,31 @@ limitations under the License.
 
 ## Logging/Threading
 - CommandService uses scheduled timer + worker pool; DataStore access wrapped; no shared mutable state outside injected components.
-- Logs avoid secrets; include IDs (commandId/release/namespace) on operations.
+- Logs avoid secrets; include IDs (commandId/release/namespace) on operations. A planned deploy is logged at INFO as a
+  summary (operation id, release, namespace, chart, version, mode, parameter names); its parameters go to DEBUG only,
+  through `HelmSetValues.redactJson`, which hides the wizard's whole form (`formValues`), PEM private keys and values
+  under secret keys (password, secret, token, secretKey, accessKey, privateKey, sshKey, apiKey, credentials, keytab,
+  `key`).
+
+## Operation files (secrets at rest)
+- The parameters of an operation and of each step are kept in `<working dir>/params/<command>-params.json`, and the
+  chart values of a deploy or upgrade in `<working dir>/cache/values-*.json`. Both are encrypted with Ambari's master
+  key (the `encrypted-v1` envelope also used for the Ambari session of an operation), files `0600` in directories
+  `0700` whatever the umask. Without a persisted master key Ambari's default passphrase is used, so the permissions
+  are then the only protection.
+- The wizard's form is kept without its secrets that no step reads: the `password`, `content` and `sensitive` fields
+  of the service definition (`SensitiveFields`), and any PEM private key. A GitOps deploy keeps the password fields,
+  which its commit looks for to keep their copies out of Git. Secrets a step needs that live in an encrypted store are
+  read there when the step runs: the Ranger admin password of an external platform context, the client secret of an
+  external OIDC provider (security profile).
+- The files of an operation whose steps all succeeded are deleted when it ends. Those of a failed or canceled
+  operation are kept for Resume, until it ended more than 30 days ago or 50 more recent operations ended that way
+  (Ambari properties `k8s.view.operations.retention.days` and `k8s.view.operations.retention.count`); it can then no
+  longer be resumed. When the view starts, these rules are applied to every operation, files no operation refers to
+  are deleted after an hour, and, once, the files an earlier version wrote in clear are encrypted and made owner-only.
+- On a system that ran an earlier version, the logs and these files may hold the Superset `SECRET_KEY`, uploaded
+  ingress TLS keys, static S3 keys and the security profile's passwords: rotate them, and purge old
+  `ambari-server.log` files and the log indices they were forwarded to.
 
 ## Caches
 - HelmResource releases: in-memory 10s TTL.

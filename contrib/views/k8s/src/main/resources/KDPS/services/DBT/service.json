@@ -94,6 +94,7 @@
           "name": "trino.auth.password",
           "label": "Password",
           "type": "password",
+          "sensitive": true,
           "condition": {
             "field": "trino.auth.method",
             "value": "ldap"
@@ -114,6 +115,7 @@
           "name": "trino.auth.jwtToken",
           "label": "Token",
           "type": "password",
+          "sensitive": true,
           "condition": {
             "field": "trino.auth.method",
             "value": "jwt"
