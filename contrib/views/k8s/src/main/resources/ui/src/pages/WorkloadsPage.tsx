@@ -43,6 +43,7 @@ import {
 import { useCapabilities } from '../components/ServiceInstallationModal/capabilities';
 import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
 import { useNamespace, ALL_NAMESPACES } from '../context/NamespaceContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { DownloadOutlined } from '@ant-design/icons';
 import { ReloadOutlined } from '@ant-design/icons';
 
@@ -55,6 +56,9 @@ const { Option } = Select;
 const WorkloadsPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  // Logs, descriptions, restarts and deletes need the operator role; read-only users keep the events.
+  const { permissions } = usePermissions();
+  const canWrite = !!permissions?.canWrite;
   const [namespaces, setNamespaces] = useState<KubeNamespace[]>([]);
   const [namespace, setNamespace] = useState<string>();
   const [pods, setPods] = useState<KubePod[]>([]);
@@ -282,15 +286,17 @@ const WorkloadsPage: React.FC = () => {
 
   // Reusable pod action menu to shrink column width
   const podActionItems = useMemo(
-    () => (row: KubePod): MenuProps['items'] => [
+    () => (row: KubePod): MenuProps['items'] => (canWrite ? [
       { key: 'logs', label: 'Logs', onClick: () => openLogs(row, row.containers?.[0]?.name) },
       { key: 'describe', label: 'Describe', onClick: () => showDescribe('pod', row.name) },
       { key: 'events', label: 'Events', onClick: () => showPodEvents(row.name) },
       { type: 'divider' as const },
       { key: 'restart', label: <span style={{ color: '#d46b08' }}>Restart</span>, onClick: () => onRestartPod(row.name) },
       { key: 'delete', label: <span style={{ color: '#a8071a' }}>Delete</span>, onClick: () => onDeletePod(row.name) }
-    ],
-    [labelSelector, namespace]
+    ] : [
+      { key: 'events', label: 'Events', onClick: () => showPodEvents(row.name) },
+    ]),
+    [labelSelector, namespace, canWrite]
   );
 
   // Columns for the pods table (lightweight status similar to OpenShift pod list)
@@ -318,11 +324,11 @@ const WorkloadsPage: React.FC = () => {
     { title: 'Labels', dataIndex: 'labels', render: (lbls: Record<string,string>) => lbls ? Object.entries(lbls).map(([k,v]) => <Tag key={k}>{k}={v}</Tag>) : '—' },
     {
       title: 'Actions',
-      render: (_: any, row: KubeService) => (
+      render: (_: any, row: KubeService) => (canWrite ? (
         <Space size="small">
           <Button size="small" onClick={() => showDescribe('service', row.name)}>Describe</Button>
         </Space>
-      )
+      ) : null)
     }
   ];
 

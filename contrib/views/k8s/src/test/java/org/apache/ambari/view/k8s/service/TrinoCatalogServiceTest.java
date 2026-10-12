@@ -94,6 +94,51 @@ class TrinoCatalogServiceTest {
     }
 
     @Test
+    void readOnlyUsersSeeTheSettingsButNotTheCredentials() {
+        String text = "connector.name=postgresql\n"
+                + "connection-url=jdbc:postgresql://db:5432/x\n"
+                + "connection-user=app\n"
+                + "connection-password=s3cret\n"
+                + "hive.s3.aws-secret-key = AbCd/123\n"
+                + "iceberg.rest-catalog.oauth2.credential: client:pa55\n"
+                + "kafka.token s3cret-token\n"
+                + "# connection-password=old-s3cret\n"
+                + "case-insensitive-name-matching.PASSWORD=x";
+
+        assertEquals("connector.name=postgresql\n"
+                        + "connection-url=jdbc:postgresql://db:5432/x\n"
+                        + "connection-user=app\n"
+                        + "connection-password=********\n"
+                        + "hive.s3.aws-secret-key=********\n"
+                        + "iceberg.rest-catalog.oauth2.credential=********\n"
+                        + "kafka.token=********\n"
+                        + "# connection-password=********\n"
+                        + "case-insensitive-name-matching.PASSWORD=********",
+                TrinoCatalogService.withoutSecrets(text));
+    }
+
+    @Test
+    void aValueWrittenOverSeveralLinesIsMaskedWhole() {
+        assertEquals("connection-password=********\nconnection-user=app",
+                TrinoCatalogService.withoutSecrets("connection-password=part1\\\n  part2\\\n  part3\nconnection-user=app"));
+        // An escaped backslash ends the value.
+        assertEquals("connection-password=********\nconnection-user=app",
+                TrinoCatalogService.withoutSecrets("connection-password=a\\\\\nconnection-user=app"));
+    }
+
+    @Test
+    void maskingKeepsWhatHoldsNoCredential() {
+        assertEquals(PG.trim(), TrinoCatalogService.withoutSecrets(PG.trim()));
+        assertEquals("connection-password=\n# a comment\n\nconnector.name=memory",
+                TrinoCatalogService.withoutSecrets("connection-password=\n# a comment\n\nconnector.name=memory"));
+        assertEquals("connection-password=********\nconnection-user=app\r",
+                TrinoCatalogService.withoutSecrets("connection-password=s3cret\r\nconnection-user=app\r"),
+                "a Windows line end does not hide the line from the mask");
+        assertEquals(null, TrinoCatalogService.withoutSecrets(null));
+        assertEquals("", TrinoCatalogService.withoutSecrets(""));
+    }
+
+    @Test
     void wizardValueCoercesToIdList() {
         assertEquals(List.of("a", "b"), CommandService.asStringList(Arrays.asList("a", " b ", "", null)));
         assertEquals(List.of("a", "b"), CommandService.asStringList("[\"a\",\"b\"]"));

@@ -1,8 +1,8 @@
 // ui/src/api/client.ts
 import { getMockClusterStats, getMockComponentStatuses, getMockClusterEvents, getMockNodes, getMockHelmReleases, getChartsJSON, getMockHelmRepos, getMockCommandStatus, getMockCommands } from './mock';
-import { getMockSecurityConfig } from './mock';
+import { getMockSecurityConfig, getMockPermissions } from './mock';
 import type {ClusterService} from '../types/ServiceTypes';
-import type {HelmRepo} from '../types';
+import type {HelmRepo, UserPermissions} from '../types';
 import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
 // Dev-mode flag: Vite statically replaces process.env.NODE_ENV at build time, and jest provides it at
 // run time — unlike import.meta.env, which is a syntax error under CommonJS test transforms.
@@ -83,6 +83,22 @@ export const pingSession = async (): Promise<void> => {
   } catch {
     /* transient network error — not an auth failure, ignore */
   }
+};
+
+/**
+ * The signed-in user's KDPS role and what it allows (GET /users/me/permissions). The development server has no
+ * backend, so it gets the admin mock there.
+ */
+export const getCurrentUserPermissions = async (): Promise<UserPermissions> => {
+  if (IS_DEV) {
+    return getMockPermissions('ADMIN');
+  }
+  const response = await fetch(`${API_BASE_URL}/users/me/permissions`, {
+    credentials: 'include',
+    cache: 'no-store',
+    headers: { 'X-Requested-By': 'ambari' },
+  });
+  return handleApiResponse(response);
 };
 
 // Backend uses single-L "CANCELED"; keep backward compatibility with old "CANCELLED"

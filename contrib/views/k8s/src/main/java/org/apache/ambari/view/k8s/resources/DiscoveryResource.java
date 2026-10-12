@@ -19,6 +19,7 @@
 package org.apache.ambari.view.k8s.resources;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
@@ -44,10 +45,20 @@ public class DiscoveryResource {
     private final ViewContext viewContext;
 
     private final KubernetesService kubernetesService;
+    /** Headers of the request this resource serves: the role check asks Ambari with the caller's credentials. */
+    private final HttpHeaders callerHeaders;
 
-    public DiscoveryResource(ViewContext viewContext, KubernetesService kubernetesService) {
+    /**
+     * Creates the resource for one request.
+     *
+     * @param viewContext       active Ambari view context
+     * @param kubernetesService Kubernetes access of the view
+     * @param callerHeaders     headers of the request; {@code null} when unknown
+     */
+    public DiscoveryResource(ViewContext viewContext, KubernetesService kubernetesService, HttpHeaders callerHeaders) {
         this.viewContext = viewContext;
         this.kubernetesService = kubernetesService;
+        this.callerHeaders = callerHeaders;
     }
 
     @GET
@@ -414,6 +425,9 @@ public class DiscoveryResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response discoverK8sSecrets(@QueryParam("label") String label,
                                        @QueryParam("namespace") String namespace) {
+        // Secret names (never their content) for the deploy wizard's Secret pickers: operators need them to
+        // deploy, read-only users do not.
+        new AuthHelper(viewContext, callerHeaders).checkWritePermission();
         try {
             List<Map<String, String>> secrets;
             if (namespace != null && !namespace.isBlank()) {

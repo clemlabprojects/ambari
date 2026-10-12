@@ -409,6 +409,20 @@ limitations under the License.
                 </configuration>
             </plugin>
 
+            <!-- Unit tests -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Ambari serves views with JAX-RS 2 (Jersey 2). hadoop-common brings the JAX-RS 1 API (Jersey 1),
+                         which would shadow it in tests: a 403 ForbiddenException could not even be built. -->
+                    <classpathDependencyExcludes>
+                        <classpathDependencyExclude>com.sun.jersey:jersey-core</classpathDependencyExclude>
+                        <classpathDependencyExclude>javax.ws.rs:jsr311-api</classpathDependencyExclude>
+                    </classpathDependencyExcludes>
+                </configuration>
+            </plugin>
+
             <!-- Clean -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

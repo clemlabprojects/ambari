@@ -77,14 +77,20 @@ limitations under the License.
     </parameter>
     <parameter>
         <name>view.admin.users</name>
-        <description>Comma-separated list of Ambari usernames allowed to configure the view (upload kubeconfig, manage repos). When left empty, any user with access to the view instance may configure it.</description>
+        <description>Comma-separated list of Ambari usernames with the KDPS admin role: they configure the view (kubeconfig, platform contexts, Helm repositories, security profiles, truststores, managed configurations) and can also do everything an operator does. When left empty, only Ambari administrators have the admin role.</description>
         <label>View Admin Users</label>
         <required>false</required>
     </parameter>
     <parameter>
         <name>view.operator.users</name>
-        <description>Comma-separated list of Ambari usernames with operator (write) access — may deploy/destroy releases but cannot change view configuration.</description>
+        <description>Comma-separated list of Ambari usernames with the KDPS operator role: they deploy, upgrade, roll back and uninstall releases and restart or delete their pods, but cannot change the view configuration. Every other user granted access to the view instance is read-only. The Ambari account of the view's own keytab webhook (webhook-user by default) does not need to be listed: it can still request pod keytabs in the WEBHOOK Kerberos injection mode.</description>
         <label>View Operator Users</label>
+        <required>false</required>
+    </parameter>
+    <parameter>
+        <name>k8s.view.allowed.namespaces</name>
+        <description>Optional comma-separated list of the Kubernetes namespaces where the view may write Opaque Secrets (keytabs, generated credentials, managed configurations) and read or delete managed configurations. When left empty, every namespace the view's Kubernetes account can reach is allowed.</description>
+        <label>Allowed Namespaces</label>
         <required>false</required>
     </parameter>
     <!--
@@ -147,13 +153,11 @@ limitations under the License.
         <description>Instance par défaut pour la vue Kubernetes</description>
         <visible>true</visible>
         <public>false</public>
-        <roles>
-            <role>CLUSTER.ADMINISTRATOR</role>
-            <role>CLUSTER.OPERATOR</role>
-            <role>SERVICE.ADMINISTRATOR</role>
-            <role>SERVICE.OPERATOR</role>
-            <role>CLUSTER.USER</role>
-        </roles>
+        <!--
+          No <roles> here: Ambari applies view roles only to an <auto-instance>, so a list on this instance
+          would be ignored. An Ambari administrator grants the instance to users, and the KDPS role of each
+          user comes from view.admin.users and view.operator.users.
+        -->
     </instance>
     
 </view>

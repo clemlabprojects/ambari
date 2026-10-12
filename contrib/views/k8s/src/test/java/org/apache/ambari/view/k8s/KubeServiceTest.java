@@ -74,7 +74,7 @@ class KubeServiceTest {
     f.setAccessible(true);
     f.set(api, ctx);
 
-    Response r = api.getCurrentUserPermissions();
+    Response r = api.getCurrentUserPermissions(null);
     assertEquals(200, r.getStatus());
     assertNotNull(r.getEntity());
   }
@@ -180,7 +180,7 @@ class KubeServiceTest {
     when(k8s.listAvailableContexts()).thenReturn(java.util.List.of(Map.of("name", "other-cluster")));
     reconnects();
 
-    Response r = api.selectKubeconfigContext(Map.of("context", "other-cluster"));
+    Response r = api.selectKubeconfigContext(null, Map.of("context", "other-cluster"));
 
     assertEquals(200, r.getStatus());
     verify(ctx).putInstanceData(anyString(), eq("other-cluster"));
@@ -193,7 +193,7 @@ class KubeServiceTest {
     KubeService api = apiAsViewAdmin(workDir);
     when(k8s.listAvailableContexts()).thenReturn(java.util.List.of(Map.of("name", "other-cluster")));
 
-    Response r = api.selectKubeconfigContext(Map.of("context", "missing"));
+    Response r = api.selectKubeconfigContext(null, Map.of("context", "missing"));
     assertEquals(400, r.getStatus());
     assertEquals("Context 'missing' is not in the uploaded kubeconfig.", error(r));
     verify(ctx, never()).putInstanceData(anyString(), anyString());
@@ -207,7 +207,7 @@ class KubeServiceTest {
     when(k8s.forceReloadClient()).thenReturn(true);
     when(k8s.pingCluster()).thenReturn(org.apache.ambari.view.k8s.model.ConnectionHealth.unreachable("connection refused"));
 
-    Response r = api.selectKubeconfigContext(Map.of("context", "other-cluster"));
+    Response r = api.selectKubeconfigContext(null, Map.of("context", "other-cluster"));
     assertEquals(503, r.getStatus());
     assertTrue(error(r).startsWith("Context 'other-cluster' was saved, but KDPS could not connect with it"), error(r));
   }
@@ -252,7 +252,7 @@ class KubeServiceTest {
     KubeService api = apiAsViewAdmin(workDir);
     when(k8s.listAvailableContexts()).thenThrow(new IllegalStateException("bad yaml"));
 
-    Response r = api.selectKubeconfigContext(Map.of("context", "x"));
+    Response r = api.selectKubeconfigContext(null, Map.of("context", "x"));
     assertEquals(400, r.getStatus());
     assertEquals("The saved kubeconfig cannot be read; upload it again.", error(r));
   }

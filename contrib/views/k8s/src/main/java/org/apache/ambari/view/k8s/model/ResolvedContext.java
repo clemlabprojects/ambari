@@ -210,4 +210,24 @@ public class ResolvedContext {
 
     public java.util.List<String> getSecretFieldsSet() { return secretFieldsSet; }
     public void setSecretFieldsSet(java.util.List<String> secretFieldsSet) { this.secretFieldsSet = secretFieldsSet; }
+
+    /** What a secret shows over REST: that it is set, never its value. */
+    public static final String MASKED_SECRET = "********";
+
+    /**
+     * Replaces every decrypted credential with {@link #MASKED_SECRET} ({@code null} when unset), so the context can be
+     * returned over REST. Only the deploy steps need the values, and they resolve the context themselves.
+     *
+     * @return this context
+     */
+    public ResolvedContext maskSecrets() {
+        rangerAdminPassword = mask(rangerAdminPassword);
+        atlasFederationPassword = mask(atlasFederationPassword);
+        oidcAdminClientSecret = mask(oidcAdminClientSecret);
+        return this;
+    }
+
+    private static String mask(String secret) {
+        return secret == null ? null : MASKED_SECRET;
+    }
 }

@@ -45,6 +45,8 @@ import { useClusterStatus } from '../../context/ClusterStatusContext';
 import { useThemeMode } from '../../context/ThemeModeContext';
 import { useReduceMotion } from '../../context/ReduceMotionContext';
 import BackgroundOperationsModal from '../common/BackgroundOperationsModal';
+import { CONFIGURE_ONLY_ROUTES } from '../../utils/permissions';
+import { usePermissions } from '../../hooks/usePermissions';
 import NamespaceSelector from './NamespaceSelector';
 import { listCommands, getClusterCapabilities, pingSession } from '../../api/client';
 import './AppLayout.css';
@@ -97,6 +99,8 @@ const ROUTE_SECTIONS: Record<string, string> = {
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const { status, error, fetchData, checkLiveness, connectionMessage } = useClusterStatus();
+  const { permissions } = usePermissions();
+  const canConfigure = !!permissions?.canConfigure;
   const { mode, toggle: toggleTheme } = useThemeMode();
   const { reduceMotion, toggle: toggleReduceMotion } = useReduceMotion();
 
@@ -204,7 +208,12 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         { key: '/configuration', icon: <SettingOutlined />, label: <NavLink to="/configuration">Cluster Settings</NavLink> },
       ],
     },
-  ]), []);
+  ]
+    // Configuration pages are hidden from roles that cannot use them (their routes refuse them too).
+    .map((item: any) => (item.children && !canConfigure
+      ? { ...item, children: item.children.filter((child: any) => !CONFIGURE_ONLY_ROUTES.includes(child.key)) }
+      : item))
+  ), [canConfigure]);
 
   const breadcrumbItems = React.useMemo(() => {
     const currentPath = location.pathname;

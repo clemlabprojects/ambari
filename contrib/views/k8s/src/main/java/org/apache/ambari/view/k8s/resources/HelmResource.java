@@ -92,14 +92,20 @@ public class HelmResource {
     private static final long RELEASE_CACHE_TTL_MILLIS = 10_000; // 10s
 
 
-    public HelmResource(ViewContext context) {
+    /**
+     * Creates the resource for one request.
+     *
+     * @param context       active Ambari view context
+     * @param callerHeaders headers of the request; the role check asks Ambari with the caller's credentials
+     */
+    public HelmResource(ViewContext context, HttpHeaders callerHeaders) {
         this.viewContext = context;
         this.configService = new ViewConfigurationService(viewContext);
         this.kubernetesService = KubernetesService.get(viewContext);
         this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService, viewContext);
         this.commandService = CommandService.get(viewContext);
         this.releaseMetadataService = new ReleaseMetadataService(viewContext);
-        this.authHelper = new AuthHelper(viewContext);
+        this.authHelper = new AuthHelper(viewContext, callerHeaders);
     }
 
     /**
@@ -108,6 +114,7 @@ public class HelmResource {
     @GET
     @Path("/repos/{id}/check")
     public Response checkRepo(@PathParam("id") String id) {
+        authHelper.checkWritePermission();
         try {
             boolean ok = new HelmRepositoryService(viewContext).check(id);
             return Response.ok(Map.of("id", id, "ok", ok)).build();
@@ -123,6 +130,7 @@ public class HelmResource {
   @Path("/monitoring/install")
   public Response installMonitoring(@QueryParam("repoId") String repoId,
                                     @QueryParam("force") @DefaultValue("false") boolean force) {
+    authHelper.checkWritePermission();
     try {
       var info = KubernetesService.get(viewContext).ensureMonitoringInstalled(repoId, force);
       if (info == null) {
@@ -140,6 +148,7 @@ public class HelmResource {
     @POST
     @Path("/monitoring/reset")
     public Response resetMonitoring() {
+        authHelper.checkWritePermission();
         try {
             KubernetesService.get(viewContext).resetMonitoringCache();
             return Response.ok(Map.of("status", "reset")).build();
@@ -583,8 +592,14 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/catalogs")
     public Response listTrinoCatalogs(@PathParam("namespace") String namespace, @PathParam("release") String releaseName) {
         try {
-            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
-                    .list(namespace, releaseName, viewContext.getUsername())).build();
+            List<org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.CatalogView> catalogs =
+                    new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+                            .list(namespace, releaseName, viewContext.getUsername());
+            // The properties come from the release values, which only those who may redeploy the release can read.
+            if (!authHelper.canWrite()) {
+                org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.withoutSecrets(catalogs);
+            }
+            return Response.ok(catalogs).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
         } catch (IllegalArgumentException | IllegalStateException e) {
@@ -600,8 +615,8 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/catalogs")
     public Response createTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
                                        java.util.Map<String, Object> body) {
+        authHelper.checkWritePermission();
         try {
-            authHelper.checkWritePermission();
             String name = body == null ? null : java.util.Objects.toString(body.get("name"), null);
             String props = body == null ? null : java.util.Objects.toString(body.get("properties"), null);
             boolean persist = body == null || body.get("persist") == null || Boolean.parseBoolean(String.valueOf(body.get("persist")));
@@ -624,8 +639,8 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/catalogs/{name}")
     public Response dropTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
                                      @PathParam("name") String name, @QueryParam("forget") @DefaultValue("true") boolean forget) {
+        authHelper.checkWritePermission();
         try {
-            authHelper.checkWritePermission();
             return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
                     .drop(namespace, releaseName, name, forget, viewContext.getUsername())).build();
         } catch (SecurityException se) {
@@ -645,6 +660,7 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/catalogs/{name}/test")
     public Response testTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
                                      @PathParam("name") String name) {
+        authHelper.checkWritePermission();
         try {
             return Response.ok(java.util.Map.of("schemas", new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
                     .test(namespace, releaseName, name, viewContext.getUsername()))).build();
@@ -662,8 +678,8 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/catalogs/{name}/adopt")
     public Response adoptTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
                                       @PathParam("name") String name) {
+        authHelper.checkWritePermission();
         try {
-            authHelper.checkWritePermission();
             return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
                     .adopt(namespace, releaseName, name, viewContext.getUsername())).build();
         } catch (SecurityException se) {
@@ -1050,6 +1066,7 @@ public class HelmResource {
                                     @PathParam("release") String releaseName,
                                     @Context HttpHeaders headers,
                                     @Context UriInfo uriInfo) {
+        authHelper.checkWritePermission();
         try {
             String commandId = org.apache.ambari.view.k8s.service.CommandService.get(viewContext)
                     .submitReleaseTlsRenewal(namespace, releaseName,
@@ -1139,7 +1156,7 @@ public class HelmResource {
                           @QueryParam("timeoutSec") @DefaultValue("900") int timeoutSeconds,
                           @QueryParam("wait") @DefaultValue("true") boolean waitForCompletion,
                           @QueryParam("atomic") @DefaultValue("false") boolean atomicUpgrade) {
-
+        authHelper.checkWritePermission();
         try {
             if (kubeContext == null) {
                 kubeContext = getKubeconfigContents();
@@ -1173,6 +1190,7 @@ public class HelmResource {
     @POST
     @Path("/upgrade")
     public HelmReleaseDTO upgrade(HelmUpgradeRequest upgradeRequest) {
+        authHelper.checkWritePermission();
         if (upgradeRequest == null) {
             throw new IllegalArgumentException("Empty request");
         }
@@ -1311,6 +1329,7 @@ public class HelmResource {
                              @QueryParam("gitBranch") String gitBranch,
                              @QueryParam("polarisCleanup") String polarisCleanup,
                              @Context HttpHeaders requestHeaders) {
+        authHelper.checkWritePermission();
         K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
         String polarisCleanupNote = null;
         // Refused before anything is removed: the cleanup below (Polaris credential, release metadata) runs even
@@ -1402,6 +1421,7 @@ public class HelmResource {
     public Response rollback(@QueryParam("namespace") String namespace,
                             @QueryParam("name") String releaseName,
                             @QueryParam("revision") int revision) {
+        authHelper.checkWritePermission();
         try {
             new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
         } catch (HelmOperationRegistry.ReleaseBusyException busy) {
@@ -1507,7 +1527,8 @@ public class HelmResource {
 
 
     /**
-     * Retrieve the computed Helm values currently applied to a release.
+     * Retrieve the computed Helm values currently applied to a release. They hold every value the release was
+     * deployed with, passwords included, so only users who may redeploy the release can read them.
      *
      * @param namespace   Kubernetes namespace of the release
      * @param releaseName name of the Helm release
@@ -1518,6 +1539,7 @@ public class HelmResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response getValues(@PathParam("namespace") String namespace,
                               @PathParam("releaseName") String releaseName) {
+        authHelper.checkWritePermission();
         try {
             // Call the method we just added to KubernetesService
             Map<String, Object> values = this.kubernetesService.getHelmReleaseValues(namespace, releaseName);

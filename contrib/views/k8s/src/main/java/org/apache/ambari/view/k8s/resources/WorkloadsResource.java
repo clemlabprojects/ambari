@@ -23,7 +23,10 @@ import org.apache.ambari.view.k8s.model.kube.KubeNamespace;
 import org.apache.ambari.view.k8s.model.kube.KubePod;
 import org.apache.ambari.view.k8s.model.kube.KubeServiceDTO;
 import org.apache.ambari.view.k8s.model.kube.KubeEventDTO;
+import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
+import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,12 +37,21 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Lightweight endpoints to browse cluster workloads (namespaces, pods, services, logs).
+ *
+ * <p>Operators and admins browse every namespace the view's Kubernetes account can reach. Read-only users only
+ * see the namespaces that hold a release deployed from this view, and cannot read pod logs or descriptions, which
+ * often show environment values and mounted configuration.
  */
 @Path("/workloads")
 @Produces(MediaType.APPLICATION_JSON)
@@ -48,25 +60,96 @@ public class WorkloadsResource {
     private static final Logger LOG = LoggerFactory.getLogger(WorkloadsResource.class);
 
     private final ViewContext ctx;
+    /** Headers of the request this resource serves: the role check asks Ambari with the caller's credentials. */
+    private final HttpHeaders callerHeaders;
+    private AuthHelper authHelper;
 
-    public WorkloadsResource(ViewContext ctx) {
+    /**
+     * Creates the resource for one request.
+     *
+     * @param ctx           active Ambari view context
+     * @param callerHeaders headers of the request; {@code null} when unknown
+     */
+    public WorkloadsResource(ViewContext ctx, HttpHeaders callerHeaders) {
         this.ctx = ctx;
+        this.callerHeaders = callerHeaders;
+    }
+
+    /** The caller's KDPS role for this request, looked up at most once. */
+    private AuthHelper auth() {
+        if (authHelper == null) {
+            authHelper = new AuthHelper(ctx, callerHeaders);
+        }
+        return authHelper;
     }
 
     private KubernetesService kube() {
         return KubernetesService.get(ctx);
     }
 
+    /**
+     * The namespaces the current user may browse, or {@code null} when every namespace is allowed. Read-only users
+     * get the namespaces of the releases deployed from this view.
+     */
+    private Set<String> readableNamespaces() {
+        if (auth().canWrite()) {
+            return null;
+        }
+        Set<String> namespaces = new HashSet<>();
+        for (K8sReleaseEntity release : new ReleaseMetadataService(ctx).findAll()) {
+            if (release != null && release.getNamespace() != null) {
+                namespaces.add(release.getNamespace());
+            }
+        }
+        return namespaces;
+    }
+
+    /** Refuses a namespace the current user may not browse. */
+    private void requireReadable(String namespace) {
+        requireReadable(namespace, readableNamespaces());
+    }
+
+    private static void requireReadable(String namespace, Set<String> readable) {
+        if (readable != null && !readable.contains(namespace)) {
+            throw AuthHelper.forbidden("Your account has read-only access to KDPS and can only browse the namespaces "
+                    + "of releases deployed from KDPS.");
+        }
+    }
+
+    /**
+     * Applies the namespace restriction to a listing: a single namespace must be readable, and an all-namespaces
+     * listing only keeps the readable rows.
+     */
+    private <T> List<T> readableOnly(String namespace, Function<String, List<T>> list, Function<T, String> namespaceOf) {
+        Set<String> readable = readableNamespaces();
+        if (readable == null) {
+            return list.apply(namespace);
+        }
+        if (namespace != null) {
+            requireReadable(namespace, readable);
+            return list.apply(namespace);
+        }
+        return list.apply(null).stream()
+                .filter(item -> readable.contains(namespaceOf.apply(item)))
+                .collect(Collectors.toList());
+    }
+
     @GET
     @Path("/namespaces")
     public List<KubeNamespace> listNamespaces() {
-        return kube().listNamespaces();
+        Set<String> readable = readableNamespaces();
+        List<KubeNamespace> namespaces = kube().listNamespaces();
+        if (readable == null) {
+            return namespaces;
+        }
+        return namespaces.stream().filter(n -> readable.contains(n.name)).collect(Collectors.toList());
     }
 
     @GET
     @Path("/namespaces/{namespace}/pods")
     public List<KubePod> listPods(@PathParam("namespace") String namespace,
                                   @QueryParam("labelSelector") String labelSelector) {
+        requireReadable(namespace);
         return kube().listPods(namespace, labelSelector);
     }
 
@@ -74,6 +157,7 @@ public class WorkloadsResource {
     @Path("/namespaces/{namespace}/services")
     public List<KubeServiceDTO> listServices(@PathParam("namespace") String namespace,
                                              @QueryParam("labelSelector") String labelSelector) {
+        requireReadable(namespace);
         return kube().listServices(namespace, labelSelector);
     }
 
@@ -81,6 +165,7 @@ public class WorkloadsResource {
     @Path("/namespaces/{namespace}/events")
     public List<KubeEventDTO> listEvents(@PathParam("namespace") String namespace,
                                          @QueryParam("labelSelector") String labelSelector) {
+        requireReadable(namespace);
         return kube().listEvents(namespace, labelSelector);
     }
 
@@ -88,6 +173,7 @@ public class WorkloadsResource {
     @Path("/namespaces/{namespace}/pods/{pod}/events")
     public List<KubeEventDTO> listPodEvents(@PathParam("namespace") String namespace,
                                             @PathParam("pod") String pod) {
+        requireReadable(namespace);
         return kube().listPodEvents(namespace, pod);
     }
 
@@ -95,6 +181,7 @@ public class WorkloadsResource {
     @Path("/namespaces/{namespace}/pods/{pod}/describe")
     public String describePod(@PathParam("namespace") String namespace,
                               @PathParam("pod") String pod) {
+        auth().checkWritePermission();
         return kube().describePod(namespace, pod);
     }
 
@@ -102,6 +189,7 @@ public class WorkloadsResource {
     @Path("/namespaces/{namespace}/services/{service}/describe")
     public String describeService(@PathParam("namespace") String namespace,
                                   @PathParam("service") String service) {
+        auth().checkWritePermission();
         return kube().describeService(namespace, service);
     }
 
@@ -109,6 +197,7 @@ public class WorkloadsResource {
     @Path("/namespaces/{namespace}/pods/{pod}/restart")
     public void restartPod(@PathParam("namespace") String namespace,
                            @PathParam("pod") String pod) {
+        auth().checkWritePermission();
         kube().restartPod(namespace, pod);
     }
 
@@ -117,6 +206,7 @@ public class WorkloadsResource {
     public void deletePod(@PathParam("namespace") String namespace,
                           @PathParam("pod") String pod,
                           @QueryParam("graceSeconds") Integer graceSeconds) {
+        auth().checkWritePermission();
         kube().deletePod(namespace, pod, graceSeconds);
     }
 
@@ -126,6 +216,7 @@ public class WorkloadsResource {
                             @PathParam("pod") String pod,
                             @QueryParam("container") String container,
                             @QueryParam("tailLines") Integer tailLines) {
+        auth().checkWritePermission();
         try {
             return kube().tailPodLog(namespace, pod, container, tailLines == null ? 200 : tailLines);
         } catch (Exception ex) {
@@ -158,7 +249,7 @@ public class WorkloadsResource {
     @GET
     @Path("/deployments")
     public List<Map<String, Object>> listDeployments(@QueryParam("namespace") String namespace) {
-        return kube().listDeployments(unscope(namespace));
+        return readableOnly(unscope(namespace), ns -> kube().listDeployments(ns), WorkloadsResource::namespaceOf);
     }
 
     /**
@@ -168,7 +259,7 @@ public class WorkloadsResource {
     @GET
     @Path("/configmaps")
     public List<Map<String, Object>> listConfigMaps(@QueryParam("namespace") String namespace) {
-        return kube().listConfigMaps(unscope(namespace));
+        return readableOnly(unscope(namespace), ns -> kube().listConfigMaps(ns), WorkloadsResource::namespaceOf);
     }
 
     /**
@@ -178,7 +269,7 @@ public class WorkloadsResource {
     @GET
     @Path("/ingresses")
     public List<Map<String, Object>> listIngresses(@QueryParam("namespace") String namespace) {
-        return kube().listIngresses(unscope(namespace));
+        return readableOnly(unscope(namespace), ns -> kube().listIngresses(ns), WorkloadsResource::namespaceOf);
     }
 
     /**
@@ -189,7 +280,12 @@ public class WorkloadsResource {
     @GET
     @Path("/routes")
     public List<Map<String, Object>> listRoutes(@QueryParam("namespace") String namespace) {
-        return kube().listRoutes(unscope(namespace));
+        return readableOnly(unscope(namespace), ns -> kube().listRoutes(ns), WorkloadsResource::namespaceOf);
+    }
+
+    private static String namespaceOf(Map<String, Object> row) {
+        Object namespace = row == null ? null : row.get("namespace");
+        return namespace == null ? null : String.valueOf(namespace);
     }
 
     /**

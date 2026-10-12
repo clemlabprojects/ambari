@@ -650,12 +650,27 @@ public class KubernetesService {
      * @return list of {@link ClusterEvent} objects
      */
     public List<ClusterEvent> getClusterEvents() {
+        return getClusterEvents(null);
+    }
+
+    /**
+     * Returns the 20 most-recent events of the given namespaces, sorted newest first.
+     *
+     * @param onlyNamespaces the namespaces to keep, or {@code null} for every namespace
+     * @return list of {@link ClusterEvent} objects
+     */
+    public List<ClusterEvent> getClusterEvents(Set<String> onlyNamespaces) {
         checkConfiguration();
         LOG.info("Fetching recent events from Kubernetes API.");
 
         List<Event> eventItems = namespaceScope.listAcrossNamespaces(NamespaceScope.Resource.EVENTS,
                 () -> client.v1().events().inAnyNamespace().list().getItems(),
                 ns -> client.v1().events().inNamespace(ns).list().getItems());
+        if (onlyNamespaces != null) {
+            eventItems = eventItems.stream()
+                .filter(e -> e.getMetadata() != null && onlyNamespaces.contains(e.getMetadata().getNamespace()))
+                .collect(Collectors.toList());
+        }
 
         Comparator<Event> byTimeDescending = Comparator.comparing(
             this::eventInstantSafely,
@@ -6205,11 +6220,97 @@ public class KubernetesService {
         return name != null && name.startsWith("sh.helm.release.v1");
     }
 
+    /** Label that marks a Secret as a configuration file managed from the Config Profiles page. */
+    public static final String MANAGED_CONFIG_LABEL = "ambari.clemlab.com/managed-config";
+
+    /**
+     * The configuration Secret {@code namespace/name}, provided the view manages it as a configuration file
+     * (label {@code ambari.clemlab.com/managed-config=true}). Any other Secret is reported as missing, so the
+     * configuration endpoints cannot be used to read or delete keytabs, passwords, TLS keys or Helm state, and do
+     * not even confirm that such a Secret exists.
+     *
+     * @param namespace Kubernetes namespace of the Secret
+     * @param name      Secret name
+     * @return the managed configuration Secret
+     * @throws NoSuchElementException when there is no such Secret or it is not a managed configuration
+     * @throws SecurityException      when the namespace is outside {@code k8s.view.allowed.namespaces}
+     */
+    public Secret requireManagedConfig(String namespace, String name) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(name, "name");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        Secret secret = client.secrets().inNamespace(namespace).withName(name).get();
+        if (secret == null || !isManagedConfig(secret)) {
+            throw new NoSuchElementException("No managed configuration named '" + name + "' in namespace '" + namespace + "'.");
+        }
+        return secret;
+    }
+
+    /**
+     * Refuses to write a managed configuration over a Secret the view does not manage as one. Saving rewrites the
+     * whole Secret with a single key, so replacing, say, a keytab Secret would destroy it.
+     *
+     * @param namespace Kubernetes namespace of the Secret
+     * @param name      Secret name
+     * @throws ManagedConfigConflictException when a Secret of that name exists without the managed-config label
+     * @throws SecurityException              when the namespace is outside {@code k8s.view.allowed.namespaces}
+     */
+    public void requireWritableManagedConfig(String namespace, String name) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(name, "name");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        Secret existing = client.secrets().inNamespace(namespace).withName(name).get();
+        if (existing != null && !isManagedConfig(existing)) {
+            throw new ManagedConfigConflictException("A Secret named '" + name + "' already exists in namespace '"
+                    + namespace + "' and is not a managed configuration. Choose another name.");
+        }
+    }
+
+    /** A managed configuration would replace a Secret the view does not manage as one. */
+    public static class ManagedConfigConflictException extends IllegalStateException {
+        public ManagedConfigConflictException(String message) {
+            super(message);
+        }
+    }
+
+    private static boolean isManagedConfig(Secret secret) {
+        Map<String, String> labels = secret.getMetadata() == null ? null : secret.getMetadata().getLabels();
+        return labels != null && "true".equals(labels.get(MANAGED_CONFIG_LABEL));
+    }
+
     /**
      * Reads the content of a managed configuration secret to display in the UI editor.
+     *
+     * @return the file content, or an empty string when the Secret has no such key
+     * @throws NoSuchElementException when there is no such Secret or it is not a managed configuration
      */
     public String getManagedConfigContent(String namespace, String name, String filename) {
-        return readOpaqueSecretKeyAsString(namespace, name, filename).orElse("");
+        Objects.requireNonNull(filename, "filename");
+        Secret secret = requireManagedConfig(namespace, name);
+        String b64 = secret.getData() == null ? null : secret.getData().get(filename);
+        if (b64 == null || b64.isBlank()) {
+            return "";
+        }
+        try {
+            return new String(Base64.getDecoder().decode(b64), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException ex) {
+            LOG.warn("Value for key '{}' in managed configuration '{}/{}' is not valid base64: {}",
+                    filename, namespace, name, ex.toString());
+            return "";
+        }
+    }
+
+    /**
+     * Deletes a managed configuration Secret; any other Secret is left alone.
+     *
+     * @throws NoSuchElementException when there is no such Secret or it is not a managed configuration
+     */
+    public void deleteManagedConfig(String namespace, String name) {
+        requireManagedConfig(namespace, name);
+        client.secrets().inNamespace(namespace).withName(name).delete();
+        LOG.info("Deleted managed configuration '{}/{}'", namespace, name);
     }
 
     /**

@@ -65,6 +65,8 @@ public class WebHookBootstrap {
     private static final String BC = "BC";
     public static final String USER_ALIAS = "ambari.k8s.webhook.user";
     public static final String PASS_ALIAS = "ambari.k8s.webhook.password";
+    /** Name of the Kerberos keytab webhook: the prefix of its {@code k8s.view.webhooks.<name>.*} settings. */
+    public static final String KEYTAB_WEBHOOK = "keytab-webhook";
 
     static {
         // BouncyCastle once per JVM
@@ -107,7 +109,7 @@ public class WebHookBootstrap {
         final String clientSec = prop(ctx, webhookName, "clientMtls.secretName",  webhookName + "-client-tls");
         final String serveSec  = prop(ctx, webhookName, "serverTls.secretName",   webhookName + "-tls");
         final String secretName = prop(ctx, webhookName, "backend.caSecretName",   "ambari-root-ca");
-        final String webhookUserName = prop(ctx, webhookName, "backend.webhookUsername",   "webhook-user");
+        final String webhookUserName = webhookUserName(ctx, webhookName);
         final String webhookUserSecret = prop(ctx, webhookName, "backend.webhookUserSecret",   "webhook-user");
 
         final int minDaysLeft = 30;
@@ -245,6 +247,18 @@ public class WebHookBootstrap {
         }
 
         LOG.info("[webhook={}] prerequisite preparation complete in {} ms", webhookName, (System.currentTimeMillis() - t0));
+    }
+
+    /**
+     * The Ambari account a webhook signs in with when it calls the view back. It is the account this bootstrap
+     * creates and writes into the webhook's credentials Secret.
+     *
+     * @param ctx         Ambari ViewContext
+     * @param webhookName logical name of the webhook, e.g. {@link #KEYTAB_WEBHOOK}
+     * @return the {@code k8s.view.webhooks.<webhookName>.backend.webhookUsername} setting, {@code webhook-user} by default
+     */
+    public static String webhookUserName(ViewContext ctx, String webhookName) {
+        return prop(ctx, webhookName, "backend.webhookUsername", "webhook-user");
     }
 
     // -------------------------------------------------------------------------

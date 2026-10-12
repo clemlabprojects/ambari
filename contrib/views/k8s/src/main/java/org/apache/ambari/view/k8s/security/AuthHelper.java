@@ -18,115 +18,292 @@
 
 package org.apache.ambari.view.k8s.security;
 
+import org.apache.ambari.view.AmbariStreamProvider;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.UserPermissions;
+import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
+import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.ws.rs.ForbiddenException;
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.MultivaluedMap;
+import javax.ws.rs.core.Response;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * Resolves the KDPS role of the current user and enforces it on the REST endpoints.
+ *
+ * <p>Three roles exist: ADMIN may change the view configuration (kubeconfig, contexts, repositories,
+ * security profiles, truststores, managed configurations) and do everything an OPERATOR does;
+ * OPERATOR may deploy, upgrade, roll back and uninstall releases and act on their pods; VIEWER only
+ * reads. The roles come from the {@code view.admin.users} and {@code view.operator.users} view
+ * properties. When {@code view.admin.users} is empty, the Ambari administrators are the view admins,
+ * so a view instance that was never configured stays closed to every other user granted access to it.
+ * Ambari is asked with the caller's own credentials: build the helper with the request's headers.
+ * The one account outside the lists is the view's own keytab webhook, which may ask for keytabs
+ * (see {@link #checkKeytabRequestPermission()}).
+ *
+ * <p>Ambari itself only lets users that were granted the view instance reach these endpoints; the
+ * {@code <roles>} of a non-automatic view instance are ignored, so nothing here can rely on Ambari
+ * having limited access to administrators.
+ */
 public class AuthHelper {
-    private final ViewContext viewContext;
     private static final Logger LOG = LoggerFactory.getLogger(AuthHelper.class);
 
+    public static final String ADMIN_USERS_PROPERTY = "view.admin.users";
+    public static final String OPERATOR_USERS_PROPERTY = "view.operator.users";
+
+    static final String CONFIGURE_DENIED = "Your account cannot change the KDPS configuration. "
+            + "Ask an Ambari administrator to add you to the view's admin users (view.admin.users).";
+    static final String WRITE_DENIED = "Your account has read-only access to KDPS: it cannot deploy, change or "
+            + "remove releases. Ask an Ambari administrator to add you to the view's operator users "
+            + "(view.operator.users).";
+
     /**
-     * Creates an AuthHelper bound to the given view context.
+     * User names that cannot change an Ambari API path. A name may hold single spaces, as directory-synced names such
+     * as "John Smith" do; both lookups encode them.
+     */
+    private static final Pattern PLAIN_USER_NAME = Pattern.compile("[\\p{L}\\p{N}._@+\\-]+( [\\p{L}\\p{N}._@+\\-]+)*");
+
+    private final ViewContext viewContext;
+    /** Headers of the request being served, {@code null} when unknown; they carry the caller's Ambari credentials. */
+    private final MultivaluedMap<String, String> callerHeaders;
+    private final Predicate<String> ambariAdministrator;
+
+    /** Whether the current user is an Ambari administrator, looked up at most once per helper (one request). */
+    private Boolean ambariAdminCache;
+
+    /**
+     * Creates an AuthHelper bound to the given view context, for code that has no request headers at hand. Ambari is
+     * then only asked through the caller's Ambari session, which a request authenticated with a user name and
+     * password does not have yet.
      *
      * @param viewContext active Ambari view context used for username and property lookups
      */
     public AuthHelper(ViewContext viewContext) {
-        this.viewContext = viewContext;
+        this(viewContext, (HttpHeaders) null);
     }
 
-    private boolean isUserInList(String propertyName) {
-        String userListStr = viewContext.getProperties().get(propertyName);
+    /**
+     * Creates an AuthHelper for one request.
+     *
+     * @param viewContext   active Ambari view context used for username and property lookups
+     * @param callerHeaders headers of the request; their credentials are forwarded when Ambari is asked whether the
+     *                      caller is an Ambari administrator. {@code null} when unknown.
+     */
+    public AuthHelper(ViewContext viewContext, HttpHeaders callerHeaders) {
+        this.viewContext = viewContext;
+        this.callerHeaders = callerHeaders == null ? null : callerHeaders.getRequestHeaders();
+        this.ambariAdministrator = this::lookUpAmbariAdministrator;
+    }
+
+    /**
+     * Creates an AuthHelper with its own Ambari administrator lookup, so tests do not need an Ambari server.
+     *
+     * @param viewContext         active Ambari view context
+     * @param ambariAdministrator tells whether the given Ambari user name is an Ambari administrator
+     */
+    AuthHelper(ViewContext viewContext, Predicate<String> ambariAdministrator) {
+        this.viewContext = viewContext;
+        this.callerHeaders = null;
+        this.ambariAdministrator = ambariAdministrator;
+    }
+
+    private enum Role { ADMIN, OPERATOR, VIEWER }
+
+    private List<String> userList(String propertyName) {
+        Map<String, String> properties = viewContext.getProperties();
+        String userListStr = properties == null ? null : properties.get(propertyName);
         if (userListStr == null || userListStr.trim().isEmpty()) {
+            return List.of();
+        }
+        return Arrays.stream(userListStr.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    private Role role() {
+        String currentUser = viewContext.getUsername();
+        List<String> admins = userList(ADMIN_USERS_PROPERTY);
+        List<String> operators = userList(OPERATOR_USERS_PROPERTY);
+        Role role;
+        if (admins.isEmpty() ? isAmbariAdministrator() : admins.contains(currentUser)) {
+            role = Role.ADMIN;
+        } else if (operators.contains(currentUser)) {
+            role = Role.OPERATOR;
+        } else {
+            role = Role.VIEWER;
+        }
+        LOG.debug("KDPS role of user '{}': {} (admin users {}, operator users {})", currentUser, role,
+                admins.isEmpty() ? "<Ambari administrators>" : admins, operators);
+        return role;
+    }
+
+    /** The caller's name as Ambari knows it. */
+    private String ambariUserName() {
+        String ambariUser = viewContext.getLoggedinUser();
+        return ambariUser == null || ambariUser.isBlank() ? viewContext.getUsername() : ambariUser;
+    }
+
+    private boolean isAmbariAdministrator() {
+        if (ambariAdminCache == null) {
+            String ambariUser = ambariUserName();
+            boolean admin = false;
+            if (ambariUser != null && !ambariUser.isBlank()) {
+                try {
+                    admin = ambariAdministrator.test(ambariUser);
+                } catch (RuntimeException e) {
+                    LOG.warn("Could not tell whether '{}' is an Ambari administrator; treating the account as read-only: {}",
+                            ambariUser, e.toString());
+                }
+            }
+            ambariAdminCache = admin;
+        }
+        return ambariAdminCache;
+    }
+
+    /**
+     * Asks Ambari whether the user holds the Ambari Administrator role, granted by name or through one of their
+     * groups. The question goes to the local Ambari with the caller's own credentials, as every other call of the view
+     * does: a request authenticated with a user name and password has no Ambari session until it completes. The
+     * caller's Ambari session is the fallback. Any failure counts as "no", so an unreachable Ambari never widens access.
+     */
+    private boolean lookUpAmbariAdministrator(String ambariUser) {
+        // A name that could change the API path is not looked up.
+        if (!PLAIN_USER_NAME.matcher(ambariUser).matches()) {
+            LOG.warn("Not looking up the unusual Ambari user name '{}'; treating the account as read-only", ambariUser);
             return false;
         }
-        List<String> userList = Arrays.stream(userListStr.split(","))
-                                      .map(String::trim)
-                                      .collect(Collectors.toList());
-        
-        String currentUser = viewContext.getUsername();
-        boolean isPresent = userList.contains(currentUser);
-        LOG.info("Checking if user '{}' is in list '{}' (from property '{}'). Result: {}", currentUser, userList, propertyName, isPresent);
-        return isPresent;
+        Map<String, String> credentials = AmbariActionClient.toAuthHeaders(callerHeaders);
+        if (!credentials.isEmpty()) {
+            try {
+                return new AmbariActionClient(viewContext, AmbariLoopbackUrlResolver.resolveApiBase(viewContext), credentials)
+                        .isAmbariAdministrator(ambariUser);
+            } catch (Exception e) {
+                LOG.info("Ambari user lookup for '{}' with the caller's credentials failed; asking with the Ambari "
+                        + "session: {}", ambariUser, e.toString());
+            }
+        }
+        AmbariStreamProvider ambari = viewContext.getAmbariStreamProvider();
+        if (ambari == null) {
+            return false;
+        }
+        // The provider builds and encodes the URL itself (a space becomes %20), so the name goes in as it is.
+        String path = "/api/v1/users/" + ambariUser + AmbariActionClient.PRIVILEGES_QUERY;
+        try (InputStream in = ambari.readFrom(path, "GET", (String) null, Map.of("X-Requested-By", "ambari"))) {
+            return AmbariActionClient.grantsAmbariAdministrator(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            LOG.warn("Ambari user lookup for '{}' failed; treating the account as read-only: {}", ambariUser, e.toString());
+            return false;
+        }
     }
 
     /**
      * Determine the effective permissions for the currently authenticated user.
-     * Checks the {@code view.admin.users} and {@code view.operator.users} property lists in order.
      *
      * @return a {@link UserPermissions} instance reflecting the user's role and capability flags
      */
     public UserPermissions getPermissions() {
-        if (isUserInList("view.admin.users")) {
-            return new UserPermissions("ADMIN", true, true);
+        switch (role()) {
+            case ADMIN:
+                return new UserPermissions("ADMIN", true, true);
+            case OPERATOR:
+                return new UserPermissions("OPERATOR", false, true);
+            default:
+                return new UserPermissions("VIEWER", false, false);
         }
-        if (isUserInList("view.operator.users")) {
-            return new UserPermissions("OPERATOR", false, true);
-        }
-        return new UserPermissions("VIEWER", false, false);
+    }
+
+    /**
+     * Whether the current user may change the view configuration and read the secrets it holds.
+     *
+     * @return true for the ADMIN role
+     */
+    public boolean canConfigure() {
+        return role() == Role.ADMIN;
+    }
+
+    /**
+     * Whether the current user may deploy, change or remove releases.
+     *
+     * @return true for the ADMIN and OPERATOR roles
+     */
+    public boolean canWrite() {
+        return role() != Role.VIEWER;
     }
 
     /**
      * Assert that the current user is allowed to modify view configuration.
-     * When {@code view.admin.users} is configured, only listed users are permitted;
-     * otherwise the Ambari view ACL is sufficient.
      *
-     * @throws ForbiddenException if the user does not hold configuration permission
+     * @throws ForbiddenException (HTTP 403 with an {@code error} message) if the user is not a view admin
      */
     public void checkConfigurationPermission() {
-        String username = viewContext.getUsername();
-        LOG.info("Performing configuration permission check for user '{}'", username);
-
-        // If view.admin.users is explicitly configured, enforce it strictly.
-        String adminListRaw = viewContext.getProperties().get("view.admin.users");
-        if (adminListRaw != null && !adminListRaw.trim().isEmpty()) {
-            if (isUserInList("view.admin.users")) {
-                LOG.info("Configuration permission GRANTED for user '{}' via view.admin.users property.", username);
-                return;
-            }
-            LOG.warn("Configuration permission DENIED for user '{}'. User not in view.admin.users.", username);
-            throw new ForbiddenException("L'utilisateur n'a pas les droits pour configurer la vue.");
+        if (!canConfigure()) {
+            LOG.warn("Configuration permission DENIED for user '{}'.", viewContext.getUsername());
+            throw forbidden(CONFIGURE_DENIED);
         }
-
-        // Property not configured: fall back to Ambari's own view ACL.
-        // Access to the view itself is already restricted to CLUSTER.ADMINISTRATOR
-        // and above by the view instance roles — any authenticated view user may configure.
-        LOG.info("view.admin.users not configured — configuration permission GRANTED for user '{}' via Ambari view ACL.", username);
     }
 
     /**
      * Assert that the current user is allowed to perform write operations (deploy, upgrade, delete).
-     * Users must appear in either {@code view.admin.users} or {@code view.operator.users}.
      *
-     * @throws ForbiddenException if the user does not hold write permission
+     * @throws ForbiddenException (HTTP 403 with an {@code error} message) if the user is a viewer
      */
     public void checkWritePermission() {
-        String username = viewContext.getUsername();
-        LOG.info("Performing write permission check for user '{}'", username);
-
-        String adminListRaw    = viewContext.getProperties().get("view.admin.users");
-        String operatorListRaw = viewContext.getProperties().get("view.operator.users");
-        boolean listsConfigured = (adminListRaw    != null && !adminListRaw.trim().isEmpty())
-                               || (operatorListRaw != null && !operatorListRaw.trim().isEmpty());
-
-        if (listsConfigured) {
-            if (isUserInList("view.admin.users") || isUserInList("view.operator.users")) {
-                LOG.info("Write permission GRANTED for user '{}' via view.admin.users / view.operator.users.", username);
-                return;
-            }
-            LOG.warn("Write permission DENIED for user '{}'. User not in admin or operator list.", username);
-            throw new ForbiddenException("L'utilisateur n'a pas les droits pour effectuer des actions d'écriture.");
+        if (!canWrite()) {
+            LOG.warn("Write permission DENIED for user '{}'.", viewContext.getUsername());
+            throw forbidden(WRITE_DENIED);
         }
+    }
 
-        // Neither list configured: fall back to Ambari view ACL.
-        // The view instance is already restricted to CLUSTER.ADMINISTRATOR and above,
-        // so any authenticated view user is implicitly an operator.
-        LOG.info("view.admin.users / view.operator.users not configured — write permission GRANTED for user '{}' via Ambari view ACL.", username);
+    /**
+     * Assert that the current user may ask for a pod's Kerberos keytab: an operator, or the Ambari account of the
+     * view's own keytab webhook. In the WEBHOOK injection mode that webhook asks for the keytab of every pod it
+     * mutates. Its account is in neither role list, so without this exception setting the lists would stop every
+     * Kerberized pod from getting its keytab.
+     *
+     * @throws ForbiddenException (HTTP 403 with an {@code error} message) for any other caller
+     */
+    public void checkKeytabRequestPermission() {
+        if (canWrite() || isKeytabWebhookAccount()) {
+            return;
+        }
+        LOG.warn("Keytab request DENIED for user '{}'.", viewContext.getUsername());
+        throw forbidden(WRITE_DENIED);
+    }
+
+    /**
+     * Whether the caller is the keytab webhook's Ambari account. The name alone is not enough: the account must also
+     * be an Ambari administrator, as the view creates it, so an ordinary user who happens to have that name (from a
+     * directory sync, say) gains nothing.
+     */
+    private boolean isKeytabWebhookAccount() {
+        String webhookUser = WebHookBootstrap.webhookUserName(viewContext, WebHookBootstrap.KEYTAB_WEBHOOK);
+        return webhookUser.equals(ambariUserName()) && isAmbariAdministrator();
+    }
+
+    /**
+     * A 403 whose body carries the reason, so the UI can show it instead of a bare status code.
+     *
+     * @param message the reason, shown to the user
+     * @return the exception to throw
+     */
+    public static ForbiddenException forbidden(String message) {
+        return new ForbiddenException(message, Response.status(Response.Status.FORBIDDEN)
+                .type(MediaType.APPLICATION_JSON)
+                .entity(Map.of("error", message))
+                .build());
     }
 }

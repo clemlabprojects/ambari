@@ -54,7 +54,15 @@ public class AmbariActionClient {
     private final String ambariApiBase; // e.g. "http://localhost:8080/api/v1"
     private final String clusterName;
     private final Map<String,String> defaultHeaders;
-    private final String permissionName = "AMBARI.ADMINISTRATOR";
+    private static final String AMBARI_ADMINISTRATOR = "AMBARI.ADMINISTRATOR";
+    private final String permissionName = AMBARI_ADMINISTRATOR;
+
+    /**
+     * Query, appended to {@code /users/<name>}, that lists every privilege of a user: those granted to the user's
+     * groups and the implicit ones included. The {@code Users/admin} flag of the user resource only reflects
+     * privileges granted to the user by name, so a member of an administrators group reads as a non-administrator.
+     */
+    public static final String PRIVILEGES_QUERY = "/privileges?fields=PrivilegeInfo/permission_name,PrivilegeInfo/type";
     private Map<String,AmbariConfigPropertiesTypes> defaultConfigTypes;
     public record WebhookCreds(String username, String password) {}
 
@@ -428,16 +436,17 @@ public class AmbariActionClient {
 
     /** this method call the clusters api path on ambari server in order to help discover existing cluster
      * the view is not linked to a cluster
-     * @return
-     * @throws Exception
+     * @return the cluster names; empty when Ambari manages no cluster
+     * @throws Exception when Ambari cannot be read or refuses the request
      */
     public List<String> listClusters() throws Exception {
         String url = ambariApiBase + "/clusters?fields=Clusters/cluster_name";
         LOG.info("Listing clusters from {}", url);
         LOG.debug("Using header keys: {}", this.defaultHeaders.keySet());
         try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
-            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+            // A refusal is not "no cluster": an account that may not list the clusters would otherwise deploy as if
+            // Ambari managed none, with nothing to inherit from it (Kerberos turned off).
+            JsonObject root = answer(new String(is.readAllBytes(), StandardCharsets.UTF_8), url);
 
             List<String> names = new ArrayList<>();
             if (root.has("items")) {
@@ -487,7 +496,7 @@ public class AmbariActionClient {
         }
 
         if (requireAdmin) {
-            boolean isAdmin = hasAmbariAdminPrivilege(username);
+            boolean isAdmin = isAmbariAdministrator(username);
             if (!isAdmin) {
                 LOG.info("User '{}' lacks {}; granting.", username, permissionName);
                 grantAmbariAdminPrivilege(username);
@@ -505,6 +514,48 @@ public class AmbariActionClient {
      */
     private String encode(String s) {
         return URLEncoder.encode(s,StandardCharsets.UTF_8);
+    }
+
+    /**
+     * A name (such as a user name) as one segment of an API path. URLEncoder writes a space as '+', which Ambari reads
+     * literally in a path, so a user called "John Smith" would be looked up as "John+Smith".
+     */
+    private static String encodePathSegment(String s) {
+        return URLEncoder.encode(s, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    /**
+     * Parses an Ambari answer, failing on an error. The view's stream provider hands back the body of an HTTP error
+     * instead of throwing, for instance {@code {"status": 403, "message": "..."}}; read as data, a refusal would look
+     * like an empty answer ("no cluster", "no permission").
+     *
+     * @param body the answer
+     * @param url  where it came from, for the error message
+     * @return the parsed answer
+     * @throws IOException when the answer is an HTTP error or not a JSON object
+     */
+    private static JsonObject answer(String body, String url) throws IOException {
+        JsonElement parsed = JsonParser.parseString(body);
+        if (!parsed.isJsonObject()) {
+            throw new IOException("Unexpected answer from " + url);
+        }
+        JsonObject root = parsed.getAsJsonObject();
+        JsonElement status = root.get("status");
+        if (status != null && status.isJsonPrimitive() && status.getAsJsonPrimitive().isNumber()
+                && status.getAsInt() >= 400) {
+            throw new IOException("HTTP " + status.getAsInt() + " from " + url
+                    + (jsonString(root, "message") == null ? "" : ": " + jsonString(root, "message")));
+        }
+        return root;
+    }
+
+    /** {@link #answer} for a collection: an answer without its {@code items} list is not one Ambari gives. */
+    private static JsonObject itemsAnswer(String body, String url) throws IOException {
+        JsonObject root = answer(body, url);
+        if (!root.has("items") || !root.get("items").isJsonArray()) {
+            throw new IOException("Unexpected answer from " + url + ": no items");
+        }
+        return root;
     }
 
     private Map<String,String> withStdHeaders(Map<String,String> extra) {
@@ -860,40 +911,84 @@ public class AmbariActionClient {
             LOG.debug("setUserPassword('{}') response: {}", username, resp);
         }
     }
+
     /**
-     * Checks if the user has AMBARI.ADMINISTRATOR privilege.
-     * helper method to check the privileges attributed to a user to check if we need to add privileges
-     * @param username the
-     * @return
+     * The Ambari authorizations (for example {@code CLUSTER.TOGGLE_KERBEROS}) the user holds on a cluster, read with
+     * this client's headers, i.e. normally the user's own session. Authorizations granted at the Ambari level, such
+     * as those of an Ambari administrator, apply to every cluster.
+     *
+     * @param username Ambari user name
+     * @param cluster  cluster the authorizations must apply to; {@code null} keeps those of every cluster
+     * @return the authorization ids
+     * @throws Exception when Ambari cannot be read or refuses the request
      */
-    private boolean hasAmbariAdminPrivilege(String username) throws IOException {
-        String url = ambariApiBase
-                + "/users/" + encode(username)
-                + "/privileges?fields=PrivilegeInfo/permission_name,PrivilegeInfo/type";
-
-        try (InputStream is = stream.readFrom(
-                url,
-                "GET",
-                (String) null,
-                withStdHeaders(null)
-        )) {
-            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-
-            if (!root.has("items") || !root.get("items").isJsonArray()) return false;
-
+    public Set<String> listUserAuthorizations(String username, String cluster) throws Exception {
+        String url = ambariApiBase + "/users/" + encodePathSegment(username) + "/authorizations?fields="
+                + "AuthorizationInfo/authorization_id,AuthorizationInfo/resource_type,AuthorizationInfo/cluster_name";
+        try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
+            JsonObject root = itemsAnswer(new String(is.readAllBytes(), StandardCharsets.UTF_8), url);
+            Set<String> granted = new LinkedHashSet<>();
             for (JsonElement el : root.getAsJsonArray("items")) {
-                JsonObject item = el.getAsJsonObject();
-                JsonObject pi   = item.getAsJsonObject("PrivilegeInfo");
-                if (pi == null) continue;
-                String type = pi.has("type") ? pi.get("type").getAsString() : null;
-                String perm = pi.has("permission_name") ? pi.get("permission_name").getAsString() : null;
-                if ("AMBARI".equalsIgnoreCase(type) && permissionName.equalsIgnoreCase(perm)) {
-                    return true;
+                JsonObject info = el.isJsonObject() ? el.getAsJsonObject().getAsJsonObject("AuthorizationInfo") : null;
+                String id = jsonString(info, "authorization_id");
+                if (id == null) {
+                    continue;
+                }
+                String clusterName = jsonString(info, "cluster_name");
+                if (cluster == null || clusterName == null || "AMBARI".equalsIgnoreCase(jsonString(info, "resource_type"))
+                        || cluster.equals(clusterName)) {
+                    granted.add(id);
                 }
             }
-            return false;
+            return granted;
         }
+    }
+
+    private static String jsonString(JsonObject o, String key) {
+        if (o == null || !o.has(key) || o.get(key).isJsonNull()) {
+            return null;
+        }
+        String value = o.get(key).getAsString();
+        return value.isBlank() ? null : value;
+    }
+
+    /**
+     * Whether the user holds the Ambari Administrator role, granted by name or through one of their groups, read
+     * with this client's headers. A user may read their own privileges; reading another user's needs an administrator.
+     *
+     * @param username Ambari user name
+     * @return true when the user is an Ambari administrator
+     * @throws IOException when Ambari cannot be read or refuses the request
+     */
+    public boolean isAmbariAdministrator(String username) throws IOException {
+        String url = ambariApiBase + "/users/" + encodePathSegment(username) + PRIVILEGES_QUERY;
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+            return grantsAmbariAdministrator(itemsAnswer(new String(is.readAllBytes(), StandardCharsets.UTF_8), url));
+        }
+    }
+
+    /**
+     * Whether a {@link #PRIVILEGES_QUERY} answer holds the Ambari Administrator role.
+     *
+     * @param privilegesJson body returned by Ambari
+     * @return true when one of the privileges is {@code AMBARI.ADMINISTRATOR} on the Ambari resource
+     */
+    public static boolean grantsAmbariAdministrator(String privilegesJson) {
+        JsonElement parsed = JsonParser.parseString(privilegesJson);
+        return parsed.isJsonObject() && grantsAmbariAdministrator(parsed.getAsJsonObject());
+    }
+
+    private static boolean grantsAmbariAdministrator(JsonObject root) {
+        if (!root.has("items") || !root.get("items").isJsonArray()) return false;
+
+        for (JsonElement el : root.getAsJsonArray("items")) {
+            JsonObject pi = el.isJsonObject() ? el.getAsJsonObject().getAsJsonObject("PrivilegeInfo") : null;
+            if ("AMBARI".equalsIgnoreCase(jsonString(pi, "type"))
+                    && AMBARI_ADMINISTRATOR.equalsIgnoreCase(jsonString(pi, "permission_name"))) {
+                return true;
+            }
+        }
+        return false;
     }
     /**
      * Grants AMBARI.ADMINISTRATOR to the user via POST /api/v1/privileges.

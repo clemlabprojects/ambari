@@ -90,6 +90,7 @@ import java.util.Comparator;
 import java.util.concurrent.*;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
@@ -122,6 +123,8 @@ public class CommandService {
     private static final String VIEW_SETTINGS_KEY = "view.settings.json";
     private static final String KERBEROS_INJECTION_MODE_WEBHOOK = "WEBHOOK";
     private static final String KERBEROS_INJECTION_MODE_PRE_PROVISIONED = "PRE_PROVISIONED";
+    /** Key of the operation result that marks a deploy refused after its steps were stored, before any of them ran. */
+    private static final String REFUSED_BEFORE_START = "refusedBeforeStart";
     private static final int MAX_RETRYABLE_ATTEMPTS = Integer.getInteger("k8s.view.command.maxRetryableAttempts", 5);
 
     // External dependencies (adapters) — injected
@@ -827,6 +830,214 @@ public class CommandService {
             mergedCount++;
         }
         LOG.info("Merged {} {} template variables into params", mergedCount, variableGroupName);
+    }
+
+    /**
+     * A keytab a PRE_PROVISIONED deploy issues through Ambari and stores in a Secret of the release namespace.
+     *
+     * @param entryKey           Kerberos entry of the service definition, for logs and traceability
+     * @param principalFqdn      principal to issue, realm included
+     * @param secretName         Secret holding the keytab
+     * @param keyNameInSecret    key of the keytab in that Secret
+     * @param mountPath          where the chart mounts the keytab
+     * @param principalValuePath chart value that pins the principal, blank when the chart derives none
+     */
+    record PlannedKeytab(String entryKey, String principalFqdn, String secretName, String keyNameInSecret,
+                         String mountPath, String principalValuePath) {}
+
+    /**
+     * The keytabs a deploy issues through Ambari: one per enabled Kerberos entry of the request, with its principal
+     * rendered and validated. Empty, with the reason logged, when the deploy issues none.
+     *
+     * @param request                    the deploy request
+     * @param preProvisionedKerberosMode whether the view issues keytabs before the install (PRE_PROVISIONED)
+     * @param externalKeytabProvided     whether the operator attached a keytab of their own
+     * @param kerberosEnabled            whether Kerberos is on for this deploy
+     * @param ambariAvailable            whether the Ambari client and the cluster are known
+     * @param kerberosEntries            the request's Kerberos entries
+     * @param kerberosRealm              the cluster's Kerberos realm
+     * @return the keytabs to issue, in entry order
+     */
+    private List<PlannedKeytab> planPreProvisionedKeytabs(HelmDeployRequest request,
+                                                          boolean preProvisionedKerberosMode,
+                                                          boolean externalKeytabProvided,
+                                                          boolean kerberosEnabled,
+                                                          boolean ambariAvailable,
+                                                          List<Map<String, Object>> kerberosEntries,
+                                                          String kerberosRealm) {
+        List<PlannedKeytab> planned = new ArrayList<>();
+        if (!preProvisionedKerberosMode) {
+            return planned;
+        }
+        // An operator-supplied keytab (a service's externalServiceTargets kerberos mode) is what the pods use, and
+        // principals of a backend realm (e.g. CDP) cannot be issued by the hosting KDC anyway.
+        if (externalKeytabProvided) {
+            LOG.info("External Kerberos keytab supplied for this deploy; skipping Ambari keytab issuance (pods use the operator-provided keytab).");
+            return planned;
+        }
+        if (!kerberosEnabled) {
+            LOG.info("Kerberos is disabled on the Ambari cluster; skipping pre-provisioned keytab creation.");
+            return planned;
+        }
+        if (!ambariAvailable) {
+            LOG.warn("Ambari client or cluster is unavailable; skipping pre-provisioned keytab creation.");
+            return planned;
+        }
+        if (kerberosEntries == null || kerberosEntries.isEmpty()) {
+            LOG.info("No Kerberos entries found in the request; skipping keytab provisioning.");
+            return planned;
+        }
+        if (kerberosRealm == null || kerberosRealm.isBlank()) {
+            LOG.warn("Kerberos realm is empty; skipping pre-provisioned keytab creation.");
+            return planned;
+        }
+        // Flatten formValues to <name,String> so principalTemplate can address wizard form fields by name
+        // (e.g. {{kerberosHostFqdn}}). Required because FreeIPA 4.12 rejects non-FQDN service host components and
+        // we don't want to hardcode any cluster's DNS suffix in service.json.
+        Map<String, String> kerberosExtraTokens = new LinkedHashMap<>();
+        if (request.getFormValues() != null) {
+            for (Map.Entry<String, Object> e : request.getFormValues().entrySet()) {
+                Object v = e.getValue();
+                if (v != null) kerberosExtraTokens.put(e.getKey(), String.valueOf(v));
+            }
+        }
+        int kerberosEntryIndex = 0;
+        for (Map<String, Object> kerberosEntry : kerberosEntries) {
+            kerberosEntryIndex++;
+            if (!isKerberosEntryEnabled(kerberosEntry.get("enabled"))) {
+                LOG.info("Skipping disabled Kerberos entry {}", kerberosEntry.getOrDefault("key", kerberosEntryIndex));
+                continue;
+            }
+            String entryKey = resolveStringValue(kerberosEntry.get("key"), "entry-" + kerberosEntryIndex);
+            String serviceName = resolveStringValue(kerberosEntry.get("serviceName"), request.getReleaseName());
+            String principalTemplate = resolveStringValue(
+                    kerberosEntry.get("principalTemplate"), "{{service}}-{{namespace}}@{{realm}}");
+            String principalFqdn = renderKerberosPrincipalTemplate(
+                    principalTemplate,
+                    serviceName,
+                    request.getNamespace(),
+                    request.getReleaseName(),
+                    kerberosRealm,
+                    kerberosExtraTokens
+            );
+            principalFqdn = normalizeKerberosPrincipalLength(principalFqdn);
+            if (principalFqdn == null || principalFqdn.isBlank()) {
+                LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
+                continue;
+            }
+            validateKerberosPrincipal(principalFqdn);
+
+            String secretName = resolveKerberosEntrySecretName(
+                    kerberosEntry,
+                    serviceName,
+                    request.getNamespace(),
+                    request.getReleaseName(),
+                    kerberosRealm
+            );
+            planned.add(new PlannedKeytab(
+                    entryKey,
+                    principalFqdn,
+                    secretName,
+                    resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab"),
+                    resolveStringValue(kerberosEntry.get("mountPath"), "/etc/security/keytabs"),
+                    resolveStringValue(kerberosEntry.get("principalValuePath"), "")));
+        }
+        return planned;
+    }
+
+    /**
+     * The steps calling Ambari with the operator's session that a deploy is known to run before its plan is built:
+     * issuing the keytabs its Secrets do not hold yet, creating the Ambari view instance its service definition
+     * declares, and creating the object store of its Iceberg catalog.
+     *
+     * @param keytabs             the keytabs the deploy issues
+     * @param alreadyStored       whether a keytab's Secret already holds it, so its step reuses it without Ambari
+     * @param createsViewInstance whether the service definition declares an Ambari view instance
+     * @param createsObjectStore  whether the Polaris step asks the cluster for the catalog's bucket, see
+     *                            {@link #polarisProvisionUsesAmbari}
+     * @return the {@link CommandType} names of those steps
+     */
+    static List<String> ambariStepsKnownUpFront(List<PlannedKeytab> keytabs, Predicate<PlannedKeytab> alreadyStored,
+                                                boolean createsViewInstance, boolean createsObjectStore) {
+        List<String> steps = new ArrayList<>();
+        if (keytabs.stream().anyMatch(keytab -> !alreadyStored.test(keytab))) {
+            steps.add(CommandType.KEYTAB_ISSUE_PRINCIPAL.name());
+        }
+        if (createsViewInstance) {
+            steps.add(CommandType.AMBARI_VIEW_PROVISION.name());
+        }
+        if (createsObjectStore) {
+            steps.add(CommandType.POLARIS_PROVISION_CATALOG.name());
+        }
+        return steps;
+    }
+
+    /**
+     * Whether the deploy plans {@link CommandType#POLARIS_PROVISION_CATALOG}: the wizard turned the Iceberg catalog on
+     * and left its provisioning on.
+     *
+     * @param formValues the wizard's form values, or {@code null}
+     */
+    static boolean plansPolarisProvision(Map<String, Object> formValues) {
+        if (formValues == null) {
+            return false;
+        }
+        // isEntryEnabled treats an absent value as enabled, which is right for chart entries but
+        // wrong for a wizard toggle: an untouched form must not provision anything.
+        Object icebergRaw = ConfigResolutionService.getByDottedPath(formValues, "icebergCatalog.enabled");
+        if (icebergRaw == null || !isEntryEnabled(icebergRaw)) {
+            return false;
+        }
+        Object provisionRaw = ConfigResolutionService.getByDottedPath(formValues, "icebergCatalog.provision");
+        return provisionRaw == null || isEntryEnabled(provisionRaw);
+    }
+
+    /**
+     * Whether the planned Polaris step may run the Polaris service command that creates the catalog's Ozone bucket and
+     * S3 identity, with the operator's Ambari session. It does not when the form gives an S3 key, which is used as it
+     * is. On another platform context than the Ambari-managed one the step never runs the command; the permission
+     * check leaves that case out on its own.
+     *
+     * @param formValues the wizard's form values, or {@code null}
+     */
+    static boolean polarisProvisionUsesAmbari(Map<String, Object> formValues) {
+        return plansPolarisProvision(formValues)
+                && stringValue(ConfigResolutionService.getByDottedPath(formValues, "icebergCatalog.s3AccessKey")).isBlank();
+    }
+
+    /** Whether the keytab's Secret already holds it for its principal, as the keytab step decides it. */
+    private boolean keytabAlreadyStored(String namespace, PlannedKeytab keytab) {
+        try {
+            return isReusableKeytab(kubernetesService.readOpaqueSecretKeyAsBytes(
+                    namespace, keytab.secretName(), keytab.keyNameInSecret()), keytab.principalFqdn());
+        } catch (Exception e) {
+            LOG.info("Could not read Secret '{}/{}' to see whether its keytab is reused: {}", namespace,
+                    keytab.secretName(), e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Whether a keytab read from its Secret can be reused for the principal. Reusing it, instead of issuing it again,
+     * keeps the principal's key unchanged, so the keytab already stored stays valid.
+     */
+    private boolean isReusableKeytab(Optional<byte[]> stored, String principalFqdn) {
+        return stored.isPresent() && stored.get().length > 0 && keytabContainsPrincipal(stored.get(), principalFqdn);
+    }
+
+    /** Whether the service definition asks for an Ambari view instance next to the release. */
+    private boolean declaresAmbariViewInstance(String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank()) {
+            return false;
+        }
+        try {
+            StackServiceDef serviceDef = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+            return serviceDef != null && (serviceDef.postDeploy != null || serviceDef.platformOps != null)
+                    && postDeployOf(serviceDef).get("ambariViewInstance") != null;
+        } catch (Exception e) {
+            LOG.warn("Could not read the service definition of {}: {}", serviceKey, e.toString());
+            return false;
+        }
     }
 
     /**
@@ -5220,6 +5431,190 @@ public class CommandService {
         } else {
             LOG.info("Kerberos injection mode is WEBHOOK; mutating webhook dependency remains enabled.");
         }
+        // Thread the selected platform context id globally so EVERY post-deploy step (OIDC client
+        // registration, Ranger repo/grant, Hive/Atlas ingestion) can resolve the context and route
+        // to its endpoints/credentials. Blank/default → steps use the local Ambari as before.
+        if (!params.containsKey("_platformContextId")) {
+            String deployPcId = resolveStringValue(ConfigResolutionService.getByDottedPath(
+                    request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap(),
+                    "platformContextId"), "");
+            if (deployPcId != null && !deployPcId.isBlank()) params.put("_platformContextId", deployPcId);
+        }
+
+        // Ambari access and the cluster's Kerberos state come first: the Ambari permissions the deploy needs are checked
+        // from them before anything is written (Secrets, ConfigMaps, the release record, OpenShift grants).
+        AmbariActionClient ambariActionClient = null;
+        List<Map<String, Object>> hadoopRequiredConfigMaps = request.getRequiredConfigMaps();
+        String wiringProblem = describeMissingWiring(request);
+        if (wiringProblem != null) {
+            throw new IllegalStateException(wiringProblem);
+        }
+
+        Map<String, Map<String, Object>> ranger = request.getRanger();
+        String cluster = null;
+        boolean ambariManagesNoCluster = false;
+        if ((hadoopRequiredConfigMaps != null) || (ranger != null)) {
+            try {
+                cluster = this.commandUtils.resolveClusterName(baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
+                params.put("_cluster", cluster);
+            } catch (Exception ex) {
+                ambariManagesNoCluster = ex instanceof CommandUtils.NoAmbariClusterException;
+                LOG.error("Could not fetch cluster name, dynamic Values will be ignored");
+            }
+            ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
+        }
+        // Fallback: even when no requiredConfigMaps/ranger, we still need Ambari access for Kerberos detection
+        if (ambariActionClient == null) {
+            try {
+                cluster = this.commandUtils.resolveClusterName(baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
+                params.put("_cluster", cluster);
+                ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
+            } catch (Exception ex) {
+                ambariManagesNoCluster = ex instanceof CommandUtils.NoAmbariClusterException;
+                LOG.warn("Could not initialize AmbariActionClient for kerberos detection: {}", ex.toString());
+            }
+        }
+        boolean kerberosEnabled = false;
+        boolean kerberosDetectionAvailable = false;
+        try {
+            if (ambariManagesNoCluster) {
+                // A KDPS-only Ambari: no cluster, hence no Kerberos to inherit. Knowing this (rather than failing to
+                // ask) lets the charts' Kerberos default be turned off below; left on, pods wait for a krb5.conf
+                // ConfigMap that is only created for Kerberized clusters.
+                LOG.info("Ambari manages no cluster: no Kerberos to inherit");
+                kerberosDetectionAvailable = true;
+            } else if (ambariActionClient != null) {
+                String securityEnabledCluster = ambariActionClient.getDesiredConfigProperty(
+                        cluster, "cluster-env", "security_enabled"
+                );
+                kerberosEnabled = "true".equalsIgnoreCase(securityEnabledCluster);
+                kerberosDetectionAvailable = true;
+            } else {
+                LOG.warn("AmbariActionClient is null; skipping Kerberos detection and ConfigMap creation");
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not determine Kerberos state from Ambari, assuming disabled: {}", ex.toString());
+        }
+
+        if (kerberosDetectionAvailable) {
+            params.put("kerberosClusterEnabled", kerberosEnabled);
+        } else {
+            LOG.warn("Kerberos detection unavailable; leaving global.security.kerberos.enabled unchanged");
+        }
+        // A selected EXTERNAL platform context may target a backend (e.g. CDP) in a DIFFERENT
+        // Kerberos realm than the Ambari-hosting cluster. When that context supplies a krb5.conf,
+        // use it for this deploy (and enable Kerberos wiring) regardless of the hosting cluster's
+        // own security state — the deployed pods must speak the backend realm, not ours.
+        String contextKrb5 = null;
+        Map<String, String> ctxResolvedKrbFields = Collections.emptyMap();
+        try {
+            Map<String, String> ctxResolvedKrb =
+                    contextResolvedFieldsForDeploy(request.getFormValues(), ambariActionClient, cluster);
+            if (ctxResolvedKrb != null) {
+                ctxResolvedKrbFields = ctxResolvedKrb;
+                contextKrb5 = ctxResolvedKrb.get("kerberos.krb5Conf");
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not resolve platform-context krb5.conf for deploy: {}", ex.toString());
+        }
+        boolean contextKerberos = (contextKrb5 != null && !contextKrb5.isBlank());
+
+        // An external keytab Secret selected on the form (e.g. hive.externalKeytabSecret for a CDP
+        // backend in a different realm) turns Kerberos ON in the chart — the pods mount the keytab AND a
+        // krb5.conf ConfigMap. So Kerberos is REQUIRED for this deploy even when the hosting Ambari is not
+        // kerberized (standalone) and the context is a discovery-based CDP/EXTERNAL one. Detect it here so
+        // the krb5.conf ConfigMap is created for this case too — and so we can fail early with a clear
+        // message if no krb5.conf can be sourced (instead of a cryptic pod "configmap not found" mount).
+        boolean externalKeytabProvided = deployUsesExternalKeytab(request.getFormValues());
+        // The target cluster's own security state (cluster-env security_enabled for Ambari clusters,
+        // a known realm for CDP/EXTERNAL), resolved by the context — the wizard's equivalent of
+        // "is Kerberos on over there?". A service that declares a Kerberos identity (kerberos[] in its
+        // definition) needs the release's Kerberos part whenever the target is Kerberized.
+        boolean contextKerberized = "true".equalsIgnoreCase(ctxResolvedKrbFields.get("kerberos.enabled"));
+        boolean serviceNeedsKerberosIdentity = !normalizeKerberosEntries(request.getKerberos()).isEmpty();
+
+        // DESIGN RULE — an EXTERNAL/CDP/REMOTE context must NOT inherit the LOCAL Ambari cluster's
+        // Kerberos. Deploying an external-backend service against the internal realm is incorrect, and it
+        // would behave differently on a standalone Ambari (no local cluster) — breaking idempotency. So
+        // for an external context, Kerberos is OPT-IN and driven SOLELY by the operator's step-3 external
+        // keytab: with a keytab, Kerberos is on (the backend realm, via that keytab); without one, it is
+        // OFF regardless of the hosting cluster's security_enabled — no keytab minting, no local realm.
+        // The MANAGED (default) context keeps auto-Kerberos from its own cluster. To use an internal realm
+        // for an external backend an operator selects the MANAGED context (an ODP cluster with security on).
+        String selectedContextIdForKrb = stringValue(params.get("_platformContextId"));
+        boolean externalContextSelected = selectedContextIdForKrb != null && !selectedContextIdForKrb.isBlank()
+                && !ContextService.DEFAULT_CONTEXT_ID.equals(selectedContextIdForKrb);
+        if (externalContextSelected) {
+            boolean localKerberos = kerberosEnabled;
+            kerberosEnabled = externalKeytabProvided; // external → keytab-driven only
+            if (localKerberos != kerberosEnabled) {
+                LOG.info("External context '{}' selected: ignoring the local cluster's Kerberos state ({}); "
+                        + "Kerberos for this deploy is {} (driven only by the step-3 external keytab).",
+                        selectedContextIdForKrb, localKerberos, kerberosEnabled ? "ENABLED" : "DISABLED");
+            }
+            params.put("kerberosClusterEnabled", kerberosEnabled);
+        }
+
+        // A backend whose auth mode resolves to Kerberos (e.g. Superset's hiveDb.authMode=kerberos, auto-
+        // detected from a kerberized CDP Hive) makes the chart mount a krb5.conf ConfigMap + a keytab —
+        // but Kerberos for an external context is driven ONLY by the operator's external keytab (554). If
+        // the operator selected the kerberized backend but attached NO keytab, kerberosEnabled stays false,
+        // the view creates neither the krb5.conf ConfigMap nor wires the keytab, and the pod later dies with
+        // the opaque "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found". Fail NOW with an
+        // actionable message pointing at the missing keytab selection.
+        if (externalContextSelected && !externalKeytabProvided
+                && (deployHasKerberizedExternalTarget(request, ctxResolvedKrbFields)
+                    || (contextKerberized && serviceNeedsKerberosIdentity))) {
+            String realm = ctxResolvedKrbFields.getOrDefault("kerberos.realm", "");
+            throw new IllegalStateException(
+                    "Platform context '" + selectedContextIdForKrb + "' is Kerberized"
+                    + (realm.isBlank() ? "" : " (realm " + realm + ")")
+                    + " and " + request.getServiceKey() + " needs a service identity there, but no external keytab "
+                    + "Secret was attached for this deploy. Create the service's keytab Secret in namespace '"
+                    + request.getNamespace() + "' (holding the keytab issued by that realm's KDC) "
+                    + "and select it in the wizard step 3 ('External ... service keytab Secret'), then redeploy. "
+                    + "Without it the pod cannot kinit and the krb5.conf/keytab volume mounts fail.");
+        }
+
+        // Kerberos identities the release gets, resolved now so that the Ambari permissions the deploy needs are known.
+        List<Map<String, Object>> kerberosEntryList = normalizeKerberosEntries(request.getKerberos());
+        String kerberosRealm = null;
+        if (kerberosEnabled) {
+            kerberosRealm = resolveKerberosRealmFromAmbari(ambariActionClient, cluster);
+        }
+        boolean ambariAvailable = ambariActionClient != null && cluster != null && !cluster.isBlank();
+        List<PlannedKeytab> plannedKeytabs = planPreProvisionedKeytabs(request, preProvisionedKerberosMode,
+                externalKeytabProvided, kerberosEnabled, ambariAvailable, kerberosEntryList, kerberosRealm);
+
+        // Reading the cluster, keytab issuance, view provisioning and the Iceberg catalog's bucket use the operator's
+        // Ambari session: refuse the deploy now, before anything is written, when the operator lacks an Ambari
+        // permission they need, instead of letting Ambari refuse a step halfway through. A keytab already stored in
+        // its Secret is reused without asking Ambari. An operator who may not read the cluster is refused here too:
+        // the cluster's Kerberos state could not be read above, so no keytab is planned, and the release would come
+        // up without its Kerberos identity.
+        boolean readsManagedCluster = readsManagedCluster(params, cluster, ambariManagesNoCluster,
+                this.commandUtils.isAutoDiscoveryEnabled());
+        // When Ambari refused to list its clusters there is no client yet; the permissions are still read with the
+        // operator's session.
+        AmbariActionClient permissionsClient = ambariActionClient != null || !readsManagedCluster
+                ? ambariActionClient
+                : new AmbariActionClient(ctx, baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
+        AmbariPermissionPreflight ambariPermissions =
+                new AmbariPermissionPreflight(permissionsClient, ambariUserName(), cluster);
+        List<AmbariPermissionPreflight.Requirement> requiredUpFront = new ArrayList<>();
+        if (readsManagedCluster) {
+            requiredUpFront.add(AmbariPermissionPreflight.READ_CLUSTER);
+        }
+        requiredUpFront.addAll(AmbariPermissionPreflight.requiredFor(
+                ambariStepsKnownUpFront(plannedKeytabs, keytab -> keytabAlreadyStored(request.getNamespace(), keytab),
+                        declaresAmbariViewInstance(request.getServiceKey()),
+                        polarisProvisionUsesAmbari(request.getFormValues())),
+                usesManagedContext(params)));
+        String missingAmbariPermission = ambariPermissions.check(requiredUpFront);
+        if (missingAmbariPermission != null) {
+            throw new IllegalStateException(missingAmbariPermission);
+        }
+
         if (request.getTls() != null && !request.getTls().isEmpty()) {
             // The wizard resolves tls[].dnsTemplates at submit time; an API-driven deploy may not.
             // Fill them in here too, because the fallback SAN (<release>.<namespace>.svc) matches
@@ -5420,15 +5815,6 @@ public class CommandService {
         if (callerHeaders != null) {
             params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
         }
-        // Thread the selected platform context id globally so EVERY post-deploy step (OIDC client
-        // registration, Ranger repo/grant, Hive/Atlas ingestion) can resolve the context and route
-        // to its endpoints/credentials. Blank/default → steps use the local Ambari as before.
-        if (!params.containsKey("_platformContextId")) {
-            String deployPcId = resolveStringValue(ConfigResolutionService.getByDottedPath(
-                    request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap(),
-                    "platformContextId"), "");
-            if (deployPcId != null && !deployPcId.isBlank()) params.put("_platformContextId", deployPcId);
-        }
         // Reusable Trino catalog references (set by applyCustomCatalogs; absent for non-Trino deploys).
         if (request.getFormValues() != null && request.getFormValues().containsKey("_catalogRefsJson")) {
             params.put("_catalogRefsJson", stringValue(request.getFormValues().get("_catalogRefsJson")));
@@ -5446,141 +5832,6 @@ public class CommandService {
 
         rootCommand.setCommandStatusId(commandStatusEntity.getId());
         rootCommand.setTitle("Install release " + request.getReleaseName());
-
-        // creates required hadoop related secrets/config map from charts.json for before running the helm chart
-        // preparing config map secrets before running commands
-        AmbariActionClient ambariActionClient = null;
-        List<Map<String, Object>> hadoopRequiredConfigMaps = request.getRequiredConfigMaps();
-        String wiringProblem = describeMissingWiring(request);
-        if (wiringProblem != null) {
-            throw new IllegalStateException(wiringProblem);
-        }
-
-        Map<String, Map<String, Object>> ranger = request.getRanger();
-        String cluster = null;
-        boolean ambariManagesNoCluster = false;
-        if ((hadoopRequiredConfigMaps != null) || (ranger != null)) {
-            try {
-                cluster = this.commandUtils.resolveClusterName(baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
-                params.put("_cluster", cluster);
-            } catch (Exception ex) {
-                ambariManagesNoCluster = ex instanceof CommandUtils.NoAmbariClusterException;
-                LOG.error("Could not fetch cluster name, dynamic Values will be ignored");
-            }
-            ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
-        }
-        // Fallback: even when no requiredConfigMaps/ranger, we still need Ambari access for Kerberos detection
-        if (ambariActionClient == null) {
-            try {
-                cluster = this.commandUtils.resolveClusterName(baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
-                params.put("_cluster", cluster);
-                ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
-            } catch (Exception ex) {
-                ambariManagesNoCluster = ex instanceof CommandUtils.NoAmbariClusterException;
-                LOG.warn("Could not initialize AmbariActionClient for kerberos detection: {}", ex.toString());
-            }
-        }
-        boolean kerberosEnabled = false;
-        boolean kerberosDetectionAvailable = false;
-        try {
-            if (ambariManagesNoCluster) {
-                // A KDPS-only Ambari: no cluster, hence no Kerberos to inherit. Knowing this (rather than failing to
-                // ask) lets the charts' Kerberos default be turned off below; left on, pods wait for a krb5.conf
-                // ConfigMap that is only created for Kerberized clusters.
-                LOG.info("Ambari manages no cluster: no Kerberos to inherit");
-                kerberosDetectionAvailable = true;
-            } else if (ambariActionClient != null) {
-                String securityEnabledCluster = ambariActionClient.getDesiredConfigProperty(
-                        cluster, "cluster-env", "security_enabled"
-                );
-                kerberosEnabled = "true".equalsIgnoreCase(securityEnabledCluster);
-                kerberosDetectionAvailable = true;
-            } else {
-                LOG.warn("AmbariActionClient is null; skipping Kerberos detection and ConfigMap creation");
-            }
-        } catch (Exception ex) {
-            LOG.warn("Could not determine Kerberos state from Ambari, assuming disabled: {}", ex.toString());
-        }
-
-        if (kerberosDetectionAvailable) {
-            params.put("kerberosClusterEnabled", kerberosEnabled);
-        } else {
-            LOG.warn("Kerberos detection unavailable; leaving global.security.kerberos.enabled unchanged");
-        }
-        // A selected EXTERNAL platform context may target a backend (e.g. CDP) in a DIFFERENT
-        // Kerberos realm than the Ambari-hosting cluster. When that context supplies a krb5.conf,
-        // use it for this deploy (and enable Kerberos wiring) regardless of the hosting cluster's
-        // own security state — the deployed pods must speak the backend realm, not ours.
-        String contextKrb5 = null;
-        Map<String, String> ctxResolvedKrbFields = Collections.emptyMap();
-        try {
-            Map<String, String> ctxResolvedKrb =
-                    contextResolvedFieldsForDeploy(request.getFormValues(), ambariActionClient, cluster);
-            if (ctxResolvedKrb != null) {
-                ctxResolvedKrbFields = ctxResolvedKrb;
-                contextKrb5 = ctxResolvedKrb.get("kerberos.krb5Conf");
-            }
-        } catch (Exception ex) {
-            LOG.warn("Could not resolve platform-context krb5.conf for deploy: {}", ex.toString());
-        }
-        boolean contextKerberos = (contextKrb5 != null && !contextKrb5.isBlank());
-
-        // An external keytab Secret selected on the form (e.g. hive.externalKeytabSecret for a CDP
-        // backend in a different realm) turns Kerberos ON in the chart — the pods mount the keytab AND a
-        // krb5.conf ConfigMap. So Kerberos is REQUIRED for this deploy even when the hosting Ambari is not
-        // kerberized (standalone) and the context is a discovery-based CDP/EXTERNAL one. Detect it here so
-        // the krb5.conf ConfigMap is created for this case too — and so we can fail early with a clear
-        // message if no krb5.conf can be sourced (instead of a cryptic pod "configmap not found" mount).
-        boolean externalKeytabProvided = deployUsesExternalKeytab(request.getFormValues());
-        // The target cluster's own security state (cluster-env security_enabled for Ambari clusters,
-        // a known realm for CDP/EXTERNAL), resolved by the context — the wizard's equivalent of
-        // "is Kerberos on over there?". A service that declares a Kerberos identity (kerberos[] in its
-        // definition) needs the release's Kerberos part whenever the target is Kerberized.
-        boolean contextKerberized = "true".equalsIgnoreCase(ctxResolvedKrbFields.get("kerberos.enabled"));
-        boolean serviceNeedsKerberosIdentity = !normalizeKerberosEntries(request.getKerberos()).isEmpty();
-
-        // DESIGN RULE — an EXTERNAL/CDP/REMOTE context must NOT inherit the LOCAL Ambari cluster's
-        // Kerberos. Deploying an external-backend service against the internal realm is incorrect, and it
-        // would behave differently on a standalone Ambari (no local cluster) — breaking idempotency. So
-        // for an external context, Kerberos is OPT-IN and driven SOLELY by the operator's step-3 external
-        // keytab: with a keytab, Kerberos is on (the backend realm, via that keytab); without one, it is
-        // OFF regardless of the hosting cluster's security_enabled — no keytab minting, no local realm.
-        // The MANAGED (default) context keeps auto-Kerberos from its own cluster. To use an internal realm
-        // for an external backend an operator selects the MANAGED context (an ODP cluster with security on).
-        String selectedContextIdForKrb = stringValue(params.get("_platformContextId"));
-        boolean externalContextSelected = selectedContextIdForKrb != null && !selectedContextIdForKrb.isBlank()
-                && !ContextService.DEFAULT_CONTEXT_ID.equals(selectedContextIdForKrb);
-        if (externalContextSelected) {
-            boolean localKerberos = kerberosEnabled;
-            kerberosEnabled = externalKeytabProvided; // external → keytab-driven only
-            if (localKerberos != kerberosEnabled) {
-                LOG.info("External context '{}' selected: ignoring the local cluster's Kerberos state ({}); "
-                        + "Kerberos for this deploy is {} (driven only by the step-3 external keytab).",
-                        selectedContextIdForKrb, localKerberos, kerberosEnabled ? "ENABLED" : "DISABLED");
-            }
-            params.put("kerberosClusterEnabled", kerberosEnabled);
-        }
-
-        // A backend whose auth mode resolves to Kerberos (e.g. Superset's hiveDb.authMode=kerberos, auto-
-        // detected from a kerberized CDP Hive) makes the chart mount a krb5.conf ConfigMap + a keytab —
-        // but Kerberos for an external context is driven ONLY by the operator's external keytab (554). If
-        // the operator selected the kerberized backend but attached NO keytab, kerberosEnabled stays false,
-        // the view creates neither the krb5.conf ConfigMap nor wires the keytab, and the pod later dies with
-        // the opaque "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found". Fail NOW with an
-        // actionable message pointing at the missing keytab selection.
-        if (externalContextSelected && !externalKeytabProvided
-                && (deployHasKerberizedExternalTarget(request, ctxResolvedKrbFields)
-                    || (contextKerberized && serviceNeedsKerberosIdentity))) {
-            String realm = ctxResolvedKrbFields.getOrDefault("kerberos.realm", "");
-            throw new IllegalStateException(
-                    "Platform context '" + selectedContextIdForKrb + "' is Kerberized"
-                    + (realm.isBlank() ? "" : " (realm " + realm + ")")
-                    + " and " + request.getServiceKey() + " needs a service identity there, but no external keytab "
-                    + "Secret was attached for this deploy. Create the service's keytab Secret in namespace '"
-                    + request.getNamespace() + "' (holding the keytab issued by that realm's KDC) "
-                    + "and select it in the wizard step 3 ('External ... service keytab Secret'), then redeploy. "
-                    + "Without it the pod cannot kinit and the krb5.conf/keytab volume mounts fail.");
-        }
 
         if (kerberosEnabled || externalKeytabProvided) {
             LOG.info("Kerberos enabled for this deploy (effective={}, externalKeytab={}, contextKrb5Present={}); preparing krb5.conf ConfigMap for Helm Chart",
@@ -5621,11 +5872,6 @@ public class CommandService {
         }
 
         // Build Kerberos template variables for later templating (catalog enrichments, etc.).
-        List<Map<String, Object>> kerberosEntryList = normalizeKerberosEntries(request.getKerberos());
-        String kerberosRealm = null;
-        if (kerberosEnabled) {
-            kerberosRealm = resolveKerberosRealmFromAmbari(ambariActionClient, cluster);
-        }
         Map<String, Object> kerberosTemplateVariableMap = buildKerberosTemplateVariablesForEntries(
                 kerberosEntryList,
                 request.getNamespace(),
@@ -5877,8 +6123,10 @@ public class CommandService {
         }
         LOG.info("Computed list of endpoints: {}", resolvedEndpoints.toArray().toString());
 
+        // What the release record will say once Helm has applied this deploy. It travels in the step parameters,
+        // which are stored below; it is only written for a first install, after the permission check.
+        Map<String, Object> releaseMetadata = new LinkedHashMap<>();
         try {
-            Map<String, Object> releaseMetadata = new LinkedHashMap<>();
             releaseMetadata.put("serviceKey", request.getServiceKey());
             releaseMetadata.put("platformContextId", stringValue(params.get("_platformContextId")));
             releaseMetadata.put("chartRef", request.getChart());
@@ -5897,11 +6145,11 @@ public class CommandService {
             if (request.getTruststoreRefs() != null) {
                 releaseMetadata.put("truststoreRefs", new ArrayList<>(request.getTruststoreRefs()));
             }
-            planReleaseMetadata(params, request.getNamespace(), request.getReleaseName(), releaseMetadata,
-                    effectiveValues);
+            params.put(RELEASE_METADATA_PARAM, releaseMetadata);
         } catch (Exception ex) {
-            LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
+            LOG.warn("Failed to plan the release metadata for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
+
         if (ranger != null) {
             // ranger-plugin-settings drives plugin repository creation (Trino, etc.).
             // Plugin-repo creation talks directly to Ranger Admin REST and doesn't
@@ -5996,7 +6244,8 @@ public class CommandService {
                 // on the fly it must not be required at all.
                 try {
                     org.apache.ambari.view.k8s.utils.WebHookBootstrap.prepareWebhookPrereqs(
-                            this.ctx, this.kubernetesService, "keytab-webhook", callerHeaders);
+                            this.ctx, this.kubernetesService,
+                            org.apache.ambari.view.k8s.utils.WebHookBootstrap.KEYTAB_WEBHOOK, callerHeaders);
                 } catch (Exception e) {
                     throw new IllegalArgumentException("Kerberos injection mode is WEBHOOK, which needs the keytab "
                             + "webhook namespace (default 'ambari-mutating-webhooks') and its certificates, but they "
@@ -6085,125 +6334,51 @@ public class CommandService {
         // OpenShift: ServiceMonitor right and the KEDA monitoring token (shared with the GitOps mode).
         OpenShiftMonitoringSetup.prepare(this.kubernetesService, request);
 
-        // 2a. Pre-provision Kerberos keytabs if the view is configured for it.
-        // Skip Ambari keytab issuance when the operator supplied an external keytab (via a service's
-        // externalServiceTargets kerberos mode): the pods use that operator-provided keytab
-        // (PRE_PROVISIONED), and principals in a backend (e.g. CDP) realm are not issuable by the
-        // hosting KDC anyway.
-        // externalKeytabProvided was computed earlier (at the krb5.conf ConfigMap gate) and reused here.
-        if (preProvisionedKerberosMode && externalKeytabProvided) {
-            LOG.info("External Kerberos keytab supplied for this deploy; skipping Ambari keytab issuance (pods use the operator-provided keytab).");
-        } else if (preProvisionedKerberosMode) {
-            boolean keytabStepsAdded = false;
-            if (!kerberosEnabled) {
-                LOG.info("Kerberos is disabled on the Ambari cluster; skipping pre-provisioned keytab creation.");
-            } else if (ambariActionClient == null || cluster == null || cluster.isBlank()) {
-                LOG.warn("Ambari client or cluster is unavailable; skipping pre-provisioned keytab creation.");
-            } else {
-                List<Map<String, Object>> kerberosEntries = kerberosEntryList;
-                if (kerberosEntries.isEmpty()) {
-                    LOG.info("No Kerberos entries found in the request; skipping keytab provisioning.");
-                } else {
-                    if (kerberosRealm == null || kerberosRealm.isBlank()) {
-                        LOG.warn("Kerberos realm is empty; skipping pre-provisioned keytab creation.");
-                    } else {
-                        boolean helmOverridesApplied = false;
-                        int kerberosEntryIndex = 0;
-                        for (Map<String, Object> kerberosEntry : kerberosEntries) {
-                            kerberosEntryIndex++;
-                            if (!isKerberosEntryEnabled(kerberosEntry.get("enabled"))) {
-                                LOG.info("Skipping disabled Kerberos entry {}", kerberosEntry.getOrDefault("key", kerberosEntryIndex));
-                                continue;
-                            }
-                            String entryKey = resolveStringValue(
-                                    kerberosEntry.get("key"), "entry-" + kerberosEntryIndex);
-                            String serviceName = resolveStringValue(
-                                    kerberosEntry.get("serviceName"), request.getReleaseName());
-                            String principalTemplate = resolveStringValue(
-                                    kerberosEntry.get("principalTemplate"), "{{service}}-{{namespace}}@{{realm}}");
-                            // Flatten formValues to <name,String> so principalTemplate can address
-                            // wizard form fields by name (e.g. {{kerberosHostFqdn}}). Required
-                            // because FreeIPA 4.12 rejects non-FQDN service host components and we
-                            // don't want to hardcode any cluster's DNS suffix in service.json.
-                            Map<String, String> kerberosExtraTokens = new LinkedHashMap<>();
-                            if (request.getFormValues() != null) {
-                                for (Map.Entry<String, Object> e : request.getFormValues().entrySet()) {
-                                    Object v = e.getValue();
-                                    if (v != null) kerberosExtraTokens.put(e.getKey(), String.valueOf(v));
-                                }
-                            }
-                            String principalFqdn = renderKerberosPrincipalTemplate(
-                                    principalTemplate,
-                                    serviceName,
-                                    request.getNamespace(),
-                                    request.getReleaseName(),
-                                    kerberosRealm,
-                                    kerberosExtraTokens
-                            );
-                            principalFqdn = normalizeKerberosPrincipalLength(principalFqdn);
-                            if (principalFqdn == null || principalFqdn.isBlank()) {
-                                LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
-                                continue;
-                            }
-                            validateKerberosPrincipal(principalFqdn);
+        // 2a. Pre-provision Kerberos keytabs if the view is configured for it (planned with the Ambari permission check).
+        if (!plannedKeytabs.isEmpty()) {
+            boolean helmOverridesApplied = false;
+            for (PlannedKeytab keytab : plannedKeytabs) {
+                LOG.info("Pre-provisioning keytab for entry {}: principal={}, secret={}, key={}, mountPath={}",
+                        keytab.entryKey(), keytab.principalFqdn(), keytab.secretName(), keytab.keyNameInSecret(),
+                        keytab.mountPath());
 
-                            String secretName = resolveKerberosEntrySecretName(
-                                    kerberosEntry,
-                                    serviceName,
-                                    request.getNamespace(),
-                                    request.getReleaseName(),
-                                    kerberosRealm
-                            );
-                            String keyNameInSecret = resolveStringValue(
-                                    kerberosEntry.get("keyNameInSecret"), "service.keytab");
-                            String mountPath = resolveStringValue(
-                                    kerberosEntry.get("mountPath"), "/etc/security/keytabs");
+                appendPreProvisionedKeytabSteps(
+                        rootCommand,
+                        childCommands,
+                        params,
+                        keytab.principalFqdn(),
+                        request.getNamespace(),
+                        keytab.secretName(),
+                        keytab.keyNameInSecret(),
+                        keytab.entryKey()
+                );
 
-                            LOG.info("Pre-provisioning keytab for entry {}: principal={}, secret={}, key={}, mountPath={}",
-                                    entryKey, principalFqdn, secretName, keyNameInSecret, mountPath);
-
-                            appendPreProvisionedKeytabSteps(
-                                    rootCommand,
-                                    childCommands,
-                                    params,
-                                    principalFqdn,
-                                    request.getNamespace(),
-                                    secretName,
-                                    keyNameInSecret,
-                                    entryKey
-                            );
-                            keytabStepsAdded = true;
-
-                            // Only one secret can be wired to global.security.kerberos.keytab.* today.
-                            if (!helmOverridesApplied) {
-                                this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretName", secretName);
-                                this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretDataKey", keyNameInSecret);
-                                if (mountPath != null && !mountPath.isBlank()) {
-                                    this.commandUtils.addOverride(params, "global.security.kerberos.keytab.mountPath", mountPath);
-                                }
-                                // Charts that kinit with a principal they derive themselves (Superset:
-                                // <serviceLabel>-<namespace>@<realm>) must be told the principal the keytab was
-                                // really issued for: KDPS shortens primaries above the FreeIPA limit, and a
-                                // derived name then no longer matches the keytab ("Keytab contains no suitable
-                                // keys"). The entry names the chart value that pins the principal.
-                                String principalValuePath = resolveStringValue(kerberosEntry.get("principalValuePath"), "");
-                                if (principalValuePath != null && !principalValuePath.isBlank()) {
-                                    this.commandUtils.addOverride(params, principalValuePath.trim(), principalFqdn);
-                                    LOG.info("Pinned the chart principal {} = {} (entry {})", principalValuePath.trim(), principalFqdn, entryKey);
-                                }
-                                helmOverridesApplied = true;
-                            } else {
-                                LOG.warn("Multiple Kerberos entries detected; Helm overrides already set from the first entry.");
-                            }
-                        }
+                // Only one secret can be wired to global.security.kerberos.keytab.* today.
+                if (!helmOverridesApplied) {
+                    this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretName", keytab.secretName());
+                    this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretDataKey", keytab.keyNameInSecret());
+                    if (keytab.mountPath() != null && !keytab.mountPath().isBlank()) {
+                        this.commandUtils.addOverride(params, "global.security.kerberos.keytab.mountPath", keytab.mountPath());
                     }
+                    // Charts that kinit with a principal they derive themselves (Superset:
+                    // <serviceLabel>-<namespace>@<realm>) must be told the principal the keytab was
+                    // really issued for: KDPS shortens primaries above the FreeIPA limit, and a
+                    // derived name then no longer matches the keytab ("Keytab contains no suitable
+                    // keys"). The entry names the chart value that pins the principal.
+                    String principalValuePath = keytab.principalValuePath();
+                    if (principalValuePath != null && !principalValuePath.isBlank()) {
+                        this.commandUtils.addOverride(params, principalValuePath.trim(), keytab.principalFqdn());
+                        LOG.info("Pinned the chart principal {} = {} (entry {})", principalValuePath.trim(),
+                                keytab.principalFqdn(), keytab.entryKey());
+                    }
+                    helmOverridesApplied = true;
+                } else {
+                    LOG.warn("Multiple Kerberos entries detected; Helm overrides already set from the first entry.");
                 }
             }
-            if (keytabStepsAdded) {
-                rootCommand.setChildListJson(gson.toJson(childCommands));
-                rootCommand.setParamsJson(gson.toJson(params));
-                store(rootCommand);
-            }
+            rootCommand.setChildListJson(gson.toJson(childCommands));
+            rootCommand.setParamsJson(gson.toJson(params));
+            store(rootCommand);
         }
 
         // 2b. Pre-provision OIDC client credentials if the service definition has oidc[] entries.
@@ -6390,42 +6565,33 @@ public class CommandService {
         {
             Map<String, Object> fvPolaris = (params.get("formValues") instanceof Map)
                     ? (Map<String, Object>) params.get("formValues") : null;
-            // isEntryEnabled treats an absent value as enabled, which is right for chart entries but
-            // wrong for a wizard toggle: an untouched form must not provision anything.
-            Object icebergRaw = (fvPolaris == null) ? null
-                    : ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.enabled");
-            boolean icebergOn = icebergRaw != null && isEntryEnabled(icebergRaw);
-            if (icebergOn) {
-                Object provisionRaw = ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.provision");
-                boolean provision = provisionRaw == null || isEntryEnabled(provisionRaw);
-                if (provision) {
-                    Map<String, Object> pp = new LinkedHashMap<>();
-                    pp.put("releaseName", request.getReleaseName());
-                    pp.put("namespace", request.getNamespace());
-                    pp.put("serviceKey", request.getServiceKey());
-                    // The same toggle governs creation: provisioning without creation attaches the
-                    // release to a catalog the operator already owns.
-                    pp.put("_createCatalog", "true");
-                    pp.put("catalogName", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.warehouse")));
-                    pp.put("s3Endpoint", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Endpoint")));
-                    pp.put("s3Region", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Region")));
-                    pp.put("s3AccessKeyId", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3AccessKey")));
-                    pp.put("s3SecretAccessKey", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3SecretKey")));
-                    pp.put("s3CredentialSecret", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3CredentialSecret")));
-                    pp.put("polarisRestUri", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.restUri")));
-                    String polarisPcId = stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "platformContextId"));
-                    if (!polarisPcId.isBlank()) pp.put("_platformContextId", polarisPcId);
-                    if (params.get("_cluster") != null) pp.put("_cluster", params.get("_cluster"));
-                    if (params.get("_baseUri") != null) pp.put("_baseUri", params.get("_baseUri"));
-                    if (params.get("_callerHeaders") != null) pp.put("_callerHeaders", params.get("_callerHeaders"));
-                    String polarisCmdId = this.commandPlanFactory.createPolarisProvision(rootCommand, pp);
-                    childCommands.add(polarisCmdId);
-                    rootCommand.setChildListJson(gson.toJson(childCommands));
-                    store(rootCommand);
-                    LOG.info("Queued POLARIS_PROVISION_CATALOG for release '{}' in namespace '{}' (catalog creation {}).",
-                            request.getReleaseName(), request.getNamespace(),
-                            "true".equals(pp.get("_createCatalog")) ? "enabled" : "disabled");
-                }
+            if (plansPolarisProvision(fvPolaris)) {
+                Map<String, Object> pp = new LinkedHashMap<>();
+                pp.put("releaseName", request.getReleaseName());
+                pp.put("namespace", request.getNamespace());
+                pp.put("serviceKey", request.getServiceKey());
+                // The same toggle governs creation: provisioning without creation attaches the
+                // release to a catalog the operator already owns.
+                pp.put("_createCatalog", "true");
+                pp.put("catalogName", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.warehouse")));
+                pp.put("s3Endpoint", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Endpoint")));
+                pp.put("s3Region", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Region")));
+                pp.put("s3AccessKeyId", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3AccessKey")));
+                pp.put("s3SecretAccessKey", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3SecretKey")));
+                pp.put("s3CredentialSecret", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3CredentialSecret")));
+                pp.put("polarisRestUri", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.restUri")));
+                String polarisPcId = stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "platformContextId"));
+                if (!polarisPcId.isBlank()) pp.put("_platformContextId", polarisPcId);
+                if (params.get("_cluster") != null) pp.put("_cluster", params.get("_cluster"));
+                if (params.get("_baseUri") != null) pp.put("_baseUri", params.get("_baseUri"));
+                if (params.get("_callerHeaders") != null) pp.put("_callerHeaders", params.get("_callerHeaders"));
+                String polarisCmdId = this.commandPlanFactory.createPolarisProvision(rootCommand, pp);
+                childCommands.add(polarisCmdId);
+                rootCommand.setChildListJson(gson.toJson(childCommands));
+                store(rootCommand);
+                LOG.info("Queued POLARIS_PROVISION_CATALOG for release '{}' in namespace '{}' (catalog creation {}).",
+                        request.getReleaseName(), request.getNamespace(),
+                        "true".equals(pp.get("_createCatalog")) ? "enabled" : "disabled");
             }
         }
 
@@ -6791,6 +6957,28 @@ public class CommandService {
                 LOG.warn("Could not queue post-deploy Ambari view provision step for '{}': {}",
                         request.getReleaseName(), ex.toString());
             }
+        }
+
+        // Steps planned since the first check, such as OpenMetadata's Ranger and Atlas wiring, may need more Ambari
+        // permissions. Keytab steps were judged there, where a keytab already stored in its Secret is known, and so was
+        // the Polaris step, which needs no Ambari permission when the form gives an S3 key. The plan is stored by now,
+        // so a refusal also closes it: resuming it would run the refused steps without the release record below.
+        List<String> plannedSteps = plannedStepTypes(rootCommand);
+        plannedSteps.removeIf(CommandType.KEYTAB_ISSUE_PRINCIPAL.name()::equals);
+        plannedSteps.removeIf(CommandType.POLARIS_PROVISION_CATALOG.name()::equals);
+        String missingPlannedPermission = ambariPermissions.check(
+                AmbariPermissionPreflight.requiredFor(plannedSteps, usesManagedContext(params)));
+        if (missingPlannedPermission != null) {
+            refuseStoredPlan(rootCommand, commandStatusEntity, missingPlannedPermission);
+            throw new IllegalStateException(missingPlannedPermission);
+        }
+
+        // Recorded once the deploy is sure to run: a refused deploy leaves the release's record as it was.
+        try {
+            planReleaseMetadata(params, request.getNamespace(), request.getReleaseName(), releaseMetadata,
+                    effectiveValues);
+        } catch (Exception ex) {
+            LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
 
         // Publish correlation ConfigMap so the mutating webhook can attach keytab requests to this command tree.
@@ -7253,13 +7441,20 @@ public class CommandService {
      * @param rootId        id of the root (top) command to resume
      * @param callerHeaders the resume request's HTTP headers (fresh, authenticated); may be null
      * @throws IllegalArgumentException if the command is unknown
-     * @throws IllegalStateException    if the command is not in a FAILED state, or has no steps
+     * @throws IllegalStateException    if the command is not in a FAILED state, has no steps, or is a deploy that was
+     *                                  refused before it started
      */
     public void resume(String rootId, javax.ws.rs.core.MultivaluedMap<String, String> callerHeaders) {
         CommandEntity root = find(rootId);
         if (root == null) throw new IllegalArgumentException("Unknown operation: " + rootId);
         CommandStatusEntity rootSt = findCommandStatusById(root.getCommandStatusId());
         if (rootSt == null) throw new IllegalStateException("No status for operation: " + rootId);
+        if (wasRefusedBeforeStart(rootSt)) {
+            // Its checks refused it; resuming would run its steps anyway, and without the release record.
+            String reason = rootSt.getMessage();
+            throw new IllegalStateException("This deploy was refused before it started, so it cannot be resumed. "
+                    + (reason == null || reason.isBlank() ? "Deploy it again from the wizard." : reason));
+        }
         if (!CommandState.FAILED.name().equals(rootSt.getState())) {
             throw new IllegalStateException("Only a failed operation can be resumed (current state: "
                     + rootSt.getState() + ").");
@@ -8909,8 +9104,7 @@ public class CommandService {
                                 // the new principal does not exist in the KDC yet, so it is created and a fresh
                                 // keytab overwrites the Secret — the view self-heals. Same-principal redeploys
                                 // still reuse (generate-once, no KDC re-key → no "Preauthentication failed").
-                                if (existing.isPresent() && existing.get().length > 0
-                                        && keytabContainsPrincipal(existing.get(), principalFqdn)) {
+                                if (isReusableKeytab(existing, principalFqdn)) {
                                     LOG.info("KEYTAB_ISSUE_PRINCIPAL: Secret '{}/{}' already holds keytab '{}' ({} bytes) for principal '{}' — reusing, NOT re-keying the KDC",
                                             reuseNs, reuseSec, reuseKey, existing.get().length, principalFqdn);
                                     appendCommandLog(id, "Reusing existing keytab in Secret " + reuseNs + "/" + reuseSec
@@ -13301,6 +13495,113 @@ public class CommandService {
         try { return dataStore.find(CommandEntity.class, id); }
         catch (PersistenceException ex) { LOG.error("Find error", ex); return null; }
     }
+
+    /** The types of every step planned under a command, the steps of its sub-steps included. */
+    private List<String> plannedStepTypes(CommandEntity root) {
+        List<String> types = new ArrayList<>();
+        for (CommandEntity step : plannedStepsOf(root)) {
+            types.add(step.getType());
+        }
+        return types;
+    }
+
+    /** Every step planned under a command, the steps of its sub-steps included. */
+    private List<CommandEntity> plannedStepsOf(CommandEntity root) {
+        List<CommandEntity> steps = new ArrayList<>();
+        java.util.Deque<String> pending = new java.util.ArrayDeque<>(childIdsOf(root));
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        while (!pending.isEmpty()) {
+            String childId = pending.poll();
+            if (childId == null || !seen.add(childId)) continue;
+            CommandEntity child = find(childId);
+            if (child == null) continue;
+            steps.add(child);
+            pending.addAll(childIdsOf(child));
+        }
+        return steps;
+    }
+
+    /**
+     * Closes a deploy refused after its steps were stored but before any of them ran. The operation stays in the list
+     * as failed, with the reason, so the operator sees why nothing happened; its steps are canceled and the operation
+     * is marked so that {@link #resume} refuses it too.
+     *
+     * @param root       the deploy's root command
+     * @param rootStatus the root command's status
+     * @param reason     why the deploy was refused, as shown to the operator
+     */
+    private void refuseStoredPlan(CommandEntity root, CommandStatusEntity rootStatus, String reason) {
+        String now = Instant.now().toString();
+        for (CommandEntity step : plannedStepsOf(root)) {
+            CommandStatusEntity stepStatus = findCommandStatusById(step.getCommandStatusId());
+            if (stepStatus == null) continue;
+            stepStatus.setState(CommandState.CANCELED.name());
+            stepStatus.setMessage("Not run: the deploy was refused before it started.");
+            stepStatus.setUpdatedAt(now);
+            store(stepStatus);
+        }
+        rootStatus.setResultJson(gson.toJson(Map.of(REFUSED_BEFORE_START, true)));
+        fail(rootStatus, reason);
+        appendCommandLog(root.getId(), "Deploy refused before it started: " + reason);
+    }
+
+    /** Whether the operation is a deploy refused before it started, see {@link #refuseStoredPlan}. */
+    private boolean wasRefusedBeforeStart(CommandStatusEntity status) {
+        String result = status.getResultJson();
+        if (result == null || result.isBlank()) {
+            return false;
+        }
+        try {
+            JsonElement parsed = JsonParser.parseString(result);
+            return parsed.isJsonObject() && parsed.getAsJsonObject().has(REFUSED_BEFORE_START)
+                    && parsed.getAsJsonObject().get(REFUSED_BEFORE_START).getAsBoolean();
+        } catch (RuntimeException unreadable) {
+            return false;
+        }
+    }
+
+    private List<String> childIdsOf(CommandEntity cmd) {
+        if (cmd == null || cmd.getChildListJson() == null || cmd.getChildListJson().isBlank()) {
+            return Collections.emptyList();
+        }
+        try {
+            List<String> ids = gson.fromJson(cmd.getChildListJson(), new TypeToken<ArrayList<String>>() {}.getType());
+            return ids == null ? Collections.emptyList() : ids;
+        } catch (Exception e) {
+            LOG.warn("Unreadable child list on command {}: {}", cmd.getId(), e.toString());
+            return Collections.emptyList();
+        }
+    }
+
+    /** The Ambari user behind the current request, as Ambari knows it (before any auth_to_local shortening). */
+    private String ambariUserName() {
+        String user = ctx.getLoggedinUser();
+        return user == null || user.isBlank() ? ctx.getUsername() : user;
+    }
+
+    /** Whether the deploy uses the Ambari-managed platform context, whose steps talk to the local Ambari. */
+    static boolean usesManagedContext(Map<String, Object> params) {
+        String contextId = stringValue(params.get("_platformContextId"));
+        return contextId.isBlank() || ContextService.DEFAULT_CONTEXT_ID.equals(contextId);
+    }
+
+    /**
+     * Whether the deploy reads the Ambari-managed cluster with the operator's session: its Kerberos state and the
+     * settings of the services the release connects to. It does on the managed context whenever Ambari manages a
+     * cluster: the one the view is bound to or discovered, or one Ambari would not list for the operator. A view bound
+     * to no cluster, with discovery off, deploys without reading one.
+     *
+     * @param params                 the deploy parameters
+     * @param cluster                the cluster the deploy acts on; {@code null} when it could not be resolved
+     * @param ambariManagesNoCluster whether Ambari answered that it manages no cluster
+     * @param discoveryEnabled       whether the cluster is discovered from Ambari when the view is bound to none
+     */
+    static boolean readsManagedCluster(Map<String, Object> params, String cluster, boolean ambariManagesNoCluster,
+                                       boolean discoveryEnabled) {
+        return usesManagedContext(params) && !ambariManagesNoCluster
+                && ((cluster != null && !cluster.isBlank()) || discoveryEnabled);
+    }
+
     private CommandEntity findCommandById(String id) {
         try { return dataStore.find(CommandEntity.class, id); }
         catch (PersistenceException ex) { LOG.error("Find error", ex); return null; }

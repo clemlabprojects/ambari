@@ -885,9 +885,11 @@ const HelmReleasesPage: React.FC = () => {
             );
           })}
           {renewable && (
-            <Button size="small" type="link" onClick={onRenew} style={{ padding: 0 }}>
-              Renew
-            </Button>
+            <PermissionGuard requires="canWrite">
+              <Button size="small" type="link" onClick={onRenew} style={{ padding: 0 }}>
+                Renew
+              </Button>
+            </PermissionGuard>
           )}
         </Space>
       );

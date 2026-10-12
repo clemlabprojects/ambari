@@ -51,7 +51,7 @@ const MONITORING_STATE_CONFIG: Record<string, { color: string; label: string; ic
 };
 
 const ConfigurationPage: React.FC = () => {
-    const { permissions } = usePermissions();
+    const { permissions, loading: permissionsLoading } = usePermissions();
     const { status, fetchData, setClusterStatus, monitoringState } = useClusterStatus();
     const [form] = Form.useForm();
     const [repoForm] = Form.useForm();
@@ -433,6 +433,10 @@ const ConfigurationPage: React.FC = () => {
         },
     };
 
+    if (permissionsLoading) {
+        // The role arrives from the backend; do not flash the refusal at an administrator meanwhile.
+        return null;
+    }
     if (!permissions?.canConfigure) {
         return <Alert message="Insufficient Permissions" description="You do not have the required permissions to configure this view." type="error" showIcon style={{ margin: 24 }} />;
     }

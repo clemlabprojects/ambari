@@ -94,6 +94,21 @@ class TrinoCatalogRuntimeServiceTest {
     }
 
     @Test
+    void readOnlyRowsKeepTheirProvenanceButNotTheirCredentials() {
+        Map<String, String> persisted = new LinkedHashMap<>();
+        persisted.put("pg", "connector.name=postgresql\nconnection-user=app\nconnection-password=s3cret");
+        List<TrinoCatalogRuntimeService.CatalogView> rows = TrinoCatalogRuntimeService.withoutSecrets(
+                TrinoCatalogRuntimeService.merge(List.of("system", "pg", "probe_x"), persisted, persisted, Map.of()));
+
+        TrinoCatalogRuntimeService.CatalogView pg = rows.get(1);
+        assertEquals("pg", pg.name);
+        assertEquals("inline", pg.source);
+        assertEquals("postgresql", pg.connector);
+        assertEquals("connector.name=postgresql\nconnection-user=app\nconnection-password=********", pg.properties);
+        assertNull(rows.get(2).properties, "a catalog only Trino knows has no properties to mask");
+    }
+
+    @Test
     void storeFileBecomesPropertiesTextWithConnectorFirst() {
         String raw = "#Sat Oct 03 09:07:21 UTC 2026\nmemory.max-data-per-node=16MB\nconnector.name=memory\nconnection-url=jdbc\\:postgresql\\://db\\:5432/x\n";
         assertEquals("connector.name=memory\nmemory.max-data-per-node=16MB\nconnection-url=jdbc:postgresql://db:5432/x",

@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.ws.rs.*;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.util.List;
@@ -58,10 +59,17 @@ public class CaRegistryResource {
     private final KubernetesService kubernetesService;
     private final AuthHelper authHelper;
 
-    public CaRegistryResource(ViewContext viewContext, KubernetesService kubernetesService) {
+    /**
+     * Creates the resource for one request.
+     *
+     * @param viewContext       active Ambari view context
+     * @param kubernetesService Kubernetes access of the view
+     * @param callerHeaders     headers of the request; the role check asks Ambari with the caller's credentials
+     */
+    public CaRegistryResource(ViewContext viewContext, KubernetesService kubernetesService, HttpHeaders callerHeaders) {
         this.viewContext = viewContext;
         this.kubernetesService = kubernetesService;
-        this.authHelper = new AuthHelper(viewContext);
+        this.authHelper = new AuthHelper(viewContext, callerHeaders);
     }
 
     private CaRegistryService service() {
@@ -98,8 +106,9 @@ public class CaRegistryResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public Response upload(Map<String, Object> body) {
+        // A company CA comes with its private key and signs certificates every release trusts: configuration.
+        authHelper.checkConfigurationPermission();
         try {
-            authHelper.checkWritePermission();
             if (body == null) {
                 return Response.status(Response.Status.BAD_REQUEST)
                         .entity(Map.of("error", "Empty request body")).build();
@@ -122,8 +131,8 @@ public class CaRegistryResource {
     @Path("{name}")
     @Produces(MediaType.APPLICATION_JSON)
     public Response delete(@PathParam("name") String caName) {
+        authHelper.checkConfigurationPermission();
         try {
-            authHelper.checkWritePermission();
             service().delete(caName);
             return Response.noContent().build();
         } catch (IllegalArgumentException iae) {
@@ -151,8 +160,8 @@ public class CaRegistryResource {
     @Path("{name}/promote-to-cluster-issuer")
     @Produces(MediaType.APPLICATION_JSON)
     public Response promoteToClusterIssuer(@PathParam("name") String caName) {
+        authHelper.checkConfigurationPermission();
         try {
-            authHelper.checkWritePermission();
             CaRegistryService.CaEntry entry = service().get(caName);
             // ClusterIssuer name we use: "clemlab-<sanitized-caName>". Keep predictable
             // so re-promotes don't proliferate issuers and the wizard's discovery list

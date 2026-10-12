@@ -180,6 +180,20 @@ public class TrinoCatalogRuntimeService {
     }
 
     /**
+     * The catalog rows with the credentials in their properties masked, for a user who may look at the release but
+     * not change it. The properties come from the release values, which hold inline catalogs' passwords as written.
+     *
+     * @param rows the rows of {@link #list}
+     * @return the same rows, masked
+     */
+    public static List<CatalogView> withoutSecrets(List<CatalogView> rows) {
+        for (CatalogView row : rows) {
+            row.properties = TrinoCatalogService.withoutSecrets(row.properties);
+        }
+        return rows;
+    }
+
+    /**
      * Pure merge (unit-tested) of SHOW CATALOGS with what is persisted. {@code rendered} = the catalog
      * ConfigMap (chart defaults + values + KDPS-managed), {@code inValues} = the release's own
      * {@code catalogs} values, {@code refs} = reusable-catalog references.

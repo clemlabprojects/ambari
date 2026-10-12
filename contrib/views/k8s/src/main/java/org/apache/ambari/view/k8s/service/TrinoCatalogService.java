@@ -182,6 +182,59 @@ public class TrinoCatalogService {
         return m.group(1);
     }
 
+    /** What a read-only user sees in place of a credential in a catalog's properties. */
+    public static final String MASKED_VALUE = "********";
+
+    /**
+     * A property line, commented out or not: its comment marks, then its name as java.util.Properties reads it (up to
+     * the first '=', ':' or blank), then its value.
+     */
+    private static final Pattern PROPERTY_LINE = Pattern.compile("(?s)^(\\s*(?:[#!]\\s*)*)([^\\s=:#!][^\\s=:]*)(.*)$");
+    /** A property whose value is a credential, e.g. connection-password, s3.aws-secret-key, oauth2.credential. */
+    private static final Pattern SECRET_PROPERTY = Pattern.compile("(?i)password|passwd|pwd|secret|credential|token|key");
+
+    /**
+     * The catalog's properties with every credential replaced by {@link #MASKED_VALUE}, for users who may read the
+     * catalogs but not use them: they keep the catalog's connector and settings, never its passwords. Reusable and
+     * inline catalogs may hold credentials in plain text, and a commented-out line may hold an old one.
+     *
+     * @param propertiesText a catalog's {@code .properties} text, or {@code null}
+     * @return the text with the values of password, secret, credential, token and key properties masked
+     */
+    public static String withoutSecrets(String propertiesText) {
+        if (propertiesText == null || propertiesText.isEmpty()) {
+            return propertiesText;
+        }
+        List<String> out = new ArrayList<>();
+        boolean maskingContinuation = false;
+        for (String line : propertiesText.split("\n", -1)) {
+            if (maskingContinuation) {
+                // The rest of a masked value written over several lines.
+                maskingContinuation = endsWithContinuation(line);
+                continue;
+            }
+            Matcher property = PROPERTY_LINE.matcher(line);
+            if (property.matches() && SECRET_PROPERTY.matcher(property.group(2)).find()
+                    && !property.group(3).replaceFirst("^\\s*[=:]?", "").isBlank()) {
+                out.add(property.group(1) + property.group(2) + "=" + MASKED_VALUE);
+                // A comment never goes on over the next line.
+                maskingContinuation = property.group(1).isBlank() && endsWithContinuation(line);
+            } else {
+                out.add(line);
+            }
+        }
+        return String.join("\n", out);
+    }
+
+    /** Whether a properties line goes on over the next one: it ends with an odd number of backslashes. */
+    private static boolean endsWithContinuation(String line) {
+        int backslashes = 0;
+        for (int i = line.length() - 1; i >= 0 && line.charAt(i) == '\\'; i--) {
+            backslashes++;
+        }
+        return backslashes % 2 == 1;
+    }
+
     /** Short content fingerprint stored with a release so a drifted catalog can be spotted later. */
     static String contentHash(String propertiesText) {
         try {

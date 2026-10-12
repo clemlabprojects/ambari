@@ -1,6 +1,8 @@
 import type { HelmRepo } from '../../types/ServiceTypes';
 
 export const getHelmRepos = jest.fn<Promise<HelmRepo[]>, []>(() => Promise.resolve([]));
+export const getCurrentUserPermissions = jest.fn<Promise<any>, []>(() =>
+  Promise.resolve({ role: 'ADMIN', canConfigure: true, canWrite: true }));
 export const createHelmRepo = jest.fn<Promise<HelmRepo>, [any]>((repo) => Promise.resolve(repo));
 export const loginHelmRepo  = jest.fn<Promise<void>, [string]>((id) => Promise.resolve());
 export const deleteHelmRepo = jest.fn<Promise<void>, [string]>((id) => Promise.resolve());

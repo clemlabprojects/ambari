@@ -20,6 +20,7 @@ import React, { useEffect, useState } from 'react';
 import { Alert, Button, Form, Input, message, Modal, Space, Table, Tag, Typography, Upload, Popconfirm } from 'antd';
 import { CloudUploadOutlined, DeleteOutlined, RocketOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { API_BASE_URL, getClusterCapabilities, type ClusterCapabilities } from '../api/client';
+import PermissionGuard from '../components/common/PermissionGuard';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -186,28 +187,31 @@ const CertificateAuthoritiesPage: React.FC = () => {
       title: 'Actions',
       key: 'actions',
       width: 280,
+      // A company CA signs certificates every release trusts: only KDPS admins change the registry.
       render: (_: any, r: CaEntry) => (
-        <Space>
-          {capabilities?.certManager.installed && !promotedIssuers[r.caName] && (
-            <Button size="small" icon={<RocketOutlined />} onClick={() => onPromote(r)}>
-              Promote to ClusterIssuer
-            </Button>
-          )}
-          {capabilities?.certManager.installed && promotedIssuers[r.caName] && (
-            <Button size="small" icon={<RocketOutlined />} onClick={() => onPromote(r)}>
-              Re-promote
-            </Button>
-          )}
-          <Popconfirm
-            title={`Delete CA "${r.caName}"?`}
-            description="Existing leaves stay valid until they expire. Promoted ClusterIssuer (if any) is NOT deleted automatically."
-            okType="danger"
-            okText="Delete"
-            onConfirm={() => onDelete(r)}
-          >
-            <Button size="small" danger icon={<DeleteOutlined />}>Delete</Button>
-          </Popconfirm>
-        </Space>
+        <PermissionGuard requires="canConfigure">
+          <Space>
+            {capabilities?.certManager.installed && !promotedIssuers[r.caName] && (
+              <Button size="small" icon={<RocketOutlined />} onClick={() => onPromote(r)}>
+                Promote to ClusterIssuer
+              </Button>
+            )}
+            {capabilities?.certManager.installed && promotedIssuers[r.caName] && (
+              <Button size="small" icon={<RocketOutlined />} onClick={() => onPromote(r)}>
+                Re-promote
+              </Button>
+            )}
+            <Popconfirm
+              title={`Delete CA "${r.caName}"?`}
+              description="Existing leaves stay valid until they expire. Promoted ClusterIssuer (if any) is NOT deleted automatically."
+              okType="danger"
+              okText="Delete"
+              onConfirm={() => onDelete(r)}
+            >
+              <Button size="small" danger icon={<DeleteOutlined />}>Delete</Button>
+            </Popconfirm>
+          </Space>
+        </PermissionGuard>
       ),
     },
   ];
@@ -220,9 +224,11 @@ const CertificateAuthoritiesPage: React.FC = () => {
         </Title>
         <Space>
           <Button onClick={refresh} loading={loading}>Refresh</Button>
-          <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>
-            Upload Company CA
-          </Button>
+          <PermissionGuard requires="canConfigure">
+            <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>
+              Upload Company CA
+            </Button>
+          </PermissionGuard>
         </Space>
       </Space>
 

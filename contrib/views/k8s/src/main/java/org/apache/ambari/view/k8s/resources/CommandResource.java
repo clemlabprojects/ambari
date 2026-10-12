@@ -22,6 +22,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.CommandStatus;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
+import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
@@ -47,6 +48,9 @@ public class CommandResource {
 
   private final AmbariAliasResolver ambariAliasResolver;
   private final CommandLogService commandLogService;
+  /** Headers of the request this resource serves: the role check asks Ambari with the caller's credentials. */
+  private final HttpHeaders callerHeaders;
+  private AuthHelper authHelper;
 
   @Context
   private UriInfo uriInfo;
@@ -64,6 +68,7 @@ public class CommandResource {
     this.viewContext = vc;
     this.ambariAliasResolver = new AmbariAliasResolver(this.viewContext);
     this.commandLogService = CommandLogService.get(vc);
+    this.callerHeaders = null;
   }
 
   /**
@@ -71,11 +76,21 @@ public class CommandResource {
    *
    * @param vc                  active Ambari view context
    * @param ambariAliasResolver resolver to use for Ambari host/port alias substitution
+   * @param callerHeaders       headers of the request; the role check asks Ambari with the caller's credentials
    */
-  public CommandResource(ViewContext vc, AmbariAliasResolver ambariAliasResolver) {
+  public CommandResource(ViewContext vc, AmbariAliasResolver ambariAliasResolver, HttpHeaders callerHeaders) {
     this.viewContext = vc;
     this.ambariAliasResolver = ambariAliasResolver;
     this.commandLogService = CommandLogService.get(vc);
+    this.callerHeaders = callerHeaders;
+  }
+
+  /** The caller's KDPS role for this request, looked up at most once. */
+  private AuthHelper auth() {
+    if (authHelper == null) {
+      authHelper = new AuthHelper(viewContext, callerHeaders);
+    }
+    return authHelper;
   }
 
   /**
@@ -98,6 +113,7 @@ public class CommandResource {
                                @QueryParam("version") String version,
                                @QueryParam("kubeContext") String kubeContext,
                                @Context HttpHeaders headers, @Context UriInfo ui) {
+    auth().checkWritePermission();
     try {
       // Pass the LOCAL Ambari API base URI (not the inbound request's baseUri) so background workers
       // resuming this command later loop back to ambari-server directly rather than through whatever
@@ -196,6 +212,7 @@ public class CommandResource {
   @POST
   @Path("/{id}/cancel")
   public Response cancel(@PathParam("id") String id) {
+    auth().checkWritePermission();
     CommandService.get(viewContext).cancel(id);
     return Response.status(Response.Status.ACCEPTED)
             .entity(Map.of("id", id, "state", "CANCELLED"))
@@ -213,6 +230,7 @@ public class CommandResource {
   @POST
   @Path("/{id}/resume")
   public Response resume(@PathParam("id") String id, @Context HttpHeaders headers) {
+    auth().checkWritePermission();
     try {
       // Pass the resume request's (fresh, authenticated) headers so replayed Ambari-callback steps
       // re-authenticate with a live session instead of the invalidated one captured at submit time.
@@ -259,6 +277,7 @@ public class CommandResource {
   @POST
   @Path("/dependencies/refresh")
   public Response refreshDependencies(@Context UriInfo ui) {
+    auth().checkWritePermission();
     try {
       CommandService.get(viewContext).refreshSharedDependencies();
       return Response.ok(Map.of("status", "ok")).build();
@@ -279,6 +298,8 @@ public class CommandResource {
   public Response requestKeytab(@Context HttpHeaders headers,
                                 @Context UriInfo ui,
                                 KeytabRequest req) {
+    // The keytab webhook calls this endpoint with its own Ambari account, which the role lists do not name.
+    auth().checkKeytabRequestPermission();
     // Delegate to the scheduler in CommandService.
     // Headers are forwarded for caller authentication; the URI is the LOCAL Ambari API base
     // (see AmbariLoopbackUrlResolver — required when Ambari sits behind a reverse proxy).

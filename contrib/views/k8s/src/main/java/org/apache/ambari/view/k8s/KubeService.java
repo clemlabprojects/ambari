@@ -150,8 +150,8 @@ public class KubeService {
     @GET
     @Path("/users/me/permissions")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getCurrentUserPermissions() {
-        AuthHelper authHelper = new AuthHelper(viewContext);
+    public Response getCurrentUserPermissions(@Context HttpHeaders headers) {
+        AuthHelper authHelper = new AuthHelper(viewContext, headers);
         return Response.ok(authHelper.getPermissions()).build();
     }
 
@@ -160,7 +160,7 @@ public class KubeService {
     @Consumes(MediaType.APPLICATION_OCTET_STREAM)
     public Response uploadKubeconfig(@Context HttpHeaders headers,
                                      @Context UriInfo ui, InputStream fileInputStream) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
 
         try {
             ViewConfigurationService configurationService = this.getConfigService();
@@ -185,7 +185,7 @@ public class KubeService {
 
             LOG.info("Kubeconfig successfully saved to {}", configurationFile.getAbsolutePath());
             LOG.info("Configuring Apache Ambari View Backend CA bundle");
-            final String webhookName = "keytab-webhook"; // must match your Helm values prefix
+            final String webhookName = WebHookBootstrap.KEYTAB_WEBHOOK; // must match your Helm values prefix
 
             // A context chosen for the previous kubeconfig may not exist in this one: fall back to the new file's
             // current-context (the operator is then offered the context list) instead of failing to connect.
@@ -307,8 +307,8 @@ public class KubeService {
     @GET
     @Path("/cluster/contexts")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response listKubeconfigContexts() {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response listKubeconfigContexts(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         try {
             return Response.ok(this.getKubernetesService().listAvailableContexts()).build();
         } catch (Exception e) {
@@ -325,8 +325,8 @@ public class KubeService {
     @Path("/cluster/context")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response selectKubeconfigContext(java.util.Map<String, String> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response selectKubeconfigContext(@Context HttpHeaders headers, java.util.Map<String, String> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         String context = body == null ? null : body.get("context");
         LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
         java.util.List<java.util.Map<String, Object>> available;
@@ -360,8 +360,8 @@ public class KubeService {
     @Path("/cluster/openshift-login")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response saveOpenShiftLogin(java.util.Map<String, Object> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response saveOpenShiftLogin(@Context HttpHeaders headers, java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         if (body == null) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error", "missing body")).build();
         }
@@ -398,8 +398,8 @@ public class KubeService {
     @Path("/cluster/openshift-login/test")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response testOpenShiftLogin(java.util.Map<String, Object> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response testOpenShiftLogin(@Context HttpHeaders headers, java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         if (body == null) {
             return Response.ok(Map.of("ok", false, "error", "missing body")).build();
         }
@@ -434,8 +434,9 @@ public class KubeService {
     @GET
     @Path("/cluster/preflight")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response preflight(@QueryParam("namespace") @DefaultValue("default") String namespace) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response preflight(@Context HttpHeaders headers,
+                              @QueryParam("namespace") @DefaultValue("default") String namespace) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         KubernetesService k = getKubernetesService();
         boolean ocp = k.isOpenShiftCluster();
         List<Map<String, Object>> checks = new java.util.ArrayList<>();
@@ -493,8 +494,8 @@ public class KubeService {
     @GET
     @Path("/cluster/proxy")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getProxySettings() {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response getProxySettings(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         ViewConfigurationService cfg = getConfigService();
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("enabled", cfg.isProxyEnabled());
@@ -514,8 +515,8 @@ public class KubeService {
     @Path("/cluster/proxy")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response saveProxySettings(java.util.Map<String, Object> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response saveProxySettings(@Context HttpHeaders headers, java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         if (body == null) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error", "missing body")).build();
         }
@@ -540,8 +541,8 @@ public class KubeService {
     @Path("/cluster/auth-mode")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response setAuthMode(java.util.Map<String, String> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response setAuthMode(@Context HttpHeaders headers, java.util.Map<String, String> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         String mode = body == null ? null : body.get("mode");
         this.getConfigService().setAuthMode(mode);
         try { this.getKubernetesService().forceReloadClient(); } catch (Exception e) {
@@ -631,10 +632,21 @@ public class KubeService {
     @GET
     @Path("/cluster/events")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getClusterEvents() {
+    public Response getClusterEvents(@Context HttpHeaders headers) {
         try {
+            // Read-only users only see the events of the namespaces of releases deployed from KDPS, as on the
+            // Workloads page.
+            java.util.Set<String> onlyNamespaces = null;
+            if (!new AuthHelper(viewContext, headers).canWrite()) {
+                onlyNamespaces = new java.util.HashSet<>();
+                for (var release : new org.apache.ambari.view.k8s.service.ReleaseMetadataService(viewContext).findAll()) {
+                    if (release != null && release.getNamespace() != null) {
+                        onlyNamespaces.add(release.getNamespace());
+                    }
+                }
+            }
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            return Response.ok(mapper.writeValueAsString(getKubernetesService().getClusterEvents())).build();
+            return Response.ok(mapper.writeValueAsString(getKubernetesService().getClusterEvents(onlyNamespaces))).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -655,8 +667,8 @@ public class KubeService {
      * Workloads sub-resource: namespaces/pods/services/logs.
      */
     @Path("/workloads")
-    public WorkloadsResource getWorkloads() {
-        return new WorkloadsResource(viewContext);
+    public WorkloadsResource getWorkloads(@Context HttpHeaders headers) {
+        return new WorkloadsResource(viewContext, headers);
     }
 
     /**
@@ -666,8 +678,8 @@ public class KubeService {
     @Path("/helm/repos")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public HelmRepoResource helmRepos() {
-        return new HelmRepoResource(viewContext);
+    public HelmRepoResource helmRepos(@Context HttpHeaders headers) {
+        return new HelmRepoResource(viewContext, headers);
     }
 
     private Response handleError(Exception e) {
@@ -694,14 +706,14 @@ public class KubeService {
     
     /** Sub-resource for /helm/* under /resources/api */
     @Path("/helm")
-    public HelmResource helm() {
+    public HelmResource helm(@Context HttpHeaders headers) {
         // Pass the ViewContext so HelmResource can access DataStore, properties, etc.
-        return new HelmResource(viewContext);
+        return new HelmResource(viewContext, headers);
     }
 
     @Path("commands")
-    public CommandResource commands() {
-        return new CommandResource(viewContext, this.getAmbariAliasResolver());
+    public CommandResource commands(@Context HttpHeaders headers) {
+        return new CommandResource(viewContext, this.getAmbariAliasResolver(), headers);
     }
 
 
@@ -710,9 +722,9 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/discovery
      */
     @Path("/discovery")
-    public DiscoveryResource discovery() {
+    public DiscoveryResource discovery(@Context HttpHeaders headers) {
         // Pass dependencies
-        return new DiscoveryResource(viewContext, getKubernetesService());
+        return new DiscoveryResource(viewContext, getKubernetesService(), headers);
     }
 
     /**
@@ -729,9 +741,9 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/configurations
      */
     @Path("/configurations")
-    public ConfigurationResource configuration() {
+    public ConfigurationResource configuration(@Context HttpHeaders headers) {
         // Pass dependencies
-        return new ConfigurationResource(viewContext, getKubernetesService());
+        return new ConfigurationResource(viewContext, getKubernetesService(), headers);
     }
 
     /**
@@ -741,8 +753,8 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/pki/cas
      */
     @Path("/pki/cas")
-    public org.apache.ambari.view.k8s.resources.CaRegistryResource caRegistry() {
-        return new org.apache.ambari.view.k8s.resources.CaRegistryResource(viewContext, getKubernetesService());
+    public org.apache.ambari.view.k8s.resources.CaRegistryResource caRegistry(@Context HttpHeaders headers) {
+        return new org.apache.ambari.view.k8s.resources.CaRegistryResource(viewContext, getKubernetesService(), headers);
     }
 
     /**
@@ -752,8 +764,8 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/contexts
      */
     @Path("/contexts")
-    public org.apache.ambari.view.k8s.resources.ContextResource contexts() {
-        return new org.apache.ambari.view.k8s.resources.ContextResource(viewContext);
+    public org.apache.ambari.view.k8s.resources.ContextResource contexts(@Context HttpHeaders headers) {
+        return new org.apache.ambari.view.k8s.resources.ContextResource(viewContext, headers);
     }
     /**
      * Reusable Trino catalogs: catalog .properties the operator defines once and attaches to
@@ -761,8 +773,8 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/trino-catalogs
      */
     @Path("/trino-catalogs")
-    public org.apache.ambari.view.k8s.resources.TrinoCatalogResource trinoCatalogs() {
-        return new org.apache.ambari.view.k8s.resources.TrinoCatalogResource(viewContext);
+    public org.apache.ambari.view.k8s.resources.TrinoCatalogResource trinoCatalogs(@Context HttpHeaders headers) {
+        return new org.apache.ambari.view.k8s.resources.TrinoCatalogResource(viewContext, headers);
     }
 
     /**
@@ -858,7 +870,9 @@ public class KubeService {
     @Path("/truststores")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response createTruststore(Map<String, Object> body) {
+    public Response createTruststore(@Context HttpHeaders headers, Map<String, Object> body) {
+        // Default truststores are trusted by every deploy, so adding or changing one is a configuration task.
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         try {
             if (body == null) {
                 return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "request body is required")).build();
@@ -880,9 +894,11 @@ public class KubeService {
     @Path("/truststores/{namespace}/{name}/default")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response setTruststoreDefault(@PathParam("namespace") String namespace,
+    public Response setTruststoreDefault(@Context HttpHeaders headers,
+                                         @PathParam("namespace") String namespace,
                                          @PathParam("name") String name,
                                          Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         try {
             boolean value = body == null || !body.containsKey("default")
                     ? true : Boolean.parseBoolean(String.valueOf(body.get("default")));
@@ -898,8 +914,10 @@ public class KubeService {
     @DELETE
     @Path("/truststores/{namespace}/{name}")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response deleteTruststore(@PathParam("namespace") String namespace,
+    public Response deleteTruststore(@Context HttpHeaders headers,
+                                     @PathParam("namespace") String namespace,
                                      @PathParam("name") String name) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         try {
             truststoreRegistry().delete(namespace, name);
             return Response.ok(Map.of("deleted", true, "namespace", namespace, "name", name)).build();

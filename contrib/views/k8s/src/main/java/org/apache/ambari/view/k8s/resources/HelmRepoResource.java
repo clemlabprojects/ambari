@@ -20,11 +20,13 @@ package org.apache.ambari.view.k8s.resources;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.HelmRepoDTO;
+import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.HelmRepositoryService;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 
 import javax.inject.Inject;
 import javax.ws.rs.*;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -40,8 +42,18 @@ public class HelmRepoResource {
   @Inject
   private ViewContext viewContext;
 
-  public HelmRepoResource(ViewContext context) {
+  /** Headers of the request this resource serves: the role check asks Ambari with the caller's credentials. */
+  private final HttpHeaders callerHeaders;
+
+  /**
+   * Creates the resource for one request.
+   *
+   * @param context       active Ambari view context
+   * @param callerHeaders headers of the request; {@code null} when unknown
+   */
+  public HelmRepoResource(ViewContext context, HttpHeaders callerHeaders) {
     this.viewContext = context;
+    this.callerHeaders = callerHeaders;
   }
 
   @GET
@@ -58,6 +70,8 @@ public class HelmRepoResource {
 
   @POST
   public HelmRepoDTO save(HelmRepoEntity e) {
+    // Repositories decide which charts every deploy pulls, so changing one is a configuration task.
+    new AuthHelper(viewContext, callerHeaders).checkConfigurationPermission();
     // plainSecret is carried in the JSON body as a @Transient field — never in the URL.
     var svc = new HelmRepositoryService(viewContext);
     HelmRepoEntity out = svc.save(e, e.getPlainSecret());
@@ -67,12 +81,14 @@ public class HelmRepoResource {
   @POST
   @Path("{id}/login")
   public Response login(@PathParam("id") String id) {
+    new AuthHelper(viewContext, callerHeaders).checkWritePermission();
     new HelmRepositoryService(viewContext).loginOrSync(id);
     return Response.noContent().build(); // 204
   }
 
   @DELETE @Path("{id}")
   public Response delete(@PathParam("id") String id) {
+    new AuthHelper(viewContext, callerHeaders).checkConfigurationPermission();
     new HelmRepositoryService(viewContext).delete(id);
     return Response.ok().build();
   }
