@@ -554,55 +554,147 @@ class FluxGitOpsBackendPlannedCommitTest {
 
     // ---------------------------------------------------------------- Git credential aliases
 
-    /** A credential store holding a Git token of the view, and secrets of Ambari that are not Git credentials. */
+    private static final String GIT_URL = "https://git.example.org/platform/gitops.git";
+    private static final String OWN_ALIAS = GitCredentialService.releaseAlias("kdps", NS, RELEASE);
+    private static final String OTHER_RELEASE_ALIAS = GitCredentialService.releaseAlias("kdps", NS, "trino");
+
+    /**
+     * A credential store holding the Git token of this release and of another one, both entered for git.example.org,
+     * a copy an earlier version stored at a deploy, and secrets of Ambari that are not Git credentials.
+     */
     private GitCredentialService credentialStore(FluxGitOpsBackend backend) throws Exception {
-        Map<String, String> stored = Map.of("gitops-7f3a", "glpat-Saved-Token", "corp-git-token", "glpat-Recorded-Token",
+        Map<String, String> stored = Map.of(OWN_ALIAS, "glpat-Own-Token", OTHER_RELEASE_ALIAS, "glpat-Trino-Token",
+                "gitops-7f3a", "glpat-Saved-Token", "corp-git-token", "glpat-Recorded-Token",
                 "ambari.db.password", "Db-Pass-1");
+        Map<String, String> hosts = Map.of(OWN_ALIAS, "git.example.org", OTHER_RELEASE_ALIAS, "git.example.org");
         GitCredentialService credentials = mock(GitCredentialService.class);
         when(credentials.resolveSecret(anyString())).thenAnswer(inv -> stored.get((String) inv.getArgument(0)));
+        when(credentials.boundHost(anyString())).thenAnswer(inv -> hosts.get((String) inv.getArgument(0)));
         Field field = FluxGitOpsBackend.class.getDeclaredField("gitCredentialService");
         field.setAccessible(true);
         field.set(backend, credentials);
         return credentials;
     }
 
-    @Test
-    void onlyGitCredentialsAreResolvedFromTheCredentialStore() throws Exception {
-        FluxGitOpsBackend backend = backend();
-        GitCredentialService credentials = credentialStore(backend);
-        HelmDeployRequest foreign = request("main");
-        foreign.getGit().setRepoUrl("https://git.example.org/platform/gitops.git");
-        foreign.getGit().setCredentialAlias("ambari.db.password");
-        HelmDeployRequest foreignTokenAlias = request("main");
-        foreignTokenAlias.getGit().setRepoUrl("https://git.example.org/platform/gitops.git");
-        foreignTokenAlias.getGit().setSshKey("-----BEGIN OPENSSH PRIVATE KEY-----");
-        foreignTokenAlias.getGit().setAuthTokenAlias("ambari.db.password");
-
-        for (HelmDeployRequest request : List.of(foreign, foreignTokenAlias)) {
-            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
-                    () -> backend.checkCommittable(request, null));
-            assertTrue(refused.getMessage().startsWith("The credential alias 'ambari.db.password' does not hold a Git "
-                    + "credential saved by KDPS"), refused.getMessage());
-            assertThrows(IllegalArgumentException.class, () -> backend.commit(request, null, planned()));
-        }
-        verify(credentials, never()).resolveSecret("ambari.db.password");
-        assertTrue(secretPayloads.isEmpty(), "nothing was prepared for the release");
-
-        // A Git token the view saved, and the alias a release already pushes with, are still used.
-        HelmDeployRequest saved = request("main");
-        saved.getGit().setRepoUrl("https://git.example.org/platform/gitops.git");
-        saved.getGit().setCredentialAlias("gitops-7f3a");
-        backend.checkCommittable(saved, null);
+    /** Records the release as deployed from {@code gitRepoUrl} with the Git credential under {@code alias}. */
+    private void recordRelease(String gitRepoUrl, String alias) {
         K8sReleaseEntity recorded = new K8sReleaseEntity();
         recorded.setId(K8sReleaseEntity.idOf(NS, RELEASE));
         recorded.setNamespace(NS);
         recorded.setReleaseName(RELEASE);
-        recorded.setGitCredentialAlias("corp-git-token");
+        recorded.setDeploymentMode("FLUX_GITOPS");
+        recorded.setGitRepoUrl(gitRepoUrl);
+        recorded.setGitCredentialAlias(alias);
         releases.put(recorded.getId(), recorded);
-        HelmDeployRequest redeploy = request("main");
-        redeploy.getGit().setRepoUrl("https://git.example.org/platform/gitops.git");
-        backend.checkCommittable(redeploy, null);
+    }
+
+    private HelmDeployRequest requestTo(String gitRepoUrl, String credentialAlias) {
+        HelmDeployRequest request = request("main");
+        request.getGit().setRepoUrl(gitRepoUrl);
+        request.getGit().setCredentialAlias(credentialAlias);
+        return request;
+    }
+
+    @Test
+    void onlyTheGitCredentialsOfTheReleaseAreResolvedFromTheCredentialStore() throws Exception {
+        FluxGitOpsBackend backend = backend();
+        GitCredentialService credentials = credentialStore(backend);
+        // One of Ambari's own secrets, another release's token, a copy stored for another deploy.
+        for (String alias : List.of("ambari.db.password", OTHER_RELEASE_ALIAS, "gitops-7f3a")) {
+            HelmDeployRequest request = requestTo(GIT_URL, alias);
+            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                    () -> backend.checkCommittable(request, null));
+            assertTrue(refused.getMessage().startsWith("The credential alias '" + alias + "' does not hold a Git "
+                    + "credential saved by KDPS for analytics/superset"), refused.getMessage());
+            assertThrows(IllegalArgumentException.class, () -> backend.commit(request, null, planned()));
+            verify(credentials, never()).resolveSecret(alias);
+        }
+        HelmDeployRequest foreignTokenAlias = requestTo(GIT_URL, null);
+        foreignTokenAlias.getGit().setSshKey("-----BEGIN OPENSSH PRIVATE KEY-----");
+        foreignTokenAlias.getGit().setAuthTokenAlias("ambari.db.password");
+        assertThrows(IllegalArgumentException.class, () -> backend.checkCommittable(foreignTokenAlias, null));
+        verify(credentials, never()).resolveSecret("ambari.db.password");
+        assertTrue(secretPayloads.isEmpty(), "nothing was prepared for the release");
+
+        // The release's own alias is used, and so is a copy an earlier version stored, for the repository recorded.
+        backend.checkCommittable(requestTo(GIT_URL, OWN_ALIAS), null);
+        verify(credentials).resolveSecret(OWN_ALIAS);
+        recordRelease(GIT_URL, "gitops-7f3a");
+        backend.checkCommittable(requestTo(GIT_URL, null), null);
         verify(credentials).resolveSecret("gitops-7f3a");
-        verify(credentials).resolveSecret("corp-git-token");
+
+        // An alias recorded for the release that KDPS did not create is not.
+        recordRelease(GIT_URL, "corp-git-token");
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> backend.checkCommittable(requestTo(GIT_URL, null), null));
+        assertTrue(refused.getMessage().startsWith("The credential alias 'corp-git-token' does not hold"),
+                refused.getMessage());
+        verify(credentials, never()).resolveSecret("corp-git-token");
+    }
+
+    @Test
+    void aStoredGitCredentialIsNeverSentToAnotherHost() throws Exception {
+        FluxGitOpsBackend backend = backend();
+        GitCredentialService credentials = credentialStore(backend);
+        String elsewhere = "https://attacker.example/platform/gitops.git";
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> backend.checkCommittable(requestTo(elsewhere, OWN_ALIAS), null));
+        assertEquals("The Git credential KDPS saved for analytics/superset was entered for git.example.org, not for "
+                + "attacker.example. Give the access token or SSH key with the deploy to use " + elsewhere + ".",
+                refused.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> backend.commit(requestTo(elsewhere, OWN_ALIAS), null, planned()));
+
+        // A redeploy moving the release to another host, with the stored credential or a copy of an earlier version.
+        recordRelease(GIT_URL, OWN_ALIAS);
+        assertThrows(IllegalArgumentException.class, () -> backend.checkCommittable(requestTo(elsewhere, null), null));
+        recordRelease(GIT_URL, "gitops-7f3a");
+        refused = assertThrows(IllegalArgumentException.class,
+                () -> backend.checkCommittable(requestTo(elsewhere, null), null));
+        assertTrue(refused.getMessage().contains("was entered for git.example.org, not for attacker.example"),
+                refused.getMessage());
+        verify(credentials, never()).resolveSecret(anyString());
+
+        // Given again with the deploy, the token goes where the deploy says.
+        HelmDeployRequest withToken = requestTo(elsewhere, null);
+        withToken.getGit().setAuthToken("glpat-Entered-For-Attacker-Example");
+        backend.checkCommittable(withToken, null);
+        verify(credentials, never()).resolveSecret(anyString());
+    }
+
+    @Test
+    void aUrlThatShowsTheBoundHostButReachesAnotherIsRefused() throws Exception {
+        FluxGitOpsBackend backend = backend();
+        GitCredentialService credentials = credentialStore(backend);
+        recordRelease(GIT_URL, OWN_ALIAS);
+        // java.net.URI reads git.example.org; JGit, which pushes, reads attacker.example (and the reverse for the last).
+        for (String crafted : List.of("https://git.example.org#@attacker.example/x.git",
+                "https://git.example.org?@attacker.example/x.git",
+                "https://attacker.example#@git.example.org/x.git")) {
+            for (String alias : java.util.Arrays.asList(OWN_ALIAS, null)) {
+                IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                        () -> backend.checkCommittable(requestTo(crafted, alias), null), crafted);
+                assertTrue(refused.getMessage().startsWith("The Git repository URL cannot be used"),
+                        refused.getMessage());
+                assertThrows(IllegalArgumentException.class,
+                        () -> backend.commit(requestTo(crafted, alias), null, planned()), crafted);
+            }
+        }
+        verify(credentials, never()).resolveSecret(anyString());
+        verify(credentials, never()).storeSecret(anyString(), anyString(), anyString());
+        assertTrue(secretPayloads.isEmpty(), "nothing was prepared for the release");
+    }
+
+    @Test
+    void thePullRequestCallsGoToTheHostTheCredentialIsBoundTo() {
+        assertEquals("code.gitlab.example", FluxGitOpsBackend.pullRequestRepoUri(
+                "https://code.gitlab.example/platform/gitops.git").getHost(), "a host holding .git stays as it is");
+        assertEquals("/platform/gitops", FluxGitOpsBackend.pullRequestRepoUri(
+                "https://code.gitlab.example/platform/gitops.git/").getPath());
+        assertEquals("https://git.example.org/platform/gitops", FluxGitOpsBackend.pullRequestRepoUri(
+                "git@git.example.org:platform/gitops.git").toString());
+        assertNull(FluxGitOpsBackend.pullRequestRepoUri("https://attacker.example#@git.example.org/x.git"));
+        assertNull(FluxGitOpsBackend.pullRequestRepoUri("https://git.example.org.git"), "the suffix is not the host");
+        assertNull(FluxGitOpsBackend.pullRequestRepoUri(repoUrl), "a local repository has no pull requests");
     }
 }

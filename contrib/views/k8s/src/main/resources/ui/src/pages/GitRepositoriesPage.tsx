@@ -19,7 +19,7 @@
 import React, { useEffect, useState } from "react";
 import type { ColumnsType } from "antd/es/table";
 import {
-  Form, Input, Select, Button, Table, Space, Popconfirm,
+  Alert, Form, Input, Select, Button, Table, Space, Popconfirm,
   Tooltip, message, Tag, Modal, Typography, Empty, Divider, Row, Col,
 } from "antd";
 import { DeleteOutlined, ReloadOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
@@ -73,7 +73,7 @@ export default function GitRepositoriesPage() {
   const openEdit = (r: GitRepo) => {
     setEditingRepo(r);
     form.resetFields();
-    form.setFieldsValue({ id: r.id, name: r.name, url: r.url, type: r.type, description: r.description, secret: '' });
+    form.setFieldsValue({ id: r.id, name: r.name, url: r.url, type: r.type, description: r.description });
     setModalOpen(true);
   };
 
@@ -86,13 +86,12 @@ export default function GitRepositoriesPage() {
   const onFinish = async (values: any) => {
     setSaving(true);
     try {
-      const { secret, ...entity } = values;
+      const entity = values;
       const repo: GitRepo = {
         id: entity.id,
         name: entity.name,
         url: entity.url,
         type: entity.type || (entity.url?.startsWith('git@') || entity.url?.startsWith('ssh://') ? 'SSH' : 'HTTPS'),
-        credentialAlias: secret ? `git-${entity.id}-${Date.now()}` : editingRepo?.credentialAlias,
         description: entity.description,
       };
       const updated = repos.find(r => r.id === repo.id)
@@ -228,19 +227,10 @@ export default function GitRepositoriesPage() {
             } />
           </Form.Item>
 
-          {/* ── Authentication ── */}
-          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 12, color: '#8c8c8c' }}>
-            Authentication
-          </Divider>
-          <Form.Item
-            name="secret"
-            label={typeWatch === 'SSH' ? 'SSH private key' : 'Access token'}
-            tooltip={typeWatch === 'SSH'
-              ? 'PEM-encoded SSH private key (-----BEGIN ... KEY-----).'
-              : 'Personal access token or password. Leave blank when editing to keep the existing credential.'}
-          >
-            <Input.Password placeholder={editingRepo ? "unchanged" : (typeWatch === 'SSH' ? '-----BEGIN ... KEY-----' : 'glpat-xxxx')} />
-          </Form.Item>
+          {/* Credentials are not saved with a repository: the deploy that uses it gives its token or SSH key, which
+              KDPS then keeps for that release only. */}
+          <Alert type="info" showIcon style={{ marginTop: 8 }}
+            message="The access token or SSH key is given in the deploy wizard, not here. KDPS keeps it for that release only." />
         </Form>
       </Modal>
     </div>

@@ -77,7 +77,7 @@ class HelmResourceUninstallTest {
     }
 
     /** The release as a GitOps deploy recorded it, with the Git directory {@code gitPath}. */
-    private void recorded(String gitPath) {
+    private K8sReleaseEntity recorded(String gitPath) {
         K8sReleaseEntity meta = new K8sReleaseEntity();
         meta.setId(K8sReleaseEntity.idOf(NS, RELEASE));
         meta.setNamespace(NS);
@@ -87,11 +87,13 @@ class HelmResourceUninstallTest {
         meta.setGitBranch("main");
         meta.setGitPath(gitPath);
         when(releaseMetadata.find(NS, RELEASE)).thenReturn(meta);
+        return meta;
     }
 
     private Response uninstall() {
-        // A token given with the request: the stored credential is not looked up.
-        return resource.uninstall(NS, RELEASE, null, "glpat-token", null, null, null, null);
+        // No Git parameter: the release is removed from Git with what its record names (see
+        // HelmResourceUninstallGitOpsTest).
+        return resource.uninstall(NS, RELEASE, null, null, null);
     }
 
     @Test
@@ -107,7 +109,8 @@ class HelmResourceUninstallTest {
             String error = String.valueOf(((Map<?, ?>) response.getEntity()).get("error"));
             assertTrue(error.contains("team-a/trino") || error.contains(String.valueOf(foreign)),
                     "names the release or the recorded directory: " + error);
-            verify(flux, never()).destroy(any(), any(), any(), any(), any(), any(), any(), any());
+            verify(flux, never()).checkRemovable(any());
+            verify(flux, never()).removeFromGit(any());
             verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
             verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
             verify(releaseMetadata, never()).delete(anyString(), anyString());
@@ -116,10 +119,10 @@ class HelmResourceUninstallTest {
 
     @Test
     void aDirectoryFoundNotToBeTheReleasesOwnOnceGitIsReadRemovesNothing() throws Exception {
-        recorded("clusters/default/team-a/trino");
+        K8sReleaseEntity meta = recorded("clusters/default/team-a/trino");
         doThrow(new FluxGitOpsBackend.NotOwnDirectoryException("The Git directory of release team-a/trino holds the"
                 + " HelmRelease team-b/trino"))
-                .when(flux).destroy(any(), any(), any(), any(), any(), any(), eq(NS), eq(RELEASE));
+                .when(flux).removeFromGit(meta);
 
         Response response = uninstall();
 
@@ -131,13 +134,13 @@ class HelmResourceUninstallTest {
 
     @Test
     void theReleasesOwnDirectoryIsRemovedThenItsCredentialAndRecord() throws Exception {
-        recorded("clusters/default/team-a/trino");
+        K8sReleaseEntity meta = recorded("clusters/default/team-a/trino");
 
         Response response = uninstall();
 
         assertEquals(200, response.getStatus());
-        verify(flux).destroy(eq("https://git.example.org/platform/gitops.git"), eq("main"), eq("main"),
-                eq("clusters/default/team-a/trino"), eq("glpat-token"), any(), eq(NS), eq(RELEASE));
+        verify(flux).checkRemovable(meta);
+        verify(flux).removeFromGit(meta);
         verify(commandService).revokePolarisForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(releaseMetadata).delete(NS, RELEASE);
     }

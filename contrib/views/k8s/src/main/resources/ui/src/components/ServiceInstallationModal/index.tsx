@@ -1311,7 +1311,6 @@ const handleServiceChange = (value: string) => {
                       git: {
                         ...form.getFieldValue('git'),
                         repoUrl: repo.url,
-                        credentialAlias: repo.credentialAlias,
                       }
                     });
                   }
@@ -1359,9 +1358,6 @@ const handleServiceChange = (value: string) => {
               <Option value="DIRECT_COMMIT">Direct commit</Option>
               <Option value="PR_MODE">Open PR (token required)</Option>
             </Select>
-          </Form.Item>
-          <Form.Item name={['git','credentialAlias']} label="Saved credential alias" tooltip="Reuse a previously stored token/SSH key (optional)">
-            <Input placeholder="alias from credential store" />
           </Form.Item>
           <Form.Item name={['git','authToken']} label="Auth token" tooltip="HTTPS personal access token (stored securely)" >
             <Input.Password placeholder="Token (optional if using SSH key)" />

@@ -18,6 +18,7 @@
 
 package org.apache.ambari.view.k8s.store;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.ambari.view.k8s.store.base.BaseModel;
 
 import javax.persistence.Column;
@@ -75,10 +76,12 @@ public class HelmRepoEntity extends BaseModel {
 
     /**
      * Transient carrier for the plain-text registry secret.
-     * Never persisted to the DataStore; read from the JSON request body and
-     * consumed immediately by HelmRepositoryService.save() to store in the
-     * credential store. Keeping it on the entity avoids a separate wrapper DTO
-     * while still ensuring the secret never travels as a URL query parameter.
+     * Read from the JSON request body and consumed immediately by
+     * HelmRepositoryService.save(), which encrypts it into the view settings and
+     * clears it before the entity is stored: Ambari's DataStore keeps every bean
+     * property, @Transient or not. Keeping it on the entity avoids a separate
+     * wrapper DTO while still ensuring the secret never travels as a URL query
+     * parameter.
      */
     @Transient
     private String plainSecret;
@@ -124,10 +127,16 @@ public class HelmRepoEntity extends BaseModel {
         this.username = username; 
     }
     
+    /**
+     * The view setting holding this repository's encrypted secret. Set by the server only: never read from or written
+     * to a request body, and never used to look the secret up (see {@code HelmRepositoryService.readPlainSecret}).
+     */
+    @JsonIgnore
     public String getSecretRef() { 
         return secretRef; 
     }
     
+    @JsonIgnore
     public void setSecretRef(String secretRef) { 
         this.secretRef = secretRef; 
     }

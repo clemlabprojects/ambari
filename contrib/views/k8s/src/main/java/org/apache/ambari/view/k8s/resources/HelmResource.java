@@ -1336,33 +1336,39 @@ public class HelmResource {
      * For Flux GitOps releases, the corresponding Git manifests are removed first. On OpenShift, the RoleBindings KDPS
      * made to grant the release's service accounts an SCC are deleted once the release is gone.
      *
+     * <p>A GitOps release is removed from the repository, branch and path its metadata records, with the Git
+     * credential KDPS saved for it: a request naming another repository, branch or credential is refused, so the
+     * stored credential never goes elsewhere and no credential travels in the URL.</p>
+     *
      * @param namespace    Kubernetes namespace of the release
      * @param releaseName  name of the Helm release to uninstall
-     * @param gitRepoUrl   optional Git repository URL to override the stored value (Flux mode only)
-     * @param gitAuthToken optional Git token to override the stored credential (Flux mode only)
-     * @param gitSshKey    optional SSH private key to override the stored credential (Flux mode only)
-     * @param gitBranch    optional Git branch to override the stored value (Flux mode only)
      * @param polarisCleanup how far to go in Polaris for a release that was given catalog access:
      *                     {@code principal} (the default) takes back the principal and its role, so
      *                     the credential stops working while the catalog and its data stay;
      *                     {@code catalog} also drops the catalog; {@code none} leaves Polaris
      *                     untouched. The object-store bucket is never deleted.
      * @return HTTP 200 on success, with {@code polarisCleanup} and {@code sccCleanup} notes when there is something
-     *         left for an administrator to do; 409, with nothing removed, while another Helm operation on the release
-     *         is running; 400, with nothing removed, for a GitOps release whose recorded Git directory is not its own
-     *         or holds another release's HelmRelease; or an error response on failure
+     *         left for an administrator to do; 400, with nothing removed, when the request names a Git repository,
+     *         branch or credential, or for a GitOps release whose recorded Git directory is not its own or holds
+     *         another release's HelmRelease; 409, with nothing removed, while another Helm operation on the release is
+     *         running or when the Git credential recorded for a GitOps release cannot be used to remove it from Git; or
+     *         an error response on failure
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
     public Response uninstall(@PathParam("namespace") String namespace,
                              @PathParam("name") String releaseName,
-                             @QueryParam("gitRepoUrl") String gitRepoUrl,
-                             @QueryParam("gitAuthToken") String gitAuthToken,
-                             @QueryParam("gitSshKey") String gitSshKey,
-                             @QueryParam("gitBranch") String gitBranch,
                              @QueryParam("polarisCleanup") String polarisCleanup,
+                             @Context UriInfo uriInfo,
                              @Context HttpHeaders requestHeaders) {
         authHelper.checkWritePermission();
+        String gitOverride = gitOverrideOf(uriInfo);
+        if (gitOverride != null) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "The uninstall request names '"
+                    + gitOverride + "'. A GitOps release is removed from the Git repository, branch and path recorded"
+                    + " for it, with the Git credential KDPS saved for it; they cannot be given with the request."))
+                    .build();
+        }
         K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
         String polarisCleanupNote = null;
         // Refused before anything is removed: the cleanup below (Polaris credential, release metadata) runs even
@@ -1372,12 +1378,13 @@ public class HelmResource {
         } catch (HelmOperationRegistry.ReleaseBusyException busy) {
             return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
         }
-        // A GitOps release whose recorded Git directory is not its own is refused here, before the cleanup below: its
-        // manifests stay in Git and Flux keeps running it, so it keeps its catalog credential and its record, which
-        // a retried uninstall needs once the record names the release's own directory.
-        if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
-            String repoUrlToUse = gitRepoUrl != null && !gitRepoUrl.isBlank() ? gitRepoUrl : meta.getGitRepoUrl();
-            if (repoUrlToUse != null && !repoUrlToUse.isBlank()) {
+        boolean gitOps = meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode());
+        if (gitOps) {
+            // A GitOps release whose recorded Git directory is not its own is refused here, before the cleanup below:
+            // its manifests stay in Git and Flux keeps running it, so it keeps its catalog credential and its record,
+            // which a retried uninstall needs once the record names the release's own directory.
+            String repoUrl = meta.getGitRepoUrl();
+            if (repoUrl != null && !repoUrl.isBlank()) {
                 try {
                     FluxGitOpsBackend.releaseDirectory(meta.getGitPath(), namespace, releaseName);
                 } catch (IllegalArgumentException refused) {
@@ -1389,38 +1396,29 @@ public class HelmResource {
                     )).build();
                 }
             }
+            // For the same reason: a release KDPS cannot remove from Git would stay there, applied by Flux, once KDPS
+            // has forgotten it.
+            try {
+                fluxGitOpsBackend.checkRemovable(meta);
+            } catch (IllegalStateException refused) {
+                return Response.status(Response.Status.CONFLICT).entity(Map.of("error", refused.getMessage())).build();
+            }
         }
         boolean refusedAsBusy = false;
         boolean refusedAsNotOwn = false;
         // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
         try {
-            if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
+            if (gitOps) {
                 try {
-                    String branchToUse = gitBranch != null && !gitBranch.isBlank() ? gitBranch : meta.getGitBranch();
-                    String repoUrlToUse = gitRepoUrl != null && !gitRepoUrl.isBlank() ? gitRepoUrl : meta.getGitRepoUrl();
-                    String repoPath = meta.getGitPath();
-                    String authTokenToUse = gitAuthToken;
-                    String sshKeyToUse = gitSshKey;
-                    if ((authTokenToUse == null || authTokenToUse.isBlank()) && (sshKeyToUse == null || sshKeyToUse.isBlank())) {
-                        GitCredentialService gitCredentialService = new GitCredentialService(viewContext);
-                        String resolved = gitCredentialService.resolveSecret(meta.getGitCredentialAlias());
-                        // Heuristic: if it looks like an RSA/PEM key, treat as sshKey, else token
-                        if (resolved != null && resolved.contains("BEGIN")) {
-                            sshKeyToUse = resolved;
-                        } else {
-                            authTokenToUse = resolved;
-                        }
-                    }
                     // The values Secrets stay while the branch Flux reconciles still holds the release: a removal
                     // pushed to a pull request branch is not applied until merged. Only the manifests the release
-                    // wrote into its own directory, as checked above, are removed.
-                    fluxGitOpsBackend.destroy(repoUrlToUse, branchToUse, FluxGitOpsBackend.reconciledBranch(meta),
-                            repoPath, authTokenToUse, sshKeyToUse, namespace, releaseName);
+                    // wrote into its own directory, as checked above, are removed, with what its metadata records.
+                    fluxGitOpsBackend.removeFromGit(meta);
                     LOG.info("Requested Flux GitOps destroy for {}/{} (repo={}, branch={}, path={})",
-                            namespace, releaseName, repoUrlToUse, branchToUse, repoPath);
+                            namespace, releaseName, meta.getGitRepoUrl(), meta.getGitBranch(), meta.getGitPath());
                 } catch (FluxGitOpsBackend.NotOwnDirectoryException refused) {
                     // Found once the branch is read, such as another HelmRelease in the release's directory:
-                    // nothing was removed, so the release keeps its credential and its record, as above.
+                    // nothing was removed, so the release keeps its credentials and its record, as above.
                     refusedAsNotOwn = true;
                     LOG.warn("Uninstall of {}/{} refused: {}", namespace, releaseName, refused.getMessage());
                     return Response.status(Response.Status.BAD_REQUEST).entity(Map.of(
@@ -1478,6 +1476,19 @@ public class HelmResource {
         if (polarisCleanupNote != null) notes.put("polarisCleanup", polarisCleanupNote);
         if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
         return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
+    }
+
+    /** Query parameters earlier versions read on an uninstall to override what a GitOps release records. */
+    static final List<String> GIT_OVERRIDE_PARAMETERS = List.of("gitRepoUrl", "gitBranch", "gitAuthToken", "gitSshKey");
+
+    /** The first Git override an uninstall request names, or {@code null}. */
+    static String gitOverrideOf(UriInfo uriInfo) {
+        if (uriInfo == null || uriInfo.getQueryParameters() == null) {
+            return null;
+        }
+        return GIT_OVERRIDE_PARAMETERS.stream()
+                .filter(name -> uriInfo.getQueryParameters().containsKey(name))
+                .findFirst().orElse(null);
     }
 
     /**

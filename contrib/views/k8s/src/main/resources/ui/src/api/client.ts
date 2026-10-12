@@ -1449,7 +1449,16 @@ export async function uninstallHelm(
 ): Promise<UninstallNotes> {
   const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}?${params.toString()}`;
   const response = await apiFetch(url, { method: 'DELETE' });
-  if (!response.ok) throw new Error(`Uninstall failed: ${response.status}`);
+  if (!response.ok) {
+    // The server says why it refused and what to do: another operation on the release is running, or a GitOps
+    // release must be deployed again with its Git token before KDPS can remove it from Git.
+    let detail = '';
+    try {
+      const body: any = await response.json();
+      detail = body?.error ? `: ${body.error}` : '';
+    } catch { /* keep the status only */ }
+    throw new Error(`Uninstall failed: ${response.status}${detail}`);
+  }
   // The body is empty when there is nothing to report.
   return response.json().catch(() => ({}));
 }

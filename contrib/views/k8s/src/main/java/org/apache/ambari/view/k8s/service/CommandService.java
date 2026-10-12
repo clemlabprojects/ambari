@@ -218,6 +218,7 @@ public class CommandService {
         this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), new GitOpsPlanBackend(this, fluxGitOpsBackend));
         this.deploymentBackends.put(DeploymentMode.DIRECT_HELM.name(), new HelmDirectBackend(this));
         recoverOrphanedCommands();
+        clearStaleCredentials();
         // In the background: the first sweep after an upgrade encrypts every file kept by the earlier version.
         this.operationFiles = new OperationFilesRetention(ctx, dataStore);
         this.startupSweep = this.workers.submit(() -> {
@@ -228,6 +229,24 @@ public class CommandService {
             }
         });
         LOG.info("CommandService initialized for {}. Consider adding DB indexes on command.id, command_status_id, created_at and pruning terminal commands periodically to keep polling fast.", ctx.getInstanceName());
+    }
+
+    /**
+     * On startup, clears credentials earlier versions left where they could be misused: chart repositories naming
+     * another view setting than their own secret (that of the OpenShift password, for one), and the copies of Git
+     * credentials each GitOps deploy stored and no release uses. Never fails the view.
+     */
+    private void clearStaleCredentials() {
+        try {
+            new HelmRepositoryService(ctx).clearForeignSecretRefs();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not check the stored credentials of the chart repositories: {}", e.toString());
+        }
+        try {
+            fluxGitOpsBackend.removeOrphanedGitCredentials();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not delete the copies of Git credentials earlier versions stored: {}", e.toString());
+        }
     }
 
     /**
@@ -6125,7 +6144,7 @@ public class CommandService {
             params.put("deploymentMode", request.getDeploymentMode());
         }
         if (gitOps) {
-            params.put("git", gitOptionsToPersist(request.getGit()));
+            params.put("git", gitOptionsToPersist(request));
             // What the commit writes besides the values, which the plan itself does not keep.
             Map<String, Object> gitOpsRelease = new LinkedHashMap<>();
             if (request.getDependencies() != null) gitOpsRelease.put("dependencies", request.getDependencies());
@@ -10844,14 +10863,17 @@ public class CommandService {
 
     /**
      * The Git options of a GitOps deploy as its command keeps them. The token and the SSH key go to Ambari's
-     * credential store, each under an alias of its own, and only the aliases are kept: neither secret is written to
-     * the command's parameters, nor logged with them. The SSH key takes {@code credentialAlias} when both are given,
-     * as it did when the commit stored them itself, and the token {@code authTokenAlias}.
+     * credential store, under the release's pending aliases ({@link GitCredentialService#pendingAlias}), and only the
+     * aliases are kept: neither secret is written to the command's parameters, nor logged with them. The release's
+     * own credential is left as it is: the commit makes the new one the release's only once it has reached Git with
+     * it. The SSH key takes {@code credentialAlias} when both are given, as it did when the commit stored them itself,
+     * and the token {@code authTokenAlias}. Each is bound to the host of the Git repository the deploy pushes to.
      *
      * @throws IllegalStateException when the credential store cannot take one of them: the deploy is refused rather
      *                               than keeping the secret in its parameters
      */
-    private HelmDeployRequest.GitOptions gitOptionsToPersist(HelmDeployRequest.GitOptions git) {
+    private HelmDeployRequest.GitOptions gitOptionsToPersist(HelmDeployRequest request) {
+        HelmDeployRequest.GitOptions git = request.getGit();
         if (git == null) {
             return null;
         }
@@ -10862,38 +10884,55 @@ public class CommandService {
         kept.setAuthTokenAlias(null);
         boolean hasToken = git.getAuthToken() != null && !git.getAuthToken().isBlank();
         boolean hasSshKey = git.getSshKey() != null && !git.getSshKey().isBlank();
+        if (!hasToken && !hasSshKey) {
+            return kept;
+        }
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        String repoUrl = git.getRepoUrl();
+        if (repoUrl == null || repoUrl.isBlank()) {
+            K8sReleaseEntity existing = new ReleaseMetadataService(ctx).find(namespace, release);
+            repoUrl = existing != null ? existing.getGitRepoUrl() : null;
+        }
+        String alias = GitCredentialService.pendingAlias(ctx.getInstanceName(), namespace, release);
+        String tokenAlias = GitCredentialService.pendingTokenAlias(ctx.getInstanceName(), namespace, release);
         if (hasSshKey) {
-            kept.setCredentialAlias(storeGitSecret(git.getSshKey(), "SSH key"));
+            kept.setCredentialAlias(storeGitSecret(alias, git.getSshKey(), repoUrl, "SSH key"));
             if (hasToken) {
-                kept.setAuthTokenAlias(storeGitSecret(git.getAuthToken(), "access token"));
+                kept.setAuthTokenAlias(storeGitSecret(tokenAlias, git.getAuthToken(), repoUrl, "access token"));
             }
-        } else if (hasToken) {
-            kept.setCredentialAlias(storeGitSecret(git.getAuthToken(), "access token"));
+        } else {
+            kept.setCredentialAlias(storeGitSecret(alias, git.getAuthToken(), repoUrl, "access token"));
+        }
+        if (!(hasSshKey && hasToken)) {
+            // A token an earlier deploy kept next to an SSH key is not this deploy's.
+            gitCredentialService.removeSecret(tokenAlias);
         }
         return kept;
     }
 
     /**
-     * Stores a Git credential of a GitOps deploy in Ambari's credential store.
+     * Stores a Git credential of a GitOps deploy in Ambari's credential store, under one of the release's pending
+     * aliases.
      *
      * @return its alias
      * @throws IllegalStateException when the credential store cannot take it
      */
-    private String storeGitSecret(String secret, String what) {
-        String alias;
+    private String storeGitSecret(String alias, String secret, String repoUrl, String what) {
+        String stored;
         try {
-            alias = gitCredentialService.storeSecret(secret, "gitops");
+            stored = gitCredentialService.storeSecret(alias, secret, repoUrl);
         } catch (RuntimeException e) {
             LOG.warn("Could not store a Git credential in Ambari's credential store: {}", e.toString());
-            alias = null;
+            stored = null;
         }
-        if (alias == null) {
+        if (stored == null) {
             throw new IllegalStateException("The Git " + what + " of this GitOps deploy could not be stored in Ambari's "
                     + "credential store, so the deploy was not started: it would otherwise be kept in clear text with "
                     + "the deploy. Check that Ambari's credential store is set up with a persisted master key "
                     + "(ambari-server setup-security), then deploy again.");
         }
-        return alias;
+        return stored;
     }
 
     /**

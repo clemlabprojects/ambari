@@ -476,6 +476,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (repoUrl == null) {
             throw new IllegalArgumentException("Flux GitOps requires git.repoUrl");
         }
+        GitCredentialService.checkRepoUrl(repoUrl);
         checkApartFromRecordedReleases(resolveTargetPath(given.getPathPrefix(),
                         existingMeta != null ? existingMeta.getGitPath() : null, request.getNamespace(),
                         request.getReleaseName()),
@@ -489,71 +490,162 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         chartVersion(request, context, existingMeta,
                 firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null));
         chartRepositoryYamls(repoName, request.getDependencies());
-        String recordedAlias = existingMeta != null ? existingMeta.getGitCredentialAlias() : null;
-        GitSecrets gitSecrets = gitSecrets(given, firstNonBlank(given.getCredentialAlias(), recordedAlias), recordedAlias);
+        GitSecrets gitSecrets = gitSecrets(given, repoUrl.trim(), request.getNamespace(), request.getReleaseName(),
+                existingMeta);
         checkGitAccess(repoUrl.trim(), firstNonBlank(given.getCommitMode(),
                 existingMeta != null ? existingMeta.getGitCommitMode() : null), gitSecrets.token(), gitSecrets.sshKey());
     }
 
-    /** The Git credentials a deploy pushes with. */
-    private record GitSecrets(String token, String sshKey) {}
-
     /**
-     * Prefixes of the credential store aliases a deploy may name for its Git credentials: those the view stores Git
-     * tokens and SSH keys under, and those its Git repositories page names. Ambari's credential store holds other
-     * secrets too (its database and LDAP passwords, for two): resolved for a deploy, any of them would be sent to the
-     * Git server the deploy names.
-     */
-    static final List<String> GIT_CREDENTIAL_ALIAS_PREFIXES = List.of("gitops-", "git-");
-
-    /**
-     * Refuses a credential store alias that does not hold a Git credential of the view: one without a
-     * {@link #GIT_CREDENTIAL_ALIAS_PREFIXES prefix}, unless the release already pushes with it.
+     * The Git credentials a deploy pushes with.
      *
-     * @param alias         the alias the deploy names, may be {@code null}
-     * @param recordedAlias the alias recorded for the release, {@code null} for a new one
-     * @throws IllegalArgumentException naming the alias
+     * @param alias the credential store alias they were read from, {@code null} when given with the deploy
      */
-    static void checkGitCredentialAlias(String alias, String recordedAlias) {
-        if (alias == null || alias.isBlank() || alias.equals(recordedAlias)
-                || GIT_CREDENTIAL_ALIAS_PREFIXES.stream().anyMatch(alias::startsWith)) {
-            return;
+    private record GitSecrets(String token, String sshKey, String alias) {}
+
+    /**
+     * The token or SSH key given with the deploy, else the one stored for the release, and the token stored next to
+     * an SSH key. A stored secret is only read from an alias of the release itself and for the Git host it was
+     * entered for ({@link #storedSecret}); an alias the deploy names next to a token or key it gives is not used.
+     *
+     * @param repoUrl      the repository the deploy pushes to
+     * @param existingMeta the release as recorded, {@code null} for a new one
+     * @throws IllegalArgumentException when the deploy names an alias that is not the release's, or the stored secret
+     *                                  was entered for another Git host
+     */
+    private GitSecrets gitSecrets(HelmDeployRequest.GitOptions git, String repoUrl, String namespace, String release,
+                                  K8sReleaseEntity existingMeta) {
+        String token = git.getAuthToken();
+        String sshKey = git.getSshKey();
+        String alias = null;
+        if (!givesGitSecret(git)) {
+            alias = firstNonBlank(git.getCredentialAlias(), existingMeta != null ? existingMeta.getGitCredentialAlias() : null);
+            if (alias != null) {
+                String resolved = storedSecret(alias, repoUrl, namespace, release, existingMeta);
+                if (resolved != null && resolved.contains("BEGIN")) {
+                    sshKey = resolved;
+                } else {
+                    token = resolved;
+                }
+            }
         }
-        throw new IllegalArgumentException("The credential alias '" + alias + "' does not hold a Git credential saved"
-                + " by KDPS. A GitOps deploy can only reuse a Git token or SSH key that KDPS saved (its alias starts"
-                + " with 'gitops-'); otherwise give the token or SSH key with the deploy.");
+        String tokenAlias = git.getAuthTokenAlias();
+        if (tokenAlias != null && !tokenAlias.isBlank()) {
+            checkReleaseAlias(tokenAlias, namespace, release, null);
+            if (token == null || token.isBlank()) {
+                token = storedSecret(tokenAlias, repoUrl, namespace, release, existingMeta);
+            }
+        }
+        return new GitSecrets(token, sshKey, alias);
     }
 
     /**
-     * The token or SSH key given with the deploy, else the one stored under its credential alias, and the token
-     * stored under its own alias next to an SSH key. Only aliases of Git credentials are resolved
-     * ({@link #checkGitCredentialAlias}).
-     *
-     * @param recordedAlias the alias recorded for the release, {@code null} for a new one
+     * The Git credentials stored for a release, for the repository its metadata records: what an uninstall, a pull
+     * request poll or any other operation without a deploy request uses.
      */
-    private GitSecrets gitSecrets(HelmDeployRequest.GitOptions git, String alias, String recordedAlias) {
-        checkGitCredentialAlias(alias, recordedAlias);
-        checkGitCredentialAlias(git.getAuthTokenAlias(), recordedAlias);
-        String token = git.getAuthToken();
-        String sshKey = git.getSshKey();
-        if ((token == null || token.isBlank()) && (sshKey == null || sshKey.isBlank()) && alias != null) {
-            String resolved = gitCredentialService.resolveSecret(alias);
-            if (resolved != null && resolved.contains("BEGIN")) {
-                sshKey = resolved;
-            } else {
-                token = resolved;
-            }
+    private GitSecrets recordedGitSecrets(K8sReleaseEntity meta) {
+        String alias = meta.getGitCredentialAlias();
+        // Without a repository nothing is sent anywhere: a removal from Git is then skipped.
+        if (alias == null || alias.isBlank() || meta.getGitRepoUrl() == null || meta.getGitRepoUrl().isBlank()) {
+            return new GitSecrets(null, null, null);
         }
-        if ((token == null || token.isBlank()) && git.getAuthTokenAlias() != null && !git.getAuthTokenAlias().isBlank()) {
-            token = gitCredentialService.resolveSecret(git.getAuthTokenAlias());
+        String resolved = storedSecret(alias, meta.getGitRepoUrl(), meta.getNamespace(), meta.getReleaseName(), meta);
+        boolean sshKey = resolved != null && resolved.contains("BEGIN");
+        return new GitSecrets(sshKey ? null : resolved, sshKey ? resolved : null, alias);
+    }
+
+    /**
+     * Reads a Git secret KDPS stored for a release, for a deploy to {@code repoUrl}. Refused unless the alias is the
+     * release's ({@link #checkReleaseAlias}) and the secret was entered for the host of {@code repoUrl}: Ambari's
+     * credential store holds other secrets too (its database and LDAP passwords, for two), and a token sent to another
+     * host is a token given away. A secret stored by an earlier version, which kept no host, is bound to the
+     * repository the release was last deployed from.
+     *
+     * @throws IllegalArgumentException naming what was refused
+     */
+    private String storedSecret(String alias, String repoUrl, String namespace, String release,
+                                K8sReleaseEntity existingMeta) {
+        String recordedAlias = existingMeta != null ? existingMeta.getGitCredentialAlias() : null;
+        checkReleaseAlias(alias, namespace, release, recordedAlias);
+        String bound = gitCredentialService.boundHost(alias);
+        if (bound == null && existingMeta != null && alias.equalsIgnoreCase(recordedAlias)) {
+            bound = GitCredentialService.hostOf(existingMeta.getGitRepoUrl());
         }
-        return new GitSecrets(token, sshKey);
+        String host = GitCredentialService.hostOf(repoUrl);
+        if (bound == null || !bound.equals(host)) {
+            throw new IllegalArgumentException("The Git credential KDPS saved for " + namespace + "/" + release
+                    + " was entered for " + (bound == null || bound.isEmpty() ? "another repository" : bound)
+                    + ", not for " + (host == null || host.isEmpty() ? repoUrl : host) + ". Give the access token or SSH"
+                    + " key with the deploy to use " + repoUrl + ".");
+        }
+        return gitCredentialService.resolveSecret(alias);
+    }
+
+    /**
+     * Refuses a credential store alias that does not hold a Git credential KDPS saved for this release: the release's
+     * own alias ({@link GitCredentialService#releaseAlias}), one its deploys keep a new credential under until it has
+     * reached Git ({@link GitCredentialService#pendingAlias}, {@link GitCredentialService#pendingTokenAlias}), or the
+     * alias recorded for it when KDPS created that alias. Any other alias may hold another release's credential or one
+     * of Ambari's own secrets.
+     *
+     * @param alias         the alias to read
+     * @param recordedAlias the alias recorded for the release, {@code null} for a new one
+     * @throws IllegalArgumentException naming the alias
+     */
+    void checkReleaseAlias(String alias, String namespace, String release, String recordedAlias) {
+        String instance = viewContext.getInstanceName();
+        boolean own = alias.equalsIgnoreCase(GitCredentialService.releaseAlias(instance, namespace, release))
+                || alias.equalsIgnoreCase(GitCredentialService.pendingAlias(instance, namespace, release))
+                || alias.equalsIgnoreCase(GitCredentialService.pendingTokenAlias(instance, namespace, release));
+        boolean recorded = alias.equalsIgnoreCase(recordedAlias) && GitCredentialService.isViewAlias(recordedAlias);
+        if (own || recorded) {
+            return;
+        }
+        throw new IllegalArgumentException("The credential alias '" + alias + "' does not hold a Git credential saved"
+                + " by KDPS for " + namespace + "/" + release + ". A GitOps deploy only reuses the Git token or SSH key"
+                + " KDPS saved for the release itself; otherwise give the token or SSH key with the deploy.");
     }
 
     /** Whether the deploy gives its token or SSH key itself, rather than an alias of the credential store. */
     private static boolean givesGitSecret(HelmDeployRequest.GitOptions git) {
         return (git.getAuthToken() != null && !git.getAuthToken().isBlank())
                 || (git.getSshKey() != null && !git.getSshKey().isBlank());
+    }
+
+    /**
+     * Once a deploy has reached Git, the Git credential the release pushes with from then on: a token or SSH key the
+     * deploy gave, or kept under its pending alias when it was submitted, becomes the release's
+     * ({@link GitCredentialService#releaseAlias}), replacing what the release had there; otherwise the alias the
+     * credential was read from. Never done before: a mistyped token, or a failed move to another Git server, would
+     * otherwise replace the credential every later operation on the release (uninstall included) relies on.
+     *
+     * @return the alias, or {@code null} when the new credential could not be stored, and the alias recorded for the
+     *         release stays
+     */
+    private String keepGitCredential(HelmDeployRequest.GitOptions git, GitSecrets secrets, String repoUrl,
+                                     String namespace, String release) {
+        String instance = viewContext.getInstanceName();
+        String releaseAlias = GitCredentialService.releaseAlias(instance, namespace, release);
+        String pendingAlias = GitCredentialService.pendingAlias(instance, namespace, release);
+        // The token a deploy gave next to its SSH key served its commit only.
+        String pendingTokenAlias = GitCredentialService.pendingTokenAlias(instance, namespace, release);
+        if (pendingTokenAlias.equalsIgnoreCase(git.getAuthTokenAlias())) {
+            gitCredentialService.removeSecret(pendingTokenAlias);
+        }
+        String kept;
+        if (givesGitSecret(git)) {
+            kept = gitCredentialService.storeSecret(releaseAlias,
+                    git.getSshKey() != null && !git.getSshKey().isBlank() ? git.getSshKey() : git.getAuthToken(), repoUrl);
+        } else if (pendingAlias.equalsIgnoreCase(secrets.alias())) {
+            kept = gitCredentialService.promote(pendingAlias, releaseAlias);
+        } else {
+            return secrets.alias();
+        }
+        if (kept == null) {
+            LOG.warn("The Git credential of {}/{} could not be stored in Ambari's credential store: the next "
+                    + "operation on the release needs it again", namespace, release);
+        }
+        return kept;
     }
 
     /**
@@ -626,6 +718,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         String repoUrl = git.getRepoUrl().trim();
+        GitCredentialService.checkRepoUrl(repoUrl);
 
         logFluxInfo(namespace, release, "apply", "Starting Flux GitOps deploy (mode=%s, repo=%s)", git.getCommitMode(), repoUrl);
 
@@ -655,18 +748,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         Path targetDir = resolveTargetPath(pathOverride, storedPath, namespace, release);
         checkApartFromRecordedReleases(targetDir, repoUrl, namespace, release);
 
-        // Resolve credentials: prefer provided, else resolve alias. A credential given in clear is stored for future
-        // operations; one given by its alias (a planned deploy stored it when it was submitted) keeps that alias.
-        String alias = firstNonBlank(git.getCredentialAlias(), existingMeta != null ? existingMeta.getGitCredentialAlias() : null);
-        GitSecrets gitSecrets = gitSecrets(git, alias, existingMeta != null ? existingMeta.getGitCredentialAlias() : null);
+        // Resolve credentials: prefer provided, else the release's stored ones. A new one, given in clear or by the
+        // pending alias a planned deploy stored it under when it was submitted, becomes the release's only once the
+        // deploy has reached Git with it (keepGitCredential).
+        String recordedAlias = existingMeta != null ? existingMeta.getGitCredentialAlias() : null;
+        GitSecrets gitSecrets = gitSecrets(git, repoUrl, namespace, release, existingMeta);
         String token = gitSecrets.token();
         String sshKey = gitSecrets.sshKey();
-        if (givesGitSecret(git)) {
-            String stored = gitCredentialService.storeSecret(sshKey != null && !sshKey.isBlank() ? sshKey : token, "gitops");
-            if (stored != null) {
-                alias = stored;
-            }
-        }
         checkGitAccess(repoUrl, git.getCommitMode(), token, sshKey);
 
         // Each release owns its own git workspace directory.
@@ -1155,6 +1243,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             throw commitEx;
         }
         boolean committed = commitSha != null;
+        String alias = keepGitCredential(git, gitSecrets, repoUrl, namespace, release);
         // A change that did not land where Flux reads is applied anyway once Git already holds it there: a pull request
         // or working branch merged since, which a redeploy then finds with nothing new to commit.
         boolean appliedNow = appliedOnCommit || (!committed && hrYaml.equals(
@@ -1162,6 +1251,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (!committed) {
             if (secretsWritten.isEmpty()) {
                 LOG.info("Flux GitOps found no changes for {}/{}; skipping commit", namespace, release);
+                // Git is unchanged, but a Git credential given with this deploy replaced the one recorded.
+                if (existingMeta != null && alias != null && !alias.equalsIgnoreCase(recordedAlias)) {
+                    try {
+                        releaseMetadataService.recordGitCredentialAlias(namespace, release, alias);
+                        forgetReplacedAlias(recordedAlias, namespace, release);
+                    } catch (Exception ex) {
+                        LOG.warn("Failed to record the Git credential of {}/{}: {}", namespace, release, ex.toString());
+                    }
+                }
                 return new CommitResult("NO_CHANGES",
                         firstNonBlank(gitClient.headCommit(), existingMeta != null ? existingMeta.getGitCommitSha() : null),
                         false, repoUrl, branch, configuredBase, appliedNow,
@@ -1234,6 +1332,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             );
             releaseMetadataService.recordTruststoreRefs(namespace, release, request.getTruststoreRefs());
             releaseMetadataService.recordGitBaseBranch(namespace, release, configuredBase);
+            if (alias != null && recordedAlias != null && !alias.equalsIgnoreCase(recordedAlias)) {
+                forgetReplacedAlias(recordedAlias, namespace, release);
+            }
         } catch (Exception ex) {
             LOG.warn("Failed to persist Flux metadata for {}/{}: {}", namespace, release, ex.toString());
         }
@@ -1560,12 +1661,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.warn("Skipping PR creation because token or repoUrl is missing");
             return null;
         }
-        String trimmed = normalizeRepoUrl(repoUrl);
-        java.net.URI uri = java.net.URI.create(trimmed);
-        String host = uri.getHost();
-        if (host == null) {
+        java.net.URI uri = pullRequestRepoUri(repoUrl);
+        if (uri == null) {
             return null;
         }
+        String host = uri.getHost();
         String path = uri.getPath();
         if (path.startsWith("/")) path = path.substring(1);
         if (host.contains("github")) {
@@ -1627,12 +1727,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (repoUrl == null || prNumber == null || token == null) {
             return null;
         }
-        String trimmed = normalizeRepoUrl(repoUrl);
-        java.net.URI uri = java.net.URI.create(trimmed);
+        java.net.URI uri = pullRequestRepoUri(repoUrl);
+        if (uri == null) {
+            return null;
+        }
         String host = uri.getHost();
         String path = uri.getPath();
         if (path.startsWith("/")) path = path.substring(1);
-        if (host == null || path.isBlank()) {
+        if (path.isBlank()) {
             return null;
         }
         if (host.contains("github")) {
@@ -1671,17 +1773,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return null;
     }
 
-    private String resolveToken(String credentialAlias) {
-        if (credentialAlias == null || credentialAlias.isBlank()) {
-            return null;
-        }
+    /** The access token stored for a release, for the repository it records; {@code null} when there is none. */
+    private String resolveToken(K8sReleaseEntity meta) {
         try {
-            String resolved = gitCredentialService.resolveSecret(credentialAlias);
-            if (resolved != null && !resolved.contains("BEGIN")) {
-                return resolved;
-            }
+            return recordedGitSecrets(meta).token();
         } catch (Exception ex) {
-            LOG.debug("Failed to resolve token for alias {}: {}", credentialAlias, ex.toString());
+            LOG.debug("Failed to resolve the Git token of {}/{}: {}", meta.getNamespace(), meta.getReleaseName(),
+                    ex.toString());
         }
         return null;
     }
@@ -1690,7 +1788,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (meta == null || meta.getGitPrNumber() == null || meta.getGitPrNumber().isBlank()) {
             return;
         }
-        String token = resolveToken(meta.getGitCredentialAlias());
+        String token = resolveToken(meta);
         if (token == null) {
             return;
         }
@@ -1761,20 +1859,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String token = null;
         String sshKey = null;
         try {
-            String resolved = gitCredentialService.resolveSecret(meta.getGitCredentialAlias());
-            if (resolved != null && resolved.contains("BEGIN")) {
-                sshKey = resolved;
-            } else {
-                token = resolved;
-            }
+            GitSecrets secrets = recordedGitSecrets(meta);
+            token = secrets.token();
+            sshKey = secrets.sshKey();
         } catch (Exception ex) {
             errors.add("Credential resolution failed: " + ex.getMessage());
         }
         try {
             destroy(repoUrl, branch, reconciledBranch(meta), path, token, sshKey, namespace, releaseName);
             gitDeleted = true;
+            forgetGitCredentials(meta);
         } catch (NotOwnDirectoryException refused) {
-            // Found once the branch is read: nothing was removed from Git, so nothing is from the cluster either.
+            // Found once the branch is read: nothing was removed from Git, so nothing is from the cluster either, and
+            // the release keeps its Git credential.
             throw refused;
         } catch (Exception ex) {
             errors.add("Git cleanup failed: " + ex.getMessage());
@@ -1800,6 +1897,120 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (!errors.isEmpty()) {
             throw new RuntimeException("Flux destroy encountered issues: " + String.join(" | ", errors));
         }
+    }
+
+    /**
+     * Refuses, before anything is removed, the uninstall of a GitOps release whose recorded Git credential cannot be
+     * used to remove it from Git: one KDPS did not save for the release, one entered for another Git server than the
+     * repository recorded, or one no longer in Ambari's credential store. Removed from KDPS anyway, the release would
+     * stay in Git, where Flux keeps applying it, with nothing left in KDPS to remove it.
+     *
+     * @param meta the release's metadata
+     * @throws IllegalStateException saying why, and that deploying the release again with its Git token or SSH key
+     *                               lets it be uninstalled
+     */
+    public void checkRemovable(K8sReleaseEntity meta) {
+        String reason;
+        try {
+            GitSecrets secrets = recordedGitSecrets(meta);
+            if (secrets.alias() == null || secrets.token() != null || secrets.sshKey() != null) {
+                return;
+            }
+            reason = "The Git credential KDPS saved for it is no longer in Ambari's credential store.";
+        } catch (IllegalArgumentException refused) {
+            reason = refused.getMessage();
+        }
+        throw new IllegalStateException("KDPS cannot remove " + meta.getNamespace() + "/" + meta.getReleaseName()
+                + " from Git with the Git credential recorded for it, so nothing was removed. " + reason
+                + " Deploy the release again once, giving its Git access token or SSH key, then uninstall it.");
+    }
+
+    /**
+     * Removes a GitOps release's manifests from Git with what its metadata records only: the repository, branch and
+     * path it was deployed to, and the Git credential KDPS saved for it. Nothing a request carries is used, so the
+     * stored credential only ever goes to the repository the release was deployed from. As any removal from Git
+     * ({@link #destroy(String, String, String, String, String, String, String, String)}), it runs in the release's own
+     * workspace under its lock and deletes only the manifests the release wrote into its own directory
+     * ({@link #releaseDirectory}, {@link #releaseManifests}). Once the removal is pushed, the release's Git credentials
+     * are deleted from Ambari's credential store.
+     *
+     * @param meta the release's metadata
+     * @throws NotOwnDirectoryException when the recorded directory is not the release's own, or holds another
+     *                                  HelmRelease; nothing is removed and the credential is kept
+     * @throws Exception                when the manifests could not be removed; the credential is then kept
+     */
+    public void removeFromGit(K8sReleaseEntity meta) throws Exception {
+        String repoUrl = meta.getGitRepoUrl();
+        if (repoUrl != null && !repoUrl.isBlank()) {
+            // Before the credential is read: it is only ever used on the release's own directory.
+            releaseDirectory(meta.getGitPath(), meta.getNamespace(), meta.getReleaseName());
+        }
+        GitSecrets secrets = recordedGitSecrets(meta);
+        destroy(repoUrl, meta.getGitBranch(), reconciledBranch(meta), meta.getGitPath(), secrets.token(),
+                secrets.sshKey(), meta.getNamespace(), meta.getReleaseName());
+        forgetGitCredentials(meta);
+    }
+
+    /**
+     * Deletes the Git credentials KDPS saved for a release that is gone from Git: the alias recorded for it, the
+     * release's own alias and those its deploys keep a new credential under, each unless another release still pushes
+     * with it.
+     */
+    private void forgetGitCredentials(K8sReleaseEntity meta) {
+        String instance = viewContext.getInstanceName();
+        java.util.Set<String> aliases = new java.util.LinkedHashSet<>();
+        if (meta.getGitCredentialAlias() != null && !meta.getGitCredentialAlias().isBlank()) {
+            aliases.add(meta.getGitCredentialAlias());
+        }
+        aliases.add(GitCredentialService.releaseAlias(instance, meta.getNamespace(), meta.getReleaseName()));
+        aliases.add(GitCredentialService.pendingAlias(instance, meta.getNamespace(), meta.getReleaseName()));
+        aliases.add(GitCredentialService.pendingTokenAlias(instance, meta.getNamespace(), meta.getReleaseName()));
+        for (String alias : aliases) {
+            forgetAlias(alias, meta.getNamespace(), meta.getReleaseName());
+        }
+    }
+
+    /** Deletes the alias a release pushed with before a deploy gave it a new Git credential. */
+    private void forgetReplacedAlias(String replaced, String namespace, String release) {
+        if (replaced != null && !replaced.isBlank()) {
+            forgetAlias(replaced, namespace, release);
+        }
+    }
+
+    /**
+     * Deletes an alias KDPS created, unless a release other than {@code namespace/release} records it. Kept when the
+     * releases cannot be read.
+     */
+    private void forgetAlias(String alias, String namespace, String release) {
+        if (!GitCredentialService.isViewAlias(alias)) {
+            return;
+        }
+        String releaseId = K8sReleaseEntity.idOf(namespace, release);
+        try {
+            boolean usedElsewhere = releaseMetadataService.findAll().stream()
+                    .anyMatch(other -> !releaseId.equals(other.getId()) && alias.equalsIgnoreCase(other.getGitCredentialAlias()));
+            if (usedElsewhere) {
+                return;
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("Kept the Git credential alias {}: the releases using it could not be read: {}", alias, e.toString());
+            return;
+        }
+        gitCredentialService.removeSecret(alias);
+    }
+
+    /**
+     * Deletes the copies of Git credentials earlier versions stored at every GitOps deploy and that no release of this
+     * view instance pushes with (see {@link GitCredentialService#removeUnreferencedLegacySecrets}).
+     *
+     * @return the number of copies deleted, {@code -1} when the cleanup did not run
+     */
+    public int removeOrphanedGitCredentials() {
+        List<String> referenced = releaseMetadataService.findAll().stream()
+                .map(K8sReleaseEntity::getGitCredentialAlias)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        return gitCredentialService.removeUnreferencedLegacySecrets(referenced);
     }
 
     /**
@@ -3381,9 +3592,34 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return ns + "/" + rel;
     }
 
-    private String normalizeRepoUrl(String repoUrl) {
+    /**
+     * The repository as the pull request calls read it (over HTTPS, without the {@code .git} suffix), whose host gets
+     * the access token; {@code null} when that is not the host the release's Git credential is bound to
+     * ({@link GitCredentialService#hostOf}).
+     */
+    static java.net.URI pullRequestRepoUri(String repoUrl) {
+        String host = GitCredentialService.hostOf(repoUrl);
+        if (host == null || host.isEmpty()) {
+            return null;
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(normalizeRepoUrl(repoUrl));
+            return host.equalsIgnoreCase(uri.getHost()) && uri.getPath() != null ? uri : null;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static String normalizeRepoUrl(String repoUrl) {
         if (repoUrl == null) return null;
-        String trimmed = repoUrl.replace(".git", "");
+        String trimmed = repoUrl.trim();
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        // Only the suffix: a host may hold ".git" too (code.gitlab.example), and must not change.
+        if (trimmed.endsWith(".git")) {
+            trimmed = trimmed.substring(0, trimmed.length() - ".git".length());
+        }
         if (trimmed.startsWith("git@")) {
             trimmed = "https://" + trimmed.substring(4).replace(":", "/");
         }

@@ -852,15 +852,31 @@ class CommandServiceGitOpsDeployTest {
     /** A credential store of its own, shared by the plan and the commit as Ambari's is. */
     private Map<String, String> credentialStore(boolean accepts) throws Exception {
         Map<String, String> stored = new LinkedHashMap<>();
+        Map<String, String> hosts = new LinkedHashMap<>();
         GitCredentialService credentials = mock(GitCredentialService.class);
         gitCredentials = credentials;
-        when(credentials.storeSecret(anyString(), anyString())).thenAnswer(inv -> {
+        when(credentials.storeSecret(anyString(), anyString(), any())).thenAnswer(inv -> {
             if (!accepts) return null;
-            String alias = "gitops-" + (stored.size() + 1);
-            stored.put(alias, inv.getArgument(0));
+            String alias = inv.getArgument(0);
+            stored.put(alias, inv.getArgument(1));
+            hosts.put(alias, GitCredentialService.hostOf(inv.getArgument(2)));
             return alias;
         });
         when(credentials.resolveSecret(anyString())).thenAnswer(inv -> stored.get((String) inv.getArgument(0)));
+        when(credentials.boundHost(anyString())).thenAnswer(inv -> hosts.get((String) inv.getArgument(0)));
+        when(credentials.removeSecret(anyString())).thenAnswer(inv -> {
+            stored.remove((String) inv.getArgument(0));
+            hosts.remove((String) inv.getArgument(0));
+            return true;
+        });
+        when(credentials.promote(anyString(), anyString())).thenAnswer(inv -> {
+            String pending = inv.getArgument(0);
+            String alias = inv.getArgument(1);
+            if (!accepts || !stored.containsKey(pending)) return null;
+            stored.put(alias, stored.remove(pending));
+            hosts.put(alias, hosts.remove(pending));
+            return alias;
+        });
         service.gitCredentialService = credentials;
         Field backendField = CommandService.class.getDeclaredField("fluxGitOpsBackend");
         backendField.setAccessible(true);
@@ -882,7 +898,13 @@ class CommandServiceGitOpsDeployTest {
         String id = service.gitOpsDeploy(request, "charts", "0.0.1", null, null, null, null);
         awaitEnd(id);
 
-        assertEquals(Map.of("gitops-1", SSH_KEY, "gitops-2", TOKEN), stored, "each under an alias of its own, once");
+        String alias = GitCredentialService.releaseAlias(ctx.getInstanceName(), NS, rel);
+        String pending = GitCredentialService.pendingAlias(ctx.getInstanceName(), NS, rel);
+        String tokenAlias = GitCredentialService.pendingTokenAlias(ctx.getInstanceName(), NS, rel);
+        verify(gitCredentials).storeSecret(pending, SSH_KEY, repoUrl);
+        verify(gitCredentials).storeSecret(tokenAlias, TOKEN, repoUrl);
+        // Once the commit reached Git, the SSH key is the release's; the token served that commit only.
+        assertEquals(Map.of(alias, SSH_KEY), stored, "one copy, under the release's alias");
         List<String> persisted = new ArrayList<>();
         persisted.add(CommandUtils.resolveParamsPayload(dataStore.find(CommandEntity.class, id).getParamsJson()));
         for (String stepId : stepIds(id)) {
@@ -896,13 +918,73 @@ class CommandServiceGitOpsDeployTest {
         Map<String, Object> commitParams = paramsOf(step(id, CommandType.GITOPS_COMMIT));
         @SuppressWarnings("unchecked")
         Map<String, Object> git = (Map<String, Object>) commitParams.get("git");
-        assertEquals("gitops-1", git.get("credentialAlias"));
-        assertEquals("gitops-2", git.get("authTokenAlias"));
-        // The commit pushed with them and reused the alias it was given.
+        assertEquals(pending, git.get("credentialAlias"));
+        assertEquals(tokenAlias, git.get("authTokenAlias"));
+        // The commit pushed with them, then made the SSH key the release's.
         assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT),
                 statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
         assertNotNull(published("main", releaseDir() + "/helmrelease.yaml"));
-        assertEquals("gitops-1", dataStore.find(K8sReleaseEntity.class, K8sReleaseEntity.idOf(NS, rel)).getGitCredentialAlias());
+        assertEquals(alias, dataStore.find(K8sReleaseEntity.class, K8sReleaseEntity.idOf(NS, rel)).getGitCredentialAlias());
+    }
+
+    @Test
+    void everyDeployOfAReleaseKeepsItsNewGitCredentialInPlaceUntilItReachesGit() throws Exception {
+        Map<String, String> stored = credentialStore(true);
+        String pending = GitCredentialService.pendingAlias(ctx.getInstanceName(), NS, rel);
+        String tokenAlias = GitCredentialService.pendingTokenAlias(ctx.getInstanceName(), NS, rel);
+        HelmDeployRequest keyAndToken = request("FLUX_GITOPS", "main");
+        keyAndToken.getGit().setSshKey(SSH_KEY);
+        keyAndToken.getGit().setAuthToken(TOKEN);
+        plan(keyAndToken, true);
+        assertEquals(Map.of(pending, SSH_KEY, tokenAlias, TOKEN), stored);
+
+        HelmDeployRequest rotated = request("FLUX_GITOPS", "main");
+        rotated.getGit().setAuthToken("glpat-Rotated-Token-78");
+        String id = plan(rotated, true);
+        plan(request("FLUX_GITOPS", "main"), true);
+
+        assertEquals(Map.of(pending, "glpat-Rotated-Token-78"), stored, "one copy for the release, the latest");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> git = (Map<String, Object>) paramsOf(step(id, CommandType.GITOPS_COMMIT)).get("git");
+        assertEquals(pending, git.get("credentialAlias"));
+        verify(gitCredentials).storeSecret(pending, "glpat-Rotated-Token-78", repoUrl);
+        verify(gitCredentials, times(3)).storeSecret(anyString(), anyString(), any());
+    }
+
+    @Test
+    void aDeployWithANewTokenWhoseCommitFailsLeavesTheReleaseWithItsWorkingToken() throws Exception {
+        Map<String, String> stored = credentialStore(true);
+        fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
+        String alias = GitCredentialService.releaseAlias(ctx.getInstanceName(), NS, rel);
+        HelmDeployRequest first = request("FLUX_GITOPS", "main");
+        first.getGit().setAuthToken(TOKEN);
+        String id = service.gitOpsDeploy(first, "charts", "0.0.1", null, null, null, null);
+        awaitEnd(id);
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT),
+                statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
+        assertEquals(Map.of(alias, TOKEN), stored);
+
+        // Moved to a Git server the commit cannot reach, with a new token: as with a mistyped one, the commit fails.
+        HelmDeployRequest moved = request("FLUX_GITOPS", "main");
+        moved.getGit().setRepoUrl("https://127.0.0.1:9/platform/gitops.git");
+        moved.getGit().setAuthToken("glpat-Mistyped-Token-79");
+        id = service.gitOpsDeploy(moved, "charts", "0.0.1", null, null, null, null);
+        awaitEnd(id);
+        assertEquals(CommandState.FAILED.name(), stateOf(id, CommandType.GITOPS_COMMIT));
+
+        assertEquals(TOKEN, stored.get(alias), "the token the release pushes with is kept");
+        assertEquals("", gitCredentials.boundHost(alias), "for the repository the release is deployed from");
+        K8sReleaseEntity recorded = dataStore.find(K8sReleaseEntity.class, K8sReleaseEntity.idOf(NS, rel));
+        assertEquals(alias, recorded.getGitCredentialAlias());
+        assertEquals(repoUrl, recorded.getGitRepoUrl());
+        // So the release can still be redeployed without its token, and removed from Git.
+        id = service.gitOpsDeploy(request("FLUX_GITOPS", "main"), "charts", "0.0.1", null, null, null, null);
+        awaitEnd(id);
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT),
+                statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
+        Field backendField = CommandService.class.getDeclaredField("fluxGitOpsBackend");
+        backendField.setAccessible(true);
+        ((FluxGitOpsBackend) backendField.get(service)).checkRemovable(recorded);
     }
 
     @Test
@@ -952,7 +1034,9 @@ class CommandServiceGitOpsDeployTest {
                 statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
         @SuppressWarnings("unchecked")
         Map<String, Object> git = (Map<String, Object>) paramsOf(step(id, CommandType.GITOPS_COMMIT)).get("git");
-        assertEquals(TOKEN, stored.get((String) git.get("credentialAlias")), "the token, stored by the view");
+        assertEquals(GitCredentialService.pendingAlias(ctx.getInstanceName(), NS, rel), git.get("credentialAlias"));
+        assertEquals(TOKEN, stored.get(GitCredentialService.releaseAlias(ctx.getInstanceName(), NS, rel)),
+                "the token, stored by the view");
         assertNull(git.get("authTokenAlias"), "the alias the request named is not kept");
 
         verify(gitCredentials, never()).resolveSecret("ambari.db.password");

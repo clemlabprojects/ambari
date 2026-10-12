@@ -169,7 +169,6 @@ const InstallStep: React.FC<InstallStepProps> = ({
                               git: {
                                 ...form.getFieldValue('git'),
                                 repoUrl: repo.url,
-                                credentialAlias: repo.credentialAlias,
                               }
                             });
                           }

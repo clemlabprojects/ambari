@@ -92,7 +92,7 @@ class SharedConfigurationTwoUsersTest {
         assertEquals(KUBECONFIG, configuration.getKubeconfigContents());
 
         HelmRepositoryService repositories = new HelmRepositoryService(view.context, mock(HelmClient.class));
-        assertEquals("registry-token", repositories.readPlainSecret(repositories.get("harbor").getSecretRef()),
+        assertEquals("registry-token", repositories.readPlainSecret(repositories.get("harbor")),
                 "the imagePullSecret of ops1's deploy gets the registry credentials");
         assertEquals("ranger-secret", new ContextService(view.context).readSecret("ext", "rangerAdminPassword"),
                 "ops1's deploy can create the Ranger repository of the external context");
@@ -137,7 +137,7 @@ class SharedConfigurationTwoUsersTest {
 
         view.as("alice");
         HelmRepositoryService alicesView = new HelmRepositoryService(view.context, mock(HelmClient.class));
-        assertEquals("rotated-token", alicesView.readPlainSecret(alicesView.get("harbor").getSecretRef()));
+        assertEquals("rotated-token", alicesView.readPlainSecret(alicesView.get("harbor")));
     }
 
     @Test

@@ -1286,7 +1286,7 @@ public class HelmService {
         final String url = repoEntity.getUrl();
         final String registryServer = normalizeRegistryServer(url); // e.g. registry.clemlab.com
         final String username = repoEntity.getUsername();
-        final String password = repositoryService.readPlainSecret(repoEntity.getSecretRef());
+        final String password = repositoryService.readPlainSecret(repoEntity);
 
         // If the repo is marked anonymous, we still create a secret only if creds exist; else skip
         if (repositoryService.isAnonymous(repoEntity) && (username == null || username.isBlank() || password == null || password.isBlank())) {

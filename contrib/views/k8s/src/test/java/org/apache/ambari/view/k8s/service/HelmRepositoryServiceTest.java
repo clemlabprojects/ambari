@@ -116,7 +116,7 @@ class HelmRepositoryServiceTest {
     assertTrue(settings.containsKey(stored.getSecretRef()));
     assertNotEquals("s3cr3t", settings.get(stored.getSecretRef()).getValue());
     assertFalse(instanceData.containsKey(stored.getSecretRef()), "not in the saving user's own instance data");
-    assertEquals("s3cr3t", svc.readPlainSecret(stored.getSecretRef()));
+    assertEquals("s3cr3t", svc.readPlainSecret(stored));
   }
 
   @Test

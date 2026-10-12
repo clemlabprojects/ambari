@@ -243,6 +243,20 @@ public class ReleaseMetadataService {
         releaseRepository.update(e);
     }
 
+    /**
+     * Records the credential store alias a GitOps release pushes with, when a deploy that changed nothing in Git still
+     * gave it a new Git credential.
+     *
+     * @param alias the alias; null or blank changes nothing
+     */
+    public void recordGitCredentialAlias(String namespace, String releaseName, String alias) {
+        if (alias == null || alias.isBlank()) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || alias.equals(e.getGitCredentialAlias())) return;
+        e.setGitCredentialAlias(alias);
+        releaseRepository.update(e);
+    }
+
     /** The truststores recorded for a release, or {@code null} when no selection was ever recorded. */
     public java.util.List<String> truststoreRefs(String namespace, String releaseName) {
         K8sReleaseEntity e = find(namespace, releaseName);
