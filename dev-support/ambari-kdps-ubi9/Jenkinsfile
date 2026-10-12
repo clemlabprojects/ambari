@@ -159,7 +159,8 @@ pipeline {
                     rm -rf "\$ctx" && mkdir "\$ctx"
                     cp dev-support/ambari-kdps-ubi9/Dockerfile dev-support/ambari-kdps-ubi9/entrypoint.sh \\
                        dev-support/ambari-kdps-ubi9/openshift-nonroot.py dev-support/ambari-kdps-ubi9/build-image.sh \\
-                       dev-support/ambari-kdps-ubi9/test-image.sh dev-support/ambari-kdps-ubi9/README.md "\$ctx/"
+                       dev-support/ambari-kdps-ubi9/test-image.sh dev-support/ambari-kdps-ubi9/test-image-postgres.sh \\
+                       dev-support/ambari-kdps-ubi9/README.md "\$ctx/"
                     cat > "\$ctx/BUILD-INFO" <<EOF
 AMBARI_VERSION=${env.AMBARI_VERSION}
 AMBARI_BUILD_DIR=${env.AMBARI_BUILD_DIR}

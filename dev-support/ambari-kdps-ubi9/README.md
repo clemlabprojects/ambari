@@ -23,7 +23,7 @@ useful rather than odd.
 | `registry.access.redhat.com/ubi9/ubi` | Base, as required for the customer's OpenShift platform |
 | `java-17-openjdk-headless` | Runs the server |
 | `python3` + `distro` | The server RPM requires both; `python3-distro` is not in the UBI repositories, so pip supplies it |
-| `postgresql` (client) | Schema load, and the check for the default administrator password, in the entrypoint |
+| `postgresql` (client) | Schema load, schema version check, and the check for the default administrator password, in the entrypoint |
 | `helm` | KDPS shells out to the binary rather than embedding a Helm library |
 | `git` | The GitOps deployment mode |
 | `procps-ng` | `ps`, which `ambari-server stop`, `status`, `restart` and the `setup-*` commands use to find the running server |
@@ -67,7 +67,7 @@ Each image build publishes its build context next to the image:
 https://archive.clemlab.com/ambari-kdps-image/<release>-<build>/ambari-kdps-image-context-<version>.tar.gz
 ```
 
-It holds this directory (Dockerfile, entrypoint, OpenShift patch, build script, image test) and a
+It holds this directory (Dockerfile, entrypoint, OpenShift patch, build script, image tests) and a
 `BUILD-INFO` file with the exact arguments Clemlab used. Everything the build downloads is a build
 argument, so the image can be rebuilt from the customer's own mirrors without reaching the Internet:
 
@@ -106,9 +106,25 @@ Before pushing, `build-image.sh` runs `test-image.sh` on the image it has just b
 `ambari-server status` and `stop` work, that the entrypoint stops the server cleanly on SIGTERM (and
 kills it only after `AMBARI_STOP_TIMEOUT`), that the audit log reaches the container's output, and
 that the first administrator password replaces `admin` / `admin` before the chart's readiness check
-can pass — and that every way of failing at it stops the container instead. The server, its API and
-its database are replaced by stand-ins for this, so it takes a couple of minutes and needs no
-database. Run it by hand with `./test-image.sh <image>`.
+can pass — and that every way of failing at it stops the container instead — and that the database
+schema is loaded, kept, upgraded or refused as [The database schema](#the-database-schema) says. The
+server, its API, its schema upgrade and its database are replaced by stand-ins for this, so it takes
+a few minutes and needs no database. Run it by hand with `./test-image.sh <image>`.
+
+A stand-in database cannot tell whether the image's DDL really loads in one transaction, or whether
+Ambari's schema upgrade starts from the image, finds its tables and changes them. So `build-image.sh`
+then runs `test-image-postgres.sh`, which runs the image's own setup, `psql`, schema upgrade and
+server against PostgreSQL in a container with no network. It checks that an empty database gets the
+whole schema; that a user that cannot create tables, or a load that fails at the DDL's last table,
+ends the container with psql's error and leaves nothing of the schema; that a schema of the line
+before the image's is refused and left exactly as it was; that `AMBARI_SCHEMA_UPGRADE=true` upgrades
+it, and completes an upgrade that stopped part-way, to the same tables, columns, keys and indexes as a
+fresh load; and that the server starts on the result. It takes about a minute. It runs
+`postgres:16-alpine` unless `POSTGRES_IMAGE` names another (a copy in your own registry, for one);
+an agent that has no such image and cannot pull it skips these checks with a warning, rather than
+fail the build. Run it by hand with `./test-image-postgres.sh <image>`. It knows how to make a schema
+of the line before 2.8.2 out of a 2.8.2 one; an image of a new line fails it until that line's is
+added.
 
 ## Running
 
@@ -126,12 +142,56 @@ database. Run it by hand with `./test-image.sh <image>`.
 | `AMBARI_DB_NAME` | `ambari` | |
 | `AMBARI_DB_USER` | `ambari` | |
 | `AMBARI_STOP_TIMEOUT` | `50` | Seconds the server gets to stop on SIGTERM before it is killed. Keep it below the pod's `terminationGracePeriodSeconds` |
+| `AMBARI_SCHEMA_UPGRADE` | `false` | `true` upgrades the schema of a database from an earlier Ambari line before the server starts. Back the database up first; see below |
 
-The entrypoint waits for Postgres, configures the server against it, loads the DDL only if the
-`clusters` table is absent, copies any jar found in `/opt/ambari-views` into the server's views
-directory, starts the server, and then replaces the default administrator password. Every step is
-idempotent: the pod will be restarted, rescheduled and rolled, and each start has to converge rather
-than assume a fresh database.
+The entrypoint waits for Postgres, configures the server against it, loads the schema into a database
+that has none and checks the version of one that has, copies any jar found in `/opt/ambari-views` into
+the server's views directory, starts the server, and then replaces the default administrator
+password. Every step is idempotent: the pod will be restarted, rescheduled and rolled, and each start
+has to converge rather than assume a fresh database.
+
+### The database schema
+
+Each Ambari line — the first three numbers of the version, so every 2.8.2.x build is the 2.8.2 line —
+has a schema of its own. The schema records its version in the `metainfo` table, and the server
+refuses to start on another line's. The entrypoint reads that version with `psql` before it starts
+the server, and compares it with the server's own (the file named by `server.version.file`):
+
+| The database | What happens |
+|---|---|
+| has no Ambari schema | The image's DDL is loaded in a single transaction that stops at the first error, so the database ends up with all of the schema or none of it. The DDL's own `BEGIN` and `COMMIT` are left out, or its `COMMIT` would end that transaction half-way. When the load fails, psql's error is in the pod logs (for example `permission denied for schema public`: from PostgreSQL 15 on, a user that does not own the database cannot create tables in its `public` schema unless it is granted) and the container exits. |
+| has a schema of the same line | The server starts on it. Any 2.8.2.x image runs on a 2.8.2 schema. |
+| has a schema of an earlier line | The container exits and says so, naming both versions, unless `AMBARI_SCHEMA_UPGRADE=true`. Nothing is changed, so an image of the earlier line still runs on the database. |
+| has a schema of an earlier line, and `AMBARI_SCHEMA_UPGRADE=true` | Ambari's schema upgrade runs before the server starts, and the lines it logs, with every warning or error logged meanwhile, are copied to the pod logs. When it fails, the container exits with the reason; the upgrade runs again on the next start for as long as the variable is set. |
+| has a schema of a later line | The container exits: a schema is never downgraded. Run an image of that line, or restore the backup taken before the upgrade. |
+
+The "schema present" sign is the `metainfo` version row, not the presence of some table: because the
+load is one transaction, that row exists only once the whole schema does. A database holding tables
+but no version — left by an image before this one whose first load stopped part-way — makes the load
+fail with `relation ... already exists`; start again from an empty database.
+
+The tables go where the database user's `search_path` puts them: in `public`, unless the database has
+a schema named after the user. `ambari-server setup` records a schema named after the database
+instead (`server.jdbc.postgres.schema`), and the schema upgrade looks for tables, columns and keys in
+that schema only: where the two differ, it takes every table to be missing, fails on creating one
+that is already there — so an upgrade that stopped part-way could never complete — and skips the
+changes to what it does not find, then reports success. So on every start, before the upgrade and the
+server run, the entrypoint records the schema it finds the `metainfo` table in, in place of setup's
+(or one given in `AMBARI_EXTRA_PROPERTIES`), and says so in the pod logs when it changes it.
+
+The schema upgrade is the program `ambari-server upgrade` runs (`SchemaUpgradeHelper`), started the
+same way, from the server's configuration and libraries, as the container's own user. The command
+itself is not used: it refuses to run as anyone but root, and the rest of what it does — merging the
+configuration files a package upgrade set aside, replaying management packs, taking ownership of
+files — is for a host whose RPM was upgraded in place, not for a new image. The program's own output
+goes to `/var/log/ambari-server/ambari-server-upgrade.log`, as it does with the command.
+
+Back the database up before setting `AMBARI_SCHEMA_UPGRADE=true`: an upgrade that fails part-way can
+leave the schema half-upgraded, and there is no way back to the earlier line but the backup. Unset it
+once the server has started, so that the next move to a new line waits for a backup again; while it
+stays set on a schema that is already current, every start says so in the pod logs. The upgrade runs
+before the server listens, so it counts against the time a liveness probe gives the container to
+start.
 
 ### The first administrator password
 

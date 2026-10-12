@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Builds and pushes the standalone Ambari + KDPS image. A native build is checked with test-image.sh
-# before it is pushed.
+# Builds and pushes the standalone Ambari + KDPS image. A native build is checked with test-image.sh,
+# and with test-image-postgres.sh when a PostgreSQL image is at hand, before it is pushed.
 #
 # Native per-architecture build by default, the same convention the ODP images follow: each
 # agent builds only its own architecture and pushes an arch-suffixed tag, so nothing runs
@@ -91,6 +91,16 @@ case "$PLATFORMS" in
     # How the image starts and stops is what keeps the server's shutdown clean, its audit log in the
     # pod logs and admin/admin off the Route; check it before anyone can pull the image.
     ./test-image.sh "${TARGET_IMAGE}"
+    # Then the schema load and upgrade, against a real PostgreSQL: a stand-in cannot tell whether the
+    # DDL loads in one transaction or whether Ambari's schema upgrade finds its tables. An agent that
+    # has no PostgreSQL image and cannot pull one skips this, and says so, rather than fail the build.
+    POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
+    if docker image inspect "${POSTGRES_IMAGE}" >/dev/null 2>&1 || docker pull -q "${POSTGRES_IMAGE}"; then
+      POSTGRES_IMAGE="${POSTGRES_IMAGE}" ./test-image-postgres.sh "${TARGET_IMAGE}"
+    else
+      echo "WARNING: ${POSTGRES_IMAGE} is not available here, so the schema load and upgrade were NOT" \
+        "checked against PostgreSQL. Run ./test-image-postgres.sh ${TARGET_IMAGE} where it is." >&2
+    fi
     docker push "${TARGET_IMAGE}"
     ;;
 esac

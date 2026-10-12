@@ -33,6 +33,7 @@ log() { echo "[entrypoint] $*" >&2; }
 LOG_DIR=/var/log/ambari-server
 LOG="${LOG_DIR}/ambari-server.log"
 AUDIT_LOG="${LOG_DIR}/ambari-audit.log"
+UPGRADE_OUT="${LOG_DIR}/ambari-server-upgrade.log"
 PIDFILE=/var/run/ambari-server/ambari-server.pid
 
 # How long the server gets to stop on its own before it is killed. Kubernetes kills the container
@@ -143,22 +144,6 @@ ambari-server setup -s \
   --databaseusername="${DB_USER}" \
   --databasepassword="${DB_PASSWORD}"
 
-# The schema is created once, by whoever gets there first. A second pod, or a restart, finds the
-# tables already present: psql exits non-zero on the duplicate-object errors, which is expected and
-# not a failure.
-if ! PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
-      -tAc "select 1 from information_schema.tables where table_name='clusters'" 2>/dev/null | grep -q 1; then
-  log "empty database: loading the Ambari schema"
-  PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
-    -f /var/lib/ambari-server/resources/Ambari-DDL-Postgres-CREATE.sql >/dev/null 2>&1 || true
-else
-  log "schema already present"
-fi
-
-# Ambari refuses to start unless the invoking user matches ambari-server.user, and the packaged
-# value is root, which no OpenShift pod can be. Everything the server writes to is group-0 writable
-# in this image, so the arbitrary UID -- named through the passwd entry added above -- is the
-# correct value to record. setup rewrites the properties file, so this has to come after it.
 # ambari.properties is rewritten by setup, so anything the deployment wants to say about the server
 # has to be applied after it. AMBARI_EXTRA_PROPERTIES carries one key=value per line; each key is
 # replaced if present and appended otherwise.
@@ -191,6 +176,188 @@ if [ -z "${AMBARI_SECURITY_MASTER_KEY:-}" ]; then
   log "AMBARI_SECURITY_MASTER_KEY is not set: the master key is required."
   exit 1
 fi
+
+# Each Ambari line -- the first three numbers of its version: every 2.8.2.x build is the 2.8.2 line --
+# has a database schema of its own, and the server refuses to start on another line's: it compares
+# those three numbers with the version the schema records. That is checked here, before the server is
+# started, so that the pod logs say which versions disagree and what to do about it, rather than leave
+# the reason at the bottom of the server's own log.
+DDL=/var/lib/ambari-server/resources/Ambari-DDL-Postgres-CREATE.sql
+
+# psql against Ambari's database, stopping at the first error. Its errors reach the container's output.
+db_psql() {
+  PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+    -v ON_ERROR_STOP=1 "$@"
+}
+
+# The schema version the database records -- its metainfo "version" row, which exists once the whole
+# schema does (load_schema) and which every schema upgrade rewrites -- or nothing when the database
+# holds no Ambari schema. Fails when the database cannot be asked.
+schema_version() {
+  local present
+  present="$(db_psql -tA -c "select to_regclass('metainfo') is not null")" || return 1
+  case "${present}" in
+    t) db_psql -tA -c "select metainfo_value from metainfo where metainfo_key = 'version'" ;;
+    f) ;;
+    *) return 1 ;;
+  esac
+}
+
+# The PostgreSQL schema that holds Ambari's tables: the one where psql, like the server, finds them
+# through the database user's search_path. Fails when the database cannot be asked.
+schema_location() {
+  db_psql -tA -c "select n.nspname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                  where c.oid = to_regclass('metainfo')"
+}
+
+# The line of an Ambari version, its first three numbers, as the server compares them. Fails when the
+# text does not start like a version.
+schema_line() {
+  [[ "$1" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 1
+  echo "$((10#${BASH_REMATCH[1]})).$((10#${BASH_REMATCH[2]})).$((10#${BASH_REMATCH[3]}))"
+}
+
+# Prints -1, 0 or 1 as the line $1 is older than, the same as or newer than the line $2.
+compare_lines() {
+  local a b i
+  IFS=. read -r -a a <<< "$1"
+  IFS=. read -r -a b <<< "$2"
+  for i in 0 1 2; do
+    if [ "${a[i]}" -lt "${b[i]}" ]; then echo -1; return 0; fi
+    if [ "${a[i]}" -gt "${b[i]}" ]; then echo 1; return 0; fi
+  done
+  echo 0
+}
+
+# Loads the schema into a database that holds none, in a single transaction: afterwards the database
+# has all of it, or nothing of it. The DDL commits its seed data part-way through, and that COMMIT
+# would end psql's transaction there and leave the rest to be committed statement by statement, so
+# the DDL's own BEGIN and COMMIT are left out. That is what makes the version row a sound sign that
+# the schema is there: it is committed with the last table, not before it. Only psql's errors are
+# printed, not the line it prints for each statement.
+load_schema() {
+  sed -E '/^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;[[:space:]]*$/Id' "${DDL}" \
+    | db_psql -q --single-transaction -f - >/dev/null
+}
+
+# Upgrades the schema to this server's line with Ambari's own schema upgrade: the program "ambari-server
+# upgrade" runs, started the way that command starts it. The command itself is not used. It refuses to
+# run as anyone but root, which no OpenShift pod is, and the rest of what it does -- merging the
+# configuration files a package upgrade set aside, replaying management packs, taking ownership of
+# files -- is for a host whose RPM was upgraded in place, not for a new image whose configuration is
+# written again on every start. ROOT is set, empty, as the launcher exports it for the JVMs it starts:
+# without it the server warns about it each time it builds a path. The program runs in the foreground,
+# so that a stop asked for meanwhile waits for it rather than cut the upgrade short. It logs to the
+# server's log, and its own output -- the JVM's and the logging library's start-up messages -- goes to
+# ambari-server-upgrade.log, where "ambari-server upgrade" puts it too. Once it has finished, the
+# container's output gets what it did: when it succeeded, its own lines from the server's log and
+# every warning or error logged meanwhile, because a change it could not make may be logged only as a
+# warning, by the code that runs its SQL; when it failed, the last of what it wrote there, which is
+# where the reason is, and the end of its output.
+upgrade_schema() {
+  local java_home classpath driver from rc=0
+  java_home="$(property ambari.java.home)"
+  classpath="/etc/ambari-server/conf:/usr/lib/ambari-server/*"
+  driver="$(property server.jdbc.driver.path)"
+  if [ -n "${driver}" ]; then classpath="${classpath}:${driver}"; fi
+  from=$(( $(stat -c %s "${LOG}" 2>/dev/null || echo 0) + 1 ))
+  ROOT="" "${java_home:-${AMBARI_JAVA_HOME:-/usr/lib/jvm/ambari-java}}/bin/java" \
+    --add-opens java.base/java.lang=ALL-UNNAMED -cp "${classpath}" \
+    org.apache.ambari.server.upgrade.SchemaUpgradeHelper </dev/null >"${UPGRADE_OUT}" 2>&1 || rc=$?
+  if [ "${rc}" -eq 0 ]; then
+    tail -c "+${from}" "${LOG}" 2>/dev/null | grep -E 'SchemaUpgradeHelper|UpgradeCatalog| (WARN|ERROR) +\[' || true
+  else
+    tail -c "+${from}" "${LOG}" 2>/dev/null | tail -n 200 || true
+    tail -n 60 "${UPGRADE_OUT}" 2>/dev/null || true
+  fi
+  return "${rc}"
+}
+
+SERVER_VERSION_FILE="$(property server.version.file)"
+SERVER_VERSION="$(head -n 1 "${SERVER_VERSION_FILE:-/var/lib/ambari-server/resources/version}" 2>/dev/null | tr -d '[:space:]')" \
+  || SERVER_VERSION=""
+if ! SERVER_LINE="$(schema_line "${SERVER_VERSION}")"; then
+  log "cannot tell which Ambari version this server is: ${SERVER_VERSION_FILE:-server.version.file} gives '${SERVER_VERSION}'"
+  exit 1
+fi
+
+if ! DB_SCHEMA="$(schema_version)"; then
+  log "could not read the Ambari schema version from the database; psql's error is above"
+  exit 1
+fi
+if [ -z "${DB_SCHEMA}" ]; then
+  log "the database holds no Ambari schema: loading it"
+  if ! load_schema; then
+    log "the Ambari schema could not be loaded, and nothing of it was kept: psql's error is above. The"
+    log "database user needs the right to create tables in the database; from PostgreSQL 15 on it no"
+    log "longer has it in the public schema unless it is granted. 'relation ... already exists' means"
+    log "the database holds tables but no schema version, left by an earlier load that did not"
+    log "complete: start again from an empty database."
+    exit 1
+  fi
+  if ! DB_SCHEMA="$(schema_version)" || [ -z "${DB_SCHEMA}" ]; then
+    log "the Ambari schema was loaded, but the database does not show its version"
+    exit 1
+  fi
+  log "loaded the Ambari ${DB_SCHEMA} schema"
+fi
+
+# setup records a PostgreSQL schema named after the database as the one holding Ambari's tables
+# (server.jdbc.postgres.schema), and the schema upgrade looks for tables, columns, keys and indexes in
+# that schema only. psql and the server find the tables through the user's search_path instead: by
+# default "public", unless the database has a schema named after the user. When the two differ, the
+# upgrade takes every table and column it checks for to be missing: it fails creating a table that is
+# already there, so an upgrade that stopped part-way never completes on a later start, and it silently
+# skips the changes to what it does not find, then reports success. So the schema that actually holds
+# the tables is recorded, before the upgrade and the server read it.
+if ! PG_SCHEMA="$(schema_location)" || [ -z "${PG_SCHEMA}" ]; then
+  log "could not tell which PostgreSQL schema holds Ambari's tables"
+  exit 1
+fi
+if [ "$(property server.jdbc.postgres.schema)" != "${PG_SCHEMA}" ]; then
+  log "Ambari's tables are in the PostgreSQL schema '${PG_SCHEMA}': recorded it as server.jdbc.postgres.schema"
+  set_property server.jdbc.postgres.schema "${PG_SCHEMA}"
+fi
+
+if ! DB_LINE="$(schema_line "${DB_SCHEMA}")"; then
+  log "the database records '${DB_SCHEMA}' as its Ambari schema version, which is not a version"
+  exit 1
+fi
+case "$(compare_lines "${DB_LINE}" "${SERVER_LINE}")" in
+  0)
+    log "the database schema (${DB_SCHEMA}) is the one Ambari ${SERVER_VERSION} runs on"
+    if [ "${AMBARI_SCHEMA_UPGRADE:-}" = true ]; then
+      log "AMBARI_SCHEMA_UPGRADE=true has nothing to do. Turn it off (in the ambari chart,"
+      log "schemaUpgrade.enabled) so that the next move to a new Ambari line waits for a backup again."
+    fi ;;
+  1)
+    log "the database schema is Ambari ${DB_SCHEMA}, newer than this server, Ambari ${SERVER_VERSION}, and"
+    log "a schema is never downgraded: this server cannot run on it. Run an image of the ${DB_LINE} line,"
+    log "or restore the database backup taken before the schema was upgraded."
+    exit 1 ;;
+  *)
+    if [ "${AMBARI_SCHEMA_UPGRADE:-}" != true ]; then
+      log "the database schema is Ambari ${DB_SCHEMA}, older than this server, Ambari ${SERVER_VERSION}, which"
+      log "runs on the ${SERVER_LINE} schema. Nothing was changed: an image of the ${DB_LINE} line still runs"
+      log "on this database. To upgrade the schema to ${SERVER_LINE}, back the database up, then start this"
+      log "image with AMBARI_SCHEMA_UPGRADE=true (in the ambari chart, schemaUpgrade.enabled=true)."
+      exit 1
+    fi
+    log "upgrading the database schema from ${DB_SCHEMA} to ${SERVER_LINE} (AMBARI_SCHEMA_UPGRADE=true)"
+    if ! upgrade_schema; then
+      log "the schema upgrade failed; the server's log above says why. The database may be partly"
+      log "upgraded. Either restore the backup taken before the upgrade and go back to an image of the"
+      log "${DB_LINE} line, or remove the cause and restart: the upgrade runs again for as long as"
+      log "AMBARI_SCHEMA_UPGRADE=true."
+      exit 1
+    fi
+    if ! DB_SCHEMA="$(schema_version)" || [ "$(schema_line "${DB_SCHEMA}" || true)" != "${SERVER_LINE}" ]; then
+      log "the schema upgrade finished, but the database records schema version '${DB_SCHEMA}', not ${SERVER_LINE}"
+      exit 1
+    fi
+    log "upgraded the database schema to ${DB_SCHEMA}. Turn AMBARI_SCHEMA_UPGRADE off again (in the"
+    log "ambari chart, schemaUpgrade.enabled) so that the next move to a new Ambari line waits for a backup." ;;
+esac
 
 # Prints "changed" once the admin account has a password other than the one the schema was created
 # with (or no local password at all). While it still has that one, prints "default" -- admin/admin
@@ -271,6 +438,10 @@ fi
 # Only this script needs the password: the server and everything it starts are not given it.
 export -n AMBARI_ADMIN_PASSWORD
 
+# Ambari refuses to start unless the invoking user matches ambari-server.user, and the packaged
+# value is root, which no OpenShift pod can be. Everything the server writes to is group-0 writable
+# in this image, so the arbitrary UID -- named through the passwd entry added above -- is the
+# correct value to record. setup rewrites the properties file, so this has to come after it.
 AMBARI_RUN_USER="$(id -u -n)"
 export USER="${AMBARI_RUN_USER}" LOGNAME="${AMBARI_RUN_USER}"
 if [ "$(id -u)" -ne 0 ] && [ -w /etc/ambari-server/conf/ambari.properties ]; then
