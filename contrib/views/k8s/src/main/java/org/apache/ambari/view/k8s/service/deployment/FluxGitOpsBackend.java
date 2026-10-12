@@ -405,6 +405,35 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
     }
 
+    /**
+     * Stops a deploy on OpenShift when service accounts of the release may not use the SCCs the service declares
+     * ({@code openshiftScc}), with the command the platform team runs. Never grants (see
+     * {@link KubernetesService#checkSccGrants}).
+     *
+     * @throws IllegalStateException when a grant is missing
+     */
+    private void requireSccGrants(HelmDeployRequest request, String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank() || !kubernetesService.isOpenShiftCluster()) return;
+        StackServiceDef def;
+        try {
+            def = stackDefinitionService.getServiceDefinition(serviceKey);
+        } catch (Exception e) {
+            LOG.warn("SCC preflight for {} could not run: {}", serviceKey, e.toString());
+            return;
+        }
+        if (def == null || def.openshiftScc == null || def.openshiftScc.isEmpty()) return;
+        List<String> warnings = new ArrayList<>();
+        String problem = kubernetesService.checkSccGrants(request.getNamespace(), request.getReleaseName(),
+                def.openshiftScc, warnings);
+        if (problem != null) {
+            throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
+                    + " on OpenShift — required Security Context Constraints are not granted.\n" + problem);
+        }
+        warnings.forEach(w -> logFluxWarn(request.getNamespace(), request.getReleaseName(), "automation", "%s", w));
+        LOG.info("The OpenShift SCCs service {} declares are granted to release {} in namespace {}",
+                serviceKey, request.getReleaseName(), request.getNamespace());
+    }
+
     /** Renders a Flux HelmRepository; OCI URLs get the oci:// scheme and {@code type: oci}. */
     static String renderHelmRepository(String name, String type, String url, String authMode) {
         boolean oci = "OCI".equalsIgnoreCase(type);
@@ -667,6 +696,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         //     stops the deploy before anything is committed to Git. A planned deploy did it when it was planned.
         if (planned == null) {
             org.apache.ambari.view.k8s.service.OpenShiftMonitoringSetup.prepare(kubernetesService, request);
+        }
+
+        // 1c. OpenShift: the security context constraints the service's pods need, detected as in direct mode. A planned
+        //     deploy has already checked them, and granted them when allowed, like a direct deploy; without a plan a
+        //     missing grant stops the deploy before anything is committed to Git.
+        if (planned == null) {
+            requireSccGrants(request, serviceKey);
         }
 
         // 2. Create mounts/PVCs if specified (a planned deploy has a step of its own for them)

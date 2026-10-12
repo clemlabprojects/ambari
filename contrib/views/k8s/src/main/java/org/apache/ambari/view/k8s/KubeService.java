@@ -441,33 +441,39 @@ public class KubeService {
         boolean ocp = k.isOpenShiftCluster();
         List<Map<String, Object>> checks = new java.util.ArrayList<>();
         // Core deploy
-        checks.add(preflightCheck("Create Deployments", "Core", k.canI("create", "apps", "deployments", null, namespace)));
-        checks.add(preflightCheck("Create Services", "Core", k.canI("create", "", "services", null, namespace)));
-        checks.add(preflightCheck("Create Secrets", "Core", k.canI("create", "", "secrets", null, namespace)));
-        checks.add(preflightCheck("Create ConfigMaps", "Core", k.canI("create", "", "configmaps", null, namespace)));
+        checks.add(preflightCheck("Create Deployments", "Core", k.canI("create", "apps", "deployments", null, null, namespace)));
+        checks.add(preflightCheck("Create Services", "Core", k.canI("create", "", "services", null, null, namespace)));
+        checks.add(preflightCheck("Create Secrets", "Core", k.canI("create", "", "secrets", null, null, namespace)));
+        checks.add(preflightCheck("Create ConfigMaps", "Core", k.canI("create", "", "configmaps", null, null, namespace)));
         // KEDA autoscaling
-        checks.add(preflightCheck("Create KEDA ScaledObjects", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "scaledobjects", null, namespace)));
-        checks.add(preflightCheck("Create KEDA TriggerAuthentications", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "triggerauthentications", null, namespace)));
+        checks.add(preflightCheck("Create KEDA ScaledObjects", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "scaledobjects", null, null, namespace)));
+        checks.add(preflightCheck("Create KEDA TriggerAuthentications", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "triggerauthentications", null, null, namespace)));
         // Monitoring (ServiceMonitor so Prometheus scrapes the workload)
-        checks.add(preflightCheck("Create ServiceMonitors", "Monitoring", k.canI("create", "monitoring.coreos.com", "servicemonitors", null, namespace)));
+        checks.add(preflightCheck("Create ServiceMonitors", "Monitoring", k.canI("create", "monitoring.coreos.com", "servicemonitors", null, null, namespace)));
         if (ocp) {
             // KEDA must read metrics from OpenShift's built-in (user-workload) monitoring via the Thanos proxy.
-            boolean thanos = k.canI("get", "", "services", "proxy", "openshift-user-workload-monitoring")
-                    || k.canI("get", "", "services", "proxy", "openshift-monitoring");
+            boolean thanos = k.canI("get", "", "services", "proxy", null, "openshift-user-workload-monitoring")
+                    || k.canI("get", "", "services", "proxy", null, "openshift-monitoring");
             checks.add(preflightCheck("Query platform monitoring (Thanos)", "Monitoring", thanos));
 
-            // SCC (advisory): a chart that needs non-default UIDs (runAsUser:0, fsGroup, seccomp) won't
-            // run under the default restricted-v2 SCC. The view NEVER grants SCCs itself (they are
-            // cluster-wide privilege grants) — this only tells the operator whether they can, and prints
-            // the exact command. Advisory: it does not fail the overall preflight.
-            boolean canGrantScc = k.canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace)
-                    && k.canI("use", "security.openshift.io", "securitycontextconstraints", "anyuid", null);
-            Map<String, Object> sccCheck = preflightCheck(
-                    "Grant a non-default SCC (anyuid) — only if a chart requires it", "Security (SCC)", canGrantScc);
+            // SCC (advisory): some services (OpenMetadata, JupyterHub) run pods that the default restricted-v2 SCC
+            // refuses. Their deploy grants the SCCs to the release's own service accounts when this account may in
+            // this project (bind on the SCC's ClusterRole, or use of the SCC); otherwise it stops with the commands
+            // for the platform team, and finds their grant on the next attempt. Advisory: it does not fail the
+            // overall preflight.
+            List<String> sccs = KubernetesService.SERVICE_SCCS;
+            boolean canGrantScc = sccs.stream().allMatch(scc -> k.canGrantScc(namespace, scc));
+            Map<String, Object> sccCheck = preflightCheck("Grant the " + String.join(" and ", sccs)
+                    + " SCCs to the service accounts of a release (OpenMetadata, JupyterHub)", "Security (SCC)",
+                    canGrantScc);
             sccCheck.put("advisory", true);
-            sccCheck.put("remediation", "oc adm policy add-scc-to-user anyuid -z <serviceaccount> -n " + namespace);
-            sccCheck.put("note", "SCCs are cluster-wide grants; a cluster admin runs this only when a chart "
-                    + "needs anyuid/privileged. The view does not grant SCCs.");
+            sccCheck.put("remediation", "Once per project, the platform team lets this account grant them:\n"
+                    + KubernetesService.sccGrantRightCommands(namespace, sccs, "  ")
+                    + "\nOr it grants them to each release's service accounts, as the deploy prints:\n"
+                    + "  oc adm policy add-scc-to-user <scc> -z <serviceaccount> -n " + namespace);
+            sccCheck.put("note", "Only the services that need them ask for these SCCs, and only for the "
+                    + "service accounts that need them. A deploy without the right stops with both commands; "
+                    + "nothing is granted to the whole project.");
             checks.add(sccCheck);
         }
         // Advisory checks (e.g. SCC) don't count against the overall readiness gate.

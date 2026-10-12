@@ -334,4 +334,28 @@ class KubeServiceTest {
 
     assertEquals(200, api.checkIsViewConfigured(null).getStatus(), "ops1 is not sent to the configuration page");
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void preflightAsksWhetherTheAccountMayGrantEachServiceSccInTheTargetProject(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.isOpenShiftCluster()).thenReturn(true);
+    when(k8s.canGrantScc("data", "anyuid")).thenReturn(true);
+    when(k8s.canGrantScc("data", "nonroot-v2")).thenReturn(false);
+
+    Map<String, Object> out = (Map<String, Object>) api.preflight(null, "data").getEntity();
+
+    Map<String, Object> scc = ((java.util.List<Map<String, Object>>) out.get("checks")).stream()
+        .filter(c -> "Security (SCC)".equals(c.get("group"))).findFirst().orElseThrow();
+    assertEquals(false, scc.get("allowed"), "nonroot-v2 may not be granted");
+    assertEquals(true, scc.get("advisory"));
+    String remediation = (String) scc.get("remediation");
+    assertTrue(remediation.contains("oc -n data create rolebinding kdps-grant-scc"), remediation);
+    assertTrue(remediation.contains("--resource-name=system:openshift:scc:nonroot-v2"), remediation);
+    assertTrue(remediation.contains("oc adm policy add-scc-to-user <scc> -z <serviceaccount> -n data"), remediation);
+    assertFalse(String.valueOf(scc.get("note")).contains("does not grant"), String.valueOf(scc.get("note")));
+    verify(k8s).canGrantScc("data", "anyuid");
+    verify(k8s).canGrantScc("data", "nonroot-v2");
+  }
 }

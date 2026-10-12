@@ -1427,22 +1427,31 @@ export async function submitHelmDeploy(payload: {
   return response.json() as Promise<{id: string}>;
 }
 
+/** What an uninstall could not take back itself and leaves to an administrator. */
+export interface UninstallNotes {
+  /** Polaris access the release keeps. */
+  polarisCleanup?: string;
+  /** OpenShift SCC grants that KDPS did not take back (made outside KDPS, or still used by another release), with the platform team's commands. */
+  sccCleanup?: string;
+}
+
 /**
  * Uninstalls a Helm release.
  *
  * @param name release name
  * @param namespace release namespace
+ * @returns the notes the server returns; empty when there is nothing left to do
  */
 export async function uninstallHelm(
   name: string,
   namespace: string,
   params: URLSearchParams = new URLSearchParams()
-) {
+): Promise<UninstallNotes> {
   const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}?${params.toString()}`;
   const response = await apiFetch(url, { method: 'DELETE' });
   if (!response.ok) throw new Error(`Uninstall failed: ${response.status}`);
-  // backend returns empty body → don't call .json()
-  return;
+  // The body is empty when there is nothing to report.
+  return response.json().catch(() => ({}));
 }
 
 /**

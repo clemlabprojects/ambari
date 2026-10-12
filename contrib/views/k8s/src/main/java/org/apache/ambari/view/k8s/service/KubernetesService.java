@@ -2411,19 +2411,25 @@ public class KubernetesService {
     }
 
     /**
-     * "Can I?" — run a SelfSubjectAccessReview (the API behind {@code oc auth can-i}) for the connected
-     * credential. Returns true if the API server says the verb is allowed on the resource/namespace.
-     * Never throws: a failure (or no client) is reported as "not allowed".
-     */
-    /**
      * Whether the connected account may create ClusterRoleBindings, i.e. grant cluster-wide roles such as
      * {@code cluster-monitoring-view}. Accounts limited to their own projects may not.
      */
     public boolean canBindClusterRoles() {
-        return canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null);
+        return canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null);
     }
 
-    public boolean canI(String verb, String group, String resource, String subresource, String namespace) {
+    /**
+     * "Can I?" — run a SelfSubjectAccessReview (the API behind {@code oc auth can-i}) for the connected
+     * credential. Returns true if the API server says the verb is allowed on the resource/namespace.
+     * Never throws: a failure (or no client) is reported as "not allowed".
+     *
+     * @param subresource the subresource ({@code proxy} of {@code services}), or null
+     * @param name        the object the check is about, or null for any object. A grant limited to named objects
+     *                    (a Role with {@code resourceNames}, as the ClusterRole of each OpenShift SCC) is seen only
+     *                    when the name is given.
+     * @param namespace   the namespace, or null for cluster-scoped resources and cluster-wide grants
+     */
+    public boolean canI(String verb, String group, String resource, String subresource, String name, String namespace) {
         if (client == null) return false;
         try {
             io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReview review =
@@ -2434,6 +2440,7 @@ public class KubernetesService {
                             .withGroup(group == null ? "" : group)
                             .withResource(resource)
                             .withSubresource(subresource)
+                            .withName(name)
                             .withNamespace(namespace)
                         .endResourceAttributes()
                     .endSpec()
@@ -2441,8 +2448,9 @@ public class KubernetesService {
             var result = client.authorization().v1().selfSubjectAccessReview().create(review);
             return result != null && result.getStatus() != null && Boolean.TRUE.equals(result.getStatus().getAllowed());
         } catch (Exception e) {
-            LOG.warn("can-i {} {}/{}{} in ns={} failed: {}", verb, group, resource,
-                    subresource != null ? "/" + subresource : "", namespace, e.toString());
+            LOG.warn("can-i {} {}/{}{}{} in ns={} failed: {}", verb, group, resource,
+                    subresource != null ? "/" + subresource : "", name != null ? " " + name : "", namespace,
+                    e.toString());
             return false;
         }
     }
@@ -2929,11 +2937,11 @@ public class KubernetesService {
                  + "' not found). Enable the built-in monitoring stack and user-workload monitoring, then retry.";
         }
 
-        boolean canSa  = canI("create", "", "serviceaccounts", null, namespace);
-        boolean canSec = canI("create", "", "secrets", null, namespace);
+        boolean canSa  = canI("create", "", "serviceaccounts", null, null, namespace);
+        boolean canSec = canI("create", "", "secrets", null, null, namespace);
         boolean canCrb = projectScoped || canBindClusterRoles();
-        boolean canRole = canI("create", "rbac.authorization.k8s.io", "roles", null, namespace);
-        boolean canRb  = canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace);
+        boolean canRole = canI("create", "rbac.authorization.k8s.io", "roles", null, null, namespace);
+        boolean canRb  = canI("create", "rbac.authorization.k8s.io", "rolebindings", null, null, namespace);
         String crbName = "kdps-monview-" + namespace + "-" + saName;
         String tenancyRoleName = saName + "-thanos-tenancy";
         if (!(canSa && canSec && canCrb && canRole && canRb)) {
@@ -3057,105 +3065,694 @@ public class KubernetesService {
         }
     }
 
+    /** Labels of the RoleBindings that grant the service accounts of one release an OpenShift SCC. */
+    static final String SCC_LABEL_MANAGED_BY = "app.kubernetes.io/managed-by";
+    static final String SCC_MANAGED_BY_KDPS = "ambari-kdps";
+    static final String SCC_LABEL_RELEASE = "ambari.clemlab.com/release";
+    static final String SCC_LABEL_SCC = "ambari.clemlab.com/scc";
+
     /**
-     * OpenShift SCC preflight (detect-else-request, mirrors {@link #ensureKedaThanosTokenSecret}).
-     * For each declared grant {@code {scc, serviceAccounts}}, bind the SCC's ClusterRole to those
-     * SPECIFIC service accounts so pods that pin a UID/GID or run as root (bundled OpenSearch,
-     * Airflow) are admitted, WITHOUT touching the SAs that must stay on {@code restricted-v2}.
+     * The SCCs the KDPS services ask for in their {@code openshiftScc}. The one-time grant that lets the account grant
+     * SCCs itself names all of them, so the next service that needs one does not stop on the same missing right.
+     */
+    public static final List<String> SERVICE_SCCS = List.of("anyuid", "nonroot-v2");
+
+    /** The ClusterRole a platform team creates so that the KDPS account may grant those SCCs in a project. */
+    static final String SCC_GRANT_ROLE = "kdps-grant-scc";
+
+    private static final String RBAC_API_GROUP = "rbac.authorization.k8s.io";
+    private static final String SCC_API_GROUP = "security.openshift.io";
+
+    /**
+     * OpenShift's PodSecurityPolicySubjectReview: create-only, and its model class has no metadata, so it is sent as a
+     * generic resource.
+     */
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext SCC_SUBJECT_REVIEW =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup(SCC_API_GROUP)
+                    .withVersion("v1")
+                    .withKind("PodSecurityPolicySubjectReview")
+                    .withPlural("podsecuritypolicysubjectreviews")
+                    .withNamespaced(true)
+                    .build();
+
+    /**
+     * The non-root UID the probe pod of a PodSecurityPolicySubjectReview runs as. No project UID range contains it, so
+     * restricted-v2, which every service account may use, refuses the probe.
+     */
+    private static final long SCC_PROBE_UID = 1000L;
+
+    /**
+     * The security context of the probe pod for the SCCs the services ask for. The review names only the one SCC
+     * admission picks (the highest priority, then the most restrictive), so each probe is one that SCC admits and that
+     * the other built-in SCCs a service account may also hold, picked before it, refuse:
+     * <ul>
+     *   <li>anyuid: root, which nonroot-v2 and restricted-v2 refuse;</li>
+     *   <li>nonroot-v2: a non-root UID with the RuntimeDefault seccomp profile, which anyuid refuses although its
+     *       priority puts it first, as it allows no seccomp profile. JupyterHub's {@code default} service account
+     *       holds both.</li>
+     * </ul>
+     */
+    private static final Map<String, Map<String, Object>> SCC_PROBE_SECURITY_CONTEXTS = Map.of(
+            "anyuid", Map.of("runAsUser", 0L),
+            "nonroot-v2", Map.of(
+                    "runAsUser", SCC_PROBE_UID,
+                    "allowPrivilegeEscalation", false,
+                    "capabilities", Map.of("drop", List.of("ALL")),
+                    "seccompProfile", Map.of("type", "RuntimeDefault")));
+
+    /** An SCC a release needs, and the service accounts of the release that need it. */
+    record SccNeed(String scc, List<String> serviceAccounts) { }
+
+    /**
+     * A RoleBinding of the project that grants an SCC: one KDPS made for a release ({@code release} set), the shared one
+     * of earlier KDPS versions, or one made outside KDPS such as by {@code oc adm policy add-scc-to-user}.
      *
-     * <p>Deliberately PER-SERVICEACCOUNT, not a namespace-group grant. Granting {@code anyuid} to
+     * @param wholeProject whether it grants every service account of the project, through a group
+     */
+    private record SccBinding(String name, String release, String scc, Set<String> serviceAccounts,
+                              boolean wholeProject) {
+        boolean covers(String sa) {
+            return wholeProject || serviceAccounts.contains(sa);
+        }
+
+        boolean ofRelease(String releaseName) {
+            return release != null && release.equals(releaseName);
+        }
+
+        /** The shared {@code kdps-scc-<scc>} binding earlier versions made for every release of the project. */
+        boolean legacy() {
+            return release == null && name.equals(LEGACY_SCC_BINDING_PREFIX + scc);
+        }
+
+        /** Whether KDPS made it, for a release or, in earlier versions, for the whole project. */
+        boolean byKdps() {
+            return release != null || legacy();
+        }
+    }
+
+    private static final String LEGACY_SCC_BINDING_PREFIX = "kdps-scc-";
+
+    /**
+     * The SCCs a service declares ({@code openshiftScc}), merged by SCC, with {@code {{releaseName}}} expanded in the
+     * service account names.
+     *
+     * <p>Deliberately PER-SERVICEACCOUNT, never a namespace-group grant. Granting {@code anyuid} to
      * {@code system:serviceaccounts:<ns>} also makes SAs that rely on the platform injecting a
      * namespace-range UID (e.g. the OpenMetadata server, which sets {@code runAsNonRoot} with no
      * UID) prefer {@code anyuid} — which injects nothing, so the image runs as root and the pod
-     * fails "container has runAsNonRoot and image will run as root". Binding only the SAs that need
-     * it leaves the server + postgres SAs on {@code restricted-v2}. RBAC subjects need not exist
-     * yet, so we can bind the release-templated Airflow SA names before Helm creates them.
-     *
-     * <p>{@code {{releaseName}}} in a service-account name is expanded to {@code releaseName}. Each
-     * SCC's RoleBinding is reconciled (deleted + recreated) so its subject list always matches the
-     * current declaration — this also heals any legacy group-subject binding of the same name.
-     *
-     * <p>Returns {@code null} when everything is granted (or off OpenShift), or an actionable message
-     * listing the {@code oc adm policy add-scc-to-user} commands a cluster admin must run when the
-     * view's account lacks the rights.
+     * fails "container has runAsNonRoot and image will run as root". An entry without service
+     * accounts is therefore skipped.
      */
-    public String ensureSccGrants(String namespace, String releaseName, java.util.List<java.util.Map<String, Object>> sccGrants) {
+    static List<SccNeed> sccNeeds(String releaseName, List<Map<String, Object>> sccGrants) {
+        Map<String, Set<String>> bySccName = new LinkedHashMap<>();
+        String rel = releaseName == null ? "" : releaseName;
+        if (sccGrants != null) {
+            for (Map<String, Object> grant : sccGrants) {
+                if (grant == null) continue;
+                Object sccObj = grant.get("scc");
+                String scc = sccObj == null ? "" : sccObj.toString().trim();
+                if (scc.isBlank()) continue;
+                Set<String> sas = new LinkedHashSet<>();
+                if (grant.get("serviceAccounts") instanceof List<?> declared) {
+                    for (Object o : declared) {
+                        if (o == null) continue;
+                        String sa = o.toString().replace("{{releaseName}}", rel).replace("{{release}}", rel).trim();
+                        if (!sa.isBlank()) sas.add(sa);
+                    }
+                }
+                if (sas.isEmpty()) {
+                    LOG.warn("openshiftScc grant for '{}' declares no serviceAccounts; skipping (refusing a "
+                            + "namespace-wide grant)", scc);
+                    continue;
+                }
+                bySccName.computeIfAbsent(scc, k -> new LinkedHashSet<>()).addAll(sas);
+            }
+        }
+        List<SccNeed> needs = new ArrayList<>();
+        bySccName.forEach((scc, sas) -> needs.add(new SccNeed(scc, List.copyOf(sas))));
+        return needs;
+    }
+
+    /** The ClusterRole OpenShift defines for each SCC, whose only rule is {@code use} on that SCC. */
+    static String sccClusterRole(String scc) {
+        return "system:openshift:scc:" + scc;
+    }
+
+    /**
+     * Name of the RoleBinding that grants {@code scc} to the service accounts of {@code releaseName}:
+     * {@code kdps-scc-<scc>-<release>}, shortened to 63 characters with a hash of the full name when longer. One per
+     * release, so that deploying or removing one release never changes the grants of another.
+     */
+    static String sccBindingName(String scc, String releaseName) {
+        String name = "kdps-scc-" + scc + "-" + releaseName;
+        if (name.length() <= 63) return name;
+        String hash;
+        try {
+            hash = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(name.getBytes(StandardCharsets.UTF_8))).substring(0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+        String head = name.substring(0, 63 - hash.length() - 1).replaceAll("[-.]+$", "");
+        return head + "-" + hash;
+    }
+
+    /**
+     * Direct deploy, OpenShift SCC preflight: detect, then grant when this account may, else stop with what the
+     * platform team can do. Pods that pin a UID/GID or run as root (bundled OpenSearch, Airflow, the JupyterHub
+     * Kerberos sidecar) are admitted only when their service account may use the SCC they need.
+     *
+     * <ol>
+     *   <li><b>Detect.</b> Each service account that may already use its SCC needs nothing: when all of them may, no
+     *       object is written. That covers {@code oc adm policy add-scc-to-user}, so a deploy blocked once goes
+     *       through after the platform team ran the printed command.</li>
+     *   <li><b>Grant</b> only when this account may (see {@link #canGrantScc}): the release's own RoleBinding
+     *       ({@link #sccBindingName}) is created, or gets the service accounts it lacks. Nothing is ever deleted or
+     *       removed from a binding, so a write that fails leaves every existing grant in place. The shared
+     *       {@code kdps-scc-<scc>} binding of earlier versions is left untouched.</li>
+     *   <li><b>Block</b> otherwise, with both remedies: the platform team grants the SCC to the service accounts, or
+     *       lets this account grant SCCs in the project.</li>
+     * </ol>
+     *
+     * <p>A service account that may use its SCC only through a binding KDPS made for another release, or the shared
+     * binding of earlier versions, also gets this release's binding when this account may grant it, so that it does not
+     * depend on a grant made for someone else. When this account may not, the deploy goes on (its pods are admitted
+     * today) with a warning naming that binding and the platform team's command.
+     *
+     * @param sccGrants the service's {@code openshiftScc} declarations
+     * @param warnings  receives what the operator should know although the deploy may go on
+     * @return {@code null} when every service account may use its SCCs (or off OpenShift); otherwise an actionable
+     *         message
+     */
+    public String ensureSccGrants(String namespace, String releaseName, List<Map<String, Object>> sccGrants,
+                                  List<String> warnings) {
+        return reconcileSccGrants(namespace, releaseName, sccGrants, true, warnings);
+    }
+
+    /**
+     * GitOps deploy, OpenShift SCC preflight: the detection of {@link #ensureSccGrants} without the grant. What runs
+     * in the project comes from Git, so nothing is granted from here; a missing grant stops the deploy with the
+     * command for the platform team, before anything is committed.
+     *
+     * @param warnings receives what the operator should know although the deploy may go on
+     * @return {@code null} when every service account may use its SCCs (or off OpenShift); otherwise an actionable
+     *         message
+     */
+    public String checkSccGrants(String namespace, String releaseName, List<Map<String, Object>> sccGrants,
+                                 List<String> warnings) {
+        return reconcileSccGrants(namespace, releaseName, sccGrants, false, warnings);
+    }
+
+    private String reconcileSccGrants(String namespace, String releaseName, List<Map<String, Object>> sccGrants,
+                                      boolean mayGrant, List<String> warnings) {
         if (client == null) return "No cluster connection.";
         if (!isOpenShiftCluster()) return null;              // no-op on vanilla Kubernetes
-        if (namespace == null || namespace.isBlank() || sccGrants == null || sccGrants.isEmpty()) return null;
+        if (namespace == null || namespace.isBlank()) return null;
+        List<SccNeed> needs = sccNeeds(releaseName, sccGrants);
+        if (needs.isEmpty()) return null;
+        if (releaseName == null || releaseName.isBlank()) {
+            return "A release name is required to check the OpenShift security context constraints of its "
+                    + "service accounts.";
+        }
 
-        boolean canRb = canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace);
-        java.util.List<String> unresolved = new java.util.ArrayList<>();
-        String rel = releaseName == null ? "" : releaseName;
-
-        for (java.util.Map<String, Object> grant : sccGrants) {
-            if (grant == null) continue;
-            Object sccObj = grant.get("scc");
-            String scc = sccObj == null ? null : sccObj.toString().trim();
-            if (scc == null || scc.isBlank()) continue;
-
-            // Resolve + template the target service accounts. No SAs => nothing safe to grant
-            // (never fall back to a namespace-group grant — see javadoc).
-            java.util.List<String> sas = new java.util.ArrayList<>();
-            Object saObj = grant.get("serviceAccounts");
-            if (saObj instanceof java.util.List) {
-                for (Object o : (java.util.List<?>) saObj) {
-                    if (o == null) continue;
-                    String sa = o.toString().replace("{{releaseName}}", rel).replace("{{release}}", rel).trim();
-                    if (!sa.isBlank()) sas.add(sa);
+        List<SccBinding> bindings = sccBindings(namespace);
+        Map<String, List<String>> unresolved = new LinkedHashMap<>();
+        boolean unchecked = false;
+        for (SccNeed need : needs) {
+            List<String> missing = new ArrayList<>();
+            List<String> borrowed = new ArrayList<>();
+            Set<String> lenders = new LinkedHashSet<>();
+            for (String sa : need.serviceAccounts()) {
+                Boolean mayUse = serviceAccountMayUseScc(namespace, sa, need.scc());
+                if (mayUse == null) unchecked = true;
+                if (!Boolean.TRUE.equals(mayUse)) {
+                    missing.add(sa);
+                    continue;
+                }
+                // Held only through what KDPS made for someone else: gone when that release is uninstalled, or when
+                // the platform team deletes the shared binding of earlier versions.
+                List<SccBinding> grantedBy = bindings.stream()
+                        .filter(b -> b.scc().equals(need.scc()) && b.covers(sa)).collect(Collectors.toList());
+                boolean ownOrOutsideKdps = grantedBy.stream().anyMatch(b -> b.ofRelease(releaseName) || !b.byKdps());
+                if (!grantedBy.isEmpty() && !ownOrOutsideKdps) {
+                    borrowed.add(sa);
+                    grantedBy.forEach(b -> lenders.add(b.legacy()
+                            ? b.name() + " (made by an earlier KDPS version for the whole project)"
+                            : b.name() + " (made by KDPS for release " + b.release() + ")"));
                 }
             }
-            if (sas.isEmpty()) {
-                LOG.warn("openshiftScc grant for '{}' declares no serviceAccounts; skipping (refusing a namespace-wide grant)", scc);
+            if (missing.isEmpty() && borrowed.isEmpty()) {
+                LOG.info("Service accounts {} may already use SCC '{}' in {}: nothing to grant for release {}",
+                        need.serviceAccounts(), need.scc(), namespace, releaseName);
                 continue;
             }
-
-            String rbName = "kdps-scc-" + scc;
-            String clusterRole = "system:openshift:scc:" + scc;
-            if (!canRb) { unresolved.add(scc + " " + String.join(",", sas)); continue; }
-
-            RoleBindingBuilder rbb = new RoleBindingBuilder()
-                    .withNewMetadata().withName(rbName).withNamespace(namespace).endMetadata()
-                    .withNewRoleRef()
-                        .withApiGroup("rbac.authorization.k8s.io")
-                        .withKind("ClusterRole")
-                        .withName(clusterRole)
-                    .endRoleRef();
-            for (String sa : sas) {
-                rbb.addNewSubject()
-                        .withKind("ServiceAccount")
-                        .withName(sa)
-                        .withNamespace(namespace)
-                    .endSubject();
+            if (mayGrant && canGrantScc(namespace, need.scc())) {
+                try {
+                    grantScc(namespace, releaseName, need.scc(), need.serviceAccounts());
+                    continue;
+                } catch (Exception e) {
+                    // Typically RBAC escalation prevention despite the access review; nothing was removed.
+                    LOG.warn("Could not grant SCC '{}' in {}: {}", need.scc(), namespace, e.getMessage());
+                }
             }
-            try {
-                // Reconcile: delete any existing binding of this name (heals a stale group/subject set)
-                // then create with the current per-SA subjects.
-                try { client.rbac().roleBindings().inNamespace(namespace).withName(rbName).delete(); } catch (Exception ignore) { }
-                client.rbac().roleBindings().inNamespace(namespace).resource(rbb.build()).create();
-                LOG.info("Granted SCC '{}' to service accounts {} in namespace {} (RoleBinding {})", scc, sas, namespace, rbName);
-            } catch (Exception e) {
-                // Typically RBAC escalation-prevention: the view can create RoleBindings but is not
-                // itself allowed to use this SCC, so it cannot grant it. Surface the manual command.
-                LOG.warn("Could not grant SCC '{}' in {}: {}", scc, namespace, e.getMessage());
-                unresolved.add(scc + " " + String.join(",", sas));
+            if (missing.isEmpty()) {
+                // Admitted today, so not a reason to stop; but the operator should know what the grant hangs on.
+                String warning = "In project " + namespace + ", service account(s) " + String.join(", ", borrowed)
+                        + " of " + releaseName + " may use SCC " + need.scc() + " only through RoleBinding "
+                        + String.join(", ", lenders) + ", not through a grant of their own. KDPS keeps that binding "
+                        + "while " + releaseName + " needs it; for a grant of their own, ask the platform team to run: "
+                        + addSccCommand(namespace, need.scc(), borrowed);
+                LOG.warn(warning);
+                if (warnings != null) warnings.add(warning);
+                continue;
             }
+            List<String> toGrant = new ArrayList<>(need.serviceAccounts());
+            toGrant.removeIf(sa -> !missing.contains(sa) && !borrowed.contains(sa));
+            unresolved.put(need.scc(), toGrant);
         }
+        return unresolved.isEmpty() ? null : sccRemedy(namespace, releaseName, unresolved, mayGrant, unchecked);
+    }
 
-        if (unresolved.isEmpty()) return null;
-        StringBuilder sb = new StringBuilder("The view's account cannot grant the OpenShift SCC(s) required by this "
-                + "service to namespace '" + namespace + "'. Ask a cluster administrator to run, before deploying:\n");
-        for (String u : unresolved) {
-            String[] parts = u.split(" ", 2);
-            String scc = parts[0];
-            String[] sas = (parts.length > 1 ? parts[1] : "").split(",");
-            sb.append("  oc adm policy add-scc-to-user ").append(scc);
-            for (String sa : sas) {
-                if (!sa.isBlank()) sb.append(" -z ").append(sa);
-            }
-            sb.append(" -n ").append(namespace).append("\n");
+    /**
+     * Whether this account may grant {@code scc} in {@code namespace}: create the RoleBinding, and get past RBAC
+     * escalation prevention, which requires {@code bind} on the SCC's ClusterRole or {@code use} of the SCC in that
+     * namespace. A project admin has neither until the platform team grants one.
+     */
+    public boolean canGrantScc(String namespace, String scc) {
+        return canI("create", RBAC_API_GROUP, "rolebindings", null, null, namespace)
+                && (canI("bind", RBAC_API_GROUP, "clusterroles", null, sccClusterRole(scc), namespace)
+                    || canI("use", SCC_API_GROUP, "securitycontextconstraints", null, scc, namespace));
+    }
+
+    /**
+     * The commands with which a platform team lets the KDPS account grant {@code sccs} in {@code namespace}: a
+     * ClusterRole allowing {@code bind} on their ClusterRoles (created once per cluster) and a RoleBinding of it in the
+     * project.
+     */
+    public static String sccGrantRightCommands(String namespace, java.util.Collection<String> sccs, String indent) {
+        StringBuilder sb = new StringBuilder(indent).append("oc create clusterrole ").append(SCC_GRANT_ROLE)
+                .append(" --verb=bind --resource=clusterroles");
+        for (String scc : sccs) sb.append(" --resource-name=").append(sccClusterRole(scc));
+        sb.append("\n").append(indent).append("oc -n ").append(namespace).append(" create rolebinding ")
+                .append(SCC_GRANT_ROLE).append(" --clusterrole=").append(SCC_GRANT_ROLE)
+                .append(" --user=<account KDPS connects with>");
+        return sb.toString();
+    }
+
+    private static String addSccCommand(String namespace, String scc, List<String> serviceAccounts) {
+        return sccPolicyCommand("add-scc-to-user", namespace, scc, serviceAccounts);
+    }
+
+    private static String sccPolicyCommand(String verb, String namespace, String scc,
+                                           java.util.Collection<String> serviceAccounts) {
+        StringBuilder sb = new StringBuilder("oc adm policy ").append(verb).append(' ').append(scc);
+        for (String sa : serviceAccounts) sb.append(" -z ").append(sa);
+        return sb.append(" -n ").append(namespace).toString();
+    }
+
+    /** What the operator is told when service accounts lack an SCC this account does not grant. */
+    private static String sccRemedy(String namespace, String releaseName, Map<String, List<String>> unresolved,
+                                    boolean grantRightHelps, boolean unchecked) {
+        StringBuilder sb = new StringBuilder("In project ").append(namespace).append(", service accounts of ")
+                .append(releaseName).append(" may not use the SCC(s) ").append(String.join(", ", unresolved.keySet()));
+        if (grantRightHelps) {
+            sb.append(", and the account KDPS connects with may not grant them.");
+        } else {
+            sb.append(". A GitOps deploy does not grant SCCs.");
+        }
+        if (unchecked) {
+            sb.append(" This account could not check the existing grants either: it needs to create "
+                    + "LocalSubjectAccessReviews in the project, which the project admin role allows.");
+        }
+        sb.append(grantRightHelps
+                ? "\nEither:\n  1. ask the platform team to grant them; the next deploy finds the grant and changes "
+                        + "nothing:\n"
+                : "\nAsk the platform team to grant them; the next deploy finds the grant:\n");
+        String indent = grantRightHelps ? "       " : "  ";
+        unresolved.forEach((scc, sas) -> sb.append(indent).append(addSccCommand(namespace, scc, sas)).append("\n"));
+        if (grantRightHelps) {
+            Set<String> sccs = new LinkedHashSet<>(unresolved.keySet());
+            sccs.addAll(SERVICE_SCCS);
+            sb.append("  2. or let this account grant them itself, once per project (the ClusterRole once per "
+                            + "cluster):\n")
+                    .append(sccGrantRightCommands(namespace, sccs, indent));
         }
         return sb.toString().trim();
+    }
+
+    /**
+     * Whether the pods of service account {@code sa} may run under {@code scc} in {@code namespace}. RBAC answers
+     * first: a LocalSubjectAccessReview for the service account and its groups sees every RoleBinding, including the
+     * one {@code oc adm policy add-scc-to-user} writes. A PodSecurityPolicySubjectReview then also sees grants written
+     * into the SCC's own users and groups fields, which RBAC does not know about.
+     *
+     * @return the answer, or {@code null} when this account may not make the LocalSubjectAccessReview and the
+     *         PodSecurityPolicySubjectReview does not tell either
+     */
+    Boolean serviceAccountMayUseScc(String namespace, String sa, String scc) {
+        String user = "system:serviceaccount:" + namespace + ":" + sa;
+        List<String> groups = List.of("system:serviceaccounts", "system:serviceaccounts:" + namespace,
+                "system:authenticated");
+        Boolean answer = null;
+        try {
+            io.fabric8.kubernetes.api.model.authorization.v1.LocalSubjectAccessReview review =
+                new io.fabric8.kubernetes.api.model.authorization.v1.LocalSubjectAccessReviewBuilder()
+                    .withNewMetadata().withNamespace(namespace).endMetadata()
+                    .withNewSpec()
+                        .withUser(user)
+                        .withGroups(groups)
+                        .withNewResourceAttributes()
+                            .withVerb("use")
+                            .withGroup(SCC_API_GROUP)
+                            .withResource("securitycontextconstraints")
+                            .withName(scc)
+                            .withNamespace(namespace)
+                        .endResourceAttributes()
+                    .endSpec()
+                    .build();
+            var result = client.authorization().v1().localSubjectAccessReview().inNamespace(namespace).create(review);
+            if (result != null && result.getStatus() != null && Boolean.TRUE.equals(result.getStatus().getAllowed())) {
+                return true;
+            }
+            answer = false;
+        } catch (Exception e) {
+            LOG.warn("Could not ask RBAC whether {} may use SCC '{}': {}", user, scc, e.toString());
+        }
+        String admittedBy;
+        try {
+            admittedBy = sccAdmittingProbe(namespace, sa, user, groups, scc);
+        } catch (Exception e) {
+            LOG.warn("Could not ask OpenShift which SCC admits the pods of {}: {}", user, e.toString());
+            return answer;
+        }
+        if (scc.equals(admittedBy)) return true;
+        // Nothing admits a probe that this SCC admits: the service account may not use it.
+        if (admittedBy == null && SCC_PROBE_SECURITY_CONTEXTS.containsKey(scc)) return false;
+        // Admission picked another SCC the service account may use, which hides whether it may use this one as well
+        // (or this SCC has no probe of its own). Reading that as "no" would block a deploy the platform team already
+        // granted, again on every retry.
+        LOG.info("OpenShift admits the probe pod of {} under {}, which does not tell whether it may use SCC '{}'",
+                user, admittedBy == null ? "no SCC" : "SCC '" + admittedBy + "'", scc);
+        return answer;
+    }
+
+    /**
+     * The SCC OpenShift admission picks for a probe pod of service account {@code sa}, or {@code null} when none
+     * admits it. The probe is the one built for {@code scc} (see {@link #SCC_PROBE_SECURITY_CONTEXTS}), else a plain
+     * non-root UID outside every project range.
+     */
+    private String sccAdmittingProbe(String namespace, String sa, String user, List<String> groups, String scc) {
+        Map<String, Object> container = new LinkedHashMap<>();
+        container.put("name", "probe");
+        container.put("image", "probe");
+        container.put("securityContext",
+                SCC_PROBE_SECURITY_CONTEXTS.getOrDefault(scc, Map.of("runAsUser", SCC_PROBE_UID)));
+        Map<String, Object> podSpec = new LinkedHashMap<>();
+        podSpec.put("serviceAccountName", sa);
+        podSpec.put("containers", List.of(container));
+        Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("user", user);
+        spec.put("groups", groups);
+        spec.put("template", Map.of("spec", podSpec));
+        GenericKubernetesResource review = new GenericKubernetesResource();
+        review.setApiVersion(SCC_API_GROUP + "/v1");
+        review.setKind("PodSecurityPolicySubjectReview");
+        review.setMetadata(new ObjectMetaBuilder().withNamespace(namespace).build());
+        review.setAdditionalProperty("spec", spec);
+        GenericKubernetesResource result = client.genericKubernetesResources(SCC_SUBJECT_REVIEW)
+                .inNamespace(namespace).resource(review).create();
+        Object allowedBy = result == null ? null : result.get("status", "allowedBy", "name");
+        return allowedBy == null ? null : allowedBy.toString();
+    }
+
+    /**
+     * The bindings that grant an SCC (bound to its {@code system:openshift:scc:<scc>} ClusterRole) to service accounts
+     * of {@code namespace}, whoever made them: the project's RoleBindings and, when this account may list them, the
+     * ClusterRoleBindings. Best effort: what cannot be read is left out.
+     */
+    private List<SccBinding> sccBindings(String namespace) {
+        List<SccBinding> out = new ArrayList<>();
+        try {
+            for (RoleBinding rb : client.rbac().roleBindings().inNamespace(namespace).list().getItems()) {
+                String scc = sccOf(rb.getRoleRef());
+                if (scc == null) continue;
+                Map<String, String> labels = rb.getMetadata().getLabels() == null
+                        ? Map.of() : rb.getMetadata().getLabels();
+                String release = SCC_MANAGED_BY_KDPS.equals(labels.get(SCC_LABEL_MANAGED_BY))
+                        ? labels.get(SCC_LABEL_RELEASE) : null;
+                out.add(new SccBinding(rb.getMetadata().getName(), release, scc,
+                        serviceAccountSubjects(rb.getSubjects(), namespace),
+                        grantsWholeProject(rb.getSubjects(), namespace)));
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not list the SCC grants in {}: {}", namespace, e.toString());
+        }
+        try {
+            for (ClusterRoleBinding crb : client.rbac().clusterRoleBindings().list().getItems()) {
+                String scc = sccOf(crb.getRoleRef());
+                if (scc == null) continue;
+                out.add(new SccBinding("clusterrolebinding/" + crb.getMetadata().getName(), null, scc,
+                        serviceAccountSubjects(crb.getSubjects(), namespace),
+                        grantsWholeProject(crb.getSubjects(), namespace)));
+            }
+        } catch (Exception e) {
+            // A project admin may not list them; the access reviews still see their grants.
+            LOG.debug("Could not list the cluster-wide SCC grants: {}", e.toString());
+        }
+        return out;
+    }
+
+    /** The SCC a binding grants, or {@code null} when its role is not an SCC's ClusterRole. */
+    private static String sccOf(io.fabric8.kubernetes.api.model.rbac.RoleRef roleRef) {
+        String prefix = sccClusterRole("");
+        if (roleRef == null || !"ClusterRole".equals(roleRef.getKind()) || roleRef.getName() == null
+                || !roleRef.getName().startsWith(prefix)) {
+            return null;
+        }
+        return roleRef.getName().substring(prefix.length());
+    }
+
+    /** Whether the subjects of a binding include a group every service account of {@code namespace} belongs to. */
+    private static boolean grantsWholeProject(List<io.fabric8.kubernetes.api.model.rbac.Subject> subjects,
+                                              String namespace) {
+        if (subjects == null) return false;
+        Set<String> groups = Set.of("system:serviceaccounts", "system:serviceaccounts:" + namespace,
+                "system:authenticated");
+        return subjects.stream().anyMatch(s -> "Group".equals(s.getKind()) && groups.contains(s.getName()));
+    }
+
+    /** The service accounts of {@code namespace} the subjects of a binding name (a RoleBinding's may omit it). */
+    private static Set<String> serviceAccountSubjects(List<io.fabric8.kubernetes.api.model.rbac.Subject> subjects,
+                                                      String namespace) {
+        Set<String> out = new LinkedHashSet<>();
+        if (subjects == null) return out;
+        for (io.fabric8.kubernetes.api.model.rbac.Subject s : subjects) {
+            if ("ServiceAccount".equals(s.getKind()) && s.getName() != null
+                    && (s.getNamespace() == null || namespace.equals(s.getNamespace()))) {
+                out.add(s.getName());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Creates the release's RoleBinding for {@code scc}, or adds the service accounts it lacks. Never deletes and never
+     * removes a subject: a write that fails leaves every existing grant in place.
+     */
+    private void grantScc(String namespace, String releaseName, String scc, List<String> serviceAccounts) {
+        String name = sccBindingName(scc, releaseName);
+        RoleBinding existing = client.rbac().roleBindings().inNamespace(namespace).withName(name).get();
+        if (existing == null) {
+            RoleBindingBuilder rbb = new RoleBindingBuilder()
+                    .withNewMetadata()
+                        .withName(name)
+                        .withNamespace(namespace)
+                        .addToLabels(SCC_LABEL_MANAGED_BY, SCC_MANAGED_BY_KDPS)
+                        .addToLabels(SCC_LABEL_RELEASE, releaseName)
+                        .addToLabels(SCC_LABEL_SCC, scc)
+                    .endMetadata()
+                    .withNewRoleRef()
+                        .withApiGroup(RBAC_API_GROUP)
+                        .withKind("ClusterRole")
+                        .withName(sccClusterRole(scc))
+                    .endRoleRef();
+            for (String sa : serviceAccounts) {
+                rbb.addNewSubject().withKind("ServiceAccount").withName(sa).withNamespace(namespace).endSubject();
+            }
+            client.rbac().roleBindings().inNamespace(namespace).resource(rbb.build()).create();
+            LOG.info("Granted SCC '{}' to service accounts {} of release {} in {} (RoleBinding {})",
+                    scc, serviceAccounts, releaseName, namespace, name);
+            return;
+        }
+        Set<String> present = serviceAccountSubjects(existing.getSubjects(), namespace);
+        List<String> added = serviceAccounts.stream().filter(sa -> !present.contains(sa)).collect(Collectors.toList());
+        if (added.isEmpty()) return;
+        client.rbac().roleBindings().inNamespace(namespace).withName(name).edit(rb -> {
+            RoleBindingBuilder b = new RoleBindingBuilder(rb);
+            for (String sa : added) {
+                b.addNewSubject().withKind("ServiceAccount").withName(sa).withNamespace(namespace).endSubject();
+            }
+            return b.build();
+        });
+        LOG.info("Granted SCC '{}' to service accounts {} of release {} in {} (added to RoleBinding {})",
+                scc, added, releaseName, namespace, name);
+    }
+
+    /**
+     * After an uninstall: takes back the SCC grants KDPS made for the release, by deleting the RoleBindings labelled
+     * with it. Best effort, never throws; a binding already gone or one this account may not delete is skipped.
+     *
+     * <p>The other KDPS releases of the project keep what they use. When a service account another release declares
+     * holds the SCC only through one of this release's bindings, that release first gets its own binding for it, when
+     * this account may grant it; otherwise the binding stays, and the note says what the platform team grants before
+     * deleting it.
+     *
+     * <p>Grants made outside KDPS are left in place. When the release's service accounts still hold one that no other
+     * release declares, the commands that take it back are returned for the platform team; so is the deletion of the
+     * shared binding of earlier versions, once no other release depends on it.
+     *
+     * @param sccGrants     the service's {@code openshiftScc} declarations, or {@code null} when unknown (then nothing
+     *                      is listed)
+     * @param otherReleases the {@code openshiftScc} declarations of the other KDPS releases of the project, by release
+     *                      name, or {@code null} when they are not known
+     * @return what the platform team may still do, or {@code null}
+     */
+    public String removeSccGrants(String namespace, String releaseName, List<Map<String, Object>> sccGrants,
+                                  Map<String, List<Map<String, Object>>> otherReleases) {
+        if (client == null || namespace == null || namespace.isBlank()
+                || releaseName == null || releaseName.isBlank()) {
+            return null;
+        }
+        if (!isOpenShiftCluster()) return null;
+        // By SCC: the service accounts the other releases declare, with the releases that declare each.
+        Map<String, Map<String, Set<String>>> stillDeclared = new HashMap<>();
+        if (otherReleases != null) {
+            otherReleases.forEach((other, grants) -> {
+                if (other == null || other.equals(releaseName)) return;
+                for (SccNeed need : sccNeeds(other, grants)) {
+                    for (String sa : need.serviceAccounts()) {
+                        stillDeclared.computeIfAbsent(need.scc(), k -> new LinkedHashMap<>())
+                                .computeIfAbsent(sa, k -> new TreeSet<>()).add(other);
+                    }
+                }
+            });
+        }
+
+        List<SccBinding> before = sccBindings(namespace);
+        List<String> kept = new ArrayList<>();
+        StringBuilder stillUsed = new StringBuilder();
+        for (SccBinding binding : before) {
+            if (!binding.ofRelease(releaseName)) continue;
+            // The service accounts of other releases that would lose the SCC with this binding, by release.
+            Map<String, List<String>> dependents = new TreeMap<>();
+            stillDeclared.getOrDefault(binding.scc(), Map.of()).forEach((sa, releases) -> {
+                boolean grantedOtherwise = before.stream().anyMatch(b -> !b.ofRelease(releaseName)
+                        && b.scc().equals(binding.scc()) && b.covers(sa));
+                if (binding.covers(sa) && !grantedOtherwise) {
+                    releases.forEach(r -> dependents.computeIfAbsent(r, k -> new ArrayList<>()).add(sa));
+                }
+            });
+            if (!dependents.isEmpty() && !handOverScc(namespace, binding.scc(), dependents)) {
+                Set<String> sas = new LinkedHashSet<>();
+                dependents.values().forEach(sas::addAll);
+                stillUsed.append("RoleBinding ").append(binding.name()).append(" stays: it also grants SCC ")
+                        .append(binding.scc()).append(" to ")
+                        .append(dependents.entrySet().stream()
+                                .map(e -> String.join(", ", e.getValue()) + " of release " + e.getKey())
+                                .collect(Collectors.joining("; ")))
+                        .append(", and the account KDPS connects with may not grant it to them. Once the platform "
+                                + "team has granted it, the binding can be deleted:\n  ")
+                        .append(addSccCommand(namespace, binding.scc(), new ArrayList<>(sas)))
+                        .append("\n  oc -n ").append(namespace).append(" delete rolebinding ").append(binding.name())
+                        .append("\n");
+                LOG.info("Kept RoleBinding {}/{} of uninstalled release {}: releases {} still use SCC '{}' through it",
+                        namespace, binding.name(), releaseName, dependents.keySet(), binding.scc());
+                continue;
+            }
+            try {
+                client.rbac().roleBindings().inNamespace(namespace).withName(binding.name()).delete();
+                LOG.info("Removed SCC '{}' from the service accounts of release {} in {} (RoleBinding {})",
+                        binding.scc(), releaseName, namespace, binding.name());
+            } catch (Exception e) {
+                if (e instanceof KubernetesClientException kce && kce.getCode() == 404) continue;   // already gone
+                LOG.warn("Could not remove RoleBinding {}/{} granting SCC '{}' to release {}: {}",
+                        namespace, binding.name(), binding.scc(), releaseName, e.toString());
+                kept.add(binding.name());
+            }
+        }
+
+        List<SccNeed> needs = sccNeeds(releaseName, sccGrants);
+        if (needs.isEmpty() && kept.isEmpty() && stillUsed.length() == 0) return null;
+        // Not the platform team's to take back: what KDPS granted (the bindings of other releases, any of this
+        // release's that stayed, the shared binding of earlier versions while another release depends on it), and the
+        // grant of a service account another release still declares.
+        List<SccBinding> remaining = sccBindings(namespace);
+        Map<String, List<String>> outsideKdps = new LinkedHashMap<>();
+        Set<String> legacy = new LinkedHashSet<>();
+        for (SccNeed need : needs) {
+            Map<String, Set<String>> declared = stillDeclared.getOrDefault(need.scc(), Map.of());
+            for (SccBinding shared : remaining) {
+                if (!shared.legacy() || !shared.scc().equals(need.scc())
+                        || need.serviceAccounts().stream().noneMatch(shared::covers)) {
+                    continue;
+                }
+                boolean dependedOn = declared.keySet().stream().anyMatch(sa -> shared.covers(sa)
+                        && remaining.stream().noneMatch(b -> !b.name().equals(shared.name()) && !b.ofRelease(releaseName)
+                                && b.scc().equals(shared.scc()) && b.covers(sa)));
+                if (!dependedOn) legacy.add(shared.name());
+            }
+            for (String sa : need.serviceAccounts()) {
+                if (declared.containsKey(sa)) continue;
+                boolean byKdps = remaining.stream().anyMatch(b -> b.byKdps() && b.scc().equals(need.scc()) && b.covers(sa));
+                if (!byKdps && Boolean.TRUE.equals(serviceAccountMayUseScc(namespace, sa, need.scc()))) {
+                    outsideKdps.computeIfAbsent(need.scc(), k -> new ArrayList<>()).add(sa);
+                }
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (!outsideKdps.isEmpty() || !legacy.isEmpty() || !kept.isEmpty()) {
+            sb.append("The service accounts of ").append(releaseName).append(" in project ").append(namespace)
+                    .append(" still hold security context constraints (SCC) that KDPS did not remove. ")
+                    .append(otherReleases == null
+                            ? "Once no other service in the project needs them, the platform team can take them back:\n"
+                            : "No other KDPS release of the project uses them; unless a workload deployed outside KDPS "
+                                    + "does, the platform team can take them back:\n");
+            outsideKdps.forEach((scc, sas) ->
+                    sb.append("  ").append(sccPolicyCommand("remove-scc-from-user", namespace, scc, sas)).append("\n"));
+            for (String name : legacy) {
+                sb.append("  oc -n ").append(namespace).append(" delete rolebinding ").append(name)
+                        .append("   (granted by an earlier KDPS version, for every release of the project)\n");
+            }
+            for (String name : kept) {
+                sb.append("  oc -n ").append(namespace).append(" delete rolebinding ").append(name)
+                        .append("   (this account could not delete it)\n");
+            }
+        }
+        sb.append(stillUsed);
+        String note = sb.toString().trim();
+        return note.isEmpty() ? null : note;
+    }
+
+    /**
+     * Grants {@code scc} to the service accounts of other releases through their own RoleBindings, so that a binding of
+     * an uninstalled release can go without taking it from them.
+     *
+     * @param dependents the service accounts to grant, by release
+     * @return whether every grant was made; {@code false} when this account may not grant the SCC
+     */
+    private boolean handOverScc(String namespace, String scc, Map<String, List<String>> dependents) {
+        if (!canGrantScc(namespace, scc)) return false;
+        try {
+            dependents.forEach((release, sas) -> grantScc(namespace, release, scc, sas));
+            return true;
+        } catch (Exception e) {
+            // Typically RBAC escalation prevention despite the access review; nothing was removed.
+            LOG.warn("Could not grant SCC '{}' in {} to releases {}: {}", scc, namespace, dependents.keySet(),
+                    e.getMessage());
+            return false;
+        }
     }
 
     /**

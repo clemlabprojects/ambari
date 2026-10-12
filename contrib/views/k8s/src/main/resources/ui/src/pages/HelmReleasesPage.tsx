@@ -801,8 +801,16 @@ const HelmReleasesPage: React.FC = () => {
                   const params = new URLSearchParams();
                   if (record.repoId) params.set('repoId', record.repoId);
                   if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
-                  await uninstallHelm(record.name, record.namespace, params);
+                  const notes = await uninstallHelm(record.name, record.namespace, params);
                   message.success(`Release ${record.name} uninstalled successfully.`);
+                  if (notes?.sccCleanup) {
+                    // What KDPS did not take back (an administrator's grant, or one another release still uses): it shows the commands that do.
+                    Modal.info({
+                      title: 'OpenShift security context constraints left in place',
+                      width: 760,
+                      content: <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, margin: 0 }}>{notes.sccCleanup}</pre>,
+                    });
+                  }
                   await refresh();
                 } catch (e: any) {
                   message.error(e?.message || 'Error during uninstallation');

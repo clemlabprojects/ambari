@@ -6928,20 +6928,25 @@ public class CommandService {
         // a service-account-token Secret) exists — create it when the view has the rights, otherwise
         // BLOCK the deploy with an actionable message so a cluster admin can provision it first, rather
         // than shipping a Trino that never scales. (detect, else request — see ensureKedaThanosTokenSecret)
-        // 2a-pre. OpenShift SCC preflight (detect-else-request). When the service declares openshiftScc
-        // (e.g. OpenMetadata's bundled OpenSearch/Airflow pin UIDs and can't run under restricted-v2),
-        // grant those SCCs to the namespace's service accounts if the view has the rights; otherwise
-        // BLOCK the deploy with the exact `oc adm policy` commands so a cluster admin can run them
-        // first — rather than shipping a release whose pods are silently rejected (FailedCreate).
+        // 2a-pre. OpenShift SCC preflight (detect, grant if allowed, else block). When the service declares
+        // openshiftScc (e.g. OpenMetadata's bundled OpenSearch/Airflow pin UIDs and can't run under
+        // restricted-v2), service accounts that may already use their SCC need nothing; the others get the
+        // release's own RoleBinding when the view's account may grant it. Otherwise BLOCK the deploy with
+        // what the platform team can do — rather than shipping a release whose pods are silently rejected
+        // (FailedCreate).
         if (this.kubernetesService.isOpenShiftCluster() && request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
             try {
                 StackServiceDef sccDef = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
                 if (sccDef != null && sccDef.openshiftScc != null && !sccDef.openshiftScc.isEmpty()) {
-                    String sccProblem = this.kubernetesService.ensureSccGrants(request.getNamespace(), request.getReleaseName(), sccDef.openshiftScc);
+                    List<String> sccWarnings = new ArrayList<>();
+                    String sccProblem = this.kubernetesService.ensureSccGrants(request.getNamespace(),
+                            request.getReleaseName(), sccDef.openshiftScc, sccWarnings);
                     if (sccProblem != null) {
                         throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
                                 + " on OpenShift — required Security Context Constraints are not granted.\n" + sccProblem);
                     }
+                    // Admitted, but through a grant made for another release: the operator reads it in the deploy log.
+                    sccWarnings.forEach(w -> appendCommandLog(id, "WARNING: " + w));
                     LOG.info("OpenShift SCC(s) {} ensured for release {} in namespace {}",
                             sccDef.openshiftScc, request.getReleaseName(), request.getNamespace());
                 }
@@ -13937,6 +13942,58 @@ public class CommandService {
         if (values == null) return null;
         for (String v : values) if (v != null && !v.isBlank()) return v;
         return null;
+    }
+
+    /**
+     * Takes back the OpenShift SCCs KDPS granted to a release, once the release is uninstalled (see
+     * {@link KubernetesService#removeSccGrants}). The service definitions say which SCCs the release needed, so grants
+     * made outside KDPS that its service accounts still hold can be listed for the platform team, and which SCCs the
+     * other releases of the project still need, so that none of them loses one.
+     *
+     * <p>Failures are reported, never thrown: the release is already gone.
+     *
+     * @param serviceKey the release's service definition, or null when unknown
+     * @return what the platform team may still do, or null when there is nothing to tell
+     */
+    public String removeSccGrantsForRelease(String namespace, String releaseName, String serviceKey) {
+        if (!kubernetesService.isOpenShiftCluster()) return null;
+        StackDefinitionService definitions = new StackDefinitionService(this.ctx);
+        Map<String, List<Map<String, Object>>> declared = new HashMap<>();
+        List<Map<String, Object>> sccGrants = openshiftScc(definitions, declared, serviceKey);
+        // The other releases of the project, as recorded when KDPS deployed them; this release's record is gone.
+        Map<String, List<Map<String, Object>>> otherReleases = new LinkedHashMap<>();
+        try {
+            for (K8sReleaseEntity other : new ReleaseMetadataService(ctx).findAll()) {
+                if (other == null || !namespace.equals(other.getNamespace())
+                        || other.getReleaseName() == null || other.getReleaseName().equals(releaseName)) {
+                    continue;
+                }
+                List<Map<String, Object>> otherScc = openshiftScc(definitions, declared, other.getServiceKey());
+                if (otherScc != null && !otherScc.isEmpty()) otherReleases.put(other.getReleaseName(), otherScc);
+            }
+        } catch (Exception e) {
+            LOG.warn("SCC cleanup for {}/{}: the other releases of the project could not be read: {}",
+                    namespace, releaseName, e.toString());
+            otherReleases = null;
+        }
+        return kubernetesService.removeSccGrants(namespace, releaseName, sccGrants, otherReleases);
+    }
+
+    /** A service's {@code openshiftScc}, read once per service; null when unknown or unreadable. */
+    private static List<Map<String, Object>> openshiftScc(StackDefinitionService definitions,
+                                                          Map<String, List<Map<String, Object>>> read,
+                                                          String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank()) return null;
+        if (read.containsKey(serviceKey)) return read.get(serviceKey);
+        List<Map<String, Object>> sccGrants = null;
+        try {
+            StackServiceDef def = definitions.getServiceDefinition(serviceKey);
+            sccGrants = def == null ? null : def.openshiftScc;
+        } catch (Exception e) {
+            LOG.warn("SCC cleanup: service definition {} could not be read: {}", serviceKey, e.toString());
+        }
+        read.put(serviceKey, sccGrants);
+        return sccGrants;
     }
 
     /**

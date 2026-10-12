@@ -1303,7 +1303,8 @@ public class HelmResource {
 
     /**
      * Uninstall a Helm release and delete its stored metadata.
-     * For Flux GitOps releases, the corresponding Git manifests are removed first.
+     * For Flux GitOps releases, the corresponding Git manifests are removed first. On OpenShift, the RoleBindings KDPS
+     * made to grant the release's service accounts an SCC are deleted once the release is gone.
      *
      * @param namespace    Kubernetes namespace of the release
      * @param releaseName  name of the Helm release to uninstall
@@ -1316,8 +1317,9 @@ public class HelmResource {
      *                     the credential stops working while the catalog and its data stay;
      *                     {@code catalog} also drops the catalog; {@code none} leaves Polaris
      *                     untouched. The object-store bucket is never deleted.
-     * @return HTTP 200 on success; 409, with nothing removed, while another Helm operation on the release is
-     *         running; or an error response on failure
+     * @return HTTP 200 on success, with {@code polarisCleanup} and {@code sccCleanup} notes when there is something
+     *         left for an administrator to do; 409, with nothing removed, while another Helm operation on the release
+     *         is running; or an error response on failure
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
@@ -1402,9 +1404,19 @@ public class HelmResource {
                 RELEASE_CACHE.clear(); // invalidate cache after mutation
             }
         }
-        return polarisCleanupNote == null
-                ? Response.ok().build()
-                : Response.ok(Map.of("polarisCleanup", polarisCleanupNote)).build();
+        // Only once the release is gone: its pods no longer need the OpenShift SCCs KDPS granted to its service
+        // accounts. Never fails the uninstall; grants KDPS did not make are listed for the platform team instead.
+        String sccCleanupNote = null;
+        try {
+            sccCleanupNote = commandService.removeSccGrantsForRelease(namespace, releaseName,
+                    meta != null ? meta.getServiceKey() : null);
+        } catch (Exception ex) {
+            LOG.warn("SCC cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+        }
+        Map<String, Object> notes = new LinkedHashMap<>();
+        if (polarisCleanupNote != null) notes.put("polarisCleanup", polarisCleanupNote);
+        if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
+        return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
     }
 
     /**

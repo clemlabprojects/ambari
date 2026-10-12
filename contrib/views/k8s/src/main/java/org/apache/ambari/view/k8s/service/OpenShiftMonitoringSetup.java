@@ -80,7 +80,8 @@ public final class OpenShiftMonitoringSetup {
         // ServiceMonitors (how the service's metrics reach OpenShift monitoring) need the monitoring-edit role in the
         // project, which a project admin does not hold by default. Without it the install fails half-way through.
         if (KedaThanosScope.serviceMonitorsEnabled(values)
-                && !kubernetesService.canI("create", "monitoring.coreos.com", "servicemonitors", null, request.getNamespace())) {
+                && !kubernetesService.canI("create", "monitoring.coreos.com", "servicemonitors", null, null,
+                        request.getNamespace())) {
             throw new IllegalStateException("Cannot deploy " + request.getReleaseName() + ": this account may not create "
                     + "ServiceMonitors in project " + request.getNamespace() + " (needed so OpenShift monitoring collects "
                     + "the service's metrics, which autoscaling reads). Ask the platform team to grant it, per project:\n"

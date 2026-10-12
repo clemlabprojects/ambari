@@ -55,9 +55,12 @@ public class StackServiceDef {
      * Listing only the SAs that genuinely need the elevated SCC leaves every other SA (server,
      * postgres) on {@code restricted-v2}. {@code {{releaseName}}} is expanded to the release name.
      *
-     * <p>On an OpenShift target the deploy preflight ({@code ensureSccGrants}) creates the per-SA
-     * RoleBindings when the view has the rights, else blocks with the exact {@code oc adm policy
-     * add-scc-to-user} commands. Ignored on vanilla Kubernetes.
+     * <p>On an OpenShift target the deploy preflight ({@code ensureSccGrants}) leaves service accounts
+     * that may already use their SCC alone, grants the others through one RoleBinding per release
+     * and SCC when the view's account may, else blocks with the {@code oc adm policy add-scc-to-user}
+     * commands and how to let the account grant SCCs. A GitOps deploy only checks
+     * ({@code checkSccGrants}); an uninstall removes the release's RoleBindings. Ignored on vanilla
+     * Kubernetes.
      */
     public List<Map<String, Object>> openshiftScc;
     public List<Map<String, Object>> endpoints;
