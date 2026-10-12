@@ -78,6 +78,7 @@ class ResourceRoleGuardTest {
       "DiscoveryResource.discoverK8sSecrets",
       "HelmResource.checkRepo",
       "HelmResource.getValues",
+      "KubeService.getInClusterServiceAccount",
       "KubeService.getProxySettings",
       "KubeService.listKubeconfigContexts",
       "KubeService.preflight",
@@ -108,6 +109,7 @@ class ResourceRoleGuardTest {
       "HelmRepoResource.save",
       "KubeService.createTruststore",
       "KubeService.deleteTruststore",
+      "KubeService.getInClusterServiceAccount",
       "KubeService.getProxySettings",
       "KubeService.listKubeconfigContexts",
       "KubeService.preflight",
@@ -117,7 +119,8 @@ class ResourceRoleGuardTest {
       "KubeService.setAuthMode",
       "KubeService.setTruststoreDefault",
       "KubeService.testOpenShiftLogin",
-      "KubeService.uploadKubeconfig");
+      "KubeService.uploadKubeconfig",
+      "KubeService.useInClusterServiceAccount");
 
   @Test
   void aReadOnlyUserIsRefusedEveryEndpointThatChangesSomething() {

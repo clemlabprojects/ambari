@@ -198,6 +198,8 @@ public class KubernetesService {
     private ViewConfigurationService configurationService;
     /** View settings and monitoring state, shared by every user of the view instance; see {@link #settings()}. */
     private volatile InstanceSettings instanceSettings;
+    /** The ServiceAccount the in-cluster mode connects with: the one of the pod Ambari runs in. Replaced by tests only. */
+    InClusterServiceAccount podServiceAccount = InClusterServiceAccount.ofThisPod();
 
     public static final String WEBHOOK_ENABLED_LABEL_KEY = "security.clemlab.com/webhooks-enabled";
 
@@ -334,25 +336,26 @@ public class KubernetesService {
     }
 
     /**
-     * Primary constructor: connects from the configuration saved for the view instance (kubeconfig file or OpenShift
-     * login). It does not fail when it cannot connect (cluster or OAuth server unreachable, password refused, unreadable
-     * kubeconfig): the service then reports the view as configured but not connected, and connects on a later
-     * request, under the single attempt and back-off of {@link #connectIfConfigured()}.
+     * Primary constructor: connects from the configuration saved for the view instance (kubeconfig file, OpenShift
+     * login or the ServiceAccount of the Ambari pod). It does not fail when it cannot connect (cluster or OAuth server
+     * unreachable, password refused, unreadable kubeconfig, no ServiceAccount token in the pod): the service then
+     * reports the view as configured but not connected, and connects on a later request, under the single attempt and
+     * back-off of {@link #connectIfConfigured()}.
      *
      * @param viewContext the Ambari view context providing configuration properties and the instance settings
      */
     public KubernetesService(ViewContext viewContext) {
         this.viewContext = viewContext;
-        this.configurationService = new ViewConfigurationService(viewContext);
+        this.configurationService = new ViewConfigurationService(viewContext, podServiceAccount);
         this.helmClient = new HelmClientDefault();
         this.repositoryService = new HelmRepositoryService(viewContext, helmClient);
         this.helmService = new HelmService(viewContext, helmClient, () -> namespaceScope);
 
         String kubeconfigPath = configurationService.getKubeconfigPath();
-        boolean openShiftLogin = configurationService.isOpenShiftLogin();
-        if (kubeconfigPath == null && !openShiftLogin) {
+        boolean uploadedKubeconfig = configurationService.usesUploadedKubeconfig();
+        if (uploadedKubeconfig && kubeconfigPath == null) {
             LOG.info("View is not configured. Kubernetes client will not be initialized.");
-        } else if (!openShiftLogin && !new File(kubeconfigPath).exists()) {
+        } else if (uploadedKubeconfig && !new File(kubeconfigPath).exists()) {
             LOG.warn("Stale configuration detected. Kubeconfig file not found at path: {}. Resetting configuration.", kubeconfigPath);
             configurationService.removeKubeconfigPath(); // Auto-healing: remove stale entry
         } else {
@@ -3764,7 +3767,12 @@ public class KubernetesService {
         // that already work). For a client-certificate-only kubeconfig there is no token, so on OpenShift
         // fall back to a minted, auto-renewed cluster-monitoring-view token. If a present token turns out
         // to lack monitoring RBAC, the query layer retries once with a minted token (see runMonitoringQuery).
-        String token = currentConfig.getOauthToken();
+        // A token provider (OpenShift login, the pod's ServiceAccount) renews the token: the one written into the
+        // kubeconfig when the client was built may have been replaced since.
+        String token = currentConfig.getOauthTokenProvider() != null ? currentConfig.getOauthTokenProvider().getToken() : null;
+        if (token == null || token.isBlank()) {
+            token = currentConfig.getOauthToken();
+        }
         if (token == null || token.isBlank()) {
             token = currentConfig.getAutoOAuthToken();
         }
@@ -3895,7 +3903,7 @@ public class KubernetesService {
      * instance). Falls back to the kubeconfig's current-context when no context has been selected.
      */
     private Config buildConfigForSelectedContext(String kubeconfigContent) {
-        String selectedContext = configurationService.getSelectedContext();
+        String selectedContext = configurationService.getContextToConnectWith();
         Config cfg;
         if (selectedContext != null && !selectedContext.isBlank()) {
             LOG.info("Building Kubernetes client for selected kubeconfig context '{}'.", selectedContext);
@@ -4347,11 +4355,13 @@ public class KubernetesService {
      * @throws Exception when the saved configuration cannot be read or turned into a client
      */
     KubernetesClient buildClientFromSavedConfiguration() throws Exception {
-        this.configurationService = new ViewConfigurationService(viewContext);
+        this.configurationService = new ViewConfigurationService(viewContext, podServiceAccount);
         boolean openShiftLogin = configurationService.isOpenShiftLogin();
+        boolean inCluster = configurationService.isInClusterServiceAccount();
         String kubeconfigContent;
-        if (openShiftLogin) {
-            // Synthesized kubeconfig with a freshly-minted OpenShift token (username/password login).
+        if (openShiftLogin || inCluster) {
+            // Synthesized kubeconfig: a freshly-minted OpenShift token (username/password login), or the token, CA and
+            // API server address of the pod's ServiceAccount (fails with the reason when the pod has none).
             kubeconfigContent = configurationService.getKubeconfigContents();
         } else {
             String kubeconfigPath = configurationService.getKubeconfigPath();
@@ -4385,8 +4395,12 @@ public class KubernetesService {
 
         Config finalConfiguration = buildConfigForSelectedContext(kubeconfigContent);
         loadK8sPropsAsSystemProperties(viewContext);
-        if (configurationService.isOpenShiftLogin()) {
+        if (openShiftLogin) {
             finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());
+        } else if (inCluster) {
+            // The token in the kubeconfig is the one of this moment; the kubelet renews it in the pod, and the provider
+            // hands the client the current one on every request.
+            finalConfiguration.setOauthTokenProvider(configurationService.getInClusterServiceAccount());
         }
         return buildTrustingClient(finalConfiguration, allClusterCaData);
     }

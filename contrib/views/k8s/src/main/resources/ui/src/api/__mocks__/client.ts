@@ -38,3 +38,8 @@ export const getSecuritySchema = jest.fn<Promise<any>, []>(() => Promise.resolve
 export const saveSecurityConfig = jest.fn<Promise<void>, [any]>(() => Promise.resolve());
 export const getSecurityProfileUsage = jest.fn<Promise<any>, [string]>(() => Promise.resolve({ releases: [] }));
 export const deleteSecurityProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+// Cluster connection with the Ambari pod's ServiceAccount (ConfigurationPage)
+export const getInClusterServiceAccount = jest.fn<Promise<any>, []>(() =>
+  Promise.resolve({ available: false, reason: 'Ambari is not running in a Kubernetes or OpenShift pod.', active: false, authMode: 'kubeconfig' }));
+export const connectWithInClusterServiceAccount = jest.fn<Promise<any>, []>(() =>
+  Promise.resolve({ message: 'KDPS now connects with the ServiceAccount system:serviceaccount:kdps:ambari.' }));

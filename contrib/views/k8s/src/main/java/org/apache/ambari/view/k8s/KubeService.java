@@ -100,6 +100,11 @@ public class KubeService {
         this.kubernetesService = kubernetesService;
     }
 
+    @VisibleForTesting
+    void setConfigService(ViewConfigurationService configService) {
+        this.configService = configService;
+    }
+
     /**
      * Endpoint to get the list of available charts.
      * Returns the chart data directly as JSON.
@@ -279,6 +284,16 @@ public class KubeService {
      *         configuration, 503 when the cluster cannot be reached or rejects the credentials
      */
     private Response reconnect(String saved) {
+        return reconnect(saved, "Check that the kubeconfig is valid (details in the Ambari server log).");
+    }
+
+    /**
+     * {@link #reconnect(String)} with what to check when no client can be built.
+     *
+     * @param saved       what was saved, to start the error message with
+     * @param whatToCheck the advice that follows when no client can be built from the configuration
+     */
+    private Response reconnect(String saved, String whatToCheck) {
         boolean built;
         try {
             built = this.getKubernetesService().forceReloadClient();
@@ -288,8 +303,7 @@ public class KubeService {
         }
         if (!built) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
-                    saved + ", but KDPS could not build a connection from it. Check that the kubeconfig is valid "
-                            + "(details in the Ambari server log).")).build();
+                    saved + ", but KDPS could not build a connection from it. " + whatToCheck)).build();
         }
         org.apache.ambari.view.k8s.model.ConnectionHealth health = this.getKubernetesService().pingCluster();
         if (!health.isConnected()) {
@@ -542,7 +556,82 @@ public class KubeService {
         return Response.ok(Collections.singletonMap("message", enabled ? "Outbound proxy enabled" : "Outbound proxy disabled")).build();
     }
 
-    /** Switch the auth mode (e.g. "kubeconfig" to go back to a previously-uploaded kubeconfig). */
+    /**
+     * Whether KDPS can connect with the ServiceAccount of the pod Ambari runs in, as whom, and whether it does now.
+     * Answers {@code available} (and {@code reason} when not), {@code active}, {@code authMode}, {@code username}
+     * ({@code system:serviceaccount:<namespace>:<name>}), {@code serviceAccount}, {@code namespace} and
+     * {@code apiServer}; never the token.
+     */
+    @GET
+    @Path("/cluster/in-cluster")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getInClusterServiceAccount(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        ViewConfigurationService configuration = this.getConfigService();
+        org.apache.ambari.view.k8s.service.InClusterServiceAccount pod = configuration.getInClusterServiceAccount();
+        String reason = pod.unavailableReason();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("available", reason == null);
+        out.put("reason", reason);
+        out.put("active", configuration.isConfigured() && configuration.isInClusterServiceAccount());
+        out.put("authMode", configuration.getAuthMode());
+        if (reason == null) {
+            org.apache.ambari.view.k8s.service.InClusterServiceAccount.Identity identity = pod.identity();
+            out.put("username", identity.username());
+            out.put("serviceAccount", identity.name());
+            out.put("namespace", identity.namespace());
+            out.put("apiServer", pod.apiServerUrl());
+        }
+        return Response.ok(out).build();
+    }
+
+    /**
+     * Connect with the ServiceAccount of the pod Ambari runs in (the ambari chart with
+     * {@code inClusterServiceAccount.enabled=true}): no kubeconfig to upload and no password to keep, for clusters whose
+     * console only signs in through SSO. The mode is saved for every user of the view instance, the client is rebuilt
+     * and checked against the cluster, as for the other modes. Refused, with the previous configuration unchanged,
+     * when the pod has no ServiceAccount token or Ambari does not run in a pod.
+     */
+    @POST
+    @Path("/cluster/in-cluster")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response useInClusterServiceAccount(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return connectWithPodServiceAccount();
+    }
+
+    /** {@link #useInClusterServiceAccount}, once the caller's role was checked. */
+    private Response connectWithPodServiceAccount() {
+        ViewConfigurationService configuration = this.getConfigService();
+        org.apache.ambari.view.k8s.service.InClusterServiceAccount pod = configuration.getInClusterServiceAccount();
+        String unavailable = pod.unavailableReason();
+        if (unavailable != null) {
+            LOG.warn("/cluster/in-cluster: refused, the pod's ServiceAccount cannot be used: {}", unavailable);
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    unavailable + " The previous configuration is unchanged.")).build();
+        }
+        String username = pod.identity().username();
+        String account = username == null ? "the ServiceAccount of the Ambari pod" : "the ServiceAccount " + username;
+        LOG.info("/cluster/in-cluster: connecting with {}", account);
+        configuration.saveInClusterServiceAccount();
+        Response notConnected = reconnect("The connection with " + account + " was saved",
+                "Check the ServiceAccount token and CA certificate mounted in the Ambari pod (details in the Ambari "
+                        + "server log).");
+        if (notConnected != null) {
+            return notConnected;
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("message", "KDPS now connects with " + account + ".");
+        out.put("username", username);
+        out.put("note", "Grant it the rights to deploy in each project KDPS deploys to (on OpenShift, the admin and "
+                + "monitoring-edit roles); Cluster prerequisites checks them.");
+        return Response.ok(out).build();
+    }
+
+    /**
+     * Switch the auth mode (e.g. "kubeconfig" to go back to a previously-uploaded kubeconfig). "in-cluster" connects
+     * with the pod's ServiceAccount, checked as {@link #useInClusterServiceAccount} does.
+     */
     @POST
     @Path("/cluster/auth-mode")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -550,6 +639,9 @@ public class KubeService {
     public Response setAuthMode(@Context HttpHeaders headers, java.util.Map<String, String> body) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
         String mode = body == null ? null : body.get("mode");
+        if (ViewConfigurationService.AUTH_MODE_IN_CLUSTER.equals(mode)) {
+            return connectWithPodServiceAccount();
+        }
         this.getConfigService().setAuthMode(mode);
         try { this.getKubernetesService().forceReloadClient(); } catch (Exception e) {
             LOG.warn("/cluster/auth-mode: reload failed: {}", e.toString());

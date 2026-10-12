@@ -47,7 +47,8 @@ import java.util.*;
  * Service for managing view configuration including kubeconfig file handling.
  *
  * <p>The configuration belongs to the view instance ({@link InstanceSettings}): whoever saves it, every user of the
- * instance and every background task connects with the same kubeconfig or OpenShift login.</p>
+ * instance and every background task connects with the same kubeconfig, OpenShift login or ServiceAccount of the
+ * Ambari pod.</p>
  */
 public class ViewConfigurationService {
     private static final Logger LOG = LoggerFactory.getLogger(ViewConfigurationService.class);
@@ -56,11 +57,13 @@ public class ViewConfigurationService {
     private static final String KUBECONFIG_UPLOADED = InstanceSettings.CONFIGURED_KEY;
     private static final String KUBECONFIG_CONTEXT_KEY = "kubeconfig.context";
 
-    // Auth mode: "kubeconfig" (default, uploaded file) or "openshift-login" (API URL + user/password,
-    // token minted + renewed on demand — for clusters where only console login is available).
+    // Auth mode: "kubeconfig" (default, uploaded file), "openshift-login" (API URL + user/password,
+    // token minted + renewed on demand — for clusters where only console login is available) or "in-cluster"
+    // (the ServiceAccount of the pod Ambari runs in — for clusters whose console only signs in through SSO).
     private static final String AUTH_MODE_KEY = "auth.mode";
     public static final String AUTH_MODE_KUBECONFIG = "kubeconfig";
     public static final String AUTH_MODE_OPENSHIFT_LOGIN = "openshift-login";
+    public static final String AUTH_MODE_IN_CLUSTER = "in-cluster";
     private static final String OS_API_URL_KEY = "openshift.apiUrl";
     private static final String OS_USERNAME_KEY = "openshift.username";
     private static final String OS_PASSWORD_ENC_KEY = "openshift.password.enc";
@@ -83,6 +86,8 @@ public class ViewConfigurationService {
     private final InstanceSettings settings;
     // Cached per-instance so the minted token is reused across calls (rebuilding would drop the cache).
     private volatile OpenShiftLoginProvider openShiftLoginProvider;
+    /** The ServiceAccount of the pod Ambari runs in, which the in-cluster mode connects with. */
+    private final InClusterServiceAccount podServiceAccount;
 
     /**
      * Constructs a {@code ViewConfigurationService} and validates the kubeconfig state on startup.
@@ -91,8 +96,20 @@ public class ViewConfigurationService {
      * @param viewContext the Ambari view context providing the instance settings and properties
      */
     public ViewConfigurationService(ViewContext viewContext) {
+        this(viewContext, InClusterServiceAccount.ofThisPod());
+    }
+
+    /**
+     * Constructs a {@code ViewConfigurationService} whose in-cluster mode connects with the given ServiceAccount
+     * rather than the one of the pod this JVM runs in.
+     *
+     * @param viewContext       the Ambari view context providing the instance settings and properties
+     * @param podServiceAccount the ServiceAccount the in-cluster mode connects with
+     */
+    public ViewConfigurationService(ViewContext viewContext, InClusterServiceAccount podServiceAccount) {
         LOG.info("Initializing ViewConfigurationService for view context: {}", viewContext.getInstanceName());
         this.viewContext = viewContext;
+        this.podServiceAccount = Objects.requireNonNull(podServiceAccount, "podServiceAccount");
         this.encryptionService = new EncryptionService();
         this.settings = new InstanceSettings(viewContext, encryptionService);
         LOG.debug("EncryptionService initialized successfully");
@@ -108,8 +125,11 @@ public class ViewConfigurationService {
             LOG.warn("Could not set helm-java extraction dir: {}", e.toString());
         }
 
-        // Check if the view is configured and if the kubeconfig file exists
-        if (isConfigured()) {
+        // Check if the view is configured and if the kubeconfig file exists. Only an uploaded kubeconfig has a file:
+        // one left behind by an earlier upload must not unconfigure a view that connects another way.
+        if (isConfigured() && !usesUploadedKubeconfig()) {
+            LOG.info("View is configured with auth mode '{}'; no kubeconfig file to check.", getAuthMode());
+        } else if (isConfigured()) {
             LOG.info("View is configured, checking kubeconfig file existence");
             String kubeconfigPath = getKubeconfigPath();
             if (kubeconfigPath != null) {
@@ -229,16 +249,57 @@ public class ViewConfigurationService {
         }
     }
 
-    /** @return the active auth mode ("kubeconfig" default, or "openshift-login"). */
+    /** @return the active auth mode ("kubeconfig" default, "openshift-login" or "in-cluster"). */
     public String getAuthMode() {
         String mode = settings.get(AUTH_MODE_KEY);
         return (mode == null || mode.isBlank()) ? AUTH_MODE_KUBECONFIG : mode;
     }
 
-    /** Switch the active auth mode (e.g. back to "kubeconfig" without re-uploading). */
+    /**
+     * Switch the active auth mode (e.g. back to "kubeconfig" without re-uploading). Switching to "in-cluster" is
+     * {@link #saveInClusterServiceAccount()}; any other unknown mode means "kubeconfig".
+     */
     public void setAuthMode(String mode) {
+        if (AUTH_MODE_IN_CLUSTER.equals(mode)) {
+            saveInClusterServiceAccount();
+            return;
+        }
         settings.put(AUTH_MODE_KEY, AUTH_MODE_OPENSHIFT_LOGIN.equals(mode) ? AUTH_MODE_OPENSHIFT_LOGIN : AUTH_MODE_KUBECONFIG);
         this.openShiftLoginProvider = null;
+    }
+
+    /**
+     * Connect with the ServiceAccount of the pod Ambari runs in from now on, for every user of the view instance, and
+     * mark the view configured. The uploaded kubeconfig and the OpenShift login stay saved, so switching back to one
+     * of them needs no new upload or password. Whether the pod has a ServiceAccount to connect with is the caller's
+     * to check first ({@link InClusterServiceAccount#unavailableReason()}).
+     */
+    public void saveInClusterServiceAccount() {
+        settings.put(AUTH_MODE_KEY, AUTH_MODE_IN_CLUSTER);
+        settings.put(KUBECONFIG_UPLOADED, "true");
+        this.openShiftLoginProvider = null;
+        LOG.info("Saved the in-cluster connection: KDPS connects with the ServiceAccount of the Ambari pod ({}).",
+                podServiceAccount.identity().username());
+    }
+
+    /** @return true if the view connects with the ServiceAccount of the pod Ambari runs in. */
+    public boolean isInClusterServiceAccount() {
+        return AUTH_MODE_IN_CLUSTER.equals(getAuthMode());
+    }
+
+    /** @return the ServiceAccount of the pod Ambari runs in, which the in-cluster mode connects with */
+    public InClusterServiceAccount getInClusterServiceAccount() {
+        return podServiceAccount;
+    }
+
+    /**
+     * Whether the view connects with an uploaded kubeconfig, the one mode whose credentials are a file in the working
+     * directory. The OpenShift login and the in-cluster mode write their kubeconfig themselves on every use.
+     *
+     * @return {@code false} in the "openshift-login" and "in-cluster" modes
+     */
+    public boolean usesUploadedKubeconfig() {
+        return !isOpenShiftLogin() && !isInClusterServiceAccount();
     }
 
     /** @return true if the view is configured with OpenShift username/password login. */
@@ -423,7 +484,7 @@ public class ViewConfigurationService {
      * @return kubeconfig contents
      */
     public String getKubeconfigContents() {
-        return withCurrentContext(getRawKubeconfigContents(), getSelectedContext());
+        return withCurrentContext(getRawKubeconfigContents(), getContextToConnectWith());
     }
 
     /**
@@ -463,14 +524,18 @@ public class ViewConfigurationService {
     }
 
     /**
-     * The kubeconfig as saved (uploaded file or synthesized OpenShift login), without the selected context applied.
-     * For showing the file and listing its contexts.
+     * The kubeconfig as saved (uploaded file, synthesized OpenShift login or synthesized from the pod's
+     * ServiceAccount), without the selected context applied. For showing the file and listing its contexts.
      *
      * @return kubeconfig contents
      */
     public String getRawKubeconfigContents() {
         if (isOpenShiftLogin()) {
             return synthesizeOpenShiftKubeconfig();
+        }
+        if (isInClusterServiceAccount()) {
+            // Written on every call: it carries the token the kubelet keeps renewed in the pod.
+            return podServiceAccount.kubeconfig();
         }
         LOG.info("Attempting to retrieve kubeconfig contents from encrypted file.");
 
@@ -569,6 +634,17 @@ public class ViewConfigurationService {
         return settings.get(KUBECONFIG_CONTEXT_KEY);
     }
 
+    /**
+     * The kubeconfig context to connect with: the one selected in KDPS when the view connects with an uploaded
+     * kubeconfig. The kubeconfigs KDPS writes itself (OpenShift login, the pod's ServiceAccount) have a single context,
+     * in which a context selected for an earlier upload would be looked for in vain.
+     *
+     * @return the context name, or {@code null} to use the kubeconfig's {@code current-context}
+     */
+    public String getContextToConnectWith() {
+        return usesUploadedKubeconfig() ? getSelectedContext() : null;
+    }
+
     public void removeSelectedContext() {
         try {
             settings.remove(KUBECONFIG_CONTEXT_KEY);
@@ -578,10 +654,10 @@ public class ViewConfigurationService {
     }
 
     /**
-     * Returns whether the view instance has been configured with a kubeconfig or an OpenShift login, whichever user
-     * saved it.
+     * Returns whether the view instance has been configured with a kubeconfig, an OpenShift login or the ServiceAccount
+     * of the Ambari pod, whichever user saved it.
      *
-     * @return {@code true} if a kubeconfig or an OpenShift login has been saved
+     * @return {@code true} if a kubeconfig, an OpenShift login or the in-cluster mode has been saved
      */
     public boolean isConfigured() {
         LOG.debug("Checking if view is configured...");

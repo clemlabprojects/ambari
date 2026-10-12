@@ -582,6 +582,36 @@ export const testOpenShiftLogin = (login: OpenShiftLogin): Promise<{ ok: boolean
     body: JSON.stringify(login),
   });
 
+/**
+ * The ServiceAccount of the pod Ambari runs in, which KDPS can connect with when Ambari runs in the cluster it manages
+ * (GET /cluster/in-cluster). Never carries the token.
+ */
+export interface InClusterServiceAccountStatus {
+  /** Whether the pod has a ServiceAccount token, CA and API server address to connect with. */
+  available: boolean;
+  /** Why not, when it is not available. */
+  reason?: string | null;
+  /** Whether KDPS connects with it now. */
+  active: boolean;
+  authMode: string;
+  /** system:serviceaccount:<namespace>:<name> */
+  username?: string | null;
+  serviceAccount?: string | null;
+  namespace?: string | null;
+  apiServer?: string;
+}
+
+/** Whether KDPS can connect with the Ambari pod's ServiceAccount, and as whom. */
+export const getInClusterServiceAccount = (): Promise<InClusterServiceAccountStatus> =>
+  fetchJson<InClusterServiceAccountStatus>("/cluster/in-cluster");
+
+/**
+ * Connect KDPS with the Ambari pod's ServiceAccount, for every user of the view (rebuilds the Kubernetes client and
+ * checks it reaches the cluster). Throws with the backend error, e.g. when the pod has no ServiceAccount token.
+ */
+export const connectWithInClusterServiceAccount = (): Promise<{ message: string; username?: string | null; note?: string }> =>
+  fetchJson<{ message: string; username?: string | null; note?: string }>("/cluster/in-cluster", { method: "POST" });
+
 export interface ProxySettings {
   enabled: boolean;
   url: string;

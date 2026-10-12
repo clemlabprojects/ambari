@@ -27,6 +27,7 @@ import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
 import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, getPreflight, type PreflightCheck, type KubeconfigContext } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
+import InClusterServiceAccountSection from '../components/common/InClusterServiceAccountSection';
 
 const { Title, Paragraph, Text } = Typography;
 const { Content } = Layout;
@@ -704,7 +705,7 @@ const ConfigurationPage: React.FC = () => {
                         <Card title="Kubernetes Cluster Connection">
                             <Space direction="vertical" size="large" style={{ width: '100%' }}>
                                 {status === 'unconfigured' && (
-                                    <Alert message="Configuration required" description="Connect the view to your cluster: upload a kubeconfig (any Kubernetes or OpenShift cluster), or log into OpenShift with a username/password." type="info" showIcon />
+                                    <Alert message="Configuration required" description="Connect the view to your cluster: upload a kubeconfig (any Kubernetes or OpenShift cluster), log into OpenShift with a username/password, or, when Ambari runs in the cluster, connect with Ambari's own ServiceAccount." type="info" showIcon />
                                 )}
 
                                 {/* ── Kubernetes / kubeconfig ── */}
@@ -767,6 +768,17 @@ const ConfigurationPage: React.FC = () => {
                                         </Space>
                                     </Form>
                                 </div>
+
+                                <Divider>or</Divider>
+
+                                {/* ── The Ambari pod's own ServiceAccount ── */}
+                                <InClusterServiceAccountSection
+                                    onConnected={() => {
+                                        setClusterStatus('connected');
+                                        setClusterStepCompleted(true);
+                                        void fetchData(true);
+                                    }}
+                                />
                             </Space>
                         </Card>
                     )}

@@ -54,7 +54,10 @@ public class InstanceSettings {
     /** Longest value the DataStore accepts in a String column. */
     public static final int MAX_VALUE_LENGTH = 3000;
 
-    /** Set to {@code "true"} once a kubeconfig or an OpenShift login was saved: the view is configured. */
+    /**
+     * Set to {@code "true"} once a kubeconfig, an OpenShift login or the in-cluster ServiceAccount connection was saved:
+     * the view is configured.
+     */
     public static final String CONFIGURED_KEY = "kubeconfig.uploaded";
 
     /**

@@ -335,6 +335,170 @@ class KubeServiceTest {
     assertEquals(200, api.checkIsViewConfigured(null).getStatus(), "ops1 is not sent to the configuration page");
   }
 
+  // ---- connecting with the Ambari pod's own ServiceAccount ----
+
+  /** The ServiceAccount kdps/ambari mounted into a pod, with the API server address in its environment. */
+  private static org.apache.ambari.view.k8s.service.InClusterServiceAccount podServiceAccount(java.nio.file.Path mount)
+      throws Exception {
+    java.nio.file.Files.writeString(mount.resolve("token"), POD_TOKEN);
+    java.nio.file.Files.writeString(mount.resolve("ca.crt"), "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n");
+    java.nio.file.Files.writeString(mount.resolve("namespace"), "kdps");
+    return new org.apache.ambari.view.k8s.service.InClusterServiceAccount(mount,
+        Map.of("KUBERNETES_SERVICE_HOST", "172.30.0.1", "KUBERNETES_SERVICE_PORT", "443")::get);
+  }
+
+  /** A bound token of system:serviceaccount:kdps:ambari (unsigned: only the API server checks signatures). */
+  private static final String POD_TOKEN = jwtWithClaims("{\"sub\":\"system:serviceaccount:kdps:ambari\","
+      + "\"kubernetes.io\":{\"namespace\":\"kdps\",\"serviceaccount\":{\"name\":\"ambari\"}}}");
+
+  private static String jwtWithClaims(String claims) {
+    java.util.Base64.Encoder url = java.util.Base64.getUrlEncoder().withoutPadding();
+    return url.encodeToString("{\"alg\":\"RS256\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "."
+        + url.encodeToString(claims.getBytes(java.nio.charset.StandardCharsets.UTF_8)) + ".c2ln";
+  }
+
+  private KubeService apiInPod(java.nio.file.Path workDir, org.apache.ambari.view.k8s.service.InClusterServiceAccount pod)
+      throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    api.setConfigService(new org.apache.ambari.view.k8s.service.ViewConfigurationService(ctx, pod));
+    return api;
+  }
+
+  @Test
+  void connectingWithThePodServiceAccountSavesTheModeForEveryoneAndReconnects(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir,
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path mount) throws Exception {
+    KubeService api = apiInPod(workDir, podServiceAccount(mount));
+    reconnects();
+
+    Response r = api.useInClusterServiceAccount(null);
+
+    assertEquals(200, r.getStatus());
+    Map<?, ?> body = (Map<?, ?>) r.getEntity();
+    assertEquals("KDPS now connects with the ServiceAccount system:serviceaccount:kdps:ambari.", body.get("message"));
+    assertEquals("system:serviceaccount:kdps:ambari", body.get("username"));
+    assertTrue(String.valueOf(body.get("note")).contains("admin and monitoring-edit"), String.valueOf(body.get("note")));
+    assertEquals("in-cluster", settings().get("auth.mode"));
+    assertEquals("true", settings().get(InstanceSettings.CONFIGURED_KEY));
+    verify(k8s).forceReloadClient();
+    verify(k8s).pingCluster();
+  }
+
+  @Test
+  void outsideAPodTheInClusterModeIsRefusedAndTheConfigurationIsUnchanged(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir,
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path mount) throws Exception {
+    KubeService api = apiInPod(workDir, new org.apache.ambari.view.k8s.service.InClusterServiceAccount(mount, name -> null));
+    settings().put("auth.mode", "openshift-login");
+
+    Response r = api.useInClusterServiceAccount(null);
+
+    assertEquals(400, r.getStatus());
+    assertTrue(error(r).contains("not running in a Kubernetes or OpenShift pod"), error(r));
+    assertTrue(error(r).endsWith("The previous configuration is unchanged."), error(r));
+    assertEquals("openshift-login", settings().get("auth.mode"));
+    assertNull(settings().get(InstanceSettings.CONFIGURED_KEY));
+    verifyNoInteractions(k8s);
+  }
+
+  @Test
+  void aPodWithoutItsTokenIsRefusedWithTheChartValueToSet(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir,
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path mount) throws Exception {
+    org.apache.ambari.view.k8s.service.InClusterServiceAccount pod = podServiceAccount(mount);
+    java.nio.file.Files.delete(mount.resolve("token")); // automountServiceAccountToken: false
+    KubeService api = apiInPod(workDir, pod);
+
+    Response r = api.useInClusterServiceAccount(null);
+
+    assertEquals(400, r.getStatus());
+    assertTrue(error(r).contains("inClusterServiceAccount.enabled=true"), error(r));
+    assertNull(settings().get("auth.mode"));
+    verifyNoInteractions(k8s);
+  }
+
+  @Test
+  void inClusterModeThatCannotReachTheClusterSaysWhy(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir,
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path mount) throws Exception {
+    KubeService api = apiInPod(workDir, podServiceAccount(mount));
+    when(k8s.forceReloadClient()).thenReturn(true);
+    when(k8s.pingCluster()).thenReturn(org.apache.ambari.view.k8s.model.ConnectionHealth.unauthenticated("token rejected"));
+
+    Response r = api.useInClusterServiceAccount(null);
+
+    assertEquals(503, r.getStatus());
+    assertTrue(error(r).startsWith("The connection with the ServiceAccount system:serviceaccount:kdps:ambari was saved, "
+        + "but KDPS could not connect with it"), error(r));
+    assertEquals("in-cluster", settings().get("auth.mode"), "saved, as for the other modes");
+  }
+
+  @Test
+  void inClusterModeFromWhichNoClientCanBeBuiltSaysWhatToCheck(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir,
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path mount) throws Exception {
+    KubeService api = apiInPod(workDir, podServiceAccount(mount));
+    when(k8s.forceReloadClient()).thenReturn(false);
+
+    Response r = api.useInClusterServiceAccount(null);
+
+    assertEquals(400, r.getStatus());
+    assertTrue(error(r).contains("Check the ServiceAccount token and CA certificate mounted in the Ambari pod"), error(r));
+    assertFalse(error(r).contains("kubeconfig"), error(r));
+  }
+
+  @Test
+  void theStatusShowsWhoKdpsWouldActAsAndWhetherItDoes(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir,
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path mount) throws Exception {
+    KubeService api = apiInPod(workDir, podServiceAccount(mount));
+
+    Map<?, ?> before = (Map<?, ?>) api.getInClusterServiceAccount(null).getEntity();
+    assertEquals(true, before.get("available"));
+    assertNull(before.get("reason"));
+    assertEquals(false, before.get("active"));
+    assertEquals("kubeconfig", before.get("authMode"));
+    assertEquals("system:serviceaccount:kdps:ambari", before.get("username"));
+    assertEquals("ambari", before.get("serviceAccount"));
+    assertEquals("kdps", before.get("namespace"));
+    assertEquals("https://172.30.0.1:443", before.get("apiServer"));
+    assertFalse(before.values().stream().anyMatch(v -> String.valueOf(v).contains(POD_TOKEN)), "never the token");
+
+    reconnects();
+    assertEquals(200, api.useInClusterServiceAccount(null).getStatus());
+    Map<?, ?> after = (Map<?, ?>) api.getInClusterServiceAccount(null).getEntity();
+    assertEquals(true, after.get("active"));
+    assertEquals("in-cluster", after.get("authMode"));
+  }
+
+  @Test
+  void theStatusOutsideAPodSaysWhyAndNamesNoOne(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir,
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path mount) throws Exception {
+    KubeService api = apiInPod(workDir, new org.apache.ambari.view.k8s.service.InClusterServiceAccount(mount, name -> null));
+
+    Map<?, ?> status = (Map<?, ?>) api.getInClusterServiceAccount(null).getEntity();
+    assertEquals(false, status.get("available"));
+    assertTrue(String.valueOf(status.get("reason")).contains("not running in a Kubernetes or OpenShift pod"));
+    assertEquals(false, status.get("active"));
+    assertFalse(status.containsKey("username"));
+  }
+
+  @Test
+  void theAuthModeSwitchChecksThePodLikeTheConnectButton(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir,
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path mount) throws Exception {
+    KubeService outside = apiInPod(workDir, new org.apache.ambari.view.k8s.service.InClusterServiceAccount(mount, name -> null));
+    assertEquals(400, outside.setAuthMode(null, Map.of("mode", "in-cluster")).getStatus());
+    assertNull(settings().get("auth.mode"));
+
+    KubeService inPod = apiInPod(workDir, podServiceAccount(mount));
+    reconnects();
+    assertEquals(200, inPod.setAuthMode(null, Map.of("mode", "in-cluster")).getStatus());
+    assertEquals("in-cluster", settings().get("auth.mode"));
+    assertEquals("true", settings().get(InstanceSettings.CONFIGURED_KEY));
+  }
+
   @Test
   @SuppressWarnings("unchecked")
   void preflightAsksWhetherTheAccountMayGrantEachServiceSccInTheTargetProject(
