@@ -88,8 +88,8 @@ case "$PLATFORMS" in
     TARGET_IMAGE="${HARBOR}/${PROJECT}/${IMAGE_NAME}:${IMG_TAG}"
     echo "Building ${TARGET_IMAGE} for ${PLATFORMS}" >&2
     docker build ${BUILD_ARGS} -t "${TARGET_IMAGE}" .
-    # How the image starts and stops is what keeps the server's shutdown clean and its audit log in
-    # the pod logs; check it before anyone can pull the image.
+    # How the image starts and stops is what keeps the server's shutdown clean, its audit log in the
+    # pod logs and admin/admin off the Route; check it before anyone can pull the image.
     ./test-image.sh "${TARGET_IMAGE}"
     docker push "${TARGET_IMAGE}"
     ;;

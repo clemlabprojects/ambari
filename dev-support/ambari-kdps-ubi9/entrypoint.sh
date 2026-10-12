@@ -42,6 +42,20 @@ case "${STOP_TIMEOUT}" in
   ''|*[!0-9]*) log "AMBARI_STOP_TIMEOUT must be a number of seconds, not '${STOP_TIMEOUT}'; using 50"; STOP_TIMEOUT=50 ;;
 esac
 
+# The pod's readiness check requires this file. It is written once the administrator password is no
+# longer Ambari's public default, once the account that has it is disabled or locked out (which turns
+# admin/admin away just the same), or once keeping the default has been explicitly allowed, so the
+# Service and the Route never send anyone to a server that still accepts admin/admin.
+ADMIN_MARKER=/tmp/admin-bootstrapped
+# What Ambari-DDL-Postgres-CREATE.sql stores for the "admin" account: the salted digest of "admin".
+DEFAULT_ADMIN_KEY=538916f8943ec225d97a9a86a2c6ec0818c1cd400e09e03b660fdaaec4af29ddbb6f2b1033b81b00
+# How long the server's API gets to accept the new administrator password before the container gives
+# up and exits.
+ADMIN_TIMEOUT="${AMBARI_ADMIN_PASSWORD_TIMEOUT:-300}"
+case "${ADMIN_TIMEOUT}" in
+  ''|*[!0-9]*) log "AMBARI_ADMIN_PASSWORD_TIMEOUT must be a number of seconds, not '${ADMIN_TIMEOUT}'; using 300"; ADMIN_TIMEOUT=300 ;;
+esac
+
 # The processes copying the server's log and its audit log to the container's output.
 TAIL_PID=""
 AUDIT_PID=""
@@ -65,6 +79,12 @@ stop_followers() {
 # exits.
 terminate() {
   trap '' TERM INT
+  stop_server
+  stop_followers
+  exit 0
+}
+
+stop_server() {
   log "stopping the server"
   local pid
   pid="$(cat "${PIDFILE}" 2>/dev/null || true)"
@@ -81,12 +101,13 @@ terminate() {
       log "the server has stopped"
     fi
   fi
-  stop_followers
-  exit 0
 }
 # Installed before any of the start-up work: bash running as PID 1 ignores a SIGTERM it has no trap
 # for, so a pod deleted while it is still starting would otherwise sit out its whole grace period.
 trap terminate TERM INT
+
+# A container restarted in place keeps its filesystem, and with it the marker of its previous run.
+rm -f "${ADMIN_MARKER}"
 
 # OpenShift assigns an arbitrary UID that has no passwd entry, and Ambari's python code calls
 # getpwuid() during setup. Giving the UID a name through nss_wrapper is the usual remedy; without
@@ -152,6 +173,9 @@ set_property() {
   fi
 }
 
+# The value ambari.properties gives a key, empty when it gives none.
+property() { sed -n "s|^$1=||p" "${PROPERTIES}" | tail -n 1; }
+
 if [ -n "${AMBARI_EXTRA_PROPERTIES:-}" ]; then
   while IFS= read -r line; do
     case "${line}" in ''|'#'*) continue;; esac
@@ -167,6 +191,85 @@ if [ -z "${AMBARI_SECURITY_MASTER_KEY:-}" ]; then
   log "AMBARI_SECURITY_MASTER_KEY is not set: the master key is required."
   exit 1
 fi
+
+# Prints "changed" once the admin account has a password other than the one the schema was created
+# with (or no local password at all). While it still has that one, prints "default" -- admin/admin
+# signs in -- unless the account is "disabled", or "locked" out after authentication.local.max.failures
+# failed sign-ins: the server turns admin/admin away from such an account, this script included.
+# Fails when the database cannot be asked. The stored digest is read rather than admin/admin tried at
+# the login, because a failed sign-in counts towards that lockout.
+admin_password_state() {
+  local row active failures max_failures
+  row="$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+    -tA -F ' ' -c "select u.active, u.consecutive_failures
+          from user_authentication a join users u on u.user_id = a.user_id
+          where u.user_name = 'admin' and a.authentication_type = 'LOCAL'
+            and a.authentication_key = '${DEFAULT_ADMIN_KEY}' limit 1")" || return 1
+  if [ -z "${row}" ]; then
+    echo changed
+    return 0
+  fi
+  read -r active failures <<< "${row}"
+  case "${active}" in ''|*[!0-9]*) return 1 ;; esac
+  case "${failures}" in ''|*[!0-9]*) return 1 ;; esac
+  max_failures="$(property authentication.local.max.failures)"
+  case "${max_failures}" in ''|*[!0-9]*) max_failures=0 ;; esac
+  if [ "${active}" -eq 0 ]; then
+    echo disabled
+  elif [ "${max_failures}" -gt 0 ] && [ "${failures}" -ge "${max_failures}" ]; then
+    echo locked
+  else
+    echo default
+  fi
+}
+
+# Says why an admin account that still has the default password is left as it is: the password can
+# only be changed by signing in, and no one can sign in to it, so neither can this script -- nor
+# anyone trying admin/admin.
+leave_unusable_admin() {
+  if [ "$1" = locked ]; then
+    log "WARNING: the admin account is locked out after too many failed sign-ins but still has Ambari's"
+    log "default password. admin/admin cannot sign in while it is locked, so it is left as it is: give it"
+    log "another password (Manage Ambari > Users) before unlocking it."
+  else
+    log "WARNING: the admin account is disabled but still has Ambari's default password. admin/admin"
+    log "cannot sign in while it is disabled, so it is left as it is: give it another password (Manage"
+    log "Ambari > Users) before enabling it again."
+  fi
+}
+
+# On an empty database Ambari creates its "admin" account with the password "admin", which is in its
+# public documentation, and nothing makes anyone change it. AMBARI_ADMIN_PASSWORD replaces it once the
+# server is up and before the pod reports ready (set_admin_password below). Keeping the default is
+# for development only and has to be asked for. Without a password the server is still started when
+# the admin account no longer accepts admin/admin: an installation whose password was changed before
+# this image asked for one has nothing left to replace, and refusing would only take its console down
+# when the image is upgraded. A new database, or an account that still accepts admin/admin, is refused.
+ALLOW_DEFAULT_ADMIN="${AMBARI_ADMIN_ALLOW_DEFAULT:-false}"
+if [ "${ALLOW_DEFAULT_ADMIN}" != true ]; then
+  if [ "${AMBARI_ADMIN_PASSWORD:-}" = admin ]; then
+    log "AMBARI_ADMIN_PASSWORD is Ambari's public default password: choose another one."
+    exit 1
+  elif [ -z "${AMBARI_ADMIN_PASSWORD:-}" ]; then
+    if ! ADMIN_STATE="$(admin_password_state)"; then
+      log "AMBARI_ADMIN_PASSWORD is not set, and the database could not be read to tell whether the admin"
+      log "account still has Ambari's default password."
+      exit 1
+    fi
+    case "${ADMIN_STATE}" in
+      changed)
+        log "AMBARI_ADMIN_PASSWORD is not set, and none is needed: the administrator password is not the default one" ;;
+      disabled|locked)
+        leave_unusable_admin "${ADMIN_STATE}" ;;
+      *)
+        log "AMBARI_ADMIN_PASSWORD is not set: the first administrator password is required."
+        log "Set AMBARI_ADMIN_ALLOW_DEFAULT=true to keep admin/admin instead (development only)."
+        exit 1 ;;
+    esac
+  fi
+fi
+# Only this script needs the password: the server and everything it starts are not given it.
+export -n AMBARI_ADMIN_PASSWORD
 
 AMBARI_RUN_USER="$(id -u -n)"
 export USER="${AMBARI_RUN_USER}" LOGNAME="${AMBARI_RUN_USER}"
@@ -216,15 +319,147 @@ for _ in $(seq 1 30); do [ -f "$LOG" ] && break; sleep 1; done
 tail -F "$LOG" &
 TAIL_PID=$!
 
-# Watch the process itself rather than run "ambari-server status" every few seconds: that starts a
-# Python interpreter and reads the server's configuration each time, to learn whether one PID is
-# alive. (status does work in this image, for an operator in "oc exec": it needs ps, which is why
-# procps-ng is installed.)
-while :; do
-  SERVER_PID="$(cat "${PIDFILE}" 2>/dev/null || true)"
-  if [ -z "${SERVER_PID}" ] || ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-    break
+# Whether the server process is still there. The process itself is watched rather than "ambari-server
+# status" run every few seconds: that starts a Python interpreter and reads the server's configuration
+# each time, to learn whether one PID is alive. (status does work in this image, for an operator in
+# "oc exec": it needs ps, which is why procps-ng is installed.)
+server_running() {
+  local pid
+  pid="$(cat "${PIDFILE}" 2>/dev/null || true)"
+  [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null
+}
+
+# The server's own API, on the loopback: plain HTTP on client.api.port, or, once api.ssl is on, HTTPS
+# only, on client.api.ssl.port. The certificate names the route host rather than 127.0.0.1, hence -k;
+# the request never leaves the pod.
+API_PORT="$(property client.api.port)"
+API_URL="http://127.0.0.1:${API_PORT:-8080}"
+CURL_TLS=()
+if [ "$(property api.ssl)" = true ]; then
+  API_PORT="$(property client.api.ssl.port)"
+  API_URL="https://127.0.0.1:${API_PORT:-8443}"
+  CURL_TLS=(-k)
+fi
+
+# Asks the server to change the admin password from the default to AMBARI_ADMIN_PASSWORD, so that the
+# server stores it the way it will check it. The JSON is built by python, which escapes whatever the
+# password contains, and reaches curl on its standard input: the password is never on a command line,
+# where anyone listing the processes would see it, nor in the logs. Prints the HTTP status, 000 when
+# nothing answered, and leaves the server's answer in the file named by $1.
+put_admin_password() {
+  AMBARI_ADMIN_PASSWORD="${AMBARI_ADMIN_PASSWORD}" python3 -c '
+import json, os, sys
+json.dump({"Users": {"old_password": "admin", "password": os.environ["AMBARI_ADMIN_PASSWORD"]}}, sys.stdout)' \
+    | curl -s "${CURL_TLS[@]}" --connect-timeout 5 --max-time 10 -o "$1" -w '%{http_code}' \
+        -u admin:admin -H 'X-Requested-By: ambari' -X PUT --data-binary @- \
+        "${API_URL}/api/v1/users/admin" \
+    || true
+}
+
+# The reason the server gave in the answer in the file named by $1, on one line, with the password
+# masked should the server ever quote it back.
+api_message() {
+  AMBARI_ADMIN_PASSWORD="${AMBARI_ADMIN_PASSWORD}" python3 -c '
+import json, os, sys
+text = open(sys.argv[1], errors="replace").read()
+try:
+    text = str(json.loads(text).get("message", text))
+except Exception:
+    pass
+text = " ".join(text.replace(os.environ["AMBARI_ADMIN_PASSWORD"], "********").split())
+print(text[:300] or "no message")' "$1" 2>/dev/null || echo "no message"
+}
+
+# Replaces Ambari's default administrator password with AMBARI_ADMIN_PASSWORD, once. When the account
+# has any other password -- set on an earlier start, or by someone since -- it is left alone: the
+# Secret sets the first password and never takes over from one changed in the UI. So is an account
+# that is disabled or locked out, with a warning: admin/admin cannot sign in to it. Returns non-zero
+# when the password could not be set, so that the container does not go on serving admin/admin.
+set_admin_password() {
+  if [ -z "${AMBARI_ADMIN_PASSWORD:-}" ] || [ "${AMBARI_ADMIN_PASSWORD}" = admin ]; then
+    # Unless the default was allowed, the server was started without a password only because the
+    # admin account no longer accepted admin/admin (checked above): there is nothing to set.
+    if [ "${ALLOW_DEFAULT_ADMIN}" = true ]; then
+      log "WARNING: AMBARI_ADMIN_ALLOW_DEFAULT=true and no other administrator password was given: this"
+      log "server accepts admin/admin until someone changes it. Development only."
+    fi
+    return 0
   fi
+  local deadline state status waiting=""
+  deadline=$(( $(date +%s) + ADMIN_TIMEOUT ))
+  while :; do
+    if ! server_running; then
+      log "the server stopped before the administrator password could be set"
+      return 1
+    fi
+    if ! state="$(admin_password_state)"; then
+      log "could not read the administrator account from the database; trying again"
+    elif [ "${state}" = changed ]; then
+      log "the administrator password is not the default one; leaving it as it is"
+      return 0
+    elif [ "${state}" != default ]; then
+      leave_unusable_admin "${state}"
+      return 0
+    else
+      status="$(put_admin_password "${ADMIN_RESPONSE}")"
+      case "${status}" in
+        2??)
+          if [ "$(admin_password_state)" = changed ]; then
+            log "set the administrator password from AMBARI_ADMIN_PASSWORD"
+            return 0
+          fi
+          log "the server accepted the administrator password, but the database does not show it changed"
+          return 1 ;;
+        000|502|503|504)
+          if [ -z "${waiting}" ]; then
+            log "waiting for the server's API to set the administrator password"
+            waiting=1
+          fi ;;
+        *)
+          # Someone may have changed the password in the meantime, which makes the old one wrong, or
+          # disabled the account, which turns admin/admin away.
+          state="$(admin_password_state)" || state=""
+          case "${state}" in
+            changed)
+              log "the administrator password is not the default one; leaving it as it is"
+              return 0 ;;
+            disabled|locked)
+              leave_unusable_admin "${state}"
+              return 0 ;;
+          esac
+          case "${status}" in
+            401|403)
+              log "the server turned admin/admin away (HTTP ${status}), although the database shows the admin"
+              log "account enabled, not locked out and with the default password: $(api_message "${ADMIN_RESPONSE}")" ;;
+            *)
+              log "the server refused to set the administrator password (HTTP ${status}): $(api_message "${ADMIN_RESPONSE}")" ;;
+          esac
+          return 1 ;;
+      esac
+    fi
+    if [ "$(date +%s)" -ge "${deadline}" ]; then
+      log "the administrator password could not be set within ${ADMIN_TIMEOUT}s"
+      return 1
+    fi
+    # Waited for in the background, like the watch below, so that a stop is not held up.
+    sleep 5 &
+    wait $!
+  done
+}
+
+ADMIN_RESPONSE="$(mktemp)"
+if set_admin_password; then
+  rm -f "${ADMIN_RESPONSE}"
+  touch "${ADMIN_MARKER}"
+else
+  rm -f "${ADMIN_RESPONSE}"
+  log "exiting rather than serve with an administrator password that may still be admin/admin"
+  stop_server
+  stop_followers
+  exit 1
+fi
+
+while server_running; do
   # In the background and waited for, because bash runs a trap only once the command in the
   # foreground has finished: a plain "sleep 10" would hold the stop up by as much as ten seconds.
   sleep 10 &

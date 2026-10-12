@@ -23,7 +23,7 @@ useful rather than odd.
 | `registry.access.redhat.com/ubi9/ubi` | Base, as required for the customer's OpenShift platform |
 | `java-17-openjdk-headless` | Runs the server |
 | `python3` + `distro` | The server RPM requires both; `python3-distro` is not in the UBI repositories, so pip supplies it |
-| `postgresql` (client) | Schema load and the readiness check in the entrypoint |
+| `postgresql` (client) | Schema load, and the check for the default administrator password, in the entrypoint |
 | `helm` | KDPS shells out to the binary rather than embedding a Helm library |
 | `git` | The GitOps deployment mode |
 | `procps-ng` | `ps`, which `ambari-server stop`, `status`, `restart` and the `setup-*` commands use to find the running server |
@@ -104,9 +104,11 @@ in to Harbor already, which is how the ODP image stages work.
 
 Before pushing, `build-image.sh` runs `test-image.sh` on the image it has just built: it checks that
 `ambari-server status` and `stop` work, that the entrypoint stops the server cleanly on SIGTERM (and
-kills it only after `AMBARI_STOP_TIMEOUT`), and that the audit log reaches the container's output.
-The server is replaced by a stand-in for this, so it takes under a minute and needs no database. Run
-it by hand with `./test-image.sh <image>`.
+kills it only after `AMBARI_STOP_TIMEOUT`), that the audit log reaches the container's output, and
+that the first administrator password replaces `admin` / `admin` before the chart's readiness check
+can pass — and that every way of failing at it stops the container instead. The server, its API and
+its database are replaced by stand-ins for this, so it takes a couple of minutes and needs no
+database. Run it by hand with `./test-image.sh <image>`.
 
 ## Running
 
@@ -116,6 +118,10 @@ it by hand with `./test-image.sh <image>`.
 |---|---|---|
 | `AMBARI_DB_HOST` | — | **required** |
 | `AMBARI_DB_PASSWORD` | — | **required** |
+| `AMBARI_SECURITY_MASTER_KEY` | — | **required**. Encrypts the credential store and the kubeconfig the KDPS view stores |
+| `AMBARI_ADMIN_PASSWORD` | — | **required** unless `AMBARI_ADMIN_ALLOW_DEFAULT=true`, or the database's `admin` account no longer accepts `admin` / `admin`. Replaces the default `admin` / `admin` on first start; see below |
+| `AMBARI_ADMIN_ALLOW_DEFAULT` | `false` | `true` lets the server start without `AMBARI_ADMIN_PASSWORD` and keep `admin` / `admin`. Development only |
+| `AMBARI_ADMIN_PASSWORD_TIMEOUT` | `300` | Seconds the server's API gets to accept the administrator password before the container exits |
 | `AMBARI_DB_PORT` | `5432` | |
 | `AMBARI_DB_NAME` | `ambari` | |
 | `AMBARI_DB_USER` | `ambari` | |
@@ -123,8 +129,51 @@ it by hand with `./test-image.sh <image>`.
 
 The entrypoint waits for Postgres, configures the server against it, loads the DDL only if the
 `clusters` table is absent, copies any jar found in `/opt/ambari-views` into the server's views
-directory, and then starts the server. Every step is idempotent: the pod will be restarted,
-rescheduled and rolled, and each start has to converge rather than assume a fresh database.
+directory, starts the server, and then replaces the default administrator password. Every step is
+idempotent: the pod will be restarted, rescheduled and rolled, and each start has to converge rather
+than assume a fresh database.
+
+### The first administrator password
+
+The DDL creates the `admin` account with the password `admin`, which is in Ambari's public
+documentation. Once the server is up, the entrypoint checks whether the account still has that
+password — by reading the digest the DDL stored, not by trying `admin` / `admin` at the login, which
+would count towards `authentication.local.max.failures` — and if so changes it to
+`AMBARI_ADMIN_PASSWORD` through the server's own API on `127.0.0.1` (HTTPS with `-k` when `api.ssl`
+is on), retrying while the API is not answering yet. Any other password is left alone, so the step
+runs once per database: a restart, or a password since changed in the UI, skips it.
+
+An `admin` account that still has the default password but is disabled, or locked out after
+`authentication.local.max.failures` failed sign-ins, is left alone too, with a warning in the pod
+logs: the server turns `admin` / `admin` away from it, and the password can only be changed by
+signing in. Give it another password from another administrator account before enabling or
+unlocking it. Enabled or unlocked with the default password, it accepts `admin` / `admin` until the
+next start replaces that with `AMBARI_ADMIN_PASSWORD`.
+
+Without `AMBARI_ADMIN_PASSWORD` (and without `AMBARI_ADMIN_ALLOW_DEFAULT=true`) the entrypoint reads
+the same digest before it starts the server. On a new database, or one whose `admin` account still
+accepts `admin` / `admin`, it exits with `AMBARI_ADMIN_PASSWORD is not set`; so it does when the
+database cannot be read. When the account no longer accepts the default — its password was changed,
+or it is disabled or locked out — there is nothing to replace, and the server starts. That is what
+lets an installation made before the image asked for a password, whose password was changed by hand,
+move to this image without one. Give it the password all the same: a new database, such as a
+disaster-recovery copy built empty, needs it, and the `ambari` chart from 0.1.11 does not render
+without it.
+
+Only then does it create `/tmp/admin-bootstrapped`, and a readiness check has to require that file:
+until it exists the server accepts `admin` / `admin`. The `ambari` chart's readiness probe is
+
+```
+test -f /tmp/admin-bootstrapped && curl -fsS -o /dev/null http://127.0.0.1:8080/
+```
+
+The password is never written to the output and never on a command line: the request body is built
+by python and reaches curl on its standard input. The server process does not inherit
+`AMBARI_ADMIN_PASSWORD`. When the server refuses the password (its password policy,
+`security.password.policy.regexp`), turns `admin` / `admin` away from an account the database shows
+enabled and not locked out, the API does not answer within `AMBARI_ADMIN_PASSWORD_TIMEOUT`, or the
+database cannot be read, the entrypoint stops the server and exits non-zero with the reason, rather
+than leave it serving `admin` / `admin`.
 
 ### Stopping
 
@@ -165,7 +214,8 @@ What the deployment needs around it:
   disposable.
 - **A PVC for `/var/lib/ambari-server/resources/views`** if you want view work directories to survive
   a restart. Not strictly required — the view re-extracts — but it makes restarts much faster.
-- **A Route or Ingress** to port 8080 (or 8443 once TLS is configured).
+- **A Route or Ingress** to port 8080 (or 8443 once TLS is configured), behind a readiness check
+  that requires `/tmp/admin-bootstrapped` (see above).
 - **RBAC for the ServiceAccount.** This is the part that is easy to under-scope: KDPS installs Helm
   releases, so its ServiceAccount needs create/update/delete on everything those charts contain, in
   every namespace it deploys to. In practice that means a Role (or ClusterRole) covering workloads,
@@ -177,7 +227,6 @@ What the deployment needs around it:
 
 - TLS is not configured; the server listens on 8080. Terminate at the Route, or run
   `ambari-server setup-security` and mount a keystore.
-- The admin password is Ambari's default until you change it. Do that before exposing the Route.
 - Two replicas would both try to load the schema and both try to serve; run one.
 
 ## Pushing to git for GitOps
