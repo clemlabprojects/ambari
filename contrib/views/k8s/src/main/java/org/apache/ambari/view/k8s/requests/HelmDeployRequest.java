@@ -132,6 +132,10 @@ public class HelmDeployRequest {
         private String commitMode; // DIRECT_COMMIT or PR_MODE
         private String branch;
         private String credentialAlias;
+        // Credential store alias of the access token when the SSH key holds credentialAlias: a deploy given both
+        // pushes with the key and opens its pull request with the token. Set by the view when it stores the token;
+        // the value a request sends is discarded.
+        private String authTokenAlias;
 
         public String getRepoUrl() { return repoUrl; }
         public void setRepoUrl(String repoUrl) { this.repoUrl = repoUrl; }
@@ -149,6 +153,8 @@ public class HelmDeployRequest {
         public void setBranch(String branch) { this.branch = branch; }
         public String getCredentialAlias() { return credentialAlias; }
         public void setCredentialAlias(String credentialAlias) { this.credentialAlias = credentialAlias; }
+        public String getAuthTokenAlias() { return authTokenAlias; }
+        public void setAuthTokenAlias(String authTokenAlias) { this.authTokenAlias = authTokenAlias; }
     }
 
     // Getters and Setters

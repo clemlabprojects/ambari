@@ -33,6 +33,7 @@ import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
 import { getGitRepos } from '../../pages/GitRepositoriesPage';
+import { waitingForMerge } from '../common/operationOutcome';
 
 import * as pako from 'pako';
 import { untar } from 'js-untar';
@@ -1062,8 +1063,30 @@ const handleServiceChange = (value: string) => {
         if ((s as any).message) message.loading({ content: (s as any).message, key: 'deploy', duration: 0 });
       });
 
+      const pendingMerge = final.state === 'SUCCEEDED' ? waitingForMerge(final) : null;
+      if (pendingMerge) {
+        // Committed to Git but not applied: Flux waits for the merge, and the steps that need the running release
+        // were not run. Kept on screen until the operator closes it.
+        message.destroy('deploy');
+        Modal.warning({
+          title: 'Committed to Git, not applied yet',
+          width: 560,
+          content: (
+            <Space direction="vertical" size={4}>
+              <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{pendingMerge.message}</span>
+              {pendingMerge.pullRequestUrl && (
+                <Typography.Link href={pendingMerge.pullRequestUrl} target="_blank" rel="noopener noreferrer">
+                  Open the pull request
+                </Typography.Link>
+              )}
+            </Space>
+          ),
+        });
+      }
       if (final.state === 'SUCCEEDED') {
-        message.success({ content: `${mode === 'upgrade' ? 'Upgrade' : 'Deployment'} completed`, key: 'deploy', duration: 3 });
+        if (!pendingMerge) {
+          message.success({ content: `${mode === 'upgrade' ? 'Upgrade' : 'Deployment'} completed`, key: 'deploy', duration: 3 });
+        }
         onDeploy();
         onClose();
         form.resetFields();

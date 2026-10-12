@@ -53,6 +53,21 @@ public enum CommandType {
     /** Installs a new Helm release into a namespace. */
     HELM_DEPLOY,
 
+    /**
+     * The GitOps counterpart of {@link #HELM_DEPLOY}: writes the release's Flux HelmRelease to the Git repository Flux
+     * reconciles, with every value the Helm install would have received. Passwords and secrets go to the release's
+     * values Secret, never to Git. Runs after the same preparation steps as a direct deploy, so nothing is committed
+     * when one of them fails, and commits nothing when Git already holds the release as planned.
+     */
+    GITOPS_COMMIT,
+
+    /**
+     * Waits until Flux has applied the HelmRelease written by {@link #GITOPS_COMMIT} and reports it Ready, so the
+     * post-deploy steps that need running pods start only then. Fails with Flux's own message when Flux gives up on
+     * the release or it is not ready in time.
+     */
+    FLUX_WAIT_READY,
+
     /** Upgrades an existing Helm release to a new chart version or values set. */
     HELM_UPGRADE,
 

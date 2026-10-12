@@ -75,7 +75,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Flux GitOps backend: renders HelmRelease/HelmRepository YAML, commits to Git and returns the commit SHA.
  * Passwords and secrets never reach Git: each HelmRelease reads them from its own Secret through
- * {@code spec.valuesFrom} (see {@link GitOpsSecretValues}).
+ * {@code spec.valuesFrom} (see {@link GitOpsSecretValues}). Deploys submitted to the view go through
+ * {@link GitOpsPlanBackend}: the command plan of a direct deploy, whose GITOPS_COMMIT step calls {@link #commit}.
  * Status/destroy are still minimal and should be enhanced to read HelmRelease CRs and delete manifests.
  */
 public class FluxGitOpsBackend implements DeploymentBackend {
@@ -89,6 +90,83 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     // Flux API versions — promoted from v2beta2/v1beta2 (deprecated in Flux 2.3, removed in Flux 3.x)
     static final String FLUX_HR_API_VERSION  = "helm.toolkit.fluxcd.io/v2";
     static final String FLUX_SRC_API_VERSION = "source.toolkit.fluxcd.io/v1";
+
+    /**
+     * Annotation of the committed HelmRelease holding a digest of its spec. Flux copies it to the cluster when it
+     * applies the manifest, which tells a deploy waiting for its release that Flux applied this version and not the
+     * previous one. Derived from the content only, so committing the same release again changes nothing.
+     */
+    public static final String SPEC_DIGEST_ANNOTATION = "ambari.clemlab.com/spec-digest";
+
+    /**
+     * How long Flux lets Helm install or upgrade a release and wait for it to be ready: the 900 seconds a direct
+     * deploy gives Helm. Flux's own default, 5 minutes, would fail a release a direct deploy installs, such as a first
+     * start that pulls large images.
+     */
+    static final String HELM_TIMEOUT = "15m";
+
+    /**
+     * What the command plan of a deploy prepared for its release before the commit (keytab, SSO client, Ranger,
+     * Hadoop configuration, certificates, image pull secret, Kerberos and truststore wiring).
+     *
+     * @param overrides       every value the plan would have passed to Helm, by Helm path; values from password fields
+     *                        keep their mark ({@link org.apache.ambari.view.k8s.service.HelmSetValues#textIfSecret}),
+     *                        so they go to the values Secret
+     * @param kerberosEnabled whether the plan found Kerberos on for this deploy, {@code null} when it could not tell
+     * @param dependencyOverrides what the Helm install of each dependency the commit writes would receive in a direct
+     *                            deploy; {@code null} when the plan prepared none
+     */
+    public record PlannedRelease(Map<String, String> overrides, Boolean kerberosEnabled,
+                                 DependencyOverrides dependencyOverrides) {
+        public PlannedRelease(Map<String, String> overrides, Boolean kerberosEnabled) {
+            this(overrides, kerberosEnabled, null);
+        }
+    }
+
+    /** The values a dependency's Helm install receives on top of its chart's, as the deploy's plan prepares them. */
+    @FunctionalInterface
+    public interface DependencyOverrides {
+        /**
+         * Prepares the dependency as a direct deploy prepares its Helm install (its image pull Secret, for one) and
+         * returns what that install would receive.
+         *
+         * @param name      the dependency, as the service definition names it
+         * @param namespace the namespace it is installed in
+         * @return its values by Helm path
+         * @throws Exception when it cannot be prepared
+         */
+        Map<String, String> of(String name, String namespace) throws Exception;
+    }
+
+    /**
+     * What a GitOps commit did.
+     *
+     * @param id                what {@link #apply} returns: the commit, {@code NO_CHANGES}, or {@code PR-STUB:<sha>}
+     *                          for a pull request commit that could not be pushed
+     * @param commitSha         the commit Git holds for the release, when known
+     * @param committed         whether this deploy created a commit; false when Git already held the release
+     * @param repoUrl           the Git repository
+     * @param branch            the branch the change was written to
+     * @param baseBranch        the branch Flux reconciles, when known
+     * @param appliedOnCommit   whether Flux applies the change as it is: a direct commit to the branch Flux reconciles,
+     *                          or a change already merged there. False while it waits for a merge.
+     * @param pullRequestUrl    the pull request of the change, when one was opened
+     * @param pullRequestState  its state, when known
+     * @param specDigest        the {@link #SPEC_DIGEST_ANNOTATION} of the committed HelmRelease
+     */
+    public record CommitResult(String id, String commitSha, boolean committed, String repoUrl, String branch,
+                               String baseBranch, boolean appliedOnCommit, String pullRequestUrl,
+                               String pullRequestState, String specDigest) {}
+
+    /**
+     * Where a HelmRelease on the cluster stands for the version a deploy committed.
+     *
+     * @param ready   Flux applied that version and reports the release Ready
+     * @param failed  Flux gave up on that version (Stalled); waiting longer will not help
+     * @param message what Flux reports, for the operator
+     * @param applied the HelmRelease on the cluster is that version: what is left is up to Flux and Helm
+     */
+    public record Readiness(boolean ready, boolean failed, String message, boolean applied) {}
 
     /**
      * One lock per release key (namespace:releaseName).
@@ -191,14 +269,20 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     /**
      * Why a dependency is not written to Git for this deploy, or {@code null}: the keytab webhook outside the WEBHOOK
      * Kerberos injection mode, then the rules direct deploys apply ({@link DependencyRules}).
+     *
+     * @param planned what the deploy's command plan prepared, whose Kerberos state then decides; {@code null} to ask
+     *                Ambari
      */
     private String gitOpsSkipReason(String name, Map<String, Object> spec, HelmDeployRequest request,
-                                    boolean managedHere, DeploymentContext context) {
+                                    boolean managedHere, DeploymentContext context, PlannedRelease planned) {
         if ("kerberos-keytab-mutating-webhook".equals(name)) {
             if (!"WEBHOOK".equals(CommandService.resolveKerberosInjectionMode(viewContext))) {
                 return "Skipped — the keytab webhook is only used in the WEBHOOK Kerberos injection mode.";
             }
-            if (followsAmbariKerberos(request) && Boolean.FALSE.equals(ambariClusterKerberos(context))) {
+            boolean kerberosOff = planned != null
+                    ? Boolean.FALSE.equals(planned.kerberosEnabled())
+                    : followsAmbariKerberos(request) && Boolean.FALSE.equals(ambariClusterKerberos(context));
+            if (kerberosOff) {
                 return "Skipped — Kerberos is disabled on the cluster.";
             }
         }
@@ -344,8 +428,142 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 """.formatted(FLUX_SRC_API_VERSION, name, oci ? "  type: oci\n" : "", effectiveUrl);
     }
 
+    /**
+     * Refuses a GitOps deploy that could not be committed, before anything is prepared for it: no Git repository, no
+     * credentials to push to it, no chart repository or chart version. The checks {@link #commit} makes, without
+     * touching Git or changing the request.
+     *
+     * @throws IllegalArgumentException naming what is missing
+     * @throws IllegalStateException    when a chart repository is not configured in KDPS
+     */
+    public void checkCommittable(HelmDeployRequest request, DeploymentContext context) {
+        K8sReleaseEntity existingMeta = releaseMetadataService.find(request.getNamespace(), request.getReleaseName());
+        HelmDeployRequest.GitOptions given = request.getGit() != null ? request.getGit() : new HelmDeployRequest.GitOptions();
+        String repoUrl = firstNonBlank(given.getRepoUrl(), existingMeta != null ? existingMeta.getGitRepoUrl() : null);
+        if (repoUrl == null) {
+            throw new IllegalArgumentException("Flux GitOps requires git.repoUrl");
+        }
+        String repoName = firstNonBlank(context != null ? context.getRepoId() : null, request.getRepoId(),
+                existingMeta != null ? existingMeta.getRepoId() : null);
+        if (repoName == null) {
+            throw new IllegalArgumentException("Select a chart repository for " + request.getReleaseName() + ": a GitOps"
+                    + " deploy names it in the HelmRelease, and none was given or recorded for this release.");
+        }
+        chartVersion(request, context, existingMeta,
+                firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null));
+        chartRepositoryYamls(repoName, request.getDependencies());
+        String recordedAlias = existingMeta != null ? existingMeta.getGitCredentialAlias() : null;
+        GitSecrets gitSecrets = gitSecrets(given, firstNonBlank(given.getCredentialAlias(), recordedAlias), recordedAlias);
+        checkGitAccess(repoUrl.trim(), firstNonBlank(given.getCommitMode(),
+                existingMeta != null ? existingMeta.getGitCommitMode() : null), gitSecrets.token(), gitSecrets.sshKey());
+    }
+
+    /** The Git credentials a deploy pushes with. */
+    private record GitSecrets(String token, String sshKey) {}
+
+    /**
+     * Prefixes of the credential store aliases a deploy may name for its Git credentials: those the view stores Git
+     * tokens and SSH keys under, and those its Git repositories page names. Ambari's credential store holds other
+     * secrets too (its database and LDAP passwords, for two): resolved for a deploy, any of them would be sent to the
+     * Git server the deploy names.
+     */
+    static final List<String> GIT_CREDENTIAL_ALIAS_PREFIXES = List.of("gitops-", "git-");
+
+    /**
+     * Refuses a credential store alias that does not hold a Git credential of the view: one without a
+     * {@link #GIT_CREDENTIAL_ALIAS_PREFIXES prefix}, unless the release already pushes with it.
+     *
+     * @param alias         the alias the deploy names, may be {@code null}
+     * @param recordedAlias the alias recorded for the release, {@code null} for a new one
+     * @throws IllegalArgumentException naming the alias
+     */
+    static void checkGitCredentialAlias(String alias, String recordedAlias) {
+        if (alias == null || alias.isBlank() || alias.equals(recordedAlias)
+                || GIT_CREDENTIAL_ALIAS_PREFIXES.stream().anyMatch(alias::startsWith)) {
+            return;
+        }
+        throw new IllegalArgumentException("The credential alias '" + alias + "' does not hold a Git credential saved"
+                + " by KDPS. A GitOps deploy can only reuse a Git token or SSH key that KDPS saved (its alias starts"
+                + " with 'gitops-'); otherwise give the token or SSH key with the deploy.");
+    }
+
+    /**
+     * The token or SSH key given with the deploy, else the one stored under its credential alias, and the token
+     * stored under its own alias next to an SSH key. Only aliases of Git credentials are resolved
+     * ({@link #checkGitCredentialAlias}).
+     *
+     * @param recordedAlias the alias recorded for the release, {@code null} for a new one
+     */
+    private GitSecrets gitSecrets(HelmDeployRequest.GitOptions git, String alias, String recordedAlias) {
+        checkGitCredentialAlias(alias, recordedAlias);
+        checkGitCredentialAlias(git.getAuthTokenAlias(), recordedAlias);
+        String token = git.getAuthToken();
+        String sshKey = git.getSshKey();
+        if ((token == null || token.isBlank()) && (sshKey == null || sshKey.isBlank()) && alias != null) {
+            String resolved = gitCredentialService.resolveSecret(alias);
+            if (resolved != null && resolved.contains("BEGIN")) {
+                sshKey = resolved;
+            } else {
+                token = resolved;
+            }
+        }
+        if ((token == null || token.isBlank()) && git.getAuthTokenAlias() != null && !git.getAuthTokenAlias().isBlank()) {
+            token = gitCredentialService.resolveSecret(git.getAuthTokenAlias());
+        }
+        return new GitSecrets(token, sshKey);
+    }
+
+    /** Whether the deploy gives its token or SSH key itself, rather than an alias of the credential store. */
+    private static boolean givesGitSecret(HelmDeployRequest.GitOptions git) {
+        return (git.getAuthToken() != null && !git.getAuthToken().isBlank())
+                || (git.getSshKey() != null && !git.getSshKey().isBlank());
+    }
+
+    /**
+     * Refuses Git options a commit could not be pushed with.
+     *
+     * @throws IllegalArgumentException naming what is missing
+     */
+    static void checkGitAccess(String repoUrl, String commitMode, String token, String sshKey) {
+        boolean isHttps = repoUrl.startsWith("https://") || repoUrl.startsWith("http://");
+        boolean isSsh = repoUrl.startsWith("git@") || repoUrl.startsWith("ssh://");
+        boolean hasToken = token != null && !token.isBlank();
+        boolean hasSshKey = sshKey != null && !sshKey.isBlank();
+        if ("PR_MODE".equalsIgnoreCase(commitMode) && isHttps && !hasToken) {
+            throw new IllegalArgumentException("PR mode requires an HTTPS token");
+        }
+        if (isHttps && !hasToken && !hasSshKey) {
+            throw new IllegalArgumentException("GitOps over HTTPS requires authToken or sshKey");
+        }
+        if (isSsh && !hasSshKey && !hasToken) {
+            throw new IllegalArgumentException("GitOps over SSH requires sshKey or HTTPS token");
+        }
+    }
+
+    /**
+     * Writes and commits the release's manifests at once, preparing only what this backend prepares itself (namespace,
+     * krb5.conf ConfigMap, truststore, mounts, image pull secret). Deploys submitted to the view do not come here:
+     * their command plan prepares the release as a direct deploy does and its GITOPS_COMMIT step calls
+     * {@link #commit}.
+     *
+     * @return the commit, {@code NO_CHANGES} when Git already holds the release, or {@code PR-STUB:<sha>}
+     */
     @Override
     public String apply(HelmDeployRequest request, DeploymentContext context) throws Exception {
+        return commit(request, context, null).id();
+    }
+
+    /**
+     * Writes the release's HelmRelease, HelmRepository and dependency manifests to Git and commits them (or opens a
+     * pull request), the passwords and secrets going to the values Secrets the HelmReleases read. Idempotent: when Git
+     * already holds the release as given, nothing is committed.
+     *
+     * @param planned what the deploy's command plan prepared, whose overrides are written into the values; {@code null}
+     *                when nothing was planned, and this backend prepares Kerberos, the truststore, the mounts and the
+     *                image pull secret itself
+     */
+    public CommitResult commit(HelmDeployRequest request, DeploymentContext context, PlannedRelease planned)
+            throws Exception {
         Objects.requireNonNull(request.getNamespace(), "namespace is required");
         Objects.requireNonNull(request.getReleaseName(), "releaseName is required");
 
@@ -368,8 +586,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         String repoUrl = git.getRepoUrl().trim();
-        boolean isHttps = repoUrl.startsWith("https://") || repoUrl.startsWith("http://");
-        boolean isSsh = repoUrl.startsWith("git@") || repoUrl.startsWith("ssh://");
 
         logFluxInfo(namespace, release, "apply", "Starting Flux GitOps deploy (mode=%s, repo=%s)", git.getCommitMode(), repoUrl);
 
@@ -395,34 +611,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String storedPath = existingMeta != null ? existingMeta.getGitPath() : null;
         Path targetDir = resolveTargetPath(pathOverride, storedPath, namespace, release);
 
-        // Resolve credentials: prefer provided, else resolve alias. Always persist for future operations.
-        String token = git.getAuthToken();
-        String sshKey = git.getSshKey();
+        // Resolve credentials: prefer provided, else resolve alias. A credential given in clear is stored for future
+        // operations; one given by its alias (a planned deploy stored it when it was submitted) keeps that alias.
         String alias = firstNonBlank(git.getCredentialAlias(), existingMeta != null ? existingMeta.getGitCredentialAlias() : null);
-        if ((token == null || token.isBlank()) && (sshKey == null || sshKey.isBlank()) && alias != null) {
-            String resolved = gitCredentialService.resolveSecret(alias);
-            if (resolved != null && resolved.contains("BEGIN")) {
-                sshKey = resolved;
-            } else {
-                token = resolved;
-            }
-        }
-        if ((token != null && !token.isBlank()) || (sshKey != null && !sshKey.isBlank())) {
+        GitSecrets gitSecrets = gitSecrets(git, alias, existingMeta != null ? existingMeta.getGitCredentialAlias() : null);
+        String token = gitSecrets.token();
+        String sshKey = gitSecrets.sshKey();
+        if (givesGitSecret(git)) {
             String stored = gitCredentialService.storeSecret(sshKey != null && !sshKey.isBlank() ? sshKey : token, "gitops");
             if (stored != null) {
                 alias = stored;
             }
         }
-
-        if ("PR_MODE".equalsIgnoreCase(git.getCommitMode()) && isHttps && (token == null || token.isBlank())) {
-            throw new IllegalArgumentException("PR mode requires an HTTPS token");
-        }
-        if (isHttps && (token == null || token.isBlank()) && (sshKey == null || sshKey.isBlank())) {
-            throw new IllegalArgumentException("GitOps over HTTPS requires authToken or sshKey");
-        }
-        if (isSsh && (sshKey == null || sshKey.isBlank()) && (token == null || token.isBlank())) {
-            throw new IllegalArgumentException("GitOps over SSH requires sshKey or HTTPS token");
-        }
+        checkGitAccess(repoUrl, git.getCommitMode(), token, sshKey);
 
         // Each release owns its own git workspace directory.
         // Operations on the same release are serialised via a per-release lock;
@@ -463,11 +664,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         // 1b. OpenShift: ServiceMonitor right and the KEDA monitoring token, exactly as in direct mode. A refusal
-        //     stops the deploy before anything is committed to Git.
-        org.apache.ambari.view.k8s.service.OpenShiftMonitoringSetup.prepare(kubernetesService, request);
+        //     stops the deploy before anything is committed to Git. A planned deploy did it when it was planned.
+        if (planned == null) {
+            org.apache.ambari.view.k8s.service.OpenShiftMonitoringSetup.prepare(kubernetesService, request);
+        }
 
-        // 2. Create mounts/PVCs if specified
-        if (request.getMounts() != null) {
+        // 2. Create mounts/PVCs if specified (a planned deploy has a step of its own for them)
+        if (planned == null && request.getMounts() != null) {
             try {
                 Map<String, Object> normalizedMounts = CommandUtils.normalizeMountsObject(request.getMounts());
                 if (!normalizedMounts.isEmpty()) {
@@ -480,34 +683,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             }
         }
 
-        // 3. Create required ConfigMaps if specified
-        if (request.getRequiredConfigMaps() != null && !request.getRequiredConfigMaps().isEmpty()) {
-            try {
-                for (Map<String, Object> cmSpec : request.getRequiredConfigMaps()) {
-                    String cmName = (String) cmSpec.get("name");
-                    if (cmName == null || cmName.isBlank()) {
-                        LOG.warn("Skipping ConfigMap with missing name in {}/{}", namespace, release);
-                        continue;
-                    }
-                    @SuppressWarnings("unchecked")
-                    Map<String, String> data = cmSpec.containsKey("data") && cmSpec.get("data") instanceof Map
-                            ? (Map<String, String>) cmSpec.get("data")
-                            : new LinkedHashMap<>();
-                    @SuppressWarnings("unchecked")
-                    Map<String, String> labels = cmSpec.containsKey("labels") && cmSpec.get("labels") instanceof Map
-                            ? (Map<String, String>) cmSpec.get("labels")
-                            : Map.of("managed-by", "ambari-k8s-view");
-                    kubernetesService.createOrUpdateConfigMap(namespace, cmName, data, labels, Map.of());
-                    logFluxInfo(namespace, release, "automation", "Created ConfigMap %s/%s", namespace, cmName);
-                }
-            } catch (Exception ex) {
-                LOG.warn("Failed to create required ConfigMaps for {}/{}: {}", namespace, release, ex.getMessage());
-                // Continue - ConfigMaps might be optional
-            }
-        }
-
-        // 4. Ensure image pull secret exists and inject into values
-        if (request.getSecretName() != null && !request.getSecretName().isBlank()) {
+        // 3. Ensure image pull secret exists and inject into values. A planned deploy's step ensured it, and the
+        //    planned overrides reference it exactly as the Helm install would.
+        if (planned == null && request.getSecretName() != null && !request.getSecretName().isBlank()) {
             try {
                 String effectiveRepoId = firstNonBlank(request.getRepoId(), repoName);
                 helmService.ensureImagePullSecretFromRepo(effectiveRepoId, namespace, request.getSecretName(), null);
@@ -555,7 +733,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             }
         }
 
-        // 5. Handle dependencies: create HelmRelease YAMLs for each dependency
+        // 4. Handle dependencies: create HelmRelease YAMLs for each dependency
         // Dependencies are committed to Git alongside the main HelmRelease
         // Note: Flux will reconcile them in parallel (no explicit ordering)
         List<DepRef> depRefs = new ArrayList<>();
@@ -591,7 +769,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     Boolean onWorking = "PR_MODE".equalsIgnoreCase(git.getCommitMode()) ? Boolean.FALSE
                             : gitClient.publishedOn(depFile, branch);
                     boolean managedHere = Boolean.TRUE.equals(onBase) || Boolean.TRUE.equals(onWorking);
-                    String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context);
+                    String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context, planned);
                     if (skipped != null) {
                         // A published file is left in place: the operator it installs (KEDA, the keytab webhook) is
                         // shared, and other releases may rely on it. One never published (e.g. in a still-open PR
@@ -627,22 +805,36 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     Map<String, Object> depValues = depSpec.containsKey("values") && depSpec.get("values") instanceof Map
                             ? (Map<String, Object>) depSpec.get("values")
                             : new LinkedHashMap<>();
-                    
+                    if (planned != null && planned.dependencyOverrides() != null) {
+                        // What its Helm install would receive in a direct deploy: the repository's image registry
+                        // and pull Secret (created in its namespace now), the keytab webhook's CA bundle and backend
+                        // URL, its resolved dynamic values such as the Kerberos realm.
+                        Map<String, String> depOverrides;
+                        try {
+                            depOverrides = planned.dependencyOverrides().of(depKey, depNamespace);
+                        } catch (Exception ex) {
+                            throw new IllegalStateException("GitOps deploy of " + namespace + "/" + release
+                                    + " stopped: dependency " + depKey + " could not be prepared in namespace "
+                                    + depNamespace + ", so nothing was committed to Git: " + ex.getMessage(), ex);
+                        }
+                        applyOverridesToValues(depValues, depOverrides);
+                    }
+
                     // Handle webhook-specific configurations
                     Object isWebhookObj = depSpec.get("isWebhook");
                     boolean isWebhook = Boolean.TRUE.equals(isWebhookObj) || "true".equalsIgnoreCase(String.valueOf(isWebhookObj));
-                    if (isWebhook) {
-                        // Inject webhook CA bundle if available (simplified - full webhook setup is complex)
-                        // Note: Full webhook configuration would require WebHookConfigurationService
-                        // For now, we rely on the dependency's own values to contain webhook config
+                    if (isWebhook && planned == null) {
+                        // Without a plan nothing computes the webhook's CA bundle and backend URL: the dependency's
+                        // own values must hold them.
                         LOG.info("Dependency {} is a webhook - ensure webhook config is in values", depKey);
                     }
-                    
+
                     // Use dependency's repoId or fall back to main repo
                     String depRepoName = firstNonBlank((String) depSpec.get("repoId"), repoName);
-                    
-                    // Inject image pull secret if specified
-                    if (request.getSecretName() != null && !request.getSecretName().isBlank()) {
+
+                    // Inject image pull secret if specified. Not for a planned deploy: as in a direct deploy, a
+                    // dependency uses the pull Secret its own definition names, created in its namespace.
+                    if (planned == null && request.getSecretName() != null && !request.getSecretName().isBlank()) {
                         if (!depValues.containsKey("imagePullSecrets")) {
                             depValues.put("imagePullSecrets", new ArrayList<>());
                         }
@@ -672,6 +864,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 }
             logFluxInfo(namespace, release, "automation", "Generated %s dependency HelmReleases and dependsOn", depRefs.size());
             } catch (Exception ex) {
+                if (planned != null) {
+                    // A direct deploy stops when a dependency cannot be installed: nothing is committed either.
+                    throw ex;
+                }
                 LOG.warn("Failed to process dependencies for {}/{}: {}", namespace, release, ex.getMessage(), ex);
                 // Continue - dependencies might be optional or can be added manually
             }
@@ -680,7 +876,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         logFluxInfo(namespace, release, "automation", "Completed pre-deployment automation steps");
         // ============================================================
 
-        // --- Apply security profile, ranger, dynamic overrides, stack globals before rendering values ---
+        // --- Apply security profile, dynamic overrides, stack globals before rendering values ---
         Map<String, Object> mergedValues = request.getValues() == null
                 ? new LinkedHashMap<>()
                 : new LinkedHashMap<>(request.getValues());
@@ -694,89 +890,99 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 }
             }
         }
-        // Ranger block
-        if (request.getRanger() != null && !request.getRanger().isEmpty() && !mergedValues.containsKey("ranger")) {
-            mergedValues.put("ranger", request.getRanger());
-        }
-        // Security profile
-        String resolvedSecurityProfile = resolveSecurityProfileName(request.getSecurityProfile());
-        if (resolvedSecurityProfile != null && !resolvedSecurityProfile.isBlank()) {
-            request.setSecurityProfile(resolvedSecurityProfile);
-        }
-        SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
-        applySecurityOverrides(securityCfg, explicitOverrides);
-        // Kerberos: on when the security profile asks for it or the Ambari cluster is Kerberized, off when Ambari
-        // reports no Kerberos (or manages no cluster) - the same rule as direct deploys. Left to the chart otherwise.
-        boolean profileKerberos = securityCfg != null && securityCfg.mode != null
-                && securityCfg.mode.toLowerCase().contains("kerberos");
-        // External contexts keep their own rules (Kerberos only from the operator's keytab), as before.
-        Boolean ambariKerberos = followsAmbariKerberos(request) ? ambariClusterKerberos(context) : null;
-        String kerberosEnabled = kerberosEnabledValue(profileKerberos, ambariKerberos);
-        if ("false".equals(kerberosEnabled)) {
-            // Not committed for a release that runs with Kerberos on a context nobody recorded: its pods would lose
-            // their keytab and krb5.conf.
-            String kerberosProblem = CommandService.kerberosSwitchOffProblem(kubernetesService, request);
-            if (kerberosProblem != null) {
-                throw new IllegalStateException(kerberosProblem);
+        if (planned != null) {
+            // The command plan applied the security profile it was asked for, Kerberos and the truststore with the
+            // rest of the release's preparation, in the order a direct deploy applies them: applied again here, the
+            // profile would undo what the plan set on top of it (the SSO login mode, for one).
+            explicitOverrides.putAll(planned.overrides());
+        } else {
+            // Security profile
+            String resolvedSecurityProfile = resolveSecurityProfileName(request.getSecurityProfile());
+            if (resolvedSecurityProfile != null && !resolvedSecurityProfile.isBlank()) {
+                request.setSecurityProfile(resolvedSecurityProfile);
             }
-            addOverride(explicitOverrides, "global.security.kerberos.enabled", "false");
-        } else if ("true".equals(kerberosEnabled)) {
-            String krb5ConfigMapName = (release.isBlank() ? "krb5-conf" : (release + "-krb5-conf"));
-            try {
-                commandUtils.ensureKrb5ConfConfigMap(namespace, krb5ConfigMapName);
-                addOverride(explicitOverrides, "global.security.kerberos.enabled", "true");
-                addOverride(explicitOverrides, "global.security.kerberos.configMapName", krb5ConfigMapName);
-            } catch (Exception ex) {
-                LOG.warn("Failed to prepare Kerberos config map for {}/{}: {}", namespace, release, ex.getMessage());
-            }
-        }
-        // Truststore for downstream TLS clients — shared with the direct deploy path via
-        // TrustBundleService: merges (deduped) the Ambari server SSL CA + Ambari Internal CA +
-        // operator truststores (defaults + those selected for this release), and provisions even
-        // when Ambari itself is not on SSL. Passwords are credential-store/alias resolved.
-        try {
-            TrustBundleService trustBundleService = new TrustBundleService(viewContext, kubernetesService);
-            TrustBundleService.ProvisionResult truststoreResult = trustBundleService.provisionReleaseTruststore(
-                    namespace, release, request.getTruststoreRefs());
-            if (truststoreResult.provisioned()) {
-                for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
-                    addOverride(explicitOverrides, override.getKey(), override.getValue());
+            SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
+            applySecurityOverrides(securityCfg, explicitOverrides);
+            // Kerberos: on when the security profile asks for it or the Ambari cluster is Kerberized, off when Ambari
+            // reports no Kerberos (or manages no cluster) - the same rule as direct deploys. Left to the chart otherwise.
+            boolean profileKerberos = securityCfg != null && securityCfg.mode != null
+                    && securityCfg.mode.toLowerCase().contains("kerberos");
+            // External contexts keep their own rules (Kerberos only from the operator's keytab), as before.
+            Boolean ambariKerberos = followsAmbariKerberos(request) ? ambariClusterKerberos(context) : null;
+            String kerberosEnabled = kerberosEnabledValue(profileKerberos, ambariKerberos);
+            if ("false".equals(kerberosEnabled)) {
+                // Not committed for a release that runs with Kerberos on a context nobody recorded: its pods would lose
+                // their keytab and krb5.conf.
+                String kerberosProblem = CommandService.kerberosSwitchOffProblem(kubernetesService, request);
+                if (kerberosProblem != null) {
+                    throw new IllegalStateException(kerberosProblem);
                 }
-                LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
-                        truststoreResult.secretName(), truststoreResult.caCount(), namespace);
-            } else {
-                LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
+                addOverride(explicitOverrides, "global.security.kerberos.enabled", "false");
+            } else if ("true".equals(kerberosEnabled)) {
+                String krb5ConfigMapName = (release.isBlank() ? "krb5-conf" : (release + "-krb5-conf"));
+                try {
+                    commandUtils.ensureKrb5ConfConfigMap(namespace, krb5ConfigMapName);
+                    addOverride(explicitOverrides, "global.security.kerberos.enabled", "true");
+                    addOverride(explicitOverrides, "global.security.kerberos.configMapName", krb5ConfigMapName);
+                } catch (Exception ex) {
+                    LOG.warn("Failed to prepare Kerberos config map for {}/{}: {}", namespace, release, ex.getMessage());
+                }
             }
-        } catch (Exception ex) {
-            LOG.warn("Failed to provision truststore Secret: {}", ex.toString());
+            // Truststore for downstream TLS clients — shared with the direct deploy path via
+            // TrustBundleService: merges (deduped) the Ambari server SSL CA + Ambari Internal CA +
+            // operator truststores (defaults + those selected for this release), and provisions even
+            // when Ambari itself is not on SSL. Passwords are credential-store/alias resolved.
+            try {
+                TrustBundleService trustBundleService = new TrustBundleService(viewContext, kubernetesService);
+                TrustBundleService.ProvisionResult truststoreResult = trustBundleService.provisionReleaseTruststore(
+                        namespace, release, request.getTruststoreRefs());
+                if (truststoreResult.provisioned()) {
+                    for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
+                        addOverride(explicitOverrides, override.getKey(), override.getValue());
+                    }
+                    LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
+                            truststoreResult.secretName(), truststoreResult.caCount(), namespace);
+                } else {
+                    LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
+                }
+            } catch (Exception ex) {
+                LOG.warn("Failed to provision truststore Secret: {}", ex.toString());
+            }
         }
+        // The view's Kerberos injection mode, written as a direct deploy writes it. Left to the chart (WEBHOOK by
+        // default), the pods would wait for a keytab webhook that the default PRE_PROVISIONED mode never installs.
+        addOverride(explicitOverrides, "global.security.kerberos.injectionMode",
+                CommandService.resolveKerberosInjectionMode(viewContext));
         // Passwords and secrets of this deploy, from the definitions: none of them may be written to Git.
         GitOpsSecretValues secrets = new GitOpsSecretValues();
-        // Global stack configs / config instantiations
-        try {
-            // Apply bundled global configs (e.g., security-env) into values._ov via overrides
-            List<StackConfig> globals = globalConfigService.listGlobalConfigs();
-            if (globals != null) {
-                for (StackConfig cfg : globals) {
-                    if (cfg.properties == null) continue;
-                    for (StackProperty p : cfg.properties) {
-                        if (p.name == null || p.name.isBlank()) continue;
-                        if (p.value == null || String.valueOf(p.value).isBlank()) continue;
-                        addOverride(explicitOverrides, p.name, String.valueOf(p.value));
-                        secrets.addPasswordProperty(p.name, p);
+        // Global stack configs / config instantiations. Not for a planned deploy: a direct deploy passes neither to
+        // Helm (its plan writes the stack configurations to Secrets), and the planned overrides are what Helm gets.
+        if (planned == null) {
+            try {
+                // Apply bundled global configs (e.g., security-env) into values._ov via overrides
+                List<StackConfig> globals = globalConfigService.listGlobalConfigs();
+                if (globals != null) {
+                    for (StackConfig cfg : globals) {
+                        if (cfg.properties == null) continue;
+                        for (StackProperty p : cfg.properties) {
+                            if (p.name == null || p.name.isBlank()) continue;
+                            if (p.value == null || String.valueOf(p.value).isBlank()) continue;
+                            addOverride(explicitOverrides, p.name, String.valueOf(p.value));
+                            secrets.addPasswordProperty(p.name, p);
+                        }
                     }
                 }
+                // Apply per-request stackConfigOverrides
+                if (request.getStackConfigOverrides() != null && !request.getStackConfigOverrides().isEmpty()) {
+                    request.getStackConfigOverrides().forEach((k, v) -> {
+                        if (k != null && v != null && !k.isBlank()) {
+                            addOverride(explicitOverrides, k, String.valueOf(v));
+                        }
+                    });
+                }
+            } catch (Exception ex) {
+                LOG.warn("Failed to apply global or stack config instantiations: {}", ex.toString());
             }
-            // Apply per-request stackConfigOverrides
-            if (request.getStackConfigOverrides() != null && !request.getStackConfigOverrides().isEmpty()) {
-                request.getStackConfigOverrides().forEach((k, v) -> {
-                    if (k != null && v != null && !k.isBlank()) {
-                        addOverride(explicitOverrides, k, String.valueOf(v));
-                    }
-                });
-            }
-        } catch (Exception ex) {
-            LOG.warn("Failed to apply global or stack config instantiations: {}", ex.toString());
         }
         // Dynamic overrides (pre-resolved) in values._dynamicOverrides
         ConfigResolutionService.mergeDynamicOverrides(mergedValues, explicitOverrides);
@@ -836,14 +1042,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String repoYaml = chartSources.get(repoName);
 
         String dependsYaml = buildDependsOnYaml(depRefs);
-        String hrYaml = ("""
-                apiVersion: %s
-                kind: HelmRelease
-                metadata:
-                  name: %s
-                  namespace: %s
+        String hrSpec = ("""
                 spec:
                   interval: 5m
+                  timeout: %s
                 """ + (dependsYaml.isEmpty() ? "" : dependsYaml) + """
                   chart:
                     spec:
@@ -855,8 +1057,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         namespace: flux-system
                 %s  values:
                 %s
-                """).formatted(FLUX_HR_API_VERSION, release, namespace, chartInSource, version, repoName,
-                        valuesFromYaml, valuesYaml);
+                """).formatted(HELM_TIMEOUT, chartInSource, version, repoName, valuesFromYaml, valuesYaml);
+        String specDigest = specDigest(hrSpec);
+        String hrYaml = """
+                apiVersion: %s
+                kind: HelmRelease
+                metadata:
+                  name: %s
+                  namespace: %s
+                  annotations:
+                    %s: "%s"
+                """.formatted(FLUX_HR_API_VERSION, release, namespace, SPEC_DIGEST_ANNOTATION, specDigest) + hrSpec;
 
         for (int i = 0; i < pendingDeps.size(); i++) {
             PendingDependency dep = pendingDeps.get(i);
@@ -914,10 +1125,18 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             throw commitEx;
         }
         boolean committed = commitSha != null;
+        // A change that did not land where Flux reads is applied anyway once Git already holds it there: a pull request
+        // or working branch merged since, which a redeploy then finds with nothing new to commit.
+        boolean appliedNow = appliedOnCommit || (!committed && hrYaml.equals(
+                gitClient.publishedContent(targetDir.resolve("helmrelease.yaml"), configuredBase)));
         if (!committed) {
             if (secretsWritten.isEmpty()) {
                 LOG.info("Flux GitOps found no changes for {}/{}; skipping commit", namespace, release);
-                return "NO_CHANGES";
+                return new CommitResult("NO_CHANGES",
+                        firstNonBlank(gitClient.headCommit(), existingMeta != null ? existingMeta.getGitCommitSha() : null),
+                        false, repoUrl, branch, configuredBase, appliedNow,
+                        existingMeta != null ? existingMeta.getGitPrUrl() : null,
+                        existingMeta != null ? existingMeta.getGitPrState() : null, specDigest);
             }
             // Only passwords or secrets changed: nothing to commit, but Flux must read the Secret again. A change not
             // applied yet never asks for it: its Secret is read only once the change is merged.
@@ -989,7 +1208,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.warn("Failed to persist Flux metadata for {}/{}: {}", namespace, release, ex.toString());
         }
 
-        return commitSha;
+        if (!committed && prUrl == null && existingMeta != null) {
+            // Only the passwords changed: the change Git holds is still the one of the release's pull request.
+            prUrl = existingMeta.getGitPrUrl();
+            prState = existingMeta.getGitPrState();
+        }
+        return new CommitResult(commitSha, commitSha, committed, repoUrl, branch, configuredBase, appliedNow, prUrl,
+                prState, specDigest);
 
         } catch (Exception applyEx) {
             // Reset workspace so the next deploy attempt starts from a clean tree.
@@ -1907,6 +2132,177 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
     }
 
+    /** The value of the {@link #SPEC_DIGEST_ANNOTATION} for a HelmRelease spec, as written to Git. */
+    static String specDigest(String spec) {
+        try {
+            byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(spec.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(hash);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
+    /**
+     * Where a HelmRelease on the cluster stands for the version a deploy committed. Ready once Flux has applied that
+     * version (its {@link #SPEC_DIGEST_ANNOTATION}), handled the reconcile or reset requested for it, and reports it
+     * Ready. Failed when Flux gave up on it (Stalled), with the cause Flux reports on its Ready condition. Otherwise
+     * still waiting, with what Flux reports meanwhile: it has not pulled the commit yet, or is installing, upgrading or
+     * retrying the release.
+     *
+     * @param helmRelease    the HelmRelease on the cluster, {@code null} when it is not there
+     * @param expectedDigest the annotation of the committed version; {@code null} to take the version on the cluster
+     */
+    public static Readiness readiness(GenericKubernetesResource helmRelease, String expectedDigest) {
+        return readiness(helmRelease, expectedDigest, null);
+    }
+
+    /**
+     * {@link #readiness(GenericKubernetesResource, String)} after asking Flux to try again a release it gave up on.
+     *
+     * @param resetRequestedAt the reset asked for ({@link KubernetesService#requestFluxReset}): until Flux has handled
+     *                         it, its Stalled condition is the one from before. {@code null} when none was asked for.
+     */
+    public static Readiness readiness(GenericKubernetesResource helmRelease, String expectedDigest,
+                                      String resetRequestedAt) {
+        if (helmRelease == null) {
+            return new Readiness(false, false,
+                    "the HelmRelease is not on the cluster yet: Flux has not applied the commit", false);
+        }
+        io.fabric8.kubernetes.api.model.ObjectMeta metadata = helmRelease.getMetadata();
+        Map<String, String> annotations = metadata == null || metadata.getAnnotations() == null
+                ? Map.of() : metadata.getAnnotations();
+        if (expectedDigest != null && !expectedDigest.equals(annotations.get(SPEC_DIGEST_ANNOTATION))) {
+            return new Readiness(false, false,
+                    "Flux has not applied the commit yet: the HelmRelease on the cluster is still the previous version",
+                    false);
+        }
+        long generation = metadata == null || metadata.getGeneration() == null ? 0L : metadata.getGeneration();
+        Map<?, ?> status = helmRelease.get("status") instanceof Map<?, ?> s ? s : Map.of();
+        long observedGeneration = asLong(status.get("observedGeneration"));
+        List<Map<?, ?>> conditions = new ArrayList<>();
+        if (status.get("conditions") instanceof List<?> listed) {
+            for (Object c : listed) {
+                if (c instanceof Map<?, ?> m) conditions.add(m);
+            }
+        }
+        Map<?, ?> ready = currentCondition(conditions, "Ready", generation, observedGeneration);
+        Map<?, ?> stalled = currentCondition(conditions, "Stalled", generation, observedGeneration);
+        boolean isReady = ready != null && isTrue(ready);
+        boolean isStalled = stalled != null && isTrue(stalled);
+
+        // A request Flux has not handled yet: the state it reports Ready or given up on predates it.
+        String pending = null;
+        if (resetRequestedAt != null
+                && !resetRequestedAt.equals(Objects.toString(status.get("lastHandledResetAt"), null))) {
+            pending = "Flux has not started its new attempt at the release yet";
+        } else {
+            String requestedAt = annotations.get("reconcile.fluxcd.io/requestedAt");
+            if (requestedAt != null
+                    && !requestedAt.equals(Objects.toString(status.get("lastHandledReconcileAt"), null))) {
+                pending = "Flux has not read the new passwords and secrets of the release yet";
+            }
+        }
+        if (pending != null) {
+            // Meanwhile, what Flux reports of the attempt under way.
+            String underWay = ready != null && !isReady && !isStalled ? describeCondition(ready) : "";
+            return new Readiness(false, false, underWay.isBlank() ? pending : underWay, true);
+        }
+        if (isStalled) {
+            // Flux words why it gave up (RetriesExceeded) on Stalled, and what failed on Ready.
+            String gaveUp = describeCondition(stalled);
+            String cause = ready != null && !isReady ? describeCondition(ready) : "";
+            return new Readiness(false, true,
+                    cause.isBlank() || cause.equals(gaveUp) ? gaveUp : cause + " (" + gaveUp + ")", true);
+        }
+        if (ready == null) {
+            return new Readiness(false, false, "Flux has not reconciled the latest change of the HelmRelease yet", true);
+        }
+        String state = describeCondition(ready);
+        return new Readiness(isReady, false, state.isBlank() ? "Flux has not reported the state of the release yet"
+                : state, true);
+    }
+
+    /**
+     * The HelmReleases that hold a HelmRelease back: those its {@code spec.dependsOn} names, when Flux reports it not
+     * Ready because one of them is not (DependencyNotReady). Flux then neither installs nor upgrades it, and never marks
+     * it Stalled, so a dependency Flux gave up on is seen only on the dependency itself.
+     *
+     * @param helmRelease the HelmRelease on the cluster, {@code null} when it is not there
+     * @return the HelmReleases it depends on, a dependency without a namespace in its own; empty when Flux does not
+     *         report it waiting for them
+     */
+    public static List<NamespacedName> awaitedDependencies(GenericKubernetesResource helmRelease) {
+        if (helmRelease == null) {
+            return List.of();
+        }
+        io.fabric8.kubernetes.api.model.ObjectMeta metadata = helmRelease.getMetadata();
+        long generation = metadata == null || metadata.getGeneration() == null ? 0L : metadata.getGeneration();
+        Map<?, ?> status = helmRelease.get("status") instanceof Map<?, ?> s ? s : Map.of();
+        List<Map<?, ?>> conditions = new ArrayList<>();
+        if (status.get("conditions") instanceof List<?> listed) {
+            for (Object c : listed) {
+                if (c instanceof Map<?, ?> m) conditions.add(m);
+            }
+        }
+        Map<?, ?> ready = currentCondition(conditions, "Ready", generation, asLong(status.get("observedGeneration")));
+        if (ready == null || isTrue(ready) || !"DependencyNotReady".equals(Objects.toString(ready.get("reason"), ""))) {
+            return List.of();
+        }
+        String ownNamespace = metadata == null ? null : metadata.getNamespace();
+        List<NamespacedName> dependencies = new ArrayList<>();
+        Map<?, ?> spec = helmRelease.get("spec") instanceof Map<?, ?> s ? s : Map.of();
+        if (spec.get("dependsOn") instanceof List<?> dependsOn) {
+            for (Object entry : dependsOn) {
+                if (!(entry instanceof Map<?, ?> dependency) || dependency.get("name") == null) continue;
+                String namespace = Objects.toString(dependency.get("namespace"), "");
+                dependencies.add(new NamespacedName(namespace.isBlank() ? ownNamespace : namespace,
+                        String.valueOf(dependency.get("name"))));
+            }
+        }
+        return dependencies;
+    }
+
+    /**
+     * The condition of the given type when Flux set it for the HelmRelease's latest change, else {@code null}. Flux
+     * records on each condition the generation it set it for, while {@code status.observedGeneration} only moves once
+     * the release is Ready or Stalled: it says nothing of a release Flux is still installing or retrying, and is read
+     * only for a condition that records none.
+     */
+    private static Map<?, ?> currentCondition(List<Map<?, ?>> conditions, String type, long generation,
+                                              long observedGeneration) {
+        Map<?, ?> condition = conditions.stream()
+                .filter(c -> type.equalsIgnoreCase(Objects.toString(c.get("type"), "")))
+                .findFirst().orElse(null);
+        if (condition == null) {
+            return null;
+        }
+        long setFor = condition.get("observedGeneration") != null
+                ? asLong(condition.get("observedGeneration")) : observedGeneration;
+        return setFor >= generation ? condition : null;
+    }
+
+    private static boolean isTrue(Map<?, ?> condition) {
+        return "True".equalsIgnoreCase(Objects.toString(condition.get("status"), ""));
+    }
+
+    /** A condition as Flux words it: "reason: message". */
+    private static String describeCondition(Map<?, ?> condition) {
+        String reason = Objects.toString(condition.get("reason"), "");
+        String message = Objects.toString(condition.get("message"), "");
+        if (reason.isBlank()) return message;
+        return message.isBlank() ? reason : reason + ": " + message;
+    }
+
+    private static long asLong(Object value) {
+        if (value instanceof Number n) return n.longValue();
+        try {
+            return value == null ? -1L : Long.parseLong(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return -1L;
+        }
+    }
+
     static void evaluateGenerationStaleness(HelmReleaseDTO dto, long desired, long observed) {
         if (desired >= 0 && observed >= 0 && observed < desired) {
             dto.staleGeneration = true;
@@ -2310,7 +2706,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     static final String MANAGED_BY_VALUE = "ambari-k8s-view";
 
     /** A namespaced object, by namespace and name. */
-    record NamespacedName(String namespace, String name) {}
+    public record NamespacedName(String namespace, String name) {}
 
     /** A dependency HelmRelease, rendered once the passwords and secrets of the deploy are known. */
     private record PendingDependency(String releaseName, String namespace, String chart, String version,
@@ -2478,6 +2874,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                   namespace: %s
                 spec:
                   interval: 5m
+                  timeout: %s
                   chart:
                     spec:
                       chart: %s
@@ -2487,7 +2884,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         namespace: flux-system
                 %s  values:
                 %s
-                """.formatted(FLUX_HR_API_VERSION, dep.releaseName(), dep.namespace(), dep.chart(),
+                """.formatted(FLUX_HR_API_VERSION, dep.releaseName(), dep.namespace(), HELM_TIMEOUT, dep.chart(),
                 dep.version() == null ? "" : "      version: " + dep.version() + "\n",
                 dep.repoName(), valuesFromYaml, serializeValuesAsYaml(values));
     }

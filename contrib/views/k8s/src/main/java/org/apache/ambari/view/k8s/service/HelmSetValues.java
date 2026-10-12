@@ -75,8 +75,8 @@ public final class HelmSetValues {
 
     /**
      * Hides secrets in a JSON text about to be logged (e.g. command parameters): the values {@link #textIfSecret}
-     * marked, and any string under a key ending in password, passwd, secret or token (e.g.
-     * {@code oidcExternalClientSecret}).
+     * marked, and any string under a key ending in password, passwd, secret, token, sshKey or privateKey (e.g.
+     * {@code oidcExternalClientSecret}, the {@code sshKey} of a GitOps deploy's Git options).
      */
     public static String redactJson(String json) {
         if (json == null) {
@@ -86,9 +86,9 @@ public final class HelmSetValues {
         return SECRET_KEY_JSON_STRING.matcher(hidden).replaceAll("$1\"<hidden>\"");
     }
 
-    /** A JSON string value under a key ending in password/passwd/secret/token, any case. */
+    /** A JSON string value under a key ending in password/passwd/secret/token/sshKey/privateKey, any case. */
     private static final java.util.regex.Pattern SECRET_KEY_JSON_STRING = java.util.regex.Pattern.compile(
-            "(\"[^\"\\\\]*(?i:password|passwd|secret|token)\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"");
+            "(\"[^\"\\\\]*(?i:password|passwd|secret|token|sshkey|privatekey)\"\\s*:\\s*)\"(?:[^\"\\\\]|\\\\.)*\"");
 
     /** A JSON string whose content starts with the marker, as Gson writes it ({@code \\u0000} escaped). */
     private static final java.util.regex.Pattern MARKED_JSON_STRING =

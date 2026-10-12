@@ -392,6 +392,36 @@ public class GitClient {
         }
     }
 
+    /**
+     * The content of a file as published on a branch of the remote, as of the last {@link #sync}.
+     *
+     * @return the content, or {@code null} when the branch or the file is not there, or cannot be read
+     */
+    public String publishedContent(Path relative, String branch) {
+        if (branch == null || branch.isBlank()) {
+            return null;
+        }
+        String path;
+        try {
+            path = workspace.relativize(resolveSafe(relative)).toString().replace('\\', '/');
+        } catch (IOException outside) {
+            return null;
+        }
+        try (Git git = Git.open(workspace.toFile())) {
+            org.eclipse.jgit.lib.ObjectId tree = git.getRepository().resolve("refs/remotes/origin/" + branch + "^{tree}");
+            if (tree == null) {
+                return null;
+            }
+            try (org.eclipse.jgit.treewalk.TreeWalk walk = org.eclipse.jgit.treewalk.TreeWalk.forPath(git.getRepository(), path, tree)) {
+                return walk == null ? null : new String(git.getRepository().open(walk.getObjectId(0)).getBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8);
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not read {} on origin/{}: {}", path, branch, e.toString());
+            return null;
+        }
+    }
+
     /** Remove a path (file or directory) relative to repo root. */
     public void deletePath(Path relative) throws IOException {
         Path abs = resolveSafe(relative);

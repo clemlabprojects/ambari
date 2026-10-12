@@ -1,0 +1,13 @@
+{
+  "label": "ZZ Test GitOps (test only, NOT in catalog.json)",
+  "chart": "example/zz-test-gitops",
+  "version": "0.0.1",
+  "form": [],
+  "postDeploy": {
+    "ambariViewInstance": {
+      "viewName": "ZZ-TEST-VIEW",
+      "viewVersion": "1.0.0.0",
+      "serviceUrlTemplate": "http://{{releaseName}}.{{namespace}}.svc.cluster.local:8080"
+    }
+  }
+}

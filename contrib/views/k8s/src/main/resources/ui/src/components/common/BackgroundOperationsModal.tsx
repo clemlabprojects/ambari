@@ -20,6 +20,7 @@ import React, { useEffect, useState } from 'react';
 import { Modal, Alert, Collapse, Progress, Typography, Space, Button, Spin, Tree, Tag, message } from 'antd';
 import { LoadingOutlined, CheckCircleTwoTone, CloseCircleTwoTone, ClockCircleOutlined } from '@ant-design/icons';
 import { cancelCommand, resumeCommand, getCommandStatus, listCommands, listChildCommands, refreshDependencies, getCommandLogs, type CommandStatus } from '../../api/client';
+import { waitingForMerge } from './operationOutcome';
 
 type BackgroundOperationsModalProps = {
   open: boolean;
@@ -278,7 +279,9 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
               null;
             if (watched && isTerminal(watched)) {
               setWatchCommandCompleted(true);
-              if (watched.state === 'SUCCEEDED' && onAutoClose) {
+              // A GitOps change still waiting for a merge also ends SUCCEEDED, with nothing applied yet: the modal
+              // stays open so the operator reads what it waits for.
+              if (watched.state === 'SUCCEEDED' && onAutoClose && !waitingForMerge(watched)) {
                 onAutoClose();
               }
             }
@@ -478,8 +481,28 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     // clicking needed. The steps tree beside it is a progress display only.
     const logId = op.id;
     const logs = logState[logId];
+    // From the row the poller keeps current: the status fetched when the operation was opened may predate its end.
+    const pendingMerge = op.state === 'SUCCEEDED' ? waitingForMerge(op) : null;
     return (
       <>
+        {pendingMerge && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Committed to Git, not applied yet"
+            description={(
+              <Space direction="vertical" size={4}>
+                <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{pendingMerge.message}</span>
+                {pendingMerge.pullRequestUrl && (
+                  <Typography.Link href={pendingMerge.pullRequestUrl} target="_blank" rel="noopener noreferrer">
+                    Open the pull request
+                  </Typography.Link>
+                )}
+              </Space>
+            )}
+          />
+        )}
         {status.state === 'FAILED' && status.error && (
           <Alert
             type="error"
@@ -564,6 +587,9 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
                     {op.message || op.type || op.id}
                   </Typography.Text>
                   <Tag color={stateColor(op.state)} style={{ margin: 0, flexShrink: 0 }}>{op.state}</Tag>
+                  {op.state === 'SUCCEEDED' && waitingForMerge(op) && (
+                    <Tag color="gold" style={{ margin: 0, flexShrink: 0 }}>WAITING FOR MERGE</Tag>
+                  )}
                   <Progress percent={displayPercent(op)} size="small" status={progressStatus(op.state) as any} style={{ width: 120, marginBottom: 0, flexShrink: 0 }} />
                   <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatTimestamp(op.updatedAt)}</Typography.Text>
                   {(op.state === 'RUNNING' || op.state === 'PENDING') ? (

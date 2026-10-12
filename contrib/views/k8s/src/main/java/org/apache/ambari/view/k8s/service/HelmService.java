@@ -1020,8 +1020,8 @@ public class HelmService {
      * "prometheus.ingress.enabled" while still shipping the structured YAML the Helm chart expects.
      */
     @SuppressWarnings("unchecked")
-    // package-private for unit testing
-    Map<String, Object> expandDotPaths(Map<String, Object> source) {
+    // package-private for unit testing, and for the GitOps commit, which writes the values Helm would get
+    static Map<String, Object> expandDotPaths(Map<String, Object> source) {
         if (source == null || source.isEmpty()) {
             return new LinkedHashMap<>();
         }
@@ -1038,7 +1038,7 @@ public class HelmService {
      * Intermediate nodes are created as {@link LinkedHashMap} instances.
      */
     @SuppressWarnings("unchecked")
-    private void insertNested(Map<String, Object> target, String key, Object value) {
+    private static void insertNested(Map<String, Object> target, String key, Object value) {
         if (key == null || key.isBlank()) {
             return;
         }
@@ -1127,7 +1127,7 @@ public class HelmService {
     }
 
     @SuppressWarnings("unchecked")
-    private Object expandIfNeeded(Object value) {
+    private static Object expandIfNeeded(Object value) {
         if (value instanceof Map) {
             return expandDotPaths((Map<String, Object>) value);
         }

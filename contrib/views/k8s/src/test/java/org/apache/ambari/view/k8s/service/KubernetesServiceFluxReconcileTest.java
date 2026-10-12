@@ -70,6 +70,27 @@ class KubernetesServiceFluxReconcileTest {
     @Test
     void aHelmReleaseNotOnTheClusterIsReported() {
         assertFalse(service().requestFluxReconcile("analytics", "not-applied-yet"));
+        assertNull(service().requestFluxReset("analytics", "not-applied-yet"));
+    }
+
+    @Test
+    void aResetIsAskedWithTheReconcileRequestOfTheSameValue() {
+        GenericKubernetesResource hr = new GenericKubernetesResourceBuilder()
+                .withApiVersion("helm.toolkit.fluxcd.io/v2").withKind("HelmRelease")
+                .withNewMetadata().withName("superset").withNamespace("analytics")
+                .addToAnnotations("team", "data").endMetadata()
+                .build();
+        client.genericKubernetesResources(HELM_RELEASES).inNamespace("analytics").resource(hr).create();
+
+        String resetAt = service().requestFluxReset("analytics", "superset");
+
+        Map<String, String> annotations = client.genericKubernetesResources(HELM_RELEASES).inNamespace("analytics")
+                .withName("superset").get().getMetadata().getAnnotations();
+        assertNotNull(resetAt);
+        assertEquals(resetAt, annotations.get("reconcile.fluxcd.io/resetAt"));
+        assertEquals(resetAt, annotations.get("reconcile.fluxcd.io/requestedAt"),
+                "Flux handles a reset only with a reconcile request of the same value");
+        assertEquals("data", annotations.get("team"));
     }
 
     @Test

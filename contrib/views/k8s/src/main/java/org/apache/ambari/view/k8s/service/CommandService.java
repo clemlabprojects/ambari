@@ -50,6 +50,7 @@ import org.apache.ambari.view.k8s.service.deployment.DeploymentBackend;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentContext;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.deployment.GitClient;
+import org.apache.ambari.view.k8s.service.deployment.GitOpsPlanBackend;
 import org.apache.ambari.view.k8s.service.deployment.HelmDirectBackend;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 
@@ -126,6 +127,20 @@ public class CommandService {
     /** Key of the operation result that marks a deploy refused after its steps were stored, before any of them ran. */
     private static final String REFUSED_BEFORE_START = "refusedBeforeStart";
     private static final int MAX_RETRYABLE_ATTEMPTS = Integer.getInteger("k8s.view.command.maxRetryableAttempts", 5);
+    /** How long a GitOps deploy waits for Flux to apply its commit and report the release Ready. */
+    private static final int FLUX_READY_TIMEOUT_SECONDS = Integer.getInteger("k8s.view.gitops.readyTimeoutSeconds", 1200);
+    /** How often that wait reads the HelmRelease. */
+    private static final int FLUX_READY_POLL_SECONDS = Integer.getInteger("k8s.view.gitops.readyPollSeconds", 10);
+    /**
+     * Command parameter of a GitOps deploy holding what its commit writes besides the values: the dependencies (as
+     * HelmReleases), the truststores and the Kerberos block of the form.
+     */
+    static final String GITOPS_RELEASE_PARAM = "_gitOpsRelease";
+    /**
+     * Entry of {@link #GITOPS_RELEASE_PARAM}: the parameters of the Helm steps of each dependency, by name, as a direct
+     * deploy would plan them; the commit computes from them what each dependency's HelmRelease receives.
+     */
+    static final String GITOPS_DEPENDENCY_STEPS = "dependencySteps";
 
     // External dependencies (adapters) — injected
     private final HelmService helmService;
@@ -133,6 +148,13 @@ public class CommandService {
     private final WebHookConfigurationService webHookConfigurationService;
     private final CommandLogService commandLogService;
     private final FluxGitOpsBackend fluxGitOpsBackend;
+    /**
+     * Prepares the keytab webhook's namespace, certificates and Ambari user before the webhook is installed;
+     * package-private so tests, which have no Ambari, can replace it.
+     */
+    java.util.function.Consumer<MultivaluedMap<String, String>> keytabWebhookPreparation;
+    /** Keeps the Git credentials of GitOps deploys; package-private so tests can use a store of their own. */
+    GitCredentialService gitCredentialService;
     private final Map<String, DeploymentBackend> deploymentBackends = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeatScheduler = Executors.newScheduledThreadPool(1);
     private final ExecutorService helmExecutor = Executors.newCachedThreadPool();
@@ -185,8 +207,11 @@ public class CommandService {
         PathConfig pathConfig = new PathConfig(ctx);
         pathConfig.ensureDirs();
         this.fluxGitOpsBackend = new FluxGitOpsBackend(pathConfig.workDir(), kubernetesService, ctx);
+        this.gitCredentialService = new GitCredentialService(ctx);
+        this.keytabWebhookPreparation = callerHeaders -> org.apache.ambari.view.k8s.utils.WebHookBootstrap
+                .prepareWebhookPrereqs(ctx, kubernetesService, "keytab-webhook", callerHeaders);
         // Dispatcher registry (can be extended later)
-        this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), fluxGitOpsBackend);
+        this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), new GitOpsPlanBackend(this, fluxGitOpsBackend));
         this.deploymentBackends.put(DeploymentMode.DIRECT_HELM.name(), new HelmDirectBackend(this));
         recoverOrphanedCommands();
         LOG.info("CommandService initialized for {}. Consider adding DB indexes on command.id, command_status_id, created_at and pruning terminal commands periodically to keep polling fast.", ctx.getInstanceName());
@@ -526,6 +551,26 @@ public class CommandService {
             return false;
         }
         return "true".equalsIgnoreCase(normalized);
+    }
+
+    /**
+     * Prepares the keytab webhook of a deploy that installs it (WEBHOOK Kerberos injection mode): its own namespace
+     * with an mTLS client Secret, a serving certificate and the Ambari CA bundle. Prepared when the webhook is about to
+     * be installed rather than at kubeconfig upload: in the default PRE_PROVISIONED mode nothing uses that namespace,
+     * and on OpenShift sites where namespaces cannot be created on the fly it must not be required at all.
+     *
+     * @throws IllegalArgumentException when they cannot be prepared, saying what the operator can do
+     */
+    private void prepareKeytabWebhook(MultivaluedMap<String, String> callerHeaders) {
+        try {
+            keytabWebhookPreparation.accept(callerHeaders);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Kerberos injection mode is WEBHOOK, which needs the keytab "
+                    + "webhook namespace (default 'ambari-mutating-webhooks') and its certificates, but they "
+                    + "could not be prepared: " + e.getMessage() + ". Pre-create that namespace and grant the "
+                    + "view access to it, or switch Settings > Kerberos injection mode to PRE_PROVISIONED "
+                    + "(the default, which needs no webhook).", e);
+        }
     }
 
     /**
@@ -5415,6 +5460,49 @@ public class CommandService {
      */
     public String directHelmDeploy(HelmDeployRequest request, String repoId, String version, String kubeContext, String commandsURL, MultivaluedMap<String,String> callerHeaders,
                                URI baseUri, AmbariAliasResolver ambariAliasResolver) {
+        String id = planReleaseDeploy(request, repoId, version, commandsURL, callerHeaders, baseUri, ambariAliasResolver,
+                false);
+        scheduleNow(id);
+        return id;
+    }
+
+    /**
+     * Flux GitOps deployment: the same command plan as {@link #directHelmDeploy}, so the release gets the same
+     * keytab, SSO client, Ranger repository, Hadoop configuration, certificates and integrations, except that the
+     * Helm install is replaced by a commit of the HelmRelease to Git ({@link CommandType#GITOPS_COMMIT}) and a wait
+     * for Flux to apply it ({@link CommandType#FLUX_WAIT_READY}) before the post-deploy steps.
+     *
+     * @return the command id, polled like that of a direct deploy
+     */
+    public String gitOpsDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
+                               MultivaluedMap<String, String> callerHeaders, URI baseUri,
+                               AmbariAliasResolver ambariAliasResolver) {
+        // Only the view sets it, for a token it stored itself (gitOptionsToPersist): any alias a request names here
+        // would be resolved from Ambari's credential store and sent to the Git server the request names.
+        if (request.getGit() != null) {
+            request.getGit().setAuthTokenAlias(null);
+        }
+        // Refused at once, rather than after the plan has issued a keytab, registered an SSO client and the rest for a
+        // release it then cannot commit.
+        this.fluxGitOpsBackend.checkCommittable(request, new DeploymentContext(repoId, version, null, commandsURL,
+                callerHeaders, baseUri, ambariAliasResolver));
+        String id = planReleaseDeploy(request, repoId, version, commandsURL, callerHeaders, baseUri, ambariAliasResolver,
+                true);
+        scheduleNow(id);
+        return id;
+    }
+
+    /**
+     * Plans and persists the command tree of a release deploy, without starting it.
+     *
+     * @param gitOps whether the release is committed to Git for Flux to apply, instead of installed with Helm: then the
+     *               plan ends with {@link CommandType#GITOPS_COMMIT} and {@link CommandType#FLUX_WAIT_READY}, and Flux
+     *               installs the dependencies, which the commit writes next to the release
+     * @return the command id
+     */
+    String planReleaseDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
+                             MultivaluedMap<String, String> callerHeaders, URI baseUri,
+                             AmbariAliasResolver ambariAliasResolver, boolean gitOps) {
         final String id = UUID.randomUUID().toString();
         final String now = Instant.now().toString();
 
@@ -5447,7 +5535,15 @@ public class CommandService {
         if (request.getDeploymentMode() != null && !request.getDeploymentMode().isBlank()) {
             params.put("deploymentMode", request.getDeploymentMode());
         }
-        if (request.getGit() != null) {
+        if (gitOps) {
+            params.put("git", gitOptionsToPersist(request.getGit()));
+            // What the commit writes besides the values, which the plan itself does not keep.
+            Map<String, Object> gitOpsRelease = new LinkedHashMap<>();
+            if (request.getDependencies() != null) gitOpsRelease.put("dependencies", request.getDependencies());
+            if (request.getTruststoreRefs() != null) gitOpsRelease.put("truststoreRefs", request.getTruststoreRefs());
+            if (request.getKerberos() != null) gitOpsRelease.put("kerberos", request.getKerberos());
+            params.put(GITOPS_RELEASE_PARAM, gitOpsRelease);
+        } else if (request.getGit() != null) {
             params.put("git", request.getGit());
         }
         if (request.getTls() != null && !request.getTls().isEmpty()) {
@@ -5965,7 +6061,7 @@ public class CommandService {
         commandStatusEntity.setAttempt(0);
 
         rootCommand.setCommandStatusId(commandStatusEntity.getId());
-        rootCommand.setTitle("Install release " + request.getReleaseName());
+        rootCommand.setTitle("Install release " + request.getReleaseName() + (gitOps ? " with GitOps" : ""));
 
         if (kerberosEnabled || externalKeytabProvided) {
             LOG.info("Kerberos enabled for this deploy (effective={}, externalKeytab={}, contextKrb5Present={}); preparing krb5.conf ConfigMap for Helm Chart",
@@ -6359,7 +6455,37 @@ public class CommandService {
          * */
         LOG.info("Processing dependencies if any for the release: {} ",request.getReleaseName());
         Map<String, Object> dependenciesToProcess = request.getDependencies();
-        if (dependenciesToProcess != null && !dependenciesToProcess.isEmpty()) {
+        if (gitOps && dependenciesToProcess != null && !dependenciesToProcess.isEmpty()) {
+            // Flux installs them: the commit writes a HelmRelease for each next to the release, which waits for them
+            // (dependsOn). Installed here with Helm as well, they would belong to two owners. The parameters of their
+            // Helm steps are planned as for a direct deploy and kept for the commit, which writes into each
+            // HelmRelease what the Helm install would receive (image registry and pull Secret, the keytab webhook's
+            // CA bundle and backend URL, the resolved realm).
+            LOG.info("GitOps deploy of {}: dependencies {} are committed with the release for Flux to install",
+                    request.getReleaseName(), dependenciesToProcess.keySet());
+            // The commit leaves the keytab webhook out by the same rule (FluxGitOpsBackend).
+            Object kerberosParam = params.get("kerberosClusterEnabled");
+            boolean kerberosOff = kerberosParam != null && !isKerberosClusterEnabled(kerberosParam);
+            Map<String, Object> dependencySteps = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> dependencyEntry : dependenciesToProcess.entrySet()) {
+                if (!(dependencyEntry.getValue() instanceof Map<?, ?> dependencySpec)) continue;
+                if ("kerberos-keytab-mutating-webhook".equals(dependencyEntry.getKey())) {
+                    if (!KERBEROS_INJECTION_MODE_WEBHOOK.equals(kerberosInjectionMode) || kerberosOff) continue;
+                    prepareKeytabWebhook(callerHeaders);
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> dependencySpecMap = (Map<String, Object>) dependencySpec;
+                dependencySteps.put(dependencyEntry.getKey(), this.commandPlanFactory.dependencyReleaseParams(
+                        rootCommand, dependencySpecMap, dependencyEntry.getKey(), commandsURL, callerHeaders, baseUri));
+            }
+            if (params.get(GITOPS_RELEASE_PARAM) instanceof Map<?, ?> gitOpsRelease) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> release = (Map<String, Object>) gitOpsRelease;
+                release.put(GITOPS_DEPENDENCY_STEPS, dependencySteps);
+                rootCommand.setParamsJson(gson.toJson(params));
+                store(rootCommand);
+            }
+        } else if (dependenciesToProcess != null && !dependenciesToProcess.isEmpty()) {
             if (kerberosDetectionAvailable && !kerberosEnabled && dependenciesToProcess.containsKey("kerberos-keytab-mutating-webhook")) {
                 dependenciesToProcess = new LinkedHashMap<>(dependenciesToProcess);
                 dependenciesToProcess.remove("kerberos-keytab-mutating-webhook");
@@ -6371,22 +6497,7 @@ public class CommandService {
                 LOG.info("Removed kerberos-keytab-mutating-webhook dependency due to PRE_PROVISIONED mode");
             }
             if (dependenciesToProcess.containsKey("kerberos-keytab-mutating-webhook")) {
-                // WEBHOOK mode only: the keytab webhook lives in its own namespace with an mTLS client
-                // Secret, a serving cert and the Ambari CA bundle. Prepared here, when the webhook is about
-                // to be installed, rather than at kubeconfig upload: in the default PRE_PROVISIONED mode
-                // nothing uses that namespace, and on OpenShift sites where namespaces cannot be created
-                // on the fly it must not be required at all.
-                try {
-                    org.apache.ambari.view.k8s.utils.WebHookBootstrap.prepareWebhookPrereqs(
-                            this.ctx, this.kubernetesService,
-                            org.apache.ambari.view.k8s.utils.WebHookBootstrap.KEYTAB_WEBHOOK, callerHeaders);
-                } catch (Exception e) {
-                    throw new IllegalArgumentException("Kerberos injection mode is WEBHOOK, which needs the keytab "
-                            + "webhook namespace (default 'ambari-mutating-webhooks') and its certificates, but they "
-                            + "could not be prepared: " + e.getMessage() + ". Pre-create that namespace and grant the "
-                            + "view access to it, or switch Settings > Kerberos injection mode to PRE_PROVISIONED "
-                            + "(the default, which needs no webhook).", e);
-                }
+                prepareKeytabWebhook(callerHeaders);
             }
             for (Map.Entry<String, Object> dependencyEntry : dependenciesToProcess.entrySet()) {
                 Object dependencySpec = dependencyEntry.getValue();
@@ -6746,8 +6857,17 @@ public class CommandService {
          * 3. Doing the dry run of the real chart installation
          *
          */
-        this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, true);
-        this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, false);
+        if (gitOps) {
+            // Committed to Git instead of installed, then awaited until Flux reports the release Ready, so the
+            // post-deploy steps below find running pods as after a Helm install. No Helm dry run: the dependencies
+            // whose resources the chart may use (KEDA, for one) are installed by Flux only after the commit; Flux
+            // renders the chart itself and its message is reported if that fails.
+            this.commandPlanFactory.createGitOpsReleaseCommands(rootCommand, FLUX_READY_TIMEOUT_SECONDS,
+                    FLUX_READY_POLL_SECONDS);
+        } else {
+            this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, true);
+            this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, false);
+        }
 
         // 4. Post-deploy: auto-provision an Ambari view instance if the service spec defines it.
         //    This creates a linked SQL-ASSISTANT-VIEW instance for each sql-assistant-* Helm release,
@@ -7108,10 +7228,14 @@ public class CommandService {
             throw new IllegalStateException(missingPlannedPermission);
         }
 
-        // Recorded once the deploy is sure to run: a refused deploy leaves the release's record as it was.
+        // Recorded once the deploy is sure to run: a refused deploy leaves the release's record as it was. A GitOps
+        // release is recorded by its commit step instead, also when it is new: a release whose preparation fails has
+        // nothing in Git and nothing running to know about.
         try {
-            planReleaseMetadata(params, request.getNamespace(), request.getReleaseName(), releaseMetadata,
-                    effectiveValues);
+            if (!gitOps) {
+                planReleaseMetadata(params, request.getNamespace(), request.getReleaseName(), releaseMetadata,
+                        effectiveValues);
+            }
         } catch (Exception ex) {
             LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
@@ -7138,7 +7262,6 @@ public class CommandService {
         }
 
         LOG.info("Queued DEPLOY_COMPOSITE id={} steps={} at {}", id, childCommands.size(), now);
-        scheduleNow(id);
         return id;
     }
 
@@ -7301,10 +7424,16 @@ public class CommandService {
         }
     }
 
+    /**
+     * The status of a command.
+     *
+     * @return the status, or {@code null} for an unknown id (or a command whose status was never stored)
+     */
     public CommandStatus getStatus(String id) {
         CommandEntity e = find(id);
-        CommandStatusEntity eStatus = findCommandStatusById(e.getCommandStatusId());
         if (e == null) return null;
+        CommandStatusEntity eStatus = findCommandStatusById(e.getCommandStatusId());
+        if (eStatus == null) return null;
         CommandStatus s = new CommandStatus();
         s.id = e.getId();
         s.hasChildren = (e.getChildListJson() != null && !e.getChildListJson().isBlank());
@@ -7319,6 +7448,7 @@ public class CommandService {
         s.createdAt = eStatus.getCreatedAt();
         s.updatedAt = eStatus.getUpdatedAt();
         s.percent = cachedPercentage(e);
+        s.result = operationResult(e, eStatus);
         LOG.info("Getting status information for command with id: {} ", s.id);
         LOG.debug("Params are: {} ", HelmSetValues.redactJson(e.getParamsJson()));
 
@@ -7332,6 +7462,28 @@ public class CommandService {
         if (stepIndex == -1) stepIndex = 0; // convert to 0-based
         s.step = stepIndex;
         return s;
+    }
+
+    /**
+     * What an operation ended with besides its state, for the operator: a GitOps deploy whose change waits for a merge
+     * says so there ({@code waitingForMerge}, {@code message}, the pull request or branch, the steps not run). Only
+     * operations have one: the results of their steps stay internal, as some hold what the step registered (an SSO
+     * client, for one).
+     *
+     * @return the result, or {@code null} when there is none
+     */
+    private Map<String, Object> operationResult(CommandEntity command, CommandStatusEntity status) {
+        if (command.getChildListJson() == null || command.getChildListJson().isBlank()
+                || status.getResultJson() == null || status.getResultJson().isBlank()) {
+            return null;
+        }
+        try {
+            Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+            return gson.fromJson(status.getResultJson(), mapType);
+        } catch (RuntimeException ex) {
+            LOG.warn("Unreadable result of operation {}: {}", command.getId(), ex.toString());
+            return null;
+        }
     }
 
     /**
@@ -7378,6 +7530,7 @@ public class CommandService {
             cs.createdAt = st.getCreatedAt();
             cs.updatedAt = st.getUpdatedAt();
             cs.percent = computePercentage(e);
+            cs.result = operationResult(e, st);
             cs.step = 0;
             out.add(cs);
         }
@@ -7914,6 +8067,9 @@ public class CommandService {
             String repoId = (String) rootParams.get("repoId");
             LOG.info("Using repoId: {} for step execution", repoId);
             LOG.debug("Child Command params are: {} ", HelmSetValues.redactJson(child.getParamsJson()));
+            // Set by a step whose outcome says more than "Done", and by one after which the operation ends.
+            String stepDoneMessage = null;
+            String operationEndMessage = null;
             switch (CommandType.valueOf(child.getType())) {
                 case HELM_REPO_LOGIN -> {
                     LOG.info("Performing helm repo login for repoId: {} ", repoId);
@@ -8149,134 +8305,9 @@ public class CommandService {
                     String chartVersion = (String) childParams.get("chartVersion");
                     String namespace = (String) childParams.get("namespace");
                     String releaseName = (String) childParams.get("releaseName");
-                    Object imageTagObj = childParams.get("imageTag");
-                    String imageTag = null;
-                    if (imageTagObj instanceof String) {
-                        imageTag = (String) imageTagObj;
-                    }
-                    String imageRepository = (String) childParams.get("imageRepository");
-                    String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
-                    Object secretName = childParams.get("secretName");
-                    Object serviceAccountsObj = childParams.get("serviceAccounts");
-                    List<String> serviceAccounts = new ArrayList<>();
-                    if (serviceAccountsObj instanceof List) {
-                        @SuppressWarnings("unchecked")
-                        List<Object> serviceAccountsList = (List<Object>) serviceAccountsObj;
-                        for (Object sa : serviceAccountsList) {
-                            if (sa instanceof String) {
-                                serviceAccounts.add((String) sa);
-                            }
-                        }
-                    }
                     LOG.info("Installing dependency release: {} in namespace: {} with chart: {} and version: {} ", releaseName, namespace, chartName, chartVersion);
                     appendCommandLog(id, "Install dependency: release=" + releaseName + " chart=" + chartName + " version=" + chartVersion + " repoId=" + repoId);
-                    Map<String, String> overrideProperties = new HashMap<>();
-                    HelmRepoEntity repository = repositoryDao.findById(repoId);
-                    List<String> images = new ArrayList<>();
-                    Object imagesObj = childParams.get("images");
-                    if (imagesObj instanceof List) {
-                        @SuppressWarnings("unchecked")
-                        List<Object> imagesList = (List<Object>) imagesObj;
-                        for (Object img : imagesList) {
-                            if (img instanceof String) {
-                                images.add((String) img);
-                            }
-                        }
-                    }
-                    /**
-                     the logic is to part images[] direct which can look like:
-                     "images": [
-                     "kerberos-keytab-mutating-webhook"
-                     ], for hand custom images
-                     or
-                     "images": [
-                     "kerberos-keytab-mutating-webhook:custom-image:tag"
-                     ], for chart images override with tag override
-                     or
-                     "images": [
-                     "kerberos-keytab-mutating-webhook:custom-image"
-                     ], for chart images override with default tag
-
-                     */
-                    for (String img : images) {
-                        if (!img.contains(":")) {
-
-                            overrideProperties.put("image.repository", imageRepository + "/" + img);
-                            overrideProperties.put("image.registry", repository.getUrl());
-                            LOG.info("Injecting in values.yaml image.repository value: {}", imageRepository + "/" + img);
-                            LOG.info("Injecting in values.yaml image.registry   value: {}", repository.getUrl());
-                            if (imageTag != null){
-                                overrideProperties.put("image.tag", imageTag);
-                                LOG.info("Injecting in values.yaml image.tag        value: {}", imageTag);
-                            }else{
-                                LOG.warn("No tag specified for image: {} and no default imageTag provided", img);
-                                LOG.warn("Skipping injection of image." + imageRepository + ".tag value. The default chart value will be used.");
-                            }
-                        } else {
-                            String[] imgParts = img.split(":");
-                            overrideProperties.put("image." + imgParts[0] + ".repository", imageRepository + "/" + imgParts[1]);
-                            overrideProperties.put("image." + imgParts[0] + ".registry", repository.getUrl());
-                            LOG.info("Injecting in values.yaml image." + imgParts[0] + ".repository value: {}", imageRepository + "/" + imgParts[1]);
-                            LOG.info("Injecting in values.yaml image." + imgParts[0] + ".registry   value: {}", repository.getUrl());
-                            if (imgParts.length > 2) {
-                                LOG.info("Injecting in values.yaml image." + imgParts[0] + ".tag        value: {}", imgParts[2]);
-                                overrideProperties.put("image." + imgParts[0] + ".tag", imgParts[2]);
-                            }else{
-                                if (imageTag != null){
-                                    LOG.info("Injecting in values.yaml image." + imgParts[0] + ".tag        value: {}", imageTag);
-                                    overrideProperties.put("image." + imgParts[0] + ".tag", imageTag);
-                                }else{
-                                    LOG.warn("No tag specified for image: {} and no default imageTag provided", img);
-                                    LOG.warn("Skipping injection of image." + imgParts[0] + ".tag value. The default chart value will be used.");
-                                }
-                            }
-
-                        }
-                    }
-                    Object fullnameOverrideObj = childParams.get("fullnameOverride");
-                    String fullnameOverride = null;
-                    if (fullnameOverrideObj instanceof String) {
-                        fullnameOverride = (String) fullnameOverrideObj;
-                        overrideProperties.put("fullnameOverride", fullnameOverride);
-                        LOG.info("Injecting fullnameOverride property with value: {} for dependency: {}", fullnameOverride, chartName);
-                    }
-                    boolean isWebhook = false;
-                    Object isWebhookObj = childParams.get("isWebhook");
-                    if (isWebhookObj instanceof Boolean) {
-                        isWebhook = (Boolean) isWebhookObj;
-                    } else if (isWebhookObj instanceof String) {
-                        isWebhook = Boolean.parseBoolean((String) isWebhookObj);
-                    }
-                    if (isWebhook) {
-                        String backend_url = (String) childParams.get("backend.url");
-                        overrideProperties.put("backend.url", backend_url);
-                        overrideProperties.put("webhook.caBundle", this.webHookConfigurationService.currentCaBundleBase64());
-                        LOG.info("Injecting backend.url property with value: {} for webhook dependency", backend_url);
-                        LOG.info("Injecting webhook.caBundle with CurrentCA");
-                    }
-
-                    // Always merge dynamic overrides (e.g., AMBARI_KERBEROS_REALM) for dependency installs
-                    this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
-
-                    if (secretName != null) {
-                        LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
-                        this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
-                        overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
-                    }
-                    if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-                        // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
-                        // registry as the main chart — i.e. the operator-selected Helm repo — not the
-                        // hardcoded service.json default. Mirror the main-release behaviour
-                        // (getEffectiveImageRegistry(repoId)); fall back to the service.json
-                        // imageRepository only when the selected repo resolves no image registry.
-                        String depRegistry = this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId);
-                        if (depRegistry == null || depRegistry.isBlank()) {
-                            depRegistry = imageRepository;
-                        }
-                        overrideProperties.put(imageGlobalRegistryProperty, depRegistry);
-                        LOG.info("Injecting in values.yaml global image registry property: {} with value: {} (from repo {})", imageGlobalRegistryProperty, depRegistry, repoId);
-                    }
+                    Map<String, String> overrideProperties = dependencyReleaseOverrides(childParams, namespace, repoId);
                     ScheduledFuture<?> heartbeat = startHeartbeat(id, () -> {
                         CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
                         return st != null && CommandState.RUNNING.name().equals(st.getState());
@@ -8743,28 +8774,10 @@ public class CommandService {
                     String namespace = (String) childParams.get("namespace");
                     String releaseName = (String) childParams.get("releaseName");
                     String version = (String) childParams.get("version");
-                    String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
                     String cluster     = (String) childParams.get("_cluster");
 
                     Map<String, Object> valuesMap = this.commandUtils.loadValuesFromParams(childParams);
-                    Map<String, String> overrideProperties = new HashMap<>();
-
-                    Object ovRaw = childParams.get("_ov");
-                    if (ovRaw instanceof Map<?, ?> ovMap) {
-                        for (Map.Entry<?, ?> e : ovMap.entrySet()) {
-                            if (e.getKey() == null || e.getValue() == null) continue;
-                            String helmPath = String.valueOf(e.getKey()).trim();
-                            String val = String.valueOf(e.getValue());
-                            if (!helmPath.isEmpty()) {
-                                overrideProperties.put(helmPath, val);
-                                LOG.info("Applying explicit override {} -> {}", helmPath, HelmSetValues.forLog(val));
-                            }
-                        }
-                    }
-
-
-                    // Apply dynamic value bindings (e.g., AMBARI_KERBEROS_REALM) on top of explicit overrides
-                    this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
+                    Map<String, String> overrideProperties = plannedReleaseOverrides(childParams);
 
                     this.kubernetesService.createNamespace(namespace);
                     // Main release namespaces only need webhook labels in webhook mode when Kerberos is enabled.
@@ -8778,32 +8791,7 @@ public class CommandService {
                         LOG.info("Skipping webhook label on namespace {} (Kerberos mode={}, clusterEnabled={})",
                                 namespace, kerberosInjectionMode, kerberosClusterEnabled);
                     }
-                    Object secretName = childParams.get("secretName");
-                    if (secretName != null) {
-                        LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
-                        this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
-                        overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
-                    }
-
-                    if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-                        LOG.info("Resolving Repository Name for: {}", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        overrideProperties.put(imageGlobalRegistryProperty, this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getImageRegistry(repoId), imageGlobalRegistryProperty);
-                    }else {
-                        overrideProperties.put("global.imageRegistry", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        LOG.info("Execution Action {}: Injecting 'global.imageRegistry' in values.yaml with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                    }
-                    /**
-                     * service and images should ne able to be configured one by one for the repositories
-                     * so right now the repositories are read from the charts Values.yaml
-                     * in the clemlab powered charts, there is a global.registry configuration
-                     */
-                    // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
-                    // service definition; rewrite them onto the repository's image registry (AMBARI-690).
-                    applyImageRegistryPaths(childParams.get("serviceKey"),
-                            this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
-                            valuesMap, overrideProperties);
+                    addReleaseImageOverrides(childParams, repoId, valuesMap, overrideProperties, child.getType());
 
                     appendCommandLog(id, "Installing release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
                     ScheduledFuture<?> heartbeatDeploy = startHeartbeat(id, () -> {
@@ -8899,6 +8887,78 @@ public class CommandService {
 //                    var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
 
 
+                }
+                case GITOPS_COMMIT -> {
+                    String namespace = (String) childParams.get("namespace");
+                    String releaseName = (String) childParams.get("releaseName");
+                    String version = (String) childParams.get("version");
+
+                    // Exactly what the Helm install of a direct deploy would receive: the same values, their dotted
+                    // keys expanded as Helm gets them, and the same overrides on top.
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> valuesMap = HelmService.expandDotPaths((Map<String, Object>)
+                            wholeNumbersAsIntegers(this.commandUtils.loadValuesFromParams(childParams)));
+                    Map<String, String> overrideProperties = plannedReleaseOverrides(childParams);
+                    this.kubernetesService.createNamespace(namespace);
+                    addReleaseImageOverrides(childParams, repoId, valuesMap, overrideProperties, child.getType());
+
+                    Object baseUriParam = childParams.get("_baseUri");
+                    DeploymentContext gitOpsContext = new DeploymentContext(repoId, version, null, null, null,
+                            baseUriParam == null ? null : URI.create(String.valueOf(baseUriParam)), null);
+                    Object kerberosParam = childParams.get("kerberosClusterEnabled");
+                    // Each dependency the commit writes gets what its Helm install would: computed only for those it
+                    // writes, so no pull Secret is created in the namespace of one it leaves out.
+                    Map<String, Map<String, Object>> dependencySteps = gitOpsDependencySteps(childParams);
+                    FluxGitOpsBackend.PlannedRelease planned = new FluxGitOpsBackend.PlannedRelease(overrideProperties,
+                            kerberosParam == null ? null : isKerberosClusterEnabled(kerberosParam),
+                            (dependency, dependencyNamespace) -> dependencySteps.containsKey(dependency)
+                                    ? dependencyReleaseOverrides(dependencySteps.get(dependency), dependencyNamespace, repoId)
+                                    : Map.of());
+                    appendCommandLog(id, "Committing HelmRelease " + namespace + "/" + releaseName + " to Git");
+                    FluxGitOpsBackend.CommitResult commit = this.fluxGitOpsBackend.commit(
+                            gitOpsRequestFromParams(childParams, valuesMap), gitOpsContext, planned);
+
+                    // Git holds the deploy now: the release metadata describes what Flux runs, or will once merged.
+                    if (childParams.get(RELEASE_METADATA_PARAM) instanceof Map<?, ?> plannedMetadata) {
+                        try {
+                            recordReleaseMetadata(namespace, releaseName, plannedMetadata, valuesMap);
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to record release metadata after the GitOps commit for {}/{}: {}",
+                                    namespace, releaseName, ex.toString());
+                        }
+                    }
+                    stepDoneMessage = describeGitOpsCommit(commit);
+                    appendCommandLog(id, stepDoneMessage);
+                    childSt.setResultJson(gson.toJson(gitOpsCommitResult(commit)));
+                    if (!commit.appliedOnCommit()) {
+                        operationEndMessage = gitOpsMergeWait(commit);
+                    }
+                }
+                case FLUX_WAIT_READY -> {
+                    String namespace = (String) childParams.get("namespace");
+                    String releaseName = (String) childParams.get("releaseName");
+                    Map<String, Object> commitResult = gitOpsCommitResultOf(root);
+                    String expectedDigest = commitResult.get("specDigest") instanceof String s && !s.isBlank() ? s : null;
+                    // Flux tries a release it gave up on again only once its spec or values change. A deploy that
+                    // committed no new version, or a wait resumed after the cause was fixed on the cluster, asks it to.
+                    boolean retryGivenUp = !Boolean.TRUE.equals(commitResult.get("committed"))
+                            || (childSt.getAttempt() != null && childSt.getAttempt() > 0);
+                    FluxGitOpsBackend.Readiness readiness = awaitFluxReady(id, child, namespace, releaseName,
+                            expectedDigest, retryGivenUp,
+                            intParam(childParams.get("timeoutSeconds"), FLUX_READY_TIMEOUT_SECONDS),
+                            intParam(childParams.get("pollSeconds"), FLUX_READY_POLL_SECONDS));
+                    stepDoneMessage = "HelmRelease " + namespace + "/" + releaseName + " is ready"
+                            + (readiness.message().isBlank() ? "" : ": " + readiness.message());
+                    appendCommandLog(id, stepDoneMessage);
+                    // What the Helm install step does once Helm returns: the Releases page recognises the release
+                    // from its Helm Secret, and endpoint discovery finds its Ingresses by their release label.
+                    try {
+                        this.kubernetesService.tagHelmReleaseSecrets(namespace, releaseName);
+                        this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
+                    } catch (Exception ex) {
+                        LOG.warn("Could not label the Helm Secret or Ingresses of {}/{}: {}", namespace, releaseName,
+                                ex.toString());
+                    }
                 }
                 case HELM_UPGRADE -> {
                     String chartName = (String) childParams.get("chart");
@@ -9857,11 +9917,32 @@ public class CommandService {
 
             // Success path for the child
             childSt.setState(CommandState.SUCCEEDED.name());
-            childSt.setMessage("Done: " + (child.getTitle() != null ? child.getTitle() : child.getType()));
+            childSt.setMessage(stepDoneMessage != null ? stepDoneMessage
+                    : "Done: " + (child.getTitle() != null ? child.getTitle() : child.getType()));
             childSt.setAttempt(0);
             childSt.setUpdatedAt(Instant.now().toString());
             store(childSt);
             try { commandLogService.append(id, "Step succeeded: " + (child.getTitle() != null ? child.getTitle() : child.getType())); } catch (Exception ignored) {}
+
+            if (operationEndMessage != null) {
+                // A GitOps change waiting for a merge: the steps that need it applied cannot run yet.
+                List<String> notRun = skipRemainingSteps(root, child, "Not run: " + operationEndMessage);
+                String outcome = operationEndMessage
+                        + (notRun.isEmpty() ? "" : " Not run until then: " + String.join(", ", notRun)
+                                + ". Redeploy the release once the change is applied to run them.");
+                Map<String, Object> rootResult = new LinkedHashMap<>();
+                if (childSt.getResultJson() != null) {
+                    rootResult.putAll(gson.fromJson(childSt.getResultJson(), mapType));
+                }
+                rootResult.put("waitingForMerge", true);
+                rootResult.put("notRun", notRun);
+                rootResult.put("message", outcome);
+                rootSt.setResultJson(gson.toJson(rootResult));
+                appendCommandLog(id, outcome);
+                succeed(rootSt, outcome);
+                refreshCurrentStepSnapshot(root);
+                return;
+            }
 
             // Update snapshot & continue with the next step
             refreshCurrentStepSnapshot(root);
@@ -9934,6 +10015,593 @@ public class CommandService {
         } finally {
             activeStepLogId.remove();
             org.slf4j.MDC.remove(CommandLogAppender.COMMAND_MDC_KEY);
+        }
+    }
+
+    /**
+     * The values the Helm install of a dependency receives on top of its chart's: the image settings of its definition,
+     * its fullnameOverride, the keytab webhook's backend URL and CA bundle, its resolved dynamic values (e.g. the
+     * Kerberos realm), and the chart repository's image registry and pull Secret, which is created in the dependency's
+     * namespace. The Helm install and the GitOps commit of a dependency both take them from here, so a commit writes
+     * what the install would pass.
+     *
+     * @param depParams the parameters of the dependency's Helm steps ({@link CommandPlanFactory#dependencyReleaseParams})
+     * @param namespace the namespace the dependency is installed in
+     * @param repoId    the deploy's chart repository, whose image registry and credentials the dependency uses
+     */
+    private Map<String, String> dependencyReleaseOverrides(Map<String, Object> depParams, String namespace,
+                                                           String repoId) throws Exception {
+        String chartName = (String) depParams.get("chart");
+        Object imageTagObj = depParams.get("imageTag");
+        String imageTag = null;
+        if (imageTagObj instanceof String) {
+            imageTag = (String) imageTagObj;
+        }
+        String imageRepository = (String) depParams.get("imageRepository");
+        String imageGlobalRegistryProperty = (String) depParams.get("imageGlobalRegistryProperty");
+        Object secretName = depParams.get("secretName");
+        Object serviceAccountsObj = depParams.get("serviceAccounts");
+        List<String> serviceAccounts = new ArrayList<>();
+        if (serviceAccountsObj instanceof List) {
+            @SuppressWarnings("unchecked")
+            List<Object> serviceAccountsList = (List<Object>) serviceAccountsObj;
+            for (Object sa : serviceAccountsList) {
+                if (sa instanceof String) {
+                    serviceAccounts.add((String) sa);
+                }
+            }
+        }
+        Map<String, String> overrideProperties = new HashMap<>();
+        HelmRepoEntity repository = repositoryDao.findById(repoId);
+        List<String> images = new ArrayList<>();
+        Object imagesObj = depParams.get("images");
+        if (imagesObj instanceof List) {
+            @SuppressWarnings("unchecked")
+            List<Object> imagesList = (List<Object>) imagesObj;
+            for (Object img : imagesList) {
+                if (img instanceof String) {
+                    images.add((String) img);
+                }
+            }
+        }
+        /**
+         the logic is to part images[] direct which can look like:
+         "images": [
+         "kerberos-keytab-mutating-webhook"
+         ], for hand custom images
+         or
+         "images": [
+         "kerberos-keytab-mutating-webhook:custom-image:tag"
+         ], for chart images override with tag override
+         or
+         "images": [
+         "kerberos-keytab-mutating-webhook:custom-image"
+         ], for chart images override with default tag
+
+         */
+        for (String img : images) {
+            if (!img.contains(":")) {
+
+                overrideProperties.put("image.repository", imageRepository + "/" + img);
+                overrideProperties.put("image.registry", repository.getUrl());
+                LOG.info("Injecting in values.yaml image.repository value: {}", imageRepository + "/" + img);
+                LOG.info("Injecting in values.yaml image.registry   value: {}", repository.getUrl());
+                if (imageTag != null){
+                    overrideProperties.put("image.tag", imageTag);
+                    LOG.info("Injecting in values.yaml image.tag        value: {}", imageTag);
+                }else{
+                    LOG.warn("No tag specified for image: {} and no default imageTag provided", img);
+                    LOG.warn("Skipping injection of image." + imageRepository + ".tag value. The default chart value will be used.");
+                }
+            } else {
+                String[] imgParts = img.split(":");
+                overrideProperties.put("image." + imgParts[0] + ".repository", imageRepository + "/" + imgParts[1]);
+                overrideProperties.put("image." + imgParts[0] + ".registry", repository.getUrl());
+                LOG.info("Injecting in values.yaml image." + imgParts[0] + ".repository value: {}", imageRepository + "/" + imgParts[1]);
+                LOG.info("Injecting in values.yaml image." + imgParts[0] + ".registry   value: {}", repository.getUrl());
+                if (imgParts.length > 2) {
+                    LOG.info("Injecting in values.yaml image." + imgParts[0] + ".tag        value: {}", imgParts[2]);
+                    overrideProperties.put("image." + imgParts[0] + ".tag", imgParts[2]);
+                }else{
+                    if (imageTag != null){
+                        LOG.info("Injecting in values.yaml image." + imgParts[0] + ".tag        value: {}", imageTag);
+                        overrideProperties.put("image." + imgParts[0] + ".tag", imageTag);
+                    }else{
+                        LOG.warn("No tag specified for image: {} and no default imageTag provided", img);
+                        LOG.warn("Skipping injection of image." + imgParts[0] + ".tag value. The default chart value will be used.");
+                    }
+                }
+
+            }
+        }
+        Object fullnameOverrideObj = depParams.get("fullnameOverride");
+        String fullnameOverride = null;
+        if (fullnameOverrideObj instanceof String) {
+            fullnameOverride = (String) fullnameOverrideObj;
+            overrideProperties.put("fullnameOverride", fullnameOverride);
+            LOG.info("Injecting fullnameOverride property with value: {} for dependency: {}", fullnameOverride, chartName);
+        }
+        boolean isWebhook = false;
+        Object isWebhookObj = depParams.get("isWebhook");
+        if (isWebhookObj instanceof Boolean) {
+            isWebhook = (Boolean) isWebhookObj;
+        } else if (isWebhookObj instanceof String) {
+            isWebhook = Boolean.parseBoolean((String) isWebhookObj);
+        }
+        if (isWebhook) {
+            String backend_url = (String) depParams.get("backend.url");
+            overrideProperties.put("backend.url", backend_url);
+            overrideProperties.put("webhook.caBundle", this.webHookConfigurationService.currentCaBundleBase64());
+            LOG.info("Injecting backend.url property with value: {} for webhook dependency", backend_url);
+            LOG.info("Injecting webhook.caBundle with CurrentCA");
+        }
+
+        // Always merge dynamic overrides (e.g., AMBARI_KERBEROS_REALM) for dependency installs
+        this.configResolutionService.mergeDynamicOverrides(depParams, overrideProperties);
+
+        if (secretName != null) {
+            LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
+            this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
+            overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
+            applyImagePullSecretTargets(secretName, depParams.get("serviceKey"), overrideProperties);
+        }
+        if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
+            // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
+            // registry as the main chart — i.e. the operator-selected Helm repo — not the
+            // hardcoded service.json default. Mirror the main-release behaviour
+            // (getEffectiveImageRegistry(repoId)); fall back to the service.json
+            // imageRepository only when the selected repo resolves no image registry.
+            String depRegistry = this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId);
+            if (depRegistry == null || depRegistry.isBlank()) {
+                depRegistry = imageRepository;
+            }
+            overrideProperties.put(imageGlobalRegistryProperty, depRegistry);
+            LOG.info("Injecting in values.yaml global image registry property: {} with value: {} (from repo {})", imageGlobalRegistryProperty, depRegistry, repoId);
+        }
+        return overrideProperties;
+    }
+
+    /**
+     * The values a release step passes to Helm on top of its values file: the plan's overrides, then each resolved
+     * dynamic value (e.g. the Kerberos realm) for a path the plan left unset. The Helm install and the GitOps commit
+     * both take them from here, so a commit writes what the install would pass.
+     */
+    private Map<String, String> plannedReleaseOverrides(Map<String, Object> childParams) {
+        Map<String, String> overrideProperties = new HashMap<>();
+        Object ovRaw = childParams.get("_ov");
+        if (ovRaw instanceof Map<?, ?> ovMap) {
+            for (Map.Entry<?, ?> e : ovMap.entrySet()) {
+                if (e.getKey() == null || e.getValue() == null) continue;
+                String helmPath = String.valueOf(e.getKey()).trim();
+                String val = String.valueOf(e.getValue());
+                if (!helmPath.isEmpty()) {
+                    overrideProperties.put(helmPath, val);
+                    LOG.info("Applying explicit override {} -> {}", helmPath, HelmSetValues.forLog(val));
+                }
+            }
+        }
+        // Apply dynamic value bindings (e.g., AMBARI_KERBEROS_REALM) on top of explicit overrides
+        this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
+        return overrideProperties;
+    }
+
+    /**
+     * Adds the image settings of a release step to its overrides: the image pull Secret, created in the namespace
+     * from the chart repository's credentials, the repository's image registry, and the image paths of charts that
+     * ignore {@code global.imageRegistry}.
+     */
+    private void addReleaseImageOverrides(Map<String, Object> childParams, String repoId, Map<String, Object> valuesMap,
+                                          Map<String, String> overrideProperties, String stepType) throws Exception {
+        String namespace = (String) childParams.get("namespace");
+        String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
+        Object secretName = childParams.get("secretName");
+        if (secretName != null) {
+            LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
+            this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
+            overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
+            overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
+        }
+
+        if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
+            LOG.info("Resolving Repository Name for: {}", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
+            overrideProperties.put(imageGlobalRegistryProperty, this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
+            LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}", stepType, this.helmService.getRepositoryService().getImageRegistry(repoId), imageGlobalRegistryProperty);
+        }else {
+            overrideProperties.put("global.imageRegistry", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
+            LOG.info("Execution Action {}: Injecting 'global.imageRegistry' in values.yaml with value: {}", stepType, this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
+        }
+        // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
+        // service definition; rewrite them onto the repository's image registry.
+        applyImageRegistryPaths(childParams.get("serviceKey"),
+                this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
+                valuesMap, overrideProperties);
+    }
+
+    /**
+     * The Git options of a GitOps deploy as its command keeps them. The token and the SSH key go to Ambari's
+     * credential store, each under an alias of its own, and only the aliases are kept: neither secret is written to
+     * the command's parameters, nor logged with them. The SSH key takes {@code credentialAlias} when both are given,
+     * as it did when the commit stored them itself, and the token {@code authTokenAlias}.
+     *
+     * @throws IllegalStateException when the credential store cannot take one of them: the deploy is refused rather
+     *                               than keeping the secret in its parameters
+     */
+    private HelmDeployRequest.GitOptions gitOptionsToPersist(HelmDeployRequest.GitOptions git) {
+        if (git == null) {
+            return null;
+        }
+        HelmDeployRequest.GitOptions kept = gson.fromJson(gson.toJson(git), HelmDeployRequest.GitOptions.class);
+        kept.setAuthToken(null);
+        kept.setSshKey(null);
+        // Set below, and only for a token stored here: never an alias the request names.
+        kept.setAuthTokenAlias(null);
+        boolean hasToken = git.getAuthToken() != null && !git.getAuthToken().isBlank();
+        boolean hasSshKey = git.getSshKey() != null && !git.getSshKey().isBlank();
+        if (hasSshKey) {
+            kept.setCredentialAlias(storeGitSecret(git.getSshKey(), "SSH key"));
+            if (hasToken) {
+                kept.setAuthTokenAlias(storeGitSecret(git.getAuthToken(), "access token"));
+            }
+        } else if (hasToken) {
+            kept.setCredentialAlias(storeGitSecret(git.getAuthToken(), "access token"));
+        }
+        return kept;
+    }
+
+    /**
+     * Stores a Git credential of a GitOps deploy in Ambari's credential store.
+     *
+     * @return its alias
+     * @throws IllegalStateException when the credential store cannot take it
+     */
+    private String storeGitSecret(String secret, String what) {
+        String alias;
+        try {
+            alias = gitCredentialService.storeSecret(secret, "gitops");
+        } catch (RuntimeException e) {
+            LOG.warn("Could not store a Git credential in Ambari's credential store: {}", e.toString());
+            alias = null;
+        }
+        if (alias == null) {
+            throw new IllegalStateException("The Git " + what + " of this GitOps deploy could not be stored in Ambari's "
+                    + "credential store, so the deploy was not started: it would otherwise be kept in clear text with "
+                    + "the deploy. Check that Ambari's credential store is set up with a persisted master key "
+                    + "(ambari-server setup-security), then deploy again.");
+        }
+        return alias;
+    }
+
+    /**
+     * The values with their whole numbers as integers. A step reads its values file back with Gson, which makes every
+     * number a double: Helm takes 2.0 as it takes 2, but a HelmRelease reviewed in Git would show 2.0.
+     */
+    static Object wholeNumbersAsIntegers(Object node) {
+        if (node instanceof Map<?, ?> map) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            map.forEach((key, value) -> out.put(String.valueOf(key), wholeNumbersAsIntegers(value)));
+            return out;
+        }
+        if (node instanceof List<?> list) {
+            List<Object> out = new ArrayList<>(list.size());
+            list.forEach(value -> out.add(wholeNumbersAsIntegers(value)));
+            return out;
+        }
+        // Beyond 2^53 a double no longer holds every whole number exactly: left as it is.
+        if (node instanceof Double d && d == Math.rint(d) && Math.abs(d) < 9.007199254740992E15) {
+            long whole = d.longValue();
+            return whole == (int) whole ? (Object) (int) whole : (Object) whole;
+        }
+        return node;
+    }
+
+    /** The deploy request a GitOps commit step writes to Git, rebuilt from the step's parameters. */
+    @SuppressWarnings("unchecked")
+    private HelmDeployRequest gitOpsRequestFromParams(Map<String, Object> params, Map<String, Object> values) {
+        HelmDeployRequest request = new HelmDeployRequest();
+        request.setChart((String) params.get("chart"));
+        request.setReleaseName((String) params.get("releaseName"));
+        request.setNamespace((String) params.get("namespace"));
+        request.setVersion((String) params.get("version"));
+        request.setRepoId((String) params.get("repoId"));
+        request.setServiceKey((String) params.get("serviceKey"));
+        request.setSecurityProfile((String) params.get("securityProfile"));
+        // Only for the dependencies: the release's own image settings come with the planned overrides.
+        request.setSecretName((String) params.get("secretName"));
+        request.setDeploymentMode(DeploymentMode.FLUX_GITOPS.name());
+        request.setValues(new LinkedHashMap<>(values));
+        request.setFormValues(params.get("formValues"));
+        request.setStackConfigOverrides(params.get("stackOverrides"));
+        request.setTls(params.get("tls"));
+        if (params.get("git") != null) {
+            request.setGit(gson.fromJson(gson.toJsonTree(params.get("git")), HelmDeployRequest.GitOptions.class));
+        }
+        if (params.get(GITOPS_RELEASE_PARAM) instanceof Map<?, ?> release) {
+            if (release.get("dependencies") instanceof Map<?, ?> dependencies) {
+                request.setDependencies(new LinkedHashMap<>((Map<String, Object>) dependencies));
+            }
+            if (release.get("truststoreRefs") instanceof List<?> refs) {
+                List<String> truststores = new ArrayList<>();
+                refs.forEach(ref -> truststores.add(String.valueOf(ref)));
+                request.setTruststoreRefs(truststores);
+            }
+            request.setKerberos(release.get("kerberos"));
+        }
+        return request;
+    }
+
+    /** The parameters of the dependencies' Helm steps that a GitOps commit step carries, by dependency. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Map<String, Object>> gitOpsDependencySteps(Map<String, Object> params) {
+        Map<String, Map<String, Object>> steps = new LinkedHashMap<>();
+        if (params.get(GITOPS_RELEASE_PARAM) instanceof Map<?, ?> release
+                && release.get(GITOPS_DEPENDENCY_STEPS) instanceof Map<?, ?> planned) {
+            planned.forEach((name, stepParams) -> {
+                if (stepParams instanceof Map<?, ?> m) steps.put(String.valueOf(name), (Map<String, Object>) m);
+            });
+        }
+        return steps;
+    }
+
+    /** What a GitOps commit did, for the operation's log and the step's status. */
+    static String describeGitOpsCommit(FluxGitOpsBackend.CommitResult commit) {
+        String where = "branch " + commit.branch() + " of " + commit.repoUrl();
+        String pullRequest = commit.pullRequestUrl() == null || commit.pullRequestUrl().isBlank()
+                ? "" : " (pull request " + commit.pullRequestUrl() + ")";
+        if (commit.committed()) {
+            String sha = commit.commitSha().startsWith("PR-STUB:")
+                    ? commit.commitSha().substring("PR-STUB:".length()) + ", kept in the view's workspace: no Git "
+                            + "credentials to push it"
+                    : commit.commitSha();
+            return "Committed " + sha + " to " + where + pullRequest;
+        }
+        if ("NO_CHANGES".equals(commit.id())) {
+            return "Git already holds this version of the release on " + where + pullRequest + ": nothing committed";
+        }
+        return "Only passwords or secrets changed: updated the release's values Secret; Git is unchanged"
+                + (commit.commitSha() == null ? "" : " at " + commit.commitSha()) + " on " + where + pullRequest;
+    }
+
+    /** The result of a GitOps commit step, which the wait for Flux reads. */
+    static Map<String, Object> gitOpsCommitResult(FluxGitOpsBackend.CommitResult commit) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("commitSha", commit.commitSha());
+        result.put("committed", commit.committed());
+        result.put("repoUrl", commit.repoUrl());
+        result.put("branch", commit.branch());
+        result.put("baseBranch", commit.baseBranch());
+        result.put("pullRequestUrl", commit.pullRequestUrl());
+        result.put("pullRequestState", commit.pullRequestState());
+        result.put("appliedOnCommit", commit.appliedOnCommit());
+        result.put("specDigest", commit.specDigest());
+        return result;
+    }
+
+    /** Why the change of a GitOps deploy is not applied yet, and what applies it. */
+    static String gitOpsMergeWait(FluxGitOpsBackend.CommitResult commit) {
+        String base = commit.baseBranch() == null || commit.baseBranch().isBlank()
+                ? "the branch Flux reconciles" : "branch " + commit.baseBranch();
+        if (commit.commitSha() != null && commit.commitSha().startsWith("PR-STUB:")) {
+            return "The pull request branch " + commit.branch() + " could not be pushed to " + commit.repoUrl()
+                    + ": the deploy has no Git credentials. Give it a token or an SSH key and deploy again.";
+        }
+        if (commit.pullRequestUrl() != null && !commit.pullRequestUrl().isBlank()) {
+            return "Waiting for the pull request " + commit.pullRequestUrl() + " to be merged into " + base
+                    + ": Flux applies the change once it is merged.";
+        }
+        return "Waiting for branch " + commit.branch() + " of " + commit.repoUrl() + " to be merged into " + base
+                + ": Flux applies the change once it is merged.";
+    }
+
+    /** The result of the GitOps commit step of an operation; empty when it has none. */
+    private Map<String, Object> gitOpsCommitResultOf(CommandEntity root) {
+        Type listType = new TypeToken<ArrayList<String>>() {}.getType();
+        List<String> steps = gson.fromJson(root.getChildListJson(), listType);
+        if (steps != null) {
+            for (String stepId : steps) {
+                CommandEntity step = findCommandById(stepId);
+                if (step == null || !CommandType.GITOPS_COMMIT.name().equals(step.getType())) continue;
+                CommandStatusEntity st = findCommandStatusById(step.getCommandStatusId());
+                if (st != null && st.getResultJson() != null && !st.getResultJson().isBlank()) {
+                    Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+                    return gson.fromJson(st.getResultJson(), mapType);
+                }
+            }
+        }
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Waits until the HelmRelease on the cluster is the version the deploy committed and Flux reports it Ready.
+     *
+     * @param retryGivenUp whether a version Flux already gave up on is to be tried again: then Flux is asked for a new
+     *                     attempt ({@link KubernetesService#requestFluxReset}) and its outcome is waited for. The same
+     *                     holds for a HelmRelease the release depends on.
+     * @throws IllegalStateException when Flux gives up on the release or on a HelmRelease it depends on, or the release
+     *                               is not ready in time, with Flux's message, and "Canceled by user" when the step is
+     *                               canceled
+     */
+    private FluxGitOpsBackend.Readiness awaitFluxReady(String commandId, CommandEntity step, String namespace,
+                                                      String releaseName, String expectedDigest, boolean retryGivenUp,
+                                                      int timeoutSeconds, int pollSeconds) throws InterruptedException {
+        String helmRelease = namespace + "/" + releaseName;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(Math.max(0, timeoutSeconds));
+        String lastMessage = null;
+        String resetRequestedAt = null;
+        Map<FluxGitOpsBackend.NamespacedName, String> dependencyResets = new HashMap<>();
+        Map<FluxGitOpsBackend.NamespacedName, String> dependencyMessages = new HashMap<>();
+        for (;;) {
+            CommandStatusEntity st = findCommandStatusById(step.getCommandStatusId());
+            if (st != null && CommandState.CANCELED.name().equals(st.getState())) {
+                throw new IllegalStateException("Canceled by user");
+            }
+            FluxGitOpsBackend.Readiness readiness;
+            io.fabric8.kubernetes.api.model.GenericKubernetesResource onCluster = null;
+            try {
+                onCluster = this.kubernetesService.getFluxHelmRelease(namespace, releaseName);
+                readiness = FluxGitOpsBackend.readiness(onCluster, expectedDigest, resetRequestedAt);
+            } catch (Exception ex) {
+                readiness = new FluxGitOpsBackend.Readiness(false, false,
+                        "the HelmRelease could not be read: " + ex.getMessage(), false);
+            }
+            if (!readiness.message().equals(lastMessage)) {
+                appendCommandLog(commandId, "Flux, HelmRelease " + helmRelease + ": " + readiness.message());
+                lastMessage = readiness.message();
+            }
+            if (readiness.ready()) {
+                return readiness;
+            }
+            if (readiness.failed() && retryGivenUp && resetRequestedAt == null) {
+                // Flux gave up on this version before this wait: the deploy is the operator's way to try it again.
+                resetRequestedAt = requestFluxRetry(commandId, namespace, releaseName, "HelmRelease " + helmRelease,
+                        readiness.message());
+                continue;
+            }
+            if (readiness.failed()) {
+                throw new IllegalStateException("Flux could not apply HelmRelease " + helmRelease + ": "
+                        + readiness.message() + ". Fix the cause on the cluster, then resume the operation or deploy "
+                        + "the release again: Flux is asked to try it again.");
+            }
+            // Flux installs the release only once each HelmRelease it depends on is Ready, and never marks the release
+            // Stalled for one it gave up on: that one is looked at here, rather than waiting out the timeout.
+            List<FluxGitOpsBackend.NamespacedName> awaited = readiness.applied()
+                    ? FluxGitOpsBackend.awaitedDependencies(onCluster) : List.of();
+            if (checkAwaitedDependencies(commandId, helmRelease, awaited, retryGivenUp, dependencyResets,
+                    dependencyMessages)) {
+                continue;
+            }
+            if (System.nanoTime() >= deadline) {
+                StringBuilder dependencyStates = new StringBuilder();
+                for (FluxGitOpsBackend.NamespacedName dependency : awaited) {
+                    if (!dependencyMessages.containsKey(dependency)) continue;
+                    dependencyStates.append(dependencyStates.length() == 0 ? " (" : "; ").append("dependency ")
+                            .append(dependency.namespace()).append('/').append(dependency.name()).append(": ")
+                            .append(dependencyMessages.get(dependency));
+                }
+                if (dependencyStates.length() > 0) dependencyStates.append(')');
+                throw new IllegalStateException("HelmRelease " + helmRelease + " is not ready after "
+                        + (timeoutSeconds % 60 == 0 ? (timeoutSeconds / 60) + " minutes" : timeoutSeconds + " seconds")
+                        + ": " + readiness.message() + dependencyStates + ". " + (readiness.applied()
+                                ? "Fix what Flux reports, then resume the operation to wait again."
+                                : "Check the Flux GitRepository and Kustomization that apply the release, then resume "
+                                        + "the operation to wait again."));
+            }
+            if (pollSeconds > 0) {
+                Thread.sleep(TimeUnit.SECONDS.toMillis(pollSeconds));
+            }
+        }
+    }
+
+    /**
+     * Looks at the HelmReleases that hold the release back ({@link FluxGitOpsBackend#awaitedDependencies}). One Flux
+     * gave up on (Stalled) holds it back for good: Flux does not try it again on its own, whatever the release's
+     * commit changes.
+     *
+     * @param dependencies the HelmReleases the release waits for
+     * @param retryGivenUp whether one Flux already gave up on is to be tried again, once
+     * @param resets       the resets this wait asked for, by dependency; one is added when Flux is asked to try again
+     * @param messages     what Flux last reported of each dependency, logged when it changes
+     * @return whether Flux was just asked to try a dependency again
+     * @throws IllegalStateException when Flux gave up on a dependency that is not to be tried again, or that it gave
+     *                               up on again, with Flux's message
+     */
+    private boolean checkAwaitedDependencies(String commandId, String helmRelease,
+                                             List<FluxGitOpsBackend.NamespacedName> dependencies, boolean retryGivenUp,
+                                             Map<FluxGitOpsBackend.NamespacedName, String> resets,
+                                             Map<FluxGitOpsBackend.NamespacedName, String> messages) {
+        for (FluxGitOpsBackend.NamespacedName dependency : dependencies) {
+            String name = dependency.namespace() + "/" + dependency.name();
+            FluxGitOpsBackend.Readiness readiness;
+            try {
+                readiness = FluxGitOpsBackend.readiness(
+                        this.kubernetesService.getFluxHelmRelease(dependency.namespace(), dependency.name()), null,
+                        resets.get(dependency));
+            } catch (Exception ex) {
+                // What the release reports, logged with it, still names the dependency it waits for.
+                LOG.warn("Could not read HelmRelease {}, which HelmRelease {} depends on: {}", name, helmRelease,
+                        ex.toString());
+                continue;
+            }
+            if (!readiness.message().equals(messages.put(dependency, readiness.message()))) {
+                appendCommandLog(commandId, "Flux, dependency HelmRelease " + name + ": " + readiness.message());
+            }
+            if (!readiness.failed()) {
+                continue;
+            }
+            String what = "dependency " + name + " of HelmRelease " + helmRelease;
+            if (retryGivenUp && !resets.containsKey(dependency)) {
+                resets.put(dependency, requestFluxRetry(commandId, dependency.namespace(), dependency.name(), what,
+                        readiness.message()));
+                return true;
+            }
+            throw new IllegalStateException("Flux could not apply " + what + ": " + readiness.message()
+                    + ". Fix the cause on the cluster, then resume the operation or deploy the release again: Flux is "
+                    + "asked to try it again.");
+        }
+        return false;
+    }
+
+    /**
+     * Asks Flux to try again a HelmRelease it gave up on ({@link KubernetesService#requestFluxReset}).
+     *
+     * @param what  the HelmRelease, as the operation's messages name it
+     * @param cause what Flux reports of it
+     * @return the reset asked for, which Flux reports once it has handled it
+     * @throws IllegalStateException when Flux could not be asked, saying how to ask it by hand
+     */
+    private String requestFluxRetry(String commandId, String namespace, String name, String what, String cause) {
+        String resetRequestedAt = null;
+        String retryProblem = null;
+        try {
+            resetRequestedAt = this.kubernetesService.requestFluxReset(namespace, name);
+        } catch (Exception ex) {
+            LOG.warn("Could not ask Flux to try HelmRelease {}/{} again: {}", namespace, name, ex.toString());
+            retryProblem = ex.getMessage();
+        }
+        if (resetRequestedAt == null) {
+            throw new IllegalStateException("Flux could not apply " + what + ": " + cause + ". Flux does not try it "
+                    + "again on its own, and it could not be asked to" + (retryProblem == null ? "" : " (" + retryProblem
+                    + ")") + ": run 'flux reconcile helmrelease " + name + " -n " + namespace + " --reset' once the "
+                    + "cause is fixed.");
+        }
+        appendCommandLog(commandId, "Flux had given up on " + what + ": asked it to try again");
+        return resetRequestedAt;
+    }
+
+    /**
+     * Marks the steps of an operation still to run after the given one as not run, and returns their titles. Used
+     * when the operation ends early because what they need is not there yet.
+     */
+    private List<String> skipRemainingSteps(CommandEntity root, CommandEntity after, String message) {
+        Type listType = new TypeToken<ArrayList<String>>() {}.getType();
+        List<String> steps = gson.fromJson(root.getChildListJson(), listType);
+        List<String> skipped = new ArrayList<>();
+        if (steps == null) {
+            return skipped;
+        }
+        boolean past = false;
+        for (String stepId : steps) {
+            if (!past) {
+                past = after.getId().equals(stepId);
+                continue;
+            }
+            CommandEntity step = findCommandById(stepId);
+            CommandStatusEntity st = step == null ? null : findCommandStatusById(step.getCommandStatusId());
+            if (st == null || !CommandState.PENDING.name().equals(st.getState())) continue;
+            st.setState(CommandState.CANCELED.name());
+            st.setMessage(message);
+            st.setUpdatedAt(Instant.now().toString());
+            store(st);
+            skipped.add(step.getTitle() != null ? step.getTitle() : step.getType());
+        }
+        return skipped;
+    }
+
+    private static int intParam(Object value, int defaultValue) {
+        if (value instanceof Number n) return n.intValue();
+        try {
+            return value == null ? defaultValue : Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
         }
     }
 
@@ -13429,7 +14097,12 @@ public class CommandService {
             var resolverCtx = new ExternalCredentialResolver.ResolverContext(secretName, secretData, formValues);
             Map<String, String> overrides = ExternalCredentialResolver.resolveApplyTo(mode, resolverCtx);
             for (Map.Entry<String, String> ov : overrides.entrySet()) {
-                this.commandUtils.addOverride(params, ov.getKey(), ov.getValue());
+                // A value read from the Secret's data is a credential: marked like a password field, it is kept out
+                // of the logs, and a GitOps deploy writes it to the release's values Secret instead of Git.
+                String template = mode.applyTo.get(ov.getKey());
+                boolean fromSecretData = template != null && template.contains("secret.data");
+                this.commandUtils.addOverride(params, ov.getKey(),
+                        fromSecretData ? HelmSetValues.asText(ov.getValue()) : ov.getValue());
             }
 
             // (5) Resolve the service principal PER deploy: an operator-typed field wins (so each

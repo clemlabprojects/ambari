@@ -105,4 +105,15 @@ class HelmSetValuesTest {
     for (String leaked : new String[]{"abc", "\"pw\"", "t0k"}) assertFalse(logged.contains(leaked), logged);
     assertTrue(logged.contains("my-secret") && logged.contains("truststore.password"), "names and keys stay visible: " + logged);
   }
+
+  @Test
+  void sshAndPrivateKeysAreHidden() {
+    String json = new com.google.gson.Gson().toJson(java.util.Map.of("git", java.util.Map.of(
+        "sshKey", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl\n-----END OPENSSH PRIVATE KEY-----",
+        "credentialAlias", "gitops-1", "repoUrl", "git@git.example.org:platform/gitops.git"),
+        "tls", java.util.Map.of("privateKey", "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----")));
+    String logged = HelmSetValues.redactJson(json);
+    assertFalse(logged.contains("b3Bl") || logged.contains("MIIE"), logged);
+    assertTrue(logged.contains("gitops-1") && logged.contains("git@git.example.org"), "aliases and URLs stay visible: " + logged);
+  }
 }

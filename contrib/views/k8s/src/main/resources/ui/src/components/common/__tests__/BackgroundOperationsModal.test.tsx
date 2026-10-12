@@ -91,4 +91,46 @@ describe('BackgroundOperationsModal', () => {
     // a FAILED watched command never auto-closes the modal
     expect(onAutoClose).not.toHaveBeenCalled();
   }, 10000);
+
+  const gitOpsDeploy = (result?: Record<string, unknown>) => ({
+    id: 'cmd-gitops', state: 'SUCCEEDED', percent: 100, step: 0, message: 'Install release trino with GitOps',
+    type: 'K8S_MANAGER_RELEASE_DEPLOY', hasChildren: true, result,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  }) as any;
+
+  it('stays open on a GitOps deploy that waits for a merge and says what it waits for', async () => {
+    const waiting = gitOpsDeploy({
+      waitingForMerge: true,
+      pullRequestUrl: 'https://git.example.org/platform/gitops/-/merge_requests/7',
+      message: 'Waiting for the pull request https://git.example.org/platform/gitops/-/merge_requests/7 to be merged '
+        + 'into branch main: Flux applies the change once it is merged. Not run until then: Ambari: provision view '
+        + 'instance for trino. Redeploy the release once the change is applied to run them.',
+    });
+    (listCommands as jest.Mock).mockResolvedValue([waiting]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(waiting);
+    const onAutoClose = jest.fn();
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={waiting.id} onAutoClose={onAutoClose} />);
+
+    await screen.findByText('Committed to Git, not applied yet');
+    expect(screen.getByText(/Not run until then: Ambari: provision view instance for trino/)).toBeTruthy();
+    expect(screen.getByText('Open the pull request').closest('a')?.getAttribute('href'))
+      .toBe('https://git.example.org/platform/gitops/-/merge_requests/7');
+    expect(screen.getByText('WAITING FOR MERGE')).toBeTruthy();
+    // past a tick of the poller, which closes the modal on an operation that ended otherwise
+    await act(async () => { await new Promise((r) => setTimeout(r, 2500)); });
+    expect(onAutoClose).not.toHaveBeenCalled();
+  }, 10000);
+
+  it('closes on a deploy that ended applied', async () => {
+    const applied = gitOpsDeploy();
+    (listCommands as jest.Mock).mockResolvedValue([applied]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(applied);
+    const onAutoClose = jest.fn();
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={applied.id} onAutoClose={onAutoClose} />);
+
+    await waitFor(() => expect(onAutoClose).toHaveBeenCalled(), { timeout: 5000 });
+    expect(screen.queryByText('Committed to Git, not applied yet')).toBeNull();
+  }, 10000);
 });

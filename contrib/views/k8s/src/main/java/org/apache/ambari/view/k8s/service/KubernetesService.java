@@ -6338,21 +6338,63 @@ public class KubernetesService {
      * @return true when the HelmRelease was annotated, false when it is not on the cluster
      */
     public boolean requestFluxReconcile(String namespace, String name) {
+        if (annotateFluxRequest(namespace, name, false) == null) {
+            return false;
+        }
+        LOG.info("Requested a Flux reconcile of HelmRelease {}/{}", namespace, name);
+        return true;
+    }
+
+    /**
+     * Asks Flux to try a HelmRelease again after it gave up on it (Stalled, retries exhausted): what
+     * {@code flux reconcile helmrelease --reset} does, the {@code reconcile.fluxcd.io/resetAt} and
+     * {@code reconcile.fluxcd.io/requestedAt} annotations set to the same value. Flux does not retry such a release
+     * on its own until its spec or values change.
+     *
+     * @param namespace the HelmRelease namespace
+     * @param name      the HelmRelease name
+     * @return the value of the request, which Flux copies to {@code status.lastHandledResetAt} once it handled it;
+     *         {@code null} when the HelmRelease is not on the cluster
+     */
+    public String requestFluxReset(String namespace, String name) {
+        String requestedAt = annotateFluxRequest(namespace, name, true);
+        if (requestedAt != null) {
+            LOG.info("Asked Flux to try HelmRelease {}/{} again (reset {})", namespace, name, requestedAt);
+        }
+        return requestedAt;
+    }
+
+    /** Annotates a HelmRelease with a reconcile request, and a reset request when asked; null when it is not there. */
+    private String annotateFluxRequest(String namespace, String name, boolean reset) {
         checkConfiguration();
         var helmRelease = client.genericKubernetesResources(FLUX_HELM_RELEASE_RDC).inNamespace(namespace).withName(name);
         if (helmRelease.get() == null) {
-            return false;
+            return null;
         }
         String requestedAt = java.time.Instant.now().toString();
         helmRelease.edit(hr -> {
             Map<String, String> annotations = hr.getMetadata().getAnnotations() == null
                     ? new HashMap<>() : new HashMap<>(hr.getMetadata().getAnnotations());
             annotations.put("reconcile.fluxcd.io/requestedAt", requestedAt);
+            if (reset) {
+                annotations.put("reconcile.fluxcd.io/resetAt", requestedAt);
+            }
             hr.getMetadata().setAnnotations(annotations);
             return hr;
         });
-        LOG.info("Requested a Flux reconcile of HelmRelease {}/{}", namespace, name);
-        return true;
+        return requestedAt;
+    }
+
+    /**
+     * The Flux HelmRelease as it is on the cluster.
+     *
+     * @param namespace the HelmRelease namespace
+     * @param name      the HelmRelease name
+     * @return the HelmRelease, or {@code null} when Flux has not applied it (yet)
+     */
+    public GenericKubernetesResource getFluxHelmRelease(String namespace, String name) {
+        checkConfiguration();
+        return client.genericKubernetesResources(FLUX_HELM_RELEASE_RDC).inNamespace(namespace).withName(name).get();
     }
 
     /**
