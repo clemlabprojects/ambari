@@ -22,11 +22,13 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.model.DeploymentMode;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
 import org.apache.ambari.view.k8s.service.HelmService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.TrinoCatalogService;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -214,6 +216,7 @@ public class TrinoCatalogRuntimeService {
             throw new IllegalStateException("Runtime catalog creation is off for this release (dynamicCatalogs.enabled=false)."
                     + " Turn it on in Upgrade/Config, or add the catalog there to apply it at the next restart.");
         }
+        if (persist) requirePersistable(t);
         TrinoStatementClient.Result r = clientFor(t).execute(buildCreateCatalog(name, connector, props), operator);
         if (!r.ok()) throw accessOrState(r, t, "create catalog '" + name + "'");
         Map<String, Object> out = new LinkedHashMap<>();
@@ -228,6 +231,7 @@ public class TrinoCatalogRuntimeService {
         if (KDPS_MANAGED.contains(name) && valuesCatalogs(t.values).containsKey(name)) {
             throw new IllegalArgumentException("'" + name + "' is built by KDPS from the platform context; turn its toggle off in Upgrade/Config instead.");
         }
+        if (forget && valuesCatalogs(t.values).containsKey(name)) requirePersistable(t);
         TrinoStatementClient.Result r = clientFor(t).execute("DROP CATALOG " + name, operator);
         if (!r.ok() && !(r.errorName != null && r.errorName.contains("NOT_FOUND"))) throw accessOrState(r, t, "drop catalog '" + name + "'");
         Map<String, Object> out = new LinkedHashMap<>();
@@ -250,6 +254,7 @@ public class TrinoCatalogRuntimeService {
     public Map<String, Object> adopt(String namespace, String release, String name, String operator) {
         Target t = resolve(namespace, release);
         if (!IDENT.matcher(name).matches()) throw new IllegalArgumentException("'" + name + "' is not a catalog name.");
+        requirePersistable(t);
         // Trino 476 has no SHOW CREATE CATALOG; under dynamic management the file catalog store inside the
         // coordinator holds exactly what was created at runtime, so read it there (as a sanity gate the
         // operator must still be allowed to SHOW SCHEMAS on it — i.e. Ranger lets them use the catalog).
@@ -355,17 +360,34 @@ public class TrinoCatalogRuntimeService {
         return new IllegalStateException("Trino refused to " + action + ": " + r.error);
     }
 
+    /**
+     * Refuses, before anything is changed live, a catalog change whose persistence would upgrade a release KDPS
+     * must not upgrade directly: one Flux reconciles from Git (a direct upgrade fights helm-controller and is
+     * reverted at its next reconcile), or one with a Helm operation still running.
+     */
+    static void requirePersistable(Target t) {
+        if (t.metadata != null && DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(t.metadata.getDeploymentMode())) {
+            throw new IllegalStateException("Release " + t.namespace + "/" + t.release + " is deployed with Flux GitOps,"
+                    + " which owns its Helm upgrades, so KDPS cannot change the catalogs saved in its values. Change"
+                    + " them in Upgrade/Config so the change goes through Git; only runtime catalogs (not saved to the"
+                    + " release) can be managed here.");
+        }
+        HelmOperationRegistry.requireIdle(t.namespace, t.release);
+    }
+
     /** Write the catalog into the release values (null text = remove) through a helm upgrade of the same chart/version. */
     @SuppressWarnings("unchecked")
     private void persistCatalog(Target t, String name, String text) {
         if (t.metadata == null || t.metadata.getChartRef() == null) {
             throw new IllegalStateException("Release metadata is missing (not deployed through KDPS?) — catalog applied live only, not persisted.");
         }
+        requirePersistable(t);
         Map<String, Object> values = new LinkedHashMap<>(t.values);
         Map<String, Object> catalogs = values.get("catalogs") instanceof Map ? new LinkedHashMap<>((Map<String, Object>) values.get("catalogs")) : new LinkedHashMap<>();
         if (text == null) catalogs.remove(name); else catalogs.put(name, text);
         values.put("catalogs", catalogs);
         HelmService helm = new HelmService(ctx);
+        // deployOrUpgrade holds the release for the whole upgrade, refusing it if another operation started since.
         helm.deployOrUpgrade(t.metadata.getChartRef(), t.release, t.namespace, values, Collections.emptyMap(),
                 kubernetesService.getConfigurationService().getKubeconfigContents(),
                 t.metadata.getRepoId(), t.metadata.getVersion(), 600, true, false, false);

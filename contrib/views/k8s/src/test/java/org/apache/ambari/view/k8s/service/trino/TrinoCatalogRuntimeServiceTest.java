@@ -17,14 +17,23 @@
  */
 package org.apache.ambari.view.k8s.service.trino;
 
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
+import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Pure helpers of the live catalog editor: SQL building, SHOW CREATE CATALOG parsing, provenance merge. */
@@ -94,5 +103,45 @@ class TrinoCatalogRuntimeServiceTest {
     @Test
     void shellQuotingSurvivesSingleQuotes() {
         assertEquals("'a'\\''b'", TrinoStatementClient.sq("a'b"));
+    }
+
+    private static TrinoCatalogRuntimeService.Target target(String release, String deploymentMode) {
+        TrinoCatalogRuntimeService.Target t = new TrinoCatalogRuntimeService.Target();
+        t.namespace = "trino";
+        t.release = release;
+        t.metadata = new K8sReleaseEntity();
+        t.metadata.setDeploymentMode(deploymentMode);
+        return t;
+    }
+
+    @Test
+    void catalogsOfAFluxManagedReleaseAreNotSavedByADirectHelmUpgrade() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> TrinoCatalogRuntimeService.requirePersistable(target("trino-flux", "FLUX_GITOPS")));
+        assertTrue(e.getMessage().contains("Flux GitOps"), e.getMessage());
+        assertDoesNotThrow(() -> TrinoCatalogRuntimeService.requirePersistable(target("trino-direct", "DIRECT_HELM")));
+        assertDoesNotThrow(() -> TrinoCatalogRuntimeService.requirePersistable(target("trino-legacy", null)),
+                "releases recorded before deployment modes existed were deployed directly");
+    }
+
+    @Test
+    void catalogsAreNotSavedWhileAHelmOperationOnTheReleaseRuns() throws Exception {
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        CountDownLatch running = new CountDownLatch(1);
+        CountDownLatch helmReturns = new CountDownLatch(1);
+        try {
+            Future<?> upgrade = HelmOperationRegistry.submit("trino", "trino-busy", pool, () -> {
+                running.countDown();
+                return helmReturns.await(30, TimeUnit.SECONDS);
+            });
+            assertTrue(running.await(5, TimeUnit.SECONDS));
+            assertThrows(HelmOperationRegistry.ReleaseBusyException.class,
+                    () -> TrinoCatalogRuntimeService.requirePersistable(target("trino-busy", "DIRECT_HELM")));
+            helmReturns.countDown();
+            upgrade.get(5, TimeUnit.SECONDS);
+        } finally {
+            helmReturns.countDown();
+            pool.shutdownNow();
+        }
     }
 }

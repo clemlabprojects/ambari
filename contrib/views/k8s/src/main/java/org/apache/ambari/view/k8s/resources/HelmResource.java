@@ -33,6 +33,7 @@ import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.*;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.service.PathConfig;
 import org.apache.ambari.view.k8s.service.CommandService;
@@ -575,6 +576,8 @@ public class HelmResource {
                     .create(namespace, releaseName, name, props, persist, viewContext.getUsername())).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT).entity(java.util.Map.of("error", busy.getMessage())).build();
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
         } catch (Exception e) {
@@ -594,6 +597,8 @@ public class HelmResource {
                     .drop(namespace, releaseName, name, forget, viewContext.getUsername())).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT).entity(java.util.Map.of("error", busy.getMessage())).build();
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
         } catch (Exception e) {
@@ -630,6 +635,8 @@ public class HelmResource {
                     .adopt(namespace, releaseName, name, viewContext.getUsername())).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT).entity(java.util.Map.of("error", busy.getMessage())).build();
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
         } catch (Exception e) {
@@ -893,7 +900,7 @@ public class HelmResource {
      * @param namespace      release namespace
      * @param releaseName    release name
      * @param revision       target Helm revision number (required, must be > 0)
-     * @return HTTP 200 on success
+     * @return HTTP 200 on success; 409 while another Helm operation on the release is running
      */
     @POST
     @Path("/releases/{namespace}/{release}/actions/rollback")
@@ -914,6 +921,10 @@ public class HelmResource {
         } catch (ForbiddenException fe) {
             return Response.status(Response.Status.FORBIDDEN)
                     .entity(Map.of("error", fe.getMessage()))
+                    .build();
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", busy.getMessage()))
                     .build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
@@ -1029,7 +1040,7 @@ public class HelmResource {
      * @param targetVersion  chart version to upgrade to; required
      * @param requestHeaders caller headers for downstream Ambari calls
      * @param uriInfo        request URI context for building command links
-     * @return HTTP 202 with command id and href
+     * @return HTTP 202 with command id and href; 409 while a Helm operation on the release is still running
      */
     @POST
     @Path("/releases/{namespace}/{release}/actions/chart-upgrade")
@@ -1057,6 +1068,10 @@ public class HelmResource {
             return Response.status(Response.Status.FORBIDDEN)
                     .entity(Map.of("error", fe.getMessage()))
                     .build();
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", busy.getMessage()))
+                    .build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Map.of("error", iae.getMessage()))
@@ -1077,7 +1092,8 @@ public class HelmResource {
      * @param timeoutSeconds   maximum seconds to wait for the release to become ready
      * @param waitForCompletion whether to block until all Kubernetes resources are ready
      * @param atomicUpgrade    whether to roll back automatically on failure
-     * @return the deployed release details, or an error response on failure
+     * @return the deployed release details; 409 while another Helm operation on the release is running, or an
+     *         error response on failure
      */
     @POST
     @Path("/deploy")
@@ -1103,6 +1119,10 @@ public class HelmResource {
             RELEASE_CACHE.clear(); // invalidate cache after mutation
             LOG.info("Deployed release: {} in namespace: {} with id:{}", deployedRelease.getName(), deployedRelease.getNamespace());
             return Response.ok(buildReleaseDto(deployedRelease)).build();
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", busy.getMessage()))
+                    .build();
         } catch (Exception e) {
             LOG.error("Deployment failed", e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
@@ -1115,7 +1135,7 @@ public class HelmResource {
      * Upgrade an existing Helm release to a new chart or values set.
      *
      * @param upgradeRequest release name, namespace, chart reference, version, repo id, and new values
-     * @return the updated release DTO
+     * @return the updated release DTO; 409 while another Helm operation on the release is running
      */
     @POST
     @Path("/upgrade")
@@ -1141,9 +1161,17 @@ public class HelmResource {
         deployRequest.setChart(chartReference);
         deployRequest.setValues(upgradeRequest.getValues());
 
-        Release upgradedRelease = new HelmService(viewContext)
-                .deployOrUpgrade(deployRequest, getKubeconfigContents(), 
-                               upgradeRequest.getRepoId(), upgradeRequest.getVersion());
+        Release upgradedRelease;
+        try {
+            upgradedRelease = new HelmService(viewContext)
+                    .deployOrUpgrade(deployRequest, getKubeconfigContents(),
+                                   upgradeRequest.getRepoId(), upgradeRequest.getVersion());
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            throw new WebApplicationException(Response.status(Response.Status.CONFLICT)
+                    .type(MediaType.APPLICATION_JSON)
+                    .entity(Map.of("error", busy.getMessage()))
+                    .build());
+        }
 
         RELEASE_CACHE.clear(); // invalidate cache after mutation
         return HelmReleaseDTO.from(upgradedRelease);
@@ -1237,7 +1265,8 @@ public class HelmResource {
      *                     the credential stops working while the catalog and its data stay;
      *                     {@code catalog} also drops the catalog; {@code none} leaves Polaris
      *                     untouched. The object-store bucket is never deleted.
-     * @return HTTP 200 on success, or an error response on failure
+     * @return HTTP 200 on success; 409, with nothing removed, while another Helm operation on the release is
+     *         running; or an error response on failure
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
@@ -1251,6 +1280,14 @@ public class HelmResource {
                              @Context HttpHeaders requestHeaders) {
         K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
         String polarisCleanupNote = null;
+        // Refused before anything is removed: the cleanup below (Polaris credential, release metadata) runs even
+        // when the uninstall fails, and must not run for a release that is still installed.
+        try {
+            HelmOperationRegistry.requireIdle(namespace, releaseName);
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
+        }
+        boolean refusedAsBusy = false;
         // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
         try {
             if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
@@ -1288,24 +1325,30 @@ public class HelmResource {
                 // Use backend dispatcher (defaults to direct Helm).
                 commandService.destroyViaBackend(namespace, releaseName, meta != null ? meta.getDeploymentMode() : null);
             }
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            // An operation on the release started since the check above: the release is untouched.
+            refusedAsBusy = true;
+            return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
         } finally {
-            // A release that was given Polaris catalog access leaves a working credential behind
-            // unless it is taken back. Done after the release itself is gone, and never allowed to
-            // fail the uninstall: an unreachable Polaris must not leave a half-removed release.
-            try {
-                polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup,
-                        requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
-            } catch (Exception ex) {
-                LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
-            }
-            try {
-                if (meta != null) {
-                    releaseMetadataService.delete(namespace, releaseName);
+            if (!refusedAsBusy) {
+                // A release that was given Polaris catalog access leaves a working credential behind
+                // unless it is taken back. Done after the release itself is gone, and never allowed to
+                // fail the uninstall: an unreachable Polaris must not leave a half-removed release.
+                try {
+                    polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup,
+                            requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
+                } catch (Exception ex) {
+                    LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
                 }
-            } catch (Exception ex) {
-                LOG.warn("Failed to delete metadata for {}/{} after uninstall: {}", namespace, releaseName, ex.toString());
+                try {
+                    if (meta != null) {
+                        releaseMetadataService.delete(namespace, releaseName);
+                    }
+                } catch (Exception ex) {
+                    LOG.warn("Failed to delete metadata for {}/{} after uninstall: {}", namespace, releaseName, ex.toString());
+                }
+                RELEASE_CACHE.clear(); // invalidate cache after mutation
             }
-            RELEASE_CACHE.clear(); // invalidate cache after mutation
         }
         return polarisCleanupNote == null
                 ? Response.ok().build()
@@ -1318,14 +1361,21 @@ public class HelmResource {
      * @param namespace   Kubernetes namespace of the release
      * @param releaseName name of the Helm release to roll back
      * @param revision    target revision number to restore
-     * @return HTTP 200 on success, or an error response on failure
+     * @return HTTP 200 on success; 409 while another Helm operation on the release is running, or an error
+     *         response on failure
      */
     @POST
     @Path("/rollback")
     public Response rollback(@QueryParam("namespace") String namespace,
                             @QueryParam("name") String releaseName,
                             @QueryParam("revision") int revision) {
-        new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
+        try {
+            new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", busy.getMessage()))
+                    .build();
+        }
         RELEASE_CACHE.clear(); // invalidate cache after mutation
         return Response.ok().build();
     }

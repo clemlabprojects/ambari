@@ -24,6 +24,7 @@ import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.CommandLogService;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 
@@ -86,7 +87,8 @@ public class CommandResource {
    * @param kubeContext optional kubeconfig context override
    * @param headers    incoming request headers forwarded for Ambari authentication
    * @param ui         request URI info used to construct the command status URL
-   * @return HTTP 202 with the command {@code id}, or 400 on invalid input
+   * @return HTTP 202 with the command {@code id}, 400 on invalid input, or 409 while a Helm operation on the
+   *         release is still running
    */
   @POST
   @Path("/helm/deploy")
@@ -104,6 +106,11 @@ public class CommandResource {
       return Response.status(Response.Status.ACCEPTED)
               .entity(Map.of("id", id))
               .build();
+    } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+      LOG.warn("submitDeploy refused (409): {}", busy.getMessage());
+      return Response.status(Response.Status.CONFLICT)
+              .entity(Map.of("error", busy.getMessage()))
+              .build();
     } catch (IllegalArgumentException | IllegalStateException validation) {
       LOG.warn("submitDeploy rejected (400): {}", validation.getMessage());
       return Response.status(Response.Status.BAD_REQUEST)
@@ -116,6 +123,12 @@ public class CommandResource {
       // payload (IllegalArgumentException) and an incomplete deploy such as a Kerberized platform
       // context with no keytab selected (IllegalStateException).
       Throwable cause = re.getCause();
+      if (cause instanceof HelmOperationRegistry.ReleaseBusyException) {
+        LOG.warn("submitDeploy refused (409, unwrapped): {}", cause.getMessage());
+        return Response.status(Response.Status.CONFLICT)
+                .entity(Map.of("error", cause.getMessage()))
+                .build();
+      }
       if (cause instanceof IllegalArgumentException || cause instanceof IllegalStateException) {
         LOG.warn("submitDeploy rejected (400, unwrapped): {}", cause.getMessage());
         return Response.status(Response.Status.BAD_REQUEST)

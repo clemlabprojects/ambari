@@ -46,12 +46,12 @@ import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
-import com.marcnuri.helm.Release;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentBackend;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentContext;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.deployment.GitClient;
 import org.apache.ambari.view.k8s.service.deployment.HelmDirectBackend;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 
 import org.apache.ambari.view.k8s.utils.*;
 import org.apache.ambari.view.k8s.client.KeycloakAdminClient;
@@ -155,11 +155,19 @@ public class CommandService {
         return ctx;
     }
     public CommandService(ViewContext ctx) {
+        this(ctx, new HelmService(ctx), KubernetesService.get(ctx));
+    }
+
+    /**
+     * Builds the service on the given Helm and Kubernetes services; package-private so tests can run steps
+     * against mocks.
+     */
+    CommandService(ViewContext ctx, HelmService helmService, KubernetesService kubernetesService) {
         this.ctx = ctx;
         this.dataStore = ctx.getDataStore();
-        this.helmService = new HelmService(ctx);
+        this.helmService = helmService;
         this.workers = Executors.newCachedThreadPool();
-        this.kubernetesService = KubernetesService.get(ctx);
+        this.kubernetesService = kubernetesService;
         this.repositoryDao =  new HelmRepoRepo(ctx.getDataStore());
         this.timer = Executors.newScheduledThreadPool(1);
         this.webHookConfigurationService = new WebHookConfigurationService(this.ctx, this.kubernetesService);
@@ -252,7 +260,22 @@ public class CommandService {
      * Polls every second to check cancellation.
      */
     private <T> T runWithCancellation(String commandId, String childStatusId, Callable<T> task) throws Exception {
-        Future<T> future = helmExecutor.submit(task);
+        return awaitWithCancellation(commandId, childStatusId, helmExecutor.submit(task), null, null);
+    }
+
+    /**
+     * Same as {@link #runWithCancellation}, for a step that installs or upgrades a release: the release is held
+     * in the {@link HelmOperationRegistry} until the Helm call returns, so the step is refused while another
+     * operation on the release is running, and a canceled step keeps the release held until Helm is done.
+     */
+    private <T> T runReleaseOperation(String commandId, String childStatusId, String namespace, String releaseName,
+                                      Callable<T> task) throws Exception {
+        Future<T> future = HelmOperationRegistry.submit(namespace, releaseName, helmExecutor, task);
+        return awaitWithCancellation(commandId, childStatusId, future, namespace, releaseName);
+    }
+
+    private <T> T awaitWithCancellation(String commandId, String childStatusId, Future<T> future,
+                                        String namespace, String releaseName) throws Exception {
         for (;;) {
             try {
                 return future.get(1, TimeUnit.SECONDS);
@@ -261,11 +284,35 @@ public class CommandService {
                 if (st != null && CommandState.CANCELED.name().equals(st.getState())) {
                     appendCommandLog(commandId, "Cancelling running task on user abort");
                     future.cancel(true);
+                    // The native Helm call cannot be interrupted: say so, rather than let the operator believe
+                    // the release is idle and retry into it.
+                    if (releaseName != null && HelmOperationRegistry.isRunning(namespace, releaseName)) {
+                        String stillRunning = "Canceled by user. The Helm call on release " + namespace + "/"
+                                + releaseName + " is still running and cannot be interrupted; deploys, upgrades, "
+                                + "rollbacks and uninstalls of this release are refused until it finishes.";
+                        appendCommandLog(commandId, stillRunning);
+                        st.setMessage(stillRunning);
+                        st.setUpdatedAt(Instant.now().toString());
+                        store(st);
+                    }
                     throw new IllegalStateException("Canceled by user");
                 }
                 // continue waiting
             }
         }
+    }
+
+    /**
+     * Writes a line to both the operation's log and the step's own log. Unlike {@link #appendCommandLog}, it does
+     * not rely on the step's thread, so the Helm task running on the Helm pool can use it.
+     */
+    private java.util.function.Consumer<String> stepLog(String commandId, String stepId) {
+        return message -> {
+            try { commandLogService.append(commandId, message); } catch (Exception ignored) {}
+            if (stepId != null && !stepId.equals(commandId)) {
+                try { commandLogService.append(stepId, message); } catch (Exception ignored) {}
+            }
+        };
     }
 
     /**
@@ -4080,6 +4127,9 @@ public class CommandService {
         if (targetVersion.equals(releaseMetadata.getVersion())) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is already at version " + targetVersion);
         }
+        // The metadata version only moves once an upgrade succeeds, so it cannot tell that one is still running
+        // (a canceled upgrade keeps running in Helm); refuse here rather than in the middle of the operation.
+        HelmOperationRegistry.requireIdle(namespace, releaseName);
 
         // Preserve operator-supplied values: read the merged values from the deployed release.
         Map<String, Object> deployedValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
@@ -4165,6 +4215,8 @@ public class CommandService {
     /**
      * Entry point for deploy requests. Creates the orchestration plan, persists it, and schedules execution.
      * Thread-safe: no shared mutable state beyond the DataStore and thread pools.
+     *
+     * @throws HelmOperationRegistry.ReleaseBusyException when a Helm operation on the release is still running
      */
     public String submitDeploy(HelmDeployRequest request, String repoId, String version, String kubeContext, String commandsURL, MultivaluedMap<String,String> callerHeaders,
                                URI baseUri, AmbariAliasResolver ambariAliasResolver) {
@@ -4172,6 +4224,10 @@ public class CommandService {
         Objects.requireNonNull(request.getChart(), "chart is required");
         Objects.requireNonNull(request.getReleaseName(), "releaseName is required");
         Objects.requireNonNull(request.getNamespace(), "namespace is required");
+        // A Helm call KDPS started on the release, canceled or not, may still be running. Refuse before anything
+        // is done: planning the deploy already rewrites the release's TLS and truststore Secrets and its Hadoop
+        // configuration, which would change under the running call for a deploy its Helm step then refuses.
+        HelmOperationRegistry.requireIdle(request.getNamespace(), request.getReleaseName());
         String deploymentMode = request.getDeploymentMode() == null ? "DIRECT_HELM" : request.getDeploymentMode();
         LOG.info("Submit deploy for release {} in namespace {} using deploymentMode={}",
                 request.getReleaseName(), request.getNamespace(), deploymentMode);
@@ -5451,40 +5507,27 @@ public class CommandService {
         LOG.info("Computed list of endpoints: {}", resolvedEndpoints.toArray().toString());
 
         try {
-            ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
-            GlobalConfigService globalConfigService = new GlobalConfigService();
-            String globalFingerprint = globalConfigService.fingerprint();
-            metadataService.recordInstallOrUpgrade(
-                    request.getNamespace(),
-                    request.getReleaseName(),
-                    request.getServiceKey(),
-                    stringValue(params.get("_platformContextId")),
-                    request.getChart(),
-                    effectiveRepoId,
-                    version,
-                    effectiveValues,
-                    id,                  // deploymentId -> command id for traceability
-                    resolvedEndpoints,   // ✅ the computed list
-                    globalFingerprint,
-                    resolvedSecurityProfile,
-                    securityProfileHash,
-                    request.getDeploymentMode(),
-                    null, // gitCommitSha (set by GitOps backend in future)
-                    null, // gitBranch
-                    null, // gitPath
-                    null, // gitRepoUrl
-                    null, // gitCredentialAlias
-                    null, // gitCommitMode
-                    null, // gitPrUrl
-                    null, // gitPrNumber
-                    null  // gitPrState
-            );
+            Map<String, Object> releaseMetadata = new LinkedHashMap<>();
+            releaseMetadata.put("serviceKey", request.getServiceKey());
+            releaseMetadata.put("platformContextId", stringValue(params.get("_platformContextId")));
+            releaseMetadata.put("chartRef", request.getChart());
+            releaseMetadata.put("repoId", effectiveRepoId);
+            releaseMetadata.put("version", version);
+            releaseMetadata.put("deploymentId", id); // command id for traceability
+            releaseMetadata.put("endpoints", resolvedEndpoints);
+            releaseMetadata.put("globalConfigVersion", new GlobalConfigService().fingerprint());
+            releaseMetadata.put("securityProfile", resolvedSecurityProfile);
+            releaseMetadata.put("securityProfileHash", securityProfileHash);
+            releaseMetadata.put("deploymentMode", request.getDeploymentMode());
             if ("true".equals(stringValue(params.get("_catalogRefsSet")))) {
-                metadataService.recordCatalogRefs(request.getNamespace(), request.getReleaseName(),
-                        stringValue(params.get("_catalogRefsJson")));
+                releaseMetadata.put("catalogRefsSet", true);
+                releaseMetadata.put("catalogRefsJson", stringValue(params.get("_catalogRefsJson")));
             }
-            metadataService.recordTruststoreRefs(request.getNamespace(), request.getReleaseName(),
-                    request.getTruststoreRefs());
+            if (request.getTruststoreRefs() != null) {
+                releaseMetadata.put("truststoreRefs", new ArrayList<>(request.getTruststoreRefs()));
+            }
+            planReleaseMetadata(params, request.getNamespace(), request.getReleaseName(), releaseMetadata,
+                    effectiveValues);
         } catch (Exception ex) {
             LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
@@ -6425,12 +6468,98 @@ public class CommandService {
     }
 
     /**
+     * Step parameter holding the release metadata a deploy records once its Helm step has applied it: chart,
+     * version, security profile and its hash, global configuration fingerprint, endpoints, catalogs and truststores.
+     */
+    static final String RELEASE_METADATA_PARAM = "_releaseMetadata";
+
+    /**
+     * Hands a deploy's release metadata to its Helm step, which records it once Helm has applied the deploy.
+     *
+     * <p>A release KDPS already knows keeps its recorded metadata until then. Recorded at submit, a deploy that
+     * then failed (a template that does not render, an interrupted upgrade) would leave KDPS believing the new
+     * configuration is live, and its drift and out-of-sync signals would stay quiet while the release still runs
+     * the previous revision. A new release has nothing to keep: it is recorded at once, so KDPS knows it while it
+     * installs, and after a failed first install.
+     *
+     * @param params      the operation's parameters, passed on to its Helm step
+     * @param namespace   release namespace
+     * @param releaseName release name
+     * @param metadata    what to record (see {@link #RELEASE_METADATA_PARAM})
+     * @param values      the values the deploy applies
+     */
+    void planReleaseMetadata(Map<String, Object> params, String namespace, String releaseName,
+                             Map<String, Object> metadata, Map<String, Object> values) {
+        params.put(RELEASE_METADATA_PARAM, metadata);
+        if (new ReleaseMetadataService(this.ctx).find(namespace, releaseName) == null) {
+            recordReleaseMetadata(namespace, releaseName, metadata, values);
+        }
+    }
+
+    /**
+     * Records the release metadata a deploy planned (see {@link #planReleaseMetadata}).
+     */
+    private void recordReleaseMetadata(String namespace, String releaseName, Map<?, ?> metadata,
+                                       Map<String, Object> values) {
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+        List<Map<String, Object>> endpoints = new ArrayList<>();
+        if (metadata.get("endpoints") instanceof List<?> listed) {
+            for (Object endpoint : listed) {
+                if (endpoint instanceof Map<?, ?> m) {
+                    Map<String, Object> copy = new LinkedHashMap<>();
+                    m.forEach((k, v) -> copy.put(String.valueOf(k), v));
+                    endpoints.add(copy);
+                }
+            }
+        }
+        metadataService.recordInstallOrUpgrade(
+                namespace,
+                releaseName,
+                stringValue(metadata.get("serviceKey")),
+                stringValue(metadata.get("platformContextId")),
+                stringValue(metadata.get("chartRef")),
+                stringValue(metadata.get("repoId")),
+                stringValue(metadata.get("version")),
+                values,
+                stringValue(metadata.get("deploymentId")),
+                endpoints,
+                stringValue(metadata.get("globalConfigVersion")),
+                stringValue(metadata.get("securityProfile")),
+                stringValue(metadata.get("securityProfileHash")),
+                stringValue(metadata.get("deploymentMode")),
+                null, // gitCommitSha (set by GitOps backend in future)
+                null, // gitBranch
+                null, // gitPath
+                null, // gitRepoUrl
+                null, // gitCredentialAlias
+                null, // gitCommitMode
+                null, // gitPrUrl
+                null, // gitPrNumber
+                null  // gitPrState
+        );
+        if (Boolean.TRUE.equals(metadata.get("catalogRefsSet"))) {
+            metadataService.recordCatalogRefs(namespace, releaseName, stringValue(metadata.get("catalogRefsJson")));
+        }
+        if (metadata.get("truststoreRefs") instanceof List<?> refs) {
+            List<String> truststores = new ArrayList<>();
+            for (Object ref : refs) {
+                if (ref != null) truststores.add(String.valueOf(ref));
+            }
+            metadataService.recordTruststoreRefs(namespace, releaseName, truststores);
+        }
+    }
+
+    /**
      * Uninstall a release via direct Helm (no GitOps path).
+     *
+     * @throws HelmOperationRegistry.ReleaseBusyException when another Helm operation on the release is running
      */
     public void directHelmDestroy(String namespace, String releaseName) {
         try {
             final String kubeconfigContent = new ViewConfigurationService(ctx).getKubeconfigContents();
             new HelmService(ctx).uninstall(namespace, releaseName, kubeconfigContent);
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            throw busy;
         } catch (Exception ex) {
             LOG.warn("directHelmDestroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
             throw new RuntimeException(ex);
@@ -6439,6 +6568,8 @@ public class CommandService {
 
     /**
      * Destroy a release using the correct backend based on deploymentMode.
+     *
+     * @throws HelmOperationRegistry.ReleaseBusyException when another Helm operation on the release is running
      */
     public void destroyViaBackend(String namespace, String releaseName, String deploymentMode) {
         String mode = deploymentMode == null ? DeploymentMode.DIRECT_HELM.name() : deploymentMode.toUpperCase(Locale.ROOT);
@@ -6450,6 +6581,8 @@ public class CommandService {
         }
         try {
             backend.destroy(namespace, releaseName);
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            throw busy;
         } catch (Exception ex) {
             LOG.warn("Backend destroy failed for mode {} {}/{}: {}", mode, namespace, releaseName, ex.toString());
             throw new RuntimeException(ex);
@@ -6913,8 +7046,9 @@ public class CommandService {
     }
 
     // recursive method
+    // package-private so tests can run one step synchronously
 
-    private void runNextStep(String id) {
+    void runNextStep(String id) {
         // 0) Load root & status (the orchestrator is the root command id)
         CommandEntity root = find(id);
         if (root == null) return;
@@ -7447,11 +7581,12 @@ public class CommandService {
                         return st != null && CommandState.RUNNING.name().equals(st.getState());
                     });
                     try {
-                        runWithCancellation(id, child.getCommandStatusId(), () ->
+                        runReleaseOperation(id, child.getCommandStatusId(), namespace, releaseName, () ->
                                 this.helmService.deployOrUpgrade(
                                         chartName,
                                         releaseName,
-                                        namespace, childParams, overrideProperties, this.kubernetesService.getConfigurationService().getKubeconfigContents(), repoId, chartVersion, false));
+                                        namespace, childParams, overrideProperties, this.kubernetesService.getConfigurationService().getKubeconfigContents(), repoId, chartVersion, false,
+                                        stepLog(id, child.getId())));
                     } finally {
                         if (heartbeat != null) heartbeat.cancel(false);
                     }
@@ -8002,17 +8137,26 @@ public class CommandService {
                     releaseTagger.setDaemon(true);
                     releaseTagger.start();
                     try {
-                        runWithCancellation(id, child.getCommandStatusId(), () ->
+                        runReleaseOperation(id, child.getCommandStatusId(), namespace, releaseName, () ->
                                 this.helmService.deployOrUpgrade(
                                         chartName,
                                         releaseName,
-                                        namespace, valuesMap, overrideProperties, this.kubernetesService.getConfigurationService().getKubeconfigContents(), repoId, version, false));
+                                        namespace, valuesMap, overrideProperties, this.kubernetesService.getConfigurationService().getKubeconfigContents(), repoId, version, false,
+                                        stepLog(id, child.getId())));
                         this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
                     } finally {
                         if (heartbeatDeploy != null) heartbeatDeploy.cancel(false);
                         // Final belt-and-suspenders tag for the success path (and stop the poller).
                         this.kubernetesService.tagHelmReleaseSecrets(namespace, releaseName);
                         releaseTagger.interrupt();
+                    }
+                    // Helm has applied the deploy: only now does the release metadata describe what runs.
+                    if (childParams.get(RELEASE_METADATA_PARAM) instanceof Map<?, ?> plannedMetadata) {
+                        try {
+                            recordReleaseMetadata(namespace, releaseName, plannedMetadata, valuesMap);
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to record release metadata after deploy for {}/{}: {}", namespace, releaseName, ex.toString());
+                        }
                     }
 
                     /** storing metadata for the deployed helm release **/
@@ -8117,13 +8261,13 @@ public class CommandService {
                         return st != null && CommandState.RUNNING.name().equals(st.getState());
                     });
                     try {
-                        runWithCancellation(id, child.getCommandStatusId(), () ->
+                        runReleaseOperation(id, child.getCommandStatusId(), namespace, releaseName, () ->
                                 this.helmService.deployOrUpgrade(
                                         chartName,
                                         releaseName,
                                         namespace, valuesMap, overrideProperties,
                                         this.kubernetesService.getConfigurationService().getKubeconfigContents(),
-                                        repoId, version, false));
+                                        repoId, version, false, stepLog(id, child.getId())));
                         this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
                     } finally {
                         if (heartbeatUpgrade != null) heartbeatUpgrade.cancel(false);
@@ -9066,7 +9210,10 @@ public class CommandService {
                     CommandStatusEntity freshRoot = findCommandStatusById(root.getCommandStatusId());
                     if (freshRoot != null && !CommandState.FAILED.name().equals(freshRoot.getState())) {
                         freshRoot.setState(CommandState.CANCELED.name());
-                        freshRoot.setMessage("Canceled by user");
+                        // Carries the step's note when its Helm call is still running after the cancel.
+                        String stepMessage = freshChild.getMessage();
+                        freshRoot.setMessage(stepMessage != null && stepMessage.startsWith("Canceled by user")
+                                ? stepMessage : "Canceled by user");
                         freshRoot.setUpdatedAt(Instant.now().toString());
                         store(freshRoot);
                     }
@@ -9075,43 +9222,10 @@ public class CommandService {
                 }
             }
 
-            // ── YAML parse error recovery ─────────────────────────────────────────────
-            // helm-java can throw a YAML parse error when parsing the install/upgrade
-            // *response* even though the release was successfully deployed to the cluster.
-            // Before marking the step as failed, verify whether the release is actually up.
-            final String exMsg = ex.getMessage() != null ? ex.getMessage() : "";
-            if (exMsg.contains("YAML parse error") || exMsg.contains("error converting YAML to JSON")) {
-                Map<String, Object> childParams = null;
-                try {
-                    childParams = gson.fromJson(resolveParamsJson(child), mapType);
-                } catch (Exception ignored) {}
-
-                if (childParams != null) {
-                    final String releaseName = (String) childParams.get("releaseName");
-                    final String namespace    = (String) childParams.get("namespace");
-                    final String kubeconfig   = this.kubernetesService.getConfigurationService().getKubeconfigContents();
-                    if (releaseName != null && namespace != null) {
-                        Optional<Release> deployed = this.helmService.findDeployedRelease(releaseName, namespace, kubeconfig);
-                        if (deployed.isPresent()) {
-                            LOG.warn("[{}] Helm response parse error for '{}' but release is deployed — treating as success: {}",
-                                    id, releaseName, exMsg);
-                            try { commandLogService.append(id,
-                                    "Warning: Helm response parsing failed but release '" + releaseName + "' is deployed. Continuing."); }
-                            catch (Exception ignored) {}
-                            childSt.setState(CommandState.SUCCEEDED.name());
-                            childSt.setMessage("Deployed (response parse warning)");
-                            childSt.setUpdatedAt(Instant.now().toString());
-                            store(childSt);
-                            this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
-                            refreshCurrentStepSnapshot(root);
-                            scheduleNow(id);
-                            return;
-                        }
-                    }
-                }
-            }
-
             // ── Regular failure ───────────────────────────────────────────────────────
+            // Helm's "YAML parse error" and "error converting YAML to JSON" are failures like any other: Helm
+            // raises them while rendering, before any revision is created, so the release still deployed is the
+            // previous one and the step must not pass for a successful deploy.
             childSt.setState(CommandState.FAILED.name());
             childSt.setMessage("Failed: " + trim(ex.getMessage()));
             childSt.setUpdatedAt(Instant.now().toString());

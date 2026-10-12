@@ -365,13 +365,14 @@ public class HelmClientDefault implements HelmClient {
         }
     }
 
-    private static String runHelmCli(List<String> command, boolean allowFailure) {
+    // package-private so tests can run it on a plain command
+    static String runHelmCli(List<String> command, boolean allowFailure) {
         try {
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             String out = new String(p.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            int code = p.waitFor();
+            int code = waitForExit(p);
             if (code != 0 && !allowFailure) {
                 throw new RuntimeException("helm command failed (" + code + "): "
                         + String.join(" ", command) + " output=" + out);
@@ -381,6 +382,29 @@ public class HelmClientDefault implements HelmClient {
             throw re;
         } catch (Exception e) {
             throw new RuntimeException("Failed to run helm command: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Waits for the helm process to exit and returns its exit code. Canceling the operation interrupts this thread
+     * but not the process, which goes on and finishes its work (a rollback, say): waiting for its real exit code
+     * keeps a command that succeeded from being reported as failed. The interrupt is restored afterwards, so the
+     * caller still sees the cancel and starts nothing more.
+     */
+    private static int waitForExit(Process p) {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    return p.waitFor();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }
