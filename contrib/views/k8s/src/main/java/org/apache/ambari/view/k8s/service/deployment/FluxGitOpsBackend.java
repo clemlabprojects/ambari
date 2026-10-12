@@ -41,6 +41,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -88,6 +89,24 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final long RETRY_BASE_DELAY_MS = 500L;
     private static final long HTTP_RETRY_BASE_DELAY_MS = 250L;
+
+    /**
+     * How many times a change is pushed when the branch keeps moving on the server meanwhile (other deploys pushing
+     * to it), each time made again on top of the server's branch.
+     */
+    static final int MAX_PUSH_ROUNDS = 5;
+
+    /**
+     * How long an operation on a release waits for another one on the same release to finish with its Git workspace
+     * before it gives up: well under the minute after which the browser stops waiting for an uninstall.
+     */
+    static final Duration WORKSPACE_LOCK_WAIT = Duration.ofSeconds(30);
+
+    /**
+     * View property: how many seconds a Git clone, fetch or push may go without any data from the server before it
+     * fails ({@link GitClient#DEFAULT_TIMEOUT_SECONDS} when not set).
+     */
+    public static final String GIT_TIMEOUT_PROPERTY = "k8s.view.git.timeout.seconds";
 
     // Flux API versions — promoted from v2beta2/v1beta2 (deprecated in Flux 2.3, removed in Flux 3.x)
     static final String FLUX_HR_API_VERSION  = "helm.toolkit.fluxcd.io/v2";
@@ -201,6 +220,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private final SecurityProfileService securityProfileService;
     private final GlobalConfigService globalConfigService = new GlobalConfigService();
     private final StackDefinitionService stackDefinitionService = new StackDefinitionService();
+    private Duration workspaceLockWait = WORKSPACE_LOCK_WAIT;
 
     /**
      * @param fluxRoot root directory where manifests will be written (simulates Git workspace).
@@ -221,6 +241,34 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         this.commandUtils = new CommandUtils(viewContext, kubernetesService);
         this.helmService = new HelmService(viewContext);
         this.securityProfileService = new SecurityProfileService(viewContext);
+    }
+
+    /** How long an operation waits for another one on the same release ({@link #WORKSPACE_LOCK_WAIT}); for tests. */
+    void setWorkspaceLockWait(Duration wait) {
+        this.workspaceLockWait = wait;
+    }
+
+    /**
+     * The timeout of Git clones, fetches and pushes: the {@link #GIT_TIMEOUT_PROPERTY} view property, else
+     * {@link GitClient#DEFAULT_TIMEOUT_SECONDS}.
+     */
+    public static int gitTimeoutSeconds(ViewContext viewContext) {
+        String configured = viewContext == null || viewContext.getProperties() == null ? null
+                : viewContext.getProperties().get(GIT_TIMEOUT_PROPERTY);
+        if (configured == null || configured.isBlank()) {
+            return GitClient.DEFAULT_TIMEOUT_SECONDS;
+        }
+        try {
+            int seconds = Integer.parseInt(configured.trim());
+            if (seconds > 0) {
+                return seconds;
+            }
+        } catch (NumberFormatException ignored) {
+            // reported below
+        }
+        LOG.warn("Ignoring the view property {}='{}': not a positive number of seconds; Git operations time out "
+                + "after {} seconds", GIT_TIMEOUT_PROPERTY, configured, GitClient.DEFAULT_TIMEOUT_SECONDS);
+        return GitClient.DEFAULT_TIMEOUT_SECONDS;
     }
 
     /**
@@ -761,12 +809,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // Operations on the same release are serialised via a per-release lock;
         // operations on different releases still run in parallel.
         Path repoDir = workspaceForRelease(namespace, release);
-        ReentrantLock workspaceLock = lockForRelease(namespace, release);
-        workspaceLock.lock();
+        ReentrantLock workspaceLock = lockWorkspace(namespace, release);
         try {
 
         GitClient gitClient = new GitClient(repoDir, repoUrl, baseBranch, token, sshKey)
-                .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari");
+                .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari")
+                .withTimeout(gitTimeoutSeconds(viewContext));
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "sync " + repoUrl);
 
@@ -774,6 +822,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         final String branch = branchCandidate;
         git.setBranch(branch);
         withGitRetry(() -> { gitClient.checkoutBranch(branch); return null; }, "checkout " + branch);
+        // A pull request or working branch merged into the branch Flux reads as new commits, and deleted on the server
+        // since: started again from there, so a redeploy neither pushes its merged commits again nor proposes them
+        // once more with its own change.
+        gitClient.restartIfMergedInto(configuredBase);
         // As the branch holds them, which also covers releases deployed to the repository from elsewhere.
         checkApartFromOtherReleases(repoDir, targetDir, namespace, release);
 
@@ -1224,17 +1276,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         boolean canPush = (token != null && !token.isBlank()) || (sshKey != null && !sshKey.isBlank());
         String commitSha = null;
         try {
-            if (gitClient.hasChanges()) {
-                if (prMode && !canPush) {
-                    // PR intent without credentials: keep a local commit as a stub and surface to the operator.
-                    String stubSha = withGitRetry(() -> gitClient.commitWithoutPush(commitMsg), "commit(no-push)");
-                    if (stubSha != null) {
-                        commitSha = "PR-STUB:" + stubSha;
-                        LOG.warn("Flux GitOps PR mode requested but no credentials provided; created local commit stub {}", commitSha);
-                    }
-                } else {
-                    commitSha = withGitRetry(() -> gitClient.commitAndPush(commitMsg), "commit/push");
+            if (prMode && !canPush) {
+                // PR intent without credentials: keep a local commit as a stub and surface to the operator.
+                String stubSha = gitClient.commit(commitMsg);
+                if (stubSha != null) {
+                    commitSha = "PR-STUB:" + stubSha;
+                    LOG.warn("Flux GitOps PR mode requested but no credentials provided; created local commit stub {}", commitSha);
                 }
+            } else {
+                // Once the branch moved on the server, the release is written again on top of it, where another
+                // release may have taken a directory around this one's since the check above.
+                commitSha = commitAndPush(gitClient, commitMsg,
+                        () -> checkApartFromOtherReleases(repoDir, targetDir, namespace, release),
+                        namespace + "/" + release);
             }
         } catch (Exception commitEx) {
             // Nothing reached Git, so nothing of this deploy may stay ahead of it: neither the Secrets Flux would apply
@@ -1348,8 +1402,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 prState, specDigest);
 
         } catch (Exception applyEx) {
-            // Reset workspace so the next deploy attempt starts from a clean tree.
-            resetWorkspaceOnFailure(repoDir);
+            // Reset workspace so the next deploy attempt starts from what the server holds.
+            resetWorkspaceOnFailure(gitClient, repoDir);
             throw applyEx;
         }
         } finally {
@@ -1846,7 +1900,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         logFluxInfo(namespace, releaseName, "destroy", "Destroy requested for repo=%s branch=%s path=%s", meta.getGitRepoUrl(), meta.getGitBranch(), meta.getGitPath());
         List<String> errors = new ArrayList<>();
-        boolean gitDeleted = false;
         String repoUrl = meta.getGitRepoUrl();
         String branch = meta.getGitBranch();
         String path = meta.getGitPath();
@@ -1867,16 +1920,20 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         try {
             destroy(repoUrl, branch, reconciledBranch(meta), path, token, sshKey, namespace, releaseName);
-            gitDeleted = true;
-            forgetGitCredentials(meta);
-        } catch (NotOwnDirectoryException refused) {
-            // Found once the branch is read: nothing was removed from Git, so nothing is from the cluster either, and
-            // the release keeps its Git credential.
+        } catch (NotOwnDirectoryException | GitOpsBusyException refused) {
+            // Found once the branch is read, or the release's workspace is busy: nothing was removed from Git, so
+            // nothing is from the cluster either, and the release keeps its Git credential.
             throw refused;
         } catch (Exception ex) {
+            // The release's manifests may still be in Git, where Flux keeps applying them: its HelmRelease deleted
+            // from the cluster would only be recreated. Nothing else is removed, and the record and the Git credential
+            // are kept, so the uninstall can be retried.
             errors.add("Git cleanup failed: " + ex.getMessage());
             LOG.warn("Flux destroy git cleanup failed for {}/{}: {}", namespace, releaseName, ex.toString());
+            throw new RuntimeException("Flux destroy encountered issues: " + String.join(" | ", errors), ex);
         }
+        // Only once the removal is pushed.
+        forgetGitCredentials(meta);
         // Best-effort cluster cleanup of HR/HelmRepository
         try {
             deleteHelmRelease(meta.getNamespace(), meta.getReleaseName());
@@ -1887,12 +1944,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             errors.add("Cluster cleanup failed: " + ex.getMessage());
             LOG.warn("Flux destroy: cluster cleanup failed for {}/{}: {}", namespace, releaseName, ex.toString());
         }
-        if (errors.isEmpty() || gitDeleted) {
-            try {
-                releaseMetadataService.delete(namespace, releaseName);
-            } catch (Exception ex) {
-                errors.add("Failed to delete metadata: " + ex.getMessage());
-            }
+        try {
+            releaseMetadataService.delete(namespace, releaseName);
+        } catch (Exception ex) {
+            errors.add("Failed to delete metadata: " + ex.getMessage());
         }
         if (!errors.isEmpty()) {
             throw new RuntimeException("Flux destroy encountered issues: " + String.join(" | ", errors));
@@ -1931,13 +1986,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * stored credential only ever goes to the repository the release was deployed from. As any removal from Git
      * ({@link #destroy(String, String, String, String, String, String, String, String)}), it runs in the release's own
      * workspace under its lock and deletes only the manifests the release wrote into its own directory
-     * ({@link #releaseDirectory}, {@link #releaseManifests}). Once the removal is pushed, the release's Git credentials
-     * are deleted from Ambari's credential store.
+     * ({@link #releaseDirectory}, {@link #releaseManifests}), committed once and pushed, made again on top of the
+     * server's branch when it moved meanwhile. Once the removal is pushed, the release's Git credentials are deleted
+     * from Ambari's credential store.
      *
      * @param meta the release's metadata
      * @throws NotOwnDirectoryException when the recorded directory is not the release's own, or holds another
-     *                                  HelmRelease; nothing is removed and the credential is kept
-     * @throws Exception                when the manifests could not be removed; the credential is then kept
+     *                                  HelmRelease, also on the server's branch after it moved; nothing is removed
+     *                                  and the credential is kept
+     * @throws GitOpsBusyException      when another GitOps operation on the release keeps its workspace past
+     *                                  {@link #WORKSPACE_LOCK_WAIT}; nothing is removed and the credential is kept
+     * @throws Exception                when Git refused the removal ({@link GitPushRejectedException}) or could not
+     *                                  take it (a timeout, an unreachable server); the workspace is reset to the
+     *                                  server's branch and the credential is kept
      */
     public void removeFromGit(K8sReleaseEntity meta) throws Exception {
         String repoUrl = meta.getGitRepoUrl();
@@ -2058,6 +2119,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * @param releaseName      name of the release.
      * @throws NotOwnDirectoryException when the recorded directory is not the release's own, or its
      *                                   {@code helmrelease.yaml} holds another HelmRelease; nothing is removed
+     * @throws GitOpsBusyException       when another GitOps operation on the release keeps its workspace past
+     *                                   {@link #WORKSPACE_LOCK_WAIT}; nothing is removed
+     * @throws GitPushRejectedException  when the server refused the removal; the workspace is reset to the server's
+     *                                   branch
      */
     public void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath,
                         String authToken, String sshKey,
@@ -2070,12 +2135,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String effectiveBranch = (branch == null || branch.isBlank()) ? "main" : branch;
         // Use the same per-release workspace as apply() so both operations share the clone.
         Path repoDir = workspaceForRelease(namespace, releaseName);
-        ReentrantLock workspaceLock = lockForRelease(namespace, releaseName);
-        workspaceLock.lock();
+        ReentrantLock workspaceLock = lockWorkspace(namespace, releaseName);
         try {
-        GitClient gitClient = new GitClient(repoDir, repoUrl, effectiveBranch, authToken, sshKey);
+        GitClient gitClient = new GitClient(repoDir, repoUrl, effectiveBranch, authToken, sshKey)
+                .withTimeout(gitTimeoutSeconds(viewContext));
+        try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
         withGitRetry(() -> { gitClient.checkoutBranch(effectiveBranch); return null; }, "destroy-checkout");
+        // As for a deploy: the removal is made on top of the branch the working branch was merged into. On top of its
+        // merged commits instead, it would come to nothing once merged: together they change nothing since the commit
+        // the working branch started from, and the branch Flux reads would keep the release.
+        gitClient.restartIfMergedInto(reconciledBranch);
 
         // Only the files a deploy of the release writes, never the whole directory: the path prefix is free, so the
         // directory of another release, or other content of the repository, may lie below this one.
@@ -2090,8 +2160,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         for (Path manifest : manifests) {
             gitClient.deletePath(manifest);
         }
-        if (gitClient.hasChanges()) {
-            String sha = withGitRetry(() -> gitClient.commitAndPush("Flux GitOps delete " + releaseDir), "destroy-commit");
+        // Once the branch moved on the server, the removal is made again on top of it, provided the directory still
+        // holds the release's own HelmRelease there.
+        String sha = commitAndPush(gitClient, "Flux GitOps delete " + releaseDir,
+                () -> checkOwnHelmRelease(repoDir, releaseDir, namespace, releaseName),
+                namespace + "/" + releaseName + " (uninstall)");
+        if (sha != null) {
             LOG.info("Flux GitOps deleted {} on branch {} commit {}", releaseDir, effectiveBranch, sha);
         } else {
             LOG.info("Flux GitOps delete skipped commit because no changes detected at {}", releaseDir);
@@ -2110,6 +2184,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     + "removal is merged there", valuesSecrets, releaseDir, reconciledBranch);
         } else {
             deleteValuesSecrets(valuesSecrets, helmReleases);
+        }
+        } catch (Exception destroyEx) {
+            // Nothing of a failed removal may stay in the workspace for the next operation to take as published.
+            resetWorkspaceOnFailure(gitClient, repoDir);
+            throw destroyEx;
         }
         } finally {
             workspaceLock.unlock();
@@ -2162,7 +2241,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * Returns the per-release git workspace directory.
      * Each release gets its own clone so concurrent deploys to different
      * releases never interfere.  Concurrent operations on the SAME release
-     * are serialised via {@link #lockForRelease}.
+     * are serialised via {@link #lockWorkspace}.
      */
     private Path workspaceForRelease(String namespace, String releaseName) {
         return fluxRoot.resolve(
@@ -2170,10 +2249,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         );
     }
 
-    /**
-     * Returns (and creates if absent) the per-release ReentrantLock.
-     * Lock before touching the workspace; unlock in a finally block.
-     */
+    /** Returns (and creates if absent) the per-release ReentrantLock, taken through {@link #lockWorkspace}. */
     private ReentrantLock lockForRelease(String namespace, String releaseName) {
         return WORKSPACE_LOCKS.computeIfAbsent(
             namespace + ":" + releaseName,
@@ -2182,29 +2258,124 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Best-effort reset of a git workspace after a failed operation so the next
-     * attempt starts from a clean tree rather than a dirty / mid-rebase state.
+     * Takes the lock of the release's workspace, waiting at most {@link #WORKSPACE_LOCK_WAIT} for another operation
+     * on the release to release it. Never waits for good: an operation stuck on an unresponsive Git server must not
+     * pin every later request for the release until Ambari is restarted.
+     *
+     * @return the lock, held; unlock it in a finally block
+     * @throws GitOpsBusyException when another operation on the release still holds it
      */
-    private void resetWorkspaceOnFailure(Path repoDir) {
+    private ReentrantLock lockWorkspace(String namespace, String releaseName) throws InterruptedException {
+        ReentrantLock lock = lockForRelease(namespace, releaseName);
+        if (!lock.tryLock(workspaceLockWait.toMillis(), TimeUnit.MILLISECONDS)) {
+            throw new GitOpsBusyException(namespace, releaseName);
+        }
+        return lock;
+    }
+
+    /**
+     * Another GitOps deploy or uninstall of the release is still using its Git workspace. Nothing was done; the
+     * operation can be retried once the other one has finished.
+     */
+    public static final class GitOpsBusyException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        public GitOpsBusyException(String namespace, String releaseName) {
+            super("Another GitOps operation on " + namespace + "/" + releaseName + " is in progress. Try again once it"
+                    + " has finished.");
+        }
+    }
+
+    /**
+     * Best-effort reset of a git workspace after a failed operation: back to the server's branch as last fetched, so
+     * the next attempt neither starts from a dirty tree nor takes a commit that was never pushed for published.
+     */
+    private void resetWorkspaceOnFailure(GitClient gitClient, Path repoDir) {
         if (!Files.exists(repoDir.resolve(".git"))) return;
         try {
-            int code = new ProcessBuilder("git", "reset", "--hard", "HEAD")
-                    .directory(repoDir.toFile())
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .start()
-                    .waitFor();
-            if (code != 0) LOG.warn("git reset --hard failed (exit {}) in {}", code, repoDir);
-            // Files written for the failed deploy and never committed would otherwise linger into the next one.
-            code = new ProcessBuilder("git", "clean", "-fd")
-                    .directory(repoDir.toFile())
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .start()
-                    .waitFor();
-            if (code != 0) LOG.warn("git clean -fd failed (exit {}) in {}", code, repoDir);
+            gitClient.resetToRemote();
         } catch (Exception ex) {
             LOG.warn("Could not reset workspace {} after failure: {}", repoDir, ex.getMessage());
+        }
+    }
+
+    /** A check made again on the server's branch before a change is written again over it. */
+    @FunctionalInterface
+    private interface BranchCheck {
+        void check() throws Exception;
+    }
+
+    /**
+     * Commits the working tree, once, and pushes it ({@link #pushRebasing}). When there is nothing new to commit but
+     * the branch holds commits the server does not have, those are pushed: a deploy never reports that Git already
+     * holds the release while the server lacks it. Commits merged since into the branch Flux reads are not among them:
+     * the branch was started again from there once checked out ({@link GitClient#restartIfMergedInto}).
+     *
+     * @param recheck   run on the server's branch before the change is made again on top of it
+     * @param operation what is pushed, for the logs
+     * @return the commit the server now holds with the change, or {@code null} when it already held it
+     */
+    private String commitAndPush(GitClient gitClient, String message, BranchCheck recheck, String operation)
+            throws Exception {
+        String sha = gitClient.commit(message);
+        if (sha == null) {
+            int unpublished = gitClient.unpublishedCommits();
+            if (unpublished == 0) {
+                return null;
+            }
+            LOG.warn("Git branch of {} holds {} commit(s) the server does not have: pushing them", operation, unpublished);
+        }
+        return pushRebasing(gitClient, message, recheck, operation);
+    }
+
+    /**
+     * Pushes the commit the workspace is on. A push that fails on the way (the network, the server busy) is tried
+     * again as it is ({@link #withGitRetry}). One refused because the branch moved on the server since it was fetched
+     * (another deploy pushed to it first) is made again on top of the server's branch: fetched, reset to it, this
+     * operation's change written again over it and committed, then pushed, up to {@link #MAX_PUSH_ROUNDS} times. Any
+     * other refusal (a protected branch, a server hook, a branch name the server cannot create) fails with the server's
+     * message.
+     *
+     * @return the commit the server now holds with the change, or {@code null} when it already held it
+     * @throws GitPushRejectedException when the server refused the push; nothing changed on the server
+     */
+    private String pushRebasing(GitClient gitClient, String message, BranchCheck recheck, String operation)
+            throws Exception {
+        for (int round = 1; ; round++) {
+            try {
+                return withGitRetry(gitClient::push, "push " + operation);
+            } catch (GitPushRejectedException rejected) {
+                if (!rejected.mayBeBranchMoved() || round >= MAX_PUSH_ROUNDS) {
+                    throw rejected;
+                }
+                GitClient.Change change = gitClient.unpublishedChange();
+                try {
+                    withGitRetry(() -> { gitClient.fetch(); return null; }, "fetch " + operation);
+                } catch (IOException fetchFailed) {
+                    rejected.addSuppressed(fetchFailed);
+                    throw rejected;
+                }
+                // Told by the server's branch, not by the server's words: the words of a lost race also cover refusals
+                // a new attempt cannot fix. Made again over a branch that did not move, or that the server does not
+                // have, the change would only find the workspace's own unpushed commit and be taken as already in Git.
+                if (!gitClient.branchMovedOnServer()) {
+                    throw rejected;
+                }
+                LOG.info("Git branch {} moved on the server while {} was pushed: writing the change again on top of it"
+                        + " (attempt {}/{})", rejected.getBranch(), operation, round + 1, MAX_PUSH_ROUNDS);
+                gitClient.resetToRemote();
+                recheck.check();
+                gitClient.write(change);
+                if (gitClient.commit(message) == null) {
+                    // Nothing new to commit on top of the server's branch is the server already holding the change,
+                    // provided the workspace holds nothing the server lacks.
+                    if (gitClient.unpublishedCommits() > 0) {
+                        throw rejected;
+                    }
+                    LOG.info("Git branch {} already holds the change of {}", rejected.getBranch(), operation);
+                    return null;
+                }
+            }
         }
     }
 
@@ -2839,7 +3010,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Execute a git operation with a tiny retry window to absorb transient network hiccups.
+     * Execute a git operation with a tiny retry window to absorb transient network hiccups. A refused push, refused
+     * credentials and a timeout fail at once ({@link GitClient#isRetryable}): trying again gets the same answer, or
+     * waits the whole timeout again while the release's workspace stays locked.
      *
      * @param op    git callable to run
      * @param label human-readable label for logging
@@ -2851,6 +3024,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 return op.call();
             } catch (IOException io) {
                 lastIo = io;
+                if (!GitClient.isRetryable(io)) {
+                    LOG.warn("Git operation {} failed: {}", label, io.getMessage());
+                    throw io;
+                }
                 LOG.warn("Git operation {} failed (attempt {}/{}): {}", label, attempt, MAX_RETRY_ATTEMPTS, io.getMessage());
                 if (attempt >= MAX_RETRY_ATTEMPTS) {
                     throw io;

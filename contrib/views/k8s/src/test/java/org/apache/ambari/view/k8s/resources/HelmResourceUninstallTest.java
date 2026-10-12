@@ -23,7 +23,9 @@ import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
+import org.apache.ambari.view.k8s.service.deployment.GitPushRejectedException;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.objenesis.ObjenesisStd;
@@ -48,7 +50,8 @@ import static org.mockito.Mockito.when;
 /**
  * The uninstall of a GitOps release from the Releases page: when the Git directory recorded for the release is not
  * its own, or holds another release's HelmRelease, nothing is removed. Its manifests stay in Git and Flux keeps running it, so it keeps its Polaris catalog
- * credential and its record, from which the uninstall is retried once the record is corrected.
+ * credential and its record, from which the uninstall is retried once the record is corrected. The same when Git
+ * refuses or cannot take the removal, or another GitOps operation on the release holds its workspace.
  */
 class HelmResourceUninstallTest {
 
@@ -128,6 +131,39 @@ class HelmResourceUninstallTest {
 
         assertEquals(400, response.getStatus());
         assertTrue(String.valueOf(((Map<?, ?>) response.getEntity()).get("error")).contains("team-b/trino"));
+        verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+        verify(releaseMetadata, never()).delete(anyString(), anyString());
+    }
+
+    @Test
+    void aRemovalGitRefusesKeepsTheReleasesCredentialAndRecord() throws Exception {
+        K8sReleaseEntity meta = recorded("clusters/default/team-a/trino");
+        doThrow(new GitPushRejectedException("https://git.example.org/platform/gitops.git", "main",
+                RemoteRefUpdate.Status.REJECTED_OTHER_REASON, "pre-receive hook declined",
+                "Not allowed to push to protected branch main"))
+                .when(flux).removeFromGit(meta);
+
+        Response response = uninstall();
+
+        assertEquals(500, response.getStatus());
+        String error = String.valueOf(((Map<?, ?>) response.getEntity()).get("error"));
+        assertTrue(error.contains("Not allowed to push to protected branch main"), "Git's own message: " + error);
+        // Flux keeps running the release from Git: it keeps its catalog credential, its SCCs and its record.
+        verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
+        verify(releaseMetadata, never()).delete(anyString(), anyString());
+    }
+
+    @Test
+    void anUninstallWhileAnotherGitOpsOperationHoldsTheReleaseIsRefusedWith409() throws Exception {
+        K8sReleaseEntity meta = recorded("clusters/default/team-a/trino");
+        doThrow(new FluxGitOpsBackend.GitOpsBusyException(NS, RELEASE)).when(flux).removeFromGit(meta);
+
+        Response response = uninstall();
+
+        assertEquals(409, response.getStatus());
+        assertEquals("Another GitOps operation on team-a/trino is in progress. Try again once it has finished.",
+                ((Map<?, ?>) response.getEntity()).get("error"));
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }

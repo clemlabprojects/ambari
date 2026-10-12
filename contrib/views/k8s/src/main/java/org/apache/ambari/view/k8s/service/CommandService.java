@@ -13996,13 +13996,15 @@ public class CommandService {
         try {
             org.apache.ambari.view.k8s.service.deployment.GitClient git =
                     new org.apache.ambari.view.k8s.service.deployment.GitClient(workspace, repoUrl, branch, token, sshKey)
-                            .withAuthor("KDPS", "kdps@clemlab.com");
+                            .withAuthor("KDPS", "kdps@clemlab.com")
+                            .withTimeout(FluxGitOpsBackend.gitTimeoutSeconds(ctx));
             git.sync();
             git.checkoutBranch(branch);
             git.writeFile(java.nio.file.Path.of(dagDir, fileName), content);
             changed = git.hasChanges();
             if (changed) {
-                commitSha = git.commitAndPush("KDPS: dbt DAG for release " + releaseName + " in " + namespace);
+                commitSha = git.commit("KDPS: dbt DAG for release " + releaseName + " in " + namespace);
+                git.push();
             }
         } finally {
             deleteRecursively(workspace);

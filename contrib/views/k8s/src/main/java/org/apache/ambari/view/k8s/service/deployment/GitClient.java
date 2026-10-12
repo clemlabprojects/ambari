@@ -28,8 +28,17 @@ import org.eclipse.jgit.api.TransportCommand;
 import org.eclipse.jgit.api.CreateBranchCommand.SetupUpstreamMode;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.TransportConfigCallback;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefUpdate;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevSort;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.ssh.jsch.JschConfigSessionFactory;
@@ -38,15 +47,25 @@ import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.SshTransport;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
+import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.TreeFilter;
 import org.eclipse.jgit.util.FS;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -54,14 +73,32 @@ import java.util.UUID;
 /**
  * Pure-Java git wrapper built on JGit — no OS {@code git} binary required (more portable/robust) and
  * a single {@link TransportConfigCallback} hook where SSH (and, later, an outbound proxy) is attached.
- * The public API is unchanged from the previous binary-based implementation.
  *
  * <p>Auth: HTTPS remotes use the token as the username (matching the old {@code https://token@host}),
  * SSH remotes use the provided private key in memory (no key file on disk). SSH host-key checking is
  * relaxed ("no") for unattended GitOps — the classic JSch provider has no OpenSSH "accept-new".
+ *
+ * <p>Every clone, fetch and push gives up once the server has sent nothing for {@link #withTimeout the timeout}:
+ * JGit's own default waits forever, so a Git server or proxy that stops answering would hold the caller (and the
+ * release's workspace lock) until Ambari is restarted.
  */
 public class GitClient {
     private static final Logger LOG = LoggerFactory.getLogger(GitClient.class);
+
+    /** Seconds a clone, fetch or push may go without any data from the server, unless set otherwise. */
+    public static final int DEFAULT_TIMEOUT_SECONDS = 120;
+
+    /** SSH keepalive: a probe after 30 s of silence, the connection dropped after 4 unanswered ones. */
+    static final int SERVER_ALIVE_INTERVAL_MS = 30_000;
+    static final int SERVER_ALIVE_COUNT_MAX = 4;
+
+    /**
+     * What the message of a failure says when trying again cannot help: the server turned down the credentials, or
+     * stopped answering (JGit's "Read timed out after", the JDK's "Read timed out", JSch's "timeout").
+     */
+    private static final List<String> NOT_RETRYABLE_MESSAGES = List.of(
+            "timed out", "time out", "timeout",
+            "not authorized", "authentication", "auth fail", "auth cancel", "not permitted", "forbidden");
 
     private final Path workspace;
     private final String repoUrl;
@@ -70,6 +107,7 @@ public class GitClient {
     private final String sshKey;
     private String authorName;
     private String authorEmail;
+    private int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
     private final TransportConfigCallback transportConfig;
 
     public GitClient(Path workspace, String repoUrl, String baseBranch, String authToken) {
@@ -90,6 +128,43 @@ public class GitClient {
         this.authorName = (name == null || name.isBlank()) ? null : name;
         this.authorEmail = (email == null || email.isBlank()) ? null : email;
         return this;
+    }
+
+    /**
+     * Sets how long a clone, fetch or push may go without any data from the server before it fails. A transfer that
+     * is slow but still moving is not cut off.
+     *
+     * @param seconds the timeout; {@link #DEFAULT_TIMEOUT_SECONDS} when not positive
+     */
+    public GitClient withTimeout(int seconds) {
+        this.timeoutSeconds = seconds > 0 ? seconds : DEFAULT_TIMEOUT_SECONDS;
+        return this;
+    }
+
+    /** The timeout of clones, fetches and pushes, in seconds. */
+    public int timeoutSeconds() {
+        return timeoutSeconds;
+    }
+
+    /**
+     * Whether trying a failed Git operation again may help. Not when the server refused the push, turned down the
+     * credentials or stopped answering: a refusal and bad credentials get the same answer again, and a server that
+     * did not answer within the timeout already had all that time, which each new attempt would add again while the
+     * release's workspace stays locked.
+     */
+    public static boolean isRetryable(Throwable failure) {
+        Set<Throwable> seen = new HashSet<>();
+        for (Throwable cause = failure; cause != null && seen.add(cause); cause = cause.getCause()) {
+            // SocketTimeoutException and JGit's own read and write timeouts are InterruptedIOExceptions.
+            if (cause instanceof GitPushRejectedException || cause instanceof InterruptedIOException) {
+                return false;
+            }
+            String message = cause.getMessage() == null ? "" : cause.getMessage().toLowerCase(Locale.ROOT);
+            if (NOT_RETRYABLE_MESSAGES.stream().anyMatch(message::contains)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ---- auth / transport ------------------------------------------------------------------------
@@ -113,7 +188,7 @@ public class GitClient {
 
     /** The URL without any user information, for logs. */
     private static String redact(String url) {
-        return url.replaceFirst("://[^@/]+@", "://");
+        return url == null ? null : url.replaceFirst("://[^@/]+@", "://");
     }
 
     /**
@@ -127,8 +202,7 @@ public class GitClient {
         final JschConfigSessionFactory sshFactory = new JschConfigSessionFactory() {
             @Override
             protected void configure(OpenSshConfig.Host host, Session session) {
-                // Classic JSch has no "accept-new"; disable strict checking for unattended automation.
-                session.setConfig("StrictHostKeyChecking", "no");
+                configureSession(session);
             }
             @Override
             protected JSch createDefaultJSch(FS fs) throws JSchException {
@@ -145,9 +219,25 @@ public class GitClient {
         };
     }
 
-    /** Apply credentials + transport (SSH/proxy) config to any JGit remote command. */
+    /**
+     * Settings of an SSH session to the Git server. Classic JSch has no "accept-new", so strict host-key checking is
+     * off for unattended automation. Keepalives notice a connection the network dropped without closing it (a
+     * firewall that forgot it, say) even while no data is expected, which the timeout of the transfer alone does not.
+     */
+    static void configureSession(Session session) {
+        session.setConfig("StrictHostKeyChecking", "no");
+        try {
+            session.setServerAliveInterval(SERVER_ALIVE_INTERVAL_MS);
+        } catch (JSchException e) {
+            LOG.warn("Could not enable SSH keepalives to the Git server: {}", e.getMessage());
+        }
+        session.setServerAliveCountMax(SERVER_ALIVE_COUNT_MAX);
+    }
+
+    /** Apply credentials, the timeout and transport (SSH/proxy) config to any JGit remote command. */
     private <C extends TransportCommand<C, ?>> C configure(C command) {
         command.setCredentialsProvider(credentials());
+        command.setTimeout(timeoutSeconds);
         if (transportConfig != null) {
             command.setTransportConfigCallback(transportConfig);
         }
@@ -156,7 +246,11 @@ public class GitClient {
 
     // ---- repository operations -------------------------------------------------------------------
 
-    /** Clone (or fetch+checkout) the repository into the workspace. */
+    /**
+     * Clones the repository into the workspace, or fetches into the clone already there, then puts the workspace on
+     * the base branch exactly as the server holds it. Commits made here and never pushed, uncommitted changes and new
+     * files are all dropped: a failed operation must not leave anything the next one would take as published.
+     */
     public void sync() throws IOException, InterruptedException {
         try {
             if (Files.exists(workspace.resolve(".git"))) {
@@ -164,50 +258,101 @@ public class GitClient {
                     StoredConfig cfg = git.getRepository().getConfig();
                     cfg.setString("remote", "origin", "url", repoUrl);
                     cfg.save();
-                    configure(git.fetch().setRemote("origin")).call();
-                    boolean exists = git.getRepository().findRef("refs/heads/" + baseBranch) != null;
-                    CheckoutCommand checkout = git.checkout().setName(baseBranch);
-                    if (!exists) {
-                        checkout.setCreateBranch(true)
-                                .setUpstreamMode(SetupUpstreamMode.TRACK)
-                                .setStartPoint("origin/" + baseBranch);
-                    }
-                    checkout.call();
-                    configure(git.pull().setRemote("origin")).call();
                 }
-                return;
+                fetch();
+            } else {
+                Files.createDirectories(workspace);
+                try {
+                    // Every branch is fetched; the base branch is set up below from the server's, also when the server
+                    // does not have it yet.
+                    configure(Git.cloneRepository()
+                            .setURI(repoUrl)
+                            .setDirectory(workspace.toFile()))
+                            .call().close();
+                } catch (GitAPIException | RuntimeException cloneFailed) {
+                    // A partial clone would be taken for a usable one by the next sync.
+                    deleteDirContents(workspace);
+                    throw cloneFailed;
+                }
             }
-            Files.createDirectories(workspace);
-            try {
-                configure(Git.cloneRepository()
-                        .setURI(repoUrl)
-                        .setBranch(baseBranch)
-                        .setDirectory(workspace.toFile()))
-                        .call().close();
-            } catch (GitAPIException branchClone) {
-                LOG.warn("Clone of branch {} failed ({}). Falling back to default branch + local branch.",
-                        baseBranch, branchClone.getMessage());
-                deleteDirContents(workspace);
-                try (Git git = configure(Git.cloneRepository()
-                        .setURI(repoUrl)
-                        .setDirectory(workspace.toFile())).call()) {
-                    boolean exists = git.getRepository().findRef("refs/heads/" + baseBranch) != null;
-                    git.checkout().setName(baseBranch).setCreateBranch(!exists).setForceRefUpdate(true).call();
-                }
+            try (Git git = Git.open(workspace.toFile())) {
+                switchTo(git, baseBranch);
             }
         } catch (GitAPIException e) {
-            throw new IOException("git sync failed for " + repoUrl + ": " + e.getMessage(), e);
+            throw new IOException("git sync failed for " + redact(repoUrl) + ": " + e.getMessage(), e);
         }
     }
 
-    /** Create or reset a branch to the current HEAD (equivalent to {@code git checkout -B}). */
+    /** Fetches every branch of the server, forgetting those it no longer has. */
+    public void fetch() throws IOException {
+        try (Git git = Git.open(workspace.toFile())) {
+            configure(git.fetch().setRemote("origin").setRemoveDeletedRefs(true)).call();
+        } catch (GitAPIException e) {
+            throw new IOException("git fetch from " + redact(repoUrl) + " failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Switches the workspace to a branch as the server holds it ({@code origin/<branch>} as last fetched). A branch
+     * the server does not have is kept as it is here, or created from the current commit.
+     */
     public void checkoutBranch(String branch) throws IOException, InterruptedException {
         try (Git git = Git.open(workspace.toFile())) {
-            boolean exists = git.getRepository().findRef("refs/heads/" + branch) != null;
-            git.checkout().setName(branch).setCreateBranch(!exists).setForceRefUpdate(true).call();
+            switchTo(git, branch);
         } catch (GitAPIException e) {
             throw new IOException("git checkout " + branch + " failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Puts the current branch back to what the server holds as last fetched ({@code origin/<branch>}), dropping the
+     * commits made here, uncommitted changes and new files. On a branch the server does not have, only the
+     * uncommitted changes and new files are dropped.
+     */
+    public void resetToRemote() throws IOException {
+        try (Git git = Git.open(workspace.toFile())) {
+            String fullBranch = git.getRepository().getFullBranch();
+            if (fullBranch != null && fullBranch.startsWith(Constants.R_HEADS)) {
+                switchTo(git, Repository.shortenRefName(fullBranch));
+            } else {
+                git.reset().setMode(ResetCommand.ResetType.HARD).call();
+                git.clean().setCleanDirectories(true).call();
+            }
+        } catch (GitAPIException e) {
+            throw new IOException("git reset of " + workspace + " failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Puts the workspace on {@code branch}: reset to {@code origin/<branch>} when the server has it, otherwise the
+     * local branch as it is (created from the current commit when absent). Uncommitted changes and new files are
+     * dropped either way.
+     */
+    private static void switchTo(Git git, String branch) throws GitAPIException, IOException {
+        Repository repo = git.getRepository();
+        Ref published = repo.exactRef(Constants.R_REMOTES + "origin/" + branch);
+        boolean local = repo.exactRef(Constants.R_HEADS + branch) != null;
+        if (!local && published == null && repo.resolve(Constants.HEAD) == null) {
+            // An empty repository: the first commit creates the branch.
+            RefUpdate head = repo.updateRef(Constants.HEAD);
+            head.disableRefLog();
+            head.link(Constants.R_HEADS + branch);
+            return;
+        }
+        if (!local || !branch.equals(repo.getBranch())) {
+            CheckoutCommand checkout = git.checkout().setName(branch).setForced(true);
+            if (!local) {
+                checkout.setCreateBranch(true)
+                        .setStartPoint(published != null ? published.getName() : Constants.HEAD);
+                if (published != null) {
+                    checkout.setUpstreamMode(SetupUpstreamMode.TRACK);
+                }
+            }
+            checkout.call();
+        }
+        git.reset().setMode(ResetCommand.ResetType.HARD)
+                .setRef(published != null ? published.getName() : Constants.HEAD).call();
+        git.clean().setCleanDirectories(true).call();
     }
 
     /** Write a file relative to the repo root. */
@@ -218,46 +363,241 @@ public class GitClient {
     }
 
     /**
-     * Stage, commit, and push. Returns the commit SHA (or null if nothing changed).
+     * Stages every change of the working tree (new, modified and deleted files) and commits it. Nothing is pushed.
      *
-     * <p>Safe to call again after a failed push: the commit made by the failed call is pushed, instead of the call
-     * finding nothing left to commit and reporting no change.
-     *
-     * @throws IOException when the push fails or the remote refuses the update
+     * @return the commit, or {@code null} when nothing changed
      */
-    public String commitAndPush(String message) throws IOException, InterruptedException {
-        String sha = commitInternal(message);
-        if (sha == null) {
-            if (unpushedCommit == null || !unpushedCommit.equals(headCommit())) {
+    public String commit(String message) throws IOException, InterruptedException {
+        try (Git git = Git.open(workspace.toFile())) {
+            git.add().addFilepattern(".").call();              // new + modified files
+            git.add().addFilepattern(".").setUpdate(true).call(); // stage deletions of tracked files
+            if (git.status().call().isClean()) {
+                LOG.info("No git changes detected, skipping commit for {}", redact(repoUrl));
                 return null;
             }
-            sha = unpushedCommit;
+            var commit = git.commit().setMessage(message);
+            if (authorName != null && authorEmail != null) {
+                commit.setAuthor(authorName, authorEmail).setCommitter(authorName, authorEmail);
+            }
+            RevCommit c = commit.call();
+            LOG.info("Created local commit {} for {}", c.getName(), redact(repoUrl));
+            return c.getName();
+        } catch (GitAPIException e) {
+            throw new IOException("git commit failed for " + redact(repoUrl) + ": " + e.getMessage(), e);
         }
-        unpushedCommit = sha;
+    }
+
+    /**
+     * Pushes the current branch to the branch of the same name on the server.
+     *
+     * @return the commit the server now holds
+     * @throws GitPushRejectedException when the server refused the update (the branch moved on, a protected branch, a
+     *                                  server hook): nothing changed on the server
+     * @throws IOException              when the server could not be reached or the transfer failed or timed out
+     */
+    public String push() throws IOException {
         try (Git git = Git.open(workspace.toFile())) {
             String branch = git.getRepository().getBranch();
+            ObjectId head = git.getRepository().resolve(Constants.HEAD);
             Iterable<PushResult> results = configure(git.push().setRemote("origin")
-                    .setRefSpecs(new RefSpec("HEAD:refs/heads/" + branch))).call();
-            // A refused update (not a fast-forward, a protected branch, a server hook) is reported, not thrown.
+                    .setRefSpecs(new RefSpec("HEAD:" + Constants.R_HEADS + branch))).call();
+            // JGit throws only when the transfer fails: a refused update is reported in the result.
             for (PushResult result : results) {
                 for (RemoteRefUpdate update : result.getRemoteUpdates()) {
                     if (update.getStatus() != RemoteRefUpdate.Status.OK
                             && update.getStatus() != RemoteRefUpdate.Status.UP_TO_DATE) {
-                        throw new IOException("git push to " + redact(repoUrl) + " (" + branch + ") was refused: "
-                                + update.getStatus() + (update.getMessage() == null ? "" : " - " + update.getMessage()));
+                        throw new GitPushRejectedException(redact(repoUrl), branch, update.getStatus(),
+                                update.getMessage(), result.getMessages());
                     }
                 }
             }
-            LOG.info("Pushed commit {} to {} ({})", sha, repoUrl, branch);
+            String sha = head == null ? null : head.getName();
+            LOG.info("Pushed commit {} to {} ({})", sha, redact(repoUrl), branch);
+            return sha;
         } catch (GitAPIException e) {
-            throw new IOException("git push failed for " + repoUrl + ": " + e.getMessage(), e);
+            throw new IOException("git push to " + redact(repoUrl) + " failed: " + e.getMessage(), e);
         }
-        unpushedCommit = null;
-        return sha;
     }
 
-    /** The commit of the last {@link #commitAndPush} call whose push failed, or null. */
-    private String unpushedCommit;
+    /**
+     * How many commits of the current branch the server does not hold: those not on {@code origin/<branch>} as last
+     * fetched or pushed, or, for a branch the server does not have, on none of its branches. Counted here rather than
+     * read from JGit's BranchTrackingStatus, which knows only branches with an upstream configured: a working branch
+     * created here has none.
+     */
+    public int unpublishedCommits() throws IOException {
+        try (Git git = Git.open(workspace.toFile()); RevWalk walk = new RevWalk(git.getRepository())) {
+            return unpublished(git.getRepository(), walk).size();
+        }
+    }
+
+    /**
+     * Whether the server's copy of the current branch, as last fetched ({@code origin/<branch>}), holds commits the
+     * current branch does not: another change landed there since the branch was taken from the server. False when the
+     * server does not have the branch, or when the current branch holds all of it: pushing it would then be a
+     * fast-forward, so a push refused was refused for another reason.
+     */
+    public boolean branchMovedOnServer() throws IOException {
+        try (Git git = Git.open(workspace.toFile()); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repo = git.getRepository();
+            Ref published = repo.exactRef(Constants.R_REMOTES + "origin/" + repo.getBranch());
+            if (published == null || published.getObjectId() == null) {
+                return false;
+            }
+            ObjectId head = repo.resolve(Constants.HEAD);
+            return head == null
+                    || !walk.isMergedInto(walk.parseCommit(published.getObjectId()), walk.parseCommit(head));
+        }
+    }
+
+    /**
+     * What the {@link #unpublishedCommits unpublished commits} of the current branch changed, each file as they left
+     * it: the change to make again ({@link #write}) on top of a branch that moved on the server.
+     */
+    public Change unpublishedChange() throws IOException {
+        try (Git git = Git.open(workspace.toFile()); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repo = git.getRepository();
+            Map<Path, byte[]> written = new LinkedHashMap<>();
+            Set<Path> deleted = new LinkedHashSet<>();
+            for (DiffEntry entry : changeOf(repo, walk, unpublished(repo, walk))) {
+                if (entry.getChangeType() == DiffEntry.ChangeType.DELETE) {
+                    deleted.add(Path.of(entry.getOldPath()));
+                } else {
+                    written.put(Path.of(entry.getNewPath()), repo.open(entry.getNewId().toObjectId()).getBytes());
+                }
+            }
+            return new Change(written, deleted);
+        }
+    }
+
+    /**
+     * Starts the current branch again from {@code origin/<base>} as last fetched when the server no longer has the
+     * branch and {@code base} already holds everything its {@link #unpublishedCommits unpublished commits} change: a
+     * pull request or working branch merged as new commits (a "squash" or "rebase" merge), then deleted on the server
+     * as several Git servers do after a merge. Those commits are on none of the server's branches, yet pushing them
+     * again would only recreate the branch, and its pull request, for a change already merged, and a new change made
+     * on top of them would carry that merged change once more. A branch whose change {@code base} lacks (never pushed,
+     * or deleted without its merge) is kept as it is, to be pushed.
+     *
+     * @param base the branch the working branch is merged into; nothing is done when null or not on the server
+     * @return whether the branch was started again from {@code origin/<base>}
+     */
+    public boolean restartIfMergedInto(String base) throws IOException {
+        if (base == null || base.isBlank()) {
+            return false;
+        }
+        try (Git git = Git.open(workspace.toFile()); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repo = git.getRepository();
+            String branch = repo.getBranch();
+            Ref merged = repo.exactRef(Constants.R_REMOTES + "origin/" + base);
+            if (merged == null || merged.getObjectId() == null
+                    || repo.exactRef(Constants.R_REMOTES + "origin/" + branch) != null) {
+                return false;
+            }
+            List<RevCommit> commits = unpublished(repo, walk);
+            if (commits.isEmpty()
+                    || !holds(repo, walk.parseCommit(merged.getObjectId()).getTree(), changeOf(repo, walk, commits))) {
+                return false;
+            }
+            git.reset().setMode(ResetCommand.ResetType.HARD).setRef(merged.getName()).call();
+            git.clean().setCleanDirectories(true).call();
+            LOG.info("Branch {} of {} is no longer on the server and {} already holds its {} commit(s): started it"
+                    + " again from {}", branch, redact(repoUrl), base, commits.size(), base);
+            return true;
+        } catch (GitAPIException e) {
+            throw new IOException("git reset of " + workspace + " to origin/" + base + " failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * What commits change together, newest first and each the parent of the one before: the oldest one's parent
+     * against the newest one, file by file.
+     */
+    private static List<DiffEntry> changeOf(Repository repo, RevWalk walk, List<RevCommit> commits) throws IOException {
+        if (commits.isEmpty()) {
+            return List.of();
+        }
+        RevCommit newest = commits.get(0);
+        RevCommit oldest = commits.get(commits.size() - 1);
+        try (TreeWalk diff = new TreeWalk(repo)) {
+            diff.setRecursive(true);
+            if (oldest.getParentCount() == 0) {
+                diff.addTree(new EmptyTreeIterator());
+            } else {
+                diff.addTree(walk.parseCommit(oldest.getParent(0)).getTree());
+            }
+            diff.addTree(newest.getTree());
+            diff.setFilter(TreeFilter.ANY_DIFF);
+            return DiffEntry.scan(diff);
+        }
+    }
+
+    /** Whether a tree holds each file a change writes, with the content it writes, and none of those it deletes. */
+    private static boolean holds(Repository repo, RevTree tree, List<DiffEntry> change) throws IOException {
+        for (DiffEntry entry : change) {
+            boolean deletes = entry.getChangeType() == DiffEntry.ChangeType.DELETE;
+            try (TreeWalk found = TreeWalk.forPath(repo, deletes ? entry.getOldPath() : entry.getNewPath(), tree)) {
+                boolean held = deletes ? found == null
+                        : found != null && found.getObjectId(0).equals(entry.getNewId().toObjectId());
+                if (!held) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Writes the files of a change into the working tree and deletes those it deleted. Nothing is committed. */
+    public void write(Change change) throws IOException {
+        for (Map.Entry<Path, byte[]> file : change.written().entrySet()) {
+            Path abs = resolveSafe(file.getKey());
+            Files.createDirectories(abs.getParent());
+            Files.write(abs, file.getValue());
+        }
+        for (Path gone : change.deleted()) {
+            deletePath(gone);
+        }
+    }
+
+    /**
+     * Files a change writes, with their content, and files it deletes, relative to the repository root.
+     *
+     * @param written the files written, by path
+     * @param deleted the files deleted
+     */
+    public record Change(Map<Path, byte[]> written, Set<Path> deleted) {
+        /** Whether the change neither writes nor deletes anything. */
+        public boolean isEmpty() {
+            return written.isEmpty() && deleted.isEmpty();
+        }
+    }
+
+    /**
+     * The commits of HEAD the server does not hold, newest first, each before its parents (see
+     * {@link #unpublishedCommits}).
+     */
+    private static List<RevCommit> unpublished(Repository repo, RevWalk walk) throws IOException {
+        ObjectId head = repo.resolve(Constants.HEAD);
+        if (head == null) {
+            return List.of();
+        }
+        // In the order of the history, not of the commit dates, which a clock set wrong can make lie.
+        walk.sort(RevSort.TOPO);
+        walk.markStart(walk.parseCommit(head));
+        Ref tracking = repo.exactRef(Constants.R_REMOTES + "origin/" + repo.getBranch());
+        List<Ref> published = tracking != null ? List.of(tracking)
+                : repo.getRefDatabase().getRefsByPrefix(Constants.R_REMOTES + "origin/");
+        for (Ref ref : published) {
+            if (ref.getObjectId() != null) {
+                walk.markUninteresting(walk.parseCommit(ref.getObjectId()));
+            }
+        }
+        List<RevCommit> commits = new ArrayList<>();
+        for (RevCommit commit : walk) {
+            commits.add(commit);
+        }
+        return commits;
+    }
 
     /**
      * Moves the current branch back to a commit, dropping the commits and the changes made since: a commit whose
@@ -271,39 +611,8 @@ public class GitClient {
         }
         try (Git git = Git.open(workspace.toFile())) {
             git.reset().setMode(ResetCommand.ResetType.HARD).setRef(commit).call();
-            if (!commit.equals(unpushedCommit)) {
-                unpushedCommit = null;
-            }
         } catch (GitAPIException e) {
             throw new IOException("git reset to " + commit + " failed: " + e.getMessage(), e);
-        }
-    }
-
-    /** Stage and commit without pushing (used for PR stub flows). */
-    public String commitWithoutPush(String message) throws IOException, InterruptedException {
-        String sha = commitInternal(message);
-        if (sha != null) {
-            LOG.info("Created local commit {} (not pushed) for {}", sha, repoUrl);
-        }
-        return sha;
-    }
-
-    private String commitInternal(String message) throws IOException, InterruptedException {
-        try (Git git = Git.open(workspace.toFile())) {
-            git.add().addFilepattern(".").call();              // new + modified files
-            git.add().addFilepattern(".").setUpdate(true).call(); // stage deletions of tracked files
-            if (git.status().call().isClean()) {
-                LOG.info("No git changes detected, skipping commit for {}", repoUrl);
-                return null;
-            }
-            var commit = git.commit().setMessage(message);
-            if (authorName != null && authorEmail != null) {
-                commit.setAuthor(authorName, authorEmail).setCommitter(authorName, authorEmail);
-            }
-            RevCommit c = commit.call();
-            return c.getName();
-        } catch (GitAPIException e) {
-            throw new IOException("git commit failed for " + repoUrl + ": " + e.getMessage(), e);
         }
     }
 

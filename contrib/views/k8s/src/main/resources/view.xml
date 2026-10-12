@@ -93,6 +93,13 @@ limitations under the License.
         <label>Allowed Namespaces</label>
         <required>false</required>
     </parameter>
+    <parameter>
+        <name>k8s.view.git.timeout.seconds</name>
+        <description>How many seconds a GitOps clone, fetch or push may go without any data from the Git server before the deploy or uninstall fails with an error. A transfer that is slow but still moving is not cut off. When left empty, 120 seconds.</description>
+        <label>Git Timeout (seconds)</label>
+        <placeholder>120</placeholder>
+        <required>false</required>
+    </parameter>
     <!--
       NOTE: the Vault address/token view parameters were intentionally removed. A `<masked>`
       parameter that has no value makes Ambari's ViewContextImpl.getProperties() call

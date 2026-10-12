@@ -73,12 +73,15 @@ class GitClientTest {
 
         client.writeFile(Path.of("apps/trino/values.yaml"), "replicas: 3\n");
         assertTrue(client.hasChanges(), "new file should be an uncommitted change");
-        String sha = client.commitAndPush("Add trino values");
+        String sha = client.commit("Add trino values");
         assertNotNull(sha, "commit should produce a sha");
         assertEquals(40, sha.length(), "sha should be a full git object id");
+        assertEquals(1, client.unpublishedCommits());
+        assertEquals(sha, client.push(), "the commit is what the server now holds");
+        assertEquals(0, client.unpublishedCommits());
 
         // A second commit with no changes returns null (nothing to commit).
-        assertEquals(null, client.commitAndPush("no-op"), "no changes → no commit");
+        assertEquals(null, client.commit("no-op"), "no changes → no commit");
 
         // Verify the push landed by re-cloning the remote fresh.
         Path verify = tmp.resolve("verify");
@@ -90,17 +93,47 @@ class GitClientTest {
     }
 
     @Test
+    void theFirstPushToAnEmptyRepositoryCreatesTheBranch(@TempDir Path tmp) throws Exception {
+        Path bare = tmp.resolve("remote.git");
+        Git.init().setBare(true).setInitialBranch(BRANCH).setDirectory(bare.toFile()).call().close();
+        try (Git bareGit = Git.open(bare.toFile())) {
+            bareGit.getRepository().getConfig().setInt("gc", null, "auto", 0);
+            bareGit.getRepository().getConfig().setBoolean("receive", null, "autogc", false);
+            bareGit.getRepository().getConfig().save();
+        }
+        GitClient client = new GitClient(tmp.resolve("ws"), bare.toUri().toString(), BRANCH, null)
+                .withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        // No background gc after the next fetch: it would still hold gc.log.lock when the temp directory is removed.
+        try (Git ws = Git.open(tmp.resolve("ws").toFile())) {
+            ws.getRepository().getConfig().setBoolean("gc", null, "autoDetach", false);
+            ws.getRepository().getConfig().save();
+        }
+
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\n");
+        String sha = client.commit("first commit");
+        assertEquals(1, client.unpublishedCommits());
+        assertEquals(sha, client.push());
+
+        assertEquals(sha, remoteHead(tmp));
+        client.sync();
+        assertEquals(sha, client.headCommit(), "the next sync finds the branch on the server");
+    }
+
+    @Test
     void deletePathIsStagedAndPushed(@TempDir Path tmp) throws Exception {
         String url = seededBareRepo(tmp);
         Path ws = tmp.resolve("workspace");
         GitClient client = new GitClient(ws, url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
         client.sync();
         client.writeFile(Path.of("gone.txt"), "temporary");
-        client.commitAndPush("add gone.txt");
+        client.commit("add gone.txt");
+        client.push();
 
         client.deletePath(Path.of("gone.txt"));
-        String sha = client.commitAndPush("remove gone.txt");
+        String sha = client.commit("remove gone.txt");
         assertNotNull(sha, "deletion should be committed");
+        client.push();
 
         Path verify = tmp.resolve("verify");
         try (Git g = Git.cloneRepository().setURI(url).setBranch(BRANCH).setDirectory(verify.toFile()).call()) {
@@ -154,7 +187,8 @@ class GitClientTest {
         GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
         client.sync();
         client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\n");
-        String sha = client.commitAndPush("add trino");
+        String sha = client.commit("add trino");
+        client.push();
         assertEquals(sha, client.headCommit());
         assertTrue(client.changedFiles().isEmpty());
 
@@ -169,7 +203,7 @@ class GitClientTest {
     }
 
     @Test
-    void aRefusedPushFailsAndTheNextCallPushesTheCommitAlreadyMade(@TempDir Path tmp) throws Exception {
+    void aRefusedPushFailsAndPushingAgainPushesTheCommitAlreadyMade(@TempDir Path tmp) throws Exception {
         String url = seededBareRepo(tmp);
         GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
         client.sync();
@@ -179,15 +213,19 @@ class GitClientTest {
         Path lock = tmp.resolve("remote.git/refs/heads/" + BRANCH + ".lock");
         Files.writeString(lock, "");
 
-        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, () -> client.commitAndPush("add trino"));
-        String unpushed = client.headCommit();
+        String unpushed = client.commit("add trino");
+        org.junit.jupiter.api.Assertions.assertThrows(org.apache.ambari.view.k8s.service.deployment.GitPushRejectedException.class,
+                client::push);
+        assertEquals(unpushed, client.headCommit());
         org.junit.jupiter.api.Assertions.assertNotEquals(seed, unpushed);
         assertEquals(seed, remoteHead(tmp), "nothing landed on the remote");
+        assertEquals(1, client.unpublishedCommits(), "the commit is known to be unpublished");
 
         Files.delete(lock);
-        assertEquals(unpushed, client.commitAndPush("add trino"), "the retry pushes the commit, not \"no changes\"");
+        assertEquals(unpushed, client.push(), "pushing again pushes the commit");
         assertEquals(unpushed, remoteHead(tmp));
-        org.junit.jupiter.api.Assertions.assertNull(client.commitAndPush("no-op"), "then nothing is left to push");
+        org.junit.jupiter.api.Assertions.assertNull(client.commit("no-op"));
+        assertEquals(0, client.unpublishedCommits(), "then nothing is left to push");
     }
 
     @Test
@@ -199,15 +237,87 @@ class GitClientTest {
         client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\n");
         Path lock = tmp.resolve("remote.git/refs/heads/" + BRANCH + ".lock");
         Files.writeString(lock, "");
-        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, () -> client.commitAndPush("add trino"));
+        client.commit("add trino");
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, client::push);
 
         client.resetTo(before);
         Files.delete(lock);
 
         assertEquals(before, client.headCommit());
         assertTrue(Files.notExists(tmp.resolve("ws/apps/trino/helmrelease.yaml")));
-        org.junit.jupiter.api.Assertions.assertNull(client.commitAndPush("add trino"),
-                "the dropped commit is not pushed by a later call");
+        org.junit.jupiter.api.Assertions.assertNull(client.commit("add trino"));
+        assertEquals(0, client.unpublishedCommits(), "the dropped commit is not pushed by a later call");
+    }
+
+    /**
+     * Commits files to {@code main} from a clone of its own, as a pull request merged by "squash" adds its change, then
+     * deletes {@code branch} on the server as it does after the merge.
+     */
+    private static void squashMergeAndDelete(Path tmp, String url, String branch, java.util.Map<String, String> files)
+            throws Exception {
+        Path merger = tmp.resolve("merger-" + System.nanoTime());
+        try (Git g = Git.cloneRepository().setURI(url).setBranch(BRANCH).setDirectory(merger.toFile()).call()) {
+            for (java.util.Map.Entry<String, String> file : files.entrySet()) {
+                Files.createDirectories(merger.resolve(file.getKey()).getParent());
+                Files.writeString(merger.resolve(file.getKey()), file.getValue());
+            }
+            g.add().addFilepattern(".").call();
+            g.commit().setMessage("Merge pull request").setAuthor("reviewer", "reviewer@example.com").call();
+            g.push().setRefSpecs(new RefSpec("HEAD:refs/heads/" + BRANCH)).call();
+        }
+        try (Git bare = Git.open(tmp.resolve("remote.git").toFile())) {
+            bare.branchDelete().setBranchNames("refs/heads/" + branch).setForce(true).call();
+        }
+    }
+
+    @Test
+    void aWorkingBranchMergedAsANewCommitAndDeletedIsStartedAgainFromTheBranchItWasMergedInto(@TempDir Path tmp)
+            throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        client.checkoutBranch("flux-work");
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\n");
+        client.commit("propose trino");
+        client.push();
+        org.junit.jupiter.api.Assertions.assertFalse(client.restartIfMergedInto(BRANCH), "the server still has it");
+
+        squashMergeAndDelete(tmp, url, "flux-work", java.util.Map.of("apps/trino/helmrelease.yaml", "kind: HelmRelease\n"));
+        client.sync();
+        client.checkoutBranch("flux-work");
+        assertEquals(1, client.unpublishedCommits(), "its commit is on none of the server's branches");
+
+        assertTrue(client.restartIfMergedInto(BRANCH));
+        assertEquals(remoteHead(tmp), client.headCommit(), "started again from main, which holds its change");
+        assertEquals(0, client.unpublishedCommits(), "nothing is left to push");
+        org.junit.jupiter.api.Assertions.assertNull(client.commit("no-op"));
+    }
+
+    @Test
+    void aWorkingBranchWhoseChangeTheBaseBranchLacksIsKept(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        client.checkoutBranch("flux-work");
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "kind: HelmRelease\n");
+        client.deletePath(Path.of("README.md"));
+        String proposed = client.commit("propose trino, drop the readme");
+
+        // Never pushed: main lacks its change.
+        org.junit.jupiter.api.Assertions.assertFalse(client.restartIfMergedInto(BRANCH));
+        org.junit.jupiter.api.Assertions.assertFalse(client.restartIfMergedInto(null));
+        org.junit.jupiter.api.Assertions.assertFalse(client.restartIfMergedInto("never-pushed"));
+        assertEquals(proposed, client.headCommit());
+
+        // Main got the new file, but still has the file the branch deletes: only part of the change is merged.
+        client.push();
+        squashMergeAndDelete(tmp, url, "flux-work", java.util.Map.of("apps/trino/helmrelease.yaml", "kind: HelmRelease\n"));
+        client.sync();
+        client.checkoutBranch("flux-work");
+
+        org.junit.jupiter.api.Assertions.assertFalse(client.restartIfMergedInto(BRANCH));
+        assertEquals(proposed, client.headCommit(), "kept, to be pushed");
+        assertEquals(1, client.unpublishedCommits());
     }
 
     private static String remoteHead(Path tmp) throws Exception {
@@ -226,11 +336,13 @@ class GitClientTest {
         client.writeFile(Path.of("deps/keda-helmrelease.yaml"), "kind: HelmRelease\n");
         org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")),
                 "written but not published");
-        client.commitWithoutPush("local only");
+        client.commit("local only");
         org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")),
                 "committed but not pushed");
         client.writeFile(Path.of("deps/other.yaml"), "x: 1\n");
-        assertNotNull(client.commitAndPush("publish"), "pushes both commits");
+        assertNotNull(client.commit("publish"));
+        assertEquals(2, client.unpublishedCommits());
+        client.push();
         client.sync();
         assertTrue(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")));
         org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("../outside")));
@@ -243,7 +355,8 @@ class GitClientTest {
         client.sync();
         client.checkoutBranch("flux-123");
         client.writeFile(Path.of("deps/keda-helmrelease.yaml"), "kind: HelmRelease\n");
-        assertNotNull(client.commitAndPush("on the working branch"));
+        assertNotNull(client.commit("on the working branch"));
+        client.push();
         client.sync();
 
         assertTrue(client.existsOnRemoteBranch(Path.of("deps/keda-helmrelease.yaml"), "flux-123"));

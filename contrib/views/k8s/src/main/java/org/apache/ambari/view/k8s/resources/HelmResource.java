@@ -1350,9 +1350,10 @@ public class HelmResource {
      * @return HTTP 200 on success, with {@code polarisCleanup} and {@code sccCleanup} notes when there is something
      *         left for an administrator to do; 400, with nothing removed, when the request names a Git repository,
      *         branch or credential, or for a GitOps release whose recorded Git directory is not its own or holds
-     *         another release's HelmRelease; 409, with nothing removed, while another Helm operation on the release is
-     *         running or when the Git credential recorded for a GitOps release cannot be used to remove it from Git; or
-     *         an error response on failure
+     *         another release's HelmRelease; 409, with nothing removed, while another Helm operation or GitOps
+     *         operation on the release is running or when the Git credential recorded for a GitOps release cannot be
+     *         used to remove it from Git; 500, with the release's credentials, SCC grants and record kept, when Git
+     *         refused or could not take the removal of a GitOps release; or an error response on failure
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
@@ -1406,6 +1407,7 @@ public class HelmResource {
         }
         boolean refusedAsBusy = false;
         boolean refusedAsNotOwn = false;
+        boolean gitRemovalFailed = false;
         // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
         try {
             if (gitOps) {
@@ -1426,7 +1428,16 @@ public class HelmResource {
                             "release", releaseName,
                             "namespace", namespace
                     )).build();
+                } catch (FluxGitOpsBackend.GitOpsBusyException busy) {
+                    // Another deploy or uninstall of the release holds its Git workspace: nothing was removed.
+                    refusedAsBusy = true;
+                    LOG.warn("Uninstall of {}/{} refused (409): {}", namespace, releaseName, busy.getMessage());
+                    return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
                 } catch (Exception ex) {
+                    // Git refused or could not take the removal: the manifests stay in Git and Flux keeps running
+                    // the release, so it keeps its catalog credential, its Git credentials, its SCC grants and its
+                    // record, from which the uninstall is retried.
+                    gitRemovalFailed = true;
                     LOG.warn("Flux destroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
                     return Response.serverError().entity(Map.of(
                             "error", "Flux destroy failed: " + ex.getMessage(),
@@ -1443,7 +1454,7 @@ public class HelmResource {
             refusedAsBusy = true;
             return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
         } finally {
-            if (!refusedAsBusy && !refusedAsNotOwn) {
+            if (!refusedAsBusy && !refusedAsNotOwn && !gitRemovalFailed) {
                 // A release that was given Polaris catalog access leaves a working credential behind
                 // unless it is taken back. Done after the release itself is gone, and never allowed to
                 // fail the uninstall: an unreachable Polaris must not leave a half-removed release.

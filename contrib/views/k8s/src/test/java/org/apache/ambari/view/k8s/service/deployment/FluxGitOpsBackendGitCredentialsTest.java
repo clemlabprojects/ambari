@@ -220,6 +220,31 @@ class FluxGitOpsBackendGitCredentialsTest {
         assertEquals("glpat-First", credentials.resolveSecret(alias));
     }
 
+    @Test
+    void aRemovalGitRefusesKeepsTheReleasesCredentialUntilARetryIsPushed() throws Exception {
+        String alias = GitCredentialService.releaseAlias("kdps", NS, RELEASE);
+        try (GitTestServers.GitDaemon server = new GitTestServers.GitDaemon(tmp.resolve("remote.git"))) {
+            repoUrl = server.url();
+            backend().apply(deploy(1, "glpat-First"), null);
+            String head = remoteHead();
+            server.refusePushes("pre-receive hook declined", "Not allowed to push to protected branch main");
+
+            GitPushRejectedException refused = assertThrows(GitPushRejectedException.class,
+                    () -> backend().removeFromGit(recorded()));
+            assertTrue(refused.getMessage().contains("Not allowed to push to protected branch main"),
+                    refused.getMessage());
+            assertEquals(head, remoteHead(), "Git still holds the release");
+            assertEquals(Set.of(alias), store.listAliases(), "kept, so the uninstall can be retried");
+            assertEquals("glpat-First", credentials.resolveSecret(alias));
+            assertEquals("127.0.0.1", credentials.boundHost(alias));
+
+            server.acceptPushes();
+            backend().removeFromGit(recorded());
+            assertNotEquals(head, remoteHead(), "the retry removed the release from Git");
+            assertEquals(Set.of(), store.listAliases(), "deleted once the removal is pushed");
+        }
+    }
+
     /** A Git server the deploy cannot reach: the commit fails, as with a mistyped token. */
     private static final String UNREACHABLE = "https://127.0.0.1:9/platform/gitops.git";
 
