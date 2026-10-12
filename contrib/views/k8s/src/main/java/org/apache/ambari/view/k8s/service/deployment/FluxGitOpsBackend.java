@@ -805,6 +805,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String sshKey = gitSecrets.sshKey();
         checkGitAccess(repoUrl, git.getCommitMode(), token, sshKey);
 
+        // The security profile, read before anything is created or committed: a deploy that names one that is gone
+        // stops here rather than committing the release without its login settings. A planned deploy applied its
+        // profile when it was planned.
+        String resolvedSecurityProfile = planned == null ? resolveSecurityProfileName(request.getSecurityProfile()) : null;
+        SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
+
         // Each release owns its own git workspace directory.
         // Operations on the same release are serialised via a per-release lock;
         // operations on different releases still run in parallel.
@@ -1091,11 +1097,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             explicitOverrides.putAll(planned.overrides());
         } else {
             // Security profile
-            String resolvedSecurityProfile = resolveSecurityProfileName(request.getSecurityProfile());
             if (resolvedSecurityProfile != null && !resolvedSecurityProfile.isBlank()) {
                 request.setSecurityProfile(resolvedSecurityProfile);
             }
-            SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
             applySecurityOverrides(securityCfg, explicitOverrides);
             // Kerberos: on when the security profile asks for it or the Ambari cluster is Kerberized, off when Ambari
             // reports no Kerberos (or manages no cluster) - the same rule as direct deploys. Left to the chart otherwise.
@@ -3079,32 +3083,41 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
     /* ------------------------ Security + overrides helpers ------------------------ */
 
+    /**
+     * The security profile a deploy without a command plan applies: the one it names, else the default profile (or
+     * the first one). A named profile is never swapped for another.
+     *
+     * @return the profile name, or null when the deploy names none and none is stored
+     * @throws IllegalArgumentException when the named profile does not exist
+     * @throws IllegalStateException    when the profiles cannot be read
+     */
     private String resolveSecurityProfileName(String requestedProfile) {
-        try {
-            var profiles = securityProfileService.loadProfiles();
-            if (profiles == null || profiles.profiles == null || profiles.profiles.isEmpty()) {
-                return null;
-            }
-            if (requestedProfile != null && profiles.profiles.containsKey(requestedProfile)) {
-                return requestedProfile;
-            }
-            if (profiles.defaultProfile != null && profiles.profiles.containsKey(profiles.defaultProfile)) {
-                return profiles.defaultProfile;
-            }
-            return profiles.profiles.keySet().stream().findFirst().orElse(null);
-        } catch (Exception ex) {
-            LOG.warn("Could not resolve security profile name: {}", ex.toString());
+        if (requestedProfile != null && !requestedProfile.isBlank()) {
+            securityProfileService.requireProfile(requestedProfile);
+            return requestedProfile;
+        }
+        var profiles = securityProfileService.loadProfiles();
+        if (profiles == null || profiles.profiles == null || profiles.profiles.isEmpty()) {
             return null;
         }
+        if (profiles.defaultProfile != null && profiles.profiles.containsKey(profiles.defaultProfile)) {
+            return profiles.defaultProfile;
+        }
+        return profiles.profiles.keySet().stream().findFirst().orElse(null);
     }
 
-    private SecurityConfigDTO loadSecurityConfig(String requestedProfile) {
-        try {
-            return securityProfileService.resolveProfile(requestedProfile);
-        } catch (Exception ex) {
-            LOG.warn("Could not load security profile {}: {}", requestedProfile, ex.toString());
+    /**
+     * The settings of the profile {@link #resolveSecurityProfileName} chose.
+     *
+     * @return the named profile, or null when none is named
+     * @throws IllegalArgumentException when the named profile no longer exists
+     * @throws IllegalStateException    when the profiles cannot be read
+     */
+    private SecurityConfigDTO loadSecurityConfig(String profileName) {
+        if (profileName == null || profileName.isBlank()) {
             return null;
         }
+        return securityProfileService.requireProfile(profileName);
     }
 
     private void applySecurityOverrides(SecurityConfigDTO cfg, Map<String, String> overrides) {

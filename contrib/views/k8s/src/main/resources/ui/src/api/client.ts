@@ -770,6 +770,13 @@ export const saveViewSettings = async (settings: any): Promise<void> => {
 export interface SecurityProfiles {
   defaultProfile?: string;
   profiles: Record<string, SecurityConfig>;
+  /** Set on a read when some stored profiles could not be read and are missing from `profiles`. */
+  incomplete?: boolean;
+  /**
+   * On a save, the profiles the page read before editing: only those left out of `profiles` are removed, so a
+   * profile created since, or never shown, is kept.
+   */
+  loadedProfiles?: string[];
 }
 
 export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
@@ -792,8 +799,13 @@ export const saveSecurityConfig = async (cfg: SecurityProfiles): Promise<void> =
     body: JSON.stringify(cfg || {})
   });
   if (!res.ok) {
+    // The server names the profile it refused and why: too large to be saved, or still used by releases.
     const txt = await res.text();
-    throw new Error(txt || 'Failed to save security config');
+    let reason = txt;
+    try {
+      reason = JSON.parse(txt)?.error || txt;
+    } catch { /* not JSON: shown as it is */ }
+    throw new Error(reason || 'Failed to save security config');
   }
 };
 

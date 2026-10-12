@@ -668,6 +668,43 @@ class CommandServiceGitOpsDeployTest {
     }
 
     @Test
+    void aDeployNamingASecurityProfileThatIsGoneFailsBeforeAnythingIsPrepared() throws Exception {
+        for (String mode : List.of("DIRECT_HELM", "FLUX_GITOPS")) {
+            HelmDeployRequest request = request(mode, "main");
+            request.setSecurityProfile("retired-ldap");
+
+            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                    () -> service.submitDeploy(request, "charts", "0.0.1", null, null, null, null, null), mode);
+            assertTrue(refused.getMessage().startsWith("The security profile 'retired-ldap' that this deploy asks for"
+                    + " does not exist"), refused.getMessage());
+            assertTrue(refused.getMessage().contains("nothing was deployed"), refused.getMessage());
+            // Planned straight away, as a resumed or scripted deploy is, it stops too rather than going without it.
+            assertThrows(IllegalArgumentException.class, () -> plan(request, "FLUX_GITOPS".equals(mode)), mode);
+        }
+
+        assertTrue(dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing was planned");
+        verify(k8s, never()).createNamespace(anyString());
+        verify(k8s, never()).createOrUpdateTlsSecret(anyString(), anyString(), any(), any(), any(), any());
+        assertEquals(List.of(seedCommit), commitsOn("main"));
+    }
+
+    @Test
+    void aDeployWhoseSecurityProfilesCannotBeReadFailsInsteadOfDeployingWithoutOne() throws Exception {
+        DataStore failing = mock(DataStore.class, org.mockito.AdditionalAnswers.delegatesTo(dataStore));
+        doThrow(new org.apache.ambari.view.PersistenceException("connection reset"))
+                .when(failing).findAll(eq(SecurityProfileEntity.class), any());
+        doReturn(failing).when(ctx).getDataStore();
+        HelmDeployRequest request = request("DIRECT_HELM", "main");
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> service.submitDeploy(request, "charts", "0.0.1", null, null, null, null, null));
+
+        assertTrue(refused.getMessage().contains("'corp-ldap'"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("could not be read"), refused.getMessage());
+        assertTrue(dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing was planned");
+    }
+
+    @Test
     void aPullRequestIsNamedInWhatTheDeployWaitsFor() {
         FluxGitOpsBackend.CommitResult proposed = new FluxGitOpsBackend.CommitResult("1a2b3c", "1a2b3c", true,
                 "https://git.example.org/platform/gitops.git", "flux-zz", "main", false,

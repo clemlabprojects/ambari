@@ -176,6 +176,29 @@ public class ReleaseMetadataService {
     }
 
     /**
+     * Points every release recorded with one security profile at another, for a profile replaced by another under a
+     * new name: their next deploy applies the new one.
+     *
+     * @param fromProfile the profile the releases are recorded with
+     * @param toProfile   the profile they use from now on
+     * @return the releases ({@code namespace/release}) that were changed
+     */
+    public List<String> reassignSecurityProfile(String fromProfile, String toProfile) {
+        if (fromProfile == null || fromProfile.isBlank() || toProfile == null || toProfile.isBlank()) {
+            return java.util.Collections.emptyList();
+        }
+        List<String> changed = new java.util.ArrayList<>();
+        for (K8sReleaseEntity entity : releaseRepository.findAll()) {
+            if (fromProfile.equals(entity.getSecurityProfile())) {
+                entity.setSecurityProfile(toProfile);
+                releaseRepository.update(entity);
+                changed.add(entity.getNamespace() + "/" + entity.getReleaseName());
+            }
+        }
+        return changed;
+    }
+
+    /**
      * Creates or updates the metadata record for a Helm install or upgrade operation.
      * All nullable parameters are ignored when {@code null} or blank.
      *

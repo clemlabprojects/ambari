@@ -95,7 +95,6 @@ import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
-import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
 import org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
@@ -4712,6 +4711,10 @@ public class CommandService {
         K8sReleaseEntity recorded = recordedRelease(request);
         ChartSource chartSource = applyReleaseDefaults(request, repoId, version, recorded);
 
+        // A deploy that names a security profile is refused before anything is prepared when the profile is gone
+        // (deleted or renamed) or cannot be read: deployed without it, the release would lose its LDAP or OIDC login.
+        resolveSecurityProfileName(request.getSecurityProfile());
+
         // Warnings found while the deploy is submitted, written into its operation log (see logDeployWarnings).
         List<String> warnings = new ArrayList<>();
 
@@ -6281,12 +6284,14 @@ public class CommandService {
         if (request.getImageGlobalRegistryProperty() != null){
             params.put("imageGlobalRegistryProperty", request.getImageGlobalRegistryProperty());
         }
-        // Apply global security overrides if configured
+        // Apply global security overrides if configured. A profile named by the deploy that is gone stops it here,
+        // rather than installing the release without its login settings.
         String resolvedSecurityProfile = resolveSecurityProfileName(request.getSecurityProfile());
         if (resolvedSecurityProfile != null && !resolvedSecurityProfile.isBlank()) {
             params.put("securityProfile", resolvedSecurityProfile);
         }
-        SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
+        SecurityConfigDTO securityCfg = resolvedSecurityProfile == null ? null
+                : new SecurityProfileService(ctx).requireProfile(resolvedSecurityProfile);
         String securityProfileHash = null;
         try {
             securityProfileHash = new SecurityProfileService(ctx).fingerprint(securityCfg);
@@ -11541,46 +11546,31 @@ public class CommandService {
      * Load the persisted global security configuration from the datastore.
      *
      * @param requestedProfile explicit profile name requested by the caller (may be null/blank)
-     * @return SecurityConfigDTO or null when absent/invalid.
+     * @return SecurityConfigDTO, or null when no profile is named or none has that name
+     * @throws IllegalStateException when the profiles cannot be read
      */
     private SecurityConfigDTO loadSecurityConfig(String requestedProfile) {
         if (requestedProfile == null || requestedProfile.isBlank()) {
             return null;
         }
-        try {
-            SecurityProfileService profileService = new SecurityProfileService(ctx);
-            return profileService.resolveProfile(requestedProfile);
-        } catch (Exception ex) {
-            LOG.warn("Could not load global security configuration: {}", ex.toString());
-            return null;
-        }
+        return new SecurityProfileService(ctx).resolveProfile(requestedProfile);
     }
 
     /**
-     * Resolve the profile name to use, considering defaults.
+     * The security profile a deploy applies: the one it names, or none when it names none (no profile is applied
+     * unless the operator picked one). A deploy that names a profile never goes on without it.
      *
      * @param requestedProfile explicit profile name requested by caller; may be null/blank
-     * @return resolved profile name or null when no profiles are stored
+     * @return the requested profile name, or null when none is requested
+     * @throws IllegalArgumentException when the requested profile does not exist
+     * @throws IllegalStateException    when the profiles cannot be read
      */
     private String resolveSecurityProfileName(String requestedProfile) {
         if (requestedProfile == null || requestedProfile.isBlank()) {
             return null;
         }
-        try {
-            SecurityProfileService profileService = new SecurityProfileService(ctx);
-            SecurityProfilesDTO profiles = profileService.loadProfiles();
-            if (profiles == null || profiles.profiles == null || profiles.profiles.isEmpty()) {
-                return null;
-            }
-            // Only honor an explicitly requested profile. If the user did not select one, do not auto-apply any profile.
-            if (profiles.profiles.containsKey(requestedProfile)) {
-                return requestedProfile;
-            }
-            return null;
-        } catch (Exception ex) {
-            LOG.warn("Could not resolve security profile name: {}", ex.toString());
-            return null;
-        }
+        new SecurityProfileService(ctx).requireProfile(requestedProfile);
+        return requestedProfile;
     }
 
     /**

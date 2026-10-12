@@ -31,3 +31,10 @@ export const saveHelmRepo = jest.fn<Promise<any>, any[]>((...a: any[]) => Promis
 export const installMonitoring = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
 export const getMonitoringDiscovery = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
 export const createReleaseRangerPolicy = jest.fn<Promise<any>, [string, string, any]>(() => Promise.resolve({ rangerServiceName: 'trino-ns', policyName: 'p', policyType: 0, accessTypes: 'select', via: 'ambari-server-action', requestId: 1 }));
+
+// Global Security page API
+export const getSecurityConfig = jest.fn<Promise<any>, []>(() => Promise.resolve({ profiles: {} }));
+export const getSecuritySchema = jest.fn<Promise<any>, []>(() => Promise.resolve(undefined));
+export const saveSecurityConfig = jest.fn<Promise<void>, [any]>(() => Promise.resolve());
+export const getSecurityProfileUsage = jest.fn<Promise<any>, [string]>(() => Promise.resolve({ releases: [] }));
+export const deleteSecurityProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());

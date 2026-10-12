@@ -91,6 +91,12 @@ public class ResolvedContext {
     /** Names ({@code <capability>.<field>}) of secret fields that have a value set. */
     private java.util.List<String> secretFieldsSet = new java.util.ArrayList<>();
 
+    /**
+     * Names ({@code <capability>.<field>}) of fields left without a value because the cluster's Ambari could not be
+     * asked (unreachable, or a call to it failed), as opposed to fields the cluster does not set.
+     */
+    private java.util.List<String> unreadFields = new java.util.ArrayList<>();
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -210,6 +216,9 @@ public class ResolvedContext {
 
     public java.util.List<String> getSecretFieldsSet() { return secretFieldsSet; }
     public void setSecretFieldsSet(java.util.List<String> secretFieldsSet) { this.secretFieldsSet = secretFieldsSet; }
+
+    public java.util.List<String> getUnreadFields() { return unreadFields; }
+    public void setUnreadFields(java.util.List<String> unreadFields) { this.unreadFields = unreadFields; }
 
     /** What a secret shows over REST: that it is set, never its value. */
     public static final String MASKED_SECRET = "********";

@@ -28,6 +28,8 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.dto.security.OidcConfig;
+import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
 import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.security.EncryptionService;
@@ -38,6 +40,9 @@ import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
@@ -75,6 +80,8 @@ public class ContextService {
 
     private static final String SECRET_PREFIX = "context.";
     private static final Gson GSON = new Gson();
+    /** Reads security profiles as {@link SecurityProfileService} stores them. */
+    private static final ObjectMapper PROFILE_MAPPER = new ObjectMapper();
 
     /**
      * Max serialized length of {@code configJson}. Matches Ambari view persistence's per-String
@@ -267,70 +274,211 @@ public class ContextService {
 
     // ----- Derived OIDC security profiles (one per OIDC-bearing context, deterministic on CRUD) -----
 
+    /** Name of the OIDC profile earlier versions created for the local cluster, before the per-context derivation. */
+    static final String LEGACY_OIDC_PROFILE = "keycloak";
+    /** Instance setting recording that the legacy OIDC profile was looked at once; it is never looked at again. */
+    static final String LEGACY_OIDC_PROFILE_CHECKED_KEY = "securityProfiles.legacyOidcProfileChecked";
+
     private static String derivedOidcProfileKey(String contextId) { return "ctx-oidc-" + contextId; }
 
     /**
-     * (Re)derive the OIDC security profile for a persisted context — invoked on create/update only.
-     * A profile keyed {@code ctx-oidc-<id>} and named after the context is upserted when the context
-     * carries OIDC (an issuer) + client-registration admin creds + a compatible backend (for REMOTE,
-     * Ambari &gt;= 2.8.2.0 with OIDC enabled); otherwise any previously-derived profile for this context
-     * is pruned. Operator-authored profiles ({@code derivedFromContext == null}) are never touched.
+     * (Re)derive the OIDC security profile for a persisted context — invoked on create/update, and by every read of
+     * the security profiles for the virtual default context. A profile keyed {@code ctx-oidc-<id>} and named after
+     * the context is upserted when the context carries OIDC (an issuer) + client-registration admin creds + a
+     * compatible backend (for REMOTE, Ambari &gt;= 2.8.2.0 with OIDC enabled); otherwise any previously-derived
+     * profile for this context is pruned, unless releases deploy with it. When some of the context's OIDC settings
+     * could not be read, nothing is written nor pruned. Only that one row is ever written, and only when it changes:
+     * every other profile is the operator's.
      * Best-effort — never fails the context save.
      */
     public void reconcileDerivedOidcProfile(String contextId, AmbariActionClient ambari, String cluster) {
         try {
-            ResolvedContext rc = resolve(contextId, ambari, cluster);
-            SecurityProfileService sps = new SecurityProfileService(viewContext);
-            org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO profiles = sps.loadProfiles();
-            if (profiles.profiles == null) profiles.profiles = new java.util.HashMap<>();
-            String key = derivedOidcProfileKey(contextId);
-            boolean isDefault = DEFAULT_CONTEXT_ID.equals(contextId);
-            // A profile is derivable when the context exposes OIDC (an issuer) on a compatible backend
-            // AND KDPS can register clients for it — either via the context's own admin creds
-            // (EXTERNAL/REMOTE) or, for the default local context, via the local Ambari oidc-env.
-            boolean canRegister = rc != null && (rc.hasContextOidcAdminCreds() || isDefault);
-            boolean derive = rc != null && rc.hasOidc() && oidcVersionSupported(rc) && canRegister;
-            if (derive) {
-                profiles.profiles.put(key, buildOidcProfileFromContext(rc));
-                // Migrate the legacy bespoke auto-profile (keyed "keycloak") the old bootstrap created
-                // for the local cluster — it is now superseded by the unified per-context derivation.
-                if (isDefault) {
-                    if (profiles.profiles.remove("keycloak") != null) {
-                        LOG.info("Migrated legacy auto OIDC profile 'keycloak' -> '{}'", key);
-                    }
-                    if ("keycloak".equals(profiles.defaultProfile)) profiles.defaultProfile = key;
-                }
-                if (profiles.defaultProfile == null || profiles.defaultProfile.isBlank()) {
-                    profiles.defaultProfile = key;
-                }
-                LOG.info("Derived OIDC security profile '{}' (source=internal) from context '{}' (issuer={})",
-                        key, rc.getName(), rc.getOidcIssuerUrl());
-            } else if (profiles.profiles.remove(key) != null) {
-                LOG.info("Pruned derived OIDC security profile '{}' — context '{}' no longer exposes usable OIDC",
-                        key, contextId);
-            }
-            sps.saveProfiles(profiles);
+            reconcileDerivedOidcProfile(contextId, resolve(contextId, ambari, cluster));
         } catch (Exception e) {
             LOG.warn("reconcileDerivedOidcProfile: could not derive OIDC profile for context {}: {}", contextId, e.toString());
         }
     }
 
+    /**
+     * {@link #reconcileDerivedOidcProfile(String, AmbariActionClient, String)} for a context already resolved.
+     *
+     * @param rc the resolved context; {@code null} when it could not be resolved, which leaves its profile as it is
+     * @throws IllegalStateException when the stored profiles cannot be read; nothing is written then
+     */
+    void reconcileDerivedOidcProfile(String contextId, ResolvedContext rc) {
+        SecurityProfileService sps = new SecurityProfileService(viewContext);
+        String key = derivedOidcProfileKey(contextId);
+        boolean defaultContext = DEFAULT_CONTEXT_ID.equals(contextId);
+        // A profile is derivable when the context exposes OIDC (an issuer) on a compatible backend
+        // AND KDPS can register clients for it — either via the context's own admin creds
+        // (EXTERNAL/REMOTE) or, for the default local context, via the local Ambari oidc-env.
+        boolean canRegister = rc != null && (rc.hasContextOidcAdminCreds() || defaultContext);
+        boolean derive = rc != null && rc.hasOidc() && oidcVersionSupported(rc) && canRegister;
+        synchronized (sps.writeLock()) {
+            if (!derive) {
+                if (sps.readStored(key) == null) {
+                    return;
+                }
+                if (!oidcSettingsRead(rc)) {
+                    // Not knowing is not "off": the profile stays until a read succeeds, which derives it again or
+                    // prunes it.
+                    LOG.info("Kept derived OIDC security profile '{}': the OIDC settings of context '{}' could not be"
+                            + " read", key, contextId);
+                    return;
+                }
+                pruneUnlessUsed(sps, key, "context '" + contextId + "' no longer exposes usable OIDC");
+                return;
+            }
+            if (!oidcSettingsRead(rc)) {
+                // The issuer was read but another OIDC setting was not: a profile built now would silently drop,
+                // say, the TLS or principal-domain setting releases deploy with. Nothing is written until a read
+                // gets them all, the legacy profile included.
+                LOG.info("Left derived OIDC security profile '{}' as it is: some OIDC settings of context '{}' could"
+                        + " not be read ({})", key, contextId, rc.getUnreadFields());
+                return;
+            }
+            SecurityProfileService.StoredProfile own = sps.readStored(key);
+            SecurityConfigDTO derived = buildOidcProfileFromContext(rc);
+            // The default flag is the operator's choice: it is only set while no profile carries it.
+            boolean markDefault = (own != null && own.isDefault()) || !sps.anyMarkedDefault();
+            if (own == null || own.isDefault() != markDefault || !sps.sameContent(own, derived)) {
+                sps.writeProfile(key, derived, markDefault);
+                LOG.info("Derived OIDC security profile '{}' (source=internal) from context '{}' (issuer={})",
+                        key, rc.getName(), rc.getOidcIssuerUrl());
+            }
+            if (defaultContext) {
+                retireLegacyOidcProfile(sps, key, derived, rc.getOidcIssuerUrl());
+            }
+        }
+    }
+
+    /**
+     * Whether a context's OIDC settings were read, so that finding none means OIDC is off: not when the context could
+     * not be resolved, when a REMOTE context's Ambari did not answer (it then reports no version), or when a call
+     * reading one of its OIDC settings failed.
+     */
+    static boolean oidcSettingsRead(ResolvedContext rc) {
+        if (rc == null) return false;
+        if (KIND_REMOTE.equals(rc.getKind()) && isBlank(rc.getAmbariVersion())) return false;
+        return rc.getUnreadFields() == null || rc.getUnreadFields().stream().noneMatch(f -> f.startsWith("oidc."));
+    }
+
+    /**
+     * Removes a derived profile unless releases deploy with it: like any profile, it is never removed from under
+     * them, since their next deploy would be refused for asking for a profile that does not exist. Callers hold the
+     * profiles' write lock.
+     *
+     * @param reason why the profile is no longer derived, for the log
+     */
+    private void pruneUnlessUsed(SecurityProfileService sps, String key, String reason) {
+        List<String> users = new ReleaseMetadataService(viewContext).findReleasesUsingProfile(key);
+        if (!users.isEmpty()) {
+            LOG.warn("Kept derived OIDC security profile '{}' although {}: releases {} deploy with it", key, reason,
+                    users);
+            return;
+        }
+        if (sps.removeStored(key)) {
+            LOG.info("Pruned derived OIDC security profile '{}' — {}", key, reason);
+        }
+    }
+
+    /**
+     * Removes the OIDC profile earlier versions created for the local cluster ({@value #LEGACY_OIDC_PROFILE}), now
+     * replaced by the derived {@code ctx-oidc-default}, once: only when it still is exactly what those versions
+     * created for the same issuer, and no release uses it. A profile of that name the operator wrote or changed,
+     * or that a release deploys with, is theirs and stays. When earlier versions already removed it, the releases
+     * still recorded with it move to the derived profile. Callers hold the profiles' write lock.
+     */
+    private void retireLegacyOidcProfile(SecurityProfileService sps, String derivedKey, SecurityConfigDTO derived,
+                                         String issuerUrl) {
+        if ("true".equals(settings.get(LEGACY_OIDC_PROFILE_CHECKED_KEY))) {
+            return;
+        }
+        SecurityProfileService.StoredProfile legacy = sps.readStored(LEGACY_OIDC_PROFILE);
+        if (legacy == null) {
+            // Earlier versions replaced it by the derived profile without updating the releases deployed with it,
+            // whose next deploy would now be refused for asking for a profile that does not exist.
+            List<String> moved = new ReleaseMetadataService(viewContext)
+                    .reassignSecurityProfile(LEGACY_OIDC_PROFILE, derivedKey);
+            if (!moved.isEmpty()) {
+                LOG.info("Releases {} now use the security profile '{}': they were deployed with '{}', which earlier"
+                        + " versions replaced by it", moved, derivedKey, LEGACY_OIDC_PROFILE);
+            }
+        } else {
+            List<String> users = new ReleaseMetadataService(viewContext).findReleasesUsingProfile(LEGACY_OIDC_PROFILE);
+            if (!isLegacyBootstrapProfile(legacy.profile(), issuerUrl)) {
+                LOG.info("Kept security profile '{}': it is not the profile earlier versions created automatically",
+                        LEGACY_OIDC_PROFILE);
+            } else if (!users.isEmpty()) {
+                LOG.info("Kept security profile '{}' that earlier versions created automatically: releases {} use it",
+                        LEGACY_OIDC_PROFILE, users);
+            } else {
+                if (legacy.isDefault()) {
+                    sps.writeProfile(derivedKey, derived, true);
+                }
+                sps.removeStored(LEGACY_OIDC_PROFILE);
+                LOG.info("Migrated legacy auto OIDC profile '{}' -> '{}'", LEGACY_OIDC_PROFILE, derivedKey);
+            }
+        }
+        settings.put(LEGACY_OIDC_PROFILE_CHECKED_KEY, "true");
+    }
+
+    /**
+     * Whether a profile is exactly the OIDC profile earlier versions created for the local cluster: the source,
+     * scopes and claims they set, the given issuer, optionally the principal domain, and nothing else.
+     */
+    static boolean isLegacyBootstrapProfile(SecurityConfigDTO cfg, String issuerUrl) {
+        if (cfg == null || cfg.oidc == null || !"oidc".equals(cfg.mode)) return false;
+        OidcConfig o = cfg.oidc;
+        if (!"internal".equals(o.source) || !"openid email profile".equals(o.scopes)
+                || !"preferred_username".equals(o.userClaim) || !"groups".equals(o.groupsClaim)) {
+            return false;
+        }
+        if (isBlank(o.issuerUrl) || isBlank(issuerUrl)
+                || !o.issuerUrl.trim().replaceAll("/+$", "").equals(issuerUrl.trim().replaceAll("/+$", ""))) {
+            return false;
+        }
+        // Whatever else the profile holds must be empty: the Global Security page saves empty sections and unset
+        // switches along with a profile, which change nothing.
+        ObjectNode rest = PROFILE_MAPPER.valueToTree(cfg);
+        rest.remove("mode");
+        ObjectNode oidc = (ObjectNode) rest.get("oidc");
+        for (String field : List.of("source", "issuerUrl", "scopes", "userClaim", "groupsClaim", "principalDomain")) {
+            oidc.remove(field);
+        }
+        return isEmptyNode(rest);
+    }
+
+    /** A JSON value that sets nothing: null, blank text, false, or a container of such values only. */
+    private static boolean isEmptyNode(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) return true;
+        if (node.isTextual()) return node.asText().isBlank();
+        if (node.isBoolean()) return !node.asBoolean();
+        if (node.isContainerNode()) {
+            for (JsonNode child : node) {
+                if (!isEmptyNode(child)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
     private void pruneDerivedOidcProfile(String contextId) {
         try {
             SecurityProfileService sps = new SecurityProfileService(viewContext);
-            org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO profiles = sps.loadProfiles();
-            if (profiles.profiles != null && profiles.profiles.remove(derivedOidcProfileKey(contextId)) != null) {
-                sps.saveProfiles(profiles);
-                LOG.info("Pruned derived OIDC security profile for deleted context {}", contextId);
+            synchronized (sps.writeLock()) {
+                String key = derivedOidcProfileKey(contextId);
+                if (sps.readStored(key) != null) {
+                    pruneUnlessUsed(sps, key, "context '" + contextId + "' was deleted");
+                }
             }
         } catch (Exception e) {
             LOG.warn("pruneDerivedOidcProfile: {}", e.toString());
         }
     }
 
-    private org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO buildOidcProfileFromContext(ResolvedContext rc) {
-        org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO cfg =
-                new org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO();
+    private SecurityConfigDTO buildOidcProfileFromContext(ResolvedContext rc) {
+        SecurityConfigDTO cfg = new SecurityConfigDTO();
         cfg.mode = "oidc";
         cfg.derivedFromContext = rc.getId();
         // Human title for the Step-1 picker: the context's own title + the auth type it carries, e.g.
@@ -338,8 +486,7 @@ public class ContextService {
         // ctx-oidc-<id> identifier; operators see this title, not the key.
         String ctxTitle = (rc.getName() != null && !rc.getName().isBlank()) ? rc.getName() : rc.getId();
         cfg.displayName = ctxTitle + " (OIDC)";
-        org.apache.ambari.view.k8s.dto.security.OidcConfig o =
-                new org.apache.ambari.view.k8s.dto.security.OidcConfig();
+        OidcConfig o = new OidcConfig();
         o.source = "internal"; // context carries admin creds → KDPS registers each service's client itself
         o.issuerUrl = rc.getOidcIssuerUrl();
         o.scopes = "openid email profile";
@@ -539,7 +686,9 @@ public class ContextService {
                         && effectiveAmbari != null && effectiveCluster != null) {
                     try {
                         secret = effectiveAmbari.getDesiredConfigProperty(effectiveCluster, "oidc-env", "oidc_admin_client_secret");
-                    } catch (Exception ignored) { }
+                    } catch (Exception e) {
+                        rc.getUnreadFields().add("oidc.adminClientSecret");
+                    }
                 }
                 if (secret != null && !secret.isBlank()) rc.setOidcAdminClientSecret(secret);
             }
@@ -715,6 +864,9 @@ public class ContextService {
                         value = override;
                     } else if (f.managedResolver != null && resolver != null) {
                         value = resolver.resolve(f.managedResolver);
+                        if (resolver.unread(f.managedResolver)) {
+                            rc.getUnreadFields().add(key);
+                        }
                     }
                 } else {
                     value = str(config.get(f.name));

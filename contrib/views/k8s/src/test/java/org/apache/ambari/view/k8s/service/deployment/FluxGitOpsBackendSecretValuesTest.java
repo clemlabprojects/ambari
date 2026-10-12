@@ -270,6 +270,24 @@ public class FluxGitOpsBackendSecretValuesTest {
     }
 
     @Test
+    public void aSecurityProfileTheDeployNamesIsNeverReplacedByTheDefaultOne() throws Exception {
+        HelmDeployRequest request = trinoRequest();
+        request.setSecurityProfile("retired-ldap");
+
+        try {
+            backend().apply(request, null);
+            fail("the default profile 'corp-ldap' must not stand in for the profile the deploy names");
+        } catch (IllegalArgumentException refused) {
+            assertTrue(refused.getMessage(), refused.getMessage().startsWith(
+                    "The security profile 'retired-ldap' that this deploy asks for does not exist"));
+        }
+
+        assertEquals("nothing is committed", seedCommit, remoteHead());
+        assertTrue("no values Secret is written", secretPayloads.isEmpty());
+        verify(k8s, never()).createNamespace(anyString());
+    }
+
+    @Test
     public void aChangedPasswordUpdatesTheSecretWithoutACommit() throws Exception {
         String first = backend().apply(trinoRequest(), null);
         useLdapProfile("Rotated-Pass-77");

@@ -19,7 +19,9 @@
 package org.apache.ambari.view.k8s.service;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.slf4j.Logger;
@@ -51,6 +53,11 @@ public class ManagedContextResolver {
     private List<String> hs2;
     private Boolean hs2Resolved;
 
+    /** Keys left without a value because Ambari could not be asked (see {@link #unread}). */
+    private final Set<String> unread = new HashSet<>();
+    /** Whether a call to Ambari failed while the current key was looked up. */
+    private boolean callFailed;
+
     public ManagedContextResolver(AmbariActionClient ambari, String cluster) {
         this.ambari = ambari;
         this.cluster = cluster;
@@ -62,9 +69,31 @@ public class ManagedContextResolver {
 
     /** Resolve a single {@code managedResolver} key, or null when unknown/unavailable. */
     public String resolve(String key) {
-        if (!available() || key == null) {
+        if (key == null) {
             return null;
         }
+        if (!available()) {
+            unread.add(key);
+            return null;
+        }
+        callFailed = false;
+        String value = lookup(key);
+        if (value == null && callFailed) {
+            unread.add(key);
+        }
+        return value;
+    }
+
+    /**
+     * Whether a key resolved to no value because Ambari could not be asked (no Ambari to ask, or a call to it
+     * failed) rather than because the cluster does not set it. A caller that acts on a missing value, such as
+     * removing what it no longer finds, must not read such a key as "not set".
+     */
+    public boolean unread(String key) {
+        return unread.contains(key);
+    }
+
+    private String lookup(String key) {
         try {
             switch (key) {
                 case "atlas.url":               return atlasUrl();
@@ -110,6 +139,7 @@ public class ManagedContextResolver {
             }
         } catch (Exception e) {
             LOG.warn("ManagedContextResolver: resolve('{}') failed: {}", key, e.toString());
+            callFailed = true;
             return null;
         }
     }
@@ -387,6 +417,8 @@ public class ManagedContextResolver {
         try {
             return ambari.getDesiredConfigProperty(cluster, type, key);
         } catch (Exception e) {
+            // Ambari answers null for a property it does not set; an exception means it could not be asked.
+            callFailed = true;
             return null;
         }
     }

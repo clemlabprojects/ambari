@@ -51,6 +51,7 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -312,9 +313,10 @@ public class ConfigurationResource {
             // Derive the default (local managed) context's OIDC security profile through the SAME
             // per-context flow used for EXTERNAL/REMOTE contexts — one profile named after the context,
             // marked derivedFromContext. The default context is virtual (no create/update event), so
-            // this GET is its deterministic trigger; the reconcile is idempotent. The loopback uses the
-            // local FQDN — not the inbound baseUri — because a public proxy in front of Ambari would
-            // PKIX-fail here and the catch below silently swallows it.
+            // this GET is its deterministic trigger; the reconcile is idempotent and writes only that
+            // profile, and only when it changed, so the wizard and this page can read as often as they like.
+            // The loopback uses the local FQDN — not the inbound baseUri — because a public proxy in front
+            // of Ambari would PKIX-fail here and the catch below silently swallows it.
             try {
                 String ambariBase = AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
                 String cluster = resolveClusterName(ambariBase, headers);
@@ -335,6 +337,13 @@ public class ConfigurationResource {
         }
     }
 
+    /**
+     * Saves the security profiles: each profile sent is stored, and the stored ones it no longer lists are removed,
+     * only among those the sender read ({@code loadedProfiles}) and never one derived from a platform context.
+     *
+     * @return 200; 400 naming a profile that cannot be stored (too large, no name, no settings); 409 when a profile
+     *         left out is still used by releases. Nothing is changed on a 400 or a 409.
+     */
     @POST
     @Path("/security")
     public Response saveSecurityConfig(SecurityProfilesDTO cfg) {
@@ -344,9 +353,17 @@ public class ConfigurationResource {
             if (toSave.profiles == null) toSave.profiles = new HashMap<>();
             new SecurityProfileService(viewContext).saveProfiles(toSave);
             return Response.ok().build();
+        } catch (IllegalArgumentException e) {
+            return badRequest(e.getMessage());
+        } catch (SecurityProfileService.ProfilesInUseException e) {
+            List<String> releases = new ArrayList<>();
+            e.releasesByProfile().values().forEach(releases::addAll);
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", e.getMessage(), "releases", releases))
+                    .build();
         } catch (Exception e) {
             LOG.error("Failed to save security config", e);
-            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+            return Response.serverError().entity(Map.of("error", String.valueOf(e.getMessage()))).build();
         }
     }
 
@@ -363,7 +380,13 @@ public class ConfigurationResource {
         }
 
         SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
-        SecurityProfilesDTO profiles = securityProfileService.loadProfiles();
+        SecurityProfilesDTO profiles;
+        try {
+            profiles = securityProfileService.loadProfiles();
+        } catch (IllegalStateException e) {
+            LOG.error("Failed to load security profiles", e);
+            return Response.serverError().entity(Map.of("error", String.valueOf(e.getMessage()))).build();
+        }
         if (profiles == null || profiles.profiles == null || !profiles.profiles.containsKey(profile)) {
             return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", "Profile not found")).build();
         }
@@ -385,7 +408,13 @@ public class ConfigurationResource {
         }
 
         SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
-        SecurityProfilesDTO profiles = securityProfileService.loadProfiles();
+        SecurityProfilesDTO profiles;
+        try {
+            profiles = securityProfileService.loadProfiles();
+        } catch (IllegalStateException e) {
+            LOG.error("Failed to load security profiles", e);
+            return Response.serverError().entity(Map.of("error", String.valueOf(e.getMessage()))).build();
+        }
         if (profiles == null || profiles.profiles == null || !profiles.profiles.containsKey(profile)) {
             return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", "Profile not found")).build();
         }
