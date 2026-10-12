@@ -426,8 +426,9 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
   }
 
   /**
-   * Reads the persisted OIDC administrator credential used to authenticate against
-   * the external OIDC provider admin API.
+   * Reads the OIDC administrator credential used to authenticate against the external
+   * OIDC provider admin API. The credential store service looks in both the persisted and
+   * the temporary store, so a temporary credential works until it expires or Ambari restarts.
    *
    * @param clusterName target cluster name
    * @return principal/key credential or {@code null} if missing/wrong type

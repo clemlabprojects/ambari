@@ -10502,7 +10502,9 @@ public class CommandService {
 
                         // Admin username/password come from the Ambari credential store (same alias used
                         // by ConfigureOidcServerAction), never from plain-text config properties.
-                        // Stored by Ansible enable_oidc.yml as a PrincipalKeyCredential at oidc.admin.credential.
+                        // The view can only read the persisted store. The Enable OIDC and Enable Kerberos
+                        // wizards store the credential there whenever the server has a persistent credential
+                        // store, as does Manage OIDC Credentials (or the credentials REST API).
                         org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
                                 oidcAliasResolver.getOidcAdminCredential(clstr);
                         adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
