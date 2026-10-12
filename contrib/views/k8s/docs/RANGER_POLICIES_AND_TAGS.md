@@ -70,15 +70,119 @@ the deployed values.
 The Hive base-ingestion service name defaults to `hive-<cluster>` (the platform context's cluster),
 and the Atlas federation target list follows it when left blank.
 
-## 3. Tag sync on an Ambari-managed context
+## 3. The Atlas tag sync account of a Trino release
 
-Ranger's tag import (`importServiceTags`) requires the sys-admin role. The KDPS view never holds the
-Ranger admin password, so on a managed context it asks the Ambari server to provision a dedicated
-internal user `kdps-tagsync-<release>` (role `ROLE_SYS_ADMIN`) with a password the view generates and
-rotates on every deploy. Only that credential lands in the release namespace, as the Secret
-`<release>-tagsync-ranger`; `tagSync.ranger.url` comes from the context or from
-`admin-properties/policymgr_external_url`. External contexts (CDP, manual) keep using the Ranger
-credentials they expose. A context without Ranger is refused at submit.
+The tag projector of a Trino release ("Sync Atlas tags to Trino", chart `tagSync`) writes tags into
+Ranger with an account of the release's own: `kdps-tagsync-<namespace>_<release>_<hash>`, an
+internal Ranger user with a password KDPS generates on every deploy that carries Ranger wiring (below).
+The projector runs, and the release gets an account, only when tag sync is on **and** access control is
+`Ranger` (`accessControl.type: ranger`), the same test as the chart's CronJob; with access control
+disabled, an account an earlier deploy gave the release is taken back.
+`<hash>` is a short hash of the KDPS instance (a random id KDPS keeps in its settings), of the
+Kubernetes API server URL and of the platform context. Releases of the same name deployed by two KDPS
+that use the same Ranger therefore get different accounts, even when both reach their cluster at the
+same URL (`https://kubernetes.default.svc` in-cluster, `https://api.crc.testing:6443` on every CRC) and
+name their platform contexts alike; and a release moved to another platform context gets another
+account even when both contexts reach the same Ranger. The account is recorded on the platform context
+whose Ranger it was created on: a deploy naming a context deleted from KDPS falls back to the managed
+cluster, and so does its account. The managed cluster is the same context whether a deploy names the
+default context or none. The underscores
+cannot occur in a namespace or a release name, so no two releases share a name. The account's Ranger
+description names the release it belongs to, and KDPS neither resets nor disables an account whose
+description names something else.
+
+Only that account reaches the release's project, as the Secret `<release>-tagsync-ranger` (`user`,
+`password`); `tagSync.ranger.url` and `tagSync.ranger.existingSecret` point the chart at it. The
+platform context's Ranger administrator credentials never leave KDPS. KDPS also records, in the view,
+which account it gave each release and on which platform context: that record, not the Secret, decides
+what is disabled later, so editing or deleting the Secret in the project changes nothing.
+
+* **Managed context**: the Ambari server, which holds the Ranger administrator, creates or resets the
+  account (`ranger_plugin_repository` in user-only mode). `tagSync.ranger.url` comes from the context or
+  from `admin-properties/policymgr_external_url`.
+* **External context** (CDP, manual) with Ranger administrator credentials: the view creates or resets
+  the account in that Ranger directly. With auto-configuration off for the context, KDPS creates no
+  account and the deploy is refused unless the values name the operator's own Secret (below).
+* **Your own account**: values naming another Secret in `tagSync.ranger.existingSecret` (keys `user` and
+  `password`) make KDPS create nothing; it only fills in `tagSync.ranger.url` when it is empty. Give
+  that Secret a name other than `<release>-tagsync-ranger`, which KDPS keeps for the accounts it
+  creates. A Secret of that name that KDPS did not write (it lacks KDPS's `managed-by: ambari-k8s-view`
+  annotation and `app.kubernetes.io/managed-by: kdps` label) is still treated as yours: KDPS neither
+  replaces nor deletes it.
+* A context without Ranger is refused at submit.
+
+Only a deploy that carries the Ranger wiring of the service definition gives the release its account
+and a new password: **Upgrade / Config** on the Releases page, or the install wizard, with a platform
+context selected. **Resync / restart**, **Refresh security profile**, **Worker autoscaling** and an upgrade
+from the YAML editor carry none: while the values keep tag sync on with KDPS's Secret, the release keeps
+its account and password as they are; with tag sync off, or values naming your own Secret, the account
+is taken back (below).
+
+**The account is a Ranger administrator.** Ranger lets only `ROLE_SYS_ADMIN` import tags
+(`importServiceTags`, and every other tag-store write); it has no narrower role and no per-repository
+right for it, so the account holds that role. Anyone who can read Secrets in the release's project can
+sign in to the platform context's Ranger with it and do anything a Ranger administrator can, such as
+change any policy or create other users. Grant the right to read Secrets in that project only to people
+you would make Ranger administrators, or leave tag sync off. A new password on every deploy, and
+disabling the account when the release stops using it, end access through this account; they do not
+undo what was done with it.
+
+**When KDPS takes the account back.** The account is disabled (status disabled, role `ROLE_USER` only,
+a password nobody is told; Ranger keeps it, so its audit trail still names it) and the Secret deleted:
+
+* on **uninstall**;
+* on a **deploy that gives the projector no KDPS account**: tag sync turned off, values naming your own
+  Secret, or a context with auto-configuration off (the deploy is then refused, and the message says
+  what was taken back); the deploy log says what was done;
+* when a **first install is refused** after the account was created, or **fails or is canceled before
+  the release is installed** (no Helm release, nothing committed to Git), since there is then no release
+  to uninstall; resuming the failed deploy gives the account again, with a new password. While a Helm
+  call of a canceled deploy still runs, KDPS waits for it (up to 30 minutes) before deciding. A deploy
+  interrupted by a restart of the Ambari server is failed when the view starts again, and its account
+  taken back the same way. Only the deploy the account was last given to takes it back: when the release
+  is deployed again in the meantime, the new deploy keeps it, and takes it back should it end without
+  installing the release;
+* when a deploy gives the release an account under another name (another platform context, another
+  Kubernetes API server URL), the previous one is disabled.
+
+When the account cannot be disabled (Ranger unreachable, no administrator access, an Ambari request
+that timed out), the deploy or the uninstall still completes and says which account to disable by hand:
+in the deploy log, or in the `tagSyncCleanup` note of the uninstall, shown on the Releases page. KDPS
+keeps the account recorded, tries again on the next deploy or uninstall of the release, and says so
+again each time until it succeeds. An account on a platform context deleted from KDPS, which KDPS can
+no longer reach, or one not found where KDPS created it, is reported once.
+
+**Releases deployed by earlier KDPS versions.** Their `<release>-tagsync-ranger` Secret holds either the
+account `kdps-tagsync-<release>` (managed context), or, on an external context, **the context's own
+Ranger administrator account and password**. Redeploy each such release with **Upgrade / Config** on
+the Releases page, its platform context selected, whatever its tag sync setting: with tag sync on, the
+Secret then holds the release's new account; otherwise it is deleted. Either way the old
+`kdps-tagsync-<release>` account is disabled, and a copied administrator account is reported in the
+deploy log (or in the refusal of a context with auto-configuration off).
+Then **change the password of that administrator account in Ranger and on the platform context**:
+anyone who could read Secrets in the project may have kept a copy. Uninstalling such a release instead
+disables the old `kdps-tagsync-<release>` account, or, for a copied administrator account, deletes the
+Secret and gives the same advice in its `tagSyncCleanup` note. The `kdps-tagsync-<release>` account was
+shared by every release of that name: redeploy the others too, since it no longer logs in once one of
+them has been redeployed. Resync / restart, Refresh security profile and Worker autoscaling leave the
+Secret of a release that still syncs tags as it is, and their deploy log says to use Upgrade / Config.
+The old `kdps-tagsync-<release>` account is disabled on the Ranger of the platform context the release
+was deployed on before the redeploy, even when Upgrade / Config moves it to another context; if that
+Ranger has no such account, the deploy log says so, and the account must be disabled by hand where it is.
+
+**Releases uninstalled with an earlier KDPS version.** Uninstalling a release never deleted its
+`<release>-tagsync-ranger` Secret before this version, and nothing KDPS does now finds those leftovers
+(only a new install of the same name in the same project does). For every Trino release that ever had
+tag sync on:
+
+1. List the leftover Secrets in every project, for example `oc get secret -A | grep tagsync-ranger`
+   (or `kubectl get secret -A | grep tagsync-ranger`), and delete those of releases that no longer exist.
+2. In the Ranger of the managed cluster, disable the `kdps-tagsync-<release>` users (no underscore in
+   the name: earlier versions created them) of releases that are no longer installed (Ranger → Settings →
+   Users: set them disabled and remove their administrator role).
+3. Change the Ranger administrator password of **every external platform context that ever had a Trino
+   release with tag sync on**, in Ranger and then on the platform context in KDPS, whether or not those
+   releases are still installed: earlier versions copied it into their projects.
 
 ## 4. Tag services
 
@@ -116,7 +220,12 @@ in `CommandService.createReleaseRangerPolicy`.
 
 `POST /api/v1/clusters/{c}/ranger_plugin_repository` — `RangerPlugin/userOnly` (create or reset a user
 without touching a repository), `userRoles` (comma-separated, default `ROLE_USER`), `resetPassword`
-(reset an existing internal user's password and roles), `tagService` (tag service of the repository).
+(reset an existing internal user's password and roles), `tagService` (tag service of the repository),
+`disableUser` (with `userOnly`: disable an internal user, leave it only `ROLE_USER` and a random
+password; no `pluginUserPassword` needed; a user Ranger does not have completes with `"found": false`;
+external users and Ambari's own Ranger administrator are refused), `userDescription` (with `userOnly`:
+the description a created user gets; an existing user whose description differs is neither reset nor
+disabled).
 
 ## 7. Known limits
 
@@ -125,3 +234,5 @@ without touching a repository), `userRoles` (comma-separated, default `ROLE_USER
 * Masking policies target exactly one column; Ranger refuses wildcards there.
 * KDPS cannot list existing policies on a managed context (no Ranger read credential); use the Ranger
   console for that.
+* The Atlas tag sync account of a Trino release is a Ranger administrator (Ranger has no narrower right
+  to write tags), and it is in the release's project: see section 3.

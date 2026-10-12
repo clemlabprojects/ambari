@@ -1384,6 +1384,8 @@ public class AmbariActionClient {
      * KDPS uses it for the TagSync writer account: Ranger's {@code importServiceTags} is sys-admin
      * only, hence {@code userRoles = "ROLE_SYS_ADMIN"} for that caller.
      *
+     * @param userDescription the description a created user gets, naming what it belongs to; an existing user is then
+     *                        reset only when it has that description. Null for the server's default and no check
      * @return the Ambari request id to wait on with {@link #waitUntilComplete}
      */
     public int submitRangerUserUpsert(
@@ -1391,6 +1393,7 @@ public class AmbariActionClient {
             String password,
             String userRoles,
             boolean resetPassword,
+            String userDescription,
             Integer timeoutSeconds,
             String context
     ) throws Exception {
@@ -1412,22 +1415,65 @@ public class AmbariActionClient {
         if (resetPassword) {
             rangerPlugin.addProperty("resetPassword", "true");
         }
+        if (userDescription != null && !userDescription.isBlank()) {
+            rangerPlugin.addProperty("userDescription", userDescription);
+        }
         if (timeoutSeconds != null) {
             rangerPlugin.addProperty("timeoutSeconds", timeoutSeconds);
         }
         root.add("RangerPlugin", rangerPlugin);
+        LOG.info("Submitting Ranger user upsert for user='{}', roles='{}', reset={}", userName, userRoles, resetPassword);
+        return postRangerPluginUser(root, "upsert");
+    }
+
+    /**
+     * Disable an INTERNAL Ranger user through the Ambari server ({@code ranger_plugin_repository} in user-only mode
+     * with {@code disableUser}): Ranger keeps the account, disabled, with only {@code ROLE_USER} and a password the
+     * server makes up and tells nobody. KDPS uses it when a release is uninstalled, for the account its Atlas tag
+     * projector wrote tags with. A user Ranger does not have is not a failure: the task then reports
+     * {@code "found": false} in its structured output.
+     *
+     * @param userDescription the description the user must have to be disabled, naming what it belongs to; null to
+     *                        disable it whatever its description
+     * @return the Ambari request id to wait on with {@link #waitUntilComplete}
+     */
+    public int submitRangerUserDisable(String userName, String userDescription, Integer timeoutSeconds, String context)
+            throws Exception {
+        Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger user disable");
+        Objects.requireNonNull(userName, "userName");
+        JsonObject root = new JsonObject();
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("context", (context == null || context.isBlank())
+                ? ("Disable Ranger user " + userName) : context);
+        root.add("RequestInfo", requestInfo);
+        JsonObject rangerPlugin = new JsonObject();
+        rangerPlugin.addProperty("userOnly", "true");
+        rangerPlugin.addProperty("pluginUserName", userName);
+        rangerPlugin.addProperty("disableUser", "true");
+        if (userDescription != null && !userDescription.isBlank()) {
+            rangerPlugin.addProperty("userDescription", userDescription);
+        }
+        if (timeoutSeconds != null) {
+            rangerPlugin.addProperty("timeoutSeconds", timeoutSeconds);
+        }
+        root.add("RangerPlugin", rangerPlugin);
+        LOG.info("Submitting Ranger user disable for user='{}'", userName);
+        return postRangerPluginUser(root, "disable");
+    }
+
+    /** POSTs a user-only {@code ranger_plugin_repository} request and returns the id of the Ambari request it started. */
+    private int postRangerPluginUser(JsonObject root, String what) throws Exception {
         String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/ranger_plugin_repository";
-        LOG.info("Submitting Ranger user upsert to {} for user='{}', roles='{}', reset={}", url, userName, userRoles, resetPassword);
         try (InputStream is = stream.readFrom(url, "POST", root.toString(),
                 withStdHeaders(Map.of("Content-Type", "application/json")))) {
             String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             JsonObject o = JsonParser.parseString(json).getAsJsonObject();
             JsonObject ro = o.getAsJsonObject("Requests");
             if (ro == null || !ro.has("id")) {
-                throw new IllegalStateException("Unexpected response for Ranger user upsert submission: " + json);
+                throw new IllegalStateException("Unexpected response for Ranger user " + what + " submission: " + json);
             }
             int id = ro.get("id").getAsInt();
-            LOG.info("Ranger user upsert request accepted by Ambari, request id={}", id);
+            LOG.info("Ranger user {} request accepted by Ambari, request id={}", what, id);
             return id;
         }
     }

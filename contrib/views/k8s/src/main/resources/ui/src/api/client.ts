@@ -1497,6 +1497,8 @@ export interface UninstallNotes {
   polarisCleanup?: string;
   /** OpenShift SCC grants that KDPS did not take back (made outside KDPS, or still used by another release), with the platform team's commands. */
   sccCleanup?: string;
+  /** The Ranger account of the release's Atlas tag sync that KDPS could not disable, or a Ranger password to change. */
+  tagSyncCleanup?: string;
 }
 
 /**

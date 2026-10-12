@@ -6533,6 +6533,15 @@ public class KubernetesService {
      * Keys are base64-encoded under the hood by Fabric8 (we pass already-encoded values).
      */
     public void createOrUpdateOpaqueSecret(String namespace, String secretName, Map<String, byte[]> binaryData) {
+        createOrUpdateOpaqueSecret(namespace, secretName, binaryData, null);
+    }
+
+    /**
+     * Create/update a Secret with multiple keys (binary) and labels. An update replaces the whole Secret, so labels an
+     * earlier write set and this one does not are dropped.
+     */
+    public void createOrUpdateOpaqueSecret(String namespace, String secretName, Map<String, byte[]> binaryData,
+                                           Map<String, String> labels) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(secretName, "secretName");
         Objects.requireNonNull(binaryData, "binaryData");
@@ -6551,6 +6560,10 @@ public class KubernetesService {
                     .addToAnnotations("managed-by", "ambari-k8s-view")
                     .addToAnnotations("managed-at", java.time.Instant.now().toString())
                     .build();
+            if (labels != null && !labels.isEmpty()) {
+                if (meta.getLabels() == null) meta.setLabels(new HashMap<>());
+                meta.getLabels().putAll(labels);
+            }
 
             Secret desired = new SecretBuilder()
                     .withMetadata(meta)

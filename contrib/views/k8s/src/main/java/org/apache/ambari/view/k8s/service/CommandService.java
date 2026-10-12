@@ -158,6 +158,23 @@ public class CommandService {
     java.util.function.Consumer<MultivaluedMap<String, String>> keytabWebhookPreparation;
     /** Keeps the Git credentials of GitOps deploys; package-private so tests can use a store of their own. */
     GitCredentialService gitCredentialService;
+    /**
+     * The Ranger accounts KDPS gave the Atlas tag projectors of releases, kept in the view's settings; package-private
+     * so tests can use records of their own.
+     */
+    TagSyncRangerAccount.Records tagSyncAccounts;
+    /**
+     * Finds the Ranger a release's tag sync account is on, given the Ambari access of a deploy or an uninstall (see
+     * {@link #tagSyncRangersOf}); package-private so tests, which have no Ranger, can replace it.
+     */
+    java.util.function.Function<Map<String, Object>, TagSyncRangerAccount.RangerLocator> tagSyncRangers;
+    /**
+     * What tells this KDPS instance apart in the names of tag sync accounts (see {@link TagSyncRangerAccount#userName});
+     * package-private so tests can name accounts the same on every run.
+     */
+    java.util.function.Supplier<String> tagSyncInstance;
+    /** Taking back the tag sync account of a deploy that did not install its release, and resuming it, one at a time. */
+    private final Object tagSyncTakeBackLock = new Object();
     private final Map<String, DeploymentBackend> deploymentBackends = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeatScheduler = Executors.newScheduledThreadPool(1);
     private final ExecutorService helmExecutor = Executors.newCachedThreadPool();
@@ -211,6 +228,9 @@ public class CommandService {
         pathConfig.ensureDirs();
         this.fluxGitOpsBackend = new FluxGitOpsBackend(pathConfig.workDir(), kubernetesService, ctx);
         this.gitCredentialService = new GitCredentialService(ctx);
+        this.tagSyncAccounts = TagSyncRangerAccount.recordsIn(new InstanceSettings(ctx));
+        this.tagSyncRangers = this::tagSyncRangersOf;
+        this.tagSyncInstance = () -> TagSyncRangerAccount.instanceId(new InstanceSettings(ctx));
         this.keytabWebhookPreparation = callerHeaders -> org.apache.ambari.view.k8s.utils.WebHookBootstrap
                 .prepareWebhookPrereqs(ctx, kubernetesService, "keytab-webhook", callerHeaders);
         // Dispatcher registry (can be extended later)
@@ -218,9 +238,11 @@ public class CommandService {
         this.deploymentBackends.put(DeploymentMode.DIRECT_HELM.name(), new HelmDirectBackend(this));
         recoverOrphanedCommands();
         clearStaleCredentials();
-        // In the background: the first sweep after an upgrade encrypts every file kept by the earlier version.
+        // In the background: the first sweep after an upgrade encrypts every file kept by the earlier version. The
+        // deploys that ended without installing their release are looked at first, while their settings are kept.
         this.operationFiles = new OperationFilesRetention(ctx, dataStore);
         this.startupSweep = this.workers.submit(() -> {
+            takeBackTagSyncAccountsAfterStart();
             try {
                 operationFiles.sweep(Instant.now());
             } catch (RuntimeException e) {
@@ -2011,8 +2033,9 @@ public class CommandService {
      * @param ambariActionClient Ambari client for config resolution (may be null)
      * @param cluster Ambari cluster name (may be null when Ambari is unavailable)
      * @param ambariAliasResolver resolver for Ambari credential aliases
+     * @return warnings for the operation log: what the operator must still do
      */
-    private void materializeRangerResources(HelmDeployRequest request,
+    private List<String> materializeRangerResources(HelmDeployRequest request,
                                             Map<String, Object> params,
                                             Map<String, Object> effectiveValues,
                                             AmbariActionClient ambariActionClient,
@@ -2020,7 +2043,7 @@ public class CommandService {
                                             AmbariAliasResolver ambariAliasResolver) {
         Map<String, Map<String, Object>> rangerSpec = request.getRanger();
         if (rangerSpec == null || rangerSpec.isEmpty()) {
-            return;
+            return List.of();
         }
 
         Map<String, Object> rangerPluginSettingsSpec = rangerSpec.get("ranger-plugin-settings");
@@ -2460,76 +2483,277 @@ public class CommandService {
         }
 
         // --- Atlas tag projection (platformOp op=ranger.tagProjectorSecret) ----------------------
-        // When the Trino wizard's "Sync Atlas tags to Trino" toggle is on, mint a Secret holding the
-        // context's Ranger admin credential in the release namespace and inject the projector's
-        // connection values, so the tag-projector CronJob (clemlab-trino tagSync) authenticates to
-        // the context's Ranger without the operator ever handling a credential. Gated exactly like the
-        // toggle: a ranger-authorized deploy against a context that exposes a direct Ranger credential.
+        // When the Trino wizard's "Sync Atlas tags to Trino" toggle is on, the tag-projector CronJob (clemlab-trino
+        // tagSync) needs a Ranger account allowed to write tags. KDPS gives the release one of its own on the
+        // context's Ranger (TagSyncRangerAccount), puts only that account in the release's project and injects the
+        // projector's connection values. The context's Ranger administrator credentials never leave the view. With
+        // the toggle off, the account an earlier deploy gave the release is taken back.
+        List<String> warnings = new ArrayList<>();
         try {
-            Object tagSyncOn = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.enabled");
-            boolean tagSyncEnabled = tagSyncOn != null && "true".equalsIgnoreCase(String.valueOf(tagSyncOn));
-            if (tagSyncEnabled && externalRangerUrl != null && rangerCtx != null
-                    && rangerCtx.getRangerAdminUsername() != null && !rangerCtx.getRangerAdminUsername().isBlank()
-                    && rangerCtx.getRangerAdminPassword() != null && !rangerCtx.getRangerAdminPassword().isBlank()) {
-                String tsSecretName = request.getReleaseName() + "-tagsync-ranger";
-                Map<String, byte[]> tsData = new LinkedHashMap<>();
-                tsData.put("user", rangerCtx.getRangerAdminUsername().getBytes(StandardCharsets.UTF_8));
-                tsData.put("password", rangerCtx.getRangerAdminPassword().getBytes(StandardCharsets.UTF_8));
-                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), tsSecretName, tsData);
-                this.commandUtils.addOverride(params, "tagSync.ranger.url", externalRangerUrl);
-                this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", tsSecretName);
-                LOG.info("Atlas tag sync: minted Secret {} and wired tagSync.ranger.* for release {} (Ranger {})",
-                        tsSecretName, request.getReleaseName(), externalRangerUrl);
-                        } else if (tagSyncEnabled && rangerCtx != null && rangerCtx.isRangerManaged()
-                    && ambariActionClient != null && cluster != null && !cluster.isBlank()) {
-                // Ambari-MANAGED context: the view never holds the Ranger admin password, so it asks the
-                // Ambari server to provision a DEDICATED internal Ranger user for the projector
-                // (kdps-tagsync-<release>, ROLE_SYS_ADMIN — Ranger's importServiceTags is sys-admin
-                // only) with a password the view generates and rotates on every deploy. Only that
-                // scoped credential ever lands in the release namespace (<release>-tagsync-ranger).
-                String tsUser = ("kdps-tagsync-" + request.getReleaseName()).toLowerCase(Locale.ROOT);
-                String tsPassword = generateRangerPassword();
-                int req = ambariActionClient.submitRangerUserUpsert(tsUser, tsPassword, "ROLE_SYS_ADMIN", true, 90,
-                        "KDPS tag sync: provision Ranger tag-writer user " + tsUser + " for " + request.getReleaseName());
-                                if (!ambariActionClient.waitUntilComplete(req, 120, java.util.concurrent.TimeUnit.SECONDS)) {
-                    String detail = ambariActionClient.failureDetail(req);
-                    throw new IllegalStateException("Ambari request " + req + " (Ranger tag-writer user '" + tsUser
-                            + "') did not complete — Atlas tag sync cannot be wired"
-                            + (detail.isBlank() ? "; see the Ambari request log." : ": " + detail));
-                }
-                String managedRangerUrl = rangerCtx.getRangerUrl() != null && !rangerCtx.getRangerUrl().isBlank()
-                        ? rangerCtx.getRangerUrl().trim()
-                        : ambariActionClient.getDesiredConfigProperty(cluster, "admin-properties", "policymgr_external_url");
-                if (managedRangerUrl == null || managedRangerUrl.isBlank()) {
-                    throw new IllegalStateException("Atlas tag sync: the managed context exposes no Ranger URL"
-                            + " (admin-properties/policymgr_external_url is empty).");
-                }
-                String tsSecretName = request.getReleaseName() + "-tagsync-ranger";
-                Map<String, byte[]> tsData = new LinkedHashMap<>();
-                tsData.put("user", tsUser.getBytes(StandardCharsets.UTF_8));
-                tsData.put("password", tsPassword.getBytes(StandardCharsets.UTF_8));
-                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), tsSecretName, tsData);
-                this.commandUtils.addOverride(params, "tagSync.ranger.url", managedRangerUrl.trim());
-                this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", tsSecretName);
-                LOG.info("Atlas tag sync (managed context): provisioned Ranger tag-writer '{}' via Ambari request {},"
-                        + " minted Secret {} and wired tagSync.ranger.* for release {} (Ranger {})",
-                        tsUser, req, tsSecretName, request.getReleaseName(), managedRangerUrl);
-            } else if (tagSyncEnabled) {
-                // Refuse NOW rather than ten steps later: the chart `require`s tagSync.ranger.url and
-                // tagSync.ranger.existingSecret, so without them the helm dry-run fails after the Ranger
-                // repo, keytabs and OIDC client were already created. A context without Ranger (or a
-                // managed one reached without Ambari access) cannot feed the projector.
-                throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a platform context with"
-                        + " Ranger: an Ambari-managed one (KDPS provisions a scoped tag-writer user through Ambari)"
-                        + " or an external/manual one exposing Ranger admin credentials. The selected context"
-                        + (rangerCtx != null && rangerCtx.getName() != null ? " '" + rangerCtx.getName() + "'" : "")
-                        + " offers neither — turn 'Sync Atlas tags to Trino' off, or pick a context with Ranger.");
-            }
-                } catch (IllegalArgumentException | IllegalStateException refused) {
+            warnings.addAll(applyTagSyncRangerAccount(request, params, effectiveValues, rangerCtx, externalRangerUrl,
+                    ambariActionClient, cluster));
+        } catch (IllegalArgumentException | IllegalStateException refused) {
             throw refused;
         } catch (Exception e) {
             LOG.warn("Atlas tag sync wiring failed for release {}: {}", request.getReleaseName(), e.toString());
         }
+        return warnings;
+    }
+
+    /**
+     * The Ranger account of a release's Atlas tag projector, as its values ask: given when the projector runs (see
+     * {@link #tagSyncProjectorRuns} and {@link #wireTagSyncRangerAccount}), taken back otherwise (see
+     * {@link #takeBackTagSyncRangerAccount}).
+     *
+     * @return what the operator must hear
+     */
+    List<String> applyTagSyncRangerAccount(HelmDeployRequest request, Map<String, Object> params,
+                                           Map<String, Object> effectiveValues,
+                                           org.apache.ambari.view.k8s.model.ResolvedContext rangerCtx,
+                                           String externalRangerUrl, AmbariActionClient ambariActionClient,
+                                           String cluster) throws Exception {
+        if (tagSyncProjectorRuns(effectiveValues)) {
+            return wireTagSyncRangerAccount(request, params, effectiveValues, rangerCtx, externalRangerUrl,
+                    ambariActionClient, cluster);
+        }
+        return takeBackTagSyncRangerAccount(request.getNamespace(), request.getReleaseName(), params);
+    }
+
+    /**
+     * Whether the release runs the Atlas tag projector, by the same test as the chart, which creates its CronJob only
+     * when {@code tagSync.enabled} is on and the coordinator enforces Ranger ({@code accessControl.type} is
+     * {@code ranger}). The wizard turns tag sync on for a context with Atlas tags and only hides the toggle when Ranger
+     * is not chosen, so values may hold {@code tagSync.enabled} on for a release that never syncs a tag.
+     */
+    static boolean tagSyncProjectorRuns(Map<String, Object> effectiveValues) {
+        Object enabled = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.enabled");
+        Object accessControl = ConfigResolutionService.getByDottedPath(effectiveValues, "accessControl.type");
+        return enabled != null && "true".equalsIgnoreCase(String.valueOf(enabled).trim())
+                && accessControl != null && "ranger".equals(String.valueOf(accessControl).trim());
+    }
+
+    /**
+     * Gives the Atlas tag projector of a release the Ranger account it writes tags with, and points the chart at it
+     * ({@code tagSync.ranger.url}, {@code tagSync.ranger.existingSecret}).
+     *
+     * <ul>
+     *   <li>Values naming a Secret other than KDPS's own in {@code tagSync.ranger.existingSecret}, or a Secret named
+     *       like KDPS's own that KDPS did not write (see {@link TagSyncRangerAccount#writtenByKdps}): the operator
+     *       brought the account, KDPS creates none and only fills in the Ranger URL when it is missing. The account an
+     *       earlier deploy gave the release is taken back, and the operator's Secret left as it is.</li>
+     *   <li>A context whose Ranger the view reaches with stored administrator credentials: the account is created
+     *       there directly, unless the operator turned auto-configuration off for the context, which is refused once
+     *       the account an earlier deploy gave the release is taken back.</li>
+     *   <li>The Ambari-managed context: the Ambari server, which holds the Ranger administrator, creates it.</li>
+     * </ul>
+     *
+     * @return what the operator must hear about the credentials the release's Secret held before
+     * @throws IllegalArgumentException when the context cannot give the release an account
+     * @throws IllegalStateException when Ranger did not take the account
+     */
+    List<String> wireTagSyncRangerAccount(HelmDeployRequest request, Map<String, Object> params,
+                                          Map<String, Object> effectiveValues,
+                                          org.apache.ambari.view.k8s.model.ResolvedContext rangerCtx,
+                                          String externalRangerUrl, AmbariActionClient ambariActionClient,
+                                          String cluster) throws Exception {
+        String release = request.getReleaseName();
+        String namespace = request.getNamespace();
+        String ownSecret = TagSyncRangerAccount.secretName(release);
+        String contextName = rangerCtx != null && rangerCtx.getName() != null ? " '" + rangerCtx.getName() + "'" : "";
+        boolean managed = rangerCtx != null && rangerCtx.isRangerManaged()
+                && ambariActionClient != null && cluster != null && !cluster.isBlank();
+
+        Object named = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.ranger.existingSecret");
+        String operatorSecret = named == null ? "" : String.valueOf(named).trim();
+        boolean namesOwnSecret = operatorSecret.isEmpty() || operatorSecret.equals(ownSecret);
+        if (namesOwnSecret && TagSyncRangerAccount.secretBroughtByOperator(kubernetesService, namespace, release)) {
+            // The operator created the Secret under the name KDPS uses: it is theirs, never replaced nor deleted.
+            if (operatorSecret.isEmpty()) {
+                this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", ownSecret);
+            }
+            operatorSecret = ownSecret;
+            namesOwnSecret = false;
+        }
+        if (!namesOwnSecret) {
+            Object url = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.ranger.url");
+            if (url == null || String.valueOf(url).isBlank()) {
+                String contextUrl = externalRangerUrl != null ? externalRangerUrl
+                        : managed ? managedRangerUrl(rangerCtx, ambariActionClient, cluster) : null;
+                if (contextUrl != null) this.commandUtils.addOverride(params, "tagSync.ranger.url", contextUrl);
+            }
+            LOG.info("Atlas tag sync: release {} uses the Ranger account of Secret {} named in its values; KDPS"
+                    + " creates none", release, operatorSecret);
+            return takeBackTagSyncRangerAccount(namespace, release, params);
+        }
+
+        String rangerUrl;
+        TagSyncRangerAccount.RangerUsers ranger;
+        if (externalRangerUrl != null) {
+            boolean managedKind = rangerCtx.getKind() == null || "MANAGED".equalsIgnoreCase(rangerCtx.getKind());
+            if (!managedKind && !rangerCtx.isAutoConfigureRemote()) {
+                // What an earlier deploy put in the project must not stay there because this one is refused: it may
+                // be the context's own Ranger administrator, which earlier KDPS versions copied there.
+                List<String> takenBack = takeBackTagSyncRangerAccount(namespace, release, params);
+                throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a Ranger account for this"
+                        + " release, and auto-configuration is off for platform context" + contextName + ", so KDPS"
+                        + " creates none in its Ranger. Create a Ranger user allowed to import tags, store its name and"
+                        + " password under the keys 'user' and 'password' of a Secret in project '" + namespace
+                        + "' whose name is not '" + ownSecret + "' (KDPS keeps that name for the accounts it creates),"
+                        + " and name that Secret in 'tagSync.ranger.existingSecret'; or turn auto-configuration on"
+                        + " for the context, or turn 'Sync Atlas tags to Trino' off."
+                        + (takenBack.isEmpty() ? "" : " " + String.join(" ", takenBack)));
+            }
+            rangerUrl = externalRangerUrl;
+            ranger = TagSyncRangerAccount.direct(externalRangerUrl, rangerCtx.getRangerAdminUsername(),
+                    rangerCtx.getRangerAdminPassword());
+        } else if (managed) {
+            rangerUrl = managedRangerUrl(rangerCtx, ambariActionClient, cluster);
+            if (rangerUrl == null) {
+                throw new IllegalStateException("Atlas tag sync: the managed context exposes no Ranger URL"
+                        + " (admin-properties/policymgr_external_url is empty).");
+            }
+            ranger = TagSyncRangerAccount.viaAmbari(ambariActionClient, TagSyncRangerAccount.AMBARI_TIMEOUT_SECONDS);
+        } else {
+            // Refuse NOW rather than ten steps later: the chart `require`s tagSync.ranger.url and
+            // tagSync.ranger.existingSecret, so without them the helm dry-run fails after the Ranger
+            // repo, keytabs and OIDC client were already created. A context without Ranger (or a
+            // managed one reached without Ambari access) cannot give the projector an account.
+            throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a platform context with"
+                    + " Ranger that KDPS can create the release's tag sync account in: the Ambari-managed one (through"
+                    + " Ambari) or an external/manual one with Ranger administrator credentials. The selected context"
+                    + contextName + " offers neither — turn 'Sync Atlas tags to Trino' off, or pick a context with Ranger.");
+        }
+
+        // The context whose Ranger the account is created on, which is not always the one the deploy names: a context
+        // KDPS no longer has resolves to the managed cluster, and the account must be recorded where it really is.
+        String contextId = rangerCtx != null && rangerCtx.getId() != null && !rangerCtx.getId().isBlank()
+                ? rangerCtx.getId() : stringValue(params.get("_platformContextId"));
+        String contextKey = TagSyncRangerAccount.contextKey(contextId);
+        String grant = UUID.randomUUID().toString();
+        boolean newAccount;
+        TagSyncRangerAccount.Provisioned account;
+        // Under the lock that taking back the account of a deploy that did not install the release holds: that
+        // take-back either ends before this deploy looks at the record, or finds it given to this deploy.
+        synchronized (tagSyncTakeBackLock) {
+            newAccount = !tagSyncAccountRecorded(namespace, release) || Boolean.FALSE.equals(
+                    releaseInstalled(namespace, release, params.get(GITOPS_RELEASE_PARAM) != null));
+            account = TagSyncRangerAccount.provision(kubernetesService, tagSyncAccounts, ranger,
+                    tagSyncRangers.apply(params), namespace, release, contextKey,
+                    recordedPlatformContext(namespace, release), tagSyncInstanceId(), kubernetesClusterUrl(), grant);
+        }
+        if (newAccount) {
+            // Should this deploy end without installing the release, nothing would ever take the account back. That
+            // holds too when the release has an account but is not installed: the deploy that gave it failed or was
+            // canceled, and now leaves taking it back to this one.
+            params.put(TAG_SYNC_NEW_ACCOUNT_PARAM, contextKey == null ? ContextService.DEFAULT_CONTEXT_ID : contextKey);
+            params.put(TAG_SYNC_GRANT_PARAM, grant);
+        }
+        this.commandUtils.addOverride(params, "tagSync.ranger.url", rangerUrl);
+        this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", ownSecret);
+        LOG.info("Atlas tag sync: release {} writes tags as Ranger account '{}' (Secret {}, Ranger {})",
+                release, account.userName(), ownSecret, rangerUrl);
+        account.warnings().forEach(w -> LOG.warn("Atlas tag sync, release {}: {}", release, w));
+        return account.warnings();
+    }
+
+    /**
+     * The Ranger account of a release's Atlas tag projector on a deploy that carries no Ranger wiring: Resync / restart,
+     * Refresh security profile and Worker autoscaling on the Releases page, an upgrade from the YAML editor, or a deploy
+     * without a platform context. Such a deploy cannot give the projector an account. When its values still sync tags
+     * with KDPS's Secret, the release keeps the account it has, password unchanged: taking it back would leave the
+     * projector reading a Secret that no longer exists, and newly tagged columns would stop reaching Trino's Ranger
+     * repository. Accounts the release no longer uses that an earlier deploy could not disable are tried again (see
+     * {@link TagSyncRangerAccount#kept}). Otherwise (tag sync off, Ranger not enforced, or the values naming another
+     * Secret) the account is taken back, see {@link #takeBackTagSyncRangerAccount}.
+     *
+     * @return what the operator must hear
+     */
+    List<String> keepOrTakeBackTagSyncRangerAccount(HelmDeployRequest request, Map<String, Object> params,
+                                                    Map<String, Object> effectiveValues) {
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        Object named = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.ranger.existingSecret");
+        String secret = named == null ? "" : String.valueOf(named).trim();
+        // Values naming no Secret at all are refused by the chart, and the release then keeps running with KDPS's.
+        boolean usesOwnSecret = secret.isEmpty() || secret.equals(TagSyncRangerAccount.secretName(release));
+        if (!tagSyncProjectorRuns(effectiveValues) || !usesOwnSecret) {
+            return takeBackTagSyncRangerAccount(namespace, release, params);
+        }
+        LOG.info("Atlas tag sync: the deploy of {}/{} carries no Ranger wiring; the release keeps its Ranger account,"
+                + " whose password is not changed", namespace, release);
+        List<String> out = TagSyncRangerAccount.kept(kubernetesService, tagSyncAccounts,
+                tagSyncRangers.apply(params), namespace, release);
+        out.forEach(w -> LOG.warn("Atlas tag sync, release {}/{}: {}", namespace, release, w));
+        return out;
+    }
+
+    /**
+     * Takes back the Ranger account an earlier deploy gave the Atlas tag projector of a release, on a deploy that gives
+     * it none (tag sync off, the operator's own account, a context with auto-configuration off): the account is
+     * disabled and the Secret {@code <release>-tagsync-ranger} deleted, so that neither stays live in the project
+     * unused. What earlier KDPS versions left in that Secret is reported, as on uninstall. Never throws.
+     *
+     * @param params the deploy's parameters, through which the Ranger of the managed cluster is reached
+     * @return what the operator must hear; empty when the release had nothing to take back
+     */
+    List<String> takeBackTagSyncRangerAccount(String namespace, String release, Map<String, Object> params) {
+        String recordedContext = null;
+        try {
+            K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(namespace, release);
+            recordedContext = recorded != null ? recorded.getPlatformContextId()
+                    : stringValue(params.get("_platformContextId"));
+        } catch (RuntimeException e) {
+            LOG.warn("Atlas tag sync: the release record of {}/{} could not be read: {}", namespace, release,
+                    e.toString());
+        }
+        TagSyncRangerAccount.Revoked revoked = TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts,
+                namespace, release, recordedContext, tagSyncRangers.apply(params));
+        List<String> out = new ArrayList<>();
+        if (!revoked.done().isEmpty()) {
+            out.add("This deploy gives the Atlas tag projector no Ranger account from KDPS, so KDPS "
+                    + String.join(" and ", revoked.done()) + ".");
+        }
+        if (revoked.note() != null) out.add(revoked.note());
+        out.forEach(w -> LOG.warn("Atlas tag sync, release {}/{}: {}", namespace, release, w));
+        return out;
+    }
+
+    /**
+     * The platform context the view recorded for a release, which a deploy only changes once it is applied; null when
+     * the release is not recorded, has no context, or its record cannot be read.
+     */
+    private String recordedPlatformContext(String namespace, String release) {
+        try {
+            K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(namespace, release);
+            return recorded == null ? null : recorded.getPlatformContextId();
+        } catch (RuntimeException e) {
+            LOG.warn("Atlas tag sync: the release record of {}/{} could not be read: {}", namespace, release,
+                    e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * This KDPS instance's part of the names of tag sync accounts (see {@link TagSyncRangerAccount#instanceId}).
+     *
+     * @throws IllegalStateException when it cannot be kept in the view settings
+     */
+    private String tagSyncInstanceId() {
+        try {
+            return tagSyncInstance.get();
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Atlas tag sync: KDPS could not keep in the view settings the id that names"
+                    + " the Ranger accounts it creates: " + (e.getMessage() == null ? e.toString() : e.getMessage()), e);
+        }
+    }
+
+    /** The Ranger URL of the managed context: the context's own, else Ambari's {@code policymgr_external_url}. */
+    private static String managedRangerUrl(org.apache.ambari.view.k8s.model.ResolvedContext rangerCtx,
+                                           AmbariActionClient ambariActionClient, String cluster) throws Exception {
+        String url = rangerCtx.getRangerUrl() != null && !rangerCtx.getRangerUrl().isBlank()
+                ? rangerCtx.getRangerUrl()
+                : ambariActionClient.getDesiredConfigProperty(cluster, "admin-properties", "policymgr_external_url");
+        return url == null || url.isBlank() ? null : url.trim();
     }
 
     /**
@@ -3779,9 +4003,14 @@ public class CommandService {
         rootParams.put("_cluster", clusterName);
         rootParams.put("_baseUri", baseUri.toString());
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        // The Ranger the release was deployed against: without it the default context is resolved, and a release on
+        // an external platform would get its repository, and its Atlas tag sync account, on the managed cluster's.
+        if (releaseMetadata.getPlatformContextId() != null && !releaseMetadata.getPlatformContextId().isBlank()) {
+            rootParams.put("_platformContextId", releaseMetadata.getPlatformContextId());
+        }
 
         AmbariAliasResolver ambariAliasResolver = new AmbariAliasResolver(ctx);
-        materializeRangerResources(
+        List<String> rangerWarnings = materializeRangerResources(
                 rangerRequest,
                 rootParams,
                 effectiveValues,
@@ -3789,6 +4018,7 @@ public class CommandService {
                 clusterName,
                 ambariAliasResolver
         );
+        rangerWarnings.forEach(w -> appendCommandLog(commandId, "WARNING: " + w));
 
         List<String> childCommandIds = new ArrayList<>();
         // Plan the Ranger repository creation step with current values.
@@ -6201,10 +6431,47 @@ public class CommandService {
      *               plan ends with {@link CommandType#GITOPS_COMMIT} and {@link CommandType#FLUX_WAIT_READY}, and Flux
      *               installs the dependencies, which the commit writes next to the release
      * @return the command id
+     * @throws RuntimeException when the deploy is refused; a first install refused once its Atlas tag projector was
+     *                          given a Ranger account has that account taken back
      */
     String planReleaseDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
                              MultivaluedMap<String, String> callerHeaders, URI baseUri,
                              AmbariAliasResolver ambariAliasResolver, boolean gitOps) {
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        boolean hadTagSyncAccount = tagSyncAccountRecorded(namespace, release);
+        try {
+            return planReleaseDeploySteps(request, repoId, version, commandsURL, callerHeaders, baseUri,
+                    ambariAliasResolver, gitOps);
+        } catch (RuntimeException refused) {
+            // A first install refused once its Atlas tag projector was given a Ranger account leaves no release to
+            // uninstall: the account, which holds the Ranger administrator role, is taken back now.
+            if (!hadTagSyncAccount && tagSyncAccountRecorded(namespace, release)
+                    && new ReleaseMetadataService(ctx).find(namespace, release) == null) {
+                String note = TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts, namespace, release, null,
+                        tagSyncRangersFor(callerHeaders)).note();
+                if (note != null) {
+                    LOG.warn("Atlas tag sync, refused install of {}/{}: {}", namespace, release, note);
+                }
+            }
+            throw refused;
+        }
+    }
+
+    private boolean tagSyncAccountRecorded(String namespace, String release) {
+        try {
+            return tagSyncAccounts.find(namespace, release) != null;
+        } catch (RuntimeException e) {
+            LOG.warn("Atlas tag sync: the record of release {}/{} could not be read: {}", namespace, release,
+                    e.toString());
+            return false;
+        }
+    }
+
+    /** Plans and persists the command tree of a release deploy (see {@link #planReleaseDeploy}). */
+    private String planReleaseDeploySteps(HelmDeployRequest request, String repoId, String version,
+                                          String commandsURL, MultivaluedMap<String, String> callerHeaders,
+                                          URI baseUri, AmbariAliasResolver ambariAliasResolver, boolean gitOps) {
         final String id = UUID.randomUUID().toString();
         final String now = Instant.now().toString();
 
@@ -6988,7 +7255,7 @@ public class CommandService {
         }
 
         if (ranger != null && !ranger.isEmpty()) {
-            materializeRangerResources(
+            List<String> rangerWarnings = materializeRangerResources(
                     request,
                     params,
                     effectiveValues,
@@ -6996,11 +7263,15 @@ public class CommandService {
                     cluster,
                     ambariAliasResolver
             );
+            rangerWarnings.forEach(w -> appendCommandLog(id, "WARNING: " + w));
             overrides = this.commandUtils.loadValuesFromParams(params);
             if (overrides == null) {
                 overrides = Collections.emptyMap();
             }
             effectiveValues = this.configResolutionService.deepMerge(defaultValues, overrides);
+        } else {
+            keepOrTakeBackTagSyncRangerAccount(request, params, effectiveValues)
+                    .forEach(w -> appendCommandLog(id, "WARNING: " + w));
         }
 
         // Apply catalog enrichments (e.g., Kerberos properties) when defined in service.json.
@@ -8462,6 +8733,9 @@ public class CommandService {
 
     public void cancel(String id) {
         cancelRecursive(id);
+        // A deploy canceled before it installed its release leaves its tag projector's account to take back. A step
+        // that was just starting its Helm call is given a moment to register it, which may yet install the release.
+        scheduleTagSyncTakeBack(id, 0, 5);
     }
 
     /**
@@ -8485,8 +8759,9 @@ public class CommandService {
      * @param rootId        id of the root (top) command to resume
      * @param callerHeaders the resume request's HTTP headers (fresh, authenticated); may be null
      * @throws IllegalArgumentException if the command is unknown
-     * @throws IllegalStateException    if the command is not in a FAILED state, has no steps, or is a deploy that was
-     *                                  refused before it started
+     * @throws IllegalStateException    if the command is not in a FAILED state, has no steps, is a deploy that was
+     *                                  refused before it started, or a deploy whose Atlas tag projector cannot be given
+     *                                  back the Ranger account taken back when it failed
      */
     public void resume(String rootId, javax.ws.rs.core.MultivaluedMap<String, String> callerHeaders) {
         CommandEntity root = find(rootId);
@@ -8536,47 +8811,53 @@ public class CommandService {
             }
         }
 
-        // Reset the FIRST failed/canceled step to PENDING, then reset any later non-SUCCEEDED steps
-        // to PENDING too (so the tail re-runs in order). SUCCEEDED steps are left untouched.
-        boolean foundFailed = false;
+        // Under the lock that taking back a tag sync account holds: the account is given back, the steps re-armed and
+        // the root flipped to RUNNING before a take-back of the failed deploy can look at it again.
         String resumeTitle = null;
-        for (String cid : childIds) {
-            if (cid == null || cid.isBlank()) continue;
-            CommandEntity child = find(cid);
-            if (child == null) continue;
-            CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
-            if (st == null) continue;
-            String state = st.getState();
+        synchronized (tagSyncTakeBackLock) {
+            giveBackTagSyncAccountOnResume(rootId);
 
-            if (!foundFailed) {
-                if (CommandState.FAILED.name().equals(state) || CommandState.CANCELED.name().equals(state)) {
-                    foundFailed = true;
-                    resumeTitle = child.getTitle();
+            // Reset the FIRST failed/canceled step to PENDING, then reset any later non-SUCCEEDED steps
+            // to PENDING too (so the tail re-runs in order). SUCCEEDED steps are left untouched.
+            boolean foundFailed = false;
+            for (String cid : childIds) {
+                if (cid == null || cid.isBlank()) continue;
+                CommandEntity child = find(cid);
+                if (child == null) continue;
+                CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
+                if (st == null) continue;
+                String state = st.getState();
+
+                if (!foundFailed) {
+                    if (CommandState.FAILED.name().equals(state) || CommandState.CANCELED.name().equals(state)) {
+                        foundFailed = true;
+                        resumeTitle = child.getTitle();
+                        st.setState(CommandState.PENDING.name());
+                        st.setError(null);
+                        st.setMessage("Retrying after failure…");
+                        st.setAttempt(st.getAttempt() == null ? 1 : st.getAttempt() + 1);
+                        st.setUpdatedAt(Instant.now().toString());
+                        store(st);
+                    }
+                } else if (!CommandState.SUCCEEDED.name().equals(state)
+                        && !CommandState.PENDING.name().equals(state)) {
+                    // A later step left RUNNING/FAILED/CANCELED by the abort — re-arm it.
                     st.setState(CommandState.PENDING.name());
                     st.setError(null);
-                    st.setMessage("Retrying after failure…");
-                    st.setAttempt(st.getAttempt() == null ? 1 : st.getAttempt() + 1);
                     st.setUpdatedAt(Instant.now().toString());
                     store(st);
                 }
-            } else if (!CommandState.SUCCEEDED.name().equals(state)
-                    && !CommandState.PENDING.name().equals(state)) {
-                // A later step left RUNNING/FAILED/CANCELED by the abort — re-arm it.
-                st.setState(CommandState.PENDING.name());
-                st.setError(null);
-                st.setUpdatedAt(Instant.now().toString());
-                store(st);
             }
-        }
 
-        // Flip the root back to RUNNING and re-schedule the step driver. If no explicit FAILED child
-        // was found (root failed in its own orchestration), runNextStep will simply pick up the first
-        // PENDING step, which is the correct resume point.
-        rootSt.setState(CommandState.RUNNING.name());
-        rootSt.setError(null);
-        rootSt.setMessage(resumeTitle != null ? ("Resumed at: " + resumeTitle) : "Resumed");
-        rootSt.setUpdatedAt(Instant.now().toString());
-        store(rootSt);
+            // Flip the root back to RUNNING and re-schedule the step driver. If no explicit FAILED child
+            // was found (root failed in its own orchestration), runNextStep will simply pick up the first
+            // PENDING step, which is the correct resume point.
+            rootSt.setState(CommandState.RUNNING.name());
+            rootSt.setError(null);
+            rootSt.setMessage(resumeTitle != null ? ("Resumed at: " + resumeTitle) : "Resumed");
+            rootSt.setUpdatedAt(Instant.now().toString());
+            store(rootSt);
+        }
         try {
             commandLogService.append(rootId, "▶ Resume requested — re-running from step: "
                     + (resumeTitle != null ? resumeTitle : "start"));
@@ -8731,6 +9012,7 @@ public class CommandService {
 
             String state = st.getState();
             if (CommandState.FAILED.name().equals(state)) {
+                takeBackTagSyncAccountNow(id, rootParams);
                 fail(rootSt, "Step failed: " + child.getTitle());
                 refreshCurrentStepSnapshot(root);
                 return;
@@ -10729,6 +11011,8 @@ public class CommandService {
                 store(childSt);
                 LOG.error("Step exhausted retry attempts: {}", rex.toString(), rex);
                 try { commandLogService.append(id, "Step exhausted retry attempts: " + trim(rex.getMessage())); } catch (Exception ignored) {}
+                // Before the root fails: a failed deploy can be resumed, which must find the account as it is.
+                takeBackTagSyncAccountNow(id, rootParams);
                 fail(rootSt, "Failed at step '" + (child.getTitle() != null ? child.getTitle() : child.getType()) + "' after " + attempt + " retry attempts: " + trim(rex.getMessage()));
                 refreshCurrentStepSnapshot(root);
             } else {
@@ -10774,6 +11058,8 @@ public class CommandService {
             store(childSt);
             LOG.error("Step execution failed: {}", ex.toString(), ex);
             appendCommandLog(id, "Step failed: " + trim(ex.getMessage()));
+            // Before the root fails: a failed deploy can be resumed, which must find the account as it is.
+            takeBackTagSyncAccountNow(id, rootParams);
             fail(rootSt, "Failed at step '" + stepTitle + "': " + trim(ex.getMessage()));
             refreshCurrentStepSnapshot(root);
         } finally {
@@ -14542,6 +14828,335 @@ public class CommandService {
             LOG.warn("Polaris revoke for {}/{} failed: {}", namespace, releaseName, ex.toString());
             return "Polaris cleanup failed: " + ex.getMessage() + ". The release was still uninstalled; remove the "
                     + "principal in Polaris by hand.";
+        }
+    }
+
+    /**
+     * Root parameter of a deploy that gave the Atlas tag projector of its release a Ranger account the release did not
+     * have before: the platform context the account is on ({@link ContextService#DEFAULT_CONTEXT_ID} for the managed
+     * cluster). Should the deploy end without installing the release, the account is taken back (see
+     * {@link #takeBackTagSyncAccountOfUninstalledRelease}), and given again if the deploy is resumed.
+     */
+    static final String TAG_SYNC_NEW_ACCOUNT_PARAM = "_tagSyncNewAccount";
+
+    /**
+     * Root parameter set with {@link #TAG_SYNC_NEW_ACCOUNT_PARAM}: the deploy as the account's record names it (see
+     * {@link TagSyncRangerAccount.Recorded#grant}). Once a later deploy of the release was given the account, the
+     * record names that one, and this deploy no longer takes the account back.
+     */
+    static final String TAG_SYNC_GRANT_PARAM = "_tagSyncGrant";
+
+    /** How long after the view starts the deploys a restart interrupted look whether to take their account back. */
+    private static final int TAG_SYNC_TAKE_BACK_AFTER_START_SECONDS = 5;
+
+    /** How often a take-back waiting for a Helm call still running on the release looks again: every 30 s for 30 min. */
+    private static final int TAG_SYNC_TAKE_BACK_ATTEMPTS = 60;
+    private static final int TAG_SYNC_TAKE_BACK_INTERVAL_SECONDS = 30;
+
+    /**
+     * Takes back, from the thread failing a deploy, the account its tag projector was given (see
+     * {@link #takeBackTagSyncAccountOfUninstalledRelease}); while a Helm call on the release still runs, looks again
+     * later.
+     */
+    private void takeBackTagSyncAccountNow(String rootId, Map<String, Object> rootParams) {
+        if (!takeBackTagSyncAccountOfUninstalledRelease(rootId, rootParams, false)) {
+            scheduleTagSyncTakeBack(rootId, 1, TAG_SYNC_TAKE_BACK_INTERVAL_SECONDS);
+        }
+    }
+
+    /**
+     * Looks, after {@code delaySeconds}, whether the deploy ended without installing its release, and takes back the
+     * account its tag projector was given (see {@link #takeBackTagSyncAccountOfUninstalledRelease}). While a Helm call
+     * on the release still runs, looks again, and after the last attempt says what is left to do.
+     */
+    private void scheduleTagSyncTakeBack(String rootId, int attempt, long delaySeconds) {
+        try {
+            timer.schedule(() -> workers.submit(() -> {
+                CommandEntity root = find(rootId);
+                if (root == null) return;
+                Map<String, Object> rootParams;
+                try {
+                    rootParams = gson.fromJson(resolveParamsJson(root),
+                            new TypeToken<LinkedHashMap<String, Object>>() {}.getType());
+                } catch (RuntimeException unreadable) {
+                    return;
+                }
+                if (takeBackTagSyncAccountOfUninstalledRelease(rootId, rootParams, true)) return;
+                if (attempt + 1 < TAG_SYNC_TAKE_BACK_ATTEMPTS) {
+                    scheduleTagSyncTakeBack(rootId, attempt + 1, TAG_SYNC_TAKE_BACK_INTERVAL_SECONDS);
+                    return;
+                }
+                TagSyncRangerAccount.Recorded account = tagSyncAccounts.find(stringValue(rootParams.get("namespace")),
+                        stringValue(rootParams.get("releaseName")));
+                appendCommandLog(rootId, "WARNING: The Helm call on release " + rootParams.get("namespace") + "/"
+                        + rootParams.get("releaseName") + " is still running. If it does not install the release,"
+                        + " uninstall it, or disable the Ranger account"
+                        + (account == null ? "" : " '" + account.userName() + "'") + " that KDPS gave its Atlas tag"
+                        + " projector, and delete the Secret " + rootParams.get("namespace") + "/"
+                        + TagSyncRangerAccount.secretName(stringValue(rootParams.get("releaseName"))) + ".");
+            }), delaySeconds, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException shuttingDown) {
+            LOG.warn("Atlas tag sync: the account check of operation {} was not scheduled: the view is stopping", rootId);
+        }
+    }
+
+    /**
+     * Takes back the Ranger account a deploy gave the Atlas tag projector of its release (see
+     * {@link #TAG_SYNC_NEW_ACCOUNT_PARAM}) when the deploy failed or was canceled without installing the release. The
+     * Releases page lists only what Helm has, so no uninstall would ever disable the account, which holds the Ranger
+     * administrator role, nor delete its Secret. A release Helm has, in any state, or that a GitOps commit recorded,
+     * keeps the account for its uninstall. What was done, or is left for an administrator, goes to the operation log.
+     * Never throws.
+     *
+     * @param requireEnded whether the deploy must have ended FAILED or CANCELED, rather than be failing on this thread
+     * @return false while a Helm call on the release still runs, which may yet install it; true otherwise
+     */
+    boolean takeBackTagSyncAccountOfUninstalledRelease(String rootId, Map<String, Object> rootParams,
+                                                       boolean requireEnded) {
+        if (rootParams == null || stringValue(rootParams.get(TAG_SYNC_NEW_ACCOUNT_PARAM)).isBlank()) return true;
+        String namespace = stringValue(rootParams.get("namespace"));
+        String release = stringValue(rootParams.get("releaseName"));
+        if (namespace.isBlank() || release.isBlank()) return true;
+        synchronized (tagSyncTakeBackLock) {
+            try {
+                if (requireEnded && !endedWithoutSuccess(rootId)) return true;
+                TagSyncRangerAccount.Recorded account = tagSyncAccounts.find(namespace, release);
+                if (account == null) return true;
+                // A later deploy of the release was given the account since: it is that deploy's to take back.
+                String grant = stringValue(rootParams.get(TAG_SYNC_GRANT_PARAM));
+                if (grant.isBlank() || !grant.equals(account.grant())) return true;
+                if (HelmOperationRegistry.isRunning(namespace, release)) return false;
+                Boolean installed = releaseInstalled(namespace, release, rootParams.get(GITOPS_RELEASE_PARAM) != null);
+                if (installed == null) {
+                    appendCommandLog(rootId, "WARNING: KDPS could not tell whether release " + namespace + "/" + release
+                            + " was installed. If it was not, disable the Ranger account '" + account.userName()
+                            + "' that KDPS gave its Atlas tag projector, and delete the Secret " + namespace + "/"
+                            + TagSyncRangerAccount.secretName(release) + "; otherwise its uninstall does.");
+                    return true;
+                }
+                if (installed) return true;
+                TagSyncRangerAccount.Revoked revoked = TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts,
+                        namespace, release, null, tagSyncRangers.apply(rootParams));
+                if (!revoked.done().isEmpty()) {
+                    appendCommandLog(rootId, "The deploy did not install release " + namespace + "/" + release
+                            + ", so KDPS " + String.join(" and ", revoked.done()) + ". Resuming the deploy gives the"
+                            + " Atlas tag projector a Ranger account again.");
+                }
+                if (revoked.note() != null) appendCommandLog(rootId, "WARNING: " + revoked.note());
+            } catch (RuntimeException e) {
+                LOG.warn("Atlas tag sync: the account of release {}/{} could not be taken back after operation {}: {}",
+                        namespace, release, rootId, e.toString());
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Looks again, once the view has started, at every deploy that ended without installing its release and gave the
+     * Atlas tag projector its account (see {@link #TAG_SYNC_NEW_ACCOUNT_PARAM}), and takes the account back (see
+     * {@link #takeBackTagSyncAccountOfUninstalledRelease}). A restart fails the deploys it interrupts (see
+     * {@link #recoverOrphanedCommands}) without running what takes the account back on failure, and drops the checks
+     * that were still waiting for a Helm call to end. A deploy whose account a later deploy was given, or whose release
+     * was installed, is left as it is. Never throws.
+     */
+    private void takeBackTagSyncAccountsAfterStart() {
+        try {
+            Collection<CommandEntity> all = dataStore.findAll(CommandEntity.class, null);
+            if (all == null) return;
+            Set<String> steps = new java.util.HashSet<>();
+            for (CommandEntity cmd : all) {
+                steps.addAll(childIdsOf(cmd));
+            }
+            for (CommandEntity root : all) {
+                if (root == null || steps.contains(root.getId()) || !endedWithoutSuccess(root.getId())) continue;
+                Map<String, Object> rootParams;
+                try {
+                    rootParams = gson.fromJson(resolveParamsJson(root),
+                            new TypeToken<LinkedHashMap<String, Object>>() {}.getType());
+                } catch (RuntimeException unreadable) {
+                    continue;
+                }
+                if (rootParams == null || stringValue(rootParams.get(TAG_SYNC_NEW_ACCOUNT_PARAM)).isBlank()) continue;
+                scheduleTagSyncTakeBack(root.getId(), 0, TAG_SYNC_TAKE_BACK_AFTER_START_SECONDS);
+            }
+        } catch (Exception e) {
+            LOG.warn("Atlas tag sync: the deploys that ended without installing their release could not be looked at"
+                    + " after the view started: {}", e.toString());
+        }
+    }
+
+    /** Whether the operation ended FAILED or CANCELED. */
+    private boolean endedWithoutSuccess(String rootId) {
+        CommandEntity root = find(rootId);
+        CommandStatusEntity status = root == null ? null : findCommandStatusById(root.getCommandStatusId());
+        return status != null && (CommandState.FAILED.name().equals(status.getState())
+                || CommandState.CANCELED.name().equals(status.getState()));
+    }
+
+    /**
+     * Whether a release exists for an uninstall to find: Helm has it, in any state, or, for a GitOps deploy, the view
+     * recorded it, which only its commit does. Null when Helm cannot be asked.
+     */
+    private Boolean releaseInstalled(String namespace, String release, boolean gitOps) {
+        if (gitOps && releaseRecorded(namespace, release)) return true;
+        try {
+            String kubeconfig = kubernetesService.getConfigurationService().getKubeconfigContents();
+            return helmService.list(namespace, kubeconfig).stream().anyMatch(r -> release.equals(r.getName()));
+        } catch (Exception e) {
+            LOG.warn("Atlas tag sync: the Helm releases of {} could not be listed: {}", namespace, e.toString());
+            return null;
+        }
+    }
+
+    /** Whether the view has a record of the release; false when it cannot be read. */
+    private boolean releaseRecorded(String namespace, String release) {
+        try {
+            return new ReleaseMetadataService(ctx).find(namespace, release) != null;
+        } catch (RuntimeException e) {
+            LOG.warn("Atlas tag sync: the release record of {}/{} could not be read: {}", namespace, release,
+                    e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Gives the Atlas tag projector, when a failed deploy is resumed, the Ranger account that was taken back because
+     * the deploy failed without installing the release (see {@link #takeBackTagSyncAccountOfUninstalledRelease}): the
+     * steps still to run point the chart at its Secret. The account gets a new password, on the Ranger it was on.
+     *
+     * @throws IllegalStateException when the account cannot be given again, before anything of the deploy is changed
+     */
+    private void giveBackTagSyncAccountOnResume(String rootId) {
+        CommandEntity root = find(rootId);
+        Map<String, Object> rootParams = root == null ? null : gson.fromJson(resolveParamsJson(root),
+                new TypeToken<LinkedHashMap<String, Object>>() {}.getType());
+        String contextId = rootParams == null ? "" : stringValue(rootParams.get(TAG_SYNC_NEW_ACCOUNT_PARAM));
+        if (contextId.isBlank()) return;
+        String namespace = stringValue(rootParams.get("namespace"));
+        String release = stringValue(rootParams.get("releaseName"));
+        if (namespace.isBlank() || release.isBlank() || tagSyncAccountRecorded(namespace, release)) return;
+        String contextKey = TagSyncRangerAccount.contextKey(contextId);
+        try {
+            TagSyncRangerAccount.RangerLocator locator = tagSyncRangers.apply(rootParams);
+            String grant = stringValue(rootParams.get(TAG_SYNC_GRANT_PARAM));
+            TagSyncRangerAccount.Provisioned account = TagSyncRangerAccount.provision(kubernetesService,
+                    tagSyncAccounts, locator.forContext(contextKey), locator, namespace, release, contextKey, null,
+                    tagSyncInstanceId(), kubernetesClusterUrl(), grant.isBlank() ? null : grant);
+            appendCommandLog(rootId, "KDPS gave the Atlas tag projector of release " + namespace + "/" + release
+                    + " its Ranger account '" + account.userName() + "' again, with a new password.");
+            account.warnings().forEach(w -> appendCommandLog(rootId, "WARNING: " + w));
+        } catch (Exception e) {
+            String reason = e.getMessage() == null || e.getMessage().isBlank() ? e.toString() : e.getMessage();
+            throw new IllegalStateException("This deploy cannot be resumed: the Ranger account of its Atlas tag"
+                    + " projector, taken back when the deploy failed, could not be given again (" + reason + ")."
+                    + " Deploy the release again from the wizard.", e);
+        }
+    }
+
+    /**
+     * Takes back the Ranger account the Atlas tag projector of a release wrote tags with, once the release is
+     * uninstalled: the account KDPS recorded for the release is disabled in the Ranger it was created on, and the
+     * Secret holding it deleted (see {@link TagSyncRangerAccount#revoke}). A release that never synced Atlas tags has
+     * neither, and nothing is done.
+     *
+     * <p>Failures are reported, never thrown: the release is already gone.
+     *
+     * @param platformContextId the release's platform context as the view recorded it, where an earlier KDPS version
+     *                          created its account
+     * @param callerHeaders     the uninstalling user's request headers, through which the Ranger of the managed
+     *                          cluster is reached (the Ambari server holds its administrator)
+     * @return what is left for an administrator to do, or null when there is nothing
+     */
+    public String revokeTagSyncRangerAccountForRelease(String namespace, String releaseName, String platformContextId,
+                                                       MultivaluedMap<String, String> callerHeaders) {
+        return TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts, namespace, releaseName,
+                platformContextId, tagSyncRangersFor(callerHeaders)).note();
+    }
+
+    /**
+     * The Ranger of tag sync accounts, reached with a user's request headers. The Ambari server is only asked for its
+     * cluster once a Ranger is needed: a release that never synced Atlas tags costs nothing.
+     */
+    private TagSyncRangerAccount.RangerLocator tagSyncRangersFor(MultivaluedMap<String, String> callerHeaders) {
+        return contextId -> tagSyncRangers.apply(ambariAccessOf(callerHeaders)).forContext(contextId);
+    }
+
+    /**
+     * The step parameters through which the Ambari server is reached with a user's request headers
+     * ({@code _baseUri}, {@code _callerHeaders}, {@code _cluster}); empty when it cannot be.
+     */
+    private Map<String, Object> ambariAccessOf(MultivaluedMap<String, String> callerHeaders) {
+        Map<String, Object> access = new LinkedHashMap<>();
+        if (callerHeaders == null) return access;
+        try {
+            java.net.URI baseUri = org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver.resolveApiBaseUri(ctx);
+            String cluster = this.commandUtils.resolveClusterName(baseUri.toString(),
+                    AmbariActionClient.toAuthHeaders(callerHeaders));
+            access.put("_baseUri", baseUri.toString());
+            access.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+            access.put("_cluster", cluster);
+        } catch (Exception e) {
+            LOG.warn("Atlas tag sync account: no Ambari access ({}); the managed cluster's Ranger cannot be reached.",
+                    e.toString());
+        }
+        return access;
+    }
+
+    /**
+     * Where the tag sync accounts of releases are created and disabled: the Ranger of a platform context, reached
+     * directly with the administrator credentials stored on the context, or, on the managed cluster, through the
+     * Ambari server that {@code stepParams} reach ({@code _baseUri}, {@code _callerHeaders}, {@code _cluster}). A
+     * platform context KDPS no longer has is reported as such: resolving it would fall back to the managed cluster,
+     * whose Ranger never had the account.
+     */
+    TagSyncRangerAccount.RangerLocator tagSyncRangersOf(Map<String, Object> stepParams) {
+        return contextId -> {
+            if (contextId != null && !contextId.isBlank() && !ContextService.NO_CONTEXT_ID.equals(contextId)
+                    && new ContextService(ctx).get(contextId) == null) {
+                throw new TagSyncRangerAccount.ContextGone(contextId);
+            }
+            Map<String, Object> ctxParams = new LinkedHashMap<>();
+            for (String key : List.of("_baseUri", "_callerHeaders", "_cluster")) {
+                if (stepParams.get(key) != null) ctxParams.put(key, stepParams.get(key));
+            }
+            if (contextId != null && !contextId.isBlank()) ctxParams.put("_platformContextId", contextId);
+            org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(ctxParams);
+            if (rc != null && rc.hasDirectRangerCreds()) {
+                return TagSyncRangerAccount.direct(rc.getRangerUrl().trim(), rc.getRangerAdminUsername(),
+                        rc.getRangerAdminPassword());
+            }
+            String cluster = stringValue(ctxParams.get("_cluster"));
+            String baseUri = stringValue(ctxParams.get("_baseUri"));
+            if (rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUri.isBlank()) {
+                AmbariActionClient ambari = new AmbariActionClient(ctx,
+                        java.net.URI.create(baseUri).resolve("/api/v1").toString(), cluster,
+                        AmbariActionClient.toAuthHeaders(ctxParams.get("_callerHeaders")));
+                return TagSyncRangerAccount.viaAmbari(ambari, TagSyncRangerAccount.AMBARI_TIMEOUT_SECONDS);
+            }
+            String where = rc != null && rc.getName() != null ? "platform context '" + rc.getName() + "'"
+                    : contextId == null || contextId.isBlank() ? "the managed cluster"
+                    : "platform context '" + contextId + "'";
+            throw new IllegalStateException("KDPS cannot reach the Ranger of " + where + " as an administrator"
+                    + (cluster.isBlank() && (rc == null || rc.isRangerManaged()) ? " (no access to the Ambari server)"
+                    : ""));
+        };
+    }
+
+    /**
+     * The Kubernetes cluster KDPS deploys to, as its API server URL: part of what makes the tag sync account of a
+     * release its own (see {@link TagSyncRangerAccount#userName}). Null when it cannot be read.
+     */
+    String kubernetesClusterUrl() {
+        try {
+            io.fabric8.kubernetes.client.KubernetesClient client = kubernetesService.getClient();
+            String url = client != null && client.getConfiguration() != null
+                    ? client.getConfiguration().getMasterUrl() : null;
+            if (url == null || url.isBlank()) return null;
+            url = url.trim().toLowerCase(Locale.ROOT);
+            return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        } catch (RuntimeException e) {
+            LOG.warn("The Kubernetes API server URL could not be read: {}", e.toString());
+            return null;
         }
     }
 

@@ -43,10 +43,20 @@ import com.sun.net.httpserver.HttpServer;
  * against: policies by id and by name, the per-service listing (paged with {@code startIndex}/{@code pageSize}
  * like Ranger), Ranger's refusal of a second policy over the same resources (error 3010, naming the policy that
  * owns them) and the user lookup. Every request is recorded.
+ * <p/>
+ * The user lookup answers that every user exists, unless {@link #userDirectory} is set (adding a user sets it): then
+ * {@link #users} is a user directory that the user actions of {@link UpsertRangerUserServerAction} read and write,
+ * matching names partially on lookup like Ranger does and masking passwords in what it answers.
  */
 final class FakeRangerAdmin implements AutoCloseable {
 
   final Map<Long, JsonObject> policies = new LinkedHashMap<>();
+  /** Users by name, with the password last set (Ranger would keep a hash). */
+  final Map<String, JsonObject> users = new LinkedHashMap<>();
+  /** Whether the user lookup reads {@link #users} rather than answering that every user exists. */
+  volatile boolean userDirectory;
+  /** The status the user lookup answers with, such as 401 for a Ranger that refuses the administrator's password. */
+  volatile int userLookupStatus = 200;
   /** "METHOD path" of every request received, oldest first. */
   final List<String> requests = new ArrayList<>();
   private long nextId = 1;
@@ -157,6 +167,31 @@ final class FakeRangerAdmin implements AutoCloseable {
     return out;
   }
 
+  /** Stores an enabled user with {@code roles}; {@code userSource} 0 is an internal user, 1 one synced from a directory. */
+  synchronized JsonObject addUser(String name, int userSource, String... roles) {
+    userDirectory = true;
+    JsonObject u = new JsonObject();
+    u.addProperty("id", nextId++);
+    u.addProperty("name", name);
+    u.addProperty("status", 1);
+    u.addProperty("userSource", userSource);
+    JsonArray roleList = new JsonArray();
+    for (String role : roles) {
+      roleList.add(role);
+    }
+    u.add("userRoleList", roleList);
+    u.addProperty("password", "initial-password");
+    users.put(name, u);
+    return u;
+  }
+
+  /** The roles of a stored user. */
+  static List<String> roles(JsonObject user) {
+    List<String> out = new ArrayList<>();
+    user.getAsJsonArray("userRoleList").forEach(r -> out.add(r.getAsString()));
+    return out;
+  }
+
   /** How many requests changed something (anything but a GET). */
   long writes() {
     return requests.stream().filter(r -> !r.startsWith("GET ")).count();
@@ -243,8 +278,50 @@ final class FakeRangerAdmin implements AutoCloseable {
       }
       return;
     }
-    if (path.equals("/service/xusers/users")) {
+    if (path.equals("/service/xusers/users") && !userDirectory) {
       answer(ex, 200, "{\"vXUsers\":[{\"id\":7,\"name\":\"" + query.get("name") + "\"}]}");
+      return;
+    }
+    if (path.equals("/service/xusers/users") && userLookupStatus != 200) {
+      answer(ex, userLookupStatus, "{\"msgDesc\":\"Authentication failed\"}");
+      return;
+    }
+    if (path.equals("/service/xusers/users")) {
+      JsonArray found = new JsonArray();
+      for (JsonObject u : users.values()) {
+        if (u.get("name").getAsString().contains(query.getOrDefault("name", ""))) {
+          JsonObject masked = u.deepCopy();
+          masked.addProperty("password", "*****");
+          found.add(masked);
+        }
+      }
+      JsonObject root = new JsonObject();
+      root.add("vXUsers", found);
+      answer(ex, 200, root.toString());
+      return;
+    }
+    if (path.equals("/service/xusers/secure/users") && "POST".equals(method)) {
+      JsonObject u = JsonParser.parseString(body).getAsJsonObject();
+      u.addProperty("id", nextId++);
+      users.put(u.get("name").getAsString(), u);
+      answer(ex, 200, u.toString());
+      return;
+    }
+    if (path.startsWith("/service/xusers/secure/users/") && "PUT".equals(method)) {
+      long id = Long.parseLong(path.substring("/service/xusers/secure/users/".length()));
+      JsonObject updated = JsonParser.parseString(body).getAsJsonObject();
+      for (JsonObject u : users.values()) {
+        if (u.get("id").getAsLong() == id) {
+          String password = updated.has("password") ? updated.get("password").getAsString() : "*****";
+          if ("*****".equals(password)) {
+            updated.add("password", u.get("password"));
+          }
+          users.put(u.get("name").getAsString(), updated);
+          answer(ex, 200, updated.toString());
+          return;
+        }
+      }
+      answer(ex, 404, "{\"msgDesc\":\"no user\"}");
       return;
     }
     answer(ex, 404, "{\"msgDesc\":\"unknown path\"}");

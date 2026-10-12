@@ -116,6 +116,7 @@ class HelmResourceUninstallTest {
             verify(flux, never()).removeFromGit(any());
             verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
             verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+            verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
             verify(releaseMetadata, never()).delete(anyString(), anyString());
         }
     }
@@ -132,6 +133,7 @@ class HelmResourceUninstallTest {
         assertEquals(400, response.getStatus());
         assertTrue(String.valueOf(((Map<?, ?>) response.getEntity()).get("error")).contains("team-b/trino"));
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -151,6 +153,7 @@ class HelmResourceUninstallTest {
         // Flux keeps running the release from Git: it keeps its catalog credential, its SCCs and its record.
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
+        verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -165,6 +168,7 @@ class HelmResourceUninstallTest {
         assertEquals("Another GitOps operation on team-a/trino is in progress. Try again once it has finished.",
                 ((Map<?, ?>) response.getEntity()).get("error"));
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -179,5 +183,34 @@ class HelmResourceUninstallTest {
         verify(flux).removeFromGit(meta);
         verify(commandService).revokePolarisForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(releaseMetadata).delete(NS, RELEASE);
+    }
+
+    @Test
+    void theRangerAccountOfTheReleasesTagSyncIsTakenBackOnTheRecordedContext() throws Exception {
+        K8sReleaseEntity meta = new K8sReleaseEntity();
+        meta.setId(K8sReleaseEntity.idOf(NS, RELEASE));
+        meta.setNamespace(NS);
+        meta.setReleaseName(RELEASE);
+        meta.setPlatformContextId("cdp-prod");
+        when(releaseMetadata.find(NS, RELEASE)).thenReturn(meta);
+        String note = "The Ranger account 'kdps-tagsync-team-a_trino' that synced Atlas tags for this release could"
+                + " not be disabled (HTTP 503). It holds the Ranger administrator role: disable it in Ranger.";
+        when(commandService.revokeTagSyncRangerAccountForRelease(NS, RELEASE, "cdp-prod", null)).thenReturn(note);
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        verify(commandService).destroyViaBackend(eq(NS), eq(RELEASE), any());
+        assertEquals(note, ((Map<?, ?>) response.getEntity()).get("tagSyncCleanup"));
+    }
+
+    @Test
+    void aTagSyncCleanupThatThrowsDoesNotFailTheUninstall() throws Exception {
+        when(commandService.revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any()))
+                .thenThrow(new IllegalStateException("unexpected"));
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
     }
 }

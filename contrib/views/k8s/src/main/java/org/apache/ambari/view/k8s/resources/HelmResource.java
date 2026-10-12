@@ -1334,7 +1334,8 @@ public class HelmResource {
     /**
      * Uninstall a Helm release and delete its stored metadata.
      * For Flux GitOps releases, the corresponding Git manifests are removed first. On OpenShift, the RoleBindings KDPS
-     * made to grant the release's service accounts an SCC are deleted once the release is gone.
+     * made to grant the release's service accounts an SCC are deleted once the release is gone. The Ranger account the
+     * release synced Atlas tags with, if any, is then disabled and its Secret deleted.
      *
      * <p>A GitOps release is removed from the repository, branch and path its metadata records, with the Git
      * credential KDPS saved for it: a request naming another repository, branch or credential is refused, so the
@@ -1347,13 +1348,14 @@ public class HelmResource {
      *                     the credential stops working while the catalog and its data stay;
      *                     {@code catalog} also drops the catalog; {@code none} leaves Polaris
      *                     untouched. The object-store bucket is never deleted.
-     * @return HTTP 200 on success, with {@code polarisCleanup} and {@code sccCleanup} notes when there is something
-     *         left for an administrator to do; 400, with nothing removed, when the request names a Git repository,
-     *         branch or credential, or for a GitOps release whose recorded Git directory is not its own or holds
-     *         another release's HelmRelease; 409, with nothing removed, while another Helm operation or GitOps
-     *         operation on the release is running or when the Git credential recorded for a GitOps release cannot be
-     *         used to remove it from Git; 500, with the release's credentials, SCC grants and record kept, when Git
-     *         refused or could not take the removal of a GitOps release; or an error response on failure
+     * @return HTTP 200 on success, with {@code polarisCleanup}, {@code sccCleanup} and {@code tagSyncCleanup} notes
+     *         when there is something left for an administrator to do; 400, with nothing removed, when the request
+     *         names a Git repository, branch or credential, or for a GitOps release whose recorded Git directory is
+     *         not its own or holds another release's HelmRelease; 409, with nothing removed, while another Helm
+     *         operation or GitOps operation on the release is running or when the Git credential recorded for a
+     *         GitOps release cannot be used to remove it from Git; 500, with the release's credentials, SCC grants,
+     *         tag sync account and record kept, when Git refused or could not take the removal of a GitOps release;
+     *         or an error response on failure
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
@@ -1483,9 +1485,21 @@ public class HelmResource {
         } catch (Exception ex) {
             LOG.warn("SCC cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
         }
+        // Likewise, the Ranger account the release's Atlas tag projector wrote tags with is disabled and its Secret
+        // deleted: it holds the Ranger administrator role. Never fails the uninstall; what could not be done is left
+        // for an administrator.
+        String tagSyncCleanupNote = null;
+        try {
+            tagSyncCleanupNote = commandService.revokeTagSyncRangerAccountForRelease(namespace, releaseName,
+                    meta != null ? meta.getPlatformContextId() : null,
+                    requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
+        } catch (Exception ex) {
+            LOG.warn("Atlas tag sync account cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+        }
         Map<String, Object> notes = new LinkedHashMap<>();
         if (polarisCleanupNote != null) notes.put("polarisCleanup", polarisCleanupNote);
         if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
+        if (tagSyncCleanupNote != null) notes.put("tagSyncCleanup", tagSyncCleanupNote);
         return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
     }
 

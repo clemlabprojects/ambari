@@ -47,4 +47,13 @@ describe('uninstallHelm', () => {
 
     await expect(uninstallHelm('om', 'data')).rejects.toThrow(/^Uninstall failed: 500$/);
   });
+
+  it('returns the note on the Ranger account of Atlas tag sync', async () => {
+    const note = "The Ranger account 'kdps-tagsync-trino-data' that synced Atlas tags for this release could not be disabled";
+    answer(JSON.stringify({ tagSyncCleanup: note }));
+
+    const notes = await uninstallHelm('trino', 'data');
+
+    expect(notes.tagSyncCleanup).toBe(note);
+  });
 });

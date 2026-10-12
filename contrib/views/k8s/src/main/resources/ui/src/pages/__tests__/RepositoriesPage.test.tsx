@@ -25,6 +25,9 @@ import { getHelmRepos, saveHelmRepo, loginHelmRepo, deleteHelmRepo } from '../..
 import RepositoriesPage from '../HelmRepositoriesPage';
 
 /** Helm repositories page: add / validate / login-sync / delete, against the current (modal-based) UI. */
+// These tests drive whole antd forms with user-event; under a loaded CI or build machine they need more than 5 s.
+jest.setTimeout(20000);
+
 describe('RepositoriesPage', () => {
   const user = userEvent.setup();
   const repo = { id: 'bitnami', name: 'Bitnami', type: 'HTTP', url: 'https://charts.bitnami.com/bitnami', authMode: 'anonymous' } as any;

@@ -1438,6 +1438,145 @@ public final class OmAtlasProvisioning {
         LOG.info("OmAtlasProvisioning: created Ranger group '{}'", groupName);
     }
 
+    /**
+     * Creates an internal Ranger user with {@code roles} and {@code password}, or, when Ranger already has an internal
+     * user of that name created for the same owner, resets its password and roles; either way the user ends up
+     * enabled. The view uses it for the account of a Trino release's Atlas tag projector on a context whose Ranger it
+     * reaches directly, with a password generated for every deploy. A user of that name whose description is not
+     * {@code owner}, and an external (synced) one, are refused rather than taken over: KDPS did not create them for
+     * this owner.
+     *
+     * @param owner the user's description, naming what it belongs to
+     */
+    public static void ensureInternalRangerUser(String rangerAdminUrl, String adminUser, String adminPassword,
+                                                String userName, String password, List<String> roles,
+                                                String owner) throws Exception {
+        String basic = basicAuth(adminUser, adminPassword);
+        JsonArray roleList = new JsonArray();
+        roles.forEach(roleList::add);
+        JsonObject user = findRangerUser(rangerAdminUrl, basic, userName);
+        if (user == null) {
+            JsonObject xuser = new JsonObject();
+            xuser.addProperty("name", userName);
+            xuser.addProperty("password", password);
+            xuser.addProperty("firstName", userName);
+            xuser.addProperty("lastName", "(KDPS)");
+            xuser.addProperty("emailAddress", "");
+            xuser.addProperty("description", owner);
+            xuser.addProperty("status", 1);
+            xuser.addProperty("isVisible", 1);
+            xuser.addProperty("userSource", 0);
+            xuser.add("userRoleList", roleList);
+            RangerAnswer created = rangerCall("POST", rangerAdminUrl + "/service/xusers/secure/users", basic, xuser);
+            if (created.code() / 100 != 2) {
+                throw new IllegalStateException("Ranger user '" + userName + "' could not be created: HTTP "
+                        + created.code() + " — " + created.body());
+            }
+            LOG.info("OmAtlasProvisioning: created Ranger user '{}' with roles {}", userName, roles);
+            return;
+        }
+        refuseExternalUser(user, userName);
+        refuseOtherOwner(user, userName, owner);
+        user.addProperty("password", password);
+        user.add("userRoleList", roleList);
+        user.addProperty("status", 1);
+        RangerAnswer updated = rangerCall("PUT",
+                rangerAdminUrl + "/service/xusers/secure/users/" + user.get("id").getAsLong(), basic, user);
+        if (updated.code() / 100 != 2) {
+            throw new IllegalStateException("Ranger user '" + userName + "' could not be updated: HTTP "
+                    + updated.code() + " — " + updated.body());
+        }
+        LOG.info("OmAtlasProvisioning: reset the password and roles {} of Ranger user '{}'", roles, userName);
+    }
+
+    /**
+     * Disables an internal Ranger user: status 0, only {@code ROLE_USER} and a random password nobody is told, so a
+     * copy of the old password, wherever it was kept, no longer logs in, and the account would hold no administrator
+     * role should someone enable it again. Ranger keeps the user, so its audit trail still names it. The administrator
+     * account the call is made with, external (synced) users, and a user whose description is not {@code owner}, are
+     * refused.
+     *
+     * @param owner the description the user must have, or null to disable it whatever its description
+     * @return false when Ranger has no user of that name
+     */
+    public static boolean disableInternalRangerUser(String rangerAdminUrl, String adminUser, String adminPassword,
+                                                    String userName, String owner) throws Exception {
+        if (userName.trim().equalsIgnoreCase(adminUser == null ? "" : adminUser.trim())) {
+            throw new IllegalArgumentException("Refusing to disable '" + userName
+                    + "': it is the Ranger administrator account of the platform context");
+        }
+        String basic = basicAuth(adminUser, adminPassword);
+        JsonObject user = findRangerUser(rangerAdminUrl, basic, userName);
+        if (user == null) {
+            return false;
+        }
+        refuseExternalUser(user, userName);
+        refuseOtherOwner(user, userName, owner);
+        JsonArray roleList = new JsonArray();
+        roleList.add("ROLE_USER");
+        user.addProperty("password", java.util.UUID.randomUUID().toString().replace("-", "") + "Kd9");
+        user.add("userRoleList", roleList);
+        user.addProperty("status", 0);
+        RangerAnswer updated = rangerCall("PUT",
+                rangerAdminUrl + "/service/xusers/secure/users/" + user.get("id").getAsLong(), basic, user);
+        if (updated.code() / 100 != 2) {
+            throw new IllegalStateException("Ranger user '" + userName + "' could not be disabled: HTTP "
+                    + updated.code() + " — " + updated.body());
+        }
+        LOG.info("OmAtlasProvisioning: disabled Ranger user '{}'", userName);
+        return true;
+    }
+
+    /**
+     * The Ranger user of exactly that name, or null when Ranger has none. Ranger's lookup matches names partially, so
+     * the exact name is picked out of what it answers; a lookup Ranger refuses throws rather than reading as no user.
+     */
+    private static JsonObject findRangerUser(String rangerAdminUrl, String basic, String userName) throws Exception {
+        RangerAnswer found = rangerCall("GET", rangerAdminUrl + "/service/xusers/users?name="
+                + java.net.URLEncoder.encode(userName, StandardCharsets.UTF_8), basic, null);
+        if (found.code() != 200) {
+            throw new IllegalStateException("Ranger user lookup for '" + userName + "' failed: HTTP " + found.code()
+                    + " — " + found.body());
+        }
+        JsonObject root = JsonParser.parseString(found.body()).getAsJsonObject();
+        if (!root.has("vXUsers") || !root.get("vXUsers").isJsonArray()) {
+            return null;
+        }
+        for (com.google.gson.JsonElement e : root.getAsJsonArray("vXUsers")) {
+            JsonObject u = e.getAsJsonObject();
+            if (u.has("name") && userName.equals(u.get("name").getAsString())) {
+                return u;
+            }
+        }
+        return null;
+    }
+
+    private static void refuseExternalUser(JsonObject user, String userName) {
+        int userSource = user.has("userSource") && !user.get("userSource").isJsonNull()
+                ? user.get("userSource").getAsInt() : 0;
+        if (userSource != 0) {
+            throw new IllegalStateException("Ranger user '" + userName + "' is an external (synced) user, which KDPS"
+                    + " did not create; it was left unchanged");
+        }
+    }
+
+    /** Refuses a user whose description does not name {@code owner}: another release's account, or not KDPS's. */
+    private static void refuseOtherOwner(JsonObject user, String userName, String owner) {
+        if (owner == null) {
+            return;
+        }
+        String description = user.has("description") && user.get("description").isJsonPrimitive()
+                ? user.get("description").getAsString() : "";
+        if (!owner.equals(description)) {
+            throw new IllegalStateException("Ranger user '" + userName + "' is not the one KDPS created: its"
+                    + " description is '" + description + "', not '" + owner + "'. It was left unchanged.");
+        }
+    }
+
+    private static String basicAuth(String user, String password) {
+        return "Basic " + Base64.getEncoder().encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8));
+    }
+
     /** The tag service of a Ranger repo by name, or null. */
     public static String getTagServiceOf(String rangerAdminUrl, String rangerUser, String rangerPassword, String serviceName) {
         try {
