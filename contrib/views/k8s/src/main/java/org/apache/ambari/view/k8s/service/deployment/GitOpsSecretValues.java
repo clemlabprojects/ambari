@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
@@ -372,7 +373,9 @@ final class GitOpsSecretValues {
 
     /**
      * Records the stack configuration overrides of password properties. Their keys are {@code <config>/<property>},
-     * which is also their path in the values.
+     * which is also their path in the values. A property its configuration no longer declares counts as one: a
+     * release deployed with an earlier definition may still carry it in its values, and nothing says it is not a
+     * password (the Superset administrator password the wizard used to ask for, for one).
      *
      * @param configs   the configurations of the service
      * @param overrides the overrides of the deploy; may be null
@@ -388,10 +391,14 @@ final class GitOpsSecretValues {
             }
             String configName = key.substring(0, slash);
             String propertyName = key.substring(slash + 1);
-            boolean password = configs.stream()
-                    .filter(c -> c != null && configName.equals(c.name) && c.properties != null)
-                    .flatMap(c -> c.properties.stream())
-                    .anyMatch(p -> isPassword(p) && propertyName.equals(p.name));
+            List<StackProperty> declared = configs.stream()
+                    .filter(c -> c != null && configName.equals(c.name))
+                    .flatMap(c -> c.properties == null ? Stream.<StackProperty>empty() : c.properties.stream())
+                    .filter(p -> p != null && propertyName.equals(p.name))
+                    .toList();
+            boolean configDeclared = configs.stream().anyMatch(c -> c != null && configName.equals(c.name));
+            boolean password = declared.stream().anyMatch(GitOpsSecretValues::isPassword)
+                    || (configDeclared && declared.isEmpty());
             if (password) {
                 addPath(key);
                 addValue(value);

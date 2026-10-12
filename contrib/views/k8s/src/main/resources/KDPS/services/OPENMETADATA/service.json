@@ -3,7 +3,7 @@
   "chart": "openmetadata",
   "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.34",
+  "version": "1.13.35",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",
@@ -2470,10 +2470,97 @@
       "source_key": "openmetadatarest"
     }
   },
+  "retiredValues": {
+    "_comment": "Values an earlier version of this definition wrote, removed from the values of every deploy.",
+    "openmetadata-env/OPENMETADATA_ADMIN_USERNAME": "The wizard no longer asks for the administrator, which the chart never read.",
+    "openmetadata-env/OPENMETADATA_ADMIN_PASSWORD": "The wizard no longer asks for an administrator password, which the chart never read: KDPS generates it into the Secret <release>-openmetadata-admin.",
+    "openmetadata-env/OPENMETADATA_DB_PASSWORD": "The wizard no longer asks for a database password, which the chart never read: KDPS generates it into the Secret <release>-openmetadata-db."
+  },
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
   "requiredChartVersion": ">=1.13.31",
+  "generatedSecrets": [
+    {
+      "key": "admin",
+      "comment": "Basic authentication (no security profile): OpenMetadata gives its bootstrap administrators the password 'admin'; the chart's Job sets them to this one. resetOnUpgrade is true on every deploy, not only until a deploy succeeds: the chart runs the Job in basic authentication only, and OpenMetadata clears the administrators' passwords while it runs with an OIDC or LDAP profile, then gives them 'admin' again at its first start in basic authentication. The Secret is therefore the one place the password is kept: a password changed in OpenMetadata is set back to it by the next deploy.",
+      "secretNameTemplate": "{{releaseName}}-openmetadata-admin",
+      "label": "the password of the OpenMetadata administrators",
+      "chartVersion": ">=1.13.35",
+      "keys": { "password": {} },
+      "values": {
+        "openmetadata.config.authorization.adminPassword.existingSecret": "{{secretName}}",
+        "openmetadata.config.authorization.adminPassword.passwordKey": "password",
+        "openmetadata.config.authorization.adminPassword.resetOnUpgrade": "true"
+      },
+      "notice": "Without a security profile (basic authentication), the OpenMetadata administrators sign in with the password in the Secret {{namespace}}/{{secretName}}. Read it with: {{readCommand}}. Each deploy sets it again: to change it, write the new password into the Secret, then deploy again."
+    },
+    {
+      "key": "database",
+      "comment": "The bundled PostgreSQL keeps the passwords it was initialized with: a release installed before keeps those its chart stored in <release>-postgresql, or, when an uninstall deleted that Secret, the user password the chart set for every release (openmetadata). OpenMetadata never signs in as postgres: that password is generated when it cannot be found. The Airflow scheduler gets the password as a file: KDPS reads the ingestion-bot token from the database through it (OmBotJwtClient).",
+      "secretNameTemplate": "{{releaseName}}-openmetadata-db",
+      "label": "the passwords of the OpenMetadata PostgreSQL database",
+      "chartVersion": ">=1.13.35",
+      "dataVolume": "data-{{releaseName}}-postgresql-0",
+      "keys": {
+        "password": {
+          "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "password" }],
+          "keptByVolume": true,
+          "formerDefault": "openmetadata"
+        },
+        "postgres-password": { "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "postgres-password" }] }
+      },
+      "values": {
+        "postgresql.auth.existingSecret": "{{secretName}}",
+        "dependencies.airflow.scheduler.extraVolumes[0].name": "openmetadata-database",
+        "dependencies.airflow.scheduler.extraVolumes[0].secret.secretName": "{{secretName}}",
+        "dependencies.airflow.scheduler.extraVolumes[0].secret.items[0].key": "password",
+        "dependencies.airflow.scheduler.extraVolumes[0].secret.items[0].path": "postgresql-password",
+        "dependencies.airflow.scheduler.extraVolumeMounts[0].name": "openmetadata-database",
+        "dependencies.airflow.scheduler.extraVolumeMounts[0].mountPath": "/opt/airflow/secrets",
+        "dependencies.airflow.scheduler.extraVolumeMounts[0].readOnly": "true"
+      }
+    },
+    {
+      "key": "airflowAdmin",
+      "comment": "The bundled Airflow's administrator, which the OpenMetadata server deploys pipelines with: the create-user job creates it with this password, or sets it on an existing one, and the server reads the same Secret.",
+      "secretNameTemplate": "{{releaseName}}-airflow-admin",
+      "label": "the password of the bundled Airflow administrator",
+      "chartVersion": ">=1.13.35",
+      "when": "dependencies.enabled",
+      "keys": { "password": {} },
+      "values": {
+        "openmetadata.config.pipelineServiceClientConfig.auth.existingSecret": "{{secretName}}",
+        "dependencies.airflow.webserver.defaultUser.password": "",
+        "dependencies.airflow.createUserJob.env[0].name": "AIRFLOW_ADMIN_PASSWORD",
+        "dependencies.airflow.createUserJob.env[0].valueFrom.secretKeyRef.name": "{{secretName}}",
+        "dependencies.airflow.createUserJob.env[0].valueFrom.secretKeyRef.key": "password"
+      },
+      "notice": "The bundled Airflow's administrator 'admin' has the password in the Secret {{namespace}}/{{secretName}}. Read it with: {{readCommand}}"
+    },
+    {
+      "key": "airflowDatabase",
+      "comment": "The bundled Airflow's PostgreSQL (fixed name openmetadata-airflow-postgresql) and the connection Airflow opens to it. Like the OpenMetadata database: a release installed before keeps its password, or the chart's former airflow_pass when an uninstall deleted the chart's Secret.",
+      "secretNameTemplate": "{{releaseName}}-airflow-db",
+      "label": "the passwords of the bundled Airflow PostgreSQL database",
+      "chartVersion": ">=1.13.35",
+      "when": "dependencies.enabled",
+      "dataVolume": "data-openmetadata-airflow-postgresql-0",
+      "keys": {
+        "password": {
+          "adoptFrom": [{ "secret": "openmetadata-airflow-postgresql", "key": "password" }],
+          "keptByVolume": true,
+          "formerDefault": "airflow_pass"
+        },
+        "postgres-password": { "adoptFrom": [{ "secret": "openmetadata-airflow-postgresql", "key": "postgres-password" }] },
+        "connection": { "template": "postgresql://airflow_user:${password}@openmetadata-airflow-postgresql:5432/airflow_db?sslmode=disable" }
+      },
+      "values": {
+        "dependencies.airflow.postgresql.auth.existingSecret": "{{secretName}}",
+        "dependencies.airflow.data.metadataSecretName": "{{secretName}}"
+      }
+    }
+  ],
   "externalServiceTargets": {
     "hive": {
       "label": "Federated ingestion (external Kerberos keytab)",

@@ -68,7 +68,8 @@ describe('Superset SECRET_KEY', () => {
     const values = build(form);
     expect(values.extraSecretEnv.SUPERSET_SECRET_KEY).toBe('Old-Key-3');
     expect(values.extraEnv).toEqual({ OPENSTREETMAP_SERVER_URL: 'https://tile.example.com' });
-    expect(Object.keys(def.retiredValues).filter(k => !k.startsWith('_'))).toEqual(['extraEnv.SUPERSET_SECRET_KEY']);
+    expect(Object.keys(def.retiredValues).filter(k => !k.startsWith('_')))
+      .toEqual(['extraEnv.SUPERSET_SECRET_KEY', 'superset-env/SUPERSET_ADMIN_PASSWORD']);
   });
 
   it('a key that only extraEnv still holds is found too, and a key typed on the upgrade wins', () => {

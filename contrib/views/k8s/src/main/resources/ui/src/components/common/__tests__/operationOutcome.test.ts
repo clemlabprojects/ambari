@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-import { waitingForMerge } from '../operationOutcome';
+import { operationNotices, waitingForMerge } from '../operationOutcome';
 
 describe('waitingForMerge', () => {
   it('reads what a GitOps deploy waiting for a merge ended with', () => {
@@ -42,5 +42,25 @@ describe('waitingForMerge', () => {
     const pending = waitingForMerge({ result: { waitingForMerge: true, pullRequestUrl: 'javascript:alert(1)' } });
     expect(pending?.pullRequestUrl).toBeUndefined();
     expect(pending?.message).toMatch(/waits for a merge/);
+  });
+});
+
+describe('operationNotices', () => {
+  it('reads what the operator must know once the deploy succeeded', () => {
+    expect(operationNotices({
+      result: { notices: ['Superset administrator \'admin\': its password is in the Secret bi/bi-superset-admin.'] },
+    })).toEqual(['Superset administrator \'admin\': its password is in the Secret bi/bi-superset-admin.']);
+  });
+
+  it('keeps the notices of a GitOps deploy waiting for a merge', () => {
+    expect(operationNotices({ result: { waitingForMerge: true, message: 'x', notices: ['n1', 'n2'] } }))
+      .toEqual(['n1', 'n2']);
+  });
+
+  it('is empty without notices, and ignores anything but text', () => {
+    expect(operationNotices(null)).toEqual([]);
+    expect(operationNotices({ result: undefined })).toEqual([]);
+    expect(operationNotices({ result: { notices: 'not a list' } })).toEqual([]);
+    expect(operationNotices({ result: { notices: [42, '', '  ', 'kept'] } })).toEqual(['kept']);
   });
 });

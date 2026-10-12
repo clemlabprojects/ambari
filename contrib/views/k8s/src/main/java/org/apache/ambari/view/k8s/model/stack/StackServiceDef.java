@@ -178,6 +178,13 @@ public class StackServiceDef {
     public Map<String, Object> secretChartVersions;
 
     /**
+     * Secrets of credentials KDPS creates for the release before Helm installs it (an administrator password, the
+     * passwords of the bundled databases), with random values kept from one deploy to the next and across an
+     * uninstall; the chart only gets their names. See {@link GeneratedSecret} and {@code GeneratedSecretService}.
+     */
+    public List<GeneratedSecret> generatedSecrets;
+
+    /**
      * Declarative external-service auth wiring. See
      * {@code docs/EXTERNAL_SERVICE_TARGETS.md} for the full contract.
      *

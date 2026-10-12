@@ -180,9 +180,9 @@ public final class OmBotJwtClient {
         String podName = target.getMetadata().getName();
         LOG.info("OmBotJwtClient: exec into pod '{}' to read the ingestion-bot token", podName);
 
-        // PGPASSWORD comes from /opt/airflow/secrets/postgresql-password OR from an env var the
-        // airflow container already has (the OM-deps chart mounts the password via the airflow DB
-        // connection Secret).
+        // PGPASSWORD comes from /opt/airflow/secrets/postgresql-password, where KDPS mounts the
+        // OpenMetadata database password of the release (generatedSecrets of the OPENMETADATA
+        // definition). A release not redeployed since still has the chart's former fixed password.
         String script =
             "set -eu\n" +
             "python3 - <<'PY'\n" +
@@ -196,8 +196,8 @@ public final class OmBotJwtClient {
             "pghost = release + '-postgresql'\n" +
             "pgport = '5432'\n" +
             "pguser = 'openmetadata_user'\n" +
-            "# Password is mounted by the airflow chart for its own db; same Secret\n" +
-            "# (the OM postgres Secret) holds the password we want.\n" +
+            "# The OM database password, mounted from the release's database Secret;\n" +
+            "# a release not redeployed since still has the chart's former fixed one.\n" +
             "pgpass = open('/opt/airflow/secrets/postgresql-password').read().strip() if os.path.exists('/opt/airflow/secrets/postgresql-password') else os.environ.get('OM_POSTGRES_PASSWORD','openmetadata')\n" +
             "q = \"SELECT json->'authenticationMechanism'->'config'->>'JWTToken' FROM user_entity WHERE name='ingestion-bot'\"\n" +
             "raw = subprocess.check_output(['psql','-h',pghost,'-p',pgport,'-U',pguser,'-d','openmetadata_db','-tA','-c',q],\n" +

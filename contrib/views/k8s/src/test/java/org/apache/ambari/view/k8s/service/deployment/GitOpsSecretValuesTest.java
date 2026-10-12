@@ -341,6 +341,22 @@ public class GitOpsSecretValuesTest {
     }
 
     @Test
+    public void aPropertyItsConfigurationNoLongerDeclaresIsKeptOutOfGit() {
+        // The administrator password an earlier definition asked for, still in the values of a release it deployed.
+        StackConfig env = new StackConfig();
+        env.name = "superset-env";
+        env.properties = List.of(property("ROW_LIMIT", "int"));
+        Map<String, Object> overrides = map("superset-env/SUPERSET_ADMIN_PASSWORD", "Old-Admin-Pass-6",
+                "superset-env/ROW_LIMIT", 5000, "other-env/SOME_SETTING", "kept");
+        GitOpsSecretValues secrets = new GitOpsSecretValues();
+
+        secrets.addPasswordConfigs(List.of(env), overrides);
+
+        assertEquals(java.util.Set.of("superset-env/SUPERSET_ADMIN_PASSWORD"), secrets.paths());
+        assertEquals(java.util.Set.of("Old-Admin-Pass-6"), secrets.secrets());
+    }
+
+    @Test
     public void theBundledServiceDefinitionsDeclareTheirSecretsAsPasswords() {
         StackDefinitionService definitions = new StackDefinitionService();
 

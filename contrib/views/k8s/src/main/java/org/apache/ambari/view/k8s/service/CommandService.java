@@ -4613,6 +4613,10 @@ public class CommandService {
         if (callerHeaders != null) {
             rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
         }
+        // The credentials Secrets of the current definition, as for a deploy: a release installed before keeps the
+        // passwords its databases run with, and the target chart gets the Secrets' names when it can read them.
+        applyGeneratedSecrets(commandId, rootParams, releaseMetadata.getServiceKey(), namespace, releaseName,
+                targetVersion, deployedValues, null);
 
         // Create the single HELM_UPGRADE child step.
         String subId = UUID.randomUUID().toString();
@@ -4796,6 +4800,113 @@ public class CommandService {
                 LOG.debug("Failed to append a deploy warning to the log of {}: {}", commandId, ex.toString());
             }
         }
+    }
+
+    /** Root parameter with what the operator is told once the operation succeeds (where to read a generated password). */
+    static final String NOTICES_PARAM = "_notices";
+    /**
+     * Root parameter with the generated Secrets whose value this operation asks the chart to set on an account
+     * ({@code namespace}, {@code secretName}): once it succeeds, the next deploys no longer ask.
+     */
+    static final String PENDING_CREDENTIALS_PARAM = "_pendingCredentials";
+
+    /**
+     * Creates the Secrets of credentials the release's service definition declares ({@code generatedSecrets}, see
+     * {@link GeneratedSecretService}) and points the chart at them: only their names go into the deploy's overrides,
+     * so no password reaches the release values, a GitOps repository or a log. A chart too old to read one keeps its
+     * own credentials, with a warning in the operation log. What the operator must know (where to read the
+     * administrator password) goes into the operation log and the operation's result ({@link #NOTICES_PARAM}). The
+     * Secrets whose value the chart is asked to set on an account are kept in {@link #PENDING_CREDENTIALS_PARAM}, for
+     * {@link #markGeneratedCredentialsApplied} once the operation succeeds.
+     *
+     * @param chartVersion the chart version deployed, or null when unknown
+     * @return whether the parameters changed
+     * @throws IllegalStateException when a database volume exists, or its claim cannot be read, but its password cannot
+     *                               be found
+     */
+    private boolean applyGeneratedSecrets(String commandId, Map<String, Object> params, String serviceKey,
+                                          String namespace, String releaseName, String chartVersion,
+                                          Map<String, Object> values, Map<String, Object> formValues) {
+        if (serviceKey == null || serviceKey.isBlank()) return false;
+        StackServiceDef def;
+        try {
+            def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (no generated credentials): {}", serviceKey, ex.toString());
+            return false;
+        }
+        if (def == null || def.generatedSecrets == null || def.generatedSecrets.isEmpty()) return false;
+        List<GeneratedSecretService.Outcome> outcomes = new GeneratedSecretService(this.kubernetesService)
+                .ensure(def.generatedSecrets, namespace, releaseName, chartVersion, values, formValues);
+        List<String> notices = new ArrayList<>();
+        List<Map<String, String>> pending = new ArrayList<>();
+        boolean changed = false;
+        for (GeneratedSecretService.Outcome outcome : outcomes) {
+            for (String warning : outcome.warnings()) {
+                LOG.warn("{}/{}: {}", namespace, releaseName, warning);
+                appendCommandLog(commandId, "[WARN] " + warning);
+            }
+            if (!outcome.applied()) continue;
+            if (outcome.pending()) pending.add(Map.of("namespace", namespace, "secretName", outcome.secretName()));
+            for (Map.Entry<String, String> value : outcome.values().entrySet()) {
+                this.commandUtils.addOverride(params, value.getKey(), value.getValue());
+                changed = true;
+            }
+            // Key names only, never their values.
+            List<String> done = new ArrayList<>();
+            if (!outcome.generated().isEmpty()) done.add("generated " + String.join(", ", outcome.generated()));
+            if (!outcome.adopted().isEmpty()) {
+                done.add("kept the " + String.join(", ", outcome.adopted()) + " the release already runs with");
+            }
+            appendCommandLog(commandId, "Credentials Secret " + namespace + "/" + outcome.secretName() + ": "
+                    + (done.isEmpty() ? "reused" : String.join("; ", done)));
+            if (outcome.notice() != null) {
+                notices.add(outcome.notice());
+                appendCommandLog(commandId, "[NOTICE] " + outcome.notice());
+            }
+        }
+        if (!notices.isEmpty()) {
+            params.put(NOTICES_PARAM, notices);
+            changed = true;
+        }
+        if (!pending.isEmpty()) {
+            params.put(PENDING_CREDENTIALS_PARAM, pending);
+            changed = true;
+        }
+        return changed;
+    }
+
+    /**
+     * Once a deploy succeeds, the generated values it asked the chart to set on an account ({@link
+     * #PENDING_CREDENTIALS_PARAM}) are set: later deploys leave the account alone. Until then every deploy asks again,
+     * so a deploy that failed or was refused after its Secret was generated does not leave the chart's default
+     * password in place. A Secret that cannot be updated is only logged: the next deploy sets the same value again.
+     */
+    private void markGeneratedCredentialsApplied(String commandId, Map<String, Object> rootParams) {
+        Object pending = rootParams == null ? null : rootParams.get(PENDING_CREDENTIALS_PARAM);
+        if (!(pending instanceof Collection<?> list) || list.isEmpty()) return;
+        GeneratedSecretService generatedSecrets = new GeneratedSecretService(this.kubernetesService);
+        for (Object entry : list) {
+            if (!(entry instanceof Map<?, ?> secret)) continue;
+            String namespace = secret.get("namespace") == null ? null : String.valueOf(secret.get("namespace"));
+            String secretName = secret.get("secretName") == null ? null : String.valueOf(secret.get("secretName"));
+            if (namespace == null || secretName == null) continue;
+            try {
+                generatedSecrets.markApplied(namespace, secretName);
+            } catch (Exception ex) {
+                LOG.warn("[{}] Could not record that the value of Secret {}/{} is set: {}", commandId, namespace,
+                        secretName, ex.toString());
+            }
+        }
+    }
+
+    /** The operation's result with its notices added ({@link #NOTICES_PARAM}), or the result unchanged. */
+    static Map<String, Object> withNotices(Map<String, Object> result, Map<String, Object> rootParams) {
+        Object notices = rootParams == null ? null : rootParams.get(NOTICES_PARAM);
+        if (!(notices instanceof Collection<?> list) || list.isEmpty()) return result;
+        Map<String, Object> withNotices = result == null ? new LinkedHashMap<>() : new LinkedHashMap<>(result);
+        withNotices.put("notices", new ArrayList<>(list));
+        return withNotices;
     }
 
     /**
@@ -5885,7 +5996,7 @@ public class CommandService {
      *   "&lt;=X.Y.Z" / "&lt;X.Y.Z"  upper bounds
      * Multiple constraints separated by commas (AND).
      */
-    private boolean isChartVersionCompatible(String actual, String range) {
+    static boolean isChartVersionCompatible(String actual, String range) {
         if (range == null || range.isBlank()) return true;
         String act = actual.trim();
         // strip leading 'v'
@@ -5914,7 +6025,7 @@ public class CommandService {
         return true;
     }
 
-    private int compareSemver(String a, String b) {
+    private static int compareSemver(String a, String b) {
         String[] pa = a.split("[.-]", -1);
         String[] pb = b.split("[.-]", -1);
         int n = Math.max(pa.length, pb.length);
@@ -7329,6 +7440,27 @@ public class CommandService {
             }
         }
 
+        // The release's generated credentials (an administrator password, the passwords of the bundled databases):
+        // created now, before the Helm or GitOps steps are planned, so those steps get the Secrets' names.
+        boolean credentialsApplied;
+        try {
+            credentialsApplied = applyGeneratedSecrets(id, params, request.getServiceKey(), request.getNamespace(),
+                    request.getReleaseName(), version, request.getValues(), request.getFormValues());
+        } catch (RuntimeException refused) {
+            // A database password that cannot be found, or a Secret that cannot be written. The plan is stored by
+            // now, so the refusal also closes it: left pending, it would show as running for good, and nothing would
+            // ever run or end its steps.
+            refuseStoredPlan(rootCommand, commandStatusEntity,
+                    refused.getMessage() == null || refused.getMessage().isBlank()
+                            ? "Could not prepare the credentials of " + request.getReleaseName() + ": " + refused
+                            : refused.getMessage());
+            throw refused;
+        }
+        if (credentialsApplied) {
+            rootCommand.setParamsJson(gson.toJson(params));
+            store(rootCommand);
+        }
+
         // 2bis. Materialize stack configurations into Secrets before Helm install
         if (request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
             String cfgCmdId = this.commandPlanFactory.createConfigMaterializeCommand(
@@ -8503,6 +8635,15 @@ public class CommandService {
             // GitLab) the chart's Ingress is what actually decides the scheme. Live
             // discovery reads spec.tls[] and produces the truthful URL.
             refreshEndpointSnapshotFromLive(root, rootParams);
+            // What the operator must know before signing in (where a generated password is kept).
+            if (rootParams != null && rootParams.get(NOTICES_PARAM) != null) {
+                Map<String, Object> rootResult = rootSt.getResultJson() == null || rootSt.getResultJson().isBlank()
+                        ? null : gson.fromJson(rootSt.getResultJson(), mapType);
+                rootSt.setResultJson(gson.toJson(withNotices(rootResult, rootParams)));
+            }
+            // The Helm install or the Flux reconcile ran the chart's hooks: a generated password is set on its
+            // account now. A GitOps change still waiting for its merge ends elsewhere and keeps asking.
+            markGeneratedCredentialsApplied(id, rootParams);
             succeed(rootSt, "All steps completed.");
             refreshCurrentStepSnapshot(root);
             // Nothing can resume it any more: its parameters and cached values, which hold its secrets, go.
@@ -10421,7 +10562,7 @@ public class CommandService {
                 rootResult.put("waitingForMerge", true);
                 rootResult.put("notRun", notRun);
                 rootResult.put("message", outcome);
-                rootSt.setResultJson(gson.toJson(rootResult));
+                rootSt.setResultJson(gson.toJson(withNotices(rootResult, rootParams)));
                 appendCommandLog(id, outcome);
                 succeed(rootSt, outcome);
                 refreshCurrentStepSnapshot(root);

@@ -6559,6 +6559,105 @@ public class KubernetesService {
     }
 
     /**
+     * Writes the keys of the Opaque Secret {@code namespace/secretName}: creates it, or sets these keys on the existing
+     * one, keeping its other keys, labels and annotations. The labels and annotations given are added. No Helm
+     * ownership is set, so a Helm uninstall of the release leaves the Secret in place.
+     *
+     * @param data key to value, stored as UTF-8
+     */
+    public void writeOpaqueSecretKeys(String namespace, String secretName, Map<String, String> data,
+                                      Map<String, String> labels, Map<String, String> annotations) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(data, "data");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        Map<String, String> encoded = new LinkedHashMap<>();
+        data.forEach((key, value) -> encoded.put(key,
+                Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8))));
+        try {
+            Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+            if (existing == null) {
+                Secret created = new SecretBuilder()
+                        .withNewMetadata()
+                            .withName(secretName)
+                            .withNamespace(namespace)
+                            .withLabels(labels == null ? Map.of() : labels)
+                            .withAnnotations(annotations == null ? Map.of() : annotations)
+                        .endMetadata()
+                        .withType("Opaque")
+                        .withData(encoded)
+                        .build();
+                client.secrets().inNamespace(namespace).resource(created).create();
+                LOG.info("Created Secret '{}/{}' with keys {}", namespace, secretName, data.keySet());
+                return;
+            }
+            client.secrets().inNamespace(namespace).withName(secretName).edit(secret -> {
+                Map<String, String> merged = new LinkedHashMap<>(secret.getData() == null ? Map.of() : secret.getData());
+                merged.putAll(encoded);
+                secret.setData(merged);
+                if (secret.getStringData() != null) secret.getStringData().keySet().removeAll(encoded.keySet());
+                secret.getMetadata().setLabels(withAdded(secret.getMetadata().getLabels(), labels));
+                secret.getMetadata().setAnnotations(withAdded(secret.getMetadata().getAnnotations(), annotations));
+                return secret;
+            });
+            LOG.info("Set keys {} of Secret '{}/{}'", data.keySet(), namespace, secretName);
+        } catch (KubernetesClientException e) {
+            throw new RuntimeException("Failed to write Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Removes one annotation of the Secret {@code namespace/secretName}, leaving the rest of it as it is. A Secret that
+     * does not exist, or does not carry the annotation, is left alone.
+     */
+    public void removeSecretAnnotation(String namespace, String secretName, String annotation) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(annotation, "annotation");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        try {
+            Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+            if (existing == null || existing.getMetadata().getAnnotations() == null
+                    || !existing.getMetadata().getAnnotations().containsKey(annotation)) {
+                return;
+            }
+            client.secrets().inNamespace(namespace).withName(secretName).edit(secret -> {
+                Map<String, String> annotations = new LinkedHashMap<>(secret.getMetadata().getAnnotations());
+                annotations.remove(annotation);
+                secret.getMetadata().setAnnotations(annotations);
+                return secret;
+            });
+            LOG.info("Removed annotation {} from Secret '{}/{}'", annotation, namespace, secretName);
+        } catch (KubernetesClientException e) {
+            throw new RuntimeException("Failed to update Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static Map<String, String> withAdded(Map<String, String> current, Map<String, String> added) {
+        Map<String, String> merged = new LinkedHashMap<>(current == null ? Map.of() : current);
+        if (added != null) merged.putAll(added);
+        return merged;
+    }
+
+    /**
+     * Whether the persistent volume claim {@code namespace/name} exists, e.g. the volume of a database that keeps the
+     * passwords it was initialized with.
+     *
+     * @return {@code null} when that cannot be read (e.g. no permission to read volume claims)
+     */
+    public Boolean persistentVolumeClaimExists(String namespace, String name) {
+        checkConfiguration();
+        try {
+            return client.persistentVolumeClaims().inNamespace(namespace).withName(name).get() != null;
+        } catch (KubernetesClientException e) {
+            LOG.warn("Could not read the volume claim {}/{}: {}", namespace, name, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Create or update a TLS Secret (type kubernetes.io/tls) with provided certificate and key bytes.
      *
      * @param namespace   Kubernetes namespace where the Secret should reside.

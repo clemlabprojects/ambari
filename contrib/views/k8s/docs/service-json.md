@@ -41,6 +41,8 @@ This document describes how to author a KDPS `service.json` so the Ambari K8S vi
   security refresh writes a warning into its operation log. Keys starting with `_` are comments. Use it rather than
   raising `requiredChartVersion`, which would refuse the resync of every release still on an older chart.
 - `openshiftScc` (optional): OpenShift security context constraints the release's service accounts need; see “OpenShift SCCs”.
+- `generatedSecrets` (optional): Secrets of credentials KDPS creates for the release before Helm installs it (an
+  administrator password, the passwords of bundled databases). See "Generated credentials" below.
 - `form`: Array of form fields shown in the wizard.
 - `variables`: Values derived from the form (and other sources) by `renderConfig`.
 - `bindings`: Mapping rules that push variables/mounts into Helm values.
@@ -213,6 +215,74 @@ could read it there. Bind such fields to a values key the chart keeps in a Secre
 it. Do not template a secret into a configuration line (`additionalConfigProperties[]`): reference an environment
 variable read from a Secret instead (`${ENV:NAME}` in Trino). When only a later chart keeps the value in a Secret,
 declare that version in `secretChartVersions`, and say so in the field's help.
+
+### Generated credentials
+A chart default such as admin/admin, or a database password written in the chart's values, is the same on every
+release. Declare such credentials in `generatedSecrets` instead: before the Helm install (or the GitOps commit, or a
+chart upgrade from the Releases page), KDPS creates each Secret in the release namespace with random values (letters
+and digits), reads them back on every later deploy, and passes only the Secret's name to the chart. The Secret is not
+part of the Helm release, so an uninstall leaves it and a reinstall on the kept volumes finds the passwords its
+databases were initialized with.
+
+```json
+"generatedSecrets": [
+  {
+    "key": "database",
+    "secretNameTemplate": "{{releaseName}}-superset-db",
+    "label": "the passwords of the Superset PostgreSQL database",
+    "chartVersion": ">=0.12.50",
+    "dataVolume": "data-{{releaseName}}-postgresql-0",
+    "keys": {
+      "password": {
+        "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "password" }],
+        "keptByVolume": true,
+        "formerDefault": "superset"
+      },
+      "postgres-password": { "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "postgres-password" }] },
+      "connection": { "template": "postgresql://superset:${password}@{{releaseName}}-postgresql:5432/superset" }
+    },
+    "values": { "postgresql.auth.existingSecret": "{{secretName}}" },
+    "notice": "..."
+  }
+]
+```
+- `secretNameTemplate`: the Secret's name (`{{releaseName}}`, `{{namespace}}`). Pick a name the chart does not use.
+- `keys`: each key gets a random value (`length`, 32 by default) the first time, unless `adoptFrom` finds one first:
+  the key of another Secret, e.g. the one the chart created for its database before it read this one, so a release
+  installed before keeps the password its database runs with. A `template` key is made of the others instead
+  (`${key}` is the URL-encoded value of that key) and follows them.
+- `dataVolume`: the database's volume claim. The database keeps the passwords it was initialized with, so when the
+  claim exists and a key is found neither in the Secret nor where `adoptFrom` points:
+  - a `keptByVolume` key (the password the release signs in with) takes its `formerDefault`, the value the chart used
+    to set for every release before it read the Secret: a release installed before, uninstalled (which deletes the
+    chart's own Secret) and installed again still runs with it. Without a `formerDefault` the deploy is refused: a new
+    password would lock the release out of its database. The operation log warns, on every deploy, while the Secret
+    holds a `formerDefault`: anyone who reads the chart knows it.
+  - any other key (e.g. `postgres-password`, which the release never signs in with) is generated, with a warning that
+    the database keeps the value it was initialized with.
+
+  When KDPS cannot read the claim (its account may not get `persistentvolumeclaims` in the namespace, or the API did
+  not answer), it cannot tell a new install from a database initialized before: a `keptByVolume` key found nowhere
+  refuses the deploy, and any other key is generated with a warning.
+
+  A refused deploy, like one whose Secret cannot be written, runs none of its steps: its operation ends failed with
+  the reason, and it cannot be resumed. Deploy again once the cause is fixed.
+- `values`: chart values the deploy sets (dotted paths, list indexes allowed for lists the chart does not set itself):
+  `{{secretName}}`, and `{{generated}}`, e.g. to set the password of an account created before
+  (`init.adminUser.resetPassword`). It is `true` from the deploy that generated a value until a deploy that carried it
+  succeeds (the Secret carries the annotation `ambari.clemlab.com/pending-apply` meanwhile), so a deploy that failed,
+  was refused or waits for its GitOps merge does not leave the chart's default password in place. Later deploys get
+  `false` and leave the account alone. Use it only when the chart sets the value on every deploy that carries it and
+  the application never gives the account its default back by itself. Otherwise set the value to `true`, so every
+  deploy sets it: OpenMetadata's administrator Job runs in basic authentication only, and OpenMetadata clears the
+  administrators' passwords while it runs with another mode, then gives them its default once basic authentication
+  is back.
+- `chartVersion`: the chart versions that read the Secret. With an older chart nothing is created and the operation
+  log warns that the release keeps the credentials of its chart.
+- `when`: a values path that must be true, e.g. `dependencies.enabled` for a bundled component.
+- `notice`: what the operator is told in the operation log and when the deploy ends (`{{secretName}}`,
+  `{{namespace}}`, `{{readCommand}}`, the command that prints the first key), e.g. where to read an administrator
+  password. Never put a value in it.
 
 ## Common patterns
 - **Conditional display:** Use `condition` to hide/show fields based on another field’s value.

@@ -109,7 +109,6 @@ export const getStackConfigsMock = (name: string) => {
         name: 'superset-env',
         description: 'Environment vars',
         properties: [
-          { name: 'SUPERSET_ADMIN_PASSWORD', displayName: 'Admin Password', type: 'password', value: 'admin', required: true },
           { name: 'ROW_LIMIT', displayName: 'Row Limit', type: 'int', value: 5000 },
         ],
       },

@@ -3,7 +3,7 @@
   "chart": "apache/superset",
   "pattern": "superset-.*",
   "secretName": "registry-credentials",
-  "version": "0.12.49",
+  "version": "0.12.50",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -1481,6 +1481,13 @@
           "excludeFromValues": true,
           "condition": { "field": "security.dynamicRoleFromGroup", "value": true },
           "help": "Optional regex a role name must match to be auto-granted (e.g. ^ad_). Leave blank to allow any role whose name matches a group. Recommended in production so an arbitrary IdP group cannot match a sensitive role like Admin or sql_lab."
+        },
+        {
+          "name": "global.security.auth.localLoginFallback",
+          "label": "Break-glass local sign-in",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "With an LDAP, Active Directory or OIDC security profile, lets the local administrator 'admin' sign in when the directory or the identity provider is unavailable: on the login form (LDAP, AD) or at /login/local (OIDC). Leave it off otherwise: while it is on, anyone who can reach Superset can try local passwords. The administrator's password is generated at the first install and kept in the Secret <release>-superset-admin. Needs chart 0.12.50 or later."
         }
       ]
     },
@@ -1507,7 +1514,8 @@
   },
   "retiredValues": {
     "_comment": "Values an earlier version of this definition wrote, removed from the values of every deploy (wizard upgrades and redeploys without the wizard alike).",
-    "extraEnv.SUPERSET_SECRET_KEY": "The SECRET_KEY now goes to extraSecretEnv: left in extraEnv, it would still show in the pod specs."
+    "extraEnv.SUPERSET_SECRET_KEY": "The SECRET_KEY now goes to extraSecretEnv: left in extraEnv, it would still show in the pod specs.",
+    "superset-env/SUPERSET_ADMIN_PASSWORD": "The wizard no longer asks for an administrator password, which the chart never read: KDPS generates it into the Secret <release>-superset-admin."
   },
   "externalServiceTargets": {
     "hive": {
@@ -1541,6 +1549,52 @@
     "global.security.auth.ldap.bindPassword": { "range": ">=0.12.49", "label": "the security profile's LDAP bind password" },
     "global.security.auth.ad.bindPassword": { "range": ">=0.12.49", "label": "the security profile's Active Directory bind password" }
   },
+  "generatedSecrets": [
+    {
+      "key": "admin",
+      "comment": "The local administrator the init job creates. Never admin/admin: a random password generated once and kept in this Secret, which the release keeps after an uninstall. resetPassword is true from the deploy that generates it until a deploy succeeds, so an administrator created before (with the chart default admin/admin) gets it too, even when the first deploy fails or is refused.",
+      "secretNameTemplate": "{{releaseName}}-superset-admin",
+      "label": "the Superset administrator password",
+      "chartVersion": ">=0.12.50",
+      "keys": { "password": {} },
+      "values": {
+        "init.adminUser.existingSecret": "{{secretName}}",
+        "init.adminUser.passwordKey": "password",
+        "init.adminUser.resetPassword": "{{generated}}"
+      },
+      "notice": "Superset administrator 'admin': its password is in the Secret {{namespace}}/{{secretName}}. Read it with: {{readCommand}}. With a security profile attached, this local account signs in only while 'Break-glass local sign-in' (Administrative users/groups) is on."
+    },
+    {
+      "key": "database",
+      "comment": "The bundled PostgreSQL keeps the passwords it was initialized with: a release installed before keeps those its chart stored in <release>-postgresql, or, when an uninstall deleted that Secret, the user password the chart set for every release (superset). Superset never signs in as postgres: that password is generated when it cannot be found.",
+      "secretNameTemplate": "{{releaseName}}-superset-db",
+      "label": "the passwords of the Superset PostgreSQL database",
+      "chartVersion": ">=0.12.50",
+      "dataVolume": "data-{{releaseName}}-postgresql-0",
+      "keys": {
+        "password": {
+          "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "password" }],
+          "keptByVolume": true,
+          "formerDefault": "superset"
+        },
+        "postgres-password": { "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "postgres-password" }] }
+      },
+      "values": {
+        "postgresql.auth.existingSecret": "{{secretName}}"
+      }
+    },
+    {
+      "key": "redis",
+      "secretNameTemplate": "{{releaseName}}-superset-redis",
+      "label": "the Superset Redis password",
+      "chartVersion": ">=0.12.50",
+      "keys": { "redis-password": {} },
+      "values": {
+        "redis.auth.enabled": "true",
+        "redis.auth.existingSecret": "{{secretName}}"
+      }
+    }
+  ],
   "requiresContext": [
     { "capability": "oidc", "fields": ["issuerUrl", "realm"] },
     { "capability": "kerberos", "fields": ["realm"] },

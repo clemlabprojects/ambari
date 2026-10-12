@@ -582,6 +582,25 @@ class CommandServiceGitOpsDeployTest {
     }
 
     @Test
+    void aChangeWaitingForAMergeHasNotSetAGeneratedPasswordYet() throws Exception {
+        String id = plan(request("FLUX_GITOPS", "flux-work"), true);
+        // As a deploy of a service with a generated administrator password plans it (see
+        // CommandServiceGeneratedSecretsTest): the chart is asked to set it on the account.
+        CommandEntity root = dataStore.find(CommandEntity.class, id);
+        Map<String, Object> rootParams = paramsOf(root);
+        rootParams.put(CommandService.PENDING_CREDENTIALS_PARAM,
+                List.of(Map.of("namespace", NS, "secretName", rel + "-zz-admin")));
+        root.setParamsJson(gson.toJson(rootParams));
+        dataStore.store(root);
+
+        CommandStatusEntity end = run(id);
+
+        assertEquals(CommandState.SUCCEEDED.name(), end.getState(), end.getMessage());
+        assertEquals(Boolean.TRUE, gson.fromJson(end.getResultJson(), Map.class).get("waitingForMerge"));
+        verify(k8s, never()).removeSecretAnnotation(anyString(), anyString(), anyString());
+    }
+
+    @Test
     void aChangeWaitingForAMergeEndsTheOperationAfterTheCommitAndRunsNothingThatNeedsIt() throws Exception {
         String id = plan(request("FLUX_GITOPS", "flux-work"), true);
 

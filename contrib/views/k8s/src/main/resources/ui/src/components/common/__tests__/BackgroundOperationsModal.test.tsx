@@ -122,6 +122,23 @@ describe('BackgroundOperationsModal', () => {
     expect(onAutoClose).not.toHaveBeenCalled();
   }, 10000);
 
+  it('stays open on a deploy that says where to read a generated password', async () => {
+    const notice = "Superset administrator 'admin': its password is in the Secret bi/bi-superset-admin. Read it with: "
+      + "kubectl -n bi get secret bi-superset-admin -o jsonpath='{.data.password}' | base64 -d.";
+    const deployed = gitOpsDeploy({ notices: [notice] });
+    (listCommands as jest.Mock).mockResolvedValue([deployed]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(deployed);
+    const onAutoClose = jest.fn();
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={deployed.id} onAutoClose={onAutoClose} />);
+
+    await screen.findByText('Before you sign in');
+    expect(screen.getByText(notice)).toBeTruthy();
+    expect(screen.queryByText('Committed to Git, not applied yet')).toBeNull();
+    await act(async () => { await new Promise((r) => setTimeout(r, 2500)); });
+    expect(onAutoClose).not.toHaveBeenCalled();
+  }, 10000);
+
   it('closes on a deploy that ended applied', async () => {
     const applied = gitOpsDeploy();
     (listCommands as jest.Mock).mockResolvedValue([applied]);

@@ -33,7 +33,7 @@ import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
 import { getGitRepos } from '../../pages/GitRepositoriesPage';
-import { waitingForMerge } from '../common/operationOutcome';
+import { operationNotices, waitingForMerge } from '../common/operationOutcome';
 
 import * as pako from 'pako';
 import { untar } from 'js-untar';
@@ -1064,6 +1064,11 @@ const handleServiceChange = (value: string) => {
       });
 
       const pendingMerge = final.state === 'SUCCEEDED' ? waitingForMerge(final) : null;
+      // Where to read the passwords KDPS generated for the release (an administrator's, for one).
+      const notices = final.state === 'SUCCEEDED' ? operationNotices(final) : [];
+      const noticeList = notices.map((notice, i) => (
+        <span key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{notice}</span>
+      ));
       if (pendingMerge) {
         // Committed to Git but not applied: Flux waits for the merge, and the steps that need the running release
         // were not run. Kept on screen until the operator closes it.
@@ -1079,8 +1084,16 @@ const handleServiceChange = (value: string) => {
                   Open the pull request
                 </Typography.Link>
               )}
+              {noticeList}
             </Space>
           ),
+        });
+      } else if (notices.length > 0) {
+        // Kept on screen until the operator closes it, so the location of the password is not missed.
+        Modal.info({
+          title: 'Before you sign in',
+          width: 560,
+          content: <Space direction="vertical" size={4}>{noticeList}</Space>,
         });
       }
       if (final.state === 'SUCCEEDED') {

@@ -77,7 +77,12 @@ describe('OpenMetadata ServiceMonitor', () => {
   });
 
   it('installs the chart that always places the ServiceMonitor in the release namespace', () => {
-    expect(svc.version).toBe('1.13.34');
+    // 1.13.34 or a later chart, which keeps that behaviour.
+    const pinned = /^(\d+)\.(\d+)\.(\d+)$/.exec(svc.version);
+    expect(pinned).not.toBeNull();
+    const [major, minor, patch] = pinned!.slice(1).map(Number);
+    expect([major, minor]).toEqual([1, 13]);
+    expect(patch).toBeGreaterThanOrEqual(34);
   });
 
   it('still accepts the chart existing releases run, so they can be redeployed', () => {

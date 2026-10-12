@@ -20,7 +20,7 @@ import React, { useEffect, useState } from 'react';
 import { Modal, Alert, Collapse, Progress, Typography, Space, Button, Spin, Tree, Tag, message } from 'antd';
 import { LoadingOutlined, CheckCircleTwoTone, CloseCircleTwoTone, ClockCircleOutlined } from '@ant-design/icons';
 import { cancelCommand, resumeCommand, getCommandStatus, listCommands, listChildCommands, refreshDependencies, getCommandLogs, type CommandStatus } from '../../api/client';
-import { waitingForMerge } from './operationOutcome';
+import { operationNotices, waitingForMerge } from './operationOutcome';
 
 type BackgroundOperationsModalProps = {
   open: boolean;
@@ -280,8 +280,10 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
             if (watched && isTerminal(watched)) {
               setWatchCommandCompleted(true);
               // A GitOps change still waiting for a merge also ends SUCCEEDED, with nothing applied yet: the modal
-              // stays open so the operator reads what it waits for.
-              if (watched.state === 'SUCCEEDED' && onAutoClose && !waitingForMerge(watched)) {
+              // stays open so the operator reads what it waits for. So it does for a deploy with notices (where to
+              // read a password KDPS generated for the release).
+              if (watched.state === 'SUCCEEDED' && onAutoClose && !waitingForMerge(watched)
+                  && operationNotices(watched).length === 0) {
                 onAutoClose();
               }
             }
@@ -483,8 +485,24 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     const logs = logState[logId];
     // From the row the poller keeps current: the status fetched when the operation was opened may predate its end.
     const pendingMerge = op.state === 'SUCCEEDED' ? waitingForMerge(op) : null;
+    const notices = op.state === 'SUCCEEDED' ? operationNotices(op) : [];
     return (
       <>
+        {notices.length > 0 && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Before you sign in"
+            description={(
+              <Space direction="vertical" size={4}>
+                {notices.map((notice, i) => (
+                  <span key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{notice}</span>
+                ))}
+              </Space>
+            )}
+          />
+        )}
         {pendingMerge && (
           <Alert
             type="warning"

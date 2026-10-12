@@ -39,3 +39,13 @@ export const waitingForMerge = (status?: Pick<CommandStatus, 'result'> | null): 
   const url = typeof result.pullRequestUrl === 'string' ? result.pullRequestUrl.trim() : '';
   return { message, pullRequestUrl: /^https?:\/\//i.test(url) ? url : undefined };
 };
+
+/**
+ * What the operator must know once an operation succeeded, as the backend words it: where to read a password KDPS
+ * generated for the release (never the password itself). Empty when there is nothing to tell.
+ */
+export const operationNotices = (status?: Pick<CommandStatus, 'result'> | null): string[] => {
+  const notices = status?.result?.notices;
+  if (!Array.isArray(notices)) return [];
+  return notices.filter((n): n is string => typeof n === 'string' && n.trim() !== '');
+};
