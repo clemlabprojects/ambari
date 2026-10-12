@@ -199,6 +199,13 @@ var (
 	backendBasicPass string
 )
 
+// Header that Ambari's CSRF protection requires on POST, PUT and DELETE calls. Ambari accepts any
+// value; "ambari" is the one its own clients send.
+const (
+	csrfHeaderName  = "X-Requested-By"
+	csrfHeaderValue = "ambari"
+)
+
 //
 // ---------------------------
 // Validation
@@ -482,7 +489,10 @@ func enqueueKeytabCreation(ctx context.Context, principal, namespace, podName, s
 	}
 	body, _ := json.Marshal(payload)
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
+	req, err := newBackendRequest(ctx, http.MethodPost, url, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	if err := attachBackendAuth(req); err != nil {
 		return err
@@ -503,7 +513,10 @@ func enqueueKeytabCreation(ctx context.Context, principal, namespace, podName, s
 func requestKeytabFromBackend(ctx context.Context, principal string) ([]byte, error) {
 	var lastError error
 	for attempt := 0; attempt <= globalConfig.BackendRetryCount; attempt++ {
-		httpRequest, _ := http.NewRequestWithContext(ctx, http.MethodPost, globalConfig.BackendBaseUrl+"/keytab", nil)
+		httpRequest, err := newBackendRequest(ctx, http.MethodPost, globalConfig.BackendBaseUrl+"/keytab", nil)
+		if err != nil {
+			return nil, err
+		}
 		query := httpRequest.URL.Query()
 		query.Add("principal", principal)
 		httpRequest.URL.RawQuery = query.Encode()
@@ -527,6 +540,18 @@ func requestKeytabFromBackend(ctx context.Context, principal string) ([]byte, er
 		return io.ReadAll(httpResponse.Body)
 	}
 	return nil, lastError
+}
+
+// newBackendRequest builds a request to the Ambari backend. The backend is the KDPS view, served
+// under Ambari's REST API, which refuses state-changing calls without an X-Requested-By header (its
+// CSRF protection). Every backend call goes through here so that none of them can miss the header.
+func newBackendRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(csrfHeaderName, csrfHeaderValue)
+	return req, nil
 }
 
 func attachBackendAuth(req *http.Request) error {

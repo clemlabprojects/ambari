@@ -39,6 +39,7 @@ import org.apache.ambari.server.StaticallyInject;
 import org.apache.ambari.server.actionmanager.ActionManager;
 import org.apache.ambari.server.actionmanager.HostRoleCommandFactory;
 import org.apache.ambari.server.agent.HeartBeatHandler;
+import org.apache.ambari.server.api.AmbariCsrfProtectionFilter;
 import org.apache.ambari.server.api.AmbariErrorHandler;
 import org.apache.ambari.server.api.AmbariPersistFilter;
 import org.apache.ambari.server.api.ContentTypeOverrideFilter;
@@ -305,6 +306,30 @@ public class AmbariServer {
     }
   }
 
+  /**
+   * Builds the Jersey application served under /api/v1.
+   * <p/>
+   * When CSRF protection is enabled, the CSRF filter is registered here and only here. The agent
+   * and certificate servlets scan the same {@code org.apache.ambari.server.api} package and their
+   * callers do not send the X-Requested-By header, so the filter must stay invisible to package
+   * scanning. Servlet init parameters are not used either: the servlet is built from this
+   * configuration, which is the only reliable place to add a provider.
+   *
+   * @param configs the server configuration
+   * @return the configuration of the REST API servlet
+   */
+  static ResourceConfig createApiResourceConfig(Configuration configs) {
+    ResourceConfig resourceConfig = new ResourceConfig().packages(
+        "org.apache.ambari.server.api.rest",
+        "org.apache.ambari.server.api.services",
+        "org.apache.ambari.eventdb.webservice",
+        "org.apache.ambari.server.api").register(org.glassfish.jersey.jackson.JacksonFeature.class);
+    if (configs.csrfProtectionEnabled()) {
+      resourceConfig.register(AmbariCsrfProtectionFilter.class);
+    }
+    return resourceConfig;
+  }
+
   public static AmbariManagementController getController() {
     return clusterController;
   }
@@ -444,11 +469,7 @@ public class AmbariServer {
       serverForAgent.addConnector(agentOneWayConnector);
       serverForAgent.addConnector(agentTwoWayConnector);
 
-      ServletHolder sh = new ServletHolder(new ServletContainer(new ResourceConfig().packages(
-              "org.apache.ambari.server.api.rest",
-              "org.apache.ambari.server.api.services",
-              "org.apache.ambari.eventdb.webservice",
-              "org.apache.ambari.server.api").register(org.glassfish.jersey.jackson.JacksonFeature.class)));
+      ServletHolder sh = new ServletHolder(new ServletContainer(createApiResourceConfig(configs)));
       root.addServlet(sh, "/api/v1/*");
       sh.setInitOrder(2);
 
@@ -503,11 +524,6 @@ public class AmbariServer {
       resources.setInitParameter("dirAllowed", "false");
       root.addServlet(resources, "/resources/*");
       resources.setInitOrder(5);
-
-      if (configs.csrfProtectionEnabled()) {
-        sh.setInitParameter("org.glassfish.jersey.server.ContainerRequestFilter",
-            "org.apache.ambari.server.api.AmbariCsrfProtectionFilter");
-      }
 
       /* Configure the API server to use the NIO connectors */
       ServerConnector apiConnector = createSelectChannelConnectorForClient(server, clientAcceptors);

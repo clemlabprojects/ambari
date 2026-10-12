@@ -19,7 +19,7 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Form, Input, message, Modal, Space, Table, Tag, Typography, Upload, Popconfirm } from 'antd';
 import { CloudUploadOutlined, DeleteOutlined, RocketOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { API_BASE_URL, getClusterCapabilities, type ClusterCapabilities } from '../api/client';
+import { API_BASE_URL, apiFetch, getClusterCapabilities, type ClusterCapabilities } from '../api/client';
 import PermissionGuard from '../components/common/PermissionGuard';
 
 const { Title, Text, Paragraph } = Typography;
@@ -48,9 +48,9 @@ interface CaEntry {
 }
 
 const fetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await apiFetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', 'X-Requested-By': 'ambari', ...(init?.headers || {}) },
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
   });
   if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
   const ct = res.headers.get('Content-Type') || '';

@@ -34,6 +34,46 @@ const resolveApiBase = (): string => {
 export const API_BASE_URL = resolveApiBase();
 
 /**
+ * Ambari refuses a state-changing call to its REST API (POST, PUT, DELETE) that lacks this header,
+ * with 400 "CSRF protection is turned on". The header is what tells a call made by this UI apart from
+ * a form that another web site makes the browser submit with the operator's session: such a form
+ * cannot add custom headers.
+ */
+export const CSRF_HEADER = 'X-Requested-By';
+const CSRF_HEADER_VALUE = 'ambari';
+
+/**
+ * Returns a copy of the request options whose headers carry {@link CSRF_HEADER}. The headers the
+ * caller set are kept, whatever form they were given in, and so is the caller's own CSRF header.
+ */
+export function withCsrfHeader(init: RequestInit = {}): RequestInit {
+  const headers: Record<string, string> = {};
+  const given = init.headers;
+  if (given) {
+    if (typeof Headers !== 'undefined' && given instanceof Headers) {
+      given.forEach((value, name) => { headers[name] = value; });
+    } else if (Array.isArray(given)) {
+      given.forEach(([name, value]) => { headers[name] = value; });
+    } else {
+      Object.assign(headers, given);
+    }
+  }
+  const csrfHeader = CSRF_HEADER.toLowerCase();
+  if (!Object.keys(headers).some((name) => name.toLowerCase() === csrfHeader)) {
+    headers[CSRF_HEADER] = CSRF_HEADER_VALUE;
+  }
+  return { ...init, headers };
+}
+
+/**
+ * fetch() for every call to the Ambari REST API, API_BASE_URL included. Going through one function
+ * means no call can miss the CSRF header; a jest test fails on any raw fetch() added elsewhere.
+ */
+export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, withCsrfHeader(init));
+}
+
+/**
  * When the Ambari session expires (e.g. after an ambari-server restart) the backend rejects
  * requests with 401, or 403 "missing authentication token". Ambari's own UI redirects to its
  * login page in that case; the view must do the same instead of surfacing a raw error and
@@ -76,7 +116,7 @@ export function handleAuthExpiry(status: number, body?: string): boolean {
  */
 export const pingSession = async (): Promise<void> => {
   try {
-    const res = await fetch(`${API_BASE_URL}/cluster/configured`, { credentials: 'include', cache: 'no-store' });
+    const res = await apiFetch(`${API_BASE_URL}/cluster/configured`, { credentials: 'include', cache: 'no-store' });
     if (!res.ok) {
       handleAuthExpiry(res.status, await res.text().catch(() => ''));
     }
@@ -93,7 +133,7 @@ export const getCurrentUserPermissions = async (): Promise<UserPermissions> => {
   if (IS_DEV) {
     return getMockPermissions('ADMIN');
   }
-  const response = await fetch(`${API_BASE_URL}/users/me/permissions`, {
+  const response = await apiFetch(`${API_BASE_URL}/users/me/permissions`, {
     credentials: 'include',
     cache: 'no-store',
     headers: { 'X-Requested-By': 'ambari' },
@@ -145,7 +185,7 @@ export const getGlobalConfigs = async (): Promise<StackConfig[]> => {
   if (IS_DEV) {
     return (await import('./mock')).getStackConfigsMock('GLOBAL') as any;
   }
-  const res = await fetch(`./api/v1/globals/configurations`, { headers: { 'X-Requested-By': 'ambari' } });
+  const res = await apiFetch(`./api/v1/globals/configurations`);
   if (!res.ok) throw new Error('Failed to load global configs');
   return res.json();
 };
@@ -204,21 +244,21 @@ export interface SecurityConfig {
 
 // Workloads browsing helpers (namespaces, pods, services, logs)
 export const getNamespaces = async (): Promise<KubeNamespace[]> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
 export const getPods = async (ns: string, labelSelector?: string): Promise<KubePod[]> => {
   const params = new URLSearchParams();
   if (labelSelector) params.set('labelSelector', labelSelector);
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods?${params.toString()}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods?${params.toString()}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
 export const getServices = async (ns: string, labelSelector?: string): Promise<KubeService[]> => {
   const params = new URLSearchParams();
   if (labelSelector) params.set('labelSelector', labelSelector);
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services?${params.toString()}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services?${params.toString()}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -237,7 +277,7 @@ export interface DeploymentRow {
 
 export const listDeployments = async (namespace?: string): Promise<DeploymentRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await fetch(`${API_BASE_URL}/workloads/deployments${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/deployments${qs}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -251,7 +291,7 @@ export interface ConfigMapRow {
 
 export const listConfigMaps = async (namespace?: string): Promise<ConfigMapRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await fetch(`${API_BASE_URL}/workloads/configmaps${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/configmaps${qs}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -267,7 +307,7 @@ export interface IngressRow {
 
 export const listIngresses = async (namespace?: string): Promise<IngressRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await fetch(`${API_BASE_URL}/workloads/ingresses${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/ingresses${qs}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -287,7 +327,7 @@ export interface RouteRow {
 
 export const listRoutes = async (namespace?: string): Promise<RouteRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await fetch(`${API_BASE_URL}/workloads/routes${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/routes${qs}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -295,7 +335,7 @@ export const getPodLogs = async (ns: string, pod: string, container?: string, ta
   const params = new URLSearchParams();
   if (container) params.set('container', container);
   if (tailLines) params.set('tailLines', tailLines.toString());
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/log?${params.toString()}`, {
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/log?${params.toString()}`, {
     credentials: 'include'
   });
   if (!res.ok) {
@@ -306,23 +346,23 @@ export const getPodLogs = async (ns: string, pod: string, container?: string, ta
 };
 
 export const getNamespaceEvents = async (ns: string): Promise<KubeEvent[]> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/events`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/events`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
 export const getPodEvents = async (ns: string, pod: string): Promise<KubeEvent[]> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/events`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/events`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
 export const describePod = async (ns: string, pod: string): Promise<string> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/describe`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/describe`, { credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
   return res.text();
 };
 
 export const describeService = async (ns: string, svc: string): Promise<string> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services/${encodeURIComponent(svc)}/describe`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services/${encodeURIComponent(svc)}/describe`, { credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
   return res.text();
 };
@@ -330,12 +370,12 @@ export const describeService = async (ns: string, svc: string): Promise<string> 
 export const deletePod = async (ns: string, pod: string, graceSeconds?: number): Promise<void> => {
   const params = new URLSearchParams();
   if (graceSeconds != null) params.set('graceSeconds', graceSeconds.toString());
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}?${params.toString()}`, { method: 'DELETE', credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}?${params.toString()}`, { method: 'DELETE', credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
 };
 
 export const restartPod = async (ns: string, pod: string): Promise<void> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/restart`, { method: 'POST', credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/restart`, { method: 'POST', credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
 };
 
@@ -343,7 +383,7 @@ async function fetchJson<T = unknown>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await apiFetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     ...options,
@@ -365,7 +405,7 @@ async function fetchJson<T = unknown>(
 function fetchWithTimeout(input: RequestInfo, init: RequestInit = {}, timeoutMs = 60000): Promise<Response> {
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
-  return fetch(input, { ...init, signal: abortController.signal })
+  return apiFetch(input, { ...init, signal: abortController.signal })
     .finally(() => clearTimeout(timeoutId));
 }
 
@@ -630,7 +670,7 @@ export async function deployHelm(
 }
 
 export async function checkHelmRepo(id: string) {
-  const response = await fetch(`${API_BASE_URL}/helm/repos/${id}/check`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/repos/${id}/check`, {
     method: 'GET',
     credentials: 'include'
   });
@@ -642,7 +682,7 @@ export async function installMonitoring(repoId?: string, force?: boolean) {
   if (repoId) qs.set('repoId', repoId);
   if (force) qs.set('force', 'true');
   const query = qs.toString() ? `?${qs.toString()}` : '';
-  const response = await fetch(`${API_BASE_URL}/helm/monitoring/install${query}`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/monitoring/install${query}`, {
     method: 'POST',
     credentials: 'include'
   });
@@ -650,7 +690,7 @@ export async function installMonitoring(repoId?: string, force?: boolean) {
 }
 
 export async function resetMonitoringCache() {
-  const response = await fetch(`${API_BASE_URL}/helm/monitoring/reset`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/monitoring/reset`, {
     method: 'POST',
     credentials: 'include'
   });
@@ -663,7 +703,7 @@ export const getClusterEvents = async () => {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return getMockClusterEvents();
   }
-  const response = await fetch(`${API_BASE_URL}/cluster/events`);
+  const response = await apiFetch(`${API_BASE_URL}/cluster/events`);
   return handleApiResponse(response);
 };
 
@@ -674,7 +714,7 @@ export const getClusterEvents = async () => {
 export const getClusterServices = async (serviceType: string): Promise<ClusterService[]> => {
     // No more mock. Call the backend.
     const params = new URLSearchParams({ serviceType });
-    const response = await fetch(`${API_BASE_URL}/discovery/ambari?${params.toString()}`, {
+    const response = await apiFetch(`${API_BASE_URL}/discovery/ambari?${params.toString()}`, {
       credentials: 'include'
     });
     return handleApiResponse(response);
@@ -687,7 +727,7 @@ export const getMonitoringDiscovery = async (): Promise<{
   namespace: string; release: string; url?: string; queryUrl?: string;
   serviceMonitorLabels?: Record<string, string>; warning?: string;
 }> => {
-  const response = await fetch(`${API_BASE_URL}/discovery/monitoring/prometheus`, { credentials: 'include' });
+  const response = await apiFetch(`${API_BASE_URL}/discovery/monitoring/prometheus`, { credentials: 'include' });
   return handleApiResponse(response);
 };
 
@@ -697,12 +737,12 @@ export const getMonitoringDiscovery = async (): Promise<{
  * incl. the OpenShift Custom Metrics Autoscaler in openshift-keda).
  */
 export const getKedaDiscovery = async (): Promise<{ present: boolean; namespace?: string; release?: string; source?: string; message?: string }> => {
-  const response = await fetch(`${API_BASE_URL}/discovery/keda`, { credentials: 'include' });
+  const response = await apiFetch(`${API_BASE_URL}/discovery/keda`, { credentials: 'include' });
   return handleApiResponse(response);
 };
 
 export const getViewSettings = async (): Promise<any> => {
-  const response = await fetch(`${API_BASE_URL}/configurations/settings`, { credentials: 'include' });
+  const response = await apiFetch(`${API_BASE_URL}/configurations/settings`, { credentials: 'include' });
   if (!response.ok) {
     const txt = await response.text();
     throw new Error(txt || 'Failed to load settings');
@@ -711,7 +751,7 @@ export const getViewSettings = async (): Promise<any> => {
 };
 
 export const saveViewSettings = async (settings: any): Promise<void> => {
-  const response = await fetch(`${API_BASE_URL}/configurations/settings`, {
+  const response = await apiFetch(`${API_BASE_URL}/configurations/settings`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -732,7 +772,7 @@ export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
   if (IS_DEV) {
     return getMockSecurityConfig();
   }
-  const res = await fetch(`${API_BASE_URL}/configurations/security`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security`, { credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Failed to load security config');
@@ -741,7 +781,7 @@ export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
 };
 
 export const saveSecurityConfig = async (cfg: SecurityProfiles): Promise<void> => {
-  const res = await fetch(`${API_BASE_URL}/configurations/security`, {
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -762,7 +802,7 @@ export const getSecuritySchema = async (): Promise<any> => {
     const { getMockSecuritySchema } = await import('./mock');
     return getMockSecuritySchema();
   }
-  const res = await fetch(`${API_BASE_URL}/configurations/security/schema`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security/schema`, { credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Failed to load security schema');
@@ -774,7 +814,7 @@ export const getSecurityProfileUsage = async (profile: string): Promise<Security
   if (!profile) {
     throw new Error('Profile name is required');
   }
-  const res = await fetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}/usage`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}/usage`, { credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Failed to load profile usage');
@@ -786,7 +826,7 @@ export const deleteSecurityProfile = async (profile: string): Promise<void> => {
   if (!profile) {
     throw new Error('Profile name is required');
   }
-  const res = await fetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}`, {
     method: 'DELETE',
     credentials: 'include'
   });
@@ -822,7 +862,7 @@ export const getDiscoveredK8sServices = async (labelSelector: string): Promise<C
 
     const params = new URLSearchParams({ label: labelSelector });
     // Note: ensure API_BASE_URL includes the /resources/api part as defined in your file
-    const response = await fetch(`${API_BASE_URL}/discovery/k8s?${params.toString()}`);
+    const response = await apiFetch(`${API_BASE_URL}/discovery/k8s?${params.toString()}`);
     return handleApiResponse(response);
 };
 
@@ -841,7 +881,7 @@ export const getDiscoveredK8sSecrets = async (labelSelector?: string, namespace?
     const params = new URLSearchParams();
     if (labelSelector) params.set('label', labelSelector);
     if (namespace) params.set('namespace', namespace);
-    const response = await fetch(`${API_BASE_URL}/discovery/secrets?${params.toString()}`);
+    const response = await apiFetch(`${API_BASE_URL}/discovery/secrets?${params.toString()}`);
     return handleApiResponse(response);
 };
 
@@ -850,7 +890,7 @@ export const getDiscoveredClusterIssuers = async (includeNotReady = false): Prom
     if (IS_DEV) return [];
     const params = new URLSearchParams();
     if (includeNotReady) params.set('includeNotReady', 'true');
-    const response = await fetch(`${API_BASE_URL}/discovery/cluster-issuers${params.toString() ? '?' + params : ''}`);
+    const response = await apiFetch(`${API_BASE_URL}/discovery/cluster-issuers${params.toString() ? '?' + params : ''}`);
     return handleApiResponse(response);
 };
 
@@ -859,7 +899,7 @@ export const getDiscoveredSecretStores = async (includeNotReady = false): Promis
     if (IS_DEV) return [];
     const params = new URLSearchParams();
     if (includeNotReady) params.set('includeNotReady', 'true');
-    const response = await fetch(`${API_BASE_URL}/discovery/secret-stores${params.toString() ? '?' + params : ''}`);
+    const response = await apiFetch(`${API_BASE_URL}/discovery/secret-stores${params.toString() ? '?' + params : ''}`);
     return handleApiResponse(response);
 }
 
@@ -872,7 +912,7 @@ export const getClusterStats = async (forceRefresh = false) => {
   }
   const params = new URLSearchParams();
   if (forceRefresh) params.set('forceRefresh', 'true');
-  const response = await fetch(`${API_BASE_URL}/cluster/stats?${params.toString()}`);
+  const response = await apiFetch(`${API_BASE_URL}/cluster/stats?${params.toString()}`);
   return handleApiResponse(response);
 };
 
@@ -881,7 +921,7 @@ export async function getCommandStatus(id: string) {
     return getMockCommandStatus(id);
   }
   // Explicit fetch keeps polling simple and avoids any header/caching surprises
-  const response = await fetch(`${API_BASE_URL}/commands/${id}`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}`, {
     credentials: 'include',
     cache: 'no-store',
   });
@@ -894,7 +934,7 @@ export async function listCommands(limit = 10, offset = 0) {
     return getMockCommands(limit, offset);
   }
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  const response = await fetch(`${API_BASE_URL}/commands?${params.toString()}`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands?${params.toString()}`, {
     credentials: 'include',
     cache: 'no-store',
   });
@@ -904,7 +944,7 @@ export async function listCommands(limit = 10, offset = 0) {
 
 export async function getCommandLogs(id: string, offset = 0, limit = 65536) {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
-  const response = await fetch(`${API_BASE_URL}/commands/${id}/logs?${params.toString()}`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}/logs?${params.toString()}`, {
     credentials: 'include',
     cache: 'no-store'
   });
@@ -913,7 +953,7 @@ export async function getCommandLogs(id: string, offset = 0, limit = 65536) {
 }
 
 export async function listChildCommands(id: string) {
-  const response = await fetch(`${API_BASE_URL}/commands/${id}/children`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}/children`, {
     credentials: 'include',
     cache: 'no-store',
   });
@@ -922,7 +962,7 @@ export async function listChildCommands(id: string) {
 }
 
 export async function cancelCommand(id: string) {
-  const response = await fetch(`${API_BASE_URL}/commands/${id}/cancel`, { method: 'POST' });
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}/cancel`, { method: 'POST' });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(text || `Cancel failed: ${response.status}`);
@@ -935,7 +975,7 @@ export async function cancelCommand(id: string) {
  * re-running the whole KDPS wizard flow.
  */
 export async function resumeCommand(id: string) {
-  const response = await fetch(`${API_BASE_URL}/commands/${id}/resume`, { method: 'POST' });
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}/resume`, { method: 'POST' });
   if (!response.ok) {
     let msg = `Resume failed: ${response.status}`;
     try {
@@ -950,7 +990,7 @@ export async function resumeCommand(id: string) {
 }
 
 export async function refreshDependencies() {
-  const response = await fetch(`${API_BASE_URL}/commands/dependencies/refresh`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands/dependencies/refresh`, {
     method: 'POST',
     credentials: 'include'
   });
@@ -965,7 +1005,7 @@ export const getComponentStatuses = async () => {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return getMockComponentStatuses();
   }
-  const response = await fetch(`${API_BASE_URL}/cluster/componentstatuses`);
+  const response = await apiFetch(`${API_BASE_URL}/cluster/componentstatuses`);
   return handleApiResponse(response);
 };
 
@@ -977,7 +1017,7 @@ export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = fals
     // managedOnly filters to KDPS-managed releases SERVER-SIDE (before pagination) so managed
     // releases that sort onto a later page are not hidden by a page-local client filter.
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset), managedOnly: String(managedOnly) });
-    const response = await fetch(`${API_BASE_URL}/helm/releases?${params.toString()}`, { credentials: 'include' });
+    const response = await apiFetch(`${API_BASE_URL}/helm/releases?${params.toString()}`, { credentials: 'include' });
     return handleApiResponse(response);
 };
 
@@ -985,7 +1025,7 @@ export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = fals
  * Fetches the latest backend-aggregated status for a release via Flux/Helm backends.
  */
 export const getReleaseStatus = async (namespace: string, releaseName: string): Promise<HelmRelease> => {
-  const response = await fetch(`${API_BASE_URL}/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/status`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/status`, {
     credentials: 'include',
     cache: 'no-store'
   });
@@ -1230,11 +1270,7 @@ export const getKubeconfigContent = async (): Promise<string> => {
     return "apiVersion: v1\nclusters:\n- name: mocked-cluster\n  cluster:\n    server: https://mock.server:6443";
   }
 
-  const response = await fetch(`${API_BASE_URL}/cluster/config`, {
-    headers: {
-      'X-Requested-By': 'ambari',
-    },
-  });
+  const response = await apiFetch(`${API_BASE_URL}/cluster/config`);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -1249,7 +1285,7 @@ export const getNodes = async (limit = 200, offset = 0) => {
     return { items: getMockNodes(), total: getMockNodes().length };
   }
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  const response = await fetch(`${API_BASE_URL}/nodes?${params.toString()}`);
+  const response = await apiFetch(`${API_BASE_URL}/nodes?${params.toString()}`);
   return handleApiResponse(response);
 };
 
@@ -1257,7 +1293,7 @@ export const isViewConfigured = async () => {
   if (IS_DEV) {
     return !sessionStorage.getItem('isUnconfigured');
   }
-  const response = await fetch(`${API_BASE_URL}/cluster/configured`);
+  const response = await apiFetch(`${API_BASE_URL}/cluster/configured`);
   try {
     const data = await handleApiResponse(response);
     return data.message === "CONFIGURED";
@@ -1267,7 +1303,7 @@ export const isViewConfigured = async () => {
 };
 
 export async function loginHelmRepo(id: string) {
-  const response = await fetch(`${API_BASE_URL}/helm/repos/${encodeURIComponent(id)}/login`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/repos/${encodeURIComponent(id)}/login`, {
     method: 'POST',
   });
 
@@ -1296,7 +1332,7 @@ export async function loginHelmRepo(id: string) {
 export async function loginRepo(repoId: string) {
   const url = `${API_BASE_URL}/helm/repos/${encodeURIComponent(repoId)}/login`;
 
-  const response = await fetch(url, { method: 'POST' });
+  const response = await apiFetch(url, { method: 'POST' });
   if (!response.ok) throw new Error(`Login repo failed: ${response.status}`);
   return response.json().catch(() => ({}));
 }
@@ -1366,7 +1402,7 @@ export async function submitHelmDeploy(payload: {
     params.set('version', String(payload.version).trim());
   }
   const url = `${API_BASE_URL}/commands/helm/deploy?${params.toString()}`;
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type':'application/json' },
     body: JSON.stringify(payload),
@@ -1399,7 +1435,7 @@ export async function uninstallHelm(
   params: URLSearchParams = new URLSearchParams()
 ) {
   const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}?${params.toString()}`;
-  const response = await fetch(url, { method: 'DELETE' });
+  const response = await apiFetch(url, { method: 'DELETE' });
   if (!response.ok) throw new Error(`Uninstall failed: ${response.status}`);
   // backend returns empty body → don't call .json()
   return;
@@ -1424,7 +1460,7 @@ export async function upgradeHelm(
   params: URLSearchParams = new URLSearchParams()
 ) {
   const url = `${API_BASE_URL}/helm/upgrade?${params.toString()}`;
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1474,38 +1510,30 @@ export interface ManagedConfig {
 export const listManagedConfigs = async (): Promise<ManagedConfig[]> => {
   // Pass namespace=dashboarding or handle in backend logic
   // Using relative path assuming proxy is set up or base URL matches
-  const response = await fetch(`${API_BASE_URL}/configurations`, {
-    headers: { 'X-Requested-By': 'ambari' }
-  });
+  const response = await apiFetch(`${API_BASE_URL}/configurations`);
   if (!response.ok) throw new Error('Failed to fetch configurations');
   return response.json();
 };
 
 export const getManagedConfigContent = async (namespace: string, name: string, filename: string): Promise<string> => {
-  const response = await fetch(`${API_BASE_URL}/configurations/${namespace}/${name}?filename=${filename}`, {
-    headers: { 'X-Requested-By': 'ambari' }
-  });
+  const response = await apiFetch(`${API_BASE_URL}/configurations/${namespace}/${name}?filename=${filename}`);
   if (!response.ok) throw new Error('Failed to fetch content');
   const json = await response.json();
   return json.content || '';
 };
 
 export const saveManagedConfig = async (config: ManagedConfig) => {
-  const response = await fetch(`${API_BASE_URL}/configurations`, {
+  const response = await apiFetch(`${API_BASE_URL}/configurations`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Requested-By': 'ambari'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config)
   });
   if (!response.ok) throw new Error('Failed to save config');
 };
 
 export const deleteManagedConfig = async (name: string, namespace: string) => {
-  const response = await fetch(`${API_BASE_URL}/configurations/${namespace}/${name}`, {
+  const response = await apiFetch(`${API_BASE_URL}/configurations/${namespace}/${name}`, {
     method: 'DELETE',
-    headers: { 'X-Requested-By': 'ambari' }
   });
   if (!response.ok) throw new Error('Failed to delete config');
 };
@@ -1519,12 +1547,9 @@ export const getReleaseValues = async (namespace: string, releaseName: string): 
   // Construct the URL. Adjust the base path ('./api/v1') if your setup differs.
   const url = `${API_BASE_URL}/helm/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/values`;
   
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method: 'GET',
-    headers: { 
-      'Content-Type': 'application/json',
-      'X-Requested-By': 'ambari' // Required by Ambari CSRF protection
-    }
+    headers: { 'Content-Type': 'application/json' },
   });
 
   if (!response.ok) {
@@ -1541,7 +1566,7 @@ export const getStackService = async (name: string): Promise<StackServiceDef> =>
   if (IS_DEV) {
     return (await import('./mock')).getStackServiceMock(name);
   }
-  const res = await fetch(`${API_BASE_URL}/services/${name}`, { headers: { 'X-Requested-By': 'ambari' } });
+  const res = await apiFetch(`${API_BASE_URL}/services/${name}`);
   if (!res.ok) throw new Error("Failed to load service definition");
   return res.json();
 };
@@ -1550,7 +1575,7 @@ export const getStackConfigs = async (name: string): Promise<StackConfig[]> => {
   if (IS_DEV) {
     return (await import('./mock')).getStackConfigsMock(name) as any;
   }
-  const res = await fetch(`${API_BASE_URL}/services/${name}/configurations`, { headers: { 'X-Requested-By': 'ambari' } });
+  const res = await apiFetch(`${API_BASE_URL}/services/${name}/configurations`);
   if (!res.ok) throw new Error("Failed to load configs");
   return res.json();
 };
@@ -1561,7 +1586,7 @@ export const getAvailableServices = async () => {
     // Use KDPS-style mocks in dev
     return getChartsJSON();
   }
-  const response = await fetch(`${API_BASE_URL}/services`, { headers: { 'X-Requested-By': 'ambari' } });
+  const response = await apiFetch(`${API_BASE_URL}/services`);
   return handleApiResponse(response);
 }
 

@@ -21,7 +21,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
-import { API_BASE_URL } from '../api/client';
+import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import { getPods, listDeployments, type DeploymentRow } from '../api/client';
 import type { KubePod } from '../types/KubeTypes';
@@ -830,9 +830,9 @@ const HelmReleasesPage: React.FC = () => {
       );
       const onRenew = async () => {
         try {
-          const res = await fetch(
+          const res = await apiFetch(
             `${API_BASE_URL}/helm/releases/${encodeURIComponent(release.namespace)}/${encodeURIComponent(release.name)}/tls/renew`,
-            { method: 'POST', headers: { 'X-Requested-By': 'ambari' } }
+            { method: 'POST' }
           );
           if (!res.ok) throw new Error(await res.text());
           const body = await res.json();
