@@ -114,6 +114,18 @@ public class StackServiceDef {
     public Map<String, String> valueAliases;
 
     /**
+     * Values an earlier version of this definition wrote and this one no longer does, keyed by dotted path: the
+     * reason they were retired (the value is removed), or, for a list of lines,
+     * {@code {"reason": ..., "linesStartingWith": [...]}} (only those lines are removed). An upgrade or a redeploy
+     * starts from the release's values, so without this they would be sent again, e.g. a secret a binding used to copy
+     * into a plain environment variable or a configuration line. The wizard leaves them out of the values it sends and
+     * the server removes them from every set of release values it sends to Helm (a deploy, a chart upgrade from the
+     * Releases page, a catalog saved on the Trino Catalogs page: {@code CommandService.applyDefinitionValueRewrites}),
+     * after the {@link #valueAliases}; keys starting with "_" are comments.
+     */
+    public Map<String, Object> retiredValues;
+
+    /**
      * Declarative rule for how the wizard couples auth profile selection with ingress
      * + TLS settings. The wizard reads this at step 1 → step 3 transition to enforce
      * the rule visibly (banner + auto-defaults) instead of hardcoding it in TypeScript.
@@ -149,6 +161,18 @@ public class StackServiceDef {
      * still defaulted to a chart with no tag-projector template.
      */
     public Map<String, String> featureChartVersions;
+
+    /**
+     * Optional chart version ranges from which the chart keeps a secret in a Kubernetes Secret, keyed by the dotted
+     * path that carries it: {@code {"range": ">=0.12.49", "label": "the security profile's LDAP bind password"}}.
+     * An older chart writes it into a ConfigMap or a plain environment variable, which anyone allowed to read
+     * ConfigMaps or Deployments can read. The path is looked up in the deploy's values, its form and the values its
+     * security profile adds. Raising {@link #requiredChartVersion} instead would refuse a resync or a security refresh
+     * of every release on an older chart, so a deploy that carries the wizard's form is refused (the operator picks a
+     * later chart there) and any other one is warned in its operation log
+     * ({@code CommandService.checkSecretChartVersions}). Keys starting with "_" are comments.
+     */
+    public Map<String, Object> secretChartVersions;
 
     /**
      * Declarative external-service auth wiring. See

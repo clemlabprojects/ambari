@@ -1,5 +1,5 @@
 import yaml from 'yaml';
-import { applyFormDefaults, buildChartValues, excludedPaths, hiddenPaths } from '../chartValues';
+import { applyFormDefaults, buildChartValues, excludedPaths, hiddenPaths, removeRetiredValues, seedFieldsFromValues } from '../chartValues';
 
 /**
  * The values the wizard previews and deploys: form, bindings, exclusions and wizard keys removed, the YAML editor
@@ -208,5 +208,53 @@ describe('fields hidden on the platform', () => {
       form: platformForm, formValues: start(), platform: 'openshift', editorValues: { metrics: { interval: '1m' } },
     });
     expect(values.metrics).toEqual({ enabled: true, interval: '1m' });
+  });
+});
+
+describe('values an earlier service definition wrote', () => {
+  it('retired values are left out of what the wizard sends; comments are not paths', () => {
+    const values = buildChartValues({
+      form, bindings, formValues: { ...formValues(), extraEnv: { KEY: 'old', KEEP: 'yes' }, top: 'x', _comment: 'kept' },
+      retiredValues: { _comment: 'why', 'extraEnv.KEY': 'moved', top: 'gone' },
+    });
+    expect(values.extraEnv).toEqual({ KEEP: 'yes' });
+    expect(values.top).toBeUndefined();
+    expect(values._comment).toBe('kept');
+  });
+
+  it('a retired line is removed from its list, the other lines stay', () => {
+    const values: any = {
+      props: ['secret.key=literal', ' secret.key=indented', 'other=1', 42],
+      nested: { props: ['a=1'] },
+    };
+    removeRetiredValues(values, {
+      props: { reason: 'moved to a Secret', linesStartingWith: ['secret.key='] },
+      'nested.props': { linesStartingWith: ['b='] },
+      'absent.list': { linesStartingWith: ['x='] },
+    });
+    expect(values.props).toEqual(['other=1', 42]);
+    expect(values.nested.props).toEqual(['a=1']);
+    expect(values.absent).toBeUndefined();
+    removeRetiredValues(values, undefined);
+    expect(values.props).toEqual(['other=1', 42]);
+  });
+
+  it('a blank field is filled from the first value path that holds something, groups included', () => {
+    const seeded = [{
+      name: 'g', type: 'group', fields: [
+        { name: 'app.key', type: 'password', excludeFromValues: true, seedFromValues: ['secretEnv.KEY', 'env.KEY'] },
+      ],
+    }];
+    const fromSecond: any = { secretEnv: { KEY: '  ' }, env: { KEY: 'from-env' } };
+    seedFieldsFromValues(seeded, fromSecond);
+    expect(fromSecond.app.key).toBe('from-env');
+
+    const typed: any = { app: { key: 'typed' }, secretEnv: { KEY: 'stored' } };
+    seedFieldsFromValues(seeded, typed);
+    expect(typed.app.key).toBe('typed');
+
+    const nothing: any = {};
+    seedFieldsFromValues(seeded, nothing);
+    expect(nothing).toEqual({});
   });
 });

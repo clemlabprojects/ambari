@@ -124,6 +124,16 @@ public class FormField {
      */
     public String seedUnlessEquals;
 
+    /**
+     * Value paths an upgrade fills a blank field from, first non-blank wins: the place the release's values keep what
+     * the field set, for a field kept out of the values ({@link #excludeFromValues}), e.g. the Superset SECRET_KEY,
+     * kept in {@code extraSecretEnv.SUPERSET_SECRET_KEY}. Read by the UI only.
+     */
+    public List<String> seedFromValues;
+
+    /** For {@code secret-discovery} fields: several Secrets may be picked, and the value is their list. Read by the UI only. */
+    public boolean multiple;
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Option {
         public String label;

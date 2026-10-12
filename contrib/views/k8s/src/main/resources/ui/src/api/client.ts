@@ -175,6 +175,8 @@ export interface StackServiceDef {
   description: string;
   form: any[]; // FormField[]
   replayableActions?: ReplayableAction[];
+  /** Values an earlier version of the definition wrote, left out of what an upgrade sends (see removeRetiredValues). */
+  retiredValues?: Record<string, unknown>;
 }
 
 export interface StackConfig {
@@ -1689,6 +1691,11 @@ export interface TrinoCatalog {
   createdAt?: string;
   updatedAt?: string;
   usedBy?: string[];
+  /**
+   * Properties that write a credential out instead of reading it with ${ENV:KEY} (a catalog saved before KDPS refused
+   * them). Until it is edited, an Upgrade/Config of a release using it is refused. Response only.
+   */
+  literalCredentials?: string[];
 }
 
 export const getTrinoCatalogs = (): Promise<TrinoCatalog[]> =>

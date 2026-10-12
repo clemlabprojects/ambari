@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { applyBindingTargets, buildVarContext, deepMerge, deleteAtStr } from './bindings';
+import { applyBindingTargets, buildVarContext, deepMerge, deleteAtStr, getAtStr, setAtStr } from './bindings';
 import type { VariableSpec } from './bindings';
 import { applyBlankValues } from './blankValues';
 import { fieldCapabilityAvailable } from './capabilities';
@@ -66,6 +66,56 @@ export function applyFormDefaults(fields: FormFieldDef[] | undefined, target: an
   }
 }
 
+/**
+ * A value an earlier version of the service definition wrote and this one no longer does (service.json
+ * `retiredValues`, keyed by dotted path): either the reason it was retired, and the value is removed, or, for a list
+ * of lines, `{ reason, linesStartingWith }`, and only the lines starting with one of those prefixes are removed (a
+ * property line a binding used to append, e.g. "internal-communication.shared-secret=").
+ */
+export type RetiredValue = string | { reason?: string; linesStartingWith?: string[] };
+
+/**
+ * Removes (in place) the retired values from `values`; keys starting with "_" are comments. An upgrade starts from the
+ * release's values, so without this they would be sent again: a secret a binding used to copy into a plain environment
+ * variable or into a configuration line, for one. The server does the same for every deploy
+ * (CommandService.removeRetiredValues), redeploys without the wizard included; here it keeps the preview truthful.
+ */
+export function removeRetiredValues(values: any, retiredValues: Record<string, RetiredValue> | undefined | null): void {
+  for (const [path, retired] of Object.entries(retiredValues || {})) {
+    if (path.startsWith('_')) continue;
+    const prefixes = typeof retired === 'object' && retired ? retired.linesStartingWith : undefined;
+    if (!Array.isArray(prefixes)) {
+      deleteAtStr(values, path);
+      continue;
+    }
+    const lines = getAtStr(values, path);
+    if (Array.isArray(lines)) {
+      setAtStr(values, path, lines.filter(l => !(typeof l === 'string' && prefixes.some(p => l.trim().startsWith(p)))));
+    }
+  }
+}
+
+const isBlank = (v: unknown) => v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+
+/**
+ * Fills (in place) each blank field that declares `seedFromValues` with the first of those value paths that holds
+ * something in `target`, groups included. Called on an upgrade, once `target` holds the release's values: a field kept
+ * out of the values (excludeFromValues) is not in them, but the release keeps what it set elsewhere. The Superset
+ * SECRET_KEY, sent in extraSecretEnv.SUPERSET_SECRET_KEY, must come back unchanged, or the database passwords Superset
+ * stored with it can no longer be decrypted.
+ */
+export function seedFieldsFromValues(fields: FormFieldDef[] | undefined, target: any): void {
+  for (const f of fields || []) {
+    if (f?.type === 'group' && Array.isArray(f.fields)) {
+      seedFieldsFromValues(f.fields, target);
+      continue;
+    }
+    if (!f?.name || !Array.isArray(f.seedFromValues) || !isBlank(getAtStr(target, f.name))) continue;
+    const found = f.seedFromValues.map(p => getAtStr(target, p)).find(v => !isBlank(v));
+    if (found !== undefined) setAtStr(target, f.name, found);
+  }
+}
+
 /** The field capabilities that depend on the platform alone, the only part of the cluster probe known here. */
 const PLATFORM_CAPABILITIES = ['kubernetes', 'openshift'];
 
@@ -111,13 +161,15 @@ export interface ChartValuesInput {
   editorValues?: Record<string, any> | null;
   /** The chart version the deploy asks for. */
   chartVersion?: unknown;
+  /** The values the service definition no longer writes (service.json `retiredValues`, see removeRetiredValues). */
+  retiredValues?: Record<string, RetiredValue> | null;
 }
 
 /**
  * The values sent to the chart, as the wizard builds them for the preview (no `editorValues`) and for the deploy:
- * form values without the fields hidden on this platform, then bindings, then the excluded fields and the wizard's
- * own keys removed, then the YAML editor merged over the result, and only then blank fields resolved for the chart
- * version.
+ * form values without the fields hidden on this platform, then bindings, then the excluded fields, the retired values
+ * and the wizard's own keys removed, then the YAML editor merged over the result, and only then blank fields resolved
+ * for the chart version.
  *
  * Hidden fields are removed before the bindings, not after, because a binding may set the same path on purpose:
  * OpenMetadata turns its ServiceMonitor on for OpenShift although its "Expose ServiceMonitor" switch is hidden there.
@@ -127,7 +179,7 @@ export interface ChartValuesInput {
  * render a bare -Xmx, and a heap computed from the memory limit uses the limit actually sent, editor included.
  */
 export function buildChartValues(input: ChartValuesInput): any {
-  const { form, bindings, variables, formValues, resolvedFields, platform, editorValues, chartVersion } = input;
+  const { form, bindings, variables, formValues, resolvedFields, platform, editorValues, chartVersion, retiredValues } = input;
   const values = JSON.parse(JSON.stringify(formValues || {}));
   const mounts = formValues?.mounts || {};
   hiddenPaths(form, platform).forEach(p => deleteAtStr(values, p));
@@ -136,6 +188,7 @@ export function buildChartValues(input: ChartValuesInput): any {
   applyBindingTargets(values, bindings || [], mounts, formValues, formValues?.releaseName || '', varCtx);
 
   excludedPaths(form).forEach(p => deleteAtStr(values, p));
+  removeRetiredValues(values, retiredValues);
   WIZARD_ENVELOPE_KEYS.forEach(k => delete values[k]);
 
   // The editor holds the whole document it was seeded with, so a deep merge only changes what the operator edited;

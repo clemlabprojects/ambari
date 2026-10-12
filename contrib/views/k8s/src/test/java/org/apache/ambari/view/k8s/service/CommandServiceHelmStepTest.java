@@ -452,6 +452,73 @@ class CommandServiceHelmStepTest {
         assertNotNull(params.get(CommandService.RELEASE_METADATA_PARAM));
     }
 
+    /**
+     * "Upgrade chart to X" on the Releases page sends the release's values back to Helm without the wizard. Those of a
+     * Superset release deployed before the SECRET_KEY moved to extraSecretEnv hold it in extraEnv, which the chart
+     * writes as a plain value into every pod spec: the upgrade moves it to the env Secret, unchanged (a new key would
+     * leave the database passwords Superset stored undecryptable).
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void aChartUpgradeFromTheReleasesPageMovesTheSupersetSecretKeyOutOfThePodSpecs() {
+        K8sReleaseEntity e = new K8sReleaseEntity();
+        e.setId(K8sReleaseEntity.idOf(NS, rel));
+        e.setNamespace(NS);
+        e.setReleaseName(rel);
+        e.setManagedByUi(true);
+        e.setServiceKey("SUPERSET");
+        e.setChartRef("superset");
+        e.setRepoId("charts");
+        e.setVersion("0.12.47");
+        dataStore.store(e);
+        Map<String, Object> deployed = new LinkedHashMap<>();
+        deployed.put("extraEnv", new LinkedHashMap<>(Map.of("SUPERSET_SECRET_KEY", "Key-In-Use-4",
+                "OPENSTREETMAP_SERVER_URL", "https://tile.example.com")));
+        when(k8s.getHelmReleaseValues(NS, rel)).thenReturn(deployed);
+        List<String> valuesFiles = new ArrayList<>();
+        when(k8s.getConfigurationService().writeCacheFile(anyString(), anyString())).thenAnswer(inv -> {
+            valuesFiles.add(inv.getArgument(1));
+            return "/cache/values.json";
+        });
+
+        service.submitReleaseUpgrade(NS, rel, "0.12.49", new MultivaluedHashMap<>(),
+                URI.create("http://ambari.example.com:8080/api/v1"));
+
+        assertEquals(1, valuesFiles.size());
+        Map<String, Object> sent = gson.fromJson(valuesFiles.get(0), Map.class);
+        assertEquals("Key-In-Use-4", ConfigResolutionService.getByDottedPath(sent, "extraSecretEnv.SUPERSET_SECRET_KEY"));
+        assertEquals(Map.of("OPENSTREETMAP_SERVER_URL", "https://tile.example.com"), sent.get("extraEnv"));
+    }
+
+    /**
+     * "Upgrade chart to X" sends the release's values back without the wizard, so nothing else tells the operator that
+     * a Trino catalog of the release still writes its password into the catalog ConfigMap: the operation log does,
+     * naming the catalog and never the password.
+     */
+    @Test
+    void aChartUpgradeFromTheReleasesPageWarnsAboutACatalogCredentialWrittenOut() throws Exception {
+        K8sReleaseEntity e = new K8sReleaseEntity();
+        e.setId(K8sReleaseEntity.idOf(NS, rel));
+        e.setNamespace(NS);
+        e.setReleaseName(rel);
+        e.setManagedByUi(true);
+        e.setServiceKey("TRINO");
+        e.setChartRef("trino");
+        e.setRepoId("charts");
+        e.setVersion("1.43.15");
+        dataStore.store(e);
+        Map<String, Object> deployed = new LinkedHashMap<>();
+        deployed.put("catalogs", new LinkedHashMap<>(Map.of("pg", "connector.name=postgresql\nconnection-password=hunter2\n")));
+        when(k8s.getHelmReleaseValues(NS, rel)).thenReturn(deployed);
+        when(k8s.getConfigurationService().writeCacheFile(anyString(), anyString())).thenReturn("/cache/values.json");
+
+        String id = service.submitReleaseUpgrade(NS, rel, "1.43.16", new MultivaluedHashMap<>(),
+                URI.create("http://ambari.example.com:8080/api/v1"));
+
+        String log = awaitLog(id, "[WARN] Catalog credentials written out: 'pg' writes connection-password out");
+        assertFalse(log.contains("hunter2"), log);
+    }
+
     /** The command log is written asynchronously; waits for a line to show up. */
     private String awaitLog(String commandId, String expected) throws InterruptedException {
         String content = "";

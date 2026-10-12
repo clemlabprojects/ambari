@@ -18,13 +18,16 @@
 
 package org.apache.ambari.view.k8s.service;
 
+import io.fabric8.kubernetes.api.model.Secret;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.WebHookConfigurationService.ServerKeystoreMaterial;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -43,6 +46,7 @@ import java.util.UUID;
  * For each enabled entry:
  *  - generates a PKCS12/JKS keystore OR a PEM bundle signed by the Ambari internal CA
  *  - stores it in an Opaque Secret along with the password (when applicable) and CA certificate
+ *  - with autoGenerate off, keeps a typed password in the password Secret (created, or updated when this view wrote it)
  *  - the chart wiring (bindings) is driven from service.json; this class does not mutate Helm values.
  */
 public class TlsManager {
@@ -102,7 +106,8 @@ public class TlsManager {
             String keystoreType = valueOrDefault(tlsEntrySpec.get("keystoreType"), "PKCS12");
             String mountPath = valueOrDefault(tlsEntrySpec.get("mountPath"), "/etc/security/tls/https-keystore.p12");
             String keystorePath = valueOrDefault(tlsEntrySpec.get("keystorePath"), mountPath);
-            String password = valueOrDefault(tlsEntrySpec.get("password"), randomPassword());
+            String typedPassword = valueOrDefault(tlsEntrySpec.get("password"), null);
+            String password = typedPassword != null ? typedPassword : randomPassword();
 
             List<String> dnsNames = new ArrayList<>();
             Object dnsRaw = tlsEntrySpec.get("dnsNames");
@@ -132,6 +137,9 @@ public class TlsManager {
                         String.join(",", dnsNames));
             } else {
                 LOG.info("Auto-generation disabled for TLS entry '{}'; expecting Secret {} to exist", tlsKey, secretName);
+                if (typedPassword != null) {
+                    ensurePasswordSecret(request.getNamespace(), passwordSecretName, passwordKey, typedPassword);
+                }
             }
 
             // Helm values are handled via bindings; here we only provision the secret.
@@ -199,6 +207,66 @@ public class TlsManager {
         } catch (Exception e) {
             throw new IllegalStateException("Failed to generate TLS password secret " + namespace + "/" + passwordSecretName + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * With the operator's own keystore, keeps the password they typed in the password Secret the chart mounts, so it
+     * never has to be written into the server configuration (a ConfigMap anyone allowed to read ConfigMaps can
+     * read). The chart reads the keystore password from that Secret only, so it must hold the typed one:
+     * <ul>
+     *   <li>missing, it is created;</li>
+     *   <li>written by this view (an earlier deploy, with a generated keystore or another typed password), it is
+     *   updated;</li>
+     *   <li>the operator's own, holding another password or none under the key, the deploy is refused: the service
+     *   could not open its keystore, and only the operator knows which password is the right one.</li>
+     * </ul>
+     *
+     * @throws IllegalArgumentException with an operator-readable message, for an operator's Secret that does not hold
+     *                                  the typed password
+     */
+    private void ensurePasswordSecret(String namespace,
+                                      String passwordSecretName,
+                                      String passwordKey,
+                                      String typedPassword) {
+        Secret existing;
+        try {
+            existing = kubernetesService.getSecret(namespace, passwordSecretName);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to read TLS password secret " + namespace + "/" + passwordSecretName
+                    + ": " + e.getMessage(), e);
+        }
+        if (existing == null) {
+            ensureNamespaceExists(namespace);
+            generatePasswordSecret(namespace, passwordSecretName, passwordKey, typedPassword);
+            return;
+        }
+        String encoded = existing.getData() == null ? null : existing.getData().get(passwordKey);
+        if (encoded != null && typedPassword.equals(new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8))) {
+            LOG.info("TLS password Secret {}/{} already holds the typed password", namespace, passwordSecretName);
+            return;
+        }
+        if (writtenByThisView(existing)) {
+            generatePasswordSecret(namespace, passwordSecretName, passwordKey, typedPassword);
+            return;
+        }
+        String problem = encoded == null
+                ? "has no key '" + passwordKey + "', from which the release reads its keystore password"
+                : "holds a different keystore password (key '" + passwordKey + "') from the one typed under"
+                        + " 'Keystore password'. The release reads the password from that Secret, so it could not open"
+                        + " its keystore";
+        String remedy = encoded == null
+                ? "Add the keystore password to the Secret under that key, or delete the Secret: it is then created"
+                        + " from the typed password."
+                : "Clear 'Keystore password' to keep the password the Secret holds, or put the typed password in the"
+                        + " Secret (or delete the Secret: it is then created from the typed password).";
+        throw new IllegalArgumentException("Secret '" + passwordSecretName + "' in namespace '" + namespace + "' "
+                + problem + ". " + remedy);
+    }
+
+    /** Whether this view wrote the Secret (it marks every Secret it writes), rather than the operator. */
+    private static boolean writtenByThisView(Secret secret) {
+        return secret.getMetadata() != null && secret.getMetadata().getAnnotations() != null
+                && "ambari-k8s-view".equals(secret.getMetadata().getAnnotations().get("managed-by"));
     }
 
     private static boolean asBoolean(Object o, boolean def) {

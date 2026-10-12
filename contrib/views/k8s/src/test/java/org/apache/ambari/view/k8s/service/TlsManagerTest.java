@@ -18,17 +18,22 @@
 
 package org.apache.ambari.view.k8s.service;
 
+import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.WebHookConfigurationService.ServerKeystoreMaterial;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -36,7 +41,9 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class TlsManagerTest {
@@ -85,5 +92,130 @@ class TlsManagerTest {
         assertArrayEquals("testpass".getBytes(), passwordData.get("truststore.password"));
 
         verify(webHookService).issueServerKeystore(anyList(), eq("PKCS12"), any(), anyInt());
+    }
+
+    /**
+     * With the operator's own keystore, the typed password goes to the password Secret the chart mounts, instead of a
+     * line in the server configuration, which is a ConfigMap.
+     */
+    @Test
+    void ownKeystoreTypedPasswordCreatesTheMissingPasswordSecret() {
+        KubernetesService kubernetesService = mock(KubernetesService.class);
+        WebHookConfigurationService webHookService = mock(WebHookConfigurationService.class);
+        TlsManager tlsManager = new TlsManager(kubernetesService, webHookService);
+
+        tlsManager.applyTls(ownKeystore("typed-pass"), request(), new HashMap<>());
+
+        ArgumentCaptor<Map<String, byte[]>> passwordCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"), passwordCaptor.capture());
+        assertArrayEquals("typed-pass".getBytes(), passwordCaptor.getValue().get("truststore.password"));
+        assertEquals(1, passwordCaptor.getValue().size(), "the password Secret holds the password only");
+        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https"), any());
+        verifyNoInteractions(webHookService);
+    }
+
+    @Test
+    void ownKeystoreLeavesAPasswordSecretHoldingTheTypedPasswordAsItIs() {
+        KubernetesService kubernetesService = mock(KubernetesService.class);
+        WebHookConfigurationService webHookService = mock(WebHookConfigurationService.class);
+        TlsManager tlsManager = new TlsManager(kubernetesService, webHookService);
+        for (boolean writtenByTheView : List.of(false, true)) {
+            when(kubernetesService.getSecret("ns", "rel-https-pass"))
+                    .thenReturn(passwordSecret("truststore.password", "typed-pass", writtenByTheView));
+
+            tlsManager.applyTls(ownKeystore("typed-pass"), request(), new HashMap<>());
+        }
+
+        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any());
+    }
+
+    /**
+     * A password Secret an earlier deploy wrote (a generated keystore, or another typed password) takes the typed
+     * password: kept, the service would not open the operator's keystore with the old one.
+     */
+    @Test
+    void ownKeystoreTypedPasswordReplacesThePasswordAnEarlierDeployWrote() {
+        KubernetesService kubernetesService = mock(KubernetesService.class);
+        WebHookConfigurationService webHookService = mock(WebHookConfigurationService.class);
+        TlsManager tlsManager = new TlsManager(kubernetesService, webHookService);
+        when(kubernetesService.getSecret("ns", "rel-https-pass"))
+                .thenReturn(passwordSecret("truststore.password", "generated-pass", true));
+
+        tlsManager.applyTls(ownKeystore("typed-pass"), request(), new HashMap<>());
+
+        ArgumentCaptor<Map<String, byte[]>> passwordCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"), passwordCaptor.capture());
+        assertArrayEquals("typed-pass".getBytes(), passwordCaptor.getValue().get("truststore.password"));
+    }
+
+    /**
+     * The operator's own password Secret is never overwritten. When it does not hold the typed password, the deploy is
+     * refused with what to do, instead of a service that cannot open its keystore.
+     */
+    @Test
+    void ownKeystoreRefusesAnOperatorPasswordSecretThatDoesNotHoldTheTypedPassword() {
+        KubernetesService kubernetesService = mock(KubernetesService.class);
+        WebHookConfigurationService webHookService = mock(WebHookConfigurationService.class);
+        TlsManager tlsManager = new TlsManager(kubernetesService, webHookService);
+
+        when(kubernetesService.getSecret("ns", "rel-https-pass"))
+                .thenReturn(passwordSecret("truststore.password", "operator-pass", false));
+        IllegalArgumentException other = assertThrows(IllegalArgumentException.class,
+                () -> tlsManager.applyTls(ownKeystore("typed-pass"), request(), new HashMap<>()));
+        assertTrue(other.getMessage().contains("Secret 'rel-https-pass' in namespace 'ns' holds a different keystore"
+                + " password (key 'truststore.password')"), other.getMessage());
+        assertTrue(other.getMessage().contains("Clear 'Keystore password'"), other.getMessage());
+
+        when(kubernetesService.getSecret("ns", "rel-https-pass"))
+                .thenReturn(passwordSecret("other.key", "typed-pass", false));
+        IllegalArgumentException noKey = assertThrows(IllegalArgumentException.class,
+                () -> tlsManager.applyTls(ownKeystore("typed-pass"), request(), new HashMap<>()));
+        assertTrue(noKey.getMessage().contains("Secret 'rel-https-pass' in namespace 'ns' has no key"
+                + " 'truststore.password'"), noKey.getMessage());
+
+        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any());
+    }
+
+    @Test
+    void ownKeystoreWithoutATypedPasswordCreatesNothing() {
+        KubernetesService kubernetesService = mock(KubernetesService.class);
+        WebHookConfigurationService webHookService = mock(WebHookConfigurationService.class);
+        TlsManager tlsManager = new TlsManager(kubernetesService, webHookService);
+
+        tlsManager.applyTls(ownKeystore(""), request(), new HashMap<>());
+
+        verify(kubernetesService, never()).getSecret(anyString(), anyString());
+        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any());
+    }
+
+    private static HelmDeployRequest request() {
+        HelmDeployRequest request = new HelmDeployRequest();
+        request.setReleaseName("rel");
+        request.setNamespace("ns");
+        return request;
+    }
+
+    /** A password Secret holding {@code password} under {@code key}, written by this view or by the operator. */
+    private static Secret passwordSecret(String key, String password, boolean writtenByTheView) {
+        SecretBuilder secret = new SecretBuilder()
+                .withNewMetadata().withName("rel-https-pass").withNamespace("ns").endMetadata()
+                .withData(Map.of(key, Base64.getEncoder().encodeToString(password.getBytes())));
+        if (writtenByTheView) {
+            secret.editMetadata().addToAnnotations("managed-by", "ambari-k8s-view").endMetadata();
+        }
+        return secret.build();
+    }
+
+    private static Map<String, Object> ownKeystore(String password) {
+        Map<String, Object> httpsSpec = new HashMap<>();
+        httpsSpec.put("enabled", true);
+        httpsSpec.put("autoGenerate", false);
+        httpsSpec.put("secretName", "rel-https");
+        httpsSpec.put("passwordSecretName", "rel-https-pass");
+        httpsSpec.put("passwordKey", "truststore.password");
+        httpsSpec.put("password", password);
+        Map<String, Object> tls = new HashMap<>();
+        tls.put("https", httpsSpec);
+        return tls;
     }
 }

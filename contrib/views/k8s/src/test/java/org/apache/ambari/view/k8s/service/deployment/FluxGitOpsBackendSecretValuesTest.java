@@ -58,7 +58,6 @@ import static org.mockito.Mockito.*;
 public class FluxGitOpsBackendSecretValuesTest {
 
     private static final String BIND_PASSWORD = "Bind-Pass-42";
-    private static final String SHARED_SECRET = "Shared-Secret-123";
     private static final String POLARIS_SECRET = "Polaris-Secret-9";
     private static final String RELEASE_DIR = "clusters/default/analytics/trino";
 
@@ -152,9 +151,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         request.setDeploymentMode("FLUX_GITOPS");
 
         Map<String, Object> values = new LinkedHashMap<>();
-        values.put("internalSharedSecret", SHARED_SECRET);
-        values.put("additionalConfigProperties", new ArrayList<>(List.of(
-                "internal-communication.shared-secret=" + SHARED_SECRET, "query.max-memory=4GB")));
+        values.put("additionalConfigProperties", new ArrayList<>(List.of("query.max-memory=4GB")));
         values.put("polarisCredential", new LinkedHashMap<>(Map.of("clientSecret", POLARIS_SECRET)));
         values.put("server", new LinkedHashMap<>(Map.of("workers", 2)));
         request.setValues(values);
@@ -239,7 +236,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         assertNotNull(helmRelease);
         assertTrue(helmRelease, helmRelease.contains("  valuesFrom:\n  - kind: Secret\n    name: trino-kdps-values\n"
                 + "    valuesKey: values.yaml\n  values:\n"));
-        for (String secret : List.of(BIND_PASSWORD, SHARED_SECRET, POLARIS_SECRET)) {
+        for (String secret : List.of(BIND_PASSWORD, POLARIS_SECRET)) {
             assertFalse("no password or secret in Git", helmRelease.contains(secret));
         }
         assertTrue("the other settings stay reviewable in Git", helmRelease.contains("ldap://dir.example.com"));
@@ -247,10 +244,10 @@ public class FluxGitOpsBackendSecretValuesTest {
 
         String payload = secretPayloads.get("analytics/trino-kdps-values");
         assertNotNull("the values Secret is written in the release namespace", payload);
-        for (String secret : List.of(BIND_PASSWORD, SHARED_SECRET, POLARIS_SECRET)) {
+        for (String secret : List.of(BIND_PASSWORD, POLARIS_SECRET)) {
             assertTrue(payload.contains(secret));
         }
-        assertTrue("a list holding a secret moves as a whole", payload.contains("query.max-memory=4GB"));
+        assertTrue("a list holding no secret stays reviewable in Git", helmRelease.contains("query.max-memory=4GB"));
         assertEquals(Map.of("managed-by", "ambari-k8s-view", "app.kubernetes.io/managed-by", "kdps",
                 "ambari.clemlab.com/release", "trino", "reconcile.fluxcd.io/watch", "Enabled"),
                 secretLabels.get("analytics/trino-kdps-values"));
@@ -305,7 +302,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         assertEquals(sha, remoteHead());
         String helmRelease = published(RELEASE_DIR + "/helmrelease.yaml");
         assertTrue("the non-secret change is committed", helmRelease.contains("workers: 3"));
-        for (String secret : List.of(BIND_PASSWORD, SHARED_SECRET, POLARIS_SECRET)) {
+        for (String secret : List.of(BIND_PASSWORD, POLARIS_SECRET)) {
             assertFalse("once secret, stays secret: " + helmRelease, helmRelease.contains(secret));
         }
         assertTrue(helmRelease.contains("name: trino-kdps-values"));
@@ -550,7 +547,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         backend().apply(request, null);
 
         String helmRelease = published(RELEASE_DIR + "/helmrelease.yaml");
-        for (String secret : List.of(POLARIS_SECRET, "S3-Secret-Key-8", SHARED_SECRET)) {
+        for (String secret : List.of(POLARIS_SECRET, "S3-Secret-Key-8")) {
             assertFalse("known from the bindings of the definition: " + helmRelease, helmRelease.contains(secret));
         }
         assertTrue("the access key is not a password", helmRelease.contains("ozone-access-key"));

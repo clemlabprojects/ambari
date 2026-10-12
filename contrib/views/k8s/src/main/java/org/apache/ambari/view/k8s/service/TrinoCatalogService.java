@@ -33,6 +33,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -44,12 +45,22 @@ import java.util.regex.Pattern;
  * "Additional Trino catalogs" block, so a catalog saved here is exactly what the deploy would
  * have accepted inline. Deleting a catalog that a release still snapshots is refused (the release
  * keeps working — the refusal is about not losing the object the operator will want to re-apply).
+ * Credentials are never stored here: a catalog reads them as {@code ${ENV:VAR}} from the Secrets
+ * the Trino release exposes to its pods.
  */
 public class TrinoCatalogService {
 
     /** Hard DataStore limit: every String property is persisted as 3000 chars. */
     static final int MAX_PROPERTIES_LENGTH = 3000;
     private static final Pattern CONNECTOR_LINE = Pattern.compile("(?m)^\\s*connector\\.name\\s*=\\s*(\\S+)\\s*$");
+    /**
+     * A property whose name says it holds a credential: a password or passphrase, a secret or secret key, an access,
+     * private or JSON key, a credential or a token (e.g. connection-password, s3.aws-secret-key,
+     * iceberg.rest-catalog.oauth2.credential). Names ending otherwise (credentials-file, token-endpoint) do not match.
+     */
+    private static final Pattern CREDENTIAL_PROPERTY = Pattern.compile(
+            "(?i).*(password|passwd|passphrase|secret|secret[-_.]?key|access[-_.]?key|private[-_.]?key"
+                    + "|json[-_.]?key|credential|credentials[-_.]?key|token)");
     private static final Gson GSON = new Gson();
 
     private final ViewContext ctx;
@@ -68,6 +79,7 @@ public class TrinoCatalogService {
             for (TrinoCatalogEntity e : all) {
                 TrinoCatalogDTO d = TrinoCatalogDTO.fromEntity(e);
                 d.usedBy = usage.getOrDefault(e.getId(), new ArrayList<>());
+                d.literalCredentials = literalCredentialProperties(e.getPropertiesText());
                 out.add(d);
             }
         }
@@ -80,6 +92,7 @@ public class TrinoCatalogService {
         if (e == null) return null;
         TrinoCatalogDTO d = TrinoCatalogDTO.fromEntity(e);
         d.usedBy = usageByCatalogId().getOrDefault(id, new ArrayList<>());
+        d.literalCredentials = literalCredentialProperties(e.getPropertiesText());
         return d;
     }
 
@@ -179,6 +192,7 @@ public class TrinoCatalogService {
             throw new IllegalArgumentException("No connector.name line — Trino would refuse to start this catalog."
                     + " Add the connector it should use (e.g. connector.name=postgresql).");
         }
+        rejectLiteralCredentials(name, propertiesText);
         return m.group(1);
     }
 
@@ -233,6 +247,46 @@ public class TrinoCatalogService {
             backslashes++;
         }
         return backslashes % 2 == 1;
+    }
+
+    /**
+     * The properties of a catalog that write a credential out instead of reading it from the environment with
+     * {@code ${ENV:VAR}}, in the order they appear. Blank values do not count.
+     */
+    static List<String> literalCredentialProperties(String propertiesText) {
+        List<String> out = new ArrayList<>();
+        if (propertiesText == null) return out;
+        for (String line : propertiesText.replace("\r\n", "\n").split("\n")) {
+            String t = line.trim();
+            int eq = t.indexOf('=');
+            if (t.isEmpty() || t.startsWith("#") || eq <= 0) continue;
+            String key = t.substring(0, eq).trim();
+            String value = t.substring(eq + 1).trim();
+            if (!value.isEmpty() && !value.startsWith("${") && CREDENTIAL_PROPERTY.matcher(key).matches()) {
+                out.add(key);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Refuses a catalog that writes a credential out. KDPS would keep it in its own database and put it in the
+     * release's catalog ConfigMap, where anyone allowed to read ConfigMaps in the namespace can read it. The message
+     * says how to read it from a Secret instead.
+     *
+     * @throws IllegalArgumentException with an operator-readable message
+     */
+    public static void rejectLiteralCredentials(String catalogName, String propertiesText) {
+        List<String> literal = literalCredentialProperties(propertiesText);
+        if (literal.isEmpty()) return;
+        String first = literal.get(0);
+        String variable = (catalogName + "_" + first).toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9_]", "_");
+        throw new IllegalArgumentException("Catalog '" + catalogName + "': " + String.join(", ", literal)
+                + (literal.size() == 1 ? " holds" : " hold") + " a credential written out. It would be stored in"
+                + " the catalog ConfigMap, which anyone allowed to read ConfigMaps in the namespace can read. Put it in"
+                + " a Kubernetes Secret in the namespace of the Trino release, select that Secret under 'Secrets with"
+                + " catalog credentials' on the release, and reference its key instead, e.g. " + first + "=${ENV:"
+                + variable + "}.");
     }
 
     /** Short content fingerprint stored with a release so a drifted catalog can be spotted later. */

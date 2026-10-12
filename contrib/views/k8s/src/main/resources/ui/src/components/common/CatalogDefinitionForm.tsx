@@ -19,7 +19,7 @@ import React from 'react';
 import type { FormInstance } from 'antd';
 import { Button, Form, Input, Typography } from 'antd';
 import { ConnectorLogo } from './ConnectorGallery';
-import { CATALOG_TEMPLATES, renderTemplate, type CatalogTemplate } from './trinoCatalogTemplates';
+import { CATALOG_TEMPLATES, CREDENTIAL_HELP, renderTemplate, type CatalogTemplate } from './trinoCatalogTemplates';
 
 const { Text } = Typography;
 
@@ -58,7 +58,7 @@ export default function CatalogDefinitionForm({ template, form, preview, setPrev
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
             {template.fields.map(f => (
               <Form.Item key={f.key} name={f.key} label={f.label} initialValue={f.defaultValue} rules={f.required ? [{ required: true, message: `${f.label} is required` }] : []}
-                extra={f.secret ? (f.help || 'Prefer a Secret exposed as an env var and reference it as ${ENV:VAR}.') : f.help}>
+                extra={f.secret ? (f.help || CREDENTIAL_HELP) : f.help}>
                 <Input placeholder={f.placeholder} spellCheck={false} />
               </Form.Item>
             ))}

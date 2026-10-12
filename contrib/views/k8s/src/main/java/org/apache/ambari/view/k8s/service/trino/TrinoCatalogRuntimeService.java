@@ -23,6 +23,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.DeploymentMode;
+import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
 import org.apache.ambari.view.k8s.service.HelmService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
@@ -390,21 +391,32 @@ public class TrinoCatalogRuntimeService {
     }
 
     /** Write the catalog into the release values (null text = remove) through a helm upgrade of the same chart/version. */
-    @SuppressWarnings("unchecked")
     private void persistCatalog(Target t, String name, String text) {
         if (t.metadata == null || t.metadata.getChartRef() == null) {
             throw new IllegalStateException("Release metadata is missing (not deployed through KDPS?) — catalog applied live only, not persisted.");
         }
         requirePersistable(t);
-        Map<String, Object> values = new LinkedHashMap<>(t.values);
-        Map<String, Object> catalogs = values.get("catalogs") instanceof Map ? new LinkedHashMap<>((Map<String, Object>) values.get("catalogs")) : new LinkedHashMap<>();
-        if (text == null) catalogs.remove(name); else catalogs.put(name, text);
-        values.put("catalogs", catalogs);
+        Map<String, Object> values = valuesWithCatalog(ctx, t, name, text);
         HelmService helm = new HelmService(ctx);
         // deployOrUpgrade holds the release for the whole upgrade, refusing it if another operation started since.
         helm.deployOrUpgrade(t.metadata.getChartRef(), t.release, t.namespace, values, Collections.emptyMap(),
                 kubernetesService.getConfigurationService().getKubeconfigContents(),
                 t.metadata.getRepoId(), t.metadata.getVersion(), 600, true, false, false);
         LOG.info("Catalog '{}' {} in release {}/{} values", name, text == null ? "removed from" : "persisted into", t.namespace, t.release);
+    }
+
+    /**
+     * The values a catalog change is saved with: the release's values with the catalog set (null text = removed), in
+     * line with the service definition KDPS runs now. The upgrade re-renders the server configuration, which must not
+     * carry again a secret an earlier definition wrote into it (the internal shared secret, the keystore password).
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> valuesWithCatalog(ViewContext ctx, Target t, String name, String text) {
+        Map<String, Object> values = new LinkedHashMap<>(t.values);
+        Map<String, Object> catalogs = values.get("catalogs") instanceof Map ? new LinkedHashMap<>((Map<String, Object>) values.get("catalogs")) : new LinkedHashMap<>();
+        if (text == null) catalogs.remove(name); else catalogs.put(name, text);
+        values.put("catalogs", catalogs);
+        CommandService.applyDefinitionValueRewrites(ctx, t.metadata == null ? null : t.metadata.getServiceKey(), values);
+        return values;
     }
 }

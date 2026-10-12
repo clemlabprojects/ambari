@@ -26,6 +26,20 @@ This document describes how to author a KDPS `service.json` so the Ambari K8S vi
 - `version` (optional): Chart version pin.
 - `dependencies` (optional): Array of child artifacts (e.g., webhooks) to deploy before the main chart.
 - `mounts`, `requiredConfigMaps`, `dynamicValues`, `ranger` (optional): See “Advanced features”.
+- `retiredValues` (optional): Values an earlier version of the definition wrote and this one no longer does, keyed by
+  dotted path, with the reason. An upgrade or a redeploy starts from the release's values, so the wizard and the server
+  remove these from every deploy (a chart upgrade from the Releases page and a catalog saved on the Trino Catalogs page
+  included); for a list of configuration lines, `{ "reason": ..., "linesStartingWith": ["key="] }`
+  removes only those lines. Keys starting with `_` are comments. Use it when a binding stops copying a secret somewhere
+  visible (a plain environment variable, a line of a configuration file kept in a ConfigMap). A value that only moves
+  takes a `valueAliases` entry as well (old path to new path): the server applies the aliases first, so a redeploy
+  without the wizard keeps it (the Superset SECRET_KEY moved from `extraEnv` to `extraSecretEnv` that way).
+- `secretChartVersions` (optional): The chart version from which the chart keeps a secret in a Kubernetes Secret, keyed
+  by the dotted path that carries it (a value, a form field, or a value the security profile adds):
+  `{ "range": ">=0.12.49", "label": "the security profile's LDAP bind password" }`. With an older chart, a deploy from
+  the wizard that carries it is refused (the operator picks a later chart under 'Version (override)'), and a resync or a
+  security refresh writes a warning into its operation log. Keys starting with `_` are comments. Use it rather than
+  raising `requiredChartVersion`, which would refuse the resync of every release still on an older chart.
 - `form`: Array of form fields shown in the wizard.
 - `variables`: Values derived from the form (and other sources) by `renderConfig`.
 - `bindings`: Mapping rules that push variables/mounts into Helm values.
@@ -39,6 +53,8 @@ Discovery/select types:
 - `hadoop-discovery`: Alias of `service-select` for Hadoop services.
 - `k8s-discovery`: Pulls options from Kubernetes by label (`lookupLabel` required).
 - `monitoring-discovery`: Calls `/discovery/monitoring/prometheus` to auto-fill monitoring namespace/release.
+- `secret-discovery`: Lists Secrets, by `lookupLabel` or, without one, the Secrets of the release namespace. With
+  `"multiple": true` several can be picked and the value is their list (Trino's catalog credential Secrets).
 
 Other field properties:
 - `required`: Boolean validation.
@@ -46,6 +62,9 @@ Other field properties:
 - `excludeFromValues`: If true, the field value is **not** sent to Helm; use for helper/lookup fields.
 - `seedFromValue`: For an `excludeFromValues` field whose effect is a chart value (a switch or an input that bindings copy into the values): the values path holding it, e.g. `"ranger.tagSync.enabled"`. On an upgrade the wizard fills the field from the deployed release's value at that path instead of the field's default, and the auto-enable defaults leave it alone, also when the release has no value there (it then runs the chart default), so an unchanged upgrade re-sends what runs.
 - `seedUnlessEquals`: With `seedFromValue`, a `${path}` template of the value the chart gets when the field is blank (e.g. `"https://${ingress.host}/api"`). A deployed value equal to it is not copied, so the field stays blank and the derived value keeps following its inputs.
+- `seedFromValues`: Value paths an upgrade fills the field from when it is blank, first non-blank wins. For an
+  excluded field whose value a binding copies elsewhere: the Superset SECRET_KEY is kept out of the values and sent
+  in `extraSecretEnv.SUPERSET_SECRET_KEY`, so an upgrade fills it back from there and the key does not change.
 - `condition`: `{ "field": "<otherField>", "value": <expected> }` to show/hide.
 - `capability`: On a field or a `group`, shows it on one platform only: `"kubernetes"` (anything but a confirmed
   OpenShift cluster) or `"openshift"` (only once the cluster is confirmed to be OpenShift). On the other platform the
@@ -167,6 +186,16 @@ A variable reads such a field by its own name (`"from": {"type": "form", "field"
 
 ## Replayable actions
 `replayableActions` lists post-deploy steps the operator can run again from the release row on the Releases page (`key`, `label`, `endpoint`). Add `"warnUnlessValueTrue": {"path": "<values path>", "message": "..."}` to ask the operator to confirm first when that value of the deployed release is not `true` (e.g. re-registering Ranger TagSync on a release that has it turned off).
+
+## Secrets
+A password or key must reach the pods from a Kubernetes Secret, never from a ConfigMap or a plain `value:` of an
+environment variable: anyone allowed to read ConfigMaps or Deployments in the namespace (the OpenShift `view` role)
+could read it there. Bind such fields to a values key the chart keeps in a Secret (Superset `extraSecretEnv`, Trino
+`polarisCredential`, the security profile's `global.security.auth.*` credentials), mark the field
+`excludeFromValues` when the chart does not read it under its own name, and add `seedFromValues` so an upgrade keeps
+it. Do not template a secret into a configuration line (`additionalConfigProperties[]`): reference an environment
+variable read from a Secret instead (`${ENV:NAME}` in Trino). When only a later chart keeps the value in a Secret,
+declare that version in `secretChartVersions`, and say so in the field's help.
 
 ## Common patterns
 - **Conditional display:** Use `condition` to hide/show fields based on another field’s value.

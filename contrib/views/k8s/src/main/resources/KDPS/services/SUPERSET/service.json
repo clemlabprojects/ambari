@@ -3,7 +3,7 @@
   "chart": "apache/superset",
   "pattern": "superset-.*",
   "secretName": "registry-credentials",
-  "version": "0.12.47",
+  "version": "0.12.49",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -822,10 +822,11 @@
     },
     {
       "name": "superset-secret-key",
+      "comment": "extraSecretEnv, not extraEnv: the chart puts it in the <fullname>-env Secret the pods read through envFrom, so the key does not show in the pod specs (anyone allowed to read Deployments could sign a session cookie or decrypt the stored database passwords with it). Superset still reads SUPERSET_SECRET_KEY, so the key, and what it encrypted, are unchanged.",
       "skipIfVarEmpty": "supersetSecret",
       "targets": [
         {
-          "path": "extraEnv.SUPERSET_SECRET_KEY",
+          "path": "extraSecretEnv.SUPERSET_SECRET_KEY",
           "from": {
             "type": "var",
             "name": "supersetSecret"
@@ -1016,7 +1017,7 @@
       "type": "password",
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_auth_mode", "value": "ldap" },
-      "help": "Password for the Trino service account above."
+      "help": "Password for the Trino service account above. It is written into the release's datasource import file, which chart 0.12.49 and later keep in a Kubernetes Secret (the deploy is refused with an older chart)."
     },
     {
       "name": "ui_trino_ranger_service",
@@ -1119,7 +1120,7 @@
           "type": "password",
           "condition": { "field": "hiveDb.ldapUser", "operator": "non-empty" },
           "excludeFromValues": true,
-          "help": "Password of the LDAP service account above. It is written into the release's datasource import file and encrypted by Superset in its metadata database."
+          "help": "Password of the LDAP service account above. It is written into the release's datasource import file, which chart 0.12.49 and later keep in a Kubernetes Secret (the deploy is refused with an older chart), and encrypted by Superset in its metadata database."
         },
         {
           "name": "hiveDb.externalKeytabSecret",
@@ -1433,7 +1434,9 @@
           "label": "SECRET_KEY",
           "type": "password",
           "required": true,
-          "help": "Superset SECRET_KEY used for session and CSRF signing."
+          "excludeFromValues": true,
+          "seedFromValues": ["extraSecretEnv.SUPERSET_SECRET_KEY", "extraEnv.SUPERSET_SECRET_KEY"],
+          "help": "Superset SECRET_KEY used for session and CSRF signing, and to encrypt the database passwords Superset stores. Kept in a Kubernetes Secret. On an upgrade it is filled with the key the release runs with: keep it, or the stored database passwords can no longer be decrypted."
         },
         {
           "name": "superset.openstreetmapServerUrl",
@@ -1497,7 +1500,13 @@
     }
   ],
   "description": "Modern data exploration and visualisation platform. Build dashboards and charts directly from your data warehouse.",
-  "valueAliases": {},
+  "valueAliases": {
+    "extraEnv.SUPERSET_SECRET_KEY": "extraSecretEnv.SUPERSET_SECRET_KEY"
+  },
+  "retiredValues": {
+    "_comment": "Values an earlier version of this definition wrote, removed from the values of every deploy (wizard upgrades and redeploys without the wizard alike).",
+    "extraEnv.SUPERSET_SECRET_KEY": "The SECRET_KEY now goes to extraSecretEnv: left in extraEnv, it would still show in the pod specs."
+  },
   "externalServiceTargets": {
     "hive": {
       "label": "Platform Hive (external Kerberos keytab)",
@@ -1523,6 +1532,13 @@
     }
   },
   "requiredChartVersion": ">=0.12.29",
+  "secretChartVersions": {
+    "_comment": "Chart 0.12.49 keeps the datasource import files (extraConfigs) in a Secret and passes the security profile's bind password to the pods through secretKeyRef; an older chart puts them in a ConfigMap or a plain environment variable. A wizard deploy that carries one of them with an older chart is refused; a resync or a security refresh is warned in its operation log.",
+    "ui_trino_svc_password": { "range": ">=0.12.49", "label": "the Trino service-account password of the datasource import file" },
+    "hiveDb.ldapPassword": { "range": ">=0.12.49", "label": "the Hive LDAP service-account password of the datasource import file" },
+    "global.security.auth.ldap.bindPassword": { "range": ">=0.12.49", "label": "the security profile's LDAP bind password" },
+    "global.security.auth.ad.bindPassword": { "range": ">=0.12.49", "label": "the security profile's Active Directory bind password" }
+  },
   "requiresContext": [
     { "capability": "oidc", "fields": ["issuerUrl", "realm"] },
     { "capability": "kerberos", "fields": ["realm"] },

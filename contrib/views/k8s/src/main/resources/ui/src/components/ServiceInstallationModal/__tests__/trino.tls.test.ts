@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildVarContext, applyBindingTargets } from '../bindings';
+import { buildTlsPayload } from '../tlsPayload';
 
 /**
  * Trino terminates TLS itself by default. Two things have to move together, so they are asserted
@@ -64,9 +65,13 @@ describe('TRINO service.json — TLS on the coordinator', () => {
     expect(JSON.stringify(v.coordinator?.additionalConfigProperties || [])).not.toContain('keystore.key=');
   });
 
-  it('an operator-supplied keystore password is pinned in the coordinator config', () => {
-    const v = render(seededTls('trino', { password: 's3cret' }));
-    expect(v.coordinator.additionalConfigProperties).toContain('http-server.https.keystore.key=s3cret');
+  it('an operator-supplied keystore password never goes into the server configuration', () => {
+    // The coordinator config is a ConfigMap anyone allowed to read ConfigMaps can read. KDPS keeps the typed password
+    // in the <keystore Secret>-pass Secret (TlsManager) and the chart's init container appends it from there.
+    const v = render(seededTls('trino', { password: 's3cret', autoGenerate: false }));
+    expect(JSON.stringify(v)).not.toContain('s3cret');
+    expect(v.server.config.https.keystore.passwordSecretName).toBe('trino-https-pass');
+    expect(v.server.config.https.keystore.passwordKey).toBe('truststore.password');
   });
 
   it('TLS off falls back to edge termination, and only then trusts the router', () => {
@@ -84,5 +89,37 @@ describe('TRINO service.json — TLS on the coordinator', () => {
     expect(v.global.security.tls.truststore.enabled).toBe(true);
     expect(v.global.security.tls.truststoreSecret).toBeUndefined();
     expect(v.global.security.tls.truststoreKey).toBeUndefined();
+  });
+});
+
+describe('TRINO service.json — TLS payload the server provisions from', () => {
+  const form = (tls: any) => ({ releaseName: 'trino', namespace: 'analytics', nameOverride: 'trino', tls: { https: tls } });
+
+  it('the password Secret follows an edited keystore Secret, as the chart mounts it', () => {
+    // The wizard seeds passwordSecretName from the default keystore Secret when the definition loads; the bindings
+    // mount `<keystore Secret>-pass` from the field as submitted. A password written under the seeded name would
+    // leave the coordinator waiting for a Secret that does not exist.
+    const tls = seededTls('trino', { secretName: 'corp-trino-ks', autoGenerate: false, password: 's3cret' });
+    expect(tls.passwordSecretName).toBe('trino-https-pass');
+
+    const payload = buildTlsPayload(def.tls, form(tls));
+
+    expect(payload.https.passwordSecretName).toBe('corp-trino-ks-pass');
+    expect(payload.https.secretName).toBe('corp-trino-ks');
+    expect(render(tls).server.config.https.keystore.passwordSecretName).toBe(payload.https.passwordSecretName);
+  });
+
+  it('keeps the default names and resolves the SANs of a default install', () => {
+    const payload = buildTlsPayload(def.tls, form(seededTls('trino')));
+    expect(payload.https.secretName).toBe('trino-https');
+    expect(payload.https.passwordSecretName).toBe('trino-https-pass');
+    expect(payload.https.dnsNames).toEqual(expect.arrayContaining([
+      'trino-trino.analytics.svc', 'trino-trino.analytics.svc.cluster.local']));
+  });
+
+  it('keeps a password Secret the service definition names itself', () => {
+    const specs = [{ ...def.tls[0], defaults: { ...def.tls[0].defaults, passwordSecretName: 'shared-https-pass' } }];
+    const payload = buildTlsPayload(specs, form(seededTls('trino', { secretName: 'corp-trino-ks' })));
+    expect(payload.https.passwordSecretName).toBe('shared-https-pass');
   });
 });

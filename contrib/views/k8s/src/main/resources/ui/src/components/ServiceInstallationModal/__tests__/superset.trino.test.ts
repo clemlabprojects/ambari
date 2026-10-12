@@ -103,6 +103,13 @@ describe('Superset → platform Trino import_datasources_trino.yaml', () => {
     expect(merged.extraConfigs?.['import_datasources_trino.yaml']).toBeUndefined();
   });
 
+  it('ldap → the service password goes into the datasource file only, which the chart keeps in a Secret', () => {
+    const { merged } = resolve({ ...HOST, ui_trino_auth_mode: 'ldap', ui_trino_svc_user: 'svc', ui_trino_svc_password: 'Svc-Pass-7' });
+    const { extraConfigs, ...rest } = merged;
+    expect(extraConfigs['import_datasources_trino.yaml']).toContain('Svc-Pass-7');
+    expect(JSON.stringify(rest)).not.toContain('Svc-Pass-7');
+  });
+
   it('writes a SEPARATE file from Hive so the two coexist (no collision)', () => {
     const { merged } = resolve({ ...HOST, ui_trino_auth_mode: 'none' });
     expect(merged.extraConfigs?.['import_datasources_trino.yaml']).toBeDefined();

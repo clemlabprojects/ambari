@@ -32,6 +32,8 @@ export type FormFieldDef = {
   capability?: string;
   /** Still sent where `capability` hides it: the wizard fills it in, or the chart uses it on both platforms. */
   keepWhenHidden?: boolean;
+  /** Value paths an upgrade fills the field from when it is blank (see seedFieldsFromValues). */
+  seedFromValues?: string[];
 };
 
 /**

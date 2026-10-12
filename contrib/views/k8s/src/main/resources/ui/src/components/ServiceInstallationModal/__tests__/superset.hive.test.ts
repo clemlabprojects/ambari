@@ -21,7 +21,7 @@ function render(resolved: Record<string, string>, formValues: any) {
   const varCtx = buildVarContext(HIVE_VARS as any, formValues, {}, resolved);
   const merged: any = {};
   applyBindingTargets(merged, HIVE_BINDINGS as any, {}, formValues, 'superset', varCtx);
-  return { varCtx, yaml: merged.extraConfigs?.['import_datasources.yaml'] as string | undefined };
+  return { varCtx, merged, yaml: merged.extraConfigs?.['import_datasources.yaml'] as string | undefined };
 }
 
 describe('Superset → platform Hive import_datasources (PyHive, impersonation)', () => {
@@ -64,6 +64,14 @@ describe('Superset → platform Hive import_datasources (PyHive, impersonation)'
     const { yaml } = render({ ...base, 'hive.authMode': 'ldap', 'hive.transportMode': 'http', 'hive.hs2HostPort': 'knox.example.com:8443' },
       form({ ldapUser: 'svc-superset', ldapPassword: 's3cret', httpPath: 'gateway/default/hive', sslCert: 'required' }));
     expect(yaml).toContain('sqlalchemy_uri: hive+https://svc-superset:s3cret@knox.example.com:8443/default?auth=BASIC&http_path=gateway/default/hive&ssl_cert=required');
+  });
+
+  it('ldap → the service password goes into the datasource file only, which the chart keeps in a Secret', () => {
+    const { merged } = render({ ...base, 'hive.authMode': 'ldap', 'hive.transportMode': 'binary' },
+      form({ ldapUser: 'svc-superset', ldapPassword: 'Svc-Pass-8' }));
+    const { extraConfigs, ...rest } = merged;
+    expect(extraConfigs['import_datasources.yaml']).toContain('Svc-Pass-8');
+    expect(JSON.stringify(rest)).not.toContain('Svc-Pass-8');
   });
 
   it('ldap without a service account emits nothing rather than a broken URL', () => {

@@ -178,6 +178,9 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
         <Select
             loading={isLoading}
             allowClear
+            // `multiple`: several resources may be picked (e.g. the Secrets holding Trino catalog credentials); the
+            // value is then their list.
+            mode={field.multiple ? 'multiple' : undefined}
             placeholder={isLoading ? 'Loading...' : 'Select...'}
             onChange={(val) => {
               if (onValueSelect) {

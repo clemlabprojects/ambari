@@ -348,7 +348,8 @@ public class GitOpsSecretValuesTest {
         StackServiceDef trinoDef = definitions.getServiceDefinition("TRINO");
         trino.addPasswordFields(trinoDef.form, map("icebergCatalog", map("clientSecret", "Polaris-Secret-1",
                 "s3SecretKey", "S3-Secret-Key-2")));
-        assertTrue(trino.paths().contains("internalSharedSecret"));
+        assertFalse("the chart generates the internal shared secret; the form no longer asks for it",
+                trino.paths().contains("internalSharedSecret"));
         assertTrue("the Polaris client secret and the S3 secret key are passwords",
                 trino.secrets().containsAll(List.of("Polaris-Secret-1", "S3-Secret-Key-2")));
 
@@ -357,8 +358,10 @@ public class GitOpsSecretValuesTest {
         assertTrue(dbt.paths().containsAll(List.of("trino.auth.password", "trino.auth.jwtToken")));
 
         GitOpsSecretValues superset = new GitOpsSecretValues();
-        superset.addPasswordFields(definitions.getServiceDefinition("SUPERSET").form, null);
-        assertTrue(superset.paths().contains("superset.secretKey"));
+        superset.addPasswordFields(definitions.getServiceDefinition("SUPERSET").form,
+                map("superset", map("secretKey", "Secret-Key-3")));
+        assertFalse("the SECRET_KEY is kept out of the values", superset.paths().contains("superset.secretKey"));
+        assertTrue("but it is still a secret wherever a binding copies it", superset.secrets().contains("Secret-Key-3"));
     }
 
     @Test
@@ -417,8 +420,10 @@ public class GitOpsSecretValuesTest {
         GitOpsSecretValues trino = new GitOpsSecretValues();
         trino.addPasswordCopies(trinoDef.form, trinoDef.variables, trinoDef.bindings);
         assertTrue(trino.keyPaths().toString(), trino.keyPaths().containsAll(List.of(
-                List.of("polarisCredential", "clientSecret"), List.of("s3Credential", "secretKey"),
-                List.of("coordinator", "additionalConfigProperties"), List.of("additionalConfigProperties"))));
+                List.of("polarisCredential", "clientSecret"), List.of("s3Credential", "secretKey"))));
+        assertFalse("no password is written into the server configuration any more",
+                trino.keyPaths().contains(List.of("coordinator", "additionalConfigProperties")));
+        assertFalse(trino.keyPaths().contains(List.of("additionalConfigProperties")));
         assertFalse("the name of a credential Secret stays readable",
                 trino.keyPaths().contains(List.of("polarisCredential", "secretRef", "name")));
         assertFalse(trino.keyPaths().contains(List.of("s3Credential", "accessKey")));
@@ -427,7 +432,7 @@ public class GitOpsSecretValuesTest {
         GitOpsSecretValues superset = new GitOpsSecretValues();
         superset.addPasswordCopies(supersetDef.form, supersetDef.variables, supersetDef.bindings);
         assertTrue(superset.keyPaths().toString(), superset.keyPaths().containsAll(List.of(
-                List.of("extraEnv", "SUPERSET_SECRET_KEY"), List.of("extraConfigs", "import_datasources_trino.yaml"),
+                List.of("extraSecretEnv", "SUPERSET_SECRET_KEY"), List.of("extraConfigs", "import_datasources_trino.yaml"),
                 List.of("extraConfigs", "import_datasources.yaml"))));
         assertFalse("the merged map is secret entry by entry", superset.keyPaths().contains(List.of("extraConfigs")));
     }

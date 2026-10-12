@@ -4516,10 +4516,23 @@ public class CommandService {
         HelmOperationRegistry.requireIdle(namespace, releaseName);
 
         // Preserve operator-supplied values: read the merged values from the deployed release.
-        Map<String, Object> deployedValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
-        if (deployedValues == null) {
-            deployedValues = Collections.emptyMap();
-        }
+        Map<String, Object> released = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        Map<String, Object> deployedValues = released == null ? new LinkedHashMap<>() : new LinkedHashMap<>(released);
+        // This upgrade goes through neither the wizard nor submitDeploy, so the values get the current definition's
+        // aliases and retired values here: an earlier definition may have put a secret where anyone allowed to read
+        // Deployments can see it (the Superset SECRET_KEY in a plain environment variable of every pod).
+        applyDefinitionValueRewrites(ctx, releaseMetadata.getServiceKey(), deployedValues);
+        // Nor are its secrets checked anywhere else: warn in the operation log about those the release still leaves
+        // readable outside a Kubernetes Secret (its values, its security profile, the target chart).
+        HelmDeployRequest sent = new HelmDeployRequest();
+        sent.setNamespace(namespace);
+        sent.setReleaseName(releaseName);
+        sent.setServiceKey(releaseMetadata.getServiceKey());
+        sent.setSecurityProfile(releaseMetadata.getSecurityProfile());
+        sent.setValues(deployedValues);
+        List<String> warnings = new ArrayList<>();
+        addIfPresent(warnings, checkLiteralCatalogCredentials(sent, releaseMetadata));
+        addIfPresent(warnings, checkSecretChartVersions(sent, targetVersion, false));
 
         final String commandId = UUID.randomUUID().toString();
         final String now = Instant.now().toString();
@@ -4592,6 +4605,7 @@ public class CommandService {
         store(rootStatus);
         store(rootCommand);
 
+        logDeployWarnings(commandId, warnings);
         scheduleNow(commandId);
         return commandId;
     }
@@ -4615,6 +4629,8 @@ public class CommandService {
         String deploymentMode = request.getDeploymentMode() == null ? "DIRECT_HELM" : request.getDeploymentMode();
         LOG.info("Submit deploy for release {} in namespace {} using deploymentMode={}",
                 request.getReleaseName(), request.getNamespace(), deploymentMode);
+        // Read before the steps below add the release's platform context, keytab and catalog references to the form.
+        final boolean fromForm = carriesServiceForm(request);
 
         // A redeploy that leaves out the chart repository, the chart version or the platform context (resync,
         // security refresh, autoscaling change, the wizard's query parameters) keeps the release's. Done first, so
@@ -4630,7 +4646,14 @@ public class CommandService {
         // Operator-supplied extra catalogs. Parsed here, next to the alias rewriting and for the same
         // reason: it is the one place every backend goes through, so a deploy driven straight at the
         // API behaves exactly like one driven from the wizard.
-        applyCustomCatalogs(request);
+        Map<String, String> customCatalogs = applyCustomCatalogs(request);
+        checkCatalogCredentials(request, customCatalogs);
+
+        // Secrets this deploy would still leave readable outside a Kubernetes Secret: refused when the operator can
+        // fix them in the wizard, otherwise written into the operation log (see logDeployWarnings).
+        List<String> warnings = new ArrayList<>();
+        addIfPresent(warnings, checkLiteralCatalogCredentials(request, recorded));
+        addIfPresent(warnings, checkSecretChartVersions(request, chartSource.version(), fromForm));
 
         // OpenMetadata Trino base ingestion: validate the target release and write the TagSync
         // mapping into the values BEFORE anything is persisted, so a bad selection fails the
@@ -4694,12 +4717,51 @@ public class CommandService {
         if (backend == null) {
             throw new IllegalStateException("No deployment backend available");
         }
+        String id;
         try {
-            return backend.apply(request, context);
+            id = backend.apply(request, context);
         } catch (Exception ex) {
             LOG.error("Deployment failed for {}/{} using mode {}: {}", request.getNamespace(), request.getReleaseName(), deploymentMode, ex.toString(), ex);
             throw new RuntimeException(ex);
         }
+        // Only a Helm deploy has an operation to log into; a GitOps deploy returns the commit it pushed.
+        if (backend == deploymentBackends.get(DeploymentMode.DIRECT_HELM.name())) {
+            logDeployWarnings(id, warnings);
+        }
+        return id;
+    }
+
+    private static void addIfPresent(List<String> list, String item) {
+        if (item != null) list.add(item);
+    }
+
+    /**
+     * Writes warnings found while the deploy was submitted into its operation log, which the operator watching it
+     * sees (the server log only reaches an administrator). They are in the server log already.
+     */
+    private void logDeployWarnings(String commandId, List<String> warnings) {
+        for (String warning : warnings) {
+            try {
+                commandLogService.append(commandId, "[WARN] " + warning);
+            } catch (Exception ex) {
+                LOG.debug("Failed to append a deploy warning to the log of {}: {}", commandId, ex.toString());
+            }
+        }
+    }
+
+    /**
+     * Whether a deploy carries a service form, as the wizard sends it (an install, Upgrade/Config), rather than only
+     * the release's values and platform context, as a resync, a security refresh or an autoscaling change sends it.
+     * Only the operator filling the form can act on a refusal there and then, e.g. by picking another chart version.
+     * Read before the deploy adds anything to the form (keys starting with "_" are the server's own).
+     */
+    static boolean carriesServiceForm(HelmDeployRequest request) {
+        Map<String, Object> form = request.getFormValues();
+        if (form == null) return false;
+        for (String key : form.keySet()) {
+            if (key != null && !key.startsWith("_") && !"platformContextId".equals(key)) return true;
+        }
+        return false;
     }
 
     /** The chart repository and chart version a deploy uses; either may be {@code null}. */
@@ -5073,6 +5135,10 @@ public class CommandService {
      * <code>"requiredChartVersion": "&gt;=0.12.24"</code>, compare against the resolved
      * chart version. Refuse the install with a clear error if they don't match — prevents
      * silent breakage when chart and service.json drift apart.
+     *
+     * <p><b>retiredValues.</b> Values an earlier version of the service.json wrote and this one no
+     * longer does are removed after the aliases (see {@link #removeRetiredValues}), so that a redeploy
+     * from the release's values does not send them again.
      */
     /** Catalog names KDPS builds itself from the platform context; an operator must not shadow them. */
     static final java.util.Set<String> KDPS_MANAGED_CATALOGS = java.util.Set.of("hive", "iceberg");
@@ -5174,13 +5240,18 @@ public class CommandService {
                 trinoHost, ref[0], ref[1], omTrinoService, trinoRangerRepo);
     }
 
-    private void applyCustomCatalogs(HelmDeployRequest request) {
+    /**
+     * Adds the reusable catalogs selected in the wizard and its inline catalogs to the chart values.
+     *
+     * @return the catalogs added (name to properties), empty when the deploy carries none
+     */
+    Map<String, String> applyCustomCatalogs(HelmDeployRequest request) {
         // A form without the custom-catalogs section (resync, security refresh, autoscaling change, a deploy driven
         // at the API) changes nothing: the release keeps the reusable catalogs it records. The wizard always sends
         // the section, so deselecting every catalog there still clears them.
         if (request.getFormValues() == null
                 || ConfigResolutionService.getByDottedPath(request.getFormValues(), "customCatalogs") == null) {
-            return;
+            return Collections.emptyMap();
         }
         // (1) reusable catalogs selected in the wizard (ids) -> snapshot their properties + remember refs
         Map<String, String> fromRefs = new LinkedHashMap<>();
@@ -5217,16 +5288,247 @@ public class CommandService {
 
         Map<String, String> merged = new LinkedHashMap<>(fromRefs);
         merged.putAll(parsed);
-        if (merged.isEmpty()) return;
+        if (merged.isEmpty()) return merged;
 
         Map<String, Object> values = request.getValues();
-        if (values == null) return;
+        if (values == null) return merged;
         Object existing = values.get("catalogs");
         Map<String, Object> catalogs = (existing instanceof Map)
                 ? (Map<String, Object>) existing : new LinkedHashMap<>();
         catalogs.putAll(merged);
         values.put("catalogs", catalogs);
         LOG.info("Trino catalogs wired into the release: reusable={} inline={}", fromRefs.keySet(), parsed.keySet());
+        return merged;
+    }
+
+    /** Values key of the Trino "Secrets with catalog credentials" (chart 1.43.16 and later). */
+    static final String CATALOG_CREDENTIAL_SECRETS = "catalogCredentialSecrets";
+
+    /** A catalog property value read from the environment: {@code ${ENV:NAME}}. */
+    private static final Pattern ENV_REFERENCE = Pattern.compile("\\$\\{ENV:([A-Za-z_][A-Za-z0-9_]*)}");
+
+    /**
+     * Environment variables the Trino chart sets itself (security profile, Polaris and S3 credentials, truststore,
+     * Hadoop configuration), which a catalog may reference without a credential Secret.
+     */
+    private static final Pattern TRINO_CHART_ENV = Pattern.compile("(TRINO|POLARIS|ICEBERG_S3|OIDC|TRUSTSTORE|HADOOP)_.*");
+
+    /**
+     * Checks the Trino "Secrets with catalog credentials" before anything is deployed. The chart exposes every key of
+     * each of these Secrets as an environment variable of the coordinator and the workers, and catalogs read their
+     * credentials from them as {@code ${ENV:KEY}}. A Secret missing from the namespace would keep the pods from
+     * starting, and a variable nothing provides stops the coordinator, so both are refused here with what to do:
+     * <ul>
+     *   <li>each Secret must exist in the release namespace;</li>
+     *   <li>each {@code ${ENV:KEY}} of the catalogs this deploy adds must be a key of one of them, a variable the
+     *   chart sets, or one of the values' {@code env}. Not checked when the values also take variables from
+     *   {@code envFrom}, or a Secret cannot be read: KDPS cannot see those keys then.</li>
+     * </ul>
+     *
+     * @param customCatalogs the catalogs this deploy adds (reusable and inline), name to properties
+     */
+    void checkCatalogCredentials(HelmDeployRequest request, Map<String, String> customCatalogs) {
+        Map<String, Object> values = request.getValues();
+        List<String> secretNames = asStringList(values == null ? null : values.get(CATALOG_CREDENTIAL_SECRETS));
+        Set<String> provided = new LinkedHashSet<>();
+        boolean allKeysKnown = true;
+        for (String secretName : secretNames) {
+            io.fabric8.kubernetes.api.model.Secret secret;
+            try {
+                secret = kubernetesService.getSecret(request.getNamespace(), secretName);
+            } catch (Exception e) {
+                LOG.warn("Could not read catalog credential Secret {}/{}; its keys are not checked: {}",
+                        request.getNamespace(), secretName, e.toString());
+                allKeysKnown = false;
+                continue;
+            }
+            if (secret == null) {
+                throw new IllegalArgumentException("Secret '" + secretName + "', selected under 'Secrets with catalog"
+                        + " credentials', does not exist in namespace '" + request.getNamespace() + "'. Create it"
+                        + " there first, e.g. kubectl -n " + request.getNamespace() + " create secret generic "
+                        + secretName + " --from-literal=PG_PASSWORD=..., or remove it from the selection.");
+            }
+            if (secret.getData() != null) provided.addAll(secret.getData().keySet());
+            if (secret.getStringData() != null) provided.addAll(secret.getStringData().keySet());
+        }
+        if (customCatalogs == null || customCatalogs.isEmpty() || !allKeysKnown) return;
+        Object envFrom = values == null ? null : values.get("envFrom");
+        if (envFrom instanceof Collection<?> sources && !sources.isEmpty()) return;
+        if (values != null && values.get("env") instanceof Collection<?> env) {
+            for (Object entry : env) {
+                if (entry instanceof Map<?, ?> m && m.get("name") != null) provided.add(String.valueOf(m.get("name")));
+            }
+        }
+        Map<String, Set<String>> missing = new LinkedHashMap<>();
+        for (Map.Entry<String, String> catalog : customCatalogs.entrySet()) {
+            Matcher m = ENV_REFERENCE.matcher(catalog.getValue() == null ? "" : catalog.getValue());
+            while (m.find()) {
+                String variable = m.group(1);
+                if (!provided.contains(variable) && !TRINO_CHART_ENV.matcher(variable).matches()) {
+                    missing.computeIfAbsent(catalog.getKey(), k -> new LinkedHashSet<>()).add(variable);
+                }
+            }
+        }
+        if (missing.isEmpty()) return;
+        List<String> parts = new ArrayList<>();
+        missing.forEach((catalog, variables) -> parts.add("'" + catalog + "' reads " + String.join(", ", variables)));
+        throw new IllegalArgumentException("Catalog credentials: " + String.join("; ", parts) + " from the"
+                + " environment, but " + (secretNames.isEmpty() ? "no Secret is selected under 'Secrets with catalog"
+                + " credentials'" : "no Secret selected under 'Secrets with catalog credentials' ("
+                + String.join(", ", secretNames) + ") has such a key") + ". Trino would not start. Add the key to"
+                + " a Secret in namespace '" + request.getNamespace() + "' and select that Secret.");
+    }
+
+    /**
+     * Looks for catalogs of the chart values that write a credential out
+     * ({@link TrinoCatalogService#literalCredentialProperties}), every catalog but the ones KDPS builds: those this
+     * deploy adds, and those the release keeps from before credentials had to come from a Secret (an inline catalog of
+     * an earlier deploy, a reusable catalog saved then, one saved from the release's Catalogs action). The chart would
+     * write them into the catalog ConfigMap, which anyone allowed to read ConfigMaps in the namespace can read.
+     * <ul>
+     *   <li>The deploy carries the wizard's custom-catalogs section: refused, naming each catalog, its properties and
+     *   where to fix it, since the operator can do so there and then.</li>
+     *   <li>Otherwise (a resync, a security refresh, an autoscaling change, a chart upgrade from the Releases page):
+     *   returned as a warning for the operation log. Refusing would leave the release without those operations.</li>
+     * </ul>
+     * The values themselves are never repeated.
+     *
+     * @param recorded the release as an earlier deploy recorded it (its reusable catalogs), may be {@code null}
+     * @return the warning, or {@code null} when every catalog reads its credentials from the environment
+     * @throws IllegalArgumentException for a credential written out in a deploy from the wizard
+     */
+    String checkLiteralCatalogCredentials(HelmDeployRequest request, K8sReleaseEntity recorded) {
+        Map<String, Object> values = request.getValues();
+        if (values == null || !(values.get("catalogs") instanceof Map<?, ?> catalogs)) return null;
+        Map<String, List<String>> literal = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> catalog : catalogs.entrySet()) {
+            String name = String.valueOf(catalog.getKey());
+            if (KDPS_MANAGED_CATALOGS.contains(name) || !(catalog.getValue() instanceof String text)) continue;
+            List<String> properties = TrinoCatalogService.literalCredentialProperties(text);
+            if (!properties.isEmpty()) literal.put(name, properties);
+        }
+        if (literal.isEmpty()) return null;
+
+        // The reusable catalogs: those the wizard selected (recorded by applyCustomCatalogs), else the release's.
+        Map<String, Object> form = request.getFormValues();
+        boolean fromWizard = form != null && ConfigResolutionService.getByDottedPath(form, "customCatalogs") != null;
+        Object refs = form != null && form.containsKey("_catalogRefsJson") ? form.get("_catalogRefsJson")
+                : recorded == null ? null : recorded.getCatalogRefsJson();
+        Set<String> reusable = TrinoCatalogService.parseRefs(refs == null ? null : String.valueOf(refs)).keySet();
+
+        List<String> parts = new ArrayList<>();
+        literal.forEach((name, properties) -> parts.add("'" + name + "' writes " + String.join(", ", properties)
+                + " out (" + (reusable.contains(name)
+                        ? "a reusable catalog: edit it on the Trino Catalogs page"
+                        : "kept from an earlier deploy of the release: define it again under 'Additional Trino"
+                                + " catalogs', which replaces it") + ")"));
+        String found = "Catalog credentials written out: " + String.join("; ", parts) + ".";
+        String namespace = request.getNamespace();
+        if (fromWizard) {
+            Map.Entry<String, List<String>> first = literal.entrySet().iterator().next();
+            String property = first.getValue().get(0);
+            String variable = (first.getKey() + "_" + property).toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9_]", "_");
+            throw new IllegalArgumentException(found + " They would be stored in the catalog ConfigMap, which anyone"
+                    + " allowed to read ConfigMaps in namespace '" + namespace + "' can read. Put each credential in a"
+                    + " Kubernetes Secret in that namespace, select the Secret under 'Secrets with catalog credentials'"
+                    + " and reference its key instead, e.g. " + property + "=${ENV:" + variable + "}.");
+        }
+        String warning = found + " They are still written into the catalog ConfigMap, which anyone allowed to read"
+                + " ConfigMaps in namespace '" + namespace + "' can read. Run Upgrade/Config on the release to read"
+                + " them from a Kubernetes Secret with ${ENV:KEY} instead.";
+        LOG.warn("{}/{}: {}", namespace, request.getReleaseName(), warning);
+        return warning;
+    }
+
+    /**
+     * Looks for secrets the chart this deploy uses would write into a ConfigMap or a plain environment variable,
+     * although a later chart keeps them in a Kubernetes Secret ({@code secretChartVersions} of the service
+     * definition). Each entry's path is looked up in the deploy's values, its form, then the values its security
+     * profile adds (an LDAP or AD bind password, an OIDC client secret).
+     * <ul>
+     *   <li>The deploy carries the wizard's form: refused, since the operator can pick a later chart under
+     *   'Version (override)' there and then.</li>
+     *   <li>Otherwise (a resync, a security refresh, an autoscaling change of a release on an older chart, a chart
+     *   upgrade from the Releases page): returned as a warning for the operation log. Refusing would leave the
+     *   release without those operations.</li>
+     * </ul>
+     *
+     * @param resolvedVersion the chart version the deploy uses; nothing is checked without one
+     * @param fromForm        whether the deploy carries the wizard's form ({@link #carriesServiceForm})
+     * @return the warning, or {@code null}
+     * @throws IllegalArgumentException for such a secret in a deploy from the wizard
+     */
+    String checkSecretChartVersions(HelmDeployRequest request, String resolvedVersion, boolean fromForm) {
+        if (resolvedVersion == null || resolvedVersion.isBlank()
+                || request.getServiceKey() == null || request.getServiceKey().isBlank()) return null;
+        StackServiceDef def;
+        try {
+            def = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (secret chart versions not checked): {}",
+                    request.getServiceKey(), ex.toString());
+            return null;
+        }
+        if (def == null || def.secretChartVersions == null || def.secretChartVersions.isEmpty()) return null;
+
+        Map<String, String> profileValues = null;   // read once, and only when needed
+        Map<String, List<String>> labelsByRange = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : def.secretChartVersions.entrySet()) {
+            String path = entry.getKey();
+            if (path == null || path.isBlank() || path.startsWith("_")
+                    || !(entry.getValue() instanceof Map<?, ?> spec)) continue;
+            String range = stringValue(spec.get("range"));
+            if (range.isBlank() || isChartVersionCompatible(resolvedVersion, range)) continue;
+            boolean carried = carriesSecret(ConfigResolutionService.getByDottedPath(request.getValues(), path))
+                    || carriesSecret(ConfigResolutionService.getByDottedPath(request.getFormValues(), path));
+            if (!carried) {
+                if (profileValues == null) profileValues = securityProfileValues(request.getSecurityProfile());
+                carried = carriesSecret(profileValues.get(path));
+            }
+            if (!carried) continue;
+            String label = stringValue(spec.get("label"));
+            labelsByRange.computeIfAbsent(range, k -> new ArrayList<>()).add(label.isBlank() ? "'" + path + "'" : label);
+        }
+        if (labelsByRange.isEmpty()) return null;
+
+        List<String> sentences = new ArrayList<>();
+        labelsByRange.forEach((range, labels) -> {
+            String them = labels.size() == 1 ? "it" : "them";
+            sentences.add("With chart " + resolvedVersion + ", " + String.join(" and ", labels) + " would not be kept"
+                    + " in a Kubernetes Secret: the chart writes " + them + " into a ConfigMap or a plain environment"
+                    + " variable, which anyone allowed to read ConfigMaps or Deployments in namespace '"
+                    + request.getNamespace() + "' can read. Chart " + range + " keeps " + them + " in a Secret.");
+        });
+        String found = String.join(" ", sentences);
+        if (fromForm) {
+            throw new IllegalArgumentException(found + " Pick such a chart version under 'Version (override)'.");
+        }
+        String warning = found + " Upgrade the release to such a chart version (Upgrade/Config, or the chart upgrade"
+                + " on the Releases page).";
+        LOG.warn("{}/{}: {}", request.getNamespace(), request.getReleaseName(), warning);
+        return warning;
+    }
+
+    /** Whether a value carries a secret: a non-blank text, or a non-empty list or map. */
+    private static boolean carriesSecret(Object value) {
+        if (value instanceof Collection<?> c) return !c.isEmpty();
+        if (value instanceof Map<?, ?> m) return !m.isEmpty();
+        return value != null && !String.valueOf(value).isBlank();
+    }
+
+    /**
+     * The chart values a security profile adds to a deploy (Helm path to value), as {@link #applySecurityOverrides}
+     * writes them; empty without a profile or when it cannot be read.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> securityProfileValues(String requestedProfile) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        try {
+            applySecurityOverrides(loadSecurityConfig(resolveSecurityProfileName(requestedProfile)), params);
+        } catch (Exception ex) {
+            LOG.warn("Could not read the values of security profile {}: {}", requestedProfile, ex.toString());
+        }
+        return params.get("_ov") instanceof Map<?, ?> ov ? (Map<String, String>) ov : Collections.emptyMap();
     }
 
     /** A form value that may arrive as a List, a JSON-ish array string or a comma-separated string. */
@@ -5293,11 +5595,8 @@ public class CommandService {
                 throw new IllegalArgumentException("Additional catalogs: '" + e.getKey()
                         + "' has no connector.name, so Trino would refuse to start. Add the connector it should use.");
             }
-            // Inline credentials end up readable in the catalog ConfigMap and in SHOW CREATE CATALOG.
-            if (e.getValue().matches("(?s).*(password|secret-key|secret_key)\\s*=\\s*(?!\\$\\{)\\S.*")) {
-                LOG.warn("Additional catalog '{}' appears to carry an inline credential. Prefer a Secret and"
-                        + " ${{ENV:VAR}} so it does not sit in the catalog ConfigMap.", e.getKey());
-            }
+            // Inline credentials would be readable in the catalog ConfigMap and in SHOW CREATE CATALOG.
+            TrinoCatalogService.rejectLiteralCredentials(e.getKey(), e.getValue());
         }
 
         return parsed;
@@ -5338,10 +5637,10 @@ public class CommandService {
                 if (togglePath == null || togglePath.isBlank() || range == null || range.isBlank()) continue;
                 if (togglePath.startsWith("_")) continue;   // "_comment" and friends: documentation, not a toggle
                 Object enabled = ConfigResolutionService.getByDottedPath(request.getValues(), togglePath);
-                if (!asBoolean(enabled, false) && request.getFormValues() != null) {
+                if (!featureOn(enabled) && request.getFormValues() != null) {
                     enabled = ConfigResolutionService.getByDottedPath(request.getFormValues(), togglePath);
                 }
-                if (!asBoolean(enabled, false)) continue;
+                if (!featureOn(enabled)) continue;
                 if (!isChartVersionCompatible(resolvedVersion, range)) {
                     throw new IllegalArgumentException(
                             "'" + togglePath + "' is enabled, which needs chart version " + range
@@ -5355,16 +5654,92 @@ public class CommandService {
             }
         }
 
-        // ----- value path rewrites
-        if (def.valueAliases == null || def.valueAliases.isEmpty()) return;
-        Map<String, Object> values = request.getValues();
-        for (Map.Entry<String, String> e : def.valueAliases.entrySet()) {
-            String from = e.getKey();
-            String to = e.getValue();
-            if (from == null || from.isBlank() || to == null || to.isBlank() || from.equals(to)) continue;
-            rewriteDottedPath(values, from, to);
-            LOG.info("Applied valueAlias for {}: {} -> {}", request.getServiceKey(), from, to);
+        // ----- value path rewrites and retired values
+        applyDefinitionValueRewrites(def, request.getServiceKey(), request.getValues());
+    }
+
+    /**
+     * Brings chart values in line with the service definition KDPS runs now, in place: moves each of its
+     * {@code valueAliases}, then removes its {@code retiredValues} (see {@link #removeRetiredValues}). Every path that
+     * sends a release's values back to Helm goes through it (a deploy, "Upgrade chart" on the Releases page, a catalog
+     * saved on the Trino Catalogs page): those values may hold what an earlier definition wrote and this one no longer
+     * does, such as a secret a binding used to copy somewhere anyone allowed to read ConfigMaps or Deployments can see.
+     * When the definition cannot be loaded, the values are left as they are.
+     *
+     * @param serviceKey the release's service, e.g. SUPERSET; nothing is done without one
+     */
+    public static void applyDefinitionValueRewrites(ViewContext ctx, String serviceKey, Map<String, Object> values) {
+        if (serviceKey == null || serviceKey.isBlank() || values == null) return;
+        StackServiceDef def;
+        try {
+            def = new StackDefinitionService(ctx).getServiceDefinition(serviceKey);
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (values sent without its aliases and retired values): {}",
+                    serviceKey, ex.toString());
+            return;
         }
+        applyDefinitionValueRewrites(def, serviceKey, values);
+    }
+
+    private static void applyDefinitionValueRewrites(StackServiceDef def, String serviceKey, Map<String, Object> values) {
+        if (def == null || values == null) return;
+        if (def.valueAliases != null) {
+            for (Map.Entry<String, String> e : def.valueAliases.entrySet()) {
+                String from = e.getKey();
+                String to = e.getValue();
+                if (from == null || from.isBlank() || to == null || to.isBlank() || from.equals(to)) continue;
+                rewriteDottedPath(values, from, to);
+                LOG.info("Applied valueAlias for {}: {} -> {}", serviceKey, from, to);
+            }
+        }
+        // After the aliases, which move a value that only changed place (the Superset SECRET_KEY).
+        removeRetiredValues(values, def.retiredValues);
+    }
+
+    /**
+     * Removes (in place) the {@code retiredValues} of a service definition from chart values: the value at each dotted
+     * path, or, for an entry {@code {"linesStartingWith": [...]}}, the lines of that list starting with one of the
+     * prefixes. Keys starting with "_" are comments. Mirrors removeRetiredValues of the wizard (chartValues.ts).
+     */
+    @SuppressWarnings("unchecked")
+    static void removeRetiredValues(Map<String, Object> values, Map<String, Object> retiredValues) {
+        if (values == null || retiredValues == null) return;
+        for (Map.Entry<String, Object> retired : retiredValues.entrySet()) {
+            String path = retired.getKey();
+            if (path == null || path.isBlank() || path.startsWith("_")) continue;
+            String[] keys = path.split("\\.");
+            Map<String, Object> parent = values;
+            for (int i = 0; i < keys.length - 1 && parent != null; i++) {
+                parent = parent.get(keys[i]) instanceof Map ? (Map<String, Object>) parent.get(keys[i]) : null;
+            }
+            if (parent == null || !parent.containsKey(keys[keys.length - 1])) continue;
+            Object prefixes = retired.getValue() instanceof Map<?, ?> spec ? spec.get("linesStartingWith") : null;
+            if (!(prefixes instanceof Collection<?> starts)) {
+                parent.remove(keys[keys.length - 1]);
+                LOG.info("Removed retired value {}", path);
+                continue;
+            }
+            if (!(parent.get(keys[keys.length - 1]) instanceof Collection<?> lines)) continue;
+            List<Object> kept = new ArrayList<>();
+            for (Object line : lines) {
+                boolean drop = line instanceof String text
+                        && starts.stream().anyMatch(start -> start != null && text.trim().startsWith(String.valueOf(start)));
+                if (!drop) kept.add(line);
+            }
+            if (kept.size() != lines.size()) {
+                parent.put(keys[keys.length - 1], kept);
+                LOG.info("Removed {} retired line(s) from {}", lines.size() - kept.size(), path);
+            }
+        }
+    }
+
+    /**
+     * Whether the setting behind a {@code featureChartVersions} entry is on: a toggle set to true, or a list with at
+     * least one entry (e.g. the Trino catalog credential Secrets).
+     */
+    static boolean featureOn(Object setting) {
+        if (setting instanceof Collection<?> list) return !list.isEmpty();
+        return asBoolean(setting, false);
     }
 
     /**
@@ -5374,7 +5749,7 @@ public class CommandService {
      * is absent.
      */
     @SuppressWarnings("unchecked")
-    private void rewriteDottedPath(Map<String, Object> root, String fromPath, String toPath) {
+    private static void rewriteDottedPath(Map<String, Object> root, String fromPath, String toPath) {
         if (root == null) return;
         String[] from = fromPath.split("\\.");
         Map<String, Object> srcParent = root;

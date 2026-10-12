@@ -21,6 +21,7 @@ import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -118,6 +120,35 @@ class TrinoCatalogRuntimeServiceTest {
     @Test
     void shellQuotingSurvivesSingleQuotes() {
         assertEquals("'a'\\''b'", TrinoStatementClient.sq("a'b"));
+    }
+
+    /**
+     * Saving a catalog upgrades the release with its values. Those of a release deployed by an earlier definition may
+     * hold secrets it wrote into the server configuration, a ConfigMap: the upgrade must not render them again.
+     */
+    @Test
+    void aSavedCatalogUpgradesTheReleaseWithoutTheSecretsAnEarlierDefinitionWroteIntoItsConfiguration() {
+        TrinoCatalogRuntimeService.Target t = target("trino", "DIRECT_HELM");
+        t.metadata.setServiceKey("TRINO");
+        t.values = new LinkedHashMap<>();
+        t.values.put("internalSharedSecret", "Typed-Shared-Secret-1");
+        t.values.put("additionalConfigProperties", new ArrayList<>(List.of(
+                "internal-communication.shared-secret=Typed-Shared-Secret-1", "http-server.process-forwarded=true")));
+        Map<String, Object> coordinator = new LinkedHashMap<>();
+        coordinator.put("additionalConfigProperties", new ArrayList<>(List.of(
+                "http-server.https.keystore.key=Typed-Keystore-Pass-2", "query.max-history=500")));
+        t.values.put("coordinator", coordinator);
+        t.values.put("catalogs", new LinkedHashMap<>(Map.of("tpch", "connector.name=tpch")));
+
+        Map<String, Object> values = TrinoCatalogRuntimeService.valuesWithCatalog(null, t, "pg",
+                "connector.name=postgresql\nconnection-password=${ENV:PG_PASSWORD}");
+
+        assertEquals(Map.of("tpch", "connector.name=tpch",
+                "pg", "connector.name=postgresql\nconnection-password=${ENV:PG_PASSWORD}"), values.get("catalogs"));
+        assertFalse(values.containsKey("internalSharedSecret"));
+        assertEquals(List.of("http-server.process-forwarded=true"), values.get("additionalConfigProperties"));
+        assertEquals(List.of("query.max-history=500"),
+                ((Map<?, ?>) values.get("coordinator")).get("additionalConfigProperties"));
     }
 
     private static TrinoCatalogRuntimeService.Target target(String release, String deploymentMode) {

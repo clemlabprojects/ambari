@@ -22,12 +22,19 @@
  * "impala" are all the Hive connector with a metastore: Trino has no Impala connector — Impala
  * tables are Hive Metastore tables, so the CDP metastore is what you point at.
  */
+/**
+ * Help under a credential field. KDPS refuses a credential written out in a catalog: it would sit in the release's
+ * catalog ConfigMap, which anyone allowed to read ConfigMaps in the namespace can read.
+ */
+export const CREDENTIAL_HELP = 'Read it from a Secret: select the Secret under "Secrets with catalog credentials" on the '
+  + 'Trino release and write ${ENV:KEY} here. A value written out is refused.';
+
 export interface TemplateField {
   key: string;            // property name
   label: string;
   placeholder?: string;
   required?: boolean;
-  secret?: boolean;       // suggest ${ENV:VAR} instead of a literal
+  secret?: boolean;       // a credential: must be ${ENV:KEY}, never a literal (see CREDENTIAL_HELP)
   help?: string;
   defaultValue?: string;
 }
@@ -49,7 +56,7 @@ export const CATALOG_TEMPLATES: CatalogTemplate[] = [
     fields: [
       { key: 'connection-url', label: 'JDBC URL', placeholder: 'jdbc:postgresql://db.example.com:5432/analytics', required: true },
       { key: 'connection-user', label: 'User', required: true },
-      { key: 'connection-password', label: 'Password', secret: true, placeholder: '${ENV:PG_PASSWORD}', help: 'Prefer a Secret exposed as an env var and reference it as ${ENV:VAR}.' },
+      { key: 'connection-password', label: 'Password', secret: true, placeholder: '${ENV:PG_PASSWORD}' },
     ],
   },
   {

@@ -51,7 +51,7 @@ const ON = { 'icebergCatalog.enabled': true, 'icebergCatalog.s3Region': 'us-east
 
 describe('TRINO service.json — Iceberg catalog on Polaris', () => {
   it('declares the chart pin, the four bindings and the polaris requiresContext entry', () => {
-    expect(def.version).toBe('1.43.15');  // 1.43.11 added tag sync, 1.43.12 added dynamic catalogs, 1.43.15 heap from the memory limit
+    expect(def.version).toBe('1.43.16');  // 1.43.11 added tag sync, 1.43.12 added dynamic catalogs, 1.43.15 heap from the memory limit, 1.43.16 credentials from Secrets
     expect(BINDINGS.map((b: any) => b.name).sort()).toEqual([
       'iceberg-catalog',
       'iceberg-catalog-s3-endpoint',

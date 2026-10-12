@@ -31,8 +31,9 @@ import ReviewStep from '../components/wizard/ReviewStep';
 import { deepMerge } from '../components/ServiceInstallationModal/bindings';
 import { seedFieldsFromRelease } from '../components/ServiceInstallationModal/seedFromRelease';
 import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
-import { applyFormDefaults, buildChartValues } from '../components/ServiceInstallationModal/chartValues';
+import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
+import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPayload';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
@@ -275,6 +276,8 @@ const ServiceWizardPage: React.FC = () => {
                 const deployed = await getReleaseValues(initial.namespace, initial.releaseName);
                 if (deployed && typeof deployed === 'object' && Object.keys(deployed).length > 0) {
                   deepMerge(initial, deployed); // deployed values win over defaults
+                  // Fields kept out of the values (the Superset SECRET_KEY) come back from where the release keeps them.
+                  if (Array.isArray(svcDef?.form)) seedFieldsFromValues(svcDef.form, initial);
                   // The Hostname (DNS) form field is scalar `ingress.host`, but charts store the host
                   // under the `ingress.hosts[]` array — back-map so the field reflects the deployed host.
                   const deployedHost = initial?.ingress?.hosts?.[0]?.host;
@@ -464,6 +467,7 @@ const ServiceWizardPage: React.FC = () => {
     platform,
     editorValues,
     chartVersion: targetChartVersion(),
+    retiredValues: (def as any)?.retiredValues,
   });
 
   const previewYaml = useMemo(() => {
@@ -494,42 +498,6 @@ const ServiceWizardPage: React.FC = () => {
       parsedRef.current = null;
       setParseError(e?.message || 'Invalid YAML');
     }
-  };
-
-  /**
-   * TLS SANs for the keystore KDPS generates, resolved at SUBMIT time from the service definition's
-   * `tls[].dnsTemplates`. It cannot be done when the definition loads: `{{ingress.host}}` is only
-   * known once the operator has filled in step 3. Without this the backend falls back to a single
-   * `<release>.<namespace>.svc` SAN, which matches neither the coordinator Service DNS nor the
-   * Route host, and every client that verifies the certificate fails the handshake.
-   */
-  const buildTlsPayload = () => {
-    const specs = (def as any)?.tls;
-    if (!Array.isArray(specs) || !specs.length) return (installValues as any)?.tls || undefined;
-    const render = (tpl: string | undefined) =>
-      (tpl || '').replace(/{{\s*([^}]+)\s*}}/g, (_m: string, raw: string) => {
-        const path = String(raw || '').trim().split('.').filter(Boolean);
-        let cur: any = installValues;
-        for (const part of path) { if (cur == null) return ''; cur = cur[part]; }
-        return cur == null ? '' : String(cur);
-      });
-    const out: any = { ...((installValues as any)?.tls || {}) };
-    for (const spec of specs) {
-      const key = spec?.key;
-      if (!key) continue;
-      const entry = { ...(out[key] || {}) };
-      const names: string[] = [];
-      for (const tpl of (Array.isArray(spec.dnsTemplates) ? spec.dnsTemplates : [])) {
-        const rendered = render(tpl);
-        if (rendered && !names.includes(rendered)) names.push(rendered);
-      }
-      for (const extra of (Array.isArray(entry.extraDns) ? entry.extraDns : [])) {
-        if (extra && !names.includes(String(extra))) names.push(String(extra));
-      }
-      if (names.length) entry.dnsNames = names;
-      out[key] = entry;
-    }
-    return out;
   };
 
   // Hand-written YAML wins, but only once the operator has actually typed in the editor (isDirtyRef): merely opening
@@ -833,7 +801,7 @@ const ServiceWizardPage: React.FC = () => {
               requiredConfigMaps: selectedCtxId === 'none'
                 ? null : ((def as any)?.requiredConfigMaps || null),
               dynamicValues: (def as any)?.dynamicValues || null,
-              tls: buildTlsPayload(),
+              tls: buildTlsPayload((def as any)?.tls, installValues),
               kerberos: (installValues as any)?.kerberos || undefined,
               // Translate ingress.tlsMode (form select) into the wire payload the backend
               // expects. Mirrors ServiceInstallationModal/index.tsx so the wizard and the

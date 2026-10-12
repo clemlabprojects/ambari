@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.15",
+  "version": "1.43.16",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -762,13 +762,6 @@
     { "name": "icebergS3CredentialSecret","from": { "type": "form", "field": "icebergCatalog.s3CredentialSecret" } },
     { "name": "releaseNameVar",          "from": { "type": "form", "field": "releaseName" } },
     { "name": "icebergProvision",        "from": { "type": "form", "field": "icebergCatalog.provision" } },
-    {
-      "name": "internalSharedSecret",
-      "from": {
-        "type": "form",
-        "field": "internalSharedSecret"
-      }
-    },
     {
       "name": "ingressCertManagerIssuerName",
       "from": {
@@ -1535,15 +1528,6 @@
           }
         },
         {
-          "comment": "Only when the operator typed a keystore password. Left blank, KDPS generates one and the chart's init container appends it from the Secret — writing an empty key= line here would shadow nothing but is noise at best.",
-          "path": "coordinator.additionalConfigProperties[]",
-          "skipIfVarEmpty": ["tlsHttpsEnabled", "tlsHttpsPassword"],
-          "from": {
-            "type": "template",
-            "template": "http-server.https.keystore.key=${tlsHttpsPassword}"
-          }
-        },
-        {
           "path": "global.security.tls.enabled",
           "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
@@ -1595,19 +1579,6 @@
           "from": {
             "type": "template",
             "template": "web-ui.enabled=${webUiEnabled}"
-          }
-        }
-      ]
-    },
-    {
-      "name": "internal-shared-secret",
-      "skipIfVarEmpty": "internalSharedSecret",
-      "targets": [
-        {
-          "path": "additionalConfigProperties[]",
-          "from": {
-            "type": "template",
-            "template": "internal-communication.shared-secret=${internalSharedSecret}"
           }
         }
       ]
@@ -1979,19 +1950,6 @@
       ]
     },
     {
-      "name": "security",
-      "label": "Internal security",
-      "type": "group",
-      "fields": [
-        {
-          "name": "internalSharedSecret",
-          "label": "Internal shared secret",
-          "type": "password",
-          "help": "Value of internal-communication.shared-secret, which secures communication between Trino nodes."
-        }
-      ]
-    },
-    {
       "name": "uiSettings",
       "label": "Interface Web",
       "type": "group",
@@ -2350,7 +2308,7 @@
           "label": "Keystore password",
           "type": "password",
           "defaultValue": "",
-          "help": "Leave blank to generate a random one.",
+          "help": "Leave blank to generate a random one. With your own keystore (keystore generation off), the password is stored in the <keystore Secret>-pass Secret, from which Trino reads it. If you created that Secret yourself, it must already hold this password; leave the field blank to keep the one it holds.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -3034,7 +2992,7 @@
           "type": "trino-catalog-select",
           "excludeFromValues": true,
           "defaultValue": [],
-          "help": "Catalogs defined once on the Trino Catalogs page and attached here. Each selected catalog's properties are copied into this release at deploy time (the release keeps that copy until you re-apply it from Upgrade/Config). Add a catalog to the list from the Trino Catalogs page."
+          "help": "Catalogs defined once on the Trino Catalogs page and attached here. Each selected catalog's properties are copied into this release at deploy time (the release keeps that copy until you re-apply it from Upgrade/Config). Add a catalog to the list from the Trino Catalogs page. A catalog that references ${ENV:KEY} needs the Secret holding KEY under 'Secrets with catalog credentials' below."
         },
         {
           "name": "customCatalogs.text",
@@ -3044,7 +3002,15 @@
           "excludeFromValues": true,
           "defaultValue": "",
           "placeholder": "[postgres_prod]\nconnector.name=postgresql\nconnection-url=jdbc:postgresql://db.example.com:5432/analytics\nconnection-user=trino\nconnection-password=${ENV:PG_PASSWORD}\n\n[kafka_events]\nconnector.name=kafka\nkafka.nodes=broker.example.com:9092",
-          "help": "One section per catalog: a [name] header followed by that catalog's .properties lines. Each becomes a Trino catalog of that name and any connector Trino supports will work. connector.name is required. The Hive and Iceberg catalogs above are built by KDPS from the platform context - configure them there, not here. Do not paste credentials inline: put them in a Secret and reference ${ENV:VAR}."
+          "help": "One section per catalog: a [name] header followed by that catalog's .properties lines. Each becomes a Trino catalog of that name and any connector Trino supports will work. connector.name is required. The Hive and Iceberg catalogs above are built by KDPS from the platform context - configure them there, not here. Credentials cannot be written inline: put them in a Secret selected under 'Secrets with catalog credentials' and reference each key as ${ENV:KEY}."
+        },
+        {
+          "name": "catalogCredentialSecrets",
+          "label": "Secrets with catalog credentials",
+          "type": "secret-discovery",
+          "multiple": true,
+          "defaultValue": [],
+          "help": "Kubernetes Secrets in the release namespace holding the passwords and keys of the catalogs above (reusable or additional). Every key of each Secret becomes an environment variable of the Trino pods: reference it in the catalog as ${ENV:KEY}, e.g. connection-password=${ENV:PG_PASSWORD}. The credential then never sits in the catalog ConfigMap or in KDPS. Create the Secret first, e.g.: kubectl -n <ns> create secret generic postgres-prod-credentials --from-literal=PG_PASSWORD=... Restart Trino after changing a Secret. Needs chart 1.43.16 or later."
         }
       ]
     }
@@ -3052,6 +3018,18 @@
   "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale.",
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
+  },
+  "retiredValues": {
+    "_comment": "Values an earlier version of this definition wrote, removed from the values of every deploy (wizard upgrades and redeploys without the wizard alike).",
+    "internalSharedSecret": "The chart generates the internal shared secret and keeps it in the <fullname>-internal-communication Secret; the operator-typed value is no longer used.",
+    "additionalConfigProperties": {
+      "reason": "The internal shared secret written out in the server configuration (a ConfigMap); the chart reads it from its Secret.",
+      "linesStartingWith": ["internal-communication.shared-secret="]
+    },
+    "coordinator.additionalConfigProperties": {
+      "reason": "The HTTPS keystore password written out in the coordinator configuration (a ConfigMap); the chart's init container appends it from the keystore password Secret.",
+      "linesStartingWith": ["http-server.https.keystore.key="]
+    }
   },
   "externalServiceTargets": {
     "hive": {
@@ -3080,7 +3058,14 @@
     "_comment": "Atlas tag sync renders a tag-projector CronJob that only exists from 1.43.11; on an older chart the toggle would deploy cleanly and do nothing.",
     "tagSync.enabled": ">=1.43.11",
     "dynamicCatalogs.enabled": ">=1.43.12",
-    "kdps.serviceUser.enabled": ">=1.43.13"
+    "kdps.serviceUser.enabled": ">=1.43.13",
+    "catalogCredentialSecrets": ">=1.43.16"
+  },
+  "secretChartVersions": {
+    "_comment": "Chart 1.43.16 reads the security profile's bind password and inline OIDC client secret from a Secret (${ENV:...} in the server configuration); an older chart writes them into the coordinator ConfigMap and plain environment variables. A wizard deploy that carries one of them with an older chart is refused; a resync or a security refresh is warned in its operation log.",
+    "global.security.auth.ldap.bindPassword": { "range": ">=1.43.16", "label": "the security profile's LDAP bind password" },
+    "global.security.auth.ad.bindPassword": { "range": ">=1.43.16", "label": "the security profile's Active Directory bind password" },
+    "global.security.auth.oidc.clientSecret": { "range": ">=1.43.16", "label": "the security profile's OIDC client secret" }
   },
   "platformOps": [
     { "op": "ranger.tagProjectorSecret", "when": "tagSync.enabled",

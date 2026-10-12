@@ -31,12 +31,14 @@ import org.apache.ambari.view.k8s.service.deployment.HelmDirectBackend;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.store.SecurityProfileEntity;
 import org.apache.ambari.view.k8s.utils.CommandUtils;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.transport.RefSpec;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Field;
 import java.net.URI;
@@ -784,6 +786,204 @@ class CommandServiceRedeployDefaultsTest {
 
         assertEquals(40, sha.length());
         assertNotNull(published(repoUrl, "clusters/default/analytics/trino/helmrelease.yaml"));
+    }
+
+    /**
+     * A redeploy re-submits the release's values. Those of a release deployed by an earlier version of the definition
+     * may hold secrets it no longer writes (the Trino internal shared secret and HTTPS keystore password as server
+     * configuration lines, which land in a ConfigMap): every backend must get the values without them.
+     */
+    @Test
+    void aResyncSendsNoneOfTheSecretsAnEarlierDefinitionWroteIntoTheTrinoConfiguration() throws Exception {
+        recordRelease(null, "1.43.15");
+        for (String mode : List.of("DIRECT_HELM", "FLUX_GITOPS")) {
+            Map<String, Object> values = new LinkedHashMap<>();
+            values.put("internalSharedSecret", "Typed-Shared-Secret-1");
+            values.put("additionalConfigProperties", new java.util.ArrayList<>(List.of(
+                    "internal-communication.shared-secret=Typed-Shared-Secret-1", "http-server.process-forwarded=true")));
+            CommandService.putDotted(values, "coordinator.additionalConfigProperties", new java.util.ArrayList<>(List.of(
+                    "http-server.https.keystore.key=Typed-Keystore-Pass-2", "query.max-history=500")));
+            HelmDeployRequest request = resyncRequest(values);
+            request.setDeploymentMode(mode);
+
+            service(direct).submitDeploy(request, "charts", null, null, null, null, null, null);
+
+            Map<String, Object> sent = sentRequest.get().getValues();
+            assertFalse(new Gson().toJson(sent).contains("Typed-Shared-Secret-1"), mode);
+            assertFalse(new Gson().toJson(sent).contains("Typed-Keystore-Pass-2"), mode);
+            assertEquals(List.of("http-server.process-forwarded=true"), sent.get("additionalConfigProperties"), mode);
+            assertEquals(List.of("query.max-history=500"),
+                    ConfigResolutionService.getByDottedPath(sent, "coordinator.additionalConfigProperties"), mode);
+        }
+    }
+
+    /**
+     * A Superset release deployed before the SECRET_KEY moved to extraSecretEnv holds it in extraEnv, which the chart
+     * writes into every pod spec. A redeploy without the wizard moves it, unchanged: a new key would leave the
+     * database passwords Superset stored undecryptable.
+     */
+    @Test
+    void aResyncOfAnEarlierSupersetReleaseMovesTheSecretKeyToTheEnvSecret() throws Exception {
+        recordRelease("SUPERSET", "apache/superset", null, "0.12.48");
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("extraEnv", new LinkedHashMap<>(Map.of("SUPERSET_SECRET_KEY", "Key-In-Use-3",
+                "OPENSTREETMAP_SERVER_URL", "https://tile.example.com")));
+        HelmDeployRequest request = resyncRequest(values);
+        request.setChart("apache/superset");
+        request.setServiceKey("SUPERSET");
+
+        submit(request, "charts", null);
+
+        Map<String, Object> sent = sentRequest.get().getValues();
+        assertEquals("Key-In-Use-3", ConfigResolutionService.getByDottedPath(sent, "extraSecretEnv.SUPERSET_SECRET_KEY"));
+        assertEquals(Map.of("OPENSTREETMAP_SERVER_URL", "https://tile.example.com"), sent.get("extraEnv"));
+    }
+
+    /** The operation log the deploy writes its warnings into. */
+    private CommandService serviceLoggingTo(CommandLogService log) throws Exception {
+        CommandService service = service(null);
+        set(service, "commandLogService", log);
+        return service;
+    }
+
+    /** A deploy from the wizard: the release's form, here with the given fields. */
+    private static HelmDeployRequest wizardRequest(String serviceKey, String chart, Map<String, Object> fields) {
+        HelmDeployRequest request = resyncRequest(new LinkedHashMap<>());
+        request.setServiceKey(serviceKey);
+        request.setChart(chart);
+        Map<String, Object> form = new LinkedHashMap<>(Map.of("releaseName", RELEASE, "namespace", NS));
+        form.putAll(fields);
+        request.setFormValues(form);
+        return request;
+    }
+
+    /**
+     * A resync re-submits the release's values, catalogs included. One an earlier deploy wrote with a password still
+     * goes to the catalog ConfigMap, so the operation log says which, without the password; the resync itself is not
+     * refused, or the release could not be resynced until someone edits it.
+     */
+    @Test
+    void aResyncOfACatalogWithACredentialWrittenOutDeploysAndSaysSoInTheOperationLog() throws Exception {
+        recordRelease(null, "1.43.16");
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("catalogs", new LinkedHashMap<>(Map.of("pg", "connector.name=postgresql\nconnection-password=hunter2\n")));
+        CommandLogService log = mock(CommandLogService.class);
+
+        serviceLoggingTo(log).submitDeploy(resyncRequest(values), null, null, null, null, null, null, null);
+
+        assertNotNull(sentRequest.get(), "the resync is not refused");
+        ArgumentCaptor<String> line = ArgumentCaptor.forClass(String.class);
+        verify(log).append(eq("command-1"), line.capture());
+        assertTrue(line.getValue().startsWith("[WARN] Catalog credentials written out: 'pg' writes connection-password out"),
+                line.getValue());
+        assertFalse(line.getValue().contains("hunter2"), line.getValue());
+    }
+
+    /**
+     * Superset before chart 0.12.49 keeps the datasource import files in a ConfigMap. An Upgrade/Config that keeps the
+     * release's older chart (the wizard fills 'Version (override)' with it) and carries the Trino service-account
+     * password is refused with the chart to pick, rather than leaving the password readable.
+     */
+    @Test
+    void aWizardDeployOfADatasourcePasswordOnAnOlderSupersetChartIsRefused() throws Exception {
+        recordRelease("SUPERSET", "apache/superset", null, "0.12.47");
+        HelmDeployRequest request = wizardRequest("SUPERSET", "apache/superset",
+                Map.of("ui_trino_auth_mode", "ldap", "ui_trino_svc_password", "Svc-Pass-7"));
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> submit(request, "charts", "0.12.47"));
+
+        assertTrue(refused.getMessage().startsWith("With chart 0.12.47, the Trino service-account password of the"
+                + " datasource import file would not be kept in a Kubernetes Secret"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("Chart >=0.12.49 keeps it in a Secret. Pick such a chart version under"
+                + " 'Version (override)'."), refused.getMessage());
+        assertFalse(refused.getMessage().contains("Svc-Pass-7"), refused.getMessage());
+        assertNull(sentRequest.get(), "nothing is deployed");
+
+        submit(wizardRequest("SUPERSET", "apache/superset",
+                Map.of("ui_trino_auth_mode", "ldap", "ui_trino_svc_password", "Svc-Pass-7")), "charts", "0.12.49");
+        assertNotNull(sentRequest.get(), "chart 0.12.49 keeps the import files in a Secret");
+    }
+
+    /** Stores the LDAP security profile 'corp-ldap', with its bind password. */
+    private void ldapSecurityProfile() throws Exception {
+        SecurityProfileEntity profile = new SecurityProfileEntity();
+        profile.setId("corp-ldap");
+        profile.setViewInstance("kdps");
+        profile.setProfileJson("{\"mode\":\"ldap\",\"ldap\":{\"url\":\"ldaps://ldap.example.com\","
+                + "\"bindDn\":\"cn=trino,ou=services\",\"bindPassword\":\"Bind-Pass-9\"}}");
+        when(ds.findAll(eq(SecurityProfileEntity.class), any()))
+                .thenReturn(List.of(profile));
+    }
+
+    /**
+     * Trino before chart 1.43.16 writes the security profile's bind password into the coordinator ConfigMap. A security
+     * refresh of a release on such a chart still runs (refusing it would leave the release without one) and its
+     * operation log says what to do; a deploy from the wizard is refused until a later chart is picked.
+     */
+    @Test
+    void theBindPasswordOnAnOlderTrinoChartIsRefusedFromTheWizardAndWarnedOtherwise() throws Exception {
+        recordRelease(null, "1.43.15");
+        ldapSecurityProfile();
+        HelmDeployRequest refresh = resyncRequest(new LinkedHashMap<>());
+        refresh.setSecurityProfile("corp-ldap");
+        CommandLogService log = mock(CommandLogService.class);
+
+        serviceLoggingTo(log).submitDeploy(refresh, null, null, null, null, null, null, null);
+
+        assertNotNull(sentRequest.get(), "the security refresh is not refused");
+        ArgumentCaptor<String> line = ArgumentCaptor.forClass(String.class);
+        verify(log).append(eq("command-1"), line.capture());
+        assertTrue(line.getValue().startsWith("[WARN] With chart 1.43.15, the security profile's LDAP bind password would"
+                + " not be kept in a Kubernetes Secret"), line.getValue());
+        assertTrue(line.getValue().contains("Upgrade the release to such a chart version"), line.getValue());
+        assertFalse(line.getValue().contains("Bind-Pass-9"), line.getValue());
+
+        sentRequest.set(null);
+        HelmDeployRequest wizard = wizardRequest("TRINO", "trinodb/trino", Map.of("securityProfile", "corp-ldap"));
+        wizard.setSecurityProfile("corp-ldap");
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> submit(wizard, "charts", "1.43.15"));
+        assertTrue(refused.getMessage().contains("Chart >=1.43.16 keeps it in a Secret"), refused.getMessage());
+        assertNull(sentRequest.get());
+
+        HelmDeployRequest upgraded = wizardRequest("TRINO", "trinodb/trino", Map.of("securityProfile", "corp-ldap"));
+        upgraded.setSecurityProfile("corp-ldap");
+        submit(upgraded, "charts", "1.43.16");
+        assertNotNull(sentRequest.get());
+    }
+
+    @Test
+    void onlyAFormBeyondThePlatformContextIsTheWizards() {
+        HelmDeployRequest request = resyncRequest(new LinkedHashMap<>());
+        assertFalse(CommandService.carriesServiceForm(request));
+        request.setFormValues(new LinkedHashMap<>(Map.of("platformContextId", "cdp-prod", "_catalogRefsJson", "{}")));
+        assertFalse(CommandService.carriesServiceForm(request), "what the Releases page and the server add");
+        request.getFormValues().put("releaseName", RELEASE);
+        assertTrue(CommandService.carriesServiceForm(request));
+    }
+
+    @Test
+    void retiredValuesAreRemovedByPathOrByLineAndCommentsAreSkipped() {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("_comment", "kept");
+        values.put("top", "gone");
+        values.put("lines", new java.util.ArrayList<>(List.of("a=1", " secret=x", "b=2")));
+        values.put("notALine", "secret=y");
+        Map<String, Object> retired = new LinkedHashMap<>();
+        retired.put("_comment", "a comment, not a path");
+        retired.put("top", "retired");
+        retired.put("lines", Map.of("linesStartingWith", List.of("secret=")));
+        retired.put("notALine", Map.of("linesStartingWith", List.of("secret=")));
+        retired.put("absent.path", "retired");
+
+        CommandService.removeRetiredValues(values, retired);
+
+        assertEquals("kept", values.get("_comment"));
+        assertFalse(values.containsKey("top"));
+        assertEquals(List.of("a=1", "b=2"), values.get("lines"));
+        assertEquals("secret=y", values.get("notALine"), "only a list is filtered by line");
+        assertFalse(values.containsKey("absent"));
     }
 
     /** The Ambari API a deploy loops back to. */

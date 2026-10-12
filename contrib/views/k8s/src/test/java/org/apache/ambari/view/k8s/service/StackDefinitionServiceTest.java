@@ -120,6 +120,34 @@ class StackDefinitionServiceTest {
     assertEquals(Boolean.FALSE, formField(served, "ingressConfig", "ingress.host").get("keepWhenHidden"));
   }
 
+  /**
+   * The Superset SECRET_KEY is kept out of the values and in extraSecretEnv: an upgrade fills the field back from
+   * there (seedFromValues) and drops the copy an earlier deploy left in extraEnv (retiredValues). The Trino catalog
+   * credential Secrets are picked several at a time (multiple). All three are read by the wizard only, so they must
+   * survive the round trip through the model.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void secretHandlingReachesTheWizard() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    Map<String, Object> superset = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("SUPERSET")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+    Map<String, Object> secretKey = formField(superset, "superset", "superset.secretKey");
+    assertEquals(Boolean.TRUE, secretKey.get("excludeFromValues"));
+    assertEquals(List.of("extraSecretEnv.SUPERSET_SECRET_KEY", "extraEnv.SUPERSET_SECRET_KEY"),
+        secretKey.get("seedFromValues"));
+    assertTrue(((Map<String, Object>) superset.get("retiredValues")).containsKey("extraEnv.SUPERSET_SECRET_KEY"));
+
+    Map<String, Object> trino = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("TRINO")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+    Map<String, Object> credentials = formField(trino, "customCatalogs", "catalogCredentialSecrets");
+    assertEquals("secret-discovery", credentials.get("type"));
+    assertEquals(Boolean.TRUE, credentials.get("multiple"));
+    assertEquals(Boolean.FALSE, credentials.get("excludeFromValues"), "the chart reads the list from the values");
+    assertTrue(((Map<String, Object>) trino.get("retiredValues")).containsKey("internalSharedSecret"));
+    assertEquals(">=1.43.16", ((Map<String, Object>) trino.get("featureChartVersions")).get("catalogCredentialSecrets"));
+  }
+
   @SuppressWarnings("unchecked")
   private static Map<String, Object> formGroup(Map<String, Object> def, String group) {
     for (Object g : (List<Object>) def.get("form")) {

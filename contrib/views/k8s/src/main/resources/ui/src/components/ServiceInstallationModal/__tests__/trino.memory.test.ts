@@ -4,7 +4,7 @@ import yaml from 'yaml';
 import { applyBindingTargets, setAtStr } from '../bindings';
 import { applyBlankValues } from '../blankValues';
 import { buildChartValues } from '../chartValues';
-import { resourceCheckErrors } from '../resourceChecks';
+import { chartVersionAtLeast, resourceCheckErrors } from '../resourceChecks';
 
 /**
  * Trino memory sizing in the wizard, run against the REAL service.json: the pods request what they are limited to
@@ -61,7 +61,7 @@ describe.each([
 
 describe('Trino memory values sent to the chart', () => {
   it('pins the chart that sizes a blank heap from the memory limit', () => {
-    expect(svc.version).toBe('1.43.15');
+    expect(chartVersionAtLeast(svc.version, '1.43.15')).toBe(true);
   });
 
   it('the defaults pass every check and leave the heap to the chart', () => {
