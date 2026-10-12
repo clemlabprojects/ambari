@@ -114,6 +114,28 @@ limitations under the License.
     not run. The UI shows that message, and the pull request link, instead of reporting the deploy completed.
     Redeploying the release once the change is merged runs them: the commit then finds nothing to change. Only
     operations return a result: those of their steps stay internal.
+- Every deploy, in either mode and from the UI or the API, is refused (400) before anything is prepared when a name
+  would not be accepted by Helm or Kubernetes: the release name (Helm's rule, at most 53 characters), the namespace,
+  and the name and namespace of each dependency (DNS-1123 labels). A GitOps deploy also needs chart repository ids
+  that are DNS-1123 labels, a chart name (optionally after `<repo>/`) and a chart version made of version or range
+  characters only (no line break, `#` or `:`); `GITOPS_COMMIT` checks them again. A direct deploy keeps every chart
+  reference Helm resolves (an `oci://` reference, with or without a tag, or the URL of a chart archive) and refuses
+  only a chart or version with a line break, another control character, or a space within the chart. The manifests
+  are built as maps and written by a YAML serializer, so no value can add a key or another document; the release's
+  directory is `<path prefix>/<namespace>/<release>` and a dependency's files stay in its `dependencies` directory.
+  Each release keeps a directory of its own: a GitOps deploy whose directory would be inside, or would hold, the
+  directory of another release of the same repository (as the branch holds it, or as KDPS recorded it for a release
+  still in an open pull request), or whose `helmrelease.yaml` already holds another HelmRelease, is refused (400)
+  before anything is prepared or committed. An uninstall deletes only the files the release's deploys write into its
+  own directory (`helmrelease.yaml`, `helmrepository.yaml` and the `-helmrelease.yaml` and `-helmrepository.yaml` files
+  of its `dependencies` directory): any other file, and the directory of a release below it, stays. A blank path, the
+  bare path prefix, another release's directory, or a `helmrelease.yaml` holding another HelmRelease, is refused (400)
+  and nothing is removed, from Git or from the cluster. The release keeps its Polaris credential and its record, so
+  the uninstall can be retried once the record is corrected.
+- Flux applies what is committed with its own rights, not with those of the account KDPS uses: by default Flux's
+  controllers are cluster administrators. For production, lock Flux down to tenants (`--default-service-account`, or
+  a `serviceAccountName` on each tenant's Kustomization) and use pull request mode, so a change is reviewed before
+  Flux applies it.
 - The Secrets the preparation creates (keytabs, SSO client, Ranger plugin, Hadoop configuration, certificates,
   truststore, values Secret) are created by the view in the release namespace and deliberately kept out of Git.
   Re-applying the Git repository alone does not recreate them: redeploy the release from the view.

@@ -23,6 +23,7 @@ import VolumeEditor from '../ServiceInstallationModal/VolumeEditor';
 import { resolveAuthCascade, applyAuthCascadeToFields } from '../ServiceInstallationModal';
 import { ExternalAuthTargetsContext, ContextLinkedFieldsContext, ResolvedContextValuesContext, type ResolvedContextInfo } from '../ServiceInstallationModal/ExternalAuthTargetsContext';
 import { FieldSyncContext, UpgradeModeContext } from '../ServiceInstallationModal/fieldSync';
+import { namespaceRules, releaseNameRules } from '../../utils/nameRules';
 
 interface InstallStepProps {
   definition: any;
@@ -109,10 +110,12 @@ const InstallStep: React.FC<InstallStepProps> = ({
         <FieldSyncContext.Provider value={onValuesChange}>
         <Form form={form} size="large" layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
             <Typography.Title level={4}>Deployment Basics</Typography.Title>
-            <Form.Item name="releaseName" label="Release Name" rules={[{ required: true }]}>
+            {/* Helm and Kubernetes refuse other names; a GitOps deploy writes them into Git. Checked again by the
+                server, these rules only warn as the name is typed. */}
+            <Form.Item name="releaseName" label="Release Name" rules={releaseNameRules(definition)}>
                 <Input />
             </Form.Item>
-            <Form.Item name="namespace" label="Kubernetes Namespace" rules={[{ required: true }]}>
+            <Form.Item name="namespace" label="Kubernetes Namespace" rules={namespaceRules()}>
                 <Input />
             </Form.Item>
             <Form.Item name="chartOverride" label="Chart (override)" tooltip="Override the default chart reference; leave blank to use service.json chart">

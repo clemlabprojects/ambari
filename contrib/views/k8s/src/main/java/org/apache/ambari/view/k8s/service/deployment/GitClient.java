@@ -422,9 +422,17 @@ public class GitClient {
         }
     }
 
-    /** Remove a path (file or directory) relative to repo root. */
+    /**
+     * Remove a path (file or directory) relative to repo root.
+     *
+     * @throws IOException when the path is outside the repository, in its {@code .git} directory, or the whole
+     *                     working tree
+     */
     public void deletePath(Path relative) throws IOException {
         Path abs = resolveSafe(relative);
+        if (abs.equals(workspace)) {
+            throw new IOException("Refusing to delete the whole repository: '" + relative + "'");
+        }
         if (Files.notExists(abs)) {
             return;
         }
@@ -445,7 +453,10 @@ public class GitClient {
         return (prefix == null || prefix.isBlank() ? "gitops" : prefix) + "-" + UUID.randomUUID();
     }
 
-    /** Ensure callers cannot escape the repository root via ".." or absolute paths. */
+    /**
+     * Ensure callers cannot escape the repository root via ".." or absolute paths, nor write to or delete Git's own
+     * data in its {@code .git} directory.
+     */
     private Path resolveSafe(Path relative) throws IOException {
         if (relative == null) {
             throw new IOException("Path is required");
@@ -453,6 +464,9 @@ public class GitClient {
         Path normalized = workspace.resolve(relative).normalize();
         if (!normalized.startsWith(workspace)) {
             throw new IOException("Refusing to operate outside repo: " + relative);
+        }
+        if (normalized.startsWith(workspace.resolve(".git"))) {
+            throw new IOException("Refusing to operate on the repository's .git directory: " + relative);
         }
         return normalized;
     }

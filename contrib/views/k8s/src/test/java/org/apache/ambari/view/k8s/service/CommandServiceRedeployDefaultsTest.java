@@ -663,6 +663,31 @@ class CommandServiceRedeployDefaultsTest {
     }
 
     @Test
+    void aReleaseInstalledFromAChartUrlOrOciReferenceIsRedeployedDirectlyButNeverWrittenToGit() throws Exception {
+        DeploymentBackend gitOps = mock(DeploymentBackend.class);
+        for (String chart : List.of("oci://registry.example.com/charts/trino",
+                "https://charts.example.com/trino-1.43.15.tgz", "kdps/trino:1.43.15", "org/charts/trino")) {
+            recordRelease("TRINO", chart, ContextService.DEFAULT_CONTEXT_ID, "1.43.14");
+            HelmDeployRequest resync = resyncRequest(new LinkedHashMap<>());
+            resync.setChart(chart);
+
+            service(gitOps).submitDeploy(resync, "charts", "1.43.14", null, null, null, null, null);
+
+            assertEquals(chart, sentRequest.get().getChart(), "Helm resolves the reference as before");
+
+            // The same chart in a GitOps deploy: a HelmRelease names a chart of its chart repository, not a URL.
+            HelmDeployRequest gitOpsResync = resyncRequest(new LinkedHashMap<>());
+            gitOpsResync.setChart(chart);
+            gitOpsResync.setDeploymentMode("FLUX_GITOPS");
+            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class, () -> service(gitOps)
+                    .submitDeploy(gitOpsResync, "charts", "1.43.14", null, null, null, null, null));
+            assertTrue(refused.getMessage().startsWith("Chart '" + chart + "' is not valid"), refused.getMessage());
+        }
+        verify(gitOps, never()).apply(any(), any());
+        verify(k8s, org.mockito.Mockito.times(4)).createNamespace(NS);
+    }
+
+    @Test
     void aRedeployWithoutTheCatalogSectionKeepsTheRecordedReusableCatalogs() throws Exception {
         // Installed from the wizard with a reusable catalog; the resync's form only carries the recorded context.
         K8sReleaseEntity recorded = recordRelease(ContextService.DEFAULT_CONTEXT_ID, "1.43.14");

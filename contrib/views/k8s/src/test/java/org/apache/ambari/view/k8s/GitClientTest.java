@@ -108,6 +108,29 @@ class GitClientTest {
         }
     }
 
+    @Test
+    void neitherTheWholeWorkingTreeNorGitsOwnDataCanBeDeletedOrWritten(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        Path ws = tmp.resolve("workspace");
+        GitClient client = new GitClient(ws, url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+
+        for (String root : new String[] {"", ".", "apps/.."}) {
+            org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                    () -> client.deletePath(Path.of(root)), "refused: '" + root + "'");
+        }
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                () -> client.deletePath(Path.of(".git")));
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                () -> client.writeFile(Path.of("apps/../.git/hooks/post-checkout"), "#!/bin/sh\n"));
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                () -> client.deletePath(Path.of("../other")));
+
+        assertTrue(Files.exists(ws.resolve("README.md")), "the working tree is untouched");
+        assertTrue(Files.exists(ws.resolve(".git/HEAD")), "so is the repository");
+        assertTrue(Files.notExists(ws.resolve(".git/hooks/post-checkout")));
+    }
+
   private static Object credentialsFor(String url, String token) throws Exception {
     org.apache.ambari.view.k8s.service.deployment.GitClient c = new org.apache.ambari.view.k8s.service.deployment.GitClient(
         java.nio.file.Files.createTempDirectory("git-cred"), url, "main", token, null);

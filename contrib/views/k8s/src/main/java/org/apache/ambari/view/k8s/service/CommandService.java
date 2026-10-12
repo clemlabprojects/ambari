@@ -47,6 +47,7 @@ import org.apache.ambari.view.k8s.store.HelmRepoRepo;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
+import org.apache.ambari.view.k8s.service.deployment.DeployRequestValidator;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentBackend;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentContext;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
@@ -149,6 +150,8 @@ public class CommandService {
     private final FluxGitOpsBackend fluxGitOpsBackend;
     /** Deletes the parameter and values files of operations that no longer need them. */
     private final OperationFilesRetention operationFiles;
+    /** The startup sweep of operation files, running in the background; tests wait for it before stubbing. */
+    final java.util.concurrent.Future<?> startupSweep;
     /**
      * Prepares the keytab webhook's namespace, certificates and Ambari user before the webhook is installed;
      * package-private so tests, which have no Ambari, can replace it.
@@ -217,7 +220,7 @@ public class CommandService {
         recoverOrphanedCommands();
         // In the background: the first sweep after an upgrade encrypts every file kept by the earlier version.
         this.operationFiles = new OperationFilesRetention(ctx, dataStore);
-        this.workers.submit(() -> {
+        this.startupSweep = this.workers.submit(() -> {
             try {
                 operationFiles.sweep(Instant.now());
             } catch (RuntimeException e) {
@@ -4655,13 +4658,17 @@ public class CommandService {
      * Thread-safe: no shared mutable state beyond the DataStore and thread pools.
      *
      * @throws HelmOperationRegistry.ReleaseBusyException when a Helm operation on the release is still running
+     * @throws IllegalArgumentException when a release, namespace, chart repository, chart or chart version name is
+     *                                  invalid for the deploy's mode ({@link DeployRequestValidator}), its own or a
+     *                                  dependency's
      */
     public String submitDeploy(HelmDeployRequest request, String repoId, String version, String kubeContext, String commandsURL, MultivaluedMap<String,String> callerHeaders,
                                URI baseUri, AmbariAliasResolver ambariAliasResolver) {
-        // Required fields
-        Objects.requireNonNull(request.getChart(), "chart is required");
-        Objects.requireNonNull(request.getReleaseName(), "releaseName is required");
-        Objects.requireNonNull(request.getNamespace(), "namespace is required");
+        // The release, namespace, chart repository, chart and version names, the dependencies' too, before anything
+        // is looked up or prepared for them, in every mode. Strictest for a GitOps deploy, which writes them into the
+        // manifests and their paths in Git, where nothing else would refuse a malformed one; a direct deploy keeps the
+        // chart URLs and OCI references Helm resolves.
+        DeployRequestValidator.validate(request, repoId, version);
         // A Helm call KDPS started on the release, canceled or not, may still be running. Refuse before anything
         // is done: planning the deploy already rewrites the release's TLS and truststore Secrets and its Hadoop
         // configuration, which would change under the running call for a deploy its Helm step then refuses.

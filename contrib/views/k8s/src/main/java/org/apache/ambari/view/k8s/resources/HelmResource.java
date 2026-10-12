@@ -1349,7 +1349,8 @@ public class HelmResource {
      *                     untouched. The object-store bucket is never deleted.
      * @return HTTP 200 on success, with {@code polarisCleanup} and {@code sccCleanup} notes when there is something
      *         left for an administrator to do; 409, with nothing removed, while another Helm operation on the release
-     *         is running; or an error response on failure
+     *         is running; 400, with nothing removed, for a GitOps release whose recorded Git directory is not its own
+     *         or holds another release's HelmRelease; or an error response on failure
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
@@ -1371,7 +1372,26 @@ public class HelmResource {
         } catch (HelmOperationRegistry.ReleaseBusyException busy) {
             return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
         }
+        // A GitOps release whose recorded Git directory is not its own is refused here, before the cleanup below: its
+        // manifests stay in Git and Flux keeps running it, so it keeps its catalog credential and its record, which
+        // a retried uninstall needs once the record names the release's own directory.
+        if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
+            String repoUrlToUse = gitRepoUrl != null && !gitRepoUrl.isBlank() ? gitRepoUrl : meta.getGitRepoUrl();
+            if (repoUrlToUse != null && !repoUrlToUse.isBlank()) {
+                try {
+                    FluxGitOpsBackend.releaseDirectory(meta.getGitPath(), namespace, releaseName);
+                } catch (IllegalArgumentException refused) {
+                    LOG.warn("Uninstall of {}/{} refused: {}", namespace, releaseName, refused.getMessage());
+                    return Response.status(Response.Status.BAD_REQUEST).entity(Map.of(
+                            "error", refused.getMessage(),
+                            "release", releaseName,
+                            "namespace", namespace
+                    )).build();
+                }
+            }
+        }
         boolean refusedAsBusy = false;
+        boolean refusedAsNotOwn = false;
         // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
         try {
             if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
@@ -1392,11 +1412,22 @@ public class HelmResource {
                         }
                     }
                     // The values Secrets stay while the branch Flux reconciles still holds the release: a removal
-                    // pushed to a pull request branch is not applied until merged.
+                    // pushed to a pull request branch is not applied until merged. Only the manifests the release
+                    // wrote into its own directory, as checked above, are removed.
                     fluxGitOpsBackend.destroy(repoUrlToUse, branchToUse, FluxGitOpsBackend.reconciledBranch(meta),
-                            repoPath, authTokenToUse, sshKeyToUse);
+                            repoPath, authTokenToUse, sshKeyToUse, namespace, releaseName);
                     LOG.info("Requested Flux GitOps destroy for {}/{} (repo={}, branch={}, path={})",
                             namespace, releaseName, repoUrlToUse, branchToUse, repoPath);
+                } catch (FluxGitOpsBackend.NotOwnDirectoryException refused) {
+                    // Found once the branch is read, such as another HelmRelease in the release's directory:
+                    // nothing was removed, so the release keeps its credential and its record, as above.
+                    refusedAsNotOwn = true;
+                    LOG.warn("Uninstall of {}/{} refused: {}", namespace, releaseName, refused.getMessage());
+                    return Response.status(Response.Status.BAD_REQUEST).entity(Map.of(
+                            "error", refused.getMessage(),
+                            "release", releaseName,
+                            "namespace", namespace
+                    )).build();
                 } catch (Exception ex) {
                     LOG.warn("Flux destroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
                     return Response.serverError().entity(Map.of(
@@ -1414,7 +1445,7 @@ public class HelmResource {
             refusedAsBusy = true;
             return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
         } finally {
-            if (!refusedAsBusy) {
+            if (!refusedAsBusy && !refusedAsNotOwn) {
                 // A release that was given Polaris catalog access leaves a working credential behind
                 // unless it is taken back. Done after the release itself is gone, and never allowed to
                 // fail the uninstall: an unreachable Polaris must not leave a half-removed release.

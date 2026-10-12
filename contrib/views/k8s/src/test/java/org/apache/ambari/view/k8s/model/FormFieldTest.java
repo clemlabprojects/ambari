@@ -90,6 +90,40 @@ class FormFieldTest {
     }
   }
 
+  @Test
+  void everyReleaseNameFieldWarnsWithHelmsRule() throws Exception {
+    // Same failure mode again: an undeclared "pattern" would never reach the wizard, which would then let any name
+    // through until the server refuses it.
+    for (String service : new String[] {"TRINO", "SUPERSET", "OPENMETADATA", "JUPYTERHUB", "GITLAB", "SQL-ASSISTANT"}) {
+      try (InputStream in = getClass().getResourceAsStream("/KDPS/services/" + service + "/service.json")) {
+        assertNotNull(in, service);
+        JsonNode releaseName = null;
+        for (JsonNode field : mapper.readTree(in).get("form")) {
+          if ("releaseName".equals(field.path("name").asText(null))) {
+            releaseName = field;
+          }
+        }
+        assertNotNull(releaseName, service + " asks for a release name");
+
+        FormField field = mapper.treeToValue(releaseName, FormField.class);
+        assertNotNull(field.pattern, service);
+        assertNotNull(field.validationHint, service);
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(field.pattern);
+        for (String name : new String[] {"trino", "trino-prod", "superset.analytics", "a".repeat(53)}) {
+          assertTrue(pattern.matcher(name).find(), service + " accepts " + name);
+          org.apache.ambari.view.k8s.service.deployment.DeployRequestValidator.checkReleaseName(name);
+        }
+        for (String name : new String[] {"Trino", "trino_prod", "trino prod", "../x", "-trino", "trino-",
+            "a".repeat(54)}) {
+          assertFalse(pattern.matcher(name).find(), service + " warns about " + name);
+          assertThrows(IllegalArgumentException.class,
+              () -> org.apache.ambari.view.k8s.service.deployment.DeployRequestValidator.checkReleaseName(name),
+              "the server refuses " + name + " too");
+        }
+      }
+    }
+  }
+
   /** Depth-first search for a field by name, descending into group fields (their nested "fields"). */
   private JsonNode findFieldByName(JsonNode fields, String name) {
     if (fields == null || !fields.isArray()) {

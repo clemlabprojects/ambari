@@ -28,6 +28,7 @@ import { FieldSyncContext } from './fieldSync';
 import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery';
 import OpenShiftMonitoringNotice from './OpenShiftMonitoringNotice';
 import { resourceCheckError } from './resourceChecks';
+import { patternRules } from '../../utils/nameRules';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
@@ -52,7 +53,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     message: requiredByContext
       ? `'${field.label}' is required: the selected Platform Context resolves ${reqWhen?.field} to '${reqCtx.value}'.`
       : `Field '${field.label}' is required.`,
-  }];
+  }, ...patternRules(field.pattern, field.validationHint)];
   const isLocked = upgradeMode && (field.name === 'releaseName' || field.name === 'namespace');
   const disabledProp = (field as any).disabled || isLocked;
   const nameParts = toNameParts(field.name);
@@ -339,7 +340,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     default: {
       // `resourceCheck`: compare the value with the limit in another field (e.g. a Java heap against the pod memory
       // limit), re-checked whenever that limit changes. Its help goes under the input: antd's `help` would hide
-      // the check's error message.
+      // the check's error message. The same for a `pattern`, whose `validationHint` is that message.
       const check = field.resourceCheck;
       const limitParts = check?.limitField ? toNameParts(check.limitField) : undefined;
       const checkRules = check && limitParts ? [{
@@ -350,7 +351,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       }] : [];
       const helpProps = limitParts
         ? { extra: field.help, dependencies: [limitParts] }
-        : { help: field.help };
+        : field.pattern ? { extra: field.help } : { help: field.help };
       return (
         <Form.Item name={nameParts} label={field.label} rules={[...rules, ...checkRules]} {...helpProps}>
           <Input

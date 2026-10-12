@@ -57,19 +57,17 @@ public class FluxGitOpsBackendTest {
     }
 
     @Test
-    public void buildDependsOnYaml_rendersList() {
+    public void dependsOnRendersList() {
         List<FluxGitOpsBackend.DepRef> deps = List.of(
                 new FluxGitOpsBackend.DepRef("dep1", "ns1"),
                 new FluxGitOpsBackend.DepRef("dep2", "ns2")
         );
 
-        String yaml = FluxGitOpsBackend.buildDependsOnYaml(deps);
+        String yaml = FluxManifests.specYaml(FluxManifests.helmReleaseSpec("trino", "1.0.0", "charts", deps, null,
+                Map.of()));
 
-        assertTrue(yaml.contains("dependsOn"));
-        assertTrue(yaml.contains("name: dep1"));
-        assertTrue(yaml.contains("namespace: ns1"));
-        assertTrue(yaml.contains("name: dep2"));
-        assertTrue(yaml.contains("namespace: ns2"));
+        assertTrue(yaml, yaml.contains("  dependsOn:\n  - name: dep1\n    namespace: ns1\n"
+                + "  - name: dep2\n    namespace: ns2\n"));
     }
 
     @Test
@@ -155,8 +153,11 @@ public class FluxGitOpsBackendTest {
 
     @Test
     public void valuesFromReadsTheReleaseValuesSecret() {
-        assertEquals("  valuesFrom:\n  - kind: Secret\n    name: trino-kdps-values\n    valuesKey: values.yaml\n",
-                FluxGitOpsBackend.buildValuesFromYaml(GitOpsSecretValues.secretName("trino")));
+        String yaml = FluxManifests.specYaml(FluxManifests.helmReleaseSpec("trino", "1.0.0", "charts", List.of(),
+                GitOpsSecretValues.secretName("trino"), Map.of("a", "b")));
+
+        assertTrue(yaml, yaml.contains("  valuesFrom:\n  - kind: Secret\n    name: trino-kdps-values\n"
+                + "    valuesKey: values.yaml\n  values:\n"));
     }
 
     @Test
@@ -192,12 +193,13 @@ public class FluxGitOpsBackendTest {
                 """);
         java.nio.file.Files.writeString(dir.resolve("broken.yaml"), "kind: [unclosed");
 
-        java.util.Set<FluxGitOpsBackend.NamespacedName> secrets = FluxGitOpsBackend.valuesSecretsUnder(dir);
+        java.util.Set<FluxGitOpsBackend.NamespacedName> secrets =
+                FluxGitOpsBackend.valuesSecretsIn(FluxGitOpsBackend.releaseManifests(dir));
 
         assertEquals("only the Secrets this view names, never one the operator referenced", java.util.Set.of(
                 new FluxGitOpsBackend.NamespacedName("analytics", "trino-kdps-values"),
                 new FluxGitOpsBackend.NamespacedName("keda", "keda-kdps-values")), secrets);
-        assertTrue(FluxGitOpsBackend.valuesSecretsUnder(dir.resolve("missing")).isEmpty());
+        assertTrue(FluxGitOpsBackend.releaseManifests(dir.resolve("missing")).isEmpty());
     }
 
     @Test

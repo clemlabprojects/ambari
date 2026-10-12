@@ -74,9 +74,11 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Flux GitOps backend: renders HelmRelease/HelmRepository YAML, commits to Git and returns the commit SHA.
- * Passwords and secrets never reach Git: each HelmRelease reads them from its own Secret through
- * {@code spec.valuesFrom} (see {@link GitOpsSecretValues}). Deploys submitted to the view go through
- * {@link GitOpsPlanBackend}: the command plan of a direct deploy, whose GITOPS_COMMIT step calls {@link #commit}.
+ * The manifests are written by {@link FluxManifests}, from names {@link DeployRequestValidator} checked, into the
+ * release's own directory of the repository. Passwords and secrets never reach Git: each HelmRelease reads them from
+ * its own Secret through {@code spec.valuesFrom} (see {@link GitOpsSecretValues}). Deploys submitted to the view go
+ * through {@link GitOpsPlanBackend}: the command plan of a direct deploy, whose GITOPS_COMMIT step calls
+ * {@link #commit}.
  * Status/destroy are still minimal and should be enhanced to read HelmRelease CRs and delete manifests.
  */
 public class FluxGitOpsBackend implements DeploymentBackend {
@@ -104,6 +106,16 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * start that pulls large images.
      */
     static final String HELM_TIMEOUT = "15m";
+
+    /**
+     * The files a deploy writes into its release's directory: its HelmRelease and HelmRepository, and in
+     * {@link #DEPENDENCIES_DIR} a {@code <dependency>-helmrelease.yaml} per dependency and a
+     * {@code <repository>-helmrepository.yaml} per other chart repository. An uninstall removes these files and
+     * nothing else; a dependency file is never named {@code helmrelease.yaml}, which marks a release's directory.
+     */
+    static final String HELM_RELEASE_FILE = "helmrelease.yaml";
+    static final String HELM_REPOSITORY_FILE = "helmrepository.yaml";
+    static final String DEPENDENCIES_DIR = "dependencies";
 
     /**
      * What the command plan of a deploy prepared for its release before the commit (keytab, SSO client, Ranger,
@@ -445,22 +457,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.warn("Chart repository {} needs credentials: Flux pulls it only with a secretRef, which KDPS does not "
                     + "write yet; create the Secret in flux-system and reference it from HelmRepository {}", name, name);
         }
-        return """
-                apiVersion: %s
-                kind: HelmRepository
-                metadata:
-                  name: %s
-                  namespace: flux-system
-                spec:
-                  interval: 5m
-                %s  url: %s
-                """.formatted(FLUX_SRC_API_VERSION, name, oci ? "  type: oci\n" : "", effectiveUrl);
+        return FluxManifests.helmRepository(name, effectiveUrl, oci);
     }
 
     /**
      * Refuses a GitOps deploy that could not be committed, before anything is prepared for it: no Git repository, no
-     * credentials to push to it, no chart repository or chart version. The checks {@link #commit} makes, without
-     * touching Git or changing the request.
+     * credentials to push to it, no chart repository or chart version, a release directory inside or above that of
+     * another release KDPS deployed to the repository. The checks {@link #commit} makes, without touching Git or
+     * changing the request.
      *
      * @throws IllegalArgumentException naming what is missing
      * @throws IllegalStateException    when a chart repository is not configured in KDPS
@@ -472,6 +476,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (repoUrl == null) {
             throw new IllegalArgumentException("Flux GitOps requires git.repoUrl");
         }
+        checkApartFromRecordedReleases(resolveTargetPath(given.getPathPrefix(),
+                        existingMeta != null ? existingMeta.getGitPath() : null, request.getNamespace(),
+                        request.getReleaseName()),
+                repoUrl, request.getNamespace(), request.getReleaseName());
         String repoName = firstNonBlank(context != null ? context.getRepoId() : null, request.getRepoId(),
                 existingMeta != null ? existingMeta.getRepoId() : null);
         if (repoName == null) {
@@ -593,8 +601,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     public CommitResult commit(HelmDeployRequest request, DeploymentContext context, PlannedRelease planned)
             throws Exception {
-        Objects.requireNonNull(request.getNamespace(), "namespace is required");
-        Objects.requireNonNull(request.getReleaseName(), "releaseName is required");
+        // Checked again here, not only when the deploy is submitted: a planned deploy commits from the parameters it
+        // saved, and every name below goes into the manifests and their paths in Git. By the GitOps rules whatever
+        // mode the request names: a chart URL a direct deploy accepts cannot be written into a HelmRelease.
+        DeployRequestValidator.validateForGitOps(request, context != null ? context.getRepoId() : null,
+                context != null ? context.getVersion() : null);
 
         final String namespace = request.getNamespace();
         final String release = request.getReleaseName();
@@ -627,9 +638,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             throw new IllegalArgumentException("Select a chart repository for " + release + ": a GitOps deploy names it"
                     + " in the HelmRelease, and none was given or recorded for this release.");
         }
+        // Also when they come from the release's record rather than from this deploy.
+        DeployRequestValidator.checkRepositoryIfGiven("Chart repository", repoName);
         request.setRepoId(repoName);
         String serviceKey = firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null);
         String version = chartVersion(request, context, existingMeta, serviceKey);
+        DeployRequestValidator.checkChartVersionIfGiven("Chart version", version);
         request.setVersion(version);
         String chart = request.getChart();
         // Every chart source, resolved before anything is created or committed: an unknown repository stops here.
@@ -639,6 +653,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String pathOverride = git.getPathPrefix();
         String storedPath = existingMeta != null ? existingMeta.getGitPath() : null;
         Path targetDir = resolveTargetPath(pathOverride, storedPath, namespace, release);
+        checkApartFromRecordedReleases(targetDir, repoUrl, namespace, release);
 
         // Resolve credentials: prefer provided, else resolve alias. A credential given in clear is stored for future
         // operations; one given by its alias (a planned deploy stored it when it was submitted) keeps that alias.
@@ -671,6 +686,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         final String branch = branchCandidate;
         git.setBranch(branch);
         withGitRetry(() -> { gitClient.checkoutBranch(branch); return null; }, "checkout " + branch);
+        // As the branch holds them, which also covers releases deployed to the repository from elsewhere.
+        checkApartFromOtherReleases(repoDir, targetDir, namespace, release);
 
         Files.createDirectories(repoDir.resolve(targetDir));
 
@@ -779,7 +796,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
             try {
                 logFluxInfo(namespace, release, "automation", "Processing %s dependencies", request.getDependencies().size());
-                Path depDir = targetDir.resolve("dependencies");
+                Path depDir = targetDir.resolve(DEPENDENCIES_DIR);
                 Files.createDirectories(repoDir.resolve(depDir));
                 
                 for (Map.Entry<String, Object> depEntry : request.getDependencies().entrySet()) {
@@ -789,16 +806,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                             ? (Map<String, Object>) depEntry.getValue()
                             : new LinkedHashMap<>();
                     
-                    String depChart = (String) depSpec.get("chart");
+                    String depChart = stringOrNull(depSpec.get("chart"));
                     if (depChart == null || depChart.isBlank()) {
                         LOG.warn("Skipping dependency {} with missing chart name", depKey);
                         continue;
                     }
+                    String depReleaseName = firstNonBlank(stringOrNull(depSpec.get("releaseName")), depKey);
                     // The same dependencies as a direct deploy: none on OpenShift that the platform provides, none
                     // that the settings do not need, none already on the cluster. One this release already manages
                     // through Flux is kept even though it is now "on the cluster": Flux installed it.
                     // "Manages" = published on the base branch, not merely present in the local workspace.
-                    Path depFile = depDir.resolve(firstNonBlank((String) depSpec.get("releaseName"), depKey) + "-helmrelease.yaml");
+                    Path depFile = dependencyFile(depDir, depReleaseName, "-" + HELM_RELEASE_FILE);
                     // (the base branch; in direct-commit mode also the working branch this release pushes to, which
                     // Flux reads; never a PR branch, which is not reconciled until merged)
                     Boolean onBase = gitClient.publishedOn(depFile, baseBranch);
@@ -822,8 +840,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // chart's version, which belongs to another chart: without one, the HelmRelease names none.
                     String depVersion = firstNonBlank(CommandService.pinnedChartVersion(stringOrNull(depSpec.get("chartVersion"))),
                             CommandService.pinnedChartVersion(stringOrNull(depSpec.get("version"))));
-                    String depReleaseName = firstNonBlank((String) depSpec.get("releaseName"), depKey);
-                    String depNamespace = firstNonBlank((String) depSpec.get("namespace"), namespace);
+                    String depNamespace = firstNonBlank(stringOrNull(depSpec.get("namespace")), namespace);
                     depRefs.add(new DepRef(depReleaseName, depNamespace));
                     
                     // Create namespace for dependency if different
@@ -866,7 +883,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     }
 
                     // Use dependency's repoId or fall back to main repo
-                    String depRepoName = firstNonBlank((String) depSpec.get("repoId"), repoName);
+                    String depRepoName = firstNonBlank(stringOrNull(depSpec.get("repoId")), repoName);
 
                     // Inject image pull secret if specified. Not for a planned deploy: as in a direct deploy, a
                     // dependency uses the pull Secret its own definition names, created in its namespace.
@@ -887,10 +904,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // to Git in the dependency's values either.
                     pendingDeps.add(new PendingDependency(depReleaseName, depNamespace,
                             chartNameInSource(depChart, isOciRepository(depRepoName)), depVersion, depRepoName,
-                            depValues, depDir.resolve(depReleaseName + "-helmrelease.yaml")));
+                            depValues, depFile));
                     if (!depRepoName.equals(repoName)) {
                         // A dependency from another chart repository needs its own Flux source.
-                        Path depRepoFile = depDir.resolve(depRepoName + "-helmrepository.yaml");
+                        Path depRepoFile = dependencyFile(depDir, depRepoName, "-" + HELM_REPOSITORY_FILE);
                         gitClient.writeFile(depRepoFile, chartSources.get(depRepoName));
                         writtenFiles.add(depRepoFile);
                     }
@@ -900,8 +917,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 }
             logFluxInfo(namespace, release, "automation", "Generated %s dependency HelmReleases and dependsOn", depRefs.size());
             } catch (Exception ex) {
-                if (planned != null) {
-                    // A direct deploy stops when a dependency cannot be installed: nothing is committed either.
+                // A direct deploy stops when a dependency cannot be installed: nothing is committed either. Nor is
+                // anything for a dependency whose name would place its file outside the release's directory.
+                if (planned != null || ex instanceof IllegalArgumentException) {
                     throw ex;
                 }
                 LOG.warn("Failed to process dependencies for {}/{}: {}", namespace, release, ex.getMessage(), ex);
@@ -1048,7 +1066,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // Once secret, always secret: a redeploy that re-submits the release's current values (resync, security
         // refresh, autoscaling) carries no form, yet those values hold what Flux merged in from the values Secrets.
         // What the Secrets hold now is recorded before anything is split.
-        StoredSecrets stored = storedSecrets(namespace, release, repoDir.resolve(targetDir).resolve("helmrelease.yaml"));
+        StoredSecrets stored = storedSecrets(namespace, release, repoDir.resolve(targetDir).resolve(HELM_RELEASE_FILE));
         for (Map<String, Object> document : stored.documents()) {
             secrets.addStoredPaths(document);
             secrets.addStoredValues(document);
@@ -1065,63 +1083,39 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // They are removed from spec.values, not blanked: Flux merges spec.values over valuesFrom.
         GitOpsSecretValues.Split split = secrets.split(mergedValues);
         List<ValuesSecret> valuesSecrets = new ArrayList<>();
-        String valuesFromYaml = "";
+        String valuesSecretName = null;
         if (split.hasSecrets()) {
             ValuesSecret valuesSecret = valuesSecret(namespace, release, split.secretValues(), stored, appliedOnCommit);
             valuesSecrets.add(valuesSecret);
-            valuesFromYaml = buildValuesFromYaml(valuesSecret.name());
+            valuesSecretName = valuesSecret.name();
         }
-
-        // Serialize values as proper YAML for readable git diffs.
-        String valuesYaml = serializeValuesAsYaml(split.publicValues());
 
         String repoYaml = chartSources.get(repoName);
 
-        String dependsYaml = buildDependsOnYaml(depRefs);
-        String hrSpec = ("""
-                spec:
-                  interval: 5m
-                  timeout: %s
-                """ + (dependsYaml.isEmpty() ? "" : dependsYaml) + """
-                  chart:
-                    spec:
-                      chart: %s
-                      version: %s
-                      sourceRef:
-                        kind: HelmRepository
-                        name: %s
-                        namespace: flux-system
-                %s  values:
-                %s
-                """).formatted(HELM_TIMEOUT, chartInSource, version, repoName, valuesFromYaml, valuesYaml);
-        String specDigest = specDigest(hrSpec);
-        String hrYaml = """
-                apiVersion: %s
-                kind: HelmRelease
-                metadata:
-                  name: %s
-                  namespace: %s
-                  annotations:
-                    %s: "%s"
-                """.formatted(FLUX_HR_API_VERSION, release, namespace, SPEC_DIGEST_ANNOTATION, specDigest) + hrSpec;
+        Map<String, Object> hrSpec = FluxManifests.helmReleaseSpec(chartInSource, version, repoName, depRefs,
+                valuesSecretName, split.publicValues());
+        String specDigest = specDigest(FluxManifests.specYaml(hrSpec));
+        String hrYaml = FluxManifests.helmRelease(release, namespace, specDigest, hrSpec);
 
         for (int i = 0; i < pendingDeps.size(); i++) {
             PendingDependency dep = pendingDeps.get(i);
             GitOpsSecretValues.Split depSplit = secrets.splitContaining(dep.values(), storedDeps.get(i).documents());
-            String depValuesFromYaml = "";
+            String depValuesSecretName = null;
             if (depSplit.hasSecrets()) {
                 ValuesSecret depSecret = valuesSecret(dep.namespace(), dep.releaseName(), depSplit.secretValues(),
                         storedDeps.get(i), appliedOnCommit);
                 valuesSecrets.add(depSecret);
-                depValuesFromYaml = buildValuesFromYaml(depSecret.name());
+                depValuesSecretName = depSecret.name();
             }
-            gitClient.writeFile(dep.file(), renderDependencyHelmRelease(dep, depValuesFromYaml, depSplit.publicValues()));
+            gitClient.writeFile(dep.file(), FluxManifests.helmRelease(dep.releaseName(), dep.namespace(), null,
+                    FluxManifests.helmReleaseSpec(dep.chart(), dep.version(), dep.repoName(), List.of(),
+                            depValuesSecretName, depSplit.publicValues())));
             writtenFiles.add(dep.file());
         }
-        gitClient.writeFile(targetDir.resolve("helmrepository.yaml"), repoYaml);
-        gitClient.writeFile(targetDir.resolve("helmrelease.yaml"), hrYaml);
-        writtenFiles.add(targetDir.resolve("helmrepository.yaml"));
-        writtenFiles.add(targetDir.resolve("helmrelease.yaml"));
+        gitClient.writeFile(targetDir.resolve(HELM_REPOSITORY_FILE), repoYaml);
+        gitClient.writeFile(targetDir.resolve(HELM_RELEASE_FILE), hrYaml);
+        writtenFiles.add(targetDir.resolve(HELM_REPOSITORY_FILE));
+        writtenFiles.add(targetDir.resolve(HELM_RELEASE_FILE));
 
         // Fail closed: nothing that holds a password or secret is committed, whatever wrote it there.
         String leakingFile = fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets);
@@ -1164,7 +1158,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // A change that did not land where Flux reads is applied anyway once Git already holds it there: a pull request
         // or working branch merged since, which a redeploy then finds with nothing new to commit.
         boolean appliedNow = appliedOnCommit || (!committed && hrYaml.equals(
-                gitClient.publishedContent(targetDir.resolve("helmrelease.yaml"), configuredBase)));
+                gitClient.publishedContent(targetDir.resolve(HELM_RELEASE_FILE), configuredBase)));
         if (!committed) {
             if (secretsWritten.isEmpty()) {
                 LOG.info("Flux GitOps found no changes for {}/{}; skipping commit", namespace, release);
@@ -1291,7 +1285,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             return targetPath(pathOverride, namespace, release);
         }
         if (storedPath != null && !storedPath.isBlank()) {
-            return validateRelative(Path.of(storedPath));
+            return releaseDirectory(storedPath, namespace, release);
         }
         return targetPath("clusters/default", namespace, release);
     }
@@ -1580,13 +1574,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             String owner = parts[0];
             String repo = parts[1];
             String apiUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/pulls";
-            String body = """
-                    {
-                      "title": "%s",
-                      "head": "%s",
-                      "base": "%s"
-                    }
-                    """.formatted(title, headBranch, baseBranch);
+            Map<String, String> pullRequest = new LinkedHashMap<>();
+            pullRequest.put("title", title);
+            pullRequest.put("head", headBranch);
+            pullRequest.put("base", baseBranch);
+            String body = gson.toJson(pullRequest);
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(java.net.URI.create(apiUrl))
                     .timeout(httpTimeout)
@@ -1760,6 +1752,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String repoUrl = meta.getGitRepoUrl();
         String branch = meta.getGitBranch();
         String path = meta.getGitPath();
+        if (repoUrl != null && !repoUrl.isBlank()) {
+            // Refused before anything is removed, from Git or from the cluster (a HelmRelease deleted there while its
+            // manifest stays in Git is recreated by Flux), and the record is kept so the uninstall can be retried
+            // once it names the release's own directory.
+            releaseDirectory(path, namespace, releaseName);
+        }
         String token = null;
         String sshKey = null;
         try {
@@ -1775,6 +1773,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         try {
             destroy(repoUrl, branch, reconciledBranch(meta), path, token, sshKey, namespace, releaseName);
             gitDeleted = true;
+        } catch (NotOwnDirectoryException refused) {
+            // Found once the branch is read: nothing was removed from Git, so nothing is from the cluster either.
+            throw refused;
         } catch (Exception ex) {
             errors.add("Git cleanup failed: " + ex.getMessage());
             LOG.warn("Flux destroy git cleanup failed for {}/{}: {}", namespace, releaseName, ex.toString());
@@ -1799,36 +1800,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (!errors.isEmpty()) {
             throw new RuntimeException("Flux destroy encountered issues: " + String.join(" | ", errors));
         }
-    }
-
-    /**
-     * Delete rendered manifests from Git and push the change.
-     *
-     * @param repoUrl   Git repository URL.
-     * @param branch    branch to use (will be created if absent).
-     * @param repoPath  path to delete (relative to repo root).
-     * @param authToken HTTPS token (optional).
-     * @param sshKey    SSH private key (optional).
-     */
-    public void destroy(String repoUrl, String branch, String repoPath, String authToken, String sshKey) throws Exception {
-        destroy(repoUrl, branch, repoPath, authToken, sshKey, null, null);
-    }
-
-    /**
-     * Delete rendered manifests from Git and push the change, for a release whose removal may be pushed to another
-     * branch than the one Flux reconciles (see {@link #reconciledBranch}).
-     *
-     * @param repoUrl          Git repository URL.
-     * @param branch           branch to push the removal to (will be created if absent).
-     * @param reconciledBranch branch Flux reconciles; its values Secrets are kept while it still holds the manifests,
-     *                         and always when it is null (unknown).
-     * @param repoPath         path to delete (relative to repo root).
-     * @param authToken        HTTPS token (optional).
-     * @param sshKey           SSH private key (optional).
-     */
-    public void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath, String authToken,
-                        String sshKey) throws Exception {
-        destroy(repoUrl, branch, reconciledBranch, repoPath, authToken, sshKey, null, null);
     }
 
     /**
@@ -1860,60 +1831,72 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Internal destroy overload that accepts namespace + releaseName so the workspace
-     * directory and lock are consistent with the apply() path for the same release.
+     * Delete the manifests of a release from Git and push the change, in the release's own workspace so it is
+     * serialised with the deploys of the same release. Only the files a deploy of the release writes into its own
+     * directory ({@link #releaseDirectory}) are deleted ({@link #releaseManifests}): never a blank path or the bare
+     * path prefix, nothing in another release's directory, even one below the release's, and no other file.
      *
+     * @param repoUrl          Git repository URL.
+     * @param branch           branch to push the removal to (will be created if absent).
      * @param reconciledBranch the branch Flux reconciles, or null when unknown: the values Secrets of the removed
      *                         HelmReleases are deleted only once it no longer holds their manifests
+     * @param repoPath         the directory recorded for the release, relative to the repo root.
+     * @param authToken        HTTPS token (optional).
+     * @param sshKey           SSH private key (optional).
+     * @param namespace        namespace of the release.
+     * @param releaseName      name of the release.
+     * @throws NotOwnDirectoryException when the recorded directory is not the release's own, or its
+     *                                   {@code helmrelease.yaml} holds another HelmRelease; nothing is removed
      */
-    void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath,
-                 String authToken, String sshKey,
-                 String namespace, String releaseName) throws Exception {
+    public void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath,
+                        String authToken, String sshKey,
+                        String namespace, String releaseName) throws Exception {
         if (repoUrl == null || repoUrl.isBlank()) {
             LOG.warn("Flux destroy skipped because repoUrl is missing");
             return;
         }
+        Path releaseDir = releaseDirectory(repoPath, namespace, releaseName);
         String effectiveBranch = (branch == null || branch.isBlank()) ? "main" : branch;
         // Use the same per-release workspace as apply() so both operations share the clone.
-        Path repoDir = (namespace != null && releaseName != null)
-                ? workspaceForRelease(namespace, releaseName)
-                : fluxRoot.resolve("gitops-destroy-" + sanitizePathComponent(repoPath));
-        ReentrantLock workspaceLock = (namespace != null && releaseName != null)
-                ? lockForRelease(namespace, releaseName)
-                : new ReentrantLock();
+        Path repoDir = workspaceForRelease(namespace, releaseName);
+        ReentrantLock workspaceLock = lockForRelease(namespace, releaseName);
         workspaceLock.lock();
         try {
         GitClient gitClient = new GitClient(repoDir, repoUrl, effectiveBranch, authToken, sshKey);
         withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
         withGitRetry(() -> { gitClient.checkoutBranch(effectiveBranch); return null; }, "destroy-checkout");
 
-        Path deletePath = validateRelative((repoPath == null || repoPath.isBlank())
-                ? Path.of("clusters/default")
-                : Path.of(repoPath));
+        // Only the files a deploy of the release writes, never the whole directory: the path prefix is free, so the
+        // directory of another release, or other content of the repository, may lie below this one.
+        checkOwnHelmRelease(repoDir, releaseDir, namespace, releaseName);
+        List<Path> files = releaseManifests(repoDir.resolve(releaseDir));
         // The HelmReleases removed here and their values Secrets, read while their manifests are still there.
-        java.util.Set<NamespacedName> helmReleases = helmReleasesUnder(repoDir.resolve(deletePath));
-        if (namespace != null && releaseName != null) {
-            helmReleases.add(new NamespacedName(namespace, releaseName));
+        java.util.Set<NamespacedName> helmReleases = helmReleasesIn(files);
+        helmReleases.add(new NamespacedName(namespace, releaseName));
+        java.util.Set<NamespacedName> valuesSecrets = valuesSecretsIn(files);
+        List<Path> manifests = files.stream().map(repoDir::relativize).collect(Collectors.toList());
+        logFluxInfo(namespace, releaseName, "destroy", "Removing %s", manifests);
+        for (Path manifest : manifests) {
+            gitClient.deletePath(manifest);
         }
-        java.util.Set<NamespacedName> valuesSecrets = valuesSecretsUnder(repoDir.resolve(deletePath));
-        logFluxInfo("-", deletePath.toString(), "destroy", "Removing path %s", deletePath);
-        gitClient.deletePath(deletePath);
         if (gitClient.hasChanges()) {
-            String sha = withGitRetry(() -> gitClient.commitAndPush("Flux GitOps delete " + deletePath), "destroy-commit");
-            LOG.info("Flux GitOps deleted {} on branch {} commit {}", deletePath, effectiveBranch, sha);
+            String sha = withGitRetry(() -> gitClient.commitAndPush("Flux GitOps delete " + releaseDir), "destroy-commit");
+            LOG.info("Flux GitOps deleted {} on branch {} commit {}", releaseDir, effectiveBranch, sha);
         } else {
-            LOG.info("Flux GitOps delete skipped commit because no changes detected at {}", deletePath);
+            LOG.info("Flux GitOps delete skipped commit because no changes detected at {}", releaseDir);
         }
         // Only once the removal is published where Flux reads: until then Flux keeps applying the HelmReleases that
         // read them. A removal pushed to another branch (that of a pull request, a working branch still to merge)
         // leaves them running from the branch Flux reconciles.
         if (reconciledBranch == null) {
             LOG.warn("Kept the values Secrets {}: the branch Flux reconciles is not known, so its HelmReleases may still "
-                    + "read them; delete them once the removal of {} is merged", valuesSecrets, deletePath);
+                    + "read them; delete them once the removal of {} is merged", valuesSecrets, releaseDir);
         } else if (!reconciledBranch.equals(effectiveBranch)
-                && !Boolean.FALSE.equals(gitClient.publishedOn(deletePath, reconciledBranch))) {
+                && java.util.stream.Stream.concat(java.util.stream.Stream.of(releaseDir.resolve(HELM_RELEASE_FILE)),
+                                manifests.stream())
+                        .anyMatch(manifest -> !Boolean.FALSE.equals(gitClient.publishedOn(manifest, reconciledBranch)))) {
             LOG.warn("Kept the values Secrets {}: {} is still on branch {}, which Flux reconciles; delete them once the "
-                    + "removal is merged there", valuesSecrets, deletePath, reconciledBranch);
+                    + "removal is merged there", valuesSecrets, releaseDir, reconciledBranch);
         } else {
             deleteValuesSecrets(valuesSecrets, helmReleases);
         }
@@ -1926,12 +1909,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * Compute the target directory path for the given prefix/namespace/release.
      *
      * @param pathPrefix user-provided prefix (can be relative).
-     * @param namespace  namespace of the release.
-     * @param release    release name.
+     * @param namespace  namespace of the release, a single path segment.
+     * @param release    release name, a single path segment.
      * @return resolved path under the configured flux root.
+     * @throws IllegalArgumentException when the namespace or the release would name another directory
      */
     public Path targetPath(String pathPrefix, String namespace, String release) {
-        return validateRelative(Path.of(pathPrefix).resolve(namespace).resolve(release));
+        return validateRelative(Path.of(pathPrefix)
+                .resolve(pathSegment("namespace", namespace))
+                .resolve(pathSegment("release name", release)));
     }
 
     static List<java.util.Map<String, String>> mapConditions(java.util.List<java.util.Map<String, Object>> conds) {
@@ -2011,43 +1997,249 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
     }
 
+    /**
+     * A path in the Git repository, normalised: relative, without "..", without control characters.
+     *
+     * @throws IllegalArgumentException for any other path
+     */
     static Path validateRelative(Path path) {
-        Path normalized = path.normalize();
-        if (normalized.isAbsolute()) {
+        if (path.isAbsolute()) {
             throw new IllegalArgumentException("Flux GitOps path must be relative to repo: " + path);
         }
-        for (Path part : normalized) {
+        // Checked before normalising: "team-a/../team-b/trino" normalises to a path without "..", yet it is the
+        // directory of another release.
+        for (Path part : path) {
             if ("..".equals(part.toString())) {
                 throw new IllegalArgumentException("Flux GitOps path cannot traverse outside repo: " + path);
             }
+            if (part.toString().chars().anyMatch(Character::isISOControl)) {
+                throw new IllegalArgumentException("Flux GitOps path cannot contain control characters: "
+                        + DeployRequestValidator.shown(path.toString()));
+            }
         }
-        return normalized;
+        return path.normalize();
     }
 
     /**
-     * Serialises a values map as a properly-indented YAML block suitable for
-     * embedding directly under the {@code values:} key of a HelmRelease manifest.
+     * A name used as one segment of a path in the Git repository: a namespace, a release, a dependency.
      *
-     * <p>Using real YAML (rather than inline JSON) produces readable git diffs
-     * and avoids edge-cases where multi-line string values get JSON-escaped into
-     * a single unreadable line.
-     *
-     * <p>The returned string is already indented with 4 spaces per level so it can
-     * be placed after {@code "  values:\n"} in the manifest template.
-     *
-     * <p>Falls back to Gson JSON if the YAML library is unavailable (should never
-     * happen since jackson-dataformat-yaml is a runtime dependency).
+     * @param what what the name names, for the message
+     * @return the name
+     * @throws IllegalArgumentException when it could name another directory ({@code /}, {@code \}, {@code .},
+     *                                  {@code ..}) or holds a control character
      */
-    private String serializeValuesAsYaml(Map<String, Object> values) {
-        if (values == null || values.isEmpty()) return "{}";
-        try {
-            String yaml = valuesYaml(values);
-            // Indent every line by 4 spaces so the block sits correctly under "  values:"
-            return "    " + yaml.replace("\n", "\n    ");
-        } catch (Exception e) {
-            LOG.warn("YAML serialisation failed for values map, falling back to JSON inline: {}", e.getMessage());
-            return gson.toJson(values);
+    static String pathSegment(String what, String name) {
+        if (name == null || name.isEmpty() || ".".equals(name) || "..".equals(name)
+                || name.chars().anyMatch(c -> c == '/' || c == '\\' || Character.isISOControl(c))) {
+            String shown = name == null ? "" : DeployRequestValidator.shown(name);
+            throw new IllegalArgumentException("The " + what + " '" + shown + "' cannot name a directory in Git: it"
+                    + " must be a single name, without '/', '\\' or '..'.");
         }
+        return name;
+    }
+
+    /**
+     * A file of the dependencies directory of a release, named after a dependency or a chart repository.
+     *
+     * @param dependenciesDir the {@code dependencies} directory of the release
+     * @param name            the dependency or chart repository
+     * @param suffix          the rest of the file name, such as {@code -helmrelease.yaml}
+     * @throws IllegalArgumentException when the name would place the file anywhere else in the repository
+     */
+    static Path dependencyFile(Path dependenciesDir, String name, String suffix) {
+        Path file = dependenciesDir.resolve(pathSegment("dependency", name) + suffix);
+        if (!dependenciesDir.equals(file.normalize().getParent())) {
+            throw new IllegalArgumentException("The dependency '" + DeployRequestValidator.shown(name)
+                    + "' cannot name a file outside " + dependenciesDir + " in Git.");
+        }
+        return file;
+    }
+
+    /**
+     * The directory recorded for a release in the Git repository, checked to be the release's own: a relative path
+     * that ends with {@code <namespace>/<release>}. A redeploy writes into it and an uninstall deletes the release's
+     * manifests from it, so a blank path, the bare path prefix or another release's directory is refused.
+     *
+     * @param recordedPath the directory recorded for the release
+     * @param namespace    namespace of the release
+     * @param release      name of the release
+     * @return the directory, normalised
+     * @throws NotOwnDirectoryException when the path is blank or is not the release's own directory
+     * @throws IllegalArgumentException when the namespace, the release or the path is malformed
+     */
+    public static Path releaseDirectory(String recordedPath, String namespace, String release) {
+        Path own = Path.of(pathSegment("namespace", namespace), pathSegment("release name", release));
+        if (recordedPath == null || recordedPath.isBlank()) {
+            throw new NotOwnDirectoryException("No Git directory is recorded for release " + own + ", so KDPS changes"
+                    + " nothing in Git for it; remove its manifests from the repository by hand if needed.");
+        }
+        Path path = validateRelative(Path.of(recordedPath));
+        if (!path.endsWith(own)) {
+            throw new NotOwnDirectoryException("The Git directory recorded for release " + own + ", '"
+                    + DeployRequestValidator.shown(recordedPath) + "', is not the release's own directory"
+                    + " (<path prefix>/" + own + "), so KDPS changes nothing in it.");
+        }
+        return path;
+    }
+
+    /**
+     * A Git directory refused for a release: not the release's own, inside or above the directory of another
+     * release, or holding another release's HelmRelease. Nothing was written to or removed from Git for the release,
+     * nor removed from the cluster.
+     */
+    public static final class NotOwnDirectoryException extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+
+        public NotOwnDirectoryException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Refuses a release directory that is inside, the same as or above the directory recorded for another release
+     * deployed to the same Git repository, so each release has a directory of its own and the deploys of one never
+     * write among the other's manifests. Covers releases whose manifests are not on the branch yet, such as one
+     * proposed in a pull request still open.
+     *
+     * @param releaseDir the directory the release's manifests are written to
+     * @param repoUrl    the Git repository they are written to
+     * @throws NotOwnDirectoryException naming the other release and its directory
+     */
+    void checkApartFromRecordedReleases(Path releaseDir, String repoUrl, String namespace, String release) {
+        String id = K8sReleaseEntity.idOf(namespace, release);
+        List<K8sReleaseEntity> others = releaseMetadataService.findAll().stream()
+                .filter(other -> other != null && !id.equals(other.getId())
+                        && !(namespace.equals(other.getNamespace()) && release.equals(other.getReleaseName()))
+                        && other.getGitPath() != null
+                        && !other.getGitPath().isBlank() && sameRepository(repoUrl, other.getGitRepoUrl()))
+                .sorted(java.util.Comparator.comparing(K8sReleaseEntity::getGitPath))
+                .collect(Collectors.toList());
+        for (K8sReleaseEntity other : others) {
+            Path otherDir;
+            try {
+                otherDir = validateRelative(Path.of(other.getGitPath()));
+            } catch (IllegalArgumentException unusable) {
+                continue;
+            }
+            String otherRelease = other.getNamespace() + "/" + other.getReleaseName();
+            if (releaseDir.startsWith(otherDir) || otherDir.startsWith(releaseDir)) {
+                throw new NotOwnDirectoryException(nestedMessage(releaseDir, namespace, release, otherDir,
+                        otherRelease));
+            }
+        }
+    }
+
+    /**
+     * Refuses a release directory of the Git workspace that is inside the directory of another release, holds one,
+     * or holds the HelmRelease of another release. A directory is a release's when it holds a
+     * {@code helmrelease.yaml} naming the HelmRelease {@code <namespace>/<release>} its path ends with, as a deploy
+     * writes it.
+     *
+     * @param workspace  the Git workspace, checked out on the branch the release is written to
+     * @param releaseDir the release's directory, relative to the workspace
+     * @throws NotOwnDirectoryException naming the other release and its directory
+     * @throws IOException              when the directory cannot be read
+     */
+    static void checkApartFromOtherReleases(Path workspace, Path releaseDir, String namespace, String release)
+            throws IOException {
+        checkOwnHelmRelease(workspace, releaseDir, namespace, release);
+        // A release's directory is <prefix>/<namespace>/<release>: no directory of fewer segments is one.
+        for (Path parent = releaseDir.getParent(); parent != null && parent.getNameCount() >= 2;
+             parent = parent.getParent()) {
+            NamespacedName owner = releaseOf(workspace, parent);
+            if (owner != null) {
+                throw new NotOwnDirectoryException(nestedMessage(releaseDir, namespace, release, parent,
+                        owner.namespace() + "/" + owner.name()));
+            }
+        }
+        Path own = workspace.resolve(releaseDir);
+        if (!Files.isDirectory(own)) {
+            return;
+        }
+        List<Path> below;
+        try (java.util.stream.Stream<Path> walk = Files.walk(own)) {
+            below = walk.filter(file -> HELM_RELEASE_FILE.equals(String.valueOf(file.getFileName())))
+                    .map(Path::getParent)
+                    .filter(dir -> !dir.equals(own))
+                    .map(workspace::relativize)
+                    .sorted()
+                    .collect(Collectors.toList());
+        }
+        for (Path dir : below) {
+            NamespacedName owner = releaseOf(workspace, dir);
+            if (owner != null) {
+                throw new NotOwnDirectoryException(nestedMessage(releaseDir, namespace, release, dir,
+                        owner.namespace() + "/" + owner.name()));
+            }
+        }
+    }
+
+    /**
+     * Refuses a release directory of the Git workspace whose {@code helmrelease.yaml} holds a HelmRelease other than
+     * the release's: a deploy would overwrite it, an uninstall delete it.
+     *
+     * @throws NotOwnDirectoryException naming the HelmRelease found
+     */
+    static void checkOwnHelmRelease(Path workspace, Path releaseDir, String namespace, String release) {
+        for (Map<?, ?> doc : helmReleaseDocuments(workspace.resolve(releaseDir).resolve(HELM_RELEASE_FILE))) {
+            Map<?, ?> metadata = (Map<?, ?>) doc.get("metadata");
+            String found = metadata.get("namespace") + "/" + metadata.get("name");
+            if (!found.equals(namespace + "/" + release)) {
+                throw new NotOwnDirectoryException("The Git directory of release " + namespace + "/" + release + ", '"
+                        + releaseDir + "', holds the HelmRelease " + DeployRequestValidator.shown(found)
+                        + " in " + HELM_RELEASE_FILE + ", so KDPS changes nothing in it. Choose another path prefix,"
+                        + " or move that HelmRelease out of the directory.");
+            }
+        }
+    }
+
+    private static String nestedMessage(Path releaseDir, String namespace, String release, Path otherDir,
+                                        String otherRelease) {
+        String relation = releaseDir.equals(otherDir) ? "is also the directory"
+                : releaseDir.startsWith(otherDir) ? "is inside the directory" : "holds the directory";
+        return "The Git directory of release " + namespace + "/" + release + ", '" + releaseDir + "', " + relation
+                + " of release " + DeployRequestValidator.shown(otherRelease) + ", '" + otherDir + "', so KDPS"
+                + " writes nothing there: each release needs a directory of its own, neither inside nor above"
+                + " another release's. Choose a path prefix that gives it one, such as the default clusters/default.";
+    }
+
+    /**
+     * The release whose directory a directory of the Git workspace is, or {@code null}: the HelmRelease
+     * {@code <namespace>/<release>} its path ends with, in its {@code helmrelease.yaml}.
+     */
+    static NamespacedName releaseOf(Path workspace, Path dir) {
+        if (dir.getNameCount() < 2) {
+            return null;
+        }
+        String namespace = dir.getName(dir.getNameCount() - 2).toString();
+        String release = dir.getFileName().toString();
+        for (Map<?, ?> doc : helmReleaseDocuments(workspace.resolve(dir).resolve(HELM_RELEASE_FILE))) {
+            Map<?, ?> metadata = (Map<?, ?>) doc.get("metadata");
+            if (namespace.equals(String.valueOf(metadata.get("namespace")))
+                    && release.equals(String.valueOf(metadata.get("name")))) {
+                return new NamespacedName(namespace, release);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether two URLs name the same Git repository, as far as their text tells: equal but for case, a trailing
+     * {@code /} or {@code .git}.
+     */
+    static boolean sameRepository(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        return repositoryKey(a).equalsIgnoreCase(repositoryKey(b));
+    }
+
+    private static String repositoryKey(String url) {
+        String key = url.trim();
+        while (key.endsWith("/")) {
+            key = key.substring(0, key.length() - 1);
+        }
+        return key.endsWith(".git") ? key.substring(0, key.length() - ".git".length()) : key;
     }
 
     /** The values as a YAML document, without the document start marker nor folded lines. */
@@ -2824,19 +3016,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Render the {@code valuesFrom} block of a HelmRelease spec, reading a values Secret. Flux merges
-     * {@code spec.values} over it.
-     *
-     * @param secretName the values Secret
-     */
-    static String buildValuesFromYaml(String secretName) {
-        return "  valuesFrom:\n"
-                + "  - kind: Secret\n"
-                + "    name: " + secretName + "\n"
-                + "    valuesKey: " + GitOpsSecretValues.VALUES_KEY + "\n";
-    }
-
-    /**
      * The values Secret a HelmRelease reads for this deploy. A direct commit to the branch Flux reconciles uses the
      * HelmRelease's own Secret. Any other change (a pull request, a working branch still to merge) must not change the
      * running release before it is merged, yet Flux applies a change of the Secret the release reads at once: a
@@ -2899,30 +3078,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             }
         }
         return new StoredSecrets(referenced, payloads, documents);
-    }
-
-    private String renderDependencyHelmRelease(PendingDependency dep, String valuesFromYaml, Map<String, Object> values) {
-        return """
-                apiVersion: %s
-                kind: HelmRelease
-                metadata:
-                  name: %s
-                  namespace: %s
-                spec:
-                  interval: 5m
-                  timeout: %s
-                  chart:
-                    spec:
-                      chart: %s
-                %s      sourceRef:
-                        kind: HelmRepository
-                        name: %s
-                        namespace: flux-system
-                %s  values:
-                %s
-                """.formatted(FLUX_HR_API_VERSION, dep.releaseName(), dep.namespace(), HELM_TIMEOUT, dep.chart(),
-                dep.version() == null ? "" : "      version: " + dep.version() + "\n",
-                dep.repoName(), valuesFromYaml, serializeValuesAsYaml(values));
     }
 
     /**
@@ -3064,10 +3219,42 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return null;
     }
 
-    /** The HelmReleases in a directory of the Git workspace, by namespace and name. */
-    static java.util.Set<NamespacedName> helmReleasesUnder(Path dir) {
+    /**
+     * The manifests a deploy writes into a release's directory that are there: its {@code helmrelease.yaml} and
+     * {@code helmrepository.yaml}, and the {@code <dependency>-helmrelease.yaml} and
+     * {@code <repository>-helmrepository.yaml} files of its {@code dependencies} directory. Nothing else in the
+     * directory, and nothing in a directory below it, which may be another release's or hold other content of the
+     * repository.
+     *
+     * @param dir the release's directory in the Git workspace
+     * @throws IOException when its dependencies directory cannot be listed
+     */
+    static List<Path> releaseManifests(Path dir) throws IOException {
+        List<Path> found = new ArrayList<>();
+        for (String name : List.of(HELM_RELEASE_FILE, HELM_REPOSITORY_FILE)) {
+            if (Files.isRegularFile(dir.resolve(name))) {
+                found.add(dir.resolve(name));
+            }
+        }
+        Path dependencies = dir.resolve(DEPENDENCIES_DIR);
+        if (Files.isDirectory(dependencies)) {
+            try (java.util.stream.Stream<Path> files = Files.list(dependencies)) {
+                files.filter(Files::isRegularFile)
+                        .filter(file -> {
+                            String name = file.getFileName().toString();
+                            return name.endsWith("-" + HELM_RELEASE_FILE) || name.endsWith("-" + HELM_REPOSITORY_FILE);
+                        })
+                        .sorted()
+                        .forEach(found::add);
+            }
+        }
+        return found;
+    }
+
+    /** The HelmReleases of manifest files of the Git workspace, by namespace and name. */
+    static java.util.Set<NamespacedName> helmReleasesIn(List<Path> files) {
         java.util.Set<NamespacedName> found = new java.util.LinkedHashSet<>();
-        for (Path file : manifestsUnder(dir)) {
+        for (Path file : files) {
             for (Map<?, ?> doc : helmReleaseDocuments(file)) {
                 Map<?, ?> metadata = (Map<?, ?>) doc.get("metadata");
                 found.add(new NamespacedName(String.valueOf(metadata.get("namespace")), String.valueOf(metadata.get("name"))));
@@ -3077,12 +3264,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * The values Secrets of the HelmReleases in a directory of the Git workspace: the one named after each
+     * The values Secrets of the HelmReleases of manifest files of the Git workspace: the one named after each
      * HelmRelease, and the HelmRelease's other values Secrets its {@code valuesFrom} reads.
      */
-    static java.util.Set<NamespacedName> valuesSecretsUnder(Path dir) {
+    static java.util.Set<NamespacedName> valuesSecretsIn(List<Path> files) {
         java.util.Set<NamespacedName> found = new java.util.LinkedHashSet<>();
-        for (Path file : manifestsUnder(dir)) {
+        for (Path file : files) {
             for (Map<?, ?> doc : helmReleaseDocuments(file)) {
                 Map<?, ?> metadata = (Map<?, ?>) doc.get("metadata");
                 String hrNamespace = String.valueOf(metadata.get("namespace"));
@@ -3092,21 +3279,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             }
         }
         return found;
-    }
-
-    private static List<Path> manifestsUnder(Path dir) {
-        if (!Files.exists(dir)) {
-            return List.of();
-        }
-        try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
-            return walk.filter(Files::isRegularFile)
-                    .filter(f -> f.getFileName().toString().endsWith(".yaml") || f.getFileName().toString().endsWith(".yml"))
-                    .sorted()
-                    .collect(Collectors.toList());
-        } catch (IOException ex) {
-            LOG.warn("Could not list the manifests under {}: {}", dir, ex.toString());
-            return List.of();
-        }
     }
 
     /** The HelmRelease documents of a manifest file that name their namespace; none when it cannot be read. */
@@ -3126,7 +3298,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 }
             }
         } catch (Exception ex) {
-            LOG.warn("Could not read {} for its values Secrets: {}", file, ex.toString());
+            LOG.warn("Could not read the HelmReleases of {}: {}", file, ex.toString());
         }
         return found;
     }
@@ -3190,20 +3362,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     /* ------------------------ DependsOn helper ------------------------ */
     /** Lightweight holder for dependency references in Flux HelmReleases. */
     record DepRef(String name, String namespace) {}
-
-    /**
-     * Render a dependsOn block for Flux HelmRelease spec.
-     */
-    static String buildDependsOnYaml(List<DepRef> deps) {
-        if (deps == null || deps.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        sb.append("  dependsOn:\n");
-        for (DepRef d : deps) {
-            sb.append("  - name: ").append(d.name).append("\n");
-            sb.append("    namespace: ").append(d.namespace).append("\n");
-        }
-        return sb.toString();
-    }
 
     private void logFluxInfo(String namespace, String release, String phase, String message, Object... args) {
         String context = buildContext(namespace, release);

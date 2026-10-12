@@ -80,6 +80,14 @@ public class FormField {
     public Integer maxLength;
     public String validationHint;
 
+    /**
+     * Regular expression the whole value must match, such as Helm's rule for a release name; the wizard shows
+     * {@link #validationHint} under the field while it does not, so a name Helm or Kubernetes would refuse is caught
+     * as it is typed. Read by the UI only, declared here for the same reason as {@link #resourceCheck}. The server
+     * checks the release, namespace and chart names on its own.
+     */
+    public String pattern;
+
     // Simple condition support: { field, value }
     public Map<String, Object> condition;
 

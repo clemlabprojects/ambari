@@ -79,6 +79,10 @@ Other field properties:
   in by itself (the ingress class it detects), or a value the chart uses on both platforms (Trino's scrape interval).
 - `options`: For `select`.
 - `placeholder`: Hint shown in an empty `string` field.
+- `pattern`, `validationHint`: A regular expression the whole value must match, and the message the field shows
+  while it does not (the field's `help` then goes under the input). Every `releaseName` field declares Helm's rule
+  for release names (at most 53 lower-case letters, digits, `-` and `.`, starting and ending with a letter or digit).
+  The wizard only warns: the server refuses an invalid release, namespace, chart or chart version on its own.
 - `omitWhenBlank`: If true and the field is left blank, the key is left out of the Helm values so the chart's own
   default applies, instead of sending an empty string an older chart may not understand.
 - `resourceCheck`: `{ "kind": "javaHeap" | "memoryRequest" | "cpuRequest", "limitField": "<otherField>" }` compares

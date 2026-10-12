@@ -462,7 +462,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         when(k8s.getSecret("analytics", "trino-kdps-values")).thenReturn(secret("trino-kdps-values", true));
         when(k8s.getSecret("analytics", "ldap-proxy-kdps-values")).thenReturn(secret("ldap-proxy-kdps-values", false));
 
-        backend().destroy(repoUrl, "main", RELEASE_DIR, null, null);
+        backend().destroy(repoUrl, "main", RELEASE_DIR, null, null, "analytics", "trino");
 
         assertNull("removed from Git", published(RELEASE_DIR + "/helmrelease.yaml"));
         verify(k8s).deleteSecret("analytics", "trino-kdps-values");
@@ -477,7 +477,7 @@ public class FluxGitOpsBackendSecretValuesTest {
                 .thenReturn(List.of("trino-kdps-values", "trino-kdps-values-1a2b3c4d", "trino-truststore"));
         when(k8s.getSecret(eq("analytics"), anyString())).thenAnswer(inv -> secret(inv.getArgument(1), true));
 
-        backend().destroy(repoUrl, "main", RELEASE_DIR, null, null);
+        backend().destroy(repoUrl, "main", RELEASE_DIR, null, null, "analytics", "trino");
 
         verify(k8s).deleteSecret("analytics", "trino-kdps-values");
         verify(k8s).deleteSecret("analytics", "trino-kdps-values-1a2b3c4d");
@@ -649,7 +649,7 @@ public class FluxGitOpsBackendSecretValuesTest {
             g.branchCreate().setName("kdps-change").setStartPoint("refs/heads/main").call();
         }
 
-        backend().destroy(repoUrl, "kdps-change", "main", RELEASE_DIR, null, null);
+        backend().destroy(repoUrl, "kdps-change", "main", RELEASE_DIR, null, null, "analytics", "trino");
 
         assertNotNull("Flux still applies the release from the base branch", published(RELEASE_DIR + "/helmrelease.yaml"));
         verify(k8s, never()).deleteSecret(anyString(), anyString());
@@ -660,7 +660,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         backend().apply(trinoRequest(), null);
         when(k8s.getSecret(eq("analytics"), anyString())).thenAnswer(inv -> secret(inv.getArgument(1), true));
 
-        backend().destroy(repoUrl, "main", null, RELEASE_DIR, null, null);
+        backend().destroy(repoUrl, "main", null, RELEASE_DIR, null, null, "analytics", "trino");
 
         verify(k8s, never()).deleteSecret(anyString(), anyString());
     }
@@ -671,7 +671,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         String name = valuesSecretOf(published("flux-work", RELEASE_DIR + "/helmrelease.yaml"));
         when(k8s.getSecret(eq("analytics"), anyString())).thenAnswer(inv -> secret(inv.getArgument(1), true));
 
-        backend().destroy(repoUrl, "flux-work", "main", RELEASE_DIR, null, null);
+        backend().destroy(repoUrl, "flux-work", "main", RELEASE_DIR, null, null, "analytics", "trino");
 
         assertNull(published("flux-work", RELEASE_DIR + "/helmrelease.yaml"));
         verify(k8s).deleteSecret("analytics", name);

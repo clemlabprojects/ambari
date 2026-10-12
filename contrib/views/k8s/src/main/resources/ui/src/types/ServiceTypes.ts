@@ -15,6 +15,10 @@ export interface FormFieldBase {
   omitWhenBlank?: boolean;
   /** Hint shown in an empty text field. */
   placeholder?: string;
+  /** Regular expression the whole value must match, such as Helm's rule for a release name. */
+  pattern?: string;
+  /** Shown under the field while its value does not match {@link pattern}. */
+  validationHint?: string;
 }
 /**
  * A value that must stay under a limit held by another field (`limitField`):

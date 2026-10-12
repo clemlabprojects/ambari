@@ -170,6 +170,8 @@ class CommandServiceGitOpsDeployTest {
         when(helm.getRepositoryService().getEffectiveImageRegistry(any())).thenReturn("registry.example.org");
 
         service = new CommandService(ctx, helm, k8s);
+        // Its background sweep of operation files reads ctx: let it finish before the tests stub ctx further.
+        service.startupSweep.get(30, java.util.concurrent.TimeUnit.SECONDS);
         rel = "zz-" + Long.toHexString(System.nanoTime());
     }
 
@@ -1084,6 +1086,111 @@ class CommandServiceGitOpsDeployTest {
 
         assertTrue(refused.getMessage().startsWith("The saved settings of this operation are no longer available"),
                 refused.getMessage());
+    }
+
+    // ------------------------------------------------------------------------------------------------ names
+
+    /** Asserts that a deploy is refused with that message before anything is planned, created or committed. */
+    private void assertRefusedOnSubmit(String expectedMessage, HelmDeployRequest request) throws Exception {
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> service.submitDeploy(request, "charts", "0.0.1", null, null, null, null, null));
+
+        assertTrue(refused.getMessage().startsWith(expectedMessage), refused.getMessage());
+        assertEquals(List.of(seedCommit), commitsOn("main"), "nothing reached Git");
+        assertTrue(dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing was planned");
+        verify(k8s, never()).createNamespace(anyString());
+        assertTrue(secretPayloads.isEmpty(), "no values Secret either");
+    }
+
+    @Test
+    void aGitOpsDeployWithANameHelmWouldRefuseChangesNothing() throws Exception {
+        HelmDeployRequest uppercase = request("FLUX_GITOPS", "main");
+        uppercase.setReleaseName("Trino_prod");
+        assertRefusedOnSubmit("Release name 'Trino_prod' is not valid", uppercase);
+
+        HelmDeployRequest traversal = request("FLUX_GITOPS", "main");
+        traversal.setReleaseName("../x");
+        assertRefusedOnSubmit("Release name '../x' is not valid", traversal);
+
+        HelmDeployRequest namespace = request("FLUX_GITOPS", "main");
+        namespace.setNamespace("../team-b");
+        assertRefusedOnSubmit("Namespace '../team-b' is not valid", namespace);
+    }
+
+    @Test
+    void aGitOpsDeployWhoseChartVersionOrDependencyWouldAddToTheManifestsChangesNothing() throws Exception {
+        HelmDeployRequest chart = request("FLUX_GITOPS", "main");
+        chart.setChart("example/zz-test-gitops\n---\napiVersion: rbac.authorization.k8s.io/v1\n"
+                + "kind: ClusterRoleBinding");
+        assertRefusedOnSubmit("Chart 'example/zz-test-gitops?---?", chart);
+
+        // A reference only a direct deploy resolves: the HelmRelease names a chart of its chart repository.
+        HelmDeployRequest oci = request("FLUX_GITOPS", "main");
+        oci.setChart("oci://registry.example.org/charts/zz-test-gitops");
+        assertRefusedOnSubmit("Chart 'oci://registry.example.org/charts/zz-test-gitops' is not valid", oci);
+
+        HelmDeployRequest version = request("FLUX_GITOPS", "main");
+        version.setVersion("0.0.1\nkind: Secret");
+        assertRefusedOnSubmit("Chart version '0.0.1?kind: Secret' is not valid", version);
+
+        HelmDeployRequest colon = request("FLUX_GITOPS", "main");
+        colon.setVersion("a: b");
+        assertRefusedOnSubmit("Chart version 'a: b' is not valid", colon);
+        // (given as the query parameter the wizard uses)
+        IllegalArgumentException queried = assertThrows(IllegalArgumentException.class,
+                () -> service.submitDeploy(request("FLUX_GITOPS", "main"), "charts", "a: b", null, null, null, null,
+                        null));
+        assertTrue(queried.getMessage().startsWith("Chart version 'a: b' is not valid"), queried.getMessage());
+
+        HelmDeployRequest dependency = fullRequest("FLUX_GITOPS");
+        dependency.getDependencies().put("ldap-proxy", new LinkedHashMap<>(Map.of("chart", "ldap-proxy",
+                "releaseName", "../../team-b/trino")));
+        assertRefusedOnSubmit("Dependency 'ldap-proxy': release name '../../team-b/trino' is not valid", dependency);
+    }
+
+    @Test
+    void aDirectDeployWithAnInvalidNameIsRefusedBeforeHelmRuns() throws Exception {
+        HelmDeployRequest request = request("DIRECT_HELM", "main");
+        request.setReleaseName("Trino_prod");
+
+        // Nothing planned: no Helm step either, which would have refused the name only once the release was prepared.
+        assertRefusedOnSubmit("Release name 'Trino_prod' is not valid", request);
+    }
+
+    @Test
+    void theDeployEndpointAnswersAnInvalidNameWithA400AndItsRule() throws Exception {
+        // doReturn, not when(...): the service's background sweep of operation files reads the same context while
+        // this test stubs it, and when(...) would stub whatever that thread called last.
+        doReturn(Map.of("k8s.view.working.dir", tmp.resolve("work").toString(), "view.admin.users", "admin"))
+                .when(ctx).getProperties();
+        doReturn("K8S-VIEW").when(ctx).getViewName();
+        org.apache.ambari.view.ViewDefinition definition = ctx.getViewDefinition();
+        doReturn("1.0.0").when(definition).getVersion();
+        doReturn("ambari.test").when(ctx)
+                .getAmbariProperty(org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver.LOOPBACK_HOST_PROPERTY);
+        javax.ws.rs.core.HttpHeaders headers = mock(javax.ws.rs.core.HttpHeaders.class);
+        when(headers.getRequestHeaders()).thenReturn(new javax.ws.rs.core.MultivaluedHashMap<>());
+        javax.ws.rs.core.UriInfo uriInfo = mock(javax.ws.rs.core.UriInfo.class);
+        when(uriInfo.getBaseUri()).thenReturn(java.net.URI.create("http://ambari.test:8080/api/v1/"));
+        HelmDeployRequest request = request("FLUX_GITOPS", "main");
+        request.setReleaseName("Trino_prod");
+
+        Field instances = CommandService.class.getDeclaredField("INSTANCES");
+        instances.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        ConcurrentMap<String, CommandService> registry = (ConcurrentMap<String, CommandService>) instances.get(null);
+        registry.put(ctx.getInstanceName(), service);
+        try {
+            Response response = new CommandResource(ctx, null, headers)
+                    .submitDeploy(request, "charts", "0.0.1", null, headers, uriInfo);
+
+            assertEquals(400, response.getStatus());
+            String error = String.valueOf(((Map<?, ?>) response.getEntity()).get("error"));
+            assertTrue(error.startsWith("Release name 'Trino_prod' is not valid: Helm accepts at most 53"), error);
+        } finally {
+            registry.remove(ctx.getInstanceName());
+        }
+        assertEquals(List.of(seedCommit), commitsOn("main"));
     }
 
     /** Keeps entities by class and id, like the view's data store. */

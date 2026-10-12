@@ -944,7 +944,9 @@
       "name": "releaseName",
       "label": "release name",
       "type": "string",
-      "required": true
+      "required": true,
+      "pattern": "^(?=.{1,53}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+      "validationHint": "Use at most 53 lower-case letters, digits, '-' and '.', starting and ending with a letter or digit (Helm's rule for release names)."
     },
     {
       "name": "namespace",
