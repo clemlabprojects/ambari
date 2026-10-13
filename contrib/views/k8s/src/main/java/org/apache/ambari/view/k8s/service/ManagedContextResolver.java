@@ -288,7 +288,7 @@ public class ManagedContextResolver {
             return explicit;
         }
         // Many clusters set only oidc_admin_url + oidc_realm; compose the issuer exactly as the
-        // service dynamicValues fallback does (CommandService.resolveOidcIssuerUrl), so the context
+        // service dynamicValues fallback does (DynamicValuesResolver.oidcIssuerUrl), so the context
         // matches what services deploy with.
         String adminUrl = cfg("oidc-env", "oidc_admin_url");
         String realm    = cfg("oidc-env", "oidc_realm");

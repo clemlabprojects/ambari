@@ -42,9 +42,6 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.*;
 
-import static org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
-import static org.apache.ambari.view.k8s.utils.CommandUtils.DYNAMIC_SOURCE_MAP;
-
 /**
  * Responsible for creating the Tree of Commands (Plans) and persisting them to DataStore.
  * Extracted from CommandService.
@@ -60,6 +57,8 @@ public class CommandPlanFactory {
 
     // Injected service to access webHook logic if needed inside planning
     private final WebHookConfigurationService webHookService;
+    /** Resolves the dynamic values of the release chart and of its dependencies. */
+    private final DynamicValuesResolver dynamicValuesResolver;
 
     /**
      * Constructs a {@code CommandPlanFactory} with the services required for building command plans.
@@ -76,33 +75,7 @@ public class CommandPlanFactory {
         this.gson = gson;
         this.webHookService = webHookService;
         this.commandUtils = commandUtils;
-    }
-
-    /**
-     * Resolve a non-managed platform context's {@code <capability>.<field>} values for a deploy, so
-     * dynamic-value tokens (Kerberos realm, OIDC issuer/realm) can be sourced from the selected
-     * context rather than this cluster's Ambari config. Returns an empty map for the managed/default
-     * context (or when none is selected), which keeps the managed deploy path unchanged.
-     */
-    private Map<String, String> contextResolvedFieldsForDeploy(Object formValuesObj,
-                                                               AmbariActionClient ambari, String cluster) {
-        try {
-            if (!(formValuesObj instanceof Map)) {
-                return java.util.Collections.emptyMap();
-            }
-            Object pc = ((Map<?, ?>) formValuesObj).get("platformContextId");
-            String pcId = pc == null ? null : String.valueOf(pc);
-            if (pcId == null || pcId.isBlank() || "default".equals(pcId)) {
-                return java.util.Collections.emptyMap();
-            }
-            org.apache.ambari.view.k8s.model.ResolvedContext rc =
-                    new ContextService(ctx).resolve(pcId, ambari, cluster);
-            return (rc != null && rc.getResolvedFields() != null)
-                    ? rc.getResolvedFields() : java.util.Collections.emptyMap();
-        } catch (Exception e) {
-            LOG.warn("Context-aware dynamicValues: could not resolve platform context: {}", e.toString());
-            return java.util.Collections.emptyMap();
-        }
+        this.dynamicValuesResolver = new DynamicValuesResolver(ctx, commandUtils);
     }
 
     /**
@@ -167,90 +140,11 @@ public class CommandPlanFactory {
         }
 
         // Resolve dynamic value tokens (e.g., AMBARI_KERBEROS_REALM -> helm path) for the main chart
-        Map<String, String> resolvedDynamicOverrides = null;
-        Object dynamicValuesObj = params.get("dynamicValues");
-        List<String> dynamicValues = new ArrayList<>();
-        if (dynamicValuesObj instanceof List) {
-            @SuppressWarnings("unchecked")
-            List<Object> l = (List<Object>) dynamicValuesObj;
-            for (Object o : l) {
-                if (o instanceof String s && !s.isBlank()) {
-                    dynamicValues.add(s.trim());
-                }
-            }
-        }
-        if (!dynamicValues.isEmpty()) {
-            try {
-                String baseUriStr = (String) params.get("_baseUri");
-                Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(params.get("_callerHeaders"));
-                String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
-                var ambariActionClient = new AmbariActionClient(ctx, baseUriStr, cluster, authHeaders);
-                // When a non-managed platform context is selected, source tokens from it.
-                Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(params.get("formValues"), ambariActionClient, cluster);
-
-                resolvedDynamicOverrides = new LinkedHashMap<>();
-                for (String dynamic : dynamicValues) {
-                    String[] parts = dynamic.split(":", 2);
-                    if (parts.length != 2) {
-                        LOG.warn("Invalid dynamic value token '{}', expected 'SOURCE:helm.path'", dynamic);
-                        continue;
-                    }
-                    String token = parts[0].trim();
-                    String helmPath = parts[1].trim();
-                    if (helmPath.isEmpty()) {
-                        LOG.warn("Empty helm path in token '{}', skipping", dynamic);
-                        continue;
-                    }
-                    // Optional path suffix: "TOKEN[/some/extra/path]:helm.path" appends
-                    // the suffix to the resolved value. Lets one Ambari property feed
-                    // multiple chart values (e.g. Keycloak issuer URL -> auth / token /
-                    // userinfo endpoints, each one needing a different sub-path).
-                    String suffix = "";
-                    int lbracket = token.indexOf('[');
-                    if (lbracket > 0 && token.endsWith("]")) {
-                        suffix = token.substring(lbracket + 1, token.length() - 1);
-                        token = token.substring(0, lbracket);
-                    }
-                    AmbariConfigRef ref = DYNAMIC_SOURCE_MAP.get(token);
-                    if (ref == null) {
-                        LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
-                        continue;
-                    }
-                    try {
-                        // A non-managed platform context (external/remote) takes precedence: use the
-                        // value it resolved for this token rather than the local Ambari config.
-                        String v = CommandUtils.contextValueForToken(token, ctxResolved);
-                        if (v == null || v.isBlank()) {
-                            v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
-                        }
-                        // AMBARI_OIDC_ISSUER_URL fallback (matches the sister code in
-                        // CommandService.resolveDynamicOverrides): if oidc-env.oidc_issuer_url
-                        // is blank, compose it from oidc_admin_url + "/realms/" + oidc_realm.
-                        // Without this the plan factory silently skips and the rendered chart
-                        // ends up without authorize/token/userinfo URLs, producing a
-                        // self-referential redirect loop at /hub/oauth_login.
-                        if ((v == null || v.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(token)) {
-                            v = resolveOidcIssuerUrlFallback(ambariActionClient, cluster);
-                        }
-                        if (v == null || v.isBlank()) {
-                            LOG.warn("Resolved empty value for token '{}' (type={}, key={}), skipping", token, ref.type, ref.key);
-                            continue;
-                        }
-                        // Strip any trailing slash on the issuer URL before appending,
-                        // so "https://issuer/" + "/path" doesn't double-slash.
-                        String resolved = suffix.isEmpty() ? v
-                                : (v.endsWith("/") ? v.substring(0, v.length() - 1) : v) + suffix;
-                        resolvedDynamicOverrides.put(helmPath, resolved);
-                        LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolved);
-                    } catch (Exception ex) {
-                        LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
-                    }
-                }
-            } catch (Exception ex) {
-                LOG.error("Could not resolve dynamic values for main chart: {}", ex.toString());
-            }
-        }
-        if (resolvedDynamicOverrides != null && !resolvedDynamicOverrides.isEmpty()) {
+        String baseUriStr = params.get("_baseUri") instanceof String s ? s : null;
+        Map<String, String> resolvedDynamicOverrides = dynamicValuesResolver.resolve(params.get("dynamicValues"),
+                params.get("formValues"), baseUriStr, AmbariActionClient.toAuthHeaders(params.get("_callerHeaders")),
+                "the release chart");
+        if (!resolvedDynamicOverrides.isEmpty()) {
             params.put("_dynamicOverrides", resolvedDynamicOverrides);
         }
         return params;
@@ -578,38 +472,9 @@ public class CommandPlanFactory {
         params.put("isWebhook", isWebhook);
         params.put("fullnameOverride", depMap.get("fullnameOverride") instanceof String s ? s : null);
 
-        /**
-         * start to check if dynamic values are given and prepare parsing and fetching
-         */
-        Object dynamicValuesObj = depMap.get("dynamicValues");
-        List<String> dynamicValues = new ArrayList<>();
-        if (dynamicValuesObj instanceof List) {
-            @SuppressWarnings("unchecked")
-            List<Object> l = (List<Object>) dynamicValuesObj;
-            for (Object o : l) {
-                if (o instanceof String s && !s.isBlank()) {
-                    dynamicValues.add(s.trim()); // each string like "SRC:helm.path"
-                }
-            }
-        }
-        Map<String, String> resolvedDynamicOverrides = null;
-
-        if (!dynamicValues.isEmpty() && baseUri == null) {
-            LOG.warn("No Ambari address to resolve the dynamic values {} of dependency {}: they are not set", dynamicValues, dependencyName);
-        } else if (!dynamicValues.isEmpty()) {
-            LOG.info("Fetching cluster name from Ambari Server in order to fetch properties");
-            String cluster = null;
-            try {
-                cluster = this.commandUtils.resolveClusterName(baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
-            } catch (Exception e) {
-                LOG.error("Could not fetch cluster name, dynamic Values will be ignored");
-            }
-            var ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
-            LOG.info("Dynamic Values will be set with cluster name {}", cluster);
-
-            // Dependency charts inherit the parent deploy's platform context (carried in the
-            // root command's formValues); source tokens from it when it is non-managed.
-            Object parentFormValues = null;
+        // Dependency charts inherit the parent deploy's platform context (carried in the root command's formValues).
+        Object parentFormValues = null;
+        if (!DynamicValuesResolver.entriesOf(depMap.get("dynamicValues")).isEmpty()) {
             try {
                 Map<String, Object> rootP = gson.fromJson(CommandUtils.resolveParamsPayload(cmd.getParamsJson()),
                         new TypeToken<Map<String, Object>>(){}.getType());
@@ -617,64 +482,13 @@ public class CommandPlanFactory {
             } catch (Exception ignore) {
                 // no parent form values → managed/default behaviour
             }
-            Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(parentFormValues, ambariActionClient, cluster);
-
-            resolvedDynamicOverrides = new LinkedHashMap<>();
-            for (String dynamic : dynamicValues) {
-                String[] parts = dynamic.split(":", 2); // IMPORTANT: limit=2
-                if (parts.length != 2) {
-                    LOG.warn("Invalid dynamic value token '{}', expected 'SOURCE:helm.path'", dynamic);
-                    continue;
-                }
-                String token = parts[0].trim();
-                String helmPath = parts[1].trim();
-                if (helmPath.isEmpty()) {
-                    LOG.warn("Empty helm path in token '{}', skipping", dynamic);
-                    continue;
-                }
-                // Optional path suffix: "TOKEN[/some/extra/path]:helm.path" appends
-                // the suffix to the resolved value. Lets one Ambari property feed
-                // multiple chart values (e.g. Keycloak issuer URL -> auth / token /
-                // userinfo endpoints, each one needing a different sub-path).
-                String suffix = "";
-                int lbracket = token.indexOf('[');
-                if (lbracket > 0 && token.endsWith("]")) {
-                    suffix = token.substring(lbracket + 1, token.length() - 1);
-                    token = token.substring(0, lbracket);
-                }
-                AmbariConfigRef ref = DYNAMIC_SOURCE_MAP.get(token);
-                if (ref == null) {
-                    LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
-                    continue;
-                }
-                try {
-                    // Non-managed platform context takes precedence over local Ambari config.
-                    String v = CommandUtils.contextValueForToken(token, ctxResolved);
-                    if (v == null || v.isBlank()) {
-                        v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
-                    }
-                    // AMBARI_OIDC_ISSUER_URL fallback — mirrors the sister loop above.
-                    if ((v == null || v.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(token)) {
-                        v = resolveOidcIssuerUrlFallback(ambariActionClient, cluster);
-                    }
-                    if (v == null || v.isBlank()) {
-                        LOG.warn("Resolved empty value for token '{}' (type={}, key={}), skipping", token, ref.type, ref.key);
-                        continue;
-                    }
-                    // Strip any trailing slash on the issuer URL before appending,
-                    // so "https://issuer/" + "/path" doesn't double-slash.
-                    String resolved = suffix.isEmpty() ? v
-                            : (v.endsWith("/") ? v.substring(0, v.length() - 1) : v) + suffix;
-                    resolvedDynamicOverrides.put(helmPath, resolved);
-                    LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolved);
-                } catch (Exception ex) {
-                    LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
-                }
-            }
         }
+        Map<String, String> resolvedDynamicOverrides = dynamicValuesResolver.resolve(depMap.get("dynamicValues"),
+                parentFormValues, baseUri == null ? null : baseUri.toString(),
+                AmbariActionClient.toAuthHeaders(callerHeaders), "dependency " + dependencyName);
 
         // Attach resolved map once; both dry-run and run commands will reuse it
-        if (resolvedDynamicOverrides != null && !resolvedDynamicOverrides.isEmpty()) {
+        if (!resolvedDynamicOverrides.isEmpty()) {
             params.put("_dynamicOverrides", resolvedDynamicOverrides);
         }
 
@@ -1449,31 +1263,5 @@ public class CommandPlanFactory {
         store(status);
         store(cmd);
         return id;
-    }
-
-    /**
-     * Fallback resolver for AMBARI_OIDC_ISSUER_URL. On many KDPS clusters the
-     * oidc-env.oidc_issuer_url config property is left blank because operators
-     * only set oidc_admin_url + oidc_realm; this composes the issuer URL the
-     * same way CommandService.resolveOidcIssuerUrl does so that downstream
-     * service.json dynamicValues directives like
-     *   "AMBARI_OIDC_ISSUER_URL[/protocol/openid-connect/auth]:..."
-     * resolve to a usable Keycloak endpoint instead of skipping silently.
-     *
-     * <p>Kept as a static helper local to CommandPlanFactory to avoid pulling
-     * a CommandService instance into the plan factory just for one lookup.
-     */
-    private static String resolveOidcIssuerUrlFallback(AmbariActionClient client, String cluster) {
-        if (client == null || cluster == null || cluster.isBlank()) return null;
-        try {
-            String adminUrl = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
-            String realm    = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_realm");
-            if (adminUrl != null && !adminUrl.isBlank() && realm != null && !realm.isBlank()) {
-                return adminUrl.replaceAll("/$", "") + "/realms/" + realm;
-            }
-        } catch (Exception ex) {
-            LOG.warn("Could not compose OIDC issuer URL fallback (admin_url + /realms/ + realm) on cluster {}: {}", cluster, ex.toString());
-        }
-        return null;
     }
 }

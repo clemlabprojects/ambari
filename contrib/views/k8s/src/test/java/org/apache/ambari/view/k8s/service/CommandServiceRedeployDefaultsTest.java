@@ -762,7 +762,9 @@ class CommandServiceRedeployDefaultsTest {
         CommandService service = service(null);
         set(service, "gson", new Gson());
         set(service, "repositoryDao", new HelmRepoRepo(ds));
-        set(service, "commandUtils", ambariManagingNoCluster());
+        CommandUtils noCluster = ambariManagingNoCluster();
+        set(service, "commandUtils", noCluster);
+        set(service, "dynamicValuesResolver", new DynamicValuesResolver(ctx, noCluster));
         when(k8s.getConfigurationService()).thenReturn(mock(ViewConfigurationService.class));
         backendsOf(service).put("DIRECT_HELM", new HelmDirectBackend(service));
 

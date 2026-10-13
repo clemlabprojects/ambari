@@ -120,6 +120,8 @@ public class CommandService {
     private final ConfigResolutionService configResolutionService;
     private final CommandUtils commandUtils;
     private final CommandPlanFactory commandPlanFactory;
+    /** Resolves the service definition's dynamic values, as {@link CommandPlanFactory} does for the Helm steps. */
+    private final DynamicValuesResolver dynamicValuesResolver;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String VIEW_SETTINGS_KEY = "view.settings.json";
@@ -258,17 +260,52 @@ public class CommandService {
      * against mocks.
      */
     CommandService(ViewContext ctx, HelmService helmService, KubernetesService kubernetesService) {
+        this(ctx, ctx.getDataStore(), helmService, kubernetesService, null, null,
+                Executors.newScheduledThreadPool(1), Executors.newCachedThreadPool(), true);
+    }
+
+    /**
+     * Builds the service on the given collaborators without starting anything in the background: no recovery of the
+     * operations a restart interrupted, no clean-up of stored credentials, no sweep of operation files and no daily
+     * renewal of the keytab webhook's certificate. Package-private so tests can plan and run operations on fakes,
+     * with nothing else touching them meanwhile.
+     *
+     * @param dataStore    where operations and release records are stored
+     * @param commandUtils cluster name, Kerberos and value helpers of the deploy steps
+     * @param planFactory  creates the Helm and preparation steps of a plan
+     * @param timer        schedules the steps that wait (retries, backoff)
+     * @param workers      runs the steps
+     */
+    CommandService(ViewContext ctx, DataStore dataStore, HelmService helmService, KubernetesService kubernetesService,
+                   CommandUtils commandUtils, CommandPlanFactory planFactory, ScheduledExecutorService timer,
+                   ExecutorService workers) {
+        this(ctx, dataStore, helmService, kubernetesService, Objects.requireNonNull(commandUtils, "commandUtils"),
+                Objects.requireNonNull(planFactory, "planFactory"), timer, workers, false);
+    }
+
+    /**
+     * @param commandUtils        null to build the view's own
+     * @param planFactory         null to build the view's own
+     * @param startBackgroundWork whether to recover interrupted operations, clear stale credentials, sweep the
+     *                            operation files and schedule the webhook certificate renewal, as a view instance does
+     */
+    private CommandService(ViewContext ctx, DataStore dataStore, HelmService helmService,
+                           KubernetesService kubernetesService, CommandUtils commandUtils,
+                           CommandPlanFactory planFactory, ScheduledExecutorService timer, ExecutorService workers,
+                           boolean startBackgroundWork) {
         this.ctx = ctx;
-        this.dataStore = ctx.getDataStore();
+        this.dataStore = dataStore;
         this.helmService = helmService;
-        this.workers = Executors.newCachedThreadPool();
+        this.workers = workers;
         this.kubernetesService = kubernetesService;
-        this.repositoryDao =  new HelmRepoRepo(ctx.getDataStore());
-        this.timer = Executors.newScheduledThreadPool(1);
+        this.repositoryDao =  new HelmRepoRepo(dataStore);
+        this.timer = timer;
         this.webHookConfigurationService = new WebHookConfigurationService(this.ctx, this.kubernetesService);
         this.configResolutionService = new ConfigResolutionService();
-        this.commandUtils = new CommandUtils(this.ctx,this.kubernetesService);
-        this.commandPlanFactory = new CommandPlanFactory(this.ctx, this.gson, this.webHookConfigurationService, this.commandUtils);
+        this.commandUtils = commandUtils != null ? commandUtils : new CommandUtils(this.ctx, this.kubernetesService);
+        this.commandPlanFactory = planFactory != null ? planFactory
+                : new CommandPlanFactory(this.ctx, this.gson, this.webHookConfigurationService, this.commandUtils);
+        this.dynamicValuesResolver = new DynamicValuesResolver(this.ctx, this.commandUtils);
         this.commandLogService = CommandLogService.get(this.ctx);
         // Stream the view's own server logging into the per-command log (see CommandLogAppender):
         // any INFO+ this view logs on a command-tagged thread shows up in the operation's aggregate
@@ -286,11 +323,16 @@ public class CommandService {
         // Dispatcher registry (can be extended later)
         this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), new GitOpsPlanBackend(this, fluxGitOpsBackend));
         this.deploymentBackends.put(DeploymentMode.DIRECT_HELM.name(), new HelmDirectBackend(this));
+        this.operationFiles = new OperationFilesRetention(ctx, dataStore);
+        if (!startBackgroundWork) {
+            this.startupSweep = java.util.concurrent.CompletableFuture.completedFuture(null);
+            LOG.info("CommandService initialized for {} without background work", ctx.getInstanceName());
+            return;
+        }
         recoverOrphanedCommands();
         clearStaleCredentials();
         // In the background: the first sweep after an upgrade encrypts every file kept by the earlier version. The
         // deploys that ended without installing their release are looked at first, while their settings are kept.
-        this.operationFiles = new OperationFilesRetention(ctx, dataStore);
         this.startupSweep = this.workers.submit(() -> {
             takeBackTagSyncAccountsAfterStart();
             // Earlier versions kept the password of the keytab webhook's Ambari administrator account in a Secret.
@@ -1826,23 +1868,11 @@ public class CommandService {
     }
 
     /**
-     * Resolve the OIDC issuer URL from Ambari cluster config.
-     * Returns the oidc_issuer_url property if non-blank; otherwise computes it as
-     * {oidc_admin_url}/realms/{oidc_realm}.
+     * The OIDC issuer URL of the managed cluster (see {@link DynamicValuesResolver#oidcIssuerUrl}): null when its
+     * {@code oidc-env} sets neither the issuer nor both the Keycloak address and realm.
      */
     private String resolveOidcIssuerUrl(AmbariActionClient client, String cluster) {
-        try {
-            String explicit = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_issuer_url");
-            if (explicit != null && !explicit.isBlank()) return explicit;
-            String adminUrl = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
-            String realm    = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_realm");
-            if (adminUrl != null && realm != null) {
-                return adminUrl.replaceAll("/$", "") + "/realms/" + realm;
-            }
-        } catch (Exception ex) {
-            LOG.warn("Could not resolve OIDC issuer URL from cluster {}: {}", cluster, ex.toString());
-        }
-        return null;
+        return DynamicValuesResolver.oidcIssuerUrl(client, cluster);
     }
 
     /**
@@ -18830,29 +18860,13 @@ public class CommandService {
     }
 
     /**
-     * Resolve a non-managed platform context's {@code <capability>.<field>} values for a deploy, so
-     * dynamic-value tokens (Kerberos realm, OIDC issuer/realm) can be sourced from the selected
-     * context rather than this cluster's Ambari config. Returns an empty map for the managed/default
-     * context (or when none is selected), keeping the managed deploy path unchanged.
+     * Resolve a non-managed platform context's {@code <capability>.<field>} values for a deploy (see
+     * {@link DynamicValuesResolver#contextResolvedFields}); empty for the managed/default context or when none is
+     * selected, keeping the managed deploy path unchanged.
      */
     private Map<String, String> contextResolvedFieldsForDeploy(Object formValuesObj,
                                                                AmbariActionClient ambari, String cluster) {
-        try {
-            if (!(formValuesObj instanceof Map)) {
-                return Collections.emptyMap();
-            }
-            Object pc = ((Map<?, ?>) formValuesObj).get("platformContextId");
-            String pcId = pc == null ? null : String.valueOf(pc);
-            if (pcId == null || pcId.isBlank() || ContextService.DEFAULT_CONTEXT_ID.equals(pcId)) {
-                return Collections.emptyMap();
-            }
-            org.apache.ambari.view.k8s.model.ResolvedContext rc =
-                    new ContextService(ctx).resolve(pcId, ambari, cluster);
-            return (rc != null && rc.getResolvedFields() != null) ? rc.getResolvedFields() : Collections.emptyMap();
-        } catch (Exception e) {
-            LOG.warn("Context-aware dynamicValues: could not resolve platform context: {}", e.toString());
-            return Collections.emptyMap();
-        }
+        return dynamicValuesResolver.contextResolvedFields(formValuesObj, ambari, cluster);
     }
 
     /**
@@ -19098,7 +19112,8 @@ public class CommandService {
     }
 
     /**
-     * Resolve dynamic override tokens (e.g., AMBARI_KERBEROS_REALM:path) into Helm override map.
+     * Resolve dynamic override tokens (e.g., AMBARI_KERBEROS_REALM:path) into Helm override map, as
+     * {@link CommandPlanFactory} does for the Helm steps of the release and of its dependencies.
      *
      * @param dynamicValuesObj raw dynamicValues object from params (usually a List<String>)
      * @param formValues       wizard form state (carries platformContextId for context-aware tokens)
@@ -19106,84 +19121,13 @@ public class CommandService {
      * @param callerHeaders    headers to propagate to Ambari
      * @return map of helmPath -> value or null when nothing resolved
      */
-    private Map<String, String> resolveDynamicOverrides(Object dynamicValuesObj, Object formValues, URI baseUri, Map<String, String> callerHeaders) {
-        if (dynamicValuesObj == null) {
+    Map<String, String> resolveDynamicOverrides(Object dynamicValuesObj, Object formValues, URI baseUri,
+                                                Map<String, String> callerHeaders) {
+        if (DynamicValuesResolver.entriesOf(dynamicValuesObj).isEmpty()) {
             return null;
         }
-        List<String> tokens = new ArrayList<>();
-        if (dynamicValuesObj instanceof List) {
-            @SuppressWarnings("unchecked")
-            List<Object> list = (List<Object>) dynamicValuesObj;
-            for (Object o : list) {
-                if (o instanceof String s && !s.isBlank()) {
-                    tokens.add(s.trim());
-                }
-            }
-        }
-        if (tokens.isEmpty() || baseUri == null) {
-            return null;
-        }
-        Map<String, String> resolved = new LinkedHashMap<>();
-        try {
-            String cluster = commandUtils.resolveClusterName(baseUri.toString(), callerHeaders);
-            AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, callerHeaders);
-            // When a non-managed platform context is selected, source tokens from it.
-            Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(formValues, ambariActionClient, cluster);
-            for (String token : tokens) {
-                String[] parts = token.split(":", 2);
-                if (parts.length != 2) {
-                    LOG.warn("Invalid dynamic value token '{}', expected 'SOURCE:helm.path'", token);
-                    continue;
-                }
-                String sourceKey = parts[0].trim();
-                String helmPath = parts[1].trim();
-                if (helmPath.isEmpty()) {
-                    LOG.warn("Empty helm path in token '{}', skipping", token);
-                    continue;
-                }
-                // Optional path-suffix syntax: "TOKEN[/sub/path]:helm.path" — strip the
-                // bracketed suffix off the source key so DYNAMIC_SOURCE_MAP lookup hits,
-                // and remember it to append to the resolved value below. Mirrors the
-                // sister parser in CommandPlanFactory; keeping both in sync.
-                String suffix = "";
-                int lb = sourceKey.indexOf('[');
-                if (lb > 0 && sourceKey.endsWith("]")) {
-                    suffix = sourceKey.substring(lb + 1, sourceKey.length() - 1);
-                    sourceKey = sourceKey.substring(0, lb);
-                }
-                AmbariConfigRef ref = CommandUtils.DYNAMIC_SOURCE_MAP.get(sourceKey);
-                if (ref == null) {
-                    LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
-                    continue;
-                }
-                try {
-                    // Non-managed platform context takes precedence over local Ambari config.
-                    String value = CommandUtils.contextValueForToken(sourceKey, ctxResolved);
-                    if (value == null || value.isBlank()) {
-                        value = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
-                    }
-                    // AMBARI_OIDC_ISSUER_URL fallback: in many clusters oidc-env.oidc_issuer_url
-                    // is left blank because operators only set oidc_admin_url + oidc_realm.
-                    // resolveOidcIssuerUrl() composes admin_url + "/realms/" + realm; reuse it
-                    // so services that map this token (Jupyter, etc.) don't render an empty value.
-                    if ((value == null || value.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(sourceKey)) {
-                        value = resolveOidcIssuerUrl(ambariActionClient, cluster);
-                    }
-                    if (value == null || value.isBlank()) {
-                        LOG.warn("Resolved empty value for token '{}' (type={}, key={})", token, ref.type, ref.key);
-                        continue;
-                    }
-                    String resolvedValue = suffix.isEmpty() ? value
-                            : (value.endsWith("/") ? value.substring(0, value.length() - 1) : value) + suffix;
-                    resolved.put(helmPath, resolvedValue);
-                    LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolvedValue);
-                } catch (Exception ex) {
-                    LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
-                }
-            }
-        } catch (Exception ex) {
-            LOG.warn("Failed to resolve dynamic overrides: {}", ex.toString());
-        }
+        Map<String, String> resolved = dynamicValuesResolver.resolve(dynamicValuesObj, formValues,
+                baseUri == null ? null : baseUri.toString(), callerHeaders, "the release chart");
         return resolved.isEmpty() ? null : resolved;
     }
 

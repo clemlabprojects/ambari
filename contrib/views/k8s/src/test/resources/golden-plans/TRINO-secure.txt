@@ -1,0 +1,75 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# The plan CommandServiceGoldenPlanTest expects for TRINO-secure: one step per line, in plan order, with its key
+# parameters indented below it. Lines starting with '#' are ignored.
+RANGER_REPOSITORY_CREATION
+    _rangerRepositoryName = trino-analytics
+    _rangerServiceType = trino
+    _rangerPluginUserName = trino_ranger_plugin_user
+    _rangerServiceConfigs = {jdbc.driverClassName=io.trino.jdbc.TrinoDriver, jdbc.url=jdbc:trino://trino-trino-coordinator.analytics.svc.cluster.local:8443?SSL=false&SSLVerification=NONE, policy.download.auth.users=trino-analytics, tag.download.auth.users=trino-analytics}
+HELM_REPO_LOGIN
+    repoId = charts
+HELM_DEPLOY_DEPENDENCY_CRD
+    crd = servicemonitors.monitoring.coreos.com
+    namespace = monitoring
+HELM_DEPLOY_DRY_RUN_DEPENDENCY_RELEASE
+    chart = kube-prometheus-stack
+    namespace = monitoring
+HELM_DEPLOY_DEPENDENCY_RELEASE
+    chart = kube-prometheus-stack
+    namespace = monitoring
+KEYTAB_ISSUE_PRINCIPAL
+    principalFqdn = trino-analytics@EXAMPLE.COM
+    secretName = trino-keytab
+    keyNameInSecret = service.keytab
+    kerberosEntryKey = coordinator
+KEYTAB_CREATE_SECRET
+    principalFqdn = trino-analytics@EXAMPLE.COM
+    secretName = trino-keytab
+    keyNameInSecret = service.keytab
+    kerberosEntryKey = coordinator
+KEYTAB_ISSUE_PRINCIPAL
+    principalFqdn = trino-analytics@EXAMPLE.COM
+    secretName = trino-keytab
+    keyNameInSecret = service.keytab
+    kerberosEntryKey = worker
+KEYTAB_CREATE_SECRET
+    principalFqdn = trino-analytics@EXAMPLE.COM
+    secretName = trino-keytab
+    keyNameInSecret = service.keytab
+    kerberosEntryKey = worker
+OIDC_REGISTER_CLIENT
+    oidcClientId = trino-analytics
+    oidcRedirectUri = https://trino.example.org/oauth2/callback
+    oidcSecretName = trino-oidc-client
+    oidcEntryKey = trino
+    publicClient = false
+    standardFlowEnabled = true
+    implicitFlowEnabled = false
+    oidcAudiences = [trino-analytics]
+OIDC_CREATE_SECRET
+    oidcClientId = trino-analytics
+    oidcSecretName = trino-oidc-client
+    oidcEntryKey = trino
+CONFIG_MATERIALIZE
+HELM_DEPLOY_DRY_RUN
+    chart = trinodb/trino
+    _dynamicOverrides = {global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.realm=odp, global.security.kerberos.realm=EXAMPLE.COM}
+    _ov = {global.security.auth.mode=oidc, global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.jwt.requiredAudience=trino-analytics, global.security.auth.oidc.secretRef.clientIdKey=client_id, global.security.auth.oidc.secretRef.clientSecretKey=client_secret, global.security.auth.oidc.secretRef.name=trino-oidc-client, global.security.kerberos.configMapName=trino-krb5-conf, global.security.kerberos.enabled=true, global.security.kerberos.injectionMode=PRE_PROVISIONED, global.security.kerberos.keytab.mountPath=/etc/security/keytabs, global.security.kerberos.keytab.secretDataKey=service.keytab, global.security.kerberos.keytab.secretName=trino-keytab, hadoopConf.configMapName=trino-hadoop-conf, hadoopConf.enabled=true, ranger.admin.ssl.truststore.fileKey=truststore.jks, ranger.admin.ssl.truststore.password=trino-ranger-admin-ts-pass, ranger.admin.ssl.truststore.passwordKey=password, ranger.admin.ssl.truststore.secretName=trino-ranger-admin-truststore, ranger.auditConfigMapName=trino-ranger-trino-audit, ranger.cred.providerFile=cred.jceks, ranger.cred.providerPath=/etc/trino/ranger/cred, ranger.cred.secretName=trino-ranger-trino-plugin-credential-provider, ranger.policymgrSslConfigMapName=trino-ranger-policymgr-ssl, ranger.policymgrssl_path=/etc/trino/ranger/ranger-policymgr-ssl-trino.xml, ranger.securityConfigMapName=trino-ranger-trino-security, ranger.serviceName=trino-analytics}
+HELM_DEPLOY
+    chart = trinodb/trino
+    _dynamicOverrides = {global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.realm=odp, global.security.kerberos.realm=EXAMPLE.COM}
+    _ov = {global.security.auth.mode=oidc, global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.jwt.requiredAudience=trino-analytics, global.security.auth.oidc.secretRef.clientIdKey=client_id, global.security.auth.oidc.secretRef.clientSecretKey=client_secret, global.security.auth.oidc.secretRef.name=trino-oidc-client, global.security.kerberos.configMapName=trino-krb5-conf, global.security.kerberos.enabled=true, global.security.kerberos.injectionMode=PRE_PROVISIONED, global.security.kerberos.keytab.mountPath=/etc/security/keytabs, global.security.kerberos.keytab.secretDataKey=service.keytab, global.security.kerberos.keytab.secretName=trino-keytab, hadoopConf.configMapName=trino-hadoop-conf, hadoopConf.enabled=true, ranger.admin.ssl.truststore.fileKey=truststore.jks, ranger.admin.ssl.truststore.password=trino-ranger-admin-ts-pass, ranger.admin.ssl.truststore.passwordKey=password, ranger.admin.ssl.truststore.secretName=trino-ranger-admin-truststore, ranger.auditConfigMapName=trino-ranger-trino-audit, ranger.cred.providerFile=cred.jceks, ranger.cred.providerPath=/etc/trino/ranger/cred, ranger.cred.secretName=trino-ranger-trino-plugin-credential-provider, ranger.policymgrSslConfigMapName=trino-ranger-policymgr-ssl, ranger.policymgrssl_path=/etc/trino/ranger/ranger-policymgr-ssl-trino.xml, ranger.securityConfigMapName=trino-ranger-trino-security, ranger.serviceName=trino-analytics}
