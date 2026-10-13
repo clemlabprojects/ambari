@@ -452,13 +452,14 @@
     },
     {
       "name": "openshift-no-prepuller",
-      "_description": "OpenShift adjustments: the image pre-puller hooks (fixed UID 65534 + seccomp annotations) cannot run under OpenShift SCCs and only warm caches, so off; the proxy Service must be ClusterIP (Helm waits forever for a LoadBalancer IP that OpenShift never assigns); the Ingress uses the openshift-default class so the ingress-to-route controller publishes the Route.",
+      "_description": "OpenShift adjustments: the image pre-puller hooks (fixed UID 65534 + seccomp annotations) cannot run under OpenShift SCCs and only warm caches, so off; the proxy Service must be ClusterIP (Helm waits forever for a LoadBalancer IP that OpenShift never assigns); the Ingress uses the openshift-default class so the ingress-to-route controller publishes the Route; the user scheduler is off, because the chart gives it a ClusterRole and ClusterRoleBinding (cluster-wide rights to delete and schedule pods) that an account limited to its own projects cannot create and a platform team would not grant to a project. User pods then use the cluster's default scheduler; the user scheduler only packs them more tightly for a cluster autoscaler. The same default is applied server-side (openshiftValueDefaults) for deploys that do not go through the wizard.",
       "skipIfVarEmpty": "isOpenShift",
       "targets": [
         { "path": "prePuller.hook.enabled",       "from": { "type": "template", "template": "false" } },
         { "path": "prePuller.continuous.enabled", "from": { "type": "template", "template": "false" } },
         { "path": "proxy.service.type",           "from": { "type": "template", "template": "ClusterIP" } },
-        { "path": "ingress.ingressClassName",     "from": { "type": "template", "template": "openshift-default" } }
+        { "path": "ingress.ingressClassName",     "from": { "type": "template", "template": "openshift-default" } },
+        { "path": "scheduling.userScheduler.enabled", "from": { "type": "template", "template": "false" } }
       ]
     }
   ],
@@ -476,9 +477,9 @@
   "requiredChartVersion": ">=4.3.0",
   "openshiftScc": [
     {
-      "comment": "OpenShift: the hub, the user scheduler and the proxy (namespace 'default' SA) pin a non-root UID that restricted-v2 refuses; nonroot-v2 accepts any non-root UID and the seccomp profile these pods declare (anyuid would refuse seccomp). 'default' also gets anyuid below; admission picks the SCC that validates each pod.",
+      "comment": "OpenShift: the hub and the proxy (namespace 'default' SA) pin a non-root UID that restricted-v2 refuses; nonroot-v2 accepts any non-root UID and the seccomp profile these pods declare (anyuid would refuse seccomp). 'default' also gets anyuid below; admission picks the SCC that validates each pod. The user scheduler is off on OpenShift (see openshiftValueDefaults), so its 'user-scheduler' SA is not listed: an operator who turns it back on also grants nonroot-v2 to that SA ('oc adm policy add-scc-to-user nonroot-v2 -z user-scheduler -n <project>').",
       "scc": "nonroot-v2",
-      "serviceAccounts": ["hub", "user-scheduler", "default"]
+      "serviceAccounts": ["hub", "default"]
     },
     {
       "comment": "User pods run under the namespace 'default' SA and carry the krb-renewer sidecar as root (constrained delegation), so they need anyuid.",
@@ -486,6 +487,10 @@
       "serviceAccounts": ["default"]
     }
   ],
+  "_openshiftValueDefaults": "Chart values every deploy on OpenShift gets when it does not set them itself, including deploys sent straight to the API or in GitOps mode, which do not run the wizard bindings. The chart turns the Z2JH user scheduler on by default; KDPS turns it off on OpenShift because its ClusterRole and ClusterRoleBinding cannot be created by an account limited to its own projects (or, with a cluster-admin Flux, would give a project service account cluster-wide pod rights). A deploy that sets the value keeps it.",
+  "openshiftValueDefaults": {
+    "scheduling.userScheduler.enabled": false
+  },
   "_imageRegistryPaths": "Z2JH ignores global.imageRegistry. At deploy time the view rewrites the registry prefix of these image values to the image registry of the selected Helm repository (private mirrors keep the upstream repository path: quay.io/jupyterhub/x -> <registry>/jupyterhub/x, registry.k8s.io/x -> <registry>/x). Entries with a default cover the chart-managed images the wizard does not expose, so API-driven deploys never fall back to quay.io / registry.k8s.io; the defaults are the Clemlab mirrors of the chart 4.3.5 upstream images.",
   "imageRegistryPaths": [
     "hub.image.name",

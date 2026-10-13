@@ -459,6 +459,21 @@ public class KubeService {
         checks.add(preflightCheck("Create Services", "Core", k.canI("create", "", "services", null, null, namespace)));
         checks.add(preflightCheck("Create Secrets", "Core", k.canI("create", "", "secrets", null, null, namespace)));
         checks.add(preflightCheck("Create ConfigMaps", "Core", k.canI("create", "", "configmaps", null, null, namespace)));
+        // Cluster-wide RBAC (advisory): an account limited to its own projects cannot create these, and the KDPS
+        // services do not need them on OpenShift with their defaults (JupyterHub's user scheduler, which does, is off
+        // there). A chart that renders them anyway fails at install with "forbidden ... at the cluster scope".
+        boolean clusterRbac = k.canI("create", "rbac.authorization.k8s.io", "clusterroles", null, null, null)
+                && k.canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null);
+        Map<String, Object> clusterRbacCheck = preflightCheck("Create ClusterRoles/ClusterRoleBindings",
+                "Cluster-wide RBAC", clusterRbac);
+        clusterRbacCheck.put("advisory", true);
+        clusterRbacCheck.put("remediation", "With their default settings, the KDPS services do not need it on"
+                + " OpenShift. On plain Kubernetes, JupyterHub's user scheduler does: either a cluster administrator"
+                + " lets this account create ClusterRoles and ClusterRoleBindings, or set"
+                + " scheduling.userScheduler.enabled to false in the JupyterHub values before deploying.");
+        clusterRbacCheck.put("note", "Charts that grant cluster-wide permissions create these objects at install."
+                + " Without the right, such an install is refused by the cluster and leaves a failed release.");
+        checks.add(clusterRbacCheck);
         // KEDA autoscaling
         checks.add(preflightCheck("Create KEDA ScaledObjects", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "scaledobjects", null, null, namespace)));
         checks.add(preflightCheck("Create KEDA TriggerAuthentications", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "triggerauthentications", null, null, namespace)));

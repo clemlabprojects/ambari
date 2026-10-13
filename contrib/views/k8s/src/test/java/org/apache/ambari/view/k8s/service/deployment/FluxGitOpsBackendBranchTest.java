@@ -474,6 +474,13 @@ class FluxGitOpsBackendBranchTest {
     void theFirstDirectCommitToAnEmptyRepositoryCreatesTheBaseBranch() throws Exception {
         Path empty = tmp.resolve("empty.git");
         Git.init().setBare(true).setInitialBranch("main").setDirectory(empty.toFile()).call().close();
+        // No background gc after a push: it would still hold gc.log.lock when the temp directory is removed.
+        try (Git bareGit = Git.open(empty.toFile())) {
+            org.eclipse.jgit.lib.StoredConfig bareConfig = bareGit.getRepository().getConfig();
+            bareConfig.setInt("gc", null, "auto", 0);
+            bareConfig.setBoolean("receive", null, "autogc", false);
+            bareConfig.save();
+        }
         bareRepo = empty;
         HelmDeployRequest request = directCommit(2);
         request.getGit().setRepoUrl(empty.toUri().toString());

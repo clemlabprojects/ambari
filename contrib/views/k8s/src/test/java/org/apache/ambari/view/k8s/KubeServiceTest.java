@@ -522,4 +522,40 @@ class KubeServiceTest {
     verify(k8s).canGrantScc("data", "anyuid");
     verify(k8s).canGrantScc("data", "nonroot-v2");
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void preflightReportsCreatingClusterRolesAsAdvisoryForAProjectLimitedAccount(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    // A project admin: everything in its own project, nothing at the cluster scope.
+    when(k8s.canI(eq("create"), anyString(), anyString(), isNull(), isNull(), eq("data"))).thenReturn(true);
+    when(k8s.canI("create", "rbac.authorization.k8s.io", "clusterroles", null, null, null)).thenReturn(false);
+
+    Map<String, Object> out = (Map<String, Object>) api.preflight(null, "data").getEntity();
+
+    Map<String, Object> clusterRbac = ((java.util.List<Map<String, Object>>) out.get("checks")).stream()
+        .filter(c -> "Create ClusterRoles/ClusterRoleBindings".equals(c.get("name"))).findFirst().orElseThrow();
+    assertEquals(false, clusterRbac.get("allowed"));
+    assertEquals(true, clusterRbac.get("advisory"));
+    assertTrue(String.valueOf(clusterRbac.get("remediation")).contains("scheduling.userScheduler.enabled"),
+        String.valueOf(clusterRbac.get("remediation")));
+    assertEquals(true, out.get("allOk"), "advisory: a project-limited account can still deploy the KDPS services");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void preflightAsksForBothClusterRolesAndClusterRoleBindings(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.canI("create", "rbac.authorization.k8s.io", "clusterroles", null, null, null)).thenReturn(true);
+    when(k8s.canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null)).thenReturn(true);
+
+    Map<String, Object> out = (Map<String, Object>) api.preflight(null, "data").getEntity();
+
+    Map<String, Object> clusterRbac = ((java.util.List<Map<String, Object>>) out.get("checks")).stream()
+        .filter(c -> "Cluster-wide RBAC".equals(c.get("group"))).findFirst().orElseThrow();
+    assertEquals(true, clusterRbac.get("allowed"));
+    verify(k8s).canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null);
+  }
 }

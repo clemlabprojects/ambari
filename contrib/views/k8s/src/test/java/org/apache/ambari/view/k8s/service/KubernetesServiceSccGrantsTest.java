@@ -371,12 +371,12 @@ class KubernetesServiceSccGrantsTest {
 
   @Test
   void anotherSccAdmittingTheProbeIsNotTheOneNeeded() throws Exception {
-    sccFieldGrants("privileged", "hub", "user-scheduler", "default");
+    sccFieldGrants("privileged", "hub", "default");
 
     String problem = svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings);
 
     assertNotNull(problem);
-    assertTrue(problem.contains("add-scc-to-user nonroot-v2 -z hub -z user-scheduler -z default -n data"), problem);
+    assertTrue(problem.contains("add-scc-to-user nonroot-v2 -z hub -z default -n data"), problem);
     assertTrue(problem.contains("add-scc-to-user anyuid -z default -n data"), problem);
   }
 
@@ -385,7 +385,7 @@ class KubernetesServiceSccGrantsTest {
     // An account with OpenShift's edit role: no LocalSubjectAccessReview, only the admission probe. 'default' holds
     // anyuid as well, which admission prefers for any probe it admits.
     localReviewsForbidden = true;
-    rbacGrants("nonroot-v2", "hub", "user-scheduler", "default");
+    rbacGrants("nonroot-v2", "hub", "default");
     rbacGrants("anyuid", "default");
     accountMayGrant("anyuid", "nonroot-v2");
 
@@ -402,7 +402,7 @@ class KubernetesServiceSccGrantsTest {
   @Test
   void withoutLocalReviewsTheRetryAfterThePrintedCommandGoesThrough() throws Exception {
     localReviewsForbidden = true;
-    rbacGrants("nonroot-v2", "hub", "user-scheduler");
+    rbacGrants("nonroot-v2", "hub");
     rbacGrants("anyuid", "default");
 
     String problem = svc.checkSccGrants(NS, "jhub", jupyterHubScc(), warnings);
@@ -422,7 +422,7 @@ class KubernetesServiceSccGrantsTest {
     // A site SCC ranked above anyuid admits every probe of 'default', so the probe cannot tell what else it holds.
     localReviewsForbidden = true;
     sccFieldGrants("site-priority-20", "default");
-    rbacGrants("nonroot-v2", "hub", "user-scheduler", "default");
+    rbacGrants("nonroot-v2", "hub", "default");
     rbacGrants("anyuid", "default");
 
     String problem = svc.checkSccGrants(NS, "jhub", jupyterHubScc(), warnings);
@@ -470,7 +470,7 @@ class KubernetesServiceSccGrantsTest {
     assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings));
 
     assertEquals(Set.of("default"), subjects(binding("kdps-scc-anyuid-jhub")));
-    assertEquals(Set.of("hub", "user-scheduler", "default"), subjects(binding("kdps-scc-nonroot-v2-jhub")));
+    assertEquals(Set.of("hub", "default"), subjects(binding("kdps-scc-nonroot-v2-jhub")));
     assertEquals(new HashSet<>(openMetadataAccounts("om")), subjects(binding("kdps-scc-anyuid-om")));
   }
 
@@ -478,7 +478,7 @@ class KubernetesServiceSccGrantsTest {
   void aGrantOnlyThroughAnotherReleaseDoesNotBlockWhenTheAccountCannotGrantButIsReported() {
     existingBinding("kdps-scc-anyuid-om", releaseLabels("om", "anyuid"), "anyuid", "default");
     rbacGrants("anyuid", "default");
-    rbacGrants("nonroot-v2", "hub", "user-scheduler", "default");
+    rbacGrants("nonroot-v2", "hub", "default");
 
     assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings), "its pods are admitted today");
     assertNull(binding("kdps-scc-anyuid-jhub"));
@@ -492,7 +492,7 @@ class KubernetesServiceSccGrantsTest {
   void aGrantOnlyThroughTheSharedBindingOfEarlierVersionsGetsTheReleasesOwnBinding() throws Exception {
     existingBinding("kdps-scc-anyuid", Map.of(), "anyuid", "default", "om-airflow-worker");
     rbacGrants("anyuid", "default", "om-airflow-worker");
-    rbacGrants("nonroot-v2", "hub", "user-scheduler", "default");
+    rbacGrants("nonroot-v2", "hub", "default");
     accountMayGrant("anyuid");
     requests();
 
@@ -509,7 +509,7 @@ class KubernetesServiceSccGrantsTest {
   void aGrantOnlyThroughTheSharedBindingOfEarlierVersionsIsReportedWhenTheAccountCannotGrant() {
     existingBinding("kdps-scc-anyuid", Map.of(), "anyuid", "default");
     rbacGrants("anyuid", "default");
-    rbacGrants("nonroot-v2", "hub", "user-scheduler", "default");
+    rbacGrants("nonroot-v2", "hub", "default");
 
     assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings));
 
@@ -524,7 +524,7 @@ class KubernetesServiceSccGrantsTest {
     existingBinding("kdps-scc-anyuid-om", releaseLabels("om", "anyuid"), "anyuid", "default");
     existingBinding("system:openshift:scc:anyuid", Map.of(), "anyuid", "default");
     rbacGrants("anyuid", "default");
-    rbacGrants("nonroot-v2", "hub", "user-scheduler", "default");
+    rbacGrants("nonroot-v2", "hub", "default");
     accountMayGrant("anyuid", "nonroot-v2");
     requests();
 
@@ -544,7 +544,7 @@ class KubernetesServiceSccGrantsTest {
         .addNewSubject().withKind("ServiceAccount").withName("default").withNamespace(NS).endSubject()
         .build()).create();
     rbacGrants("anyuid", "default");
-    rbacGrants("nonroot-v2", "hub", "user-scheduler", "default");
+    rbacGrants("nonroot-v2", "hub", "default");
 
     assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings));
 

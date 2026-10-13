@@ -76,6 +76,13 @@ public class FluxGitOpsBackendManifestSafetyTest {
     public void setUp() throws Exception {
         bareRepo = tmp.getRoot().toPath().resolve("remote.git");
         Git.init().setBare(true).setInitialBranch("main").setDirectory(bareRepo.toFile()).call().close();
+        // No background gc after a push: it would still hold gc.log.lock when the temp directory is removed.
+        try (Git bareGit = Git.open(bareRepo.toFile())) {
+            org.eclipse.jgit.lib.StoredConfig bareConfig = bareGit.getRepository().getConfig();
+            bareConfig.setInt("gc", null, "auto", 0);
+            bareConfig.setBoolean("receive", null, "autogc", false);
+            bareConfig.save();
+        }
         repoUrl = bareRepo.toUri().toString();
         Path seed = tmp.newFolder("seed").toPath();
         try (Git g = Git.cloneRepository().setURI(repoUrl).setDirectory(seed.toFile()).call()) {

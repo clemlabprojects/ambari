@@ -5096,6 +5096,9 @@ public class CommandService {
         sent.setServiceKey(releaseMetadata.getServiceKey());
         sent.setSecurityProfile(releaseMetadata.getSecurityProfile());
         sent.setValues(deployedValues);
+        // Nor does it run the wizard's OpenShift bindings: a release installed before they existed would otherwise
+        // keep the chart's default, such as JupyterHub's user scheduler and its cluster-wide ClusterRole.
+        applyOpenShiftValueDefaults(sent);
         List<String> warnings = new ArrayList<>();
         addIfPresent(warnings, checkLiteralCatalogCredentials(sent, releaseMetadata));
         addIfPresent(warnings, checkSecretChartVersions(sent, targetVersion, false));
@@ -5233,6 +5236,10 @@ public class CommandService {
         // dispatch so every code path (direct helm, flux GitOps, dry-run preview) sees
         // the same rewritten values map.
         applyValueAliasesAndVersionCheck(request, chartSource.version(), warnings);
+
+        // OpenShift defaults the wizard sets through its bindings (JupyterHub's user scheduler off), for the deploys
+        // that do not run them. After the aliases, so a default never lands beside a value moved to its new path.
+        applyOpenShiftValueDefaults(request);
 
         // Operator-supplied extra catalogs. Parsed here, next to the alias rewriting and for the same
         // reason: it is the one place every backend goes through, so a deploy driven straight at the
@@ -5814,6 +5821,50 @@ public class CommandService {
         }
         return firstNonBlank(def.label, serviceKey, "This service") + " is not supported on "
                 + (openShift ? "OpenShift" : "plain Kubernetes") + " in this release.";
+    }
+
+    /**
+     * Gives a deploy on OpenShift the chart values its service definition declares in
+     * {@link StackServiceDef#openshiftValueDefaults} and the deploy does not set, in every deployment mode. The wizard
+     * sets the same values through bindings gated on the platform; a request sent straight to the API, a GitOps
+     * deploy driven from Git and a chart upgrade from the Releases page do not run them, and would otherwise deploy
+     * the chart's own default, such as
+     * JupyterHub's user scheduler with its ClusterRole, which an account limited to its own projects cannot create.
+     * The cluster is only probed for a service that declares such defaults.
+     *
+     * @param request the deploy request; its values are completed in place
+     */
+    void applyOpenShiftValueDefaults(HelmDeployRequest request) {
+        StackServiceDef def = serviceDefinition(request.getServiceKey());
+        if (def == null || def.openshiftValueDefaults == null || def.openshiftValueDefaults.isEmpty()) return;
+        if (!kubernetesService.isOpenShiftCluster()) return;
+        if (request.getValues() == null) request.setValues(new LinkedHashMap<>());
+        List<String> applied = applyOpenShiftValueDefaults(def, request.getValues());
+        if (!applied.isEmpty()) {
+            LOG.info("{}/{}: OpenShift defaults of {} applied: {}", request.getNamespace(), request.getReleaseName(),
+                    request.getServiceKey(), applied);
+        }
+    }
+
+    /**
+     * Writes each of the definition's {@code openshiftValueDefaults} into {@code values} where they carry no value
+     * for its path; a value already there, the operator's choice or a binding's, is kept.
+     *
+     * @param def    the service definition
+     * @param values the chart values, changed in place
+     * @return the paths that were given their default, in declaration order
+     */
+    static List<String> applyOpenShiftValueDefaults(StackServiceDef def, Map<String, Object> values) {
+        List<String> applied = new ArrayList<>();
+        if (def == null || def.openshiftValueDefaults == null || values == null) return applied;
+        for (Map.Entry<String, Object> e : def.openshiftValueDefaults.entrySet()) {
+            String path = e.getKey();
+            if (path == null || path.isBlank() || path.startsWith("_")) continue;   // "_comment": documentation
+            if (ConfigResolutionService.getByDottedPath(values, path) != null) continue;
+            putDotted(values, path, e.getValue());
+            applied.add(path);
+        }
+        return applied;
     }
 
     /** The service definition, or {@code null} when there is no service key or it cannot be read. */

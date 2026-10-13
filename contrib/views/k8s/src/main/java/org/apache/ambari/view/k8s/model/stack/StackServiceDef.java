@@ -65,6 +65,18 @@ public class StackServiceDef {
     public List<Map<String, Object>> openshiftScc;
 
     /**
+     * Chart values a deploy on OpenShift gets when it does not set them itself, keyed by dotted values path, e.g.
+     * {@code {"scheduling.userScheduler.enabled": false}} for JupyterHub, whose user scheduler needs a ClusterRole
+     * that an account limited to its own projects cannot create. The wizard sets the same values through bindings
+     * gated on {@code isOpenShift}; this covers the deploys that do not run them (a request sent straight to the API,
+     * a GitOps deploy driven from Git, a chart upgrade from the Releases page), in every deployment mode
+     * ({@code CommandService.applyOpenShiftValueDefaults}).
+     * A value the deploy already carries is kept. Keys starting with "_" are comments. Ignored on
+     * plain Kubernetes.
+     */
+    public Map<String, Object> openshiftValueDefaults;
+
+    /**
      * Platforms the service can be deployed on, as the cluster capabilities name them: {@code "kubernetes"} (plain
      * Kubernetes) and {@code "openshift"}. Absent or empty means every platform. The catalog hides a service once the
      * cluster is known to be a platform the list leaves out, and the deploy refuses it there
