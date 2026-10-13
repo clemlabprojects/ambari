@@ -20,6 +20,8 @@ package org.apache.ambari.view.k8s.resources;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.CommandStatus;
+import org.apache.ambari.view.k8s.model.DeploymentMode;
+import org.apache.ambari.view.k8s.model.GitOpsDeployResult;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.security.AuthHelper;
@@ -29,6 +31,7 @@ import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.service.IngressTlsSecretGuard;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
+import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
@@ -40,6 +43,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.*;
 import javax.ws.rs.core.*;
 import java.net.URI;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Path("/")
@@ -106,9 +110,12 @@ public class CommandResource {
    * @param kubeContext optional kubeconfig context override
    * @param headers    incoming request headers forwarded for Ambari authentication
    * @param ui         request URI info used to construct the command status URL
-   * @return HTTP 202 with the command {@code id}, 400 on invalid input, or 409 while a Helm operation or a GitOps
-   *         operation on the release is still running, or when the deploy's ingress certificate would replace an
-   *         existing Secret KDPS did not issue and {@code replaceExistingTls} is not set (code and Secret in the body)
+   * @return HTTP 202 with the command {@code id} and the deploy's {@code mode}, plus, for a GitOps deploy, what it does
+   *         in Git ({@code gitOps}, a {@link GitOpsDeployResult}: the branch now, the commit and pull request in the
+   *         operation's result once committed), 400 on invalid input, or 409 while a Helm operation or a GitOps
+   *         operation on the release is still running, when the deploy asks for a direct Helm upgrade of a release
+   *         deployed with Flux GitOps, or when the deploy's ingress certificate would replace an existing Secret KDPS
+   *         did not issue and {@code replaceExistingTls} is not set (code and Secret in the body)
    */
   @POST
   @Path("/helm/deploy")
@@ -130,9 +137,10 @@ public class CommandResource {
       // reverse proxy the user happened to be on. See AmbariLoopbackUrlResolver.
       String id = CommandService.get(viewContext).submitDeploy(req, repoId, version, kubeContext, this.getCommandsUrl(ui), headers.getRequestHeaders(), AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext), this.ambariAliasResolver);
       return Response.status(Response.Status.ACCEPTED)
-              .entity(Map.of("id", id))
+              .entity(deployAccepted(id, req))
               .build();
-    } catch (HelmOperationRegistry.ReleaseBusyException | FluxGitOpsBackend.GitOpsBusyException busy) {
+    } catch (HelmOperationRegistry.ReleaseBusyException | FluxGitOpsBackend.GitOpsBusyException
+             | ReleaseHeldInGitException busy) {
       LOG.warn("submitDeploy refused (409): {}", busy.getMessage());
       return Response.status(Response.Status.CONFLICT)
               .entity(Map.of("error", busy.getMessage()))
@@ -155,7 +163,8 @@ public class CommandResource {
         return noKey.getResponse();
       }
       if (cause instanceof HelmOperationRegistry.ReleaseBusyException
-              || cause instanceof FluxGitOpsBackend.GitOpsBusyException) {
+              || cause instanceof FluxGitOpsBackend.GitOpsBusyException
+              || cause instanceof ReleaseHeldInGitException) {
         LOG.warn("submitDeploy refused (409, unwrapped): {}", cause.getMessage());
         return Response.status(Response.Status.CONFLICT)
                 .entity(Map.of("error", cause.getMessage()))
@@ -172,6 +181,21 @@ public class CommandResource {
       }
       throw re;
     }
+  }
+
+  /**
+   * The answer to a deploy accepted: its operation, its mode and, for a GitOps deploy, what it does in Git, so the page
+   * says where the change goes rather than only that a deploy started.
+   */
+  static Map<String, Object> deployAccepted(String id, HelmDeployRequest req) {
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("id", id);
+    GitOpsDeployResult gitOps = CommandService.gitOpsSubmitted(req);
+    body.put("mode", gitOps != null ? DeploymentMode.FLUX_GITOPS.name() : DeploymentMode.DIRECT_HELM.name());
+    if (gitOps != null) {
+      body.put(GitOpsDeployResult.KEY, gitOps);
+    }
+    return body;
   }
 
   /**

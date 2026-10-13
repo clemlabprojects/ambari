@@ -20,7 +20,7 @@ import React, { useEffect, useState } from 'react';
 import { Modal, Alert, Collapse, Progress, Typography, Space, Button, Spin, Tree, Tag, message } from 'antd';
 import { LoadingOutlined, CheckCircleTwoTone, CloseCircleTwoTone, ClockCircleOutlined } from '@ant-design/icons';
 import { cancelCommand, resumeCommand, getCommandStatus, listCommands, listChildCommands, refreshDependencies, getCommandLogs, type CommandStatus } from '../../api/client';
-import { operationNotices, waitingForMerge } from './operationOutcome';
+import { describeGitOps, gitOpsResult, operationNotices, waitingForMerge } from './operationOutcome';
 
 type BackgroundOperationsModalProps = {
   open: boolean;
@@ -486,6 +486,10 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     // From the row the poller keeps current: the status fetched when the operation was opened may predate its end.
     const pendingMerge = op.state === 'SUCCEEDED' ? waitingForMerge(op) : null;
     const notices = op.state === 'SUCCEEDED' ? operationNotices(op) : [];
+    // What a GitOps deploy did in Git, from the moment its commit step ran: the commit, the branch, the pull request.
+    const gitOps = gitOpsResult(op);
+    const gitOpsSummary = gitOps ? describeGitOps(gitOps) : null;
+    const pullRequestUrl = pendingMerge?.pullRequestUrl || gitOps?.prUrl;
     return (
       <>
         {notices.length > 0 && (
@@ -503,17 +507,22 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
             )}
           />
         )}
-        {pendingMerge && (
+        {(pendingMerge || gitOpsSummary) && (
           <Alert
-            type="warning"
+            type={pendingMerge ? 'warning' : 'info'}
             showIcon
             style={{ marginBottom: 12 }}
-            message="Committed to Git, not applied yet"
+            message={pendingMerge ? 'Committed to Git, not applied yet' : gitOpsSummary?.title}
             description={(
               <Space direction="vertical" size={4}>
-                <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{pendingMerge.message}</span>
-                {pendingMerge.pullRequestUrl && (
-                  <Typography.Link href={pendingMerge.pullRequestUrl} target="_blank" rel="noopener noreferrer">
+                {gitOpsSummary && gitOpsSummary.lines.length > 0 && (
+                  <span style={{ wordBreak: 'break-word' }}>{gitOpsSummary.lines.join(' · ')}</span>
+                )}
+                {pendingMerge && (
+                  <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{pendingMerge.message}</span>
+                )}
+                {pullRequestUrl && (
+                  <Typography.Link href={pullRequestUrl} target="_blank" rel="noopener noreferrer">
                     Open the pull request
                   </Typography.Link>
                 )}

@@ -550,6 +550,36 @@ class CommandServiceHelmStepTest {
         assertFalse(log.contains("hunter2"), log);
     }
 
+    /**
+     * "Upgrade chart" runs Helm on the release: on a release Flux reconciles from Git, Flux would put the chart Git
+     * holds back at its next reconcile. Refused before anything is read or planned, even when sent straight to the API.
+     */
+    @Test
+    void aChartUpgradeOfAGitOpsReleaseIsRefused() {
+        K8sReleaseEntity e = new K8sReleaseEntity();
+        e.setId(K8sReleaseEntity.idOf(NS, rel));
+        e.setNamespace(NS);
+        e.setReleaseName(rel);
+        e.setManagedByUi(true);
+        e.setServiceKey("SUPERSET");
+        e.setChartRef("superset");
+        e.setRepoId("charts");
+        e.setVersion("0.12.47");
+        e.setDeploymentMode("FLUX_GITOPS");
+        dataStore.store(e);
+
+        org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException refused = assertThrows(
+                org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException.class,
+                () -> service.submitReleaseUpgrade(NS, rel, "0.12.49", new MultivaluedHashMap<>(),
+                        URI.create("http://ambari.example.com:8080/api/v1")));
+
+        assertTrue(refused.getMessage().contains("would undo a chart upgrade made with Helm at its next reconcile"),
+                refused.getMessage());
+        assertTrue(refused.getMessage().contains("Revert or change the release in Git"), refused.getMessage());
+        verify(k8s, never()).getHelmReleaseValues(anyString(), anyString());
+        assertTrue(dataStore.findAll(CommandEntity.class, null).isEmpty(), "no operation planned");
+    }
+
     /** The command log is written asynchronously; waits for a line to show up. */
     private String awaitLog(String commandId, String expected) throws InterruptedException {
         String content = "";

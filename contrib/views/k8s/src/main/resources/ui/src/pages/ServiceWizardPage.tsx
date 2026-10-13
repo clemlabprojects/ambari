@@ -31,6 +31,7 @@ import ReviewStep from '../components/wizard/ReviewStep';
 import { deepMerge } from '../components/ServiceInstallationModal/bindings';
 import { seedFieldsFromRelease } from '../components/ServiceInstallationModal/seedFromRelease';
 import { gitOptionsToSubmit } from '../utils/gitOpsBranches';
+import { deploySubmittedMessage } from '../components/common/operationOutcome';
 import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
 import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
@@ -793,7 +794,7 @@ const ServiceWizardPage: React.FC = () => {
           const versionOverride = targetChartVersion();
           if (versionOverride) params.set('version', versionOverride);
 
-          const { id } = await submitHelmDeploy({
+          const accepted = await submitHelmDeploy({
               chart: chartRef,
               releaseName: installValues.releaseName,
               namespace: installValues.namespace,
@@ -857,8 +858,9 @@ const ServiceWizardPage: React.FC = () => {
               // Keycloak rejects the client registration with HTTP 400 invalid_input.
               formValues: deployFormValues(installValues, atlasRestartAuthorized),
           }, params);
-      message.success('Deployment request submitted');
-      setLastCommandId(id);
+      // A GitOps deploy says where its change goes in Git; the operations window then shows the commit and pull request.
+      message.success(deploySubmittedMessage('Deployment', accepted), accepted?.mode === 'FLUX_GITOPS' ? 8 : undefined);
+      setLastCommandId(accepted.id);
       setShowOpsModal(true);
   } catch(e: any) {
       // The ingress certificate would replace an existing Secret KDPS did not issue: on a first install, mostly the
@@ -1040,7 +1042,7 @@ const ServiceWizardPage: React.FC = () => {
   const steps = React.useMemo(() => {
     if (!def) return [];
     return [
-      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
+      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} upgrade={!!isUpgrade} deployedMode={upgradeState?.deploymentMode} /> },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Chart Settings', content: (
         <>

@@ -54,6 +54,7 @@ public class HelmReleaseDTO {
     public Boolean gitBaseBranchAssumed; // true when no base branch is recorded and main is only assumed
     public String gitCommitMode; // DIRECT_COMMIT or PR_MODE, as the release was last deployed
     public Boolean gitPendingDelete; // true while the uninstall waits for its removal pull request to be merged
+    public Boolean installed; // false for a GitOps release Helm does not list (not installed by Flux yet, or removed)
     public String gitPath;
     public String gitRepoUrl;
     public String gitPrUrl;

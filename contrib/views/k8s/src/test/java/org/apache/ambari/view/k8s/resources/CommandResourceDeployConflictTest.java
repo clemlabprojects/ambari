@@ -25,6 +25,7 @@ import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.IngressTlsSecretGuard;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
+import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,7 +52,8 @@ import static org.mockito.Mockito.when;
  * A deploy submitted while another GitOps operation holds the release's Git workspace is answered 409, as one
  * submitted while a Helm operation runs on the release: the operator retries once the other one has finished. So is
  * a deploy whose ingress certificate would replace an existing Secret KDPS did not issue: the wizard asks the operator
- * and deploys again, which it can only do when the answer names that Secret.
+ * and deploys again, which it can only do when the answer names that Secret. So is a direct Helm upgrade of a release
+ * deployed with Flux GitOps, which Flux would undo.
  */
 class CommandResourceDeployConflictTest {
 
@@ -92,6 +94,22 @@ class CommandResourceDeployConflictTest {
     Response response = operator().submitDeploy(new HelmDeployRequest(), null, null, null, headers(), uriInfo());
 
     assertEquals(409, response.getStatus());
+  }
+
+  @Test
+  void aDirectHelmUpgradeOfAReleaseHeldInGitAnswers409DirectOrReportedThroughTheDeploy() throws Exception {
+    ReleaseHeldInGitException heldInGit = new ReleaseHeldInGitException("Release analytics/trino is deployed with Flux"
+        + " GitOps: Flux installs what Git holds and would undo a Helm upgrade at its next reconcile.");
+    when(commands.submitDeploy(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(heldInGit)
+        .thenThrow(new RuntimeException(heldInGit));
+
+    for (int i = 0; i < 2; i++) {
+      Response response = operator().submitDeploy(new HelmDeployRequest(), null, null, null, headers(), uriInfo());
+
+      assertEquals(409, response.getStatus());
+      assertEquals(heldInGit.getMessage(), ((Map<?, ?>) response.getEntity()).get("error"));
+    }
   }
 
   @Test

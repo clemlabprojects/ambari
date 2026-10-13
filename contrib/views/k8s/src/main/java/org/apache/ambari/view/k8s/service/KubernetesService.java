@@ -7393,11 +7393,6 @@ public class KubernetesService {
         client.secrets().inNamespace(namespace).withName(name).delete();
     }
 
-    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext FLUX_HELM_RELEASE_RDC =
-            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
-                    .withGroup("helm.toolkit.fluxcd.io").withVersion("v2")
-                    .withKind("HelmRelease").withPlural("helmreleases").withNamespaced(true).build();
-
     /** The annotation Flux reads on an object on the cluster before it prunes it, and the value that keeps it. */
     private static final String FLUX_PRUNE_ANNOTATION = "kustomize.toolkit.fluxcd.io/prune";
     private static final String FLUX_PRUNE_DISABLED = "disabled";
@@ -7456,6 +7451,7 @@ public class KubernetesService {
      * @param namespace the HelmRelease namespace
      * @param name      the HelmRelease name
      * @return true when the HelmRelease was annotated, false when it is not on the cluster
+     * @throws IllegalStateException when the cluster does not serve the Flux HelmRelease API
      */
     public boolean requestFluxReconcile(String namespace, String name) {
         if (annotateFluxRequest(namespace, name, false) == null) {
@@ -7475,6 +7471,7 @@ public class KubernetesService {
      * @param name      the HelmRelease name
      * @return the value of the request, which Flux copies to {@code status.lastHandledResetAt} once it handled it;
      *         {@code null} when the HelmRelease is not on the cluster
+     * @throws IllegalStateException when the cluster does not serve the Flux HelmRelease API
      */
     public String requestFluxReset(String namespace, String name) {
         String requestedAt = annotateFluxRequest(namespace, name, true);
@@ -7484,11 +7481,19 @@ public class KubernetesService {
         return requestedAt;
     }
 
-    /** Annotates a HelmRelease with a reconcile request, and a reset request when asked; null when it is not there. */
+    /**
+     * Annotates a HelmRelease with a reconcile request, and a reset request when asked; null when it is not there.
+     *
+     * @throws IllegalStateException when the cluster does not serve the Flux HelmRelease API
+     */
     private String annotateFluxRequest(String namespace, String name, boolean reset) {
         checkConfiguration();
-        var helmRelease = client.genericKubernetesResources(FLUX_HELM_RELEASE_RDC).inNamespace(namespace).withName(name);
+        FluxApiVersions.Selection helmReleaseApi = FluxApiVersions.resolve(client, FluxApiVersions.Kind.HELM_RELEASE);
+        var helmRelease = client.genericKubernetesResources(helmReleaseApi.context()).inNamespace(namespace).withName(name);
         if (helmRelease.get() == null) {
+            if (!helmReleaseApi.served()) {
+                throw new IllegalStateException(helmReleaseApi.problem());
+            }
             return null;
         }
         String requestedAt = java.time.Instant.now().toString();
@@ -7513,10 +7518,18 @@ public class KubernetesService {
      * @param namespace the HelmRelease namespace
      * @param name      the HelmRelease name
      * @return the HelmRelease, or {@code null} when Flux has not applied it (yet)
+     * @throws IllegalStateException when the cluster does not serve the Flux HelmRelease API, which it answers as it
+     *                               answers for a HelmRelease that is not there
      */
     public GenericKubernetesResource getFluxHelmRelease(String namespace, String name) {
         checkConfiguration();
-        return client.genericKubernetesResources(FLUX_HELM_RELEASE_RDC).inNamespace(namespace).withName(name).get();
+        FluxApiVersions.Selection helmReleaseApi = FluxApiVersions.resolve(client, FluxApiVersions.Kind.HELM_RELEASE);
+        GenericKubernetesResource helmRelease = client.genericKubernetesResources(helmReleaseApi.context())
+                .inNamespace(namespace).withName(name).get();
+        if (helmRelease == null && !helmReleaseApi.served()) {
+            throw new IllegalStateException(helmReleaseApi.problem());
+        }
+        return helmRelease;
     }
 
     /**

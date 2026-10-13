@@ -54,6 +54,8 @@ import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.deployment.GitClient;
 import org.apache.ambari.view.k8s.service.deployment.GitOpsPlanBackend;
 import org.apache.ambari.view.k8s.service.deployment.HelmDirectBackend;
+import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
+import org.apache.ambari.view.k8s.model.GitOpsDeployResult;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 
 import org.apache.ambari.view.k8s.utils.*;
@@ -143,6 +145,13 @@ public class CommandService {
      * deploy would plan them; the commit computes from them what each dependency's HelmRelease receives.
      */
     static final String GITOPS_DEPENDENCY_STEPS = "dependencySteps";
+    /**
+     * Held, per release ({@code namespace/release}), by a request from its check that no GitOps deploy of the release
+     * is running until its own deploy is stored: shared by every view instance, so two requests cannot both pass the
+     * check and both commit values built on what Helm reports, the second taking the first's change out of Git.
+     */
+    private static final ConcurrentMap<String, java.util.concurrent.locks.ReentrantLock> GITOPS_SUBMISSIONS =
+            new ConcurrentHashMap<>();
     /**
      * Step parameter of "Regenerate keytabs": the keytab is issued again by the KDC even when the release's Secret
      * already holds one for the principal.
@@ -5815,6 +5824,8 @@ public class CommandService {
      * @param callerHeaders  request headers used for downstream Ambari calls (cluster resolution, logs)
      * @param baseUri        Ambari base URI used to resolve the cluster context
      * @return the root command id, suitable for polling via the commands API
+     * @throws ReleaseHeldInGitException for a release deployed with Flux GitOps: Flux installs the chart version Git
+     *                                   holds, so its chart is changed in Git (Upgrade/Config commits it there)
      */
     public String submitReleaseUpgrade(String namespace,
                                        String releaseName,
@@ -5833,6 +5844,9 @@ public class CommandService {
         if (releaseMetadata == null) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
         }
+        // The upgrade below runs Helm on the release: on a GitOps release, Flux would put the chart Git holds back.
+        ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadata, namespace, releaseName,
+                "a chart upgrade made with Helm");
         if (releaseMetadata.getChartRef() == null || releaseMetadata.getChartRef().isBlank()) {
             throw new IllegalStateException("Release metadata missing chartRef for " + namespace + "/" + releaseName);
         }
@@ -5956,9 +5970,14 @@ public class CommandService {
      * @throws IllegalArgumentException when a release, namespace, chart repository, chart or chart version name is
      *                                  invalid for the deploy's mode ({@link DeployRequestValidator}), its own or a
      *                                  dependency's
+     * @throws ReleaseHeldInGitException when the request asks for a direct Helm upgrade of a release deployed with Flux
+     *                                   GitOps ({@link #applyRecordedDeploymentMode})
      */
     public String submitDeploy(HelmDeployRequest request, String repoId, String version, String kubeContext, String commandsURL, MultivaluedMap<String,String> callerHeaders,
                                URI baseUri, AmbariAliasResolver ambariAliasResolver) {
+        // A release deployed with Flux GitOps stays there: settled first, so its names are checked for that mode.
+        K8sReleaseEntity recorded = request == null ? null : recordedRelease(request);
+        applyRecordedDeploymentMode(request, recorded);
         // The release, namespace, chart repository, chart and version names, the dependencies' too, before anything
         // is looked up or prepared for them, in every mode. Strictest for a GitOps deploy, which writes them into the
         // manifests and their paths in Git, where nothing else would refuse a malformed one; a direct deploy keeps the
@@ -5978,16 +5997,16 @@ public class CommandService {
         HiddenReleaseValues.restore(request.getValues(), () -> HiddenReleaseValues.withAliasTargets(
                 kubernetesService.getHelmReleaseValues(request.getNamespace(), request.getReleaseName()),
                 valueAliasesOf(request)));
+        // Read before the steps below add the release's platform context, keytab and catalog references to the form.
+        final boolean fromForm = carriesServiceForm(request);
+
         String deploymentMode = request.getDeploymentMode() == null ? "DIRECT_HELM" : request.getDeploymentMode();
         LOG.info("Submit deploy for release {} in namespace {} using deploymentMode={}",
                 request.getReleaseName(), request.getNamespace(), deploymentMode);
-        // Read before the steps below add the release's platform context, keytab and catalog references to the form.
-        final boolean fromForm = carriesServiceForm(request);
 
         // A redeploy that leaves out the chart repository, the chart version or the platform context (resync,
         // security refresh, autoscaling change, the wizard's query parameters) keeps the release's. Done first, so
         // the version check, every backend and the recorded parameters all see the same values.
-        K8sReleaseEntity recorded = recordedRelease(request);
         ChartSource chartSource = applyReleaseDefaults(request, repoId, version, recorded);
 
         // A deploy that names a security profile is refused before anything is prepared when the profile is gone
@@ -7479,6 +7498,8 @@ public class CommandService {
      * for Flux to apply it ({@link CommandType#FLUX_WAIT_READY}) before the post-deploy steps.
      *
      * @return the command id, polled like that of a direct deploy
+     * @throws FluxGitOpsBackend.GitOpsBusyException when another GitOps deploy of the release has not finished, or is
+     *                                               being submitted; nothing is planned
      */
     public String gitOpsDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
                                MultivaluedMap<String, String> callerHeaders, URI baseUri,
@@ -7488,14 +7509,50 @@ public class CommandService {
         if (request.getGit() != null) {
             request.getGit().setAuthTokenAlias(null);
         }
-        // Refused at once, rather than after the plan has issued a keytab, registered an SSO client and the rest for a
-        // release it then cannot commit.
-        this.fluxGitOpsBackend.checkCommittable(request, new DeploymentContext(repoId, version, null, commandsURL,
-                callerHeaders, baseUri, ambariAliasResolver));
-        String id = planReleaseDeploy(request, repoId, version, commandsURL, callerHeaders, baseUri, ambariAliasResolver,
-                true);
-        scheduleNow(id);
-        return id;
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        return submittingGitOpsChange(namespace, release, () -> {
+            // Its values were built on what Helm reports, which does not hold yet what the running deploy commits:
+            // committed after it, they would take that change out of Git.
+            String running = runningGitOpsDeploy(namespace, release);
+            if (running != null) {
+                throw new FluxGitOpsBackend.GitOpsBusyException("A GitOps deploy of " + namespace + "/" + release
+                        + " has not finished (operation " + running + "): a change made before Flux has applied it"
+                        + " would take it out of Git. Try again once it has finished, or cancel it.");
+            }
+            // Refused at once, rather than after the plan has issued a keytab, registered an SSO client and the rest
+            // for a release it then cannot commit.
+            this.fluxGitOpsBackend.checkCommittable(request, new DeploymentContext(repoId, version, null, commandsURL,
+                    callerHeaders, baseUri, ambariAliasResolver));
+            String id = planReleaseDeploy(request, repoId, version, commandsURL, callerHeaders, baseUri,
+                    ambariAliasResolver, true);
+            scheduleNow(id);
+            return id;
+        });
+    }
+
+    /**
+     * Runs {@code submission}, a change of a release deployed with Flux GitOps that ends with its deploy submitted,
+     * alone among such changes of the release in this server: from the check that no deploy of the release is running
+     * to the moment its own deploy is stored, which every later check sees. Nested calls on the same thread run.
+     *
+     * @return what the submission returned
+     * @throws FluxGitOpsBackend.GitOpsBusyException when another change of the release is being submitted; it is not
+     *                                               waited for, which would only end with this one refused as well
+     */
+    public static <T> T submittingGitOpsChange(String namespace, String releaseName,
+                                               java.util.function.Supplier<T> submission) {
+        java.util.concurrent.locks.ReentrantLock lock = GITOPS_SUBMISSIONS.computeIfAbsent(
+                namespace + "/" + releaseName, k -> new java.util.concurrent.locks.ReentrantLock());
+        if (!lock.tryLock()) {
+            throw new FluxGitOpsBackend.GitOpsBusyException("Another change of " + namespace + "/" + releaseName
+                    + " is being submitted to Git. Try again once it has been submitted.");
+        }
+        try {
+            return submission.get();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -10989,6 +11046,8 @@ public class CommandService {
                     stepDoneMessage = describeGitOpsCommit(commit);
                     appendCommandLog(id, stepDoneMessage);
                     childSt.setResultJson(gson.toJson(gitOpsCommitResult(commit)));
+                    // The operation says what the deploy did in Git at once, while the wait for Flux still runs.
+                    recordGitOpsResult(root.getCommandStatusId(), rootSt, gitOpsDeployResult(commit));
                     if (!commit.appliedOnCommit()) {
                         operationEndMessage = gitOpsMergeWait(commit);
                     }
@@ -12027,6 +12086,9 @@ public class CommandService {
                         + (notRun.isEmpty() ? "" : " Not run until then: " + String.join(", ", notRun)
                                 + ". Redeploy the release once the change is applied to run them.");
                 Map<String, Object> rootResult = new LinkedHashMap<>();
+                if (rootSt.getResultJson() != null && !rootSt.getResultJson().isBlank()) {
+                    rootResult.putAll(gson.fromJson(rootSt.getResultJson(), mapType));
+                }
                 if (childSt.getResultJson() != null) {
                     rootResult.putAll(gson.fromJson(childSt.getResultJson(), mapType));
                 }
@@ -12496,6 +12558,206 @@ public class CommandService {
         }
         return "Only passwords or secrets changed: updated the release's values Secret; Git is unchanged"
                 + (commit.commitSha() == null ? "" : " at " + commit.commitSha()) + " on " + where + pullRequest;
+    }
+
+    /**
+     * Adds what a GitOps commit did to the result of its operation, read again first: the commit can take long, and
+     * the operation may have been canceled meanwhile. Written from the copy read when the step started, the operation
+     * would be running again, and would end FAILED rather than CANCELED; one that ended keeps its state and result.
+     * {@code tickRoot}, the copy the step goes on with, gets the same result.
+     *
+     * @param rootStatusId the status id of the operation
+     * @param tickRoot     the operation's status as the step read it
+     * @param result       what the commit did
+     */
+    void recordGitOpsResult(String rootStatusId, CommandStatusEntity tickRoot, GitOpsDeployResult result) {
+        Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+        CommandStatusEntity fresh = findCommandStatusById(rootStatusId);
+        CommandStatusEntity base = fresh != null ? fresh : tickRoot;
+        Map<String, Object> rootResult = new LinkedHashMap<>();
+        if (base.getResultJson() != null && !base.getResultJson().isBlank()) {
+            rootResult.putAll(gson.fromJson(base.getResultJson(), mapType));
+        }
+        rootResult.put(GitOpsDeployResult.KEY, result);
+        String json = gson.toJson(rootResult);
+        tickRoot.setResultJson(json);
+        if (fresh == null || isTerminal(fresh.getState())) {
+            LOG.info("Operation status {} {}: what its GitOps commit did is not recorded on it", rootStatusId,
+                    fresh == null ? "not found" : "already ended " + fresh.getState());
+            return;
+        }
+        fresh.setResultJson(json);
+        store(fresh);
+    }
+
+    /**
+     * What a GitOps commit did, for the operator ({@link GitOpsDeployResult}). A commit that could not be pushed (no
+     * Git credentials) is named by its SHA; the operation's message says it waits in the view's workspace.
+     */
+    static GitOpsDeployResult gitOpsDeployResult(FluxGitOpsBackend.CommitResult commit) {
+        GitOpsDeployResult result = new GitOpsDeployResult();
+        String sha = commit.commitSha();
+        result.commit = sha != null && sha.startsWith("PR-STUB:") ? sha.substring("PR-STUB:".length()) : sha;
+        result.branch = commit.branch();
+        result.prUrl = commit.pullRequestUrl() == null || commit.pullRequestUrl().isBlank()
+                ? null : commit.pullRequestUrl();
+        result.prState = commit.pullRequestState() == null || commit.pullRequestState().isBlank()
+                ? null : commit.pullRequestState();
+        result.noChanges = !commit.committed();
+        return result;
+    }
+
+    /**
+     * What the answer to a deploy says of it before anything is committed: for a GitOps deploy, its mode and the branch
+     * the request names for the change, the base branch of a direct commit or the working branch of a pull request;
+     * the operation's result says the rest once its commit step ran. {@code null} for a deploy with Helm.
+     */
+    public static GitOpsDeployResult gitOpsSubmitted(HelmDeployRequest request) {
+        if (request == null || !DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(
+                String.valueOf(request.getDeploymentMode()).trim())) {
+            return null;
+        }
+        GitOpsDeployResult result = new GitOpsDeployResult();
+        HelmDeployRequest.GitOptions git = request.getGit();
+        if (git != null) {
+            String branch = "PR_MODE".equalsIgnoreCase(git.getCommitMode()) ? git.getBranch() : git.getBaseBranch();
+            result.branch = branch == null || branch.isBlank() ? null : branch;
+        }
+        return result;
+    }
+
+    /**
+     * Keeps a release deployed with Flux GitOps there. A redeploy that names no deployment mode (an API resync) goes
+     * through Git, with the repository, base branch and commit mode the release records when it names no Git options.
+     * One that asks for a direct Helm upgrade is refused: Flux would undo it at its next reconcile, and the release
+     * would no longer be recorded as held in Git, so its uninstall would leave its HelmRelease there.
+     *
+     * @param request  the deploy request, completed in place
+     * @param recorded the release as recorded by an earlier deploy, {@code null} for a first install
+     * @throws ReleaseHeldInGitException when the request asks for a direct Helm upgrade of a release held in Git
+     */
+    static void applyRecordedDeploymentMode(HelmDeployRequest request, K8sReleaseEntity recorded) {
+        if (request == null || recorded == null || !DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(recorded.getDeploymentMode())) {
+            return;
+        }
+        String asked = request.getDeploymentMode();
+        if (asked == null || asked.isBlank()) {
+            request.setDeploymentMode(DeploymentMode.FLUX_GITOPS.name());
+            if (request.getGit() == null) {
+                request.setGit(recordedGitOptions(recorded));
+            }
+            return;
+        }
+        if (!DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(asked.trim())) {
+            ReleaseHeldInGitException.refuseIfHeldInGit(recorded, request.getNamespace(), request.getReleaseName(),
+                    "a Helm upgrade");
+        }
+    }
+
+    /**
+     * The Git options a release deployed with Flux GitOps records: its repository, the base branch Flux reads and its
+     * commit mode, so a change is committed where Flux reads it, by a direct commit or through a pull request as
+     * before.
+     */
+    static HelmDeployRequest.GitOptions recordedGitOptions(K8sReleaseEntity metadata) {
+        HelmDeployRequest.GitOptions git = new HelmDeployRequest.GitOptions();
+        git.setRepoUrl(metadata.getGitRepoUrl());
+        // Only a base branch the record tells: one only assumed would be recorded as the one Flux reads.
+        git.setBaseBranch(FluxGitOpsBackend.knownBaseBranch(metadata));
+        git.setCommitMode(metadata.getGitCommitMode() == null || metadata.getGitCommitMode().isBlank()
+                ? "DIRECT_COMMIT" : metadata.getGitCommitMode());
+        return git;
+    }
+
+    /**
+     * The request that deploys a release again with other values, as a redeploy from the Releases page sends it: its
+     * chart, chart repository, service, security profile and platform context, at the chart version it runs (left out,
+     * so the deploy keeps it). A GitOps release keeps its repository, the base branch it records and its commit mode,
+     * so the change is committed where Flux reads it, by a direct commit or through a pull request as before.
+     *
+     * @param metadata the release's record
+     * @param values   the values to deploy
+     */
+    public static HelmDeployRequest releaseRedeployRequest(K8sReleaseEntity metadata, Map<String, Object> values) {
+        HelmDeployRequest request = new HelmDeployRequest();
+        request.setChart(metadata.getChartRef());
+        request.setReleaseName(metadata.getReleaseName());
+        request.setNamespace(metadata.getNamespace());
+        request.setValues(values);
+        request.setServiceKey(metadata.getServiceKey());
+        request.setSecurityProfile(metadata.getSecurityProfile());
+        request.setRepoId(metadata.getRepoId());
+        if (metadata.getPlatformContextId() != null && !metadata.getPlatformContextId().isBlank()) {
+            Map<String, Object> form = new LinkedHashMap<>();
+            form.put("platformContextId", metadata.getPlatformContextId());
+            request.setFormValues(form);
+        }
+        boolean gitOps = DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(metadata.getDeploymentMode());
+        request.setDeploymentMode(gitOps ? DeploymentMode.FLUX_GITOPS.name() : DeploymentMode.DIRECT_HELM.name());
+        if (gitOps) {
+            request.setGit(recordedGitOptions(metadata));
+        }
+        return request;
+    }
+
+    /**
+     * The GitOps deploy of a release that has not finished: waiting to run, before its commit, or waiting for Flux to
+     * apply what it committed. Until it has, the values Helm reports for the release are not those Git holds, so a
+     * change built on them would drop what that deploy commits.
+     *
+     * @return the id of that deploy's operation, or {@code null} when none is running; also {@code null} when the
+     *         operations cannot be read (logged)
+     */
+    public String runningGitOpsDeploy(String namespace, String releaseName) {
+        Collection<CommandEntity> roots;
+        try {
+            roots = dataStore.findAll(CommandEntity.class, "childListJson IS NOT NULL");
+        } catch (Exception filterErr) {
+            try {
+                roots = dataStore.findAll(CommandEntity.class, null);
+            } catch (Exception e) {
+                LOG.warn("Could not tell whether a GitOps deploy of {}/{} is running: {}", namespace, releaseName,
+                        e.toString());
+                return null;
+            }
+        }
+        return runningGitOpsDeploy(roots, this::findCommandStatusById, namespace, releaseName);
+    }
+
+    /**
+     * {@link #runningGitOpsDeploy(String, String)} among the operations given.
+     *
+     * @param roots    operations, steps among them are skipped
+     * @param statuses the status of an operation, by its status id
+     */
+    static String runningGitOpsDeploy(Collection<CommandEntity> roots,
+                                      java.util.function.Function<String, CommandStatusEntity> statuses,
+                                      String namespace, String releaseName) {
+        if (roots == null) return null;
+        Gson reader = new Gson();
+        Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+        for (CommandEntity root : roots) {
+            if (root == null || root.getChildListJson() == null || root.getChildListJson().isBlank()
+                    || !CommandType.K8S_MANAGER_RELEASE_DEPLOY.name().equals(root.getType())) {
+                continue;
+            }
+            CommandStatusEntity status = statuses.apply(root.getCommandStatusId());
+            if (status == null || !(CommandState.RUNNING.name().equals(status.getState())
+                    || CommandState.PENDING.name().equals(status.getState()))) {
+                continue;
+            }
+            Map<String, Object> params;
+            try {
+                params = reader.fromJson(CommandUtils.resolveParamsPayload(root.getParamsJson()), mapType);
+            } catch (RuntimeException unreadable) {
+                continue;
+            }
+            if (params != null && params.get(GITOPS_RELEASE_PARAM) != null
+                    && namespace.equals(params.get("namespace")) && releaseName.equals(params.get("releaseName"))) {
+                return root.getId();
+            }
+        }
+        return null;
     }
 
     /** The result of a GitOps commit step, which the wait for Flux reads. */

@@ -489,6 +489,18 @@ public class K8sReleaseEntity extends BaseModel {
     }
 
     /**
+     * The spec digest annotation of the HelmRelease the last GitOps change of the release committed, which Flux copies
+     * to the cluster once it has applied that change (null when never recorded).
+     */
+    public String getGitSpecDigest() {
+        return gitMeta().get("specDigest");
+    }
+
+    public void setGitSpecDigest(String gitSpecDigest) {
+        putGitMeta("specDigest", gitSpecDigest);
+    }
+
+    /**
      * Whether the uninstall of a GitOps release waits for its removal to be merged into the branch Flux reconciles: the
      * release still runs, and its pull request is the one recorded ({@link #getGitPrUrl}).
      */

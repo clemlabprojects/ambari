@@ -21,7 +21,7 @@ import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, 
 import { DatabaseOutlined, DeleteOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import {
   adoptReleaseCatalog, createReleaseCatalog, dropReleaseCatalog, listReleaseCatalogs, testReleaseCatalog,
-  type ReleaseCatalog,
+  type CatalogSaved, type ReleaseCatalog,
 } from '../../api/client';
 import { CATALOG_TEMPLATES, type CatalogTemplate } from './trinoCatalogTemplates';
 import ConnectorGallery from './ConnectorGallery';
@@ -38,6 +38,41 @@ const SOURCE_TAG: Record<string, { color: string; label: string; hint: string }>
   unmanaged: { color: 'volcano', label: 'Unmanaged', hint: 'Exists in Trino only (created outside KDPS). It disappears at the next restart unless you adopt it.' },
   builtin: { color: 'default', label: 'Built-in', hint: 'Trino system catalog.' },
 };
+
+/**
+ * How saving a catalog to the release is worded: a release deployed with Flux GitOps gets its values committed to Git,
+ * which Flux then applies (by a direct commit or through a pull request, as the release was deployed), never a Helm
+ * upgrade Flux would undo.
+ *
+ * A drop on such a release always asks for the catalog to be removed from the release values too: one committed to Git
+ * and not applied by Flux yet is listed as runtime-only, and dropped only live it would come back once Flux applies
+ * that commit. The server refuses the drop while such a change is pending, and removes the catalog from Git otherwise.
+ */
+export function catalogSaveWording(release: Pick<HelmRelease, 'deploymentMode'> | null) {
+  const gitOps = release?.deploymentMode === 'FLUX_GITOPS';
+  return gitOps ? {
+    gitOps,
+    checkbox: 'commit to Git (survives restarts once Flux applies it)',
+    intro: 'when "commit to Git" is on, committed to the release values in Git; Flux applies it, so it comes back after a restart.',
+    adoptHint: 'Commit this runtime-only catalog to the release values in Git so it survives restarts',
+    dropPersisted: 'Dropped in Trino now and removed from the release values in Git.',
+    dropUnsaved: 'Dropped in Trino now. Refused while Git holds a change of the release that Flux has not applied, as that change may save this catalog.',
+    forgetOnDrop: (_c: Pick<ReleaseCatalog, 'persisted'>) => true,
+    saved: (name: string, how: CatalogSaved) => `Catalog '${name}' committed to Git — Flux applies it`
+      + (how.commandId ? '; follow the commit in Background operations' : ''),
+    removed: (name: string) => `Catalog '${name}' dropped and removed from the release values in Git`,
+  } : {
+    gitOps,
+    checkbox: 'save to release (survives restarts)',
+    intro: 'when "save to release" is on, written to the release values so it comes back after a restart.',
+    adoptHint: 'Save this runtime-only catalog into the release so it survives restarts',
+    dropPersisted: 'Dropped in Trino now and removed from the release values.',
+    dropUnsaved: 'Dropped in Trino now.',
+    forgetOnDrop: (c: Pick<ReleaseCatalog, 'persisted'>) => c.persisted,
+    saved: (name: string) => `Catalog '${name}' saved to the release — it now survives restarts`,
+    removed: (name: string) => `Catalog '${name}' dropped`,
+  };
+}
 
 /** Turn fetchJson's "HTTP 4xx – {\"error\":\"…\"}" into the backend's sentence. */
 export function errorText(e: unknown): string {
@@ -66,6 +101,7 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
   const [schemas, setSchemas] = useState<{ name: string; list: string[] } | null>(null);
 
   const ns = release?.namespace || ''; const rel = release?.name || '';
+  const wording = catalogSaveWording(release);
   const template = useMemo(() => CATALOG_TEMPLATES.find(t => t.id === templateId)!, [templateId]);
 
   const load = useCallback(async () => {
@@ -95,7 +131,8 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
     setBusy('create');
     try {
       const r = await createReleaseCatalog(ns, rel, { name, properties, persist });
-      message.success(`Catalog '${r.name}' created${r.persisted ? ' and saved to the release' : ' (runtime only)'}`);
+      if (r.committedToGit) message.success(`Catalog '${r.name}' created. ${wording.saved(r.name, r)}`, 8);
+      else message.success(`Catalog '${r.name}' created${r.persisted ? ' and saved to the release' : ' (runtime only)'}`);
       setCreating(false); form.resetFields(); setPreview('');
       await load();
     } catch (e) { message.error(errorText(e), 10); }
@@ -104,7 +141,11 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
 
   const doDrop = async (c: ReleaseCatalog) => {
     setBusy(c.name);
-    try { await dropReleaseCatalog(ns, rel, c.name, c.persisted); message.success(`Catalog '${c.name}' dropped`); await load(); }
+    try {
+      const r = await dropReleaseCatalog(ns, rel, c.name, wording.forgetOnDrop(c));
+      message.success(r.committedToGit ? wording.removed(c.name) : `Catalog '${c.name}' dropped`);
+      await load();
+    }
     catch (e) { message.error(errorText(e), 10); }
     finally { setBusy(null); }
   };
@@ -116,7 +157,7 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
   };
   const doAdopt = async (c: ReleaseCatalog) => {
     setBusy(c.name);
-    try { await adoptReleaseCatalog(ns, rel, c.name); message.success(`Catalog '${c.name}' saved to the release — it now survives restarts`); await load(); }
+    try { const r = await adoptReleaseCatalog(ns, rel, c.name); message.success(wording.saved(c.name, r)); await load(); }
     catch (e) { message.error(errorText(e), 10); }
     finally { setBusy(null); }
   };
@@ -142,9 +183,9 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
       render: (_: unknown, c) => (
         <Space>
           {c.live && c.source !== 'builtin' ? <Tooltip title="SHOW SCHEMAS as you"><Button size="small" icon={<ExperimentOutlined />} loading={busy === c.name} onClick={() => doTest(c)} /></Tooltip> : null}
-          {c.source === 'unmanaged' ? <Tooltip title="Save this runtime-only catalog into the release so it survives restarts"><Button size="small" icon={<SaveOutlined />} loading={busy === c.name} onClick={() => doAdopt(c)}>Adopt</Button></Tooltip> : null}
+          {c.source === 'unmanaged' ? <Tooltip title={wording.adoptHint}><Button size="small" icon={<SaveOutlined />} loading={busy === c.name} onClick={() => doAdopt(c)}>Adopt</Button></Tooltip> : null}
           {c.source !== 'builtin' && c.source !== 'managed' ? (
-            <Popconfirm title={`Drop catalog '${c.name}'?`} description={c.persisted ? 'Dropped in Trino now and removed from the release values.' : 'Dropped in Trino now.'} okText="Drop" okButtonProps={{ danger: true }} onConfirm={() => doDrop(c)}>
+            <Popconfirm title={`Drop catalog '${c.name}'?`} description={c.persisted ? wording.dropPersisted : wording.dropUnsaved} okText="Drop" okButtonProps={{ danger: true }} onConfirm={() => doDrop(c)}>
               <Tooltip title="DROP CATALOG as you"><Button size="small" danger icon={<DeleteOutlined />} loading={busy === c.name} /></Tooltip>
             </Popconfirm>
           ) : null}
@@ -164,7 +205,7 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
     >
       <Paragraph type="secondary" style={{ marginTop: 0 }}>
         Actions run on the coordinator as <Text strong>you</Text>: Ranger decides what you may create, test or drop.
-        A catalog created here is applied immediately and, when "save to release" is on, written to the release values so it comes back after a restart.
+        A catalog created here is applied immediately and, {wording.intro}
       </Paragraph>
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       <Table<ReleaseCatalog> size="small" rowKey="name" columns={columns} dataSource={rows} loading={loading} pagination={false} />
@@ -184,7 +225,7 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
             <CatalogDefinitionForm template={template} form={form} preview={preview} setPreview={setPreview} onChangeConnector={() => setGalleryOpen(true)} />
             <Space>
               <Button type="primary" icon={<PlusOutlined />} loading={busy === 'create'} onClick={doCreate}>Create catalog</Button>
-              <Checkbox checked={persist} onChange={(e) => setPersist(e.target.checked)}>save to release (survives restarts)</Checkbox>
+              <Checkbox checked={persist} onChange={(e) => setPersist(e.target.checked)}>{wording.checkbox}</Checkbox>
               <Button onClick={() => { setCreating(false); form.resetFields(); }}>Cancel</Button>
             </Space>
           </Form>

@@ -38,6 +38,8 @@ interface InstallStepProps {
   resolvedContext?: ResolvedContextInfo | null;
   /** Upgrading a deployed release (discovery must not replace its values). */
   upgrade?: boolean;
+  /** How the release being upgraded was deployed; a release deployed with Flux GitOps keeps its mode. */
+  deployedMode?: string;
 }
 
 const InstallStep: React.FC<InstallStepProps> = ({
@@ -49,6 +51,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
   securityProfiles = {},
   resolvedContext,
   upgrade = false,
+  deployedMode,
 }) => {
   const [form] = Form.useForm();
 
@@ -108,6 +111,8 @@ const InstallStep: React.FC<InstallStepProps> = ({
     onChange(mergedValues);
   };
 
+  const heldInGit = upgrade && deployedMode === 'FLUX_GITOPS';
+
   if (mode === 'general') {
       return (
         <FieldSyncContext.Provider value={onValuesChange}>
@@ -142,14 +147,18 @@ const InstallStep: React.FC<InstallStepProps> = ({
                   ))}
                 </Select>
             </Form.Item>
+            {/* Flux reconciles a GitOps release from Git: a direct Helm upgrade would be undone at its next
+                reconcile, and the server refuses it. */}
             <Form.Item
               name="deploymentMode"
               label="Deployment mode"
               initialValue="DIRECT_HELM"
-              tooltip="Direct Helm installs releases immediately; Flux GitOps commits manifests to Git."
+              tooltip={heldInGit
+                ? 'This release is deployed with Flux GitOps: its changes are committed to Git, which Flux applies. To deploy it with Helm instead, uninstall it first.'
+                : 'Direct Helm installs releases immediately; Flux GitOps commits manifests to Git.'}
               rules={[{ required: true }]}
             >
-              <Radio.Group>
+              <Radio.Group disabled={heldInGit}>
                 <Radio value="DIRECT_HELM">Direct Helm</Radio>
                 <Radio value="FLUX_GITOPS">Flux GitOps</Radio>
               </Radio.Group>

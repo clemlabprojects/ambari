@@ -304,9 +304,11 @@ public class ReleaseMetadataService {
      * @param prUrl      the pull request of the change, or null for none
      * @param prNumber   its number, or null
      * @param prState    its state, or null
+     * @param specDigest the spec digest annotation of the HelmRelease Git now holds for the release, or null
      */
     public void recordGitChange(String namespace, String releaseName, String branch, String baseBranch,
-                                String commitMode, String prUrl, String prNumber, String prState) {
+                                String commitMode, String prUrl, String prNumber, String prState,
+                                String specDigest) {
         K8sReleaseEntity e = find(namespace, releaseName);
         if (e == null) return;
         e.setGitBranch(branch);
@@ -317,6 +319,7 @@ public class ReleaseMetadataService {
         e.setGitPrUrl(prUrl);
         e.setGitPrNumber(prNumber);
         e.setGitPrState(prState);
+        e.setGitSpecDigest(specDigest);
         e.setGitPendingDelete(false);
         e.setGitRemovedHelmReleases(null);
         releaseRepository.update(e);

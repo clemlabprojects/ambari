@@ -28,6 +28,8 @@ jest.mock('../../api/client', () => ({
   getReleaseStatus: jest.fn(),
   uninstallHelm: jest.fn(),
   getReleaseActionRefusals: jest.fn(),
+  getReleaseHistory: jest.fn(),
+  rollbackReleaseToRevision: jest.fn(),
 }));
 jest.mock('../../assets/services', () => ({ serviceIcon: () => '' }));
 jest.mock('../../context/ClusterStatusContext', () => ({
@@ -35,8 +37,8 @@ jest.mock('../../context/ClusterStatusContext', () => ({
 }));
 
 import {
-  getAvailableServices, getClusterCapabilities, getHelmReleases, getReleaseActionRefusals, getReleaseStatus,
-  getReleaseTlsState, uninstallHelm,
+  getAvailableServices, getClusterCapabilities, getHelmReleases, getReleaseActionRefusals, getReleaseHistory,
+  getReleaseStatus, getReleaseTlsState, rollbackReleaseToRevision, uninstallHelm,
 } from '../../api/client';
 import { invalidateCapabilities } from '../../components/ServiceInstallationModal/capabilities';
 import { PermissionsContext } from '../../context/PermissionsContext';
@@ -275,5 +277,127 @@ describe('HelmReleasesPage repair actions', () => {
     await waitFor(() => expect(keytabs.getAttribute('aria-disabled')).toBe('true'));
     const oidc = screen.getByRole('menuitem', { name: /Re-register OIDC client/ });
     expect(oidc.getAttribute('aria-disabled')).not.toBe('true');
+  });
+});
+
+/**
+ * A release deployed with Flux GitOps is rolled back through Git: Flux would undo a Helm rollback at its next
+ * reconcile. Its revision history is shown read-only, with what brings an earlier version back.
+ */
+describe('HelmReleasesPage revision history of a GitOps release', () => {
+  const user = userEvent.setup();
+  const history = [
+    { revision: 3, status: 'deployed', chart: 'trino-1.43.16', app_version: '476', description: 'Upgrade complete' },
+    { revision: 2, status: 'superseded', chart: 'trino-1.43.15', app_version: '476', description: 'Upgrade complete' },
+  ];
+
+  const openHistory = async (deploymentMode: string) => {
+    (getAvailableServices as jest.Mock).mockResolvedValue({});
+    (getClusterCapabilities as jest.Mock).mockResolvedValue({ platform: 'kubernetes' });
+    (getHelmReleases as jest.Mock).mockResolvedValue({
+      items: [{
+        id: 'analytics/trino', name: 'trino', namespace: 'analytics', chart: 'trino-1.43.16', version: '1.43.16',
+        status: 'deployed', managedByUi: true, deploymentMode,
+      }],
+      total: 1,
+    });
+    (getReleaseTlsState as jest.Mock).mockResolvedValue([]);
+    (getReleaseStatus as jest.Mock).mockResolvedValue({});
+    (getReleaseActionRefusals as jest.Mock).mockResolvedValue({ refusals: {} });
+    (getReleaseHistory as jest.Mock).mockResolvedValue(history);
+    render(
+      <PermissionsContext.Provider value={{ permissions: { canWrite: true, canConfigure: true } as any, loading: false }}>
+        <MemoryRouter><HelmReleasesPage /></MemoryRouter>
+      </PermissionsContext.Provider>);
+    await screen.findByText('trino');
+    const row = screen.getByText('trino').closest('tr') as HTMLElement;
+    const buttons = within(row).getAllByRole('button');
+    await user.click(buttons[buttons.length - 1]);
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    invalidateCapabilities();
+  });
+
+  it('shows the history read-only, with how to go back through Git', async () => {
+    await openHistory('FLUX_GITOPS');
+
+    await user.click(await screen.findByText('Revision history (read-only)…'));
+
+    expect(await screen.findByText('Read-only: this release is deployed with Flux GitOps')).toBeTruthy();
+    expect(screen.getByText(/revert or change the release in Git/)).toBeTruthy();
+    const rollback = (await screen.findByText('Rollback to 2')).closest('button') as HTMLButtonElement;
+    expect(rollback.disabled).toBe(true);
+    await user.click(rollback);
+    expect(rollbackReleaseToRevision).not.toHaveBeenCalled();
+  });
+
+  it('keeps the rollback of a release deployed with Helm', async () => {
+    await openHistory('DIRECT_HELM');
+
+    await user.click(await screen.findByText('Revision history…'));
+
+    const rollback = (await screen.findByText('Rollback to 2')).closest('button') as HTMLButtonElement;
+    expect(rollback.disabled).toBe(false);
+    expect(screen.queryByText('Read-only: this release is deployed with Flux GitOps')).toBeNull();
+  });
+});
+
+/**
+ * A GitOps release Flux has not installed (its pull request not merged yet) is listed from its record: the cluster holds
+ * none of its values, so no action that redeploys it from them is offered. Its Uninstall and Retry reconcile are.
+ */
+describe('HelmReleasesPage GitOps release not installed by Flux yet', () => {
+  const user = userEvent.setup();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    invalidateCapabilities();
+  });
+
+  it('offers no redeploy action on a release waiting for its pull request', async () => {
+    (getAvailableServices as jest.Mock).mockResolvedValue({ TRINO: { label: 'Trino', chart: 'trinodb/trino' } });
+    (getClusterCapabilities as jest.Mock).mockResolvedValue({ platform: 'kubernetes' });
+    (getHelmReleases as jest.Mock).mockResolvedValue({
+      items: [{
+        id: 'trino', name: 'trino', namespace: 'analytics', chart: 'clemlab-trino', version: '1.43.16',
+        status: 'PENDING_PR', managedByUi: true, serviceKey: 'TRINO', deploymentMode: 'FLUX_GITOPS',
+        gitCommitMode: 'PR_MODE', gitPrUrl: 'https://git.example.org/platform/gitops/pulls/7', gitPrState: 'open',
+        securityProfile: 'ldap', securityProfileStale: true, restartRequired: true, installed: false,
+        catalogManagement: false,
+      }],
+      total: 1,
+    });
+    (getReleaseTlsState as jest.Mock).mockResolvedValue([]);
+    // The status endpoint does not know whether Flux installed the release: the list's answer must survive its refresh.
+    (getReleaseStatus as jest.Mock).mockResolvedValue({
+      name: 'trino', namespace: 'analytics', status: 'PENDING_PR', deploymentMode: 'FLUX_GITOPS',
+      installed: null, catalogManagement: null,
+    });
+    (getReleaseActionRefusals as jest.Mock).mockResolvedValue({ refusals: {} });
+    render(
+      <PermissionsContext.Provider value={{ permissions: { canWrite: true, canConfigure: true } as any, loading: false }}>
+        <MemoryRouter><HelmReleasesPage /></MemoryRouter>
+      </PermissionsContext.Provider>);
+    await screen.findByText('trino');
+    await waitFor(() => expect(getAvailableServices).toHaveBeenCalled());
+    await waitFor(() => expect(getReleaseStatus).toHaveBeenCalledWith('analytics', 'trino'));
+    await act(async () => { await Promise.resolve(); });
+
+    const row = screen.getByText('trino').closest('tr') as HTMLElement;
+    const buttons = within(row).getAllByRole('button');
+    await user.click(buttons[buttons.length - 1]);
+
+    for (const name of [/Upgrade \/ Config/, /Resync \/ restart/, /Refresh security profile/, /Worker autoscaling/,
+      /Revision history/]) {
+      const item = await screen.findByRole('menuitem', { name });
+      expect(item.getAttribute('aria-disabled')).toBe('true');
+    }
+    expect(screen.getByRole('menuitem', { name: /Uninstall/ }).getAttribute('aria-disabled')).not.toBe('true');
+    expect(screen.getByRole('menuitem', { name: /Retry reconcile/ }).getAttribute('aria-disabled')).not.toBe('true');
+    expect(screen.queryByRole('menuitem', { name: /Catalogs/ })).toBeNull();
+    await user.click(screen.getByRole('menuitem', { name: /Revision history/ }));
+    expect(getReleaseHistory).not.toHaveBeenCalled();
   });
 });

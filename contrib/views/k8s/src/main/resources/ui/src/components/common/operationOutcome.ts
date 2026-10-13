@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import type { CommandStatus } from '../../api/client';
+import type { CommandStatus, DeployAccepted, GitOpsDeployResult } from '../../api/client';
 
 /**
  * A GitOps deploy whose change waits for a merge: the operation ends SUCCEEDED once the change is in Git, but Flux
@@ -48,4 +48,49 @@ export const operationNotices = (status?: Pick<CommandStatus, 'result'> | null):
   const notices = status?.result?.notices;
   if (!Array.isArray(notices)) return [];
   return notices.filter((n): n is string => typeof n === 'string' && n.trim() !== '');
+};
+
+/** Only a web link is offered as one: the URL comes from the Git provider. */
+const webLink = (url: unknown): string | undefined => {
+  const trimmed = typeof url === 'string' ? url.trim() : '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : undefined;
+};
+
+/** What a GitOps deploy did in Git once its commit step ran (result.gitOps), or null for any other operation. */
+export const gitOpsResult = (status?: Pick<CommandStatus, 'result'> | null): GitOpsDeployResult | null => {
+  const gitOps = status?.result?.gitOps;
+  if (!gitOps || typeof gitOps !== 'object' || gitOps.mode !== 'FLUX_GITOPS') return null;
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  return {
+    mode: 'FLUX_GITOPS',
+    commit: text(gitOps.commit),
+    branch: text(gitOps.branch),
+    prUrl: webLink(gitOps.prUrl),
+    prState: text(gitOps.prState),
+    noChanges: typeof gitOps.noChanges === 'boolean' ? gitOps.noChanges : undefined,
+  };
+};
+
+/** The title and lines the operations window shows for what a GitOps deploy did in Git. */
+export const describeGitOps = (gitOps: GitOpsDeployResult): { title: string; lines: string[] } => {
+  const title = gitOps.noChanges === true
+    ? 'Git already holds this change: nothing committed'
+    : gitOps.commit ? 'Committed to Git' : 'Committing to Git';
+  const lines = [
+    gitOps.commit ? `Commit ${gitOps.commit.slice(0, 12)}` : null,
+    gitOps.branch ? `Branch ${gitOps.branch}` : null,
+    gitOps.prUrl || gitOps.prState ? `Pull request${gitOps.prState ? ` (${gitOps.prState})` : ''}` : null,
+  ].filter((line): line is string => !!line);
+  return { title, lines };
+};
+
+/**
+ * What the page says once a deploy is accepted. A GitOps deploy commits its change to Git once the release is
+ * prepared, and Flux applies it from there: said so, with the branch the change goes to when the answer names it.
+ */
+export const deploySubmittedMessage = (action: string, answer?: Partial<DeployAccepted> | null): string => {
+  if (answer?.mode !== 'FLUX_GITOPS' && !answer?.gitOps) return `${action} started`;
+  const branch = answer?.gitOps?.branch;
+  return `${action} started: the change is committed to Git${branch ? ` on branch ${branch}` : ''} once the`
+    + ' release is prepared, then Flux applies it. Follow it in Background operations.';
 };

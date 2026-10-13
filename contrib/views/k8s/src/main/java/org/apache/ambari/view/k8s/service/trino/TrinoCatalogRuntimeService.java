@@ -18,17 +18,22 @@
 package org.apache.ambari.view.k8s.service.trino;
 
 import io.fabric8.kubernetes.api.model.Container;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.DeploymentMode;
+import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
 import org.apache.ambari.view.k8s.service.HelmService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.TrinoCatalogService;
+import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
+import org.apache.ambari.view.k8s.service.deployment.GitPullRequests;
+import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.slf4j.Logger;
@@ -44,6 +49,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -85,12 +91,53 @@ public class TrinoCatalogRuntimeService {
         public K8sReleaseEntity metadata;
     }
 
+    /**
+     * Submits a deploy of a release through Git, as a redeploy from the Releases page does, and returns its operation
+     * id: how a catalog saved to a release deployed with Flux GitOps gets into its values.
+     */
+    @FunctionalInterface
+    public interface GitOpsRedeploy {
+        String submit(HelmDeployRequest request);
+
+        /**
+         * The operation of a GitOps deploy of the release that has not finished, or {@code null} when none is
+         * running (see {@link CommandService#runningGitOpsDeploy(String, String)}).
+         */
+        default String runningDeploy(String namespace, String release) {
+            return null;
+        }
+
+        /**
+         * Refuses, before anything is changed live, what the deploy's submission would refuse at once whatever the
+         * catalog: no Ambari master key to keep the operation with, or a security profile the release records that
+         * is gone (deleted or renamed).
+         */
+        default void checkSubmittable(K8sReleaseEntity release) {
+        }
+    }
+
     private final ViewContext ctx;
     private final KubernetesService kubernetesService;
+    private final GitOpsRedeploy gitOpsRedeploy;
 
     public TrinoCatalogRuntimeService(ViewContext ctx) {
+        this(ctx, null);
+    }
+
+    /**
+     * @param gitOpsRedeploy commits the values of a release deployed with Flux GitOps to Git; without it, a catalog is
+     *                       saved to such a release only through Upgrade/Config
+     */
+    public TrinoCatalogRuntimeService(ViewContext ctx, GitOpsRedeploy gitOpsRedeploy) {
         this.ctx = ctx;
         this.kubernetesService = KubernetesService.get(ctx);
+        this.gitOpsRedeploy = gitOpsRedeploy;
+    }
+
+    TrinoCatalogRuntimeService(ViewContext ctx, KubernetesService kubernetesService, GitOpsRedeploy gitOpsRedeploy) {
+        this.ctx = ctx;
+        this.kubernetesService = kubernetesService;
+        this.gitOpsRedeploy = gitOpsRedeploy;
     }
 
     // ---------------------------------------------------------------- resolution
@@ -197,7 +244,7 @@ public class TrinoCatalogRuntimeService {
         return v != null && "true".equalsIgnoreCase(String.valueOf(v));
     }
 
-    private TrinoStatementClient clientFor(Target t) {
+    TrinoStatementClient clientFor(Target t) {
         return new TrinoStatementClient(kubernetesService.getClient(), t.namespace, t.podName, t.container,
                 t.httpsPort, t.serviceUser, t.servicePassword);
     }
@@ -264,13 +311,69 @@ public class TrinoCatalogRuntimeService {
             throw new IllegalStateException("Runtime catalog creation is off for this release (dynamicCatalogs.enabled=false)."
                     + " Turn it on in Upgrade/Config, or add the catalog there to apply it at the next restart.");
         }
-        if (persist) requirePersistable(t);
-        TrinoStatementClient.Result r = clientFor(t).execute(buildCreateCatalog(name, connector, props), operator);
-        if (!r.ok()) throw accessOrState(r, t, "create catalog '" + name + "'");
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("name", name); out.put("connector", connector); out.put("live", true);
-        if (persist) { persistCatalog(t, name, propertiesText.trim()); out.put("persisted", true); }
-        return out;
+        return aloneInGit(t, persist, () -> {
+            if (persist) checkPersistable(t);
+            TrinoStatementClient.Result r = clientFor(t).execute(buildCreateCatalog(name, connector, props), operator);
+            if (!r.ok()) throw accessOrState(r, t, "create catalog '" + name + "'");
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("name", name); out.put("connector", connector); out.put("live", true);
+            if (persist) {
+                try {
+                    out.putAll(persistCatalog(t, name, propertiesText.trim()));
+                } catch (RuntimeException notSaved) {
+                    throw undoCreateNotCommitted(t, name, operator, notSaved);
+                }
+                out.put("persisted", true);
+            }
+            return out;
+        });
+    }
+
+    /**
+     * Runs a catalog change saved to a release deployed with Flux GitOps alone among the changes of the release
+     * submitted to Git ({@link CommandService#submittingGitOpsChange}), from its check that Git holds no change of the
+     * release Flux has not applied until its own deploy is stored. Two changes passing that check together would each
+     * commit the values Helm reports with only their own catalog, the second taking the first's out of Git while it
+     * stays live, gone at the next restart. Any other change runs as it is.
+     *
+     * @param saved whether the change is saved to the release values
+     * @throws org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend.GitOpsBusyException when another change
+     *         of the release is being submitted to Git; nothing was changed
+     */
+    private static <T> T aloneInGit(Target t, boolean saved, Supplier<T> change) {
+        if (!saved || !heldInGit(t)) return change.get();
+        return CommandService.submittingGitOpsChange(t.namespace, t.release, change);
+    }
+
+    /**
+     * A catalog created live on a release deployed with Flux GitOps whose commit to Git could not be submitted: it is
+     * dropped again, so the release is not left with a catalog Git does not hold, gone at the next restart and in the
+     * way of a retry ("already exists"); the refusal is then passed on as it came. When it cannot be dropped, the error
+     * says the catalog is live but not saved. A release deployed with Helm keeps its refusal as it came.
+     *
+     * @return the exception to throw
+     */
+    private RuntimeException undoCreateNotCommitted(Target t, String name, String operator,
+                                                    RuntimeException notSaved) {
+        if (!heldInGit(t)) return notSaved;
+        String undoError;
+        try {
+            TrinoStatementClient.Result undo = clientFor(t).execute("DROP CATALOG " + name, operator);
+            undoError = undo.ok() ? null : undo.error;
+        } catch (RuntimeException e) {
+            undoError = e.getMessage();
+        }
+        if (undoError == null) {
+            LOG.info("Catalog '{}' dropped again from {}/{}: its commit to Git could not be submitted ({})", name,
+                    t.namespace, t.release, notSaved.toString());
+            return notSaved;
+        }
+        LOG.warn("Catalog '{}' stays live on {}/{} without its commit to Git: dropping it again failed: {}", name,
+                t.namespace, t.release, undoError);
+        return new IllegalStateException("Catalog '" + name + "' was created in Trino, but it could not be committed"
+                + " to Git (" + notSaved.getMessage() + "), and dropping it again failed (" + undoError + "). It is"
+                + " live only and is gone at the next restart: drop it, or adopt it once the problem is fixed.",
+                notSaved);
     }
 
     public Map<String, Object> drop(String namespace, String release, String name, boolean forget, String operator) {
@@ -279,13 +382,45 @@ public class TrinoCatalogRuntimeService {
         if (KDPS_MANAGED.contains(name) && valuesCatalogs(t.values).containsKey(name)) {
             throw new IllegalArgumentException("'" + name + "' is built by KDPS from the platform context; turn its toggle off in Upgrade/Config instead.");
         }
-        if (forget && valuesCatalogs(t.values).containsKey(name)) requirePersistable(t);
-        TrinoStatementClient.Result r = clientFor(t).execute("DROP CATALOG " + name, operator);
-        if (!r.ok() && !(r.errorName != null && r.errorName.contains("NOT_FOUND"))) throw accessOrState(r, t, "drop catalog '" + name + "'");
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("name", name); out.put("live", false);
-        if (forget && valuesCatalogs(t.values).containsKey(name)) { persistCatalog(t, name, null); out.put("persisted", false); }
-        return out;
+        return aloneInGit(t, forget, () -> {
+            if (forget && valuesCatalogs(t.values).containsKey(name)) checkPersistable(t);
+            else if (forget) refuseDropWhileGitChangePending(t, name);
+            TrinoStatementClient.Result r = clientFor(t).execute("DROP CATALOG " + name, operator);
+            if (!r.ok() && !(r.errorName != null && r.errorName.contains("NOT_FOUND"))) throw accessOrState(r, t, "drop catalog '" + name + "'");
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("name", name); out.put("live", false);
+            if (forget && valuesCatalogs(t.values).containsKey(name)) {
+                try {
+                    out.putAll(persistCatalog(t, name, null));
+                } catch (RuntimeException notSaved) {
+                    if (!heldInGit(t)) throw notSaved;
+                    // Dropped live already: say so, rather than an error that reads as if nothing changed.
+                    throw new IllegalStateException("Catalog '" + name + "' was dropped from Trino, but its removal"
+                            + " could not be committed to Git (" + notSaved.getMessage() + "). It is still saved to"
+                            + " the release and comes back at the next restart: drop it again once the problem is"
+                            + " fixed.", notSaved);
+                }
+                out.put("persisted", false);
+            }
+            return out;
+        });
+    }
+
+    /**
+     * Refuses, before it is dropped live, a catalog forgotten on a release deployed with Flux GitOps while Git holds a
+     * change of the release Flux has not applied: a catalog that change saves is not in the values Helm reports yet,
+     * so nothing would remove it from Git, and it would come back once the change is applied.
+     *
+     * @throws ReleaseHeldInGitException when such a change is pending
+     */
+    private void refuseDropWhileGitChangePending(Target t, String name) {
+        String pending = pendingGitChange(t);
+        if (pending != null) {
+            throw new ReleaseHeldInGitException("Release " + t.namespace + "/" + t.release + " is deployed with Flux"
+                    + " GitOps and Git holds a change of it that is not applied yet: " + pending + ". That change may"
+                    + " save catalog '" + name + "', which would then come back once it is applied, so nothing was"
+                    + " changed. Drop the catalog once the change is applied.");
+        }
     }
 
     public List<String> test(String namespace, String release, String name, String operator) {
@@ -302,23 +437,26 @@ public class TrinoCatalogRuntimeService {
     public Map<String, Object> adopt(String namespace, String release, String name, String operator) {
         Target t = resolve(namespace, release);
         if (!IDENT.matcher(name).matches()) throw new IllegalArgumentException("'" + name + "' is not a catalog name.");
-        requirePersistable(t);
-        // Trino 476 has no SHOW CREATE CATALOG; under dynamic management the file catalog store inside the
-        // coordinator holds exactly what was created at runtime, so read it there (as a sanity gate the
-        // operator must still be allowed to SHOW SCHEMAS on it — i.e. Ranger lets them use the catalog).
-        TrinoStatementClient.Result r = clientFor(t).execute("SHOW SCHEMAS FROM " + name, operator);
-        if (!r.ok()) throw accessOrState(r, t, "read catalog '" + name + "'");
-        String raw = clientFor(t).readFile(t.storeDir + "/" + name + ".properties");
-        if (raw == null || raw.isBlank()) {
-            throw new IllegalStateException("'" + name + "' has no file in the catalog store (" + t.storeDir + ") — only catalogs"
-                    + " created at runtime under dynamic management can be adopted.");
-        }
-        String text = propertiesFromStoreFile(raw);
-        TrinoCatalogService.validateCatalog(name, text);
-        persistCatalog(t, name, text);
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("name", name); out.put("persisted", true); out.put("properties", text);
-        return out;
+        return aloneInGit(t, true, () -> {
+            checkPersistable(t);
+            // Trino 476 has no SHOW CREATE CATALOG; under dynamic management the file catalog store inside the
+            // coordinator holds exactly what was created at runtime, so read it there (as a sanity gate the
+            // operator must still be allowed to SHOW SCHEMAS on it — i.e. Ranger lets them use the catalog).
+            TrinoStatementClient.Result r = clientFor(t).execute("SHOW SCHEMAS FROM " + name, operator);
+            if (!r.ok()) throw accessOrState(r, t, "read catalog '" + name + "'");
+            String raw = clientFor(t).readFile(t.storeDir + "/" + name + ".properties");
+            if (raw == null || raw.isBlank()) {
+                throw new IllegalStateException("'" + name + "' has no file in the catalog store (" + t.storeDir + ") — only catalogs"
+                        + " created at runtime under dynamic management can be adopted.");
+            }
+            String text = propertiesFromStoreFile(raw);
+            TrinoCatalogService.validateCatalog(name, text);
+            Map<String, Object> saved = persistCatalog(t, name, text);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("name", name); out.put("persisted", true); out.put("properties", text);
+            out.putAll(saved);
+            return out;
+        });
     }
 
     // ---------------------------------------------------------------- helpers (pure, unit-tested)
@@ -409,33 +547,214 @@ public class TrinoCatalogRuntimeService {
     }
 
     /**
-     * Refuses, before anything is changed live, a catalog change whose persistence would upgrade a release KDPS
-     * must not upgrade directly: one Flux reconciles from Git (a direct upgrade fights helm-controller and is
-     * reverted at its next reconcile), or one with a Helm operation still running.
+     * Refuses, before anything is changed live, a catalog change whose persistence cannot run now: a Helm operation on
+     * the release is still running. A release deployed with Flux GitOps is not refused: its catalogs are saved through
+     * Git ({@link #persistCatalog}).
      */
     static void requirePersistable(Target t) {
-        if (t.metadata != null && DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(t.metadata.getDeploymentMode())) {
-            throw new IllegalStateException("Release " + t.namespace + "/" + t.release + " is deployed with Flux GitOps,"
-                    + " which owns its Helm upgrades, so KDPS cannot change the catalogs saved in its values. Change"
-                    + " them in Upgrade/Config so the change goes through Git; only runtime catalogs (not saved to the"
-                    + " release) can be managed here.");
-        }
         HelmOperationRegistry.requireIdle(t.namespace, t.release);
     }
 
-    /** Write the catalog into the release values (null text = remove) through a helm upgrade of the same chart/version. */
-    private void persistCatalog(Target t, String name, String text) {
+    /**
+     * {@link #requirePersistable}, and for a release deployed with Flux GitOps a way to commit its values, with no
+     * change of the release still pending in Git ({@link #refuseWhileGitChangePending}) and nothing its deploy would
+     * be refused for at once ({@link GitOpsRedeploy#checkSubmittable}).
+     */
+    private void checkPersistable(Target t) {
+        requirePersistable(t);
+        if (heldInGit(t) && gitOpsRedeploy == null) {
+            throw new IllegalStateException("Release " + t.namespace + "/" + t.release + " is deployed with Flux"
+                    + " GitOps: save the catalog in Upgrade/Config, which commits it to Git.");
+        }
+        refuseWhileGitChangePending(t);
+        if (heldInGit(t)) {
+            gitOpsRedeploy.checkSubmittable(t.metadata);
+        }
+    }
+
+    /**
+     * Refuses, before anything is changed live, a catalog change saved to a release deployed with Flux GitOps while
+     * Git holds a change of the release Flux has not applied: a pull request not merged yet, a commit not pushed, a
+     * removal proposed in a pull request still open, a deploy still running (until Flux has applied what it
+     * committed), or a commit Flux has not applied on the cluster, as when the deploy that made it ended before Flux
+     * did (its upgrade failed, or the wait timed out). The values committed are built on those Helm reports for the
+     * release, which do not hold that change yet: committing them would take it out of Git (out of the pull request,
+     * for one not merged). A removal still proposed refuses any deploy of the release, which would only fail once the
+     * catalog is changed live.
+     *
+     * @throws ReleaseHeldInGitException when such a change is pending; the REST resources answer it with 409
+     */
+    void refuseWhileGitChangePending(Target t) {
+        String pending = pendingGitChange(t);
+        if (pending != null) {
+            throw new ReleaseHeldInGitException("Release " + t.namespace + "/" + t.release + " is deployed with Flux"
+                    + " GitOps and Git holds a change of it that is not applied yet: " + pending + ". The catalogs"
+                    + " saved to the release cannot be committed to Git without undoing that change, so nothing was"
+                    + " changed. Try again once the change is applied; until then, only catalogs not saved to the"
+                    + " release can be added.");
+        }
+    }
+
+    /**
+     * The change of a release deployed with Flux GitOps that Git holds and Flux has not applied
+     * ({@link #refuseWhileGitChangePending}), or {@code null} when there is none, or the release is deployed with Helm.
+     *
+     * @throws ReleaseHeldInGitException when its HelmRelease cannot be read
+     */
+    private String pendingGitChange(Target t) {
+        if (!heldInGit(t)) return null;
+        String pending = gitChangePending(t.metadata);
+        if (pending == null && gitOpsRedeploy != null) {
+            String operation = gitOpsRedeploy.runningDeploy(t.namespace, t.release);
+            if (operation != null) {
+                pending = "a deploy of the release is still running (operation " + operation + "), until Flux has"
+                        + " applied what it commits";
+            }
+        }
+        if (pending == null) {
+            pending = fluxNotApplied(t);
+        }
+        return pending;
+    }
+
+    /**
+     * Why Flux has not applied, on the cluster, the last change of the release committed to Git, read from its
+     * HelmRelease ({@link #fluxNotApplied(GenericKubernetesResource, String)}); {@code null} when it has.
+     *
+     * @throws ReleaseHeldInGitException when the HelmRelease cannot be read: nothing then tells that Helm reports
+     *                                   what Git holds
+     */
+    private String fluxNotApplied(Target t) {
+        GenericKubernetesResource helmRelease;
+        try {
+            helmRelease = kubernetesService.getFluxHelmRelease(t.namespace, t.release);
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the Flux HelmRelease of {}/{}: {}", t.namespace, t.release, e.toString());
+            throw new ReleaseHeldInGitException("Release " + t.namespace + "/" + t.release + " is deployed with Flux"
+                    + " GitOps, and its HelmRelease could not be read to check that Flux has applied what Git holds ("
+                    + e.getMessage() + "). The catalogs saved to the release are not committed to Git without that"
+                    + " check, so nothing was changed; only catalogs not saved to the release can be added.");
+        }
+        return fluxNotApplied(helmRelease, digestStillToApply(t.metadata));
+    }
+
+    /**
+     * The spec digest the last change of the release recorded, while that change can still reach the branch Flux
+     * reconciles; {@code null} once its pull request was closed without being merged. The release then runs what the
+     * base branch holds, which the HelmRelease on the cluster is taken as: waiting for the closed change would refuse
+     * the catalogs saved to the release for good.
+     */
+    static String digestStillToApply(K8sReleaseEntity meta) {
+        if (meta == null) return null;
+        if ("PR_MODE".equalsIgnoreCase(meta.getGitCommitMode()) && !meta.isGitPendingDelete()
+                && GitPullRequests.isClosed(meta.getGitPrState())) {
+            return null;
+        }
+        return meta.getGitSpecDigest();
+    }
+
+    /**
+     * Why a HelmRelease on the cluster does not run the last change of its release committed to Git, or {@code null}
+     * when it does: Flux has applied the committed version (its spec digest), reports the release Ready for its latest
+     * generation, and runs the chart revision it last attempted. Otherwise Helm may still report the values from before
+     * that change, as after an upgrade Flux rolled back, or one held by a dependency or a failing chart source.
+     *
+     * @param helmRelease     the HelmRelease on the cluster, {@code null} when it is not there
+     * @param committedDigest the spec digest the last commit recorded; {@code null} when none was recorded (a release
+     *                        deployed by an earlier version), which takes the version on the cluster
+     */
+    static String fluxNotApplied(GenericKubernetesResource helmRelease, String committedDigest) {
+        FluxGitOpsBackend.Readiness readiness = FluxGitOpsBackend.readiness(helmRelease, committedDigest);
+        if (!readiness.ready()) {
+            String reason = "Flux has not applied its last commit (" + readiness.message() + ")";
+            Map<String, String> annotations = helmRelease == null || helmRelease.getMetadata() == null
+                    || helmRelease.getMetadata().getAnnotations() == null
+                    ? Map.of() : helmRelease.getMetadata().getAnnotations();
+            if (helmRelease != null && committedDigest != null
+                    && !committedDigest.equals(annotations.get(FluxGitOpsBackend.SPEC_DIGEST_ANNOTATION))) {
+                // Only a new deploy records another version: a commit reverted or replaced in Git never arrives.
+                reason += ". If that commit was reverted or replaced in Git, it will never be applied: redeploy the"
+                        + " release with Upgrade/Config, which records the version Git holds now";
+            }
+            return reason;
+        }
+        Map<?, ?> status = helmRelease.get("status") instanceof Map<?, ?> m ? m : Map.of();
+        Object attempted = status.get("lastAttemptedRevision");
+        Object applied = status.get("lastAppliedRevision");
+        if (attempted != null && applied != null && !String.valueOf(attempted).equals(String.valueOf(applied))) {
+            return "Flux last attempted chart revision " + attempted + " but the release runs " + applied;
+        }
+        return null;
+    }
+
+    /**
+     * What change of a release deployed with Flux GitOps its record says is pending in Git: its pull request, not
+     * merged yet, a commit for one that could not be pushed, or the pull request proposing its removal, still open (a
+     * deploy of the release is refused until that one is merged or closed, so its catalogs could not be committed).
+     * {@code null} when the record tells none.
+     */
+    static String gitChangePending(K8sReleaseEntity meta) {
+        if (meta == null || !DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(meta.getDeploymentMode())) {
+            return null;
+        }
+        String pullRequest = meta.getGitPrUrl() != null && !meta.getGitPrUrl().isBlank() ? meta.getGitPrUrl()
+                : meta.getGitPrNumber();
+        boolean pullRequestOpen = pullRequest != null && !pullRequest.isBlank()
+                && GitPullRequests.isOpen(meta.getGitPrState());
+        if (meta.isGitPendingDelete()) {
+            return pullRequestOpen ? "its removal is proposed in pull request " + pullRequest + ", not merged yet"
+                    : null;
+        }
+        if (!"PR_MODE".equalsIgnoreCase(meta.getGitCommitMode())) {
+            return null;
+        }
+        String sha = meta.getGitCommitSha();
+        if (sha != null && sha.startsWith("PR-STUB:")) {
+            return "its change is committed in the KDPS workspace (" + sha.substring("PR-STUB:".length())
+                    + ") but was not pushed for a pull request";
+        }
+        if (pullRequestOpen) {
+            return "its pull request " + pullRequest + " is not merged yet";
+        }
+        return null;
+    }
+
+    /** Whether the release is deployed with Flux GitOps, whose values only change through Git. */
+    static boolean heldInGit(Target t) {
+        return t.metadata != null && DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(t.metadata.getDeploymentMode());
+    }
+
+    /**
+     * Write the catalog into the release values (null text = remove). A release deployed with Helm gets a helm upgrade
+     * of the same chart/version. One deployed with Flux GitOps gets its values committed to Git, by a direct commit or
+     * through a pull request as it was deployed: Flux would undo a helm upgrade at its next reconcile, and the catalog
+     * would be gone at the next restart.
+     *
+     * @return for a release deployed with Flux GitOps, the operation that commits the change ({@code commandId}) and
+     *         {@code committedToGit}; empty otherwise
+     */
+    Map<String, Object> persistCatalog(Target t, String name, String text) {
         if (t.metadata == null || t.metadata.getChartRef() == null) {
             throw new IllegalStateException("Release metadata is missing (not deployed through KDPS?) — catalog applied live only, not persisted.");
         }
-        requirePersistable(t);
+        checkPersistable(t);
         Map<String, Object> values = valuesWithCatalog(ctx, t, name, text);
+        if (heldInGit(t)) {
+            String commandId = gitOpsRedeploy.submit(CommandService.releaseRedeployRequest(t.metadata, values));
+            LOG.info("Catalog '{}' {} release {}/{} through Git (operation {})", name,
+                    text == null ? "removed from" : "committed to", t.namespace, t.release, commandId);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("committedToGit", true);
+            out.put("commandId", commandId);
+            return out;
+        }
         HelmService helm = new HelmService(ctx);
         // deployOrUpgrade holds the release for the whole upgrade, refusing it if another operation started since.
         helm.deployOrUpgrade(t.metadata.getChartRef(), t.release, t.namespace, values, Collections.emptyMap(),
                 kubernetesService.getConfigurationService().getKubeconfigContents(),
                 t.metadata.getRepoId(), t.metadata.getVersion(), 600, true, false, false);
         LOG.info("Catalog '{}' {} in release {}/{} values", name, text == null ? "removed from" : "persisted into", t.namespace, t.release);
+        return Collections.emptyMap();
     }
 
     /**

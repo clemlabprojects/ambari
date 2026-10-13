@@ -59,6 +59,7 @@ import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.DependencyRules;
+import org.apache.ambari.view.k8s.service.FluxApiVersions;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
@@ -130,9 +131,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     public static final String GIT_TIMEOUT_PROPERTY = "k8s.view.git.timeout.seconds";
 
-    // Flux API versions — promoted from v2beta2/v1beta2 (deprecated in Flux 2.3, removed in Flux 3.x)
-    static final String FLUX_HR_API_VERSION  = "helm.toolkit.fluxcd.io/v2";
-    static final String FLUX_SRC_API_VERSION = "source.toolkit.fluxcd.io/v1";
+    // Flux API versions KDPS writes to Git — promoted from v2beta2/v1beta2 (deprecated in Flux 2.3, removed in Flux
+    // 3.x). The cluster is read at the version it serves (FluxApiVersions).
+    static final String FLUX_HR_API_VERSION = FluxApiVersions.Kind.HELM_RELEASE.group() + "/"
+            + FluxApiVersions.Kind.HELM_RELEASE.current();
+    static final String FLUX_SRC_API_VERSION = FluxApiVersions.Kind.HELM_REPOSITORY.group() + "/"
+            + FluxApiVersions.Kind.HELM_REPOSITORY.current();
 
     /**
      * Annotation of the committed HelmRelease holding a digest of its spec. Flux copies it to the cluster when it
@@ -1804,7 +1808,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // which its next deploys and its uninstall follow, or no longer wait for a removal closed unmerged.
                     try {
                         releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
-                                baseToRecord, git.getCommitMode(), prUrl, prNumber, prState);
+                                baseToRecord, git.getCommitMode(), prUrl, prNumber, prState, specDigest);
                     } catch (Exception ex) {
                         LOG.warn("Failed to record the Git state of {}/{}: {}", namespace, release, ex.toString());
                     }
@@ -1891,7 +1895,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             // Exactly where the change went: a direct commit forgets an earlier pull request, and a deploy ends a
             // removal that waited for its merge.
             releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
-                    baseToRecord, git.getCommitMode(), prUrl, prNumber, prState);
+                    baseToRecord, git.getCommitMode(), prUrl, prNumber, prState, specDigest);
             if (alias != null && recordedAlias != null && !alias.equalsIgnoreCase(recordedAlias)) {
                 forgetReplacedAlias(recordedAlias, namespace, release);
             }
@@ -2208,20 +2212,16 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         try {
-            CustomResourceDefinitionContext ctx = helmReleaseContext();
+            FluxApiVersions.Selection helmReleaseApi = fluxApi(FluxApiVersions.Kind.HELM_RELEASE);
 
             GenericKubernetesResource hr = kubernetesService.getClient()
-                    .genericKubernetesResources(ctx)
+                    .genericKubernetesResources(helmReleaseApi.context())
                     .inNamespace(namespace)
                     .withName(releaseName)
                     .get();
 
             if (hr == null) {
-                dto.status = "NOT_FOUND";
-                dto.message = dto.message == null
-                        ? "HelmRelease not found; waiting for Flux to reconcile"
-                        : dto.message + " | HelmRelease not found";
-                dto.reconcileMessage = dto.message;
+                notOnCluster(dto, meta, helmReleaseApi);
                 return dto;
             }
             if (hr.getMetadata() != null && hr.getMetadata().getGeneration() != null) {
@@ -2318,12 +2318,44 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Lightweight existence check to avoid a second status call for PR state handling.
+     * The status of a release whose HelmRelease the cluster does not return. Flux not serving the HelmRelease API at
+     * all is said as such: the cluster answers "not found" for an API it does not serve as for a release Flux has not
+     * applied. Otherwise what the release waits for: its pull request to be merged, Flux to apply a merged change, or
+     * Flux to reconcile. A status the pull request's state already gave (merged, closed, not pushed) is kept.
+     */
+    static void notOnCluster(HelmReleaseDTO dto, K8sReleaseEntity meta, FluxApiVersions.Selection helmReleaseApi) {
+        if (!helmReleaseApi.served()) {
+            dto.status = "UNKNOWN";
+            dto.message = appendMessage(dto.message, helmReleaseApi.problem());
+        } else if ("PENDING_PR".equals(dto.status) || "PROGRESSING".equals(dto.status)
+                || "FAILED".equals(dto.status)) {
+            dto.message = appendMessage(dto.message, "HelmRelease not on the cluster yet");
+        } else if (dto.gitPrUrl != null && !dto.gitPrUrl.isBlank() && GitPullRequests.isOpen(dto.gitPrState)) {
+            dto.status = "PENDING_PR";
+            dto.message = appendMessage(dto.message, "Waiting for the pull request " + dto.gitPrUrl + " to be merged"
+                    + (meta == null ? "" : " into " + recordedBaseBranch(meta))
+                    + ": Flux installs the release once it is merged");
+        } else {
+            dto.status = "NOT_FOUND";
+            dto.message = dto.message == null
+                    ? "HelmRelease not found; waiting for Flux to reconcile"
+                    : dto.message + " | HelmRelease not found";
+        }
+        dto.reconcileMessage = dto.message;
+    }
+
+    /**
+     * Lightweight existence check to avoid a second status call for PR state handling. {@code false} when it cannot
+     * tell, Flux not serving the HelmRelease API included.
      */
     private boolean hrNotAvailable(String namespace, String releaseName) {
         try {
+            FluxApiVersions.Selection helmReleaseApi = fluxApi(FluxApiVersions.Kind.HELM_RELEASE);
+            if (!helmReleaseApi.served()) {
+                return false;
+            }
             GenericKubernetesResource hr = kubernetesService.getClient()
-                    .genericKubernetesResources(helmReleaseContext())
+                    .genericKubernetesResources(helmReleaseApi.context())
                     .inNamespace(namespace)
                     .withName(releaseName)
                     .get();
@@ -2335,25 +2367,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * The Flux custom resources KDPS writes, at the API versions it writes them ({@link #FLUX_HR_API_VERSION},
-     * {@link #FLUX_SRC_API_VERSION}).
+     * The version at which the cluster serves a kind of Flux object (see {@link FluxApiVersions}): the one KDPS writes
+     * ({@link #FLUX_HR_API_VERSION}, {@link #FLUX_SRC_API_VERSION}), else the one of a Flux older than 2.3.
      */
-    private static CustomResourceDefinitionContext helmReleaseContext() {
-        return new CustomResourceDefinitionContext.Builder()
-                .withGroup("helm.toolkit.fluxcd.io")
-                .withVersion(FLUX_HR_API_VERSION.substring(FLUX_HR_API_VERSION.indexOf('/') + 1))
-                .withScope("Namespaced")
-                .withPlural("helmreleases")
-                .build();
+    private FluxApiVersions.Selection fluxApi(FluxApiVersions.Kind kind) {
+        return FluxApiVersions.resolve(kubernetesService == null ? null : kubernetesService.getClient(), kind);
     }
 
-    private static CustomResourceDefinitionContext helmRepositoryContext() {
-        return new CustomResourceDefinitionContext.Builder()
-                .withGroup("source.toolkit.fluxcd.io")
-                .withVersion(FLUX_SRC_API_VERSION.substring(FLUX_SRC_API_VERSION.indexOf('/') + 1))
-                .withScope("Namespaced")
-                .withPlural("helmrepositories")
-                .build();
+    private CustomResourceDefinitionContext helmReleaseContext() {
+        return fluxApi(FluxApiVersions.Kind.HELM_RELEASE).context();
+    }
+
+    private CustomResourceDefinitionContext helmRepositoryContext() {
+        return fluxApi(FluxApiVersions.Kind.HELM_REPOSITORY).context();
     }
 
     /** The access token stored for a release, for the repository it records; {@code null} when there is none. */
@@ -2643,8 +2669,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             return null;
         }
         try {
+            FluxApiVersions.Selection helmReleaseApi = fluxApi(FluxApiVersions.Kind.HELM_RELEASE);
+            if (!helmReleaseApi.served()) {
+                LOG.warn("Could not look for HelmRelease {}/{} on the cluster: {}", namespace, releaseName,
+                        helmReleaseApi.problem());
+                return null;
+            }
             return kubernetesService.getClient()
-                    .genericKubernetesResources(helmReleaseContext())
+                    .genericKubernetesResources(helmReleaseApi.context())
                     .inNamespace(namespace)
                     .withName(releaseName)
                     .get() != null;
@@ -3156,6 +3188,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         public GitOpsBusyException(String namespace, String releaseName) {
             super("Another GitOps operation on " + namespace + "/" + releaseName + " is in progress. Try again once it"
                     + " has finished.");
+        }
+
+        /** @param message what is in progress, and when to try again */
+        public GitOpsBusyException(String message) {
+            super(message);
         }
     }
 
@@ -4123,8 +4160,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             return;
         }
         try {
+            FluxApiVersions.Selection helmReleaseApi = fluxApi(FluxApiVersions.Kind.HELM_RELEASE);
+            if (!helmReleaseApi.served()) {
+                LOG.warn("Could not delete HelmRelease {}/{} from the cluster: {}", namespace, releaseName,
+                        helmReleaseApi.problem());
+                return;
+            }
             kubernetesService.getClient()
-                    .genericKubernetesResources(helmReleaseContext())
+                    .genericKubernetesResources(helmReleaseApi.context())
                     .inNamespace(namespace)
                     .withName(releaseName)
                     .delete();

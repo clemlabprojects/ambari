@@ -139,6 +139,28 @@ describe('BackgroundOperationsModal', () => {
     expect(onAutoClose).not.toHaveBeenCalled();
   }, 10000);
 
+  it('shows what a running GitOps deploy committed, while it waits for Flux', async () => {
+    const committed = {
+      ...gitOpsDeploy({
+        gitOps: {
+          mode: 'FLUX_GITOPS', commit: '3f0c9a52e7d14b6c8a9e', branch: 'main', noChanges: false,
+          prUrl: 'https://git.example.org/platform/gitops/pulls/7', prState: 'merged',
+        },
+      }),
+      state: 'RUNNING', percent: 60,
+    };
+    (listCommands as jest.Mock).mockResolvedValue([committed]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(committed);
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={committed.id} />);
+
+    await screen.findByText('Committed to Git');
+    expect(screen.getByText('Commit 3f0c9a52e7d1 · Branch main · Pull request (merged)')).toBeTruthy();
+    expect(screen.getByText('Open the pull request').closest('a')?.getAttribute('href'))
+      .toBe('https://git.example.org/platform/gitops/pulls/7');
+    expect(screen.queryByText('Committed to Git, not applied yet')).toBeNull();
+  }, 10000);
+
   it('closes on a deploy that ended applied', async () => {
     const applied = gitOpsDeploy();
     (listCommands as jest.Mock).mockResolvedValue([applied]);

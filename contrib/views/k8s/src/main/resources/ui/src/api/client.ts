@@ -144,6 +144,32 @@ export const getCurrentUserPermissions = async (): Promise<UserPermissions> => {
 // Backend uses single-L "CANCELED"; keep backward compatibility with old "CANCELLED"
 export type CommandState = 'PENDING'|'RUNNING'|'SUCCEEDED'|'FAILED'|'CANCELLED'|'CANCELED';
 
+/**
+ * What a GitOps deploy does in Git, as the backend words it: the answer to the deploy carries the mode and the branch
+ * the request names, the operation's result (result.gitOps) the commit, the pull request and whether Git
+ * already held the change once its commit step ran.
+ */
+export type GitOpsDeployResult = {
+  mode: 'FLUX_GITOPS';
+  /** The commit holding the change; the one Git already held when nothing was committed. */
+  commit?: string;
+  /** The branch the change goes to: the branch Flux reconciles, or the pull request's. */
+  branch?: string;
+  /** The pull request of the change, when one was opened. */
+  prUrl?: string;
+  /** Its state when known: open, merged, closed. */
+  prState?: string;
+  /** Git already held the change, so nothing was committed. Absent until the commit step ran. */
+  noChanges?: boolean;
+};
+
+/** The answer to an accepted deploy: the operation to follow, the deploy's mode and, for GitOps, what it does in Git. */
+export type DeployAccepted = {
+  id: string;
+  mode?: 'DIRECT_HELM' | 'FLUX_GITOPS';
+  gitOps?: GitOpsDeployResult;
+};
+
 export type CommandStatus = {
   id: string;
   hasChildren?: boolean;
@@ -1551,7 +1577,7 @@ export async function submitHelmDeploy(payload: {
     }
     throw err;
   }
-  return response.json() as Promise<{id: string}>;
+  return response.json() as Promise<DeployAccepted>;
 }
 
 /** What an uninstall took back, and what it could not take back itself and leaves to an administrator. */
@@ -1887,12 +1913,20 @@ export interface ReleaseCatalog {
   reusableId?: string;
   properties?: string;
 }
+/**
+ * How a catalog change was saved to the release: on a release deployed with Flux GitOps, by a deploy that commits the
+ * values to Git, whose operation is named; nothing more for a Helm upgrade.
+ */
+export interface CatalogSaved {
+  committedToGit?: boolean;
+  commandId?: string;
+}
 const relCat = (ns: string, rel: string) => `/helm/releases/${encodeURIComponent(ns)}/${encodeURIComponent(rel)}/catalogs`;
 export const listReleaseCatalogs = (ns: string, rel: string): Promise<ReleaseCatalog[]> => fetchJson<ReleaseCatalog[]>(relCat(ns, rel));
 export const createReleaseCatalog = (ns: string, rel: string, body: { name: string; properties: string; persist: boolean }) =>
-  fetchJson<{ name: string; connector?: string; live: boolean; persisted?: boolean }>(relCat(ns, rel), { method: 'POST', body: JSON.stringify(body) });
+  fetchJson<{ name: string; connector?: string; live: boolean; persisted?: boolean } & CatalogSaved>(relCat(ns, rel), { method: 'POST', body: JSON.stringify(body) });
 export const dropReleaseCatalog = (ns: string, rel: string, name: string, forget = true) =>
-  fetchJson<{ name: string }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}?forget=${forget}`, { method: 'DELETE' });
+  fetchJson<{ name: string } & CatalogSaved>(`${relCat(ns, rel)}/${encodeURIComponent(name)}?forget=${forget}`, { method: 'DELETE' });
 export const testReleaseCatalog = (ns: string, rel: string, name: string) =>
   fetchJson<{ schemas: string[] }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/test`, { method: 'POST' });
 /** Releases → "Ranger policy…": one Ranger policy (allow / mask / row filter) on a Trino release's repo or its tag service. */
@@ -1921,4 +1955,4 @@ export const createReleaseRangerPolicy = (ns: string, rel: string, body: RangerP
     { method: 'POST', body: JSON.stringify(body) });
 
 export const adoptReleaseCatalog = (ns: string, rel: string, name: string) =>
-  fetchJson<{ name: string; properties: string }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, { method: 'POST' });
+  fetchJson<{ name: string; properties: string } & CatalogSaved>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, { method: 'POST' });

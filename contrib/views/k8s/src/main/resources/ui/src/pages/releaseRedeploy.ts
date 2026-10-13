@@ -41,3 +41,27 @@ export function releaseRedeployPayload(release: HelmRelease, values: any, git?: 
     git,
   };
 }
+
+/** Why a release deployed with Flux GitOps is not rolled back from KDPS, and what brings an earlier version back. */
+export const ROLLBACK_IN_GIT = 'Flux installs what Git holds and would undo a Helm rollback at its next reconcile.'
+  + ' To go back to an earlier version, revert or change the release in Git: revert its commit in the Git repository,'
+  + ' or use Upgrade / Config, which commits the change to Git.';
+
+/** Whether a release is rolled back through Git rather than with Helm: one deployed with Flux GitOps. */
+export function rollbackHeldInGit(release: Pick<HelmRelease, 'deploymentMode'>): boolean {
+  return release.deploymentMode === 'FLUX_GITOPS';
+}
+
+/**
+ * Why a GitOps release Flux has not installed offers no action that redeploys it. Those actions start from the values
+ * the cluster holds for the release, and it holds none: the change committed would replace the configuration waiting in
+ * Git (in its pull request, for one not merged) with the service's defaults.
+ */
+export const NOT_INSTALLED_BY_FLUX = 'Flux has not installed this release, so the cluster holds none of its'
+  + ' configuration to start from: this action would replace the configuration waiting in Git with defaults. Change'
+  + ' the release in Git, or use this action once Flux has installed it.';
+
+/** Whether a release is listed from its GitOps record only: Helm does not list it, so it has no values to redeploy. */
+export function notInstalledByFlux(release: Pick<HelmRelease, 'installed'>): boolean {
+  return release.installed === false;
+}

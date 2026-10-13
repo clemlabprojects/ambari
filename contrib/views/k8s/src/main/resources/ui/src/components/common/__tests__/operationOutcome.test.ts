@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-import { operationNotices, waitingForMerge } from '../operationOutcome';
+import { deploySubmittedMessage, describeGitOps, gitOpsResult, operationNotices, waitingForMerge } from '../operationOutcome';
 
 describe('waitingForMerge', () => {
   it('reads what a GitOps deploy waiting for a merge ended with', () => {
@@ -62,5 +62,60 @@ describe('operationNotices', () => {
     expect(operationNotices({ result: undefined })).toEqual([]);
     expect(operationNotices({ result: { notices: 'not a list' } })).toEqual([]);
     expect(operationNotices({ result: { notices: [42, '', '  ', 'kept'] } })).toEqual(['kept']);
+  });
+});
+
+describe('gitOpsResult', () => {
+  it('reads what a GitOps deploy did in Git', () => {
+    expect(gitOpsResult({
+      result: {
+        gitOps: {
+          mode: 'FLUX_GITOPS', commit: '3f0c9a52e7d14b6c8a9e', branch: 'flux-1', noChanges: false,
+          prUrl: 'https://git.example.org/platform/gitops/pulls/7', prState: 'open',
+        },
+      },
+    })).toEqual({
+      mode: 'FLUX_GITOPS', commit: '3f0c9a52e7d14b6c8a9e', branch: 'flux-1', noChanges: false,
+      prUrl: 'https://git.example.org/platform/gitops/pulls/7', prState: 'open',
+    });
+  });
+
+  it('is null for an operation that did nothing in Git', () => {
+    expect(gitOpsResult(null)).toBeNull();
+    expect(gitOpsResult({ result: { waitingForMerge: true } })).toBeNull();
+    expect(gitOpsResult({ result: { gitOps: { mode: 'DIRECT_HELM' } } })).toBeNull();
+  });
+
+  it('offers only a web link to the pull request', () => {
+    expect(gitOpsResult({ result: { gitOps: { mode: 'FLUX_GITOPS', prUrl: 'javascript:alert(1)' } } })?.prUrl)
+      .toBeUndefined();
+  });
+});
+
+describe('describeGitOps', () => {
+  it('names the commit, the branch and the pull request', () => {
+    expect(describeGitOps({
+      mode: 'FLUX_GITOPS', commit: '3f0c9a52e7d14b6c8a9e', branch: 'main', prState: 'open', noChanges: false,
+    })).toEqual({ title: 'Committed to Git', lines: ['Commit 3f0c9a52e7d1', 'Branch main', 'Pull request (open)'] });
+  });
+
+  it('says when Git already held the change', () => {
+    expect(describeGitOps({ mode: 'FLUX_GITOPS', commit: 'abc', branch: 'main', noChanges: true }).title)
+      .toBe('Git already holds this change: nothing committed');
+  });
+});
+
+describe('deploySubmittedMessage', () => {
+  it('says a GitOps change goes to Git, and to which branch', () => {
+    expect(deploySubmittedMessage('Resync', { id: 'op', mode: 'FLUX_GITOPS', gitOps: { mode: 'FLUX_GITOPS', branch: 'main' } }))
+      .toBe('Resync started: the change is committed to Git on branch main once the release is prepared, then Flux'
+        + ' applies it. Follow it in Background operations.');
+    expect(deploySubmittedMessage('Redeploy', { id: 'op', mode: 'FLUX_GITOPS', gitOps: { mode: 'FLUX_GITOPS' } }))
+      .toMatch(/^Redeploy started: the change is committed to Git once the release is prepared/);
+  });
+
+  it('says only that a deploy with Helm started', () => {
+    expect(deploySubmittedMessage('Deployment', { id: 'op', mode: 'DIRECT_HELM' })).toBe('Deployment started');
+    expect(deploySubmittedMessage('Deployment', undefined)).toBe('Deployment started');
   });
 });

@@ -45,6 +45,7 @@ export interface HelmRelease {
   gitBaseBranchAssumed?: boolean; // no base branch is recorded: main is only assumed, and never sent back as one
   gitCommitMode?: string; // DIRECT_COMMIT | PR_MODE, as the release was last deployed
   gitPendingDelete?: boolean; // the uninstall waits for its removal pull request to be merged
+  installed?: boolean; // false: a GitOps release Helm does not list (not installed by Flux yet, or removed by it)
   gitPath?: string;
   gitRepoUrl?: string;
   gitPrUrl?: string;

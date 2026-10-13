@@ -18,7 +18,7 @@
 
 // ui/src/pages/HelmReleasesPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
+import { Alert, Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { UNINSTALL_POLARIS_REVOCATION, uninstallFollowUps, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
@@ -28,7 +28,8 @@ import { getPods, listDeployments, type DeploymentRow } from '../api/client';
 import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
-import { gitOptionsForRelease, releaseRedeployPayload } from './releaseRedeploy';
+import { gitOptionsForRelease, NOT_INSTALLED_BY_FLUX, notInstalledByFlux, releaseRedeployPayload, rollbackHeldInGit, ROLLBACK_IN_GIT } from './releaseRedeploy';
+import { deploySubmittedMessage } from '../components/common/operationOutcome';
 import { offersCatalogs } from './releaseCatalogs';
 import { repairActionState, type RepairAction, type RepairActionState } from './releaseRepairActions';
 import { offeredOnPlatform } from './catalogPlatforms';
@@ -249,7 +250,7 @@ const HelmReleasesPage: React.FC = () => {
         if (response?.id) {
           setWatchedCommandId(response.id);
           setIsCommandDrawerOpen(true);
-          message.success('Security refresh started');
+          message.success(deploySubmittedMessage('Security refresh', response));
         } else {
           message.success('Security refresh submitted');
         }
@@ -270,7 +271,7 @@ const HelmReleasesPage: React.FC = () => {
       setWatchedCommandId(response.id);
       setIsCommandDrawerOpen(true);
     }
-    message.success('Redeploy started');
+    message.success(deploySubmittedMessage('Redeploy', response));
   };
 
   /**
@@ -288,7 +289,7 @@ const HelmReleasesPage: React.FC = () => {
       if (response?.id) {
         setWatchedCommandId(response.id);
         setIsCommandDrawerOpen(true);
-        message.success('Resync started');
+        message.success(deploySubmittedMessage('Resync', response));
       } else {
         message.success('Resync submitted');
       }
@@ -692,6 +693,17 @@ const HelmReleasesPage: React.FC = () => {
       onClick,
     });
 
+    // An action that redeploys the release from the values the cluster holds, which a GitOps release Flux has not
+    // installed has none of: disabled on it, with the reason.
+    const redeployItem = <T extends { label: React.ReactNode; disabled?: boolean }>(record: HelmRelease, item: T): T =>
+      notInstalledByFlux(record)
+        ? {
+          ...item,
+          disabled: true,
+          label: <Tooltip title={NOT_INSTALLED_BY_FLUX} placement="left"><span>{item.label}</span></Tooltip>,
+        }
+        : item;
+
     const buildMenuItems = (record: HelmRelease): MenuProps['items'] => {
       // Resolve the service definition to know which post-install actions are supported.
       const serviceDefinition = record.serviceKey ? serviceDefinitions[record.serviceKey] : undefined;
@@ -709,12 +721,13 @@ const HelmReleasesPage: React.FC = () => {
           label: `Upgrade chart to ${upgradeTargetVersion}`,
           onClick: () => triggerChartUpgrade(record, upgradeTargetVersion),
         }] : []),
-        {
+        redeployItem(record, {
           key: 'rollback',
           icon: <RollbackOutlined />,
-          label: 'Revision history…',
+          // A GitOps release goes back to an earlier version through Git: its history is shown, not rolled back.
+          label: rollbackHeldInGit(record) ? 'Revision history (read-only)…' : 'Revision history…',
           onClick: () => { void openHistoryModal(record); },
-        },
+        }),
         // Live catalog management, on the Trino releases where it can run: runs on the coordinator as the operator.
         ...(offersCatalogs(record) ? [{
           key: 'catalogs',
@@ -729,13 +742,13 @@ const HelmReleasesPage: React.FC = () => {
           icon: <SafetyCertificateOutlined />,
           label: 'Ranger policy…',
           onClick: () => setPolicyRelease(record),
-        }, {
+        }, redeployItem(record, {
           key: 'autoscaling',
           icon: <SyncOutlined />,
           label: 'Worker autoscaling…',
           onClick: () => setAutoscalingRelease(record),
-        }] : []),
-        {
+        })] : []),
+        redeployItem(record, {
           key: 'update',
           icon: <SyncOutlined />,
           label: 'Upgrade / Config',
@@ -769,20 +782,20 @@ const HelmReleasesPage: React.FC = () => {
               },
             });
           }
-        },
-        ...(record.securityProfile ? [{
+        }),
+        ...(record.securityProfile ? [redeployItem(record, {
           key: 'refresh-security',
           icon: <ReloadOutlined />,
           disabled: !record.securityProfileStale,
           label: record.securityProfileStale ? 'Refresh security profile' : 'Refresh security profile (up-to-date)',
           onClick: () => refreshSecurityProfile(record)
-        }] : []),
-        ...((record.serviceKey && (record.restartRequired || record.securityProfileStale)) ? [{
+        })] : []),
+        ...((record.serviceKey && (record.restartRequired || record.securityProfileStale)) ? [redeployItem(record, {
           key: 'resync',
           icon: <ReloadOutlined />,
           label: 'Resync / restart',
           onClick: () => resyncRelease(record, 'Resyncing release...')
-        }] : []),
+        })] : []),
         ...(record.deploymentMode === 'FLUX_GITOPS' ? [{
           key: 'retry-reconcile',
           icon: <ReloadOutlined />,
@@ -1428,6 +1441,10 @@ const HelmReleasesPage: React.FC = () => {
               footer={<Button onClick={() => setHistoryModalRelease(null)}>Close</Button>}
               width={820}
             >
+              {historyModalRelease && rollbackHeldInGit(historyModalRelease) ? (
+                <Alert type="info" showIcon style={{ marginBottom: 12 }}
+                  message="Read-only: this release is deployed with Flux GitOps" description={ROLLBACK_IN_GIT} />
+              ) : null}
               {historyError ? (
                 <Text type="danger">{historyError}</Text>
               ) : (
@@ -1463,6 +1480,16 @@ const HelmReleasesPage: React.FC = () => {
                         const isCurrent = entry.status === 'deployed';
                         if (isCurrent) {
                           return <Tag color="green">Current</Tag>;
+                        }
+                        // Flux installs what Git holds and would undo a Helm rollback: the history is read-only.
+                        if (historyModalRelease && rollbackHeldInGit(historyModalRelease)) {
+                          return (
+                            <Tooltip title={ROLLBACK_IN_GIT}>
+                              <Button size="small" icon={<RollbackOutlined />} disabled>
+                                Rollback to {entry.revision}
+                              </Button>
+                            </Tooltip>
+                          );
                         }
                         return (
                           <Button

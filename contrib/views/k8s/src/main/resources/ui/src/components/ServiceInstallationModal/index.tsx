@@ -35,7 +35,7 @@ import type { MountSpec } from '../../types/MountSpec';
 import { getGitRepos, type GitRepo } from '../../pages/GitRepositoriesPage';
 import GitSshFields from '../common/GitSshFields';
 import { savedRepoGitFields } from '../../utils/gitSsh';
-import { operationNotices, waitingForMerge } from '../common/operationOutcome';
+import { describeGitOps, gitOpsResult, operationNotices, waitingForMerge } from '../common/operationOutcome';
 
 import * as pako from 'pako';
 import { untar } from 'js-untar';
@@ -1056,6 +1056,10 @@ const handleServiceChange = (value: string) => {
       });
 
       const pendingMerge = final.state === 'SUCCEEDED' ? waitingForMerge(final) : null;
+      // What a GitOps deploy did in Git: the commit, the branch and the pull request.
+      const gitOps = gitOpsResult(final);
+      const gitOpsSummary = gitOps ? describeGitOps(gitOps) : null;
+      const gitOpsLine = gitOpsSummary && gitOpsSummary.lines.length > 0 ? gitOpsSummary.lines.join(' · ') : null;
       // Where to read the passwords KDPS generated for the release (an administrator's, for one).
       const notices = final.state === 'SUCCEEDED' ? operationNotices(final) : [];
       const noticeList = notices.map((notice, i) => (
@@ -1070,6 +1074,7 @@ const handleServiceChange = (value: string) => {
           width: 560,
           content: (
             <Space direction="vertical" size={4}>
+              {gitOpsLine && <span style={{ wordBreak: 'break-word' }}>{gitOpsLine}</span>}
               <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{pendingMerge.message}</span>
               {pendingMerge.pullRequestUrl && (
                 <Typography.Link href={pendingMerge.pullRequestUrl} target="_blank" rel="noopener noreferrer">
@@ -1090,7 +1095,12 @@ const handleServiceChange = (value: string) => {
       }
       if (final.state === 'SUCCEEDED') {
         if (!pendingMerge) {
-          message.success({ content: `${mode === 'upgrade' ? 'Upgrade' : 'Deployment'} completed`, key: 'deploy', duration: 3 });
+          message.success({
+            content: `${mode === 'upgrade' ? 'Upgrade' : 'Deployment'} completed`
+              + (gitOpsSummary ? ` — ${gitOpsSummary.title}${gitOpsLine ? `: ${gitOpsLine}` : ''}` : ''),
+            key: 'deploy',
+            duration: gitOpsSummary ? 6 : 3,
+          });
         }
         onDeploy();
         onClose();

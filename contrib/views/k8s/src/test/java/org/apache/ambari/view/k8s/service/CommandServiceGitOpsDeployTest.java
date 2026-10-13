@@ -31,6 +31,7 @@ import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.resources.CommandResource;
 import org.apache.ambari.view.k8s.service.deployment.FakePullRequests;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
+import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
@@ -519,6 +520,9 @@ class CommandServiceGitOpsDeployTest {
         assertEquals("FLUX_GITOPS", recorded.getDeploymentMode());
         assertEquals(repoUrl, recorded.getGitRepoUrl());
         assertEquals(commitsOn("main").get(0), recorded.getGitCommitSha());
+        // What the deploy did in Git, as the operation's status gives it to the page.
+        assertEquals(Map.of("mode", "FLUX_GITOPS", "commit", commitsOn("main").get(0), "branch", "main",
+                "noChanges", false), service.getStatus(id).result.get("gitOps"));
     }
 
     @Test
@@ -762,6 +766,12 @@ class CommandServiceGitOpsDeployTest {
         Map<?, ?> result = gson.fromJson(end.getResultJson(), Map.class);
         assertEquals(Boolean.TRUE, result.get("waitingForMerge"));
         assertEquals("flux-work", result.get("branch"));
+        Map<?, ?> gitOps = (Map<?, ?>) result.get("gitOps");
+        assertEquals("FLUX_GITOPS", gitOps.get("mode"));
+        assertEquals("flux-work", gitOps.get("branch"));
+        assertEquals(FakePullRequests.url("1"), gitOps.get("prUrl"));
+        assertEquals(Boolean.FALSE, gitOps.get("noChanges"));
+        assertNotNull(gitOps.get("commit"));
         // What the operator's screens read: the operation's status, and the list of operations.
         CommandStatus polled = service.getStatus(id);
         assertEquals(CommandState.SUCCEEDED, polled.state);
@@ -791,6 +801,8 @@ class CommandServiceGitOpsDeployTest {
         run(again);
 
         assertTrue(statusOf(step(again, CommandType.GITOPS_COMMIT)).getMessage().contains("nothing committed"));
+        assertEquals(Boolean.TRUE, ((Map<?, ?>) service.getStatus(again).result.get("gitOps")).get("noChanges"),
+                "Git already held the change");
         assertEquals(CommandState.SUCCEEDED.name(), stateOf(again, CommandType.FLUX_WAIT_READY));
         assertNotEquals(CommandState.PENDING.name(), stateOf(again, CommandType.AMBARI_VIEW_PROVISION));
     }
@@ -815,6 +827,48 @@ class CommandServiceGitOpsDeployTest {
         confirmed.setReplaceExistingTls(true);
         plan(confirmed, false);
         verify(k8s).createOrUpdateTlsSecret(eq(NS), eq(rel + "-ingress-tls"), any(), any(), any(), any());
+    }
+
+    @Test
+    void aGitOpsDeployIsRefusedWhileAnotherOneOfTheReleaseHasNotFinishedOrIsBeingSubmitted() throws Exception {
+        // A deploy planned and not run yet: its commit is still to come.
+        String running = plan(request("FLUX_GITOPS", "main"), true);
+        int operations = dataStore.findAll(CommandEntity.class, null).size();
+
+        FluxGitOpsBackend.GitOpsBusyException refused = assertThrows(FluxGitOpsBackend.GitOpsBusyException.class,
+                () -> service.gitOpsDeploy(request("FLUX_GITOPS", "main"), "charts", "0.0.1", null, null, null, null));
+        assertTrue(refused.getMessage().contains("operation " + running), refused.getMessage());
+        assertEquals(operations, dataStore.findAll(CommandEntity.class, null).size(), "nothing was planned");
+
+        // Once it has ended, the release may be deployed again.
+        CommandStatusEntity status = statusOf(dataStore.find(CommandEntity.class, running));
+        status.setState(CommandState.CANCELED.name());
+        dataStore.store(status);
+        java.util.concurrent.CountDownLatch submitting = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        Thread other = new Thread(() -> CommandService.submittingGitOpsChange(NS, rel, () -> {
+            submitting.countDown();
+            try {
+                return done.await(30, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }));
+        other.start();
+        try {
+            assertTrue(submitting.await(30, java.util.concurrent.TimeUnit.SECONDS));
+            // Another change of the release is between its own check and the moment its deploy is stored.
+            refused = assertThrows(FluxGitOpsBackend.GitOpsBusyException.class, () -> service.gitOpsDeploy(
+                    request("FLUX_GITOPS", "main"), "charts", "0.0.1", null, null, null, null));
+            assertTrue(refused.getMessage().contains("is being submitted to Git"), refused.getMessage());
+            assertEquals(operations, dataStore.findAll(CommandEntity.class, null).size(), "nothing was planned");
+        } finally {
+            done.countDown();
+            other.join(30_000);
+        }
+        fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
+        awaitEnd(service.gitOpsDeploy(request("FLUX_GITOPS", "main"), "charts", "0.0.1", null, null, null, null));
     }
 
     @Test
@@ -1381,6 +1435,45 @@ class CommandServiceGitOpsDeployTest {
     }
 
     @Test
+    void anOperationCanceledWhileItsCommitRanStaysCanceled() {
+        CommandStatusEntity canceled = new CommandStatusEntity();
+        canceled.setId("st-canceled");
+        canceled.setState(CommandState.CANCELED.name());
+        canceled.setMessage("Canceled by user");
+        canceled.setResultJson("{\"note\":\"kept\"}");
+        dataStore.store(canceled);
+        // The copy the step read when it started, before the operator canceled it.
+        CommandStatusEntity tickRoot = new CommandStatusEntity();
+        tickRoot.setId("st-canceled");
+        tickRoot.setState(CommandState.RUNNING.name());
+        org.apache.ambari.view.k8s.model.GitOpsDeployResult result =
+                new org.apache.ambari.view.k8s.model.GitOpsDeployResult();
+        result.commit = "3f0c9a5";
+
+        service.recordGitOpsResult("st-canceled", tickRoot, result);
+
+        CommandStatusEntity stored = dataStore.find(CommandStatusEntity.class, "st-canceled");
+        assertEquals(CommandState.CANCELED.name(), stored.getState(), "not running again, nor failed next");
+        assertEquals("Canceled by user", stored.getMessage());
+        assertEquals("{\"note\":\"kept\"}", stored.getResultJson());
+        assertTrue(tickRoot.getResultJson().contains("3f0c9a5"), "the step goes on with what it committed");
+
+        CommandStatusEntity running = new CommandStatusEntity();
+        running.setId("st-running");
+        running.setState(CommandState.RUNNING.name());
+        running.setResultJson("{\"note\":\"kept\"}");
+        dataStore.store(running);
+
+        service.recordGitOpsResult("st-running", new CommandStatusEntity(), result);
+
+        Map<?, ?> recorded = gson.fromJson(dataStore.find(CommandStatusEntity.class, "st-running").getResultJson(),
+                Map.class);
+        assertEquals("kept", recorded.get("note"));
+        assertEquals("3f0c9a5", ((Map<?, ?>) recorded.get("gitOps")).get("commit"));
+        assertEquals(CommandState.RUNNING.name(), dataStore.find(CommandStatusEntity.class, "st-running").getState());
+    }
+
+    @Test
     void aSubmittedGitOpsDeployReturnsAnOperationPolledLikeAnyOther() throws Exception {
         fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
 
@@ -1393,6 +1486,50 @@ class CommandServiceGitOpsDeployTest {
         awaitEnd(id);
         assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.FLUX_WAIT_READY));
         assertNotNull(published("main", releaseDir() + "/helmrelease.yaml"));
+    }
+
+    @Test
+    void aRedeployOfAGitOpsReleaseThatNamesNoModeGoesThroughGitAndOneAskingForAHelmUpgradeIsRefused() throws Exception {
+        fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
+        awaitEnd(service.submitDeploy(request("FLUX_GITOPS", "main"), "charts", "0.0.1", null, null, null, null, null));
+        K8sReleaseEntity recorded = dataStore.find(K8sReleaseEntity.class, K8sReleaseEntity.idOf(NS, rel));
+        assertEquals("FLUX_GITOPS", recorded.getDeploymentMode());
+        // What tells, later, whether Flux has applied that commit.
+        assertNotNull(recorded.getGitSpecDigest());
+        assertTrue(published("main", releaseDir() + "/helmrelease.yaml").contains(recorded.getGitSpecDigest()));
+        List<String> commits = commitsOn("main");
+        int operations = dataStore.findAll(CommandEntity.class, null).size();
+
+        // The Upgrade/Config radio flipped to Direct Helm: Flux would undo the upgrade at its next reconcile.
+        HelmDeployRequest helmUpgrade = request("DIRECT_HELM", "main");
+        helmUpgrade.setGit(null);
+        helmUpgrade.setIngressTlsUpload(null);
+        ReleaseHeldInGitException refused = assertThrows(ReleaseHeldInGitException.class,
+                () -> service.submitDeploy(helmUpgrade, "charts", "0.0.1", null, null, null, null, null));
+        assertTrue(refused.getMessage().contains("would undo a Helm upgrade"), refused.getMessage());
+        assertEquals(operations, dataStore.findAll(CommandEntity.class, null).size(), "nothing was planned");
+        assertEquals("FLUX_GITOPS", dataStore.find(K8sReleaseEntity.class, K8sReleaseEntity.idOf(NS, rel))
+                .getDeploymentMode(), "still recorded as held in Git");
+
+        // A resync sent to the API without a deployment mode or Git options.
+        HelmDeployRequest resync = request(null, "main");
+        resync.setGit(null);
+        resync.setIngressTlsUpload(null);
+        resync.getValues().put("replicaCount", 3);
+        String id = service.submitDeploy(resync, "charts", "0.0.1", null, null, null, null, null);
+
+        assertEquals("FLUX_GITOPS", resync.getDeploymentMode());
+        assertEquals(repoUrl, resync.getGit().getRepoUrl());
+        assertEquals("main", resync.getGit().getBaseBranch());
+        assertEquals("DIRECT_COMMIT", resync.getGit().getCommitMode());
+        assertTrue(service.getStatus(id).message.endsWith("with GitOps"), service.getStatus(id).message);
+        // Its commit is what this test is about, not the wait for Flux after it.
+        for (int i = 0; i < 600 && !CommandState.SUCCEEDED.name().equals(stateOf(id, CommandType.GITOPS_COMMIT)); i++) {
+            Thread.sleep(50);
+        }
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT));
+        assertEquals(commits.size() + 1, commitsOn("main").size(), "committed to Git");
+        assertTrue(published("main", releaseDir() + "/helmrelease.yaml").contains("replicaCount: 3\n"));
     }
 
     // ------------------------------------------------------------------------------------------------ secrets at rest
