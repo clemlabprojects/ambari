@@ -150,7 +150,7 @@ public class FluxGitOpsBackendManifestSafetyTest {
     /** A file as published on the remote main branch, or null. */
     private String published(String path) throws Exception {
         Path clone = tmp.getRoot().toPath().resolve("verify-" + System.nanoTime());
-        try (Git ignored = Git.cloneRepository().setURI(repoUrl).setBranch("main").setDirectory(clone.toFile()).call()) {
+        try (Git ignored = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, "main", clone)) {
             Path file = clone.resolve(path);
             return Files.exists(file) ? Files.readString(file) : null;
         }
@@ -162,7 +162,7 @@ public class FluxGitOpsBackendManifestSafetyTest {
      */
     private void pushByHand(Map<String, String> files) throws Exception {
         Path clone = tmp.getRoot().toPath().resolve("by-hand-" + System.nanoTime());
-        try (Git g = Git.cloneRepository().setURI(repoUrl).setBranch("main").setDirectory(clone.toFile()).call()) {
+        try (Git g = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, "main", clone)) {
             for (Map.Entry<String, String> file : files.entrySet()) {
                 Path target = clone.resolve(file.getKey());
                 Files.createDirectories(target.getParent());

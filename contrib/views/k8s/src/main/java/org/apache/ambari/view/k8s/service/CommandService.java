@@ -8135,28 +8135,12 @@ public class CommandService {
             LOG.info("Kerberos enabled for this deploy (effective={}, externalKeytab={}, contextKrb5Present={}); preparing krb5.conf ConfigMap for Helm Chart",
                     kerberosEnabled, externalKeytabProvided, contextKerberos);
 
-            // Derive a unique ConfigMap name per release to avoid collisions across multiple installs
-            String releaseName = request.getReleaseName() != null ? request.getReleaseName().trim() : "";
-            String krb5ConfigMapName = (releaseName.isEmpty() ? "krb5-conf" : (releaseName + "-krb5-conf"));
-
-            // 1) Create/update the ConfigMap — from the selected context's krb5.conf when supplied,
-            //    otherwise from the hosting cluster's /etc/krb5.conf. Returns false when NEITHER source
-            //    exists (a standalone Ambari + external/CDP context whose krb5.conf field is empty).
-            boolean krb5Created = this.commandUtils.ensureKrb5ConfConfigMap(
-                    request.getNamespace(), krb5ConfigMapName, contextKrb5);
-
-            if (!krb5Created) {
-                // Kerberos is on for this deploy but no krb5.conf could be sourced. Fail NOW with an
-                // actionable message rather than letting the pod fail later with the opaque
-                // "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found".
-                throw new IllegalStateException(
-                        "Kerberos is enabled for this deploy but no krb5.conf could be found: the selected "
-                        + "platform context has no krb5.conf and this Ambari host has no /etc/krb5.conf. "
-                        + "For a backend in a different Kerberos realm (e.g. CDP), paste that realm's krb5.conf "
-                        + "into the platform context — Contexts → <your context> → Kerberos → krb5.conf — "
-                        + "then redeploy. (Expected ConfigMap: " + krb5ConfigMapName + " in namespace "
-                        + request.getNamespace() + ".)");
-            }
+            // 1) Create/update the ConfigMap (one per release) — from the selected context's krb5.conf when
+            //    supplied, otherwise from the hosting cluster's /etc/krb5.conf. Stops with what to do when
+            //    NEITHER source exists (a standalone Ambari + external/CDP context whose krb5.conf field is
+            //    empty) or the ConfigMap cannot be written. Shared with GitOps deploys.
+            String krb5ConfigMapName = this.commandUtils.prepareKrb5ConfConfigMap(
+                    request.getNamespace(), request.getReleaseName(), contextKrb5);
 
             // 2) Inject Helm overrides so the chart mounts it:
             //    global.security.kerberos.enabled = true
@@ -8182,22 +8166,21 @@ public class CommandService {
         // Merges (deduped) the Ambari server SSL CA + Ambari Internal CA + operator truststores
         // (defaults + those selected for this release) into a single <release>-truststore Secret and
         // wires global.security.tls.*. Assembly lives in TrustBundleService so the direct and GitOps
-        // paths stay identical; it provisions even when Ambari itself is not on SSL.
-        try {
-            TrustBundleService trustBundleService = new TrustBundleService(ctx, this.kubernetesService);
-            TrustBundleService.ProvisionResult truststoreResult = trustBundleService.provisionReleaseTruststore(
-                    request.getNamespace(), request.getReleaseName(), request.getTruststoreRefs());
-            if (truststoreResult.provisioned()) {
-                for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
-                    this.commandUtils.addOverride(params, override.getKey(), override.getValue());
-                }
-                LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
-                        truststoreResult.secretName(), truststoreResult.caCount(), request.getNamespace());
-            } else {
-                LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
+        // paths stay identical; it provisions even when Ambari itself is not on SSL. A release that needs
+        // the Secret (truststores selected, or a service mounting it) stops here when it cannot be
+        // written, before anything is installed; the CAs left out are written to the operation log.
+        TrustBundleService.ProvisionResult truststoreResult = new TrustBundleService(ctx, this.kubernetesService)
+                .provisionForDeploy(request.getNamespace(), request.getReleaseName(), request.getServiceKey(),
+                        request.getTruststoreRefs());
+        truststoreResult.warnings().forEach(w -> appendCommandLog(id, "WARNING: " + w));
+        if (truststoreResult.provisioned()) {
+            for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
+                this.commandUtils.addOverride(params, override.getKey(), override.getValue());
             }
-        } catch (Exception ex) {
-            LOG.warn("Failed to provision truststore Secret: {}", ex.toString());
+            LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
+                    truststoreResult.secretName(), truststoreResult.caCount(), request.getNamespace());
+        } else {
+            LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
         }
         // The required Hadoop config maps are MATERIALIZED FROM THE LOCAL (managed) cluster's
         // desired configs. On a standalone Ambari (no cluster) — or when the cluster could not be
@@ -11211,7 +11194,16 @@ public class CommandService {
                             throw new IllegalStateException("INGRESS_TLS_SELFSIGN: caName is required when ca=companyUploaded");
                         }
                         CaRegistryService caRegistry = new CaRegistryService(ctx, this.kubernetesService);
-                        CaRegistryService.CaEntry entry = caRegistry.get(caName);
+                        CaRegistryService.CaEntry entry;
+                        try {
+                            entry = caRegistry.get(caName);
+                        } catch (RuntimeException e) {
+                            if (NamespaceScope.isForbidden(e)) {
+                                throw new IllegalStateException("INGRESS_TLS_SELFSIGN: "
+                                        + PkiNamespaces.forbiddenMessage(caRegistry.registryNamespace()), e);
+                            }
+                            throw e;
+                        }
                         ca = webHookCfg.loadUploadedCertificateAuthority(entry.namespace(), entry.secretName());
                         appendCommandLog(id, "INGRESS_TLS_SELFSIGN: using company CA '" + caName + "' (subject=" + entry.subject() + ")");
                     } else {

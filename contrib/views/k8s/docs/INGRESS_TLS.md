@@ -94,7 +94,9 @@ with `spec.ca.secretName` referencing it.
 
 ### Storage
 
-- Namespace: `ambari-pki` (configurable via view instance property `pki.namespace`).
+- Namespace: `ambari-pki`, or the *Company CA project* set in Cluster Settings (view setting
+  `pki.namespace`; the view instance property of the same name is still read when the setting is empty).
+  Never a project releases are deployed to: the Secrets hold the CA private keys.
 - One `kubernetes.io/tls` Secret per CA: `<view-instance>-<sanitized-caName>`.
 - Labels: `managed-by=ambari-k8s-view`, `ambari.clemlab.com/resource-type=issuing-ca`.
 - Validation on upload: PEMs parse, cert has `basicConstraints.CA=true`, not expired, key parses.
@@ -242,11 +244,16 @@ Releases page → TLS column → **Renew** button. Dispatches based on source.
 
 ## Configuration
 
-View instance properties:
+View settings (Cluster Settings → *Truststores and Company CAs*):
 
-| Property | Default | Effect |
+| Setting | Default | Effect |
 |---|---|---|
-| `pki.namespace` | `ambari-pki` | Where Company CAs are persisted as Secrets. |
+| `pki.namespace` | `ambari-pki` | Where Company CAs are persisted as Secrets. Falls back to the view instance property of the same name. |
+| `truststore.namespace` | the Company CA project | Where the truststores of the Truststores page are persisted. |
+
+When KDPS may not write Secrets in that project (an account limited to its own projects), the
+Certificate Authorities and Truststores pages answer 403 with what to do: the platform team creates
+the project and grants the KDPS account `edit` there.
 
 Per-service in service.json:
 

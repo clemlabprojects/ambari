@@ -7062,6 +7062,23 @@ public class KubernetesService {
     }
 
     /**
+     * The Secrets of a namespace the view keeps for itself, such as the truststore project, carrying a label with the
+     * given value. Unlike {@link #listSecretsWithLabel}, the namespace is not checked against
+     * {@code k8s.view.allowed.namespaces}: that list limits the projects releases are deployed to, and the view writes
+     * the Secrets of its own namespaces without it, so reading them must not depend on it either.
+     *
+     * @param namespace  the namespace
+     * @param labelKey   the label
+     * @param labelValue its value
+     * @return the Secrets, with their data
+     */
+    public List<Secret> listViewSecretsWithLabel(String namespace, String labelKey, String labelValue) {
+        checkConfiguration();
+        return executeWithAuthRetry("list the Secrets labelled " + labelKey + " in namespace " + namespace,
+                () -> client.secrets().inNamespace(namespace).withLabel(labelKey, labelValue).list().getItems());
+    }
+
+    /**
      * The Secrets the view wrote in one namespace that do not carry a label, such as those an earlier version of the
      * view wrote before it labelled them.
      *

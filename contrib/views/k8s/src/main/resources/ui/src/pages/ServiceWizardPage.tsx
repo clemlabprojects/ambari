@@ -39,6 +39,7 @@ import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPaylo
 import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecretReplacement, describeIngressTlsChange, ingressTlsChange, ingressTlsNotice, keptCertificateHostProblem, KEEP_CURRENT_TLS, offersKeepCurrentTls, securityProfileIngress, seedKeepCurrentTls, unconfirmedTlsReplacement, upgradeChartFormValues, type CurrentIngressTls } from '../components/ServiceInstallationModal/ingressTls';
 import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
 import { deployFormValues } from './deployFormValues';
+import { normalizeTruststoreRefs, truststoreRef } from './truststoreRefs';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
@@ -841,10 +842,11 @@ const ServiceWizardPage: React.FC = () => {
               // Only send securityProfile if user explicitly picked one.
               securityProfile: (installValues as any)?.securityProfile || undefined,
               // Managed truststores selected to trust in this release (defaults are always merged
-              // server-side). Names come from the Truststores tab. Always sent, empty included: the
-              // backend records the choice and reuses it when the release is redeployed without one.
+              // server-side), as <namespace>/<name> of the Truststores tab listing, so the server reads
+              // the one picked. Always sent, empty included: the backend records the choice and reuses it
+              // when the release is redeployed without one. A deploy stops when one cannot be read.
               truststoreRefs: Array.isArray((installValues as any)?.truststoreRefs)
-                ? (installValues as any).truststoreRefs : [],
+                ? normalizeTruststoreRefs((installValues as any).truststoreRefs, managedTruststores) : [],
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
               // A working branch left in the form names nothing for a direct commit, which the server refuses.
               git: gitOptionsToSubmit((installValues as any)?.git) || undefined,
@@ -1093,11 +1095,11 @@ const ServiceWizardPage: React.FC = () => {
               allowClear
               style={{ width: '100%' }}
               placeholder="Select truststore(s) to trust in this release"
-              value={(installValues as any)?.truststoreRefs || []}
+              value={normalizeTruststoreRefs((installValues as any)?.truststoreRefs, managedTruststores)}
               onChange={(v) => setInstallValues((prev: any) => ({ ...prev, truststoreRefs: v }))}
               options={managedTruststores.map((t) => ({
-                value: t.name,
-                label: `${t.name}${t.isDefault ? ' (default)' : ''} · ${t.caCount} CA${t.caCount === 1 ? '' : 's'}`,
+                value: truststoreRef(t),
+                label: `${t.name} (${t.namespace})${t.isDefault ? ' (default)' : ''} · ${t.caCount} CA${t.caCount === 1 ? '' : 's'}`,
               }))}
               notFoundContent={<span style={{ fontSize: 12 }}>No managed truststores — create one in the Truststores tab</span>}
               dropdownRender={(menu) => (

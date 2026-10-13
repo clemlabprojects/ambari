@@ -1796,6 +1796,17 @@ export const listTruststores = async (namespace?: string): Promise<TruststoreSum
   return fetchJson<TruststoreSummary[]>(`/truststores${qs}`);
 };
 
+/** Where truststores created in the Truststores tab are written, and whether KDPS may write Secrets there. */
+export interface TruststoreRegistryStatus {
+  namespace: string;
+  canWrite: boolean;
+  /** What to do when KDPS may not write there. */
+  message?: string;
+}
+
+export const getTruststoreRegistry = async (): Promise<TruststoreRegistryStatus> =>
+  fetchJson<TruststoreRegistryStatus>('/truststores/registry');
+
 /** Create a truststore from a public certificate PEM (trust anchor, no private key). */
 export const createTruststore = async (
   name: string,

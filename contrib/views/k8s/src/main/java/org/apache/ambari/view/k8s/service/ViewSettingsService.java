@@ -33,7 +33,8 @@ import java.util.Map;
 
 /**
  * The view settings saved from the Configuration page: one JSON document, kept under {@value #SETTINGS_KEY} in the
- * instance settings (monitoring, Kerberos injection mode).
+ * instance settings (monitoring, Kerberos injection mode, the projects of the truststores and Company CAs read by
+ * {@link PkiNamespaces}).
  *
  * <p>The credentials of the object store Thanos writes to ({@code monitoring.thanos.accessKey} and
  * {@code monitoring.thanos.secretKey}) are not kept in that document: they are encrypted with Ambari's master key
@@ -127,12 +128,16 @@ public class ViewSettingsService {
      * document without a {@code thanos} section drops the stored credentials.
      *
      * @param incoming the settings as the Configuration page sends them
-     * @throws IllegalArgumentException      when the document is too large to be saved
+     * @throws IllegalArgumentException      when the document is too large to be saved, or names a truststore or
+     *                                       Company CA project that is not a valid namespace name
      * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException when a credential is given and the
      *                                       Ambari master key was not found; nothing is saved
      */
     public void save(Map<String, Object> incoming) {
         Map<String, Object> doc = copyOf(incoming);
+        for (String key : List.of(PkiNamespaces.TRUSTSTORE_NAMESPACE, PkiNamespaces.PKI_NAMESPACE)) {
+            PkiNamespaces.checkNamespaceSetting(key, ConfigResolutionService.getByDottedPath(doc, key));
+        }
         Map<String, Object> thanos = thanosSection(doc, false);
         Map<String, String> replaced = new LinkedHashMap<>();
         for (String field : THANOS_SECRETS) {

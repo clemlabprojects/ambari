@@ -558,4 +558,91 @@ class KubeServiceTest {
     assertEquals(true, clusterRbac.get("allowed"));
     verify(k8s).canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null);
   }
+
+  /** A refusal of the Kubernetes API for lack of rights, as an account limited to its own projects receives it. */
+  private static io.fabric8.kubernetes.client.KubernetesClientException forbidden() {
+    return new io.fabric8.kubernetes.client.KubernetesClientException(
+        "secrets is forbidden: User \"kdps\" cannot get resource \"secrets\" in API group \"\" in the namespace "
+            + "\"ambari-pki\"", 403, null);
+  }
+
+  @Test
+  void aTruststoreChangeKdpsMayNotMakeIsRefusedWithWhatToDo(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir)
+      throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.getClient()).thenThrow(forbidden());
+
+    Response created = api.createTruststore(null, Map.of("name", "corp-ca",
+        "caCertPem", org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Corporate Root CA")));
+    assertEquals(403, created.getStatus());
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), error(created));
+
+    Response flipped = api.setTruststoreDefault(null, "ambari-pki", "corp-ca-truststore", Map.of("default", true));
+    assertEquals(403, flipped.getStatus());
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), error(flipped));
+
+    Response deleted = api.deleteTruststore(null, "ambari-pki", "corp-ca-truststore");
+    assertEquals(403, deleted.getStatus());
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), error(deleted));
+  }
+
+  @Test
+  void aTruststoreOutsideTheTruststoreProjectCannotBeMadeDefaultNorDeleted(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+
+    Response flipped = api.setTruststoreDefault(null, "team-a", "corp-ca-truststore", Map.of("default", true));
+    assertEquals(400, flipped.getStatus());
+    assertTrue(error(flipped).contains("is not in the truststore project ambari-pki"), error(flipped));
+
+    Response deleted = api.deleteTruststore(null, "team-a", "corp-ca-truststore");
+    assertEquals(400, deleted.getStatus());
+    verify(k8s, never()).getClient();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void onlyTheTruststoresOfTheTruststoreProjectAreListedAsManaged() throws Exception {
+    // A Secret labelled as a truststore in a workload project is neither selectable nor default: a deploy would not
+    // trust it, so the Truststores tab and the wizard do not offer it as one.
+    KubernetesService.TruststoreSummary registered = summary("ambari-pki", "corp-ca-truststore");
+    KubernetesService.TruststoreSummary planted = summary("team-b", "partner-ca-truststore");
+    when(k8s.listTruststores(null)).thenReturn(new java.util.ArrayList<>(java.util.List.of(registered, planted)));
+
+    java.util.List<KubernetesService.TruststoreSummary> listed =
+        (java.util.List<KubernetesService.TruststoreSummary>) api().listTruststores(null).getEntity();
+
+    assertEquals(2, listed.size());
+    assertTrue(listed.get(0).managed);
+    assertTrue(listed.get(0).isDefault);
+    assertFalse(listed.get(1).managed);
+    assertFalse(listed.get(1).isDefault);
+  }
+
+  /** A truststore created in the Truststores tab and flagged default, as the listing reports it. */
+  private static KubernetesService.TruststoreSummary summary(String namespace, String name) {
+    KubernetesService.TruststoreSummary t = new KubernetesService.TruststoreSummary();
+    t.namespace = namespace;
+    t.name = name;
+    t.managed = true;
+    t.isDefault = true;
+    return t;
+  }
+
+  @Test
+  void theTruststoresPageLearnsWhereTruststoresAreWrittenAndWhetherKdpsMayWriteThere() throws Exception {
+    when(k8s.canI("create", "", "secrets", null, null, "ambari-pki")).thenReturn(false);
+
+    Response refused = api().truststoreRegistryStatus();
+    assertEquals(200, refused.getStatus());
+    Map<?, ?> body = (Map<?, ?>) refused.getEntity();
+    assertEquals("ambari-pki", body.get("namespace"));
+    assertEquals(false, body.get("canWrite"));
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), body.get("message"));
+
+    when(k8s.canI("create", "", "secrets", null, null, "ambari-pki")).thenReturn(true);
+    body = (Map<?, ?>) api().truststoreRegistryStatus().getEntity();
+    assertEquals(true, body.get("canWrite"));
+    assertFalse(body.containsKey("message"));
+  }
 }

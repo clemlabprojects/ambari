@@ -29,6 +29,8 @@ import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings,
 import { required, url, slug, trim } from "../utils/formRules";
 import InClusterServiceAccountSection from '../components/common/InClusterServiceAccountSection';
 import { MASKED_SECRET, SECRET_SET_PLACEHOLDER } from './globalSecurityFields';
+import { NAMESPACE_HINT, NAMESPACE_PATTERN, patternRules } from '../utils/nameRules';
+import { serverMessage } from '../utils/serverMessage';
 
 /** A stored credential comes masked: it is shown as a blank field, never as the mask. */
 const unmasked = (value: any) => (value === MASKED_SECRET ? '' : value);
@@ -275,6 +277,9 @@ const ConfigurationPage: React.FC = () => {
             thanosNodePort:     vals.monitoring?.thanosNodePort,
         },
         kerberos: { injectionMode: vals.kerberos?.injectionMode },
+        // Where the Truststores tab and the Certificate Authorities page keep their Secrets; blank keeps ambari-pki.
+        truststore: { namespace: String(vals.truststore?.namespace ?? '').trim() || undefined },
+        pki: { namespace: String(vals.pki?.namespace ?? '').trim() || undefined },
     });
 
     const navButtons = (
@@ -392,6 +397,8 @@ const ConfigurationPage: React.FC = () => {
                         thanosNodePort:             settings?.monitoring?.thanosNodePort,
                     },
                     kerberos: { injectionMode: settings?.kerberos?.injectionMode ?? 'WEBHOOK' },
+                    truststore: { namespace: settings?.truststore?.namespace },
+                    pki: { namespace: settings?.pki?.namespace },
                 });
                 setThanosKeysSet({
                     accessKey: settings?.monitoring?.thanos?.accessKeySet === true,
@@ -971,6 +978,51 @@ const ConfigurationPage: React.FC = () => {
                                 }}
                             >
                                 <Collapse ghost items={monitoringCollapseItems} />
+                            </Form>
+                        </Card>
+                    )}
+
+                    {/* ── Projects of the truststores and Company CAs ── */}
+                    {status !== 'unconfigured' && (
+                        <Card style={{ marginTop: 16 }} title="Truststores and Company CAs">
+                            <Paragraph type="secondary">
+                                The projects where KDPS keeps the truststores of the Truststores page and the Company CAs
+                                of the Certificate Authorities page. With an account limited to its own projects, ask the
+                                platform team to create a project for them and grant the KDPS account <Text code>edit</Text> there,
+                                then name it here. Company CAs carry their private keys: never use a project releases are
+                                deployed to. Leave blank for <Text code>ambari-pki</Text>.
+                            </Paragraph>
+                            <Form form={form} layout="vertical">
+                                <Row gutter={16}>
+                                    <Col xs={24} md={12}>
+                                        <Form.Item name={['pki', 'namespace']} label="Company CA project" className="form-compact-row"
+                                            rules={patternRules(NAMESPACE_PATTERN, NAMESPACE_HINT)}>
+                                            <Input placeholder="ambari-pki" autoComplete="off" />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col xs={24} md={12}>
+                                        <Form.Item name={['truststore', 'namespace']} label="Truststore project (optional)" className="form-compact-row"
+                                            extra="Blank: the Company CA project."
+                                            rules={patternRules(NAMESPACE_PATTERN, NAMESPACE_HINT)}>
+                                            <Input placeholder="same as the Company CA project" autoComplete="off" />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Button
+                                    type="primary" size="small"
+                                    onClick={async () => {
+                                        try {
+                                            await form.validateFields([['pki', 'namespace'], ['truststore', 'namespace']]);
+                                            const vals = form.getFieldsValue(true);
+                                            await saveViewSettings(buildFullPayload(vals));
+                                            rememberThanosKeys(vals);
+                                            message.success('Truststore and Company CA projects saved');
+                                        } catch (e: any) {
+                                            if (e?.errorFields) return;
+                                            message.error(serverMessage(e, 'Save failed'));
+                                        }
+                                    }}
+                                >Save</Button>
                             </Form>
                         </Card>
                     )}

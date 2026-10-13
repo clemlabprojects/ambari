@@ -369,13 +369,43 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     static boolean followsAmbariKerberos(HelmDeployRequest request) {
         Map<String, Object> form = request.getFormValues() == null ? Map.of() : request.getFormValues();
+        return ContextService.DEFAULT_CONTEXT_ID.equals(selectedContextId(request))
+                && !CommandService.deployUsesExternalKeytab(form);
+    }
+
+    /** The platform context the deploy targets: the request's, else the form's, else the default one. */
+    static String selectedContextId(HelmDeployRequest request) {
+        Map<String, Object> form = request.getFormValues() == null ? Map.of() : request.getFormValues();
         Object fromForm = ConfigResolutionService.getByDottedPath(form, "platformContextId");
         String contextId = request.getPlatformContextId();
         if (contextId == null || contextId.isBlank()) {
             contextId = fromForm == null || String.valueOf(fromForm).isBlank() ? ContextService.DEFAULT_CONTEXT_ID
                     : String.valueOf(fromForm);
         }
-        return ContextService.DEFAULT_CONTEXT_ID.equals(contextId) && !CommandService.deployUsesExternalKeytab(form);
+        return contextId;
+    }
+
+    /**
+     * The krb5.conf of the platform context the deploy targets, as a direct deploy takes it: a backend in another realm
+     * (CDP, a remote ODP) needs its own, not this host's.
+     *
+     * @return the krb5.conf, or {@code null} for the default context or one that has none (this host's is used)
+     */
+    String contextKrb5Conf(HelmDeployRequest request) {
+        String contextId = selectedContextId(request);
+        if (ContextService.DEFAULT_CONTEXT_ID.equals(contextId)) {
+            return null;
+        }
+        try {
+            org.apache.ambari.view.k8s.model.ResolvedContext resolved =
+                    new ContextService(viewContext).resolve(contextId, null, null);
+            Map<String, String> fields = resolved == null ? null : resolved.getResolvedFields();
+            String krb5 = fields == null ? null : fields.get("kerberos.krb5Conf");
+            return krb5 == null || krb5.isBlank() ? null : krb5;
+        } catch (Exception ex) {
+            LOG.warn("Could not resolve the krb5.conf of platform context {}: {}", contextId, ex.toString());
+            return null;
+        }
     }
 
     /**
@@ -1307,17 +1337,20 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // Dependencies are committed to Git with the main HelmRelease, where they belong to no release: other releases
         // rely on the operators they install, so no uninstall removes them.
         // Note: Flux will reconcile them in parallel (no explicit ordering)
-        List<DepRef> depRefs = new ArrayList<>();
         List<PendingDependency> pendingDeps = new ArrayList<>();
         // Every file this deploy writes, searched for passwords and secrets before the commit.
         List<Path> writtenFiles = new ArrayList<>();
         if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
+            // The dependency being prepared, and its namespace once known, for the message that stops the deploy.
+            String depKey = null;
+            String depNamespace = null;
             try {
                 logFluxInfo(namespace, release, "automation", "Processing %s dependencies", request.getDependencies().size());
                 Path legacyDepDir = targetDir.resolve(DEPENDENCIES_DIR);
 
                 for (Map.Entry<String, Object> depEntry : request.getDependencies().entrySet()) {
-                    String depKey = depEntry.getKey();
+                    depKey = depEntry.getKey();
+                    depNamespace = null;
                     @SuppressWarnings("unchecked")
                     Map<String, Object> depSpec = depEntry.getValue() instanceof Map
                             ? (Map<String, Object>) depEntry.getValue()
@@ -1331,7 +1364,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     String depReleaseName = firstNonBlank(stringOrNull(depSpec.get("releaseName")), depKey);
                     // The namespace the form picked for it, which also places its file.
                     DependencyRules.applyNamespaceFromForm(depSpec, request.getFormValues());
-                    String depNamespace = firstNonBlank(stringOrNull(depSpec.get("namespace")), namespace);
+                    depNamespace = firstNonBlank(stringOrNull(depSpec.get("namespace")), namespace);
                     // The same dependencies as a direct deploy: none on OpenShift that the platform provides, none
                     // that the settings do not need, none already on the cluster. One Flux already manages is kept
                     // even though it is now "on the cluster": Flux installed it, for this release or another one.
@@ -1361,7 +1394,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // chart's version, which belongs to another chart: without one, the HelmRelease names none.
                     String depVersion = firstNonBlank(CommandService.pinnedChartVersion(stringOrNull(depSpec.get("chartVersion"))),
                             CommandService.pinnedChartVersion(stringOrNull(depSpec.get("version"))));
-                    depRefs.add(new DepRef(depReleaseName, depNamespace));
                     
                     // Create namespace for dependency if different
                     if (!depNamespace.equals(namespace)) {
@@ -1387,10 +1419,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         Map<String, String> depOverrides;
                         try {
                             depOverrides = planned.dependencyOverrides().of(depKey, depNamespace, depRepoName);
-                        } catch (Exception ex) {
-                            throw new IllegalStateException("GitOps deploy of " + namespace + "/" + release
-                                    + " stopped: dependency " + depKey + " could not be prepared in namespace "
-                                    + depNamespace + ", so nothing was committed to Git: " + ex.getMessage(), ex);
+                        } catch (IllegalArgumentException ex) {
+                            // Not the path refusal rethrown as it is below: reported with the dependency it stopped.
+                            throw new IllegalStateException(ex.getMessage(), ex);
                         }
                         applyOverridesToValues(depValues, depOverrides);
                     }
@@ -1421,15 +1452,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     logFluxInfo(namespace, release, "automation", "Added dependency HelmRelease %s/%s (chart=%s, version=%s)",
                             depNamespace, depReleaseName, depChart, firstNonBlank(depVersion, "not pinned"));
                 }
-            logFluxInfo(namespace, release, "automation", "Generated %s dependency HelmReleases and dependsOn", depRefs.size());
+            logFluxInfo(namespace, release, "automation", "Generated %s dependency HelmReleases and dependsOn", pendingDeps.size());
+            } catch (IllegalArgumentException ex) {
+                // Nothing is committed for a dependency whose name would place its file outside the release's directory.
+                throw ex;
             } catch (Exception ex) {
-                // A direct deploy stops when a dependency cannot be installed: nothing is committed either. Nor is
-                // anything for a dependency whose name would place its file outside the release's directory.
-                if (planned != null || ex instanceof IllegalArgumentException) {
-                    throw ex;
-                }
-                LOG.warn("Failed to process dependencies for {}/{}: {}", namespace, release, ex.getMessage(), ex);
-                // Continue - dependencies might be optional or can be added manually
+                // A direct deploy stops when a dependency cannot be installed: nothing is committed either. A
+                // dependency the deploy needs (those it does not were skipped above) that cannot be prepared stops it:
+                // committed without it, the release would wait on a HelmRelease that never comes.
+                throw new IllegalStateException("GitOps deploy of " + namespace + "/" + release + " stopped: dependency "
+                        + depKey + " could not be prepared" + (depNamespace != null ? " in namespace " + depNamespace : "")
+                        + ", so nothing was committed to Git: " + ex.getMessage(), ex);
             }
         }
 
@@ -1479,34 +1512,29 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 }
                 addOverride(explicitOverrides, "global.security.kerberos.enabled", "false");
             } else if ("true".equals(kerberosEnabled)) {
-                String krb5ConfigMapName = (release.isBlank() ? "krb5-conf" : (release + "-krb5-conf"));
-                try {
-                    commandUtils.ensureKrb5ConfConfigMap(namespace, krb5ConfigMapName);
-                    addOverride(explicitOverrides, "global.security.kerberos.enabled", "true");
-                    addOverride(explicitOverrides, "global.security.kerberos.configMapName", krb5ConfigMapName);
-                } catch (Exception ex) {
-                    LOG.warn("Failed to prepare Kerberos config map for {}/{}: {}", namespace, release, ex.getMessage());
-                }
+                // Prepared as a direct deploy prepares it, from the selected context's krb5.conf when it has one; no
+                // commit points the chart at a ConfigMap that was never written.
+                String krb5ConfigMapName = commandUtils.prepareKrb5ConfConfigMap(namespace, release,
+                        contextKrb5Conf(request));
+                addOverride(explicitOverrides, "global.security.kerberos.enabled", "true");
+                addOverride(explicitOverrides, "global.security.kerberos.configMapName", krb5ConfigMapName);
             }
             // Truststore for downstream TLS clients — shared with the direct deploy path via
             // TrustBundleService: merges (deduped) the Ambari server SSL CA + Ambari Internal CA +
             // operator truststores (defaults + those selected for this release), and provisions even
-            // when Ambari itself is not on SSL. Passwords are credential-store/alias resolved.
-            try {
-                TrustBundleService trustBundleService = new TrustBundleService(viewContext, kubernetesService);
-                TrustBundleService.ProvisionResult truststoreResult = trustBundleService.provisionReleaseTruststore(
-                        namespace, release, request.getTruststoreRefs());
-                if (truststoreResult.provisioned()) {
-                    for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
-                        addOverride(explicitOverrides, override.getKey(), override.getValue());
-                    }
-                    LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
-                            truststoreResult.secretName(), truststoreResult.caCount(), namespace);
-                } else {
-                    LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
+            // when Ambari itself is not on SSL. Passwords are credential-store/alias resolved. A release
+            // that needs the Secret stops here, before anything is committed, when it cannot be written.
+            TrustBundleService.ProvisionResult truststoreResult = new TrustBundleService(viewContext, kubernetesService)
+                    .provisionForDeploy(namespace, release, serviceKey, request.getTruststoreRefs());
+            truststoreResult.warnings().forEach(w -> logFluxWarn(namespace, release, "automation", "%s", w));
+            if (truststoreResult.provisioned()) {
+                for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
+                    addOverride(explicitOverrides, override.getKey(), override.getValue());
                 }
-            } catch (Exception ex) {
-                LOG.warn("Failed to provision truststore Secret: {}", ex.toString());
+                LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
+                        truststoreResult.secretName(), truststoreResult.caCount(), namespace);
+            } else {
+                LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
             }
         }
         // The view's Kerberos injection mode, written as a direct deploy writes it. Left to the chart (WEBHOOK by
@@ -1608,12 +1636,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 sharedDir, false);
         List<SourceSecret> sourceSecrets = new ArrayList<>(source.secrets());
 
-        Map<String, Object> hrSpec = FluxManifests.helmReleaseSpec(chartInSource, version, source.name(),
-                source.referencedFrom(namespace), depRefs, valuesSecretName, split.publicValues(),
-                helmTimeout(serviceKey));
-        String specDigest = specDigest(FluxManifests.specYaml(hrSpec));
-        String hrYaml = FluxManifests.helmRelease(release, namespace, specDigest, hrSpec);
-
         // Dependencies an earlier version wrote into this release's directory move to the shared directory, in this
         // commit: those written above replace their old copy, the others go on as they were. One that cannot move yet
         // is written where it is, with its chart source next to it.
@@ -1622,6 +1644,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 release);
         Map<Path, String> sourceFiles = new LinkedHashMap<>();
         sourceFiles.put(source.file(), source.yaml());
+        List<DepRef> depRefs = new ArrayList<>();
         for (int i = 0; i < pendingDeps.size(); i++) {
             PendingDependency dep = pendingDeps.get(i);
             boolean inPlace = stayed.contains(dep.file());
@@ -1646,7 +1669,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                             depSource.referencedFrom(dep.namespace()), List.of(), depValuesSecretName,
                             depSplit.publicValues()), true));
             writtenFiles.add(depFile);
+            // Only a dependency whose HelmRelease is written: the release must never wait on one Git does not hold.
+            depRefs.add(new DepRef(dep.releaseName(), dep.namespace()));
         }
+        Map<String, Object> hrSpec = FluxManifests.helmReleaseSpec(chartInSource, version, source.name(),
+                source.referencedFrom(namespace), depRefs, valuesSecretName, split.publicValues(),
+                helmTimeout(serviceKey));
+        String specDigest = specDigest(FluxManifests.specYaml(hrSpec));
+        String hrYaml = FluxManifests.helmRelease(release, namespace, specDigest, hrSpec);
         if (!source.file().equals(targetDir.resolve(HELM_REPOSITORY_FILE))) {
             // The release reads the platform's source: one of its own, written by a deploy before, goes.
             gitClient.deletePath(targetDir.resolve(HELM_REPOSITORY_FILE));

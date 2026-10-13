@@ -206,7 +206,7 @@ public class FluxGitOpsBackendSecretValuesTest {
     /** A file as published on a remote branch, or null. */
     private String published(String branch, String path) throws Exception {
         Path clone = tmp.getRoot().toPath().resolve("verify-" + System.nanoTime());
-        try (Git ignored = Git.cloneRepository().setURI(repoUrl).setBranch(branch).setDirectory(clone.toFile()).call()) {
+        try (Git ignored = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, branch, clone)) {
             Path file = clone.resolve(path);
             return Files.exists(file) ? Files.readString(file) : null;
         }

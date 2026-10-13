@@ -85,7 +85,7 @@ class GitClientTest {
 
         // Verify the push landed by re-cloning the remote fresh.
         Path verify = tmp.resolve("verify");
-        try (Git g = Git.cloneRepository().setURI(url).setBranch(BRANCH).setDirectory(verify.toFile()).call()) {
+        try (Git g = org.apache.ambari.view.k8s.utils.TestGitClones.clone(url, BRANCH, verify)) {
             Path pushed = verify.resolve("apps/trino/values.yaml");
             assertTrue(Files.exists(pushed), "pushed file must exist in the remote");
             assertEquals("replicas: 3\n", Files.readString(pushed, StandardCharsets.UTF_8));
@@ -136,7 +136,7 @@ class GitClientTest {
         client.push();
 
         Path verify = tmp.resolve("verify");
-        try (Git g = Git.cloneRepository().setURI(url).setBranch(BRANCH).setDirectory(verify.toFile()).call()) {
+        try (Git g = org.apache.ambari.view.k8s.utils.TestGitClones.clone(url, BRANCH, verify)) {
             assertTrue(Files.notExists(verify.resolve("gone.txt")), "deleted file must be gone in the remote");
         }
     }
@@ -256,7 +256,7 @@ class GitClientTest {
     private static void squashMergeAndDelete(Path tmp, String url, String branch, java.util.Map<String, String> files)
             throws Exception {
         Path merger = tmp.resolve("merger-" + System.nanoTime());
-        try (Git g = Git.cloneRepository().setURI(url).setBranch(BRANCH).setDirectory(merger.toFile()).call()) {
+        try (Git g = org.apache.ambari.view.k8s.utils.TestGitClones.clone(url, BRANCH, merger)) {
             for (java.util.Map.Entry<String, String> file : files.entrySet()) {
                 Files.createDirectories(merger.resolve(file.getKey()).getParent());
                 Files.writeString(merger.resolve(file.getKey()), file.getValue());

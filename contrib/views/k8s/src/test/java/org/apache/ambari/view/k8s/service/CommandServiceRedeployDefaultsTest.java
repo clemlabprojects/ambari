@@ -622,7 +622,7 @@ class CommandServiceRedeployDefaultsTest {
     /** A file as published on the main branch of the GitOps repository, or null. */
     private String published(String repoUrl, String path) throws Exception {
         Path clone = tmp.resolve("verify-" + System.nanoTime());
-        try (Git ignored = Git.cloneRepository().setURI(repoUrl).setBranch("main").setDirectory(clone.toFile()).call()) {
+        try (Git ignored = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, "main", clone)) {
             Path file = clone.resolve(path);
             return Files.exists(file) ? Files.readString(file) : null;
         }

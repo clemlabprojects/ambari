@@ -528,6 +528,55 @@ public class CommandUtils {
     }
 
     /**
+     * The name of a release's krb5.conf ConfigMap, unique per release so installs never share one.
+     *
+     * @param releaseName the release; blank for the shared name
+     * @return {@code <release>-krb5-conf}
+     */
+    public static String krb5ConfigMapName(String releaseName) {
+        String release = releaseName == null ? "" : releaseName.trim();
+        return release.isEmpty() ? "krb5-conf" : release + "-krb5-conf";
+    }
+
+    /**
+     * Writes the krb5.conf ConfigMap of a Kerberized release, before anything is installed or committed to Git. The
+     * one preparation of Kerberos shared by direct and GitOps deploys: the caller sets
+     * {@code global.security.kerberos.enabled} and {@code configMapName} only once this returned, so a chart is never
+     * pointed at a ConfigMap that does not exist.
+     *
+     * @param namespace    the release namespace
+     * @param releaseName  the release
+     * @param contextKrb5  the krb5.conf of the selected platform context, or {@code null} for this host's
+     *                     /etc/krb5.conf
+     * @return the ConfigMap name
+     * @throws IllegalStateException when no krb5.conf can be found, or the ConfigMap cannot be written, with what to do
+     */
+    public String prepareKrb5ConfConfigMap(String namespace, String releaseName, String contextKrb5) {
+        String configMapName = krb5ConfigMapName(releaseName);
+        boolean written;
+        try {
+            written = ensureKrb5ConfConfigMap(namespace, configMapName, contextKrb5);
+        } catch (RuntimeException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new IllegalStateException("Kerberos is enabled for this deploy but its krb5.conf ConfigMap "
+                    + configMapName + " could not be written in namespace " + namespace + ": "
+                    + (cause.getMessage() != null ? cause.getMessage() : cause.toString()), e);
+        }
+        if (!written) {
+            // Fails now with what to do, rather than letting the pod fail later with the opaque
+            // "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found".
+            throw new IllegalStateException(
+                    "Kerberos is enabled for this deploy but no krb5.conf could be found: the selected "
+                    + "platform context has no krb5.conf and this Ambari host has no /etc/krb5.conf. "
+                    + "For a backend in a different Kerberos realm (e.g. CDP), paste that realm's krb5.conf "
+                    + "into the platform context — Contexts → <your context> → Kerberos → krb5.conf — "
+                    + "then redeploy. (Expected ConfigMap: " + configMapName + " in namespace "
+                    + namespace + ".)");
+        }
+        return configMapName;
+    }
+
+    /**
      * Same as {@link #ensureKrb5ConfConfigMap(String, String)}, but when {@code krb5Override}
      * is non-blank the ConfigMap is built from that content (supplied by the selected external
      * platform context's {@code kerberos.krb5Conf}) instead of the host's /etc/krb5.conf.

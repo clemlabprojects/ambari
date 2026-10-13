@@ -389,7 +389,7 @@ class CommandServiceGitOpsDeployTest {
 
     private String published(String branch, String path) throws Exception {
         Path clone = tmp.resolve("verify-" + System.nanoTime());
-        try (Git ignored = Git.cloneRepository().setURI(repoUrl).setBranch(branch).setDirectory(clone.toFile()).call()) {
+        try (Git ignored = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, branch, clone)) {
             Path file = clone.resolve(path);
             return Files.exists(file) ? Files.readString(file) : null;
         }
@@ -882,6 +882,82 @@ class CommandServiceGitOpsDeployTest {
                 + "merged into branch main: Flux applies the change once it is merged.", CommandService.gitOpsMergeWait(proposed));
         assertEquals("Committed 1a2b3c to branch flux-zz of https://git.example.org/platform/gitops.git (pull request "
                 + "https://git.example.org/platform/gitops/-/merge_requests/7)", CommandService.describeGitOpsCommit(proposed));
+    }
+
+    // ------------------------------------------------------------------------------------------------ truststore
+
+    /** A truststore as the Truststores tab creates it. */
+    private static io.fabric8.kubernetes.api.model.Secret managedTruststore(String namespace, String name) {
+        String pem = org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Corporate Root CA");
+        return new io.fabric8.kubernetes.api.model.SecretBuilder().withNewMetadata().withNamespace(namespace)
+                .withName(name).addToLabels("ambari.clemlab.com/resource-type", "truststore").endMetadata()
+                .addToData("ca.crt", java.util.Base64.getEncoder().encodeToString(pem.getBytes(StandardCharsets.UTF_8)))
+                .build();
+    }
+
+    /**
+     * Why a deploy was refused, as the deploy endpoint answers it: the direct backend wraps the refusal of its plan
+     * in a RuntimeException, which the endpoint unwraps.
+     */
+    private String refusal(HelmDeployRequest request) {
+        RuntimeException refused = assertThrows(RuntimeException.class,
+                () -> service.submitDeploy(request, "charts", "0.0.1", null, null, null, null, null),
+                request.getDeploymentMode());
+        Throwable reason = refused instanceof IllegalStateException ? refused : refused.getCause();
+        assertInstanceOf(IllegalStateException.class, reason, request.getDeploymentMode());
+        return reason.getMessage();
+    }
+
+    @Test
+    void aSelectedTruststoreThatCannotBeReadStopsTheDeployBeforeHelmOrGit() throws Exception {
+        for (String mode : List.of("DIRECT_HELM", "FLUX_GITOPS")) {
+            HelmDeployRequest request = request(mode, "main");
+            request.setTruststoreRefs(List.of("ambari-pki/corp-ca-truststore"));
+
+            String refused = refusal(request);
+
+            assertTrue(refused.startsWith("Could not write truststore Secret " + NS + "/" + rel
+                    + "-truststore: The truststore 'ambari-pki/corp-ca-truststore' (Truststore not found: "
+                    + "ambari-pki/corp-ca-truststore) selected for this release could not be read."), refused);
+        }
+
+        assertTrue(dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing was planned, so Helm never ran");
+        assertEquals(List.of(seedCommit), commitsOn("main"), "nothing reached Git");
+        verify(k8s, never()).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap());
+    }
+
+    @Test
+    void aTruststoreSecretThatCannotBeWrittenStopsTheDeployBeforeHelmOrGit() throws Exception {
+        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
+                .thenReturn(managedTruststore("ambari-pki", "corp-ca-truststore"));
+        doThrow(new io.fabric8.kubernetes.client.KubernetesClientException("etcdserver: request timed out", 500, null))
+                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap());
+        for (String mode : List.of("DIRECT_HELM", "FLUX_GITOPS")) {
+            HelmDeployRequest request = request(mode, "main");
+            request.setTruststoreRefs(List.of("corp-ca"));
+
+            String refused = refusal(request);
+
+            assertTrue(refused.startsWith("Could not write truststore Secret " + NS + "/" + rel + "-truststore: "), refused);
+            assertTrue(refused.contains("etcdserver: request timed out"), refused);
+        }
+
+        assertTrue(dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing was planned, so Helm never ran");
+        assertEquals(List.of(seedCommit), commitsOn("main"), "nothing reached Git");
+    }
+
+    @Test
+    void aSelectedTruststoreIsWrittenIntoTheReleaseTruststoreAndWired() throws Exception {
+        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
+                .thenReturn(managedTruststore("ambari-pki", "corp-ca-truststore"));
+        HelmDeployRequest request = request("DIRECT_HELM", "main");
+        request.setTruststoreRefs(List.of("ambari-pki/corp-ca-truststore"));
+
+        String rootId = plan(request, false);
+
+        verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap());
+        assertTrue(String.valueOf(paramsOf(dataStore.find(CommandEntity.class, rootId)))
+                .contains("global.security.tls.truststoreSecret"), "the chart is pointed at the Secret");
     }
 
     // ------------------------------------------------------------------------------------------------ dependencies

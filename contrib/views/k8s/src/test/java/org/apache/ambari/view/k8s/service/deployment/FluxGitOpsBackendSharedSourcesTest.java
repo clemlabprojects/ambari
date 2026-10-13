@@ -43,7 +43,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -208,7 +207,7 @@ public class FluxGitOpsBackendSharedSourcesTest {
     /** The branch Flux reconciles as the server holds it, in a fresh clone. */
     private Path cloneMain() throws Exception {
         Path clone = tmp.getRoot().toPath().resolve("verify-" + System.nanoTime());
-        Git.cloneRepository().setURI(repoUrl).setBranch("main").setDirectory(clone.toFile()).call().close();
+        org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, "main", clone).close();
         return clone;
     }
 
@@ -220,7 +219,7 @@ public class FluxGitOpsBackendSharedSourcesTest {
 
     private void pushByHand(Map<String, String> files) throws Exception {
         Path clone = tmp.getRoot().toPath().resolve("by-hand-" + System.nanoTime());
-        try (Git g = Git.cloneRepository().setURI(repoUrl).setBranch("main").setDirectory(clone.toFile()).call()) {
+        try (Git g = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, "main", clone)) {
             for (Map.Entry<String, String> file : files.entrySet()) {
                 Path target = clone.resolve(file.getKey());
                 Files.createDirectories(target.getParent());
@@ -454,12 +453,10 @@ public class FluxGitOpsBackendSharedSourcesTest {
     @Test
     public void aPrivateCaComesFromTheKdpsTruststoresTheRepositoryNames() throws Exception {
         chartRepos.get("charts").setCaTruststores("corp-ca, partner-ca");
-        when(k8s.readOpaqueSecretKeyAsBytes("ambari-pki", "corp-ca-truststore", "ca.crt"))
-                .thenReturn(Optional.of("-----BEGIN CERTIFICATE-----\nCORP\n-----END CERTIFICATE-----\n"
-                        .getBytes(StandardCharsets.UTF_8)));
-        when(k8s.readOpaqueSecretKeyAsBytes("ambari-pki", "partner-ca-truststore", "ca.crt"))
-                .thenReturn(Optional.of("-----BEGIN CERTIFICATE-----\nPARTNER\n-----END CERTIFICATE-----"
-                        .getBytes(StandardCharsets.UTF_8)));
+        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
+                .thenReturn(truststore("corp-ca-truststore", "-----BEGIN CERTIFICATE-----\nCORP\n-----END CERTIFICATE-----\n"));
+        when(k8s.getSecret("ambari-pki", "partner-ca-truststore"))
+                .thenReturn(truststore("partner-ca-truststore", "-----BEGIN CERTIFICATE-----\nPARTNER\n-----END CERTIFICATE-----"));
 
         backend().apply(request("analytics", "trino", "trinodb/trino", "charts"), null);
 
@@ -473,6 +470,14 @@ public class FluxGitOpsBackendSharedSourcesTest {
         assertEquals("-----BEGIN CERTIFICATE-----\nCORP\n-----END CERTIFICATE-----\n"
                         + "-----BEGIN CERTIFICATE-----\nPARTNER\n-----END CERTIFICATE-----\n",
                 new String(data.getValue().get("ca.crt"), StandardCharsets.UTF_8));
+    }
+
+    /** A truststore as the Truststores tab creates it. */
+    private static io.fabric8.kubernetes.api.model.Secret truststore(String name, String caPem) {
+        return new io.fabric8.kubernetes.api.model.SecretBuilder().withNewMetadata().withName(name)
+                .withNamespace("ambari-pki").addToLabels("ambari.clemlab.com/resource-type", "truststore").endMetadata()
+                .addToData("ca.crt", java.util.Base64.getEncoder().encodeToString(caPem.getBytes(StandardCharsets.UTF_8)))
+                .build();
     }
 
     @Test

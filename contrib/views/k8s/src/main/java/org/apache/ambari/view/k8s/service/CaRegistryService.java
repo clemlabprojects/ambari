@@ -37,7 +37,8 @@ import java.util.Objects;
 
 /**
  * Persists admin-uploaded Company Issuing CAs as K8s Secrets under a dedicated
- * privileged namespace (default {@code ambari-pki}). One Secret per CA. Used as the
+ * privileged namespace (default {@code ambari-pki}, set in the view settings: see
+ * {@link PkiNamespaces#caNamespace()}). One Secret per CA. Used as the
  * trust anchor when an operator picks the {@code signedByCompanyCA} ingress-TLS mode
  * at install time.
  *
@@ -69,8 +70,8 @@ public class CaRegistryService {
 
     private static final Logger LOG = LoggerFactory.getLogger(CaRegistryService.class);
 
-    /** Where the company-CA Secrets live. Configurable via instance property {@code pki.namespace}. */
-    public static final String DEFAULT_REGISTRY_NAMESPACE = "ambari-pki";
+    /** Where the company-CA Secrets live unless the view settings name another project ({@link PkiNamespaces}). */
+    public static final String DEFAULT_REGISTRY_NAMESPACE = PkiNamespaces.DEFAULT_NAMESPACE;
 
     /** Standard label flagging the K8s view-managed CA registry entries. */
     public static final String LABEL_RESOURCE_TYPE = "ambari.clemlab.com/resource-type";
@@ -79,16 +80,24 @@ public class CaRegistryService {
 
     private final ViewContext viewContext;
     private final KubernetesService kubernetesService;
+    private final PkiNamespaces namespaces;
 
     public CaRegistryService(ViewContext viewContext, KubernetesService kubernetesService) {
-        this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
-        this.kubernetesService = Objects.requireNonNull(kubernetesService, "kubernetesService");
+        this(viewContext, kubernetesService, new PkiNamespaces(viewContext));
     }
 
-    /** Resolve the registry namespace from the view instance properties, with a safe default. */
+    CaRegistryService(ViewContext viewContext, KubernetesService kubernetesService, PkiNamespaces namespaces) {
+        this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
+        this.kubernetesService = Objects.requireNonNull(kubernetesService, "kubernetesService");
+        this.namespaces = Objects.requireNonNull(namespaces, "namespaces");
+    }
+
+    /**
+     * The registry namespace: the Company CA project of the view settings, with a dedicated default. Never a project
+     * releases are deployed to, since the CA private keys would be readable by every editor of that project.
+     */
     public String registryNamespace() {
-        String fromCfg = viewContext.getProperties() != null ? viewContext.getProperties().get("pki.namespace") : null;
-        return (fromCfg != null && !fromCfg.isBlank()) ? fromCfg.trim() : DEFAULT_REGISTRY_NAMESPACE;
+        return namespaces.caNamespace();
     }
 
     /** Stable, namespaced Secret name for a CA. Lower-cased + DNS-1123-safe. */

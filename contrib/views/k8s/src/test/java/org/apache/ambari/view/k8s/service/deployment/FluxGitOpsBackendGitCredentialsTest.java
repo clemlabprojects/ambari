@@ -203,7 +203,7 @@ class FluxGitOpsBackendGitCredentialsTest {
 
         // The release's own directory, found to hold another release's HelmRelease once the branch is read.
         Path byHand = tmp.resolve("by-hand");
-        try (Git g = Git.cloneRepository().setURI(repoUrl).setBranch("main").setDirectory(byHand.toFile()).call()) {
+        try (Git g = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, "main", byHand)) {
             Files.writeString(byHand.resolve(ownDir).resolve(FluxGitOpsBackend.HELM_RELEASE_FILE),
                     FluxManifests.helmRelease("trino", NS, null, FluxManifests.helmReleaseSpec("trino", "1.43.14",
                             "trino-charts", null, List.of(), GitOpsSecretValues.secretName("trino"), Map.of())));

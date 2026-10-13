@@ -21,6 +21,7 @@ import { Alert, Button, Form, Input, message, Modal, Space, Table, Tag, Typograp
 import { CloudUploadOutlined, DeleteOutlined, RocketOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { API_BASE_URL, apiFetch, getClusterCapabilities, type ClusterCapabilities } from '../api/client';
 import PermissionGuard from '../components/common/PermissionGuard';
+import { serverMessage } from '../utils/serverMessage';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -57,8 +58,19 @@ const fetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   return ct.includes('json') ? (res.json() as Promise<T>) : (undefined as unknown as T);
 };
 
+/** The registry listing: its entries, the project they are kept in, and whether KDPS may add one there. */
+interface CaListing {
+  items: CaEntry[];
+  namespace?: string;
+  canWrite?: boolean;
+  /** What to do when KDPS may not write there. */
+  message?: string;
+}
+
 const CertificateAuthoritiesPage: React.FC = () => {
   const [items, setItems] = useState<CaEntry[]>([]);
+  const [registry, setRegistry] = useState<Omit<CaListing, 'items'> | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [capabilities, setCapabilities] = useState<ClusterCapabilities | null>(null);
@@ -66,9 +78,11 @@ const CertificateAuthoritiesPage: React.FC = () => {
 
   const refresh = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const data = await fetchJson<{ items: CaEntry[] }>('/pki/cas');
+      const data = await fetchJson<CaListing>('/pki/cas');
       setItems(data.items || []);
+      setRegistry({ namespace: data.namespace, canWrite: data.canWrite, message: data.message });
       // Refresh the promotion map by listing ClusterIssuers and matching by source label.
       const caps = await getClusterCapabilities();
       setCapabilities(caps);
@@ -83,7 +97,7 @@ const CertificateAuthoritiesPage: React.FC = () => {
         setPromotedIssuers(map);
       }
     } catch (e: any) {
-      message.error('Failed to load CA registry: ' + (e?.message || e));
+      setLoadError(serverMessage(e, 'The Company CA registry could not be loaded.'));
     } finally {
       setLoading(false);
     }
@@ -100,7 +114,7 @@ const CertificateAuthoritiesPage: React.FC = () => {
       message.success(`Promoted to ClusterIssuer ${res.clusterIssuerName} (${res.ready ? 'ready' : 'pending'})`);
       refresh();
     } catch (e: any) {
-      message.error('Promote failed: ' + (e?.message || e));
+      message.error('Promote failed: ' + serverMessage(e));
     }
   };
 
@@ -110,7 +124,7 @@ const CertificateAuthoritiesPage: React.FC = () => {
       message.success('CA deleted');
       refresh();
     } catch (e: any) {
-      message.error('Delete failed: ' + (e?.message || e));
+      message.error('Delete failed: ' + serverMessage(e));
     }
   };
 
@@ -121,7 +135,7 @@ const CertificateAuthoritiesPage: React.FC = () => {
       setUploadOpen(false);
       refresh();
     } catch (e: any) {
-      message.error('Upload failed: ' + (e?.message || e));
+      message.error('Upload failed: ' + serverMessage(e));
     }
   };
 
@@ -240,6 +254,15 @@ const CertificateAuthoritiesPage: React.FC = () => {
         Either path uses the same root of trust.
       </Paragraph>
 
+      {loadError && (
+        <Alert type="error" showIcon style={{ marginBottom: 16 }}
+          message="Company CAs cannot be read" description={loadError} />
+      )}
+      {registry && registry.canWrite === false && (
+        <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+          message="Company CAs cannot be uploaded or changed" description={registry.message} />
+      )}
+
       {capabilities && !capabilities.certManager.installed && (
         <Alert
           type="info"
@@ -259,12 +282,12 @@ const CertificateAuthoritiesPage: React.FC = () => {
         pagination={false}
       />
 
-      <UploadModal open={uploadOpen} onCancel={() => setUploadOpen(false)} onSubmit={onUpload} />
+      <UploadModal open={uploadOpen} namespace={registry?.namespace} onCancel={() => setUploadOpen(false)} onSubmit={onUpload} />
     </div>
   );
 };
 
-const UploadModal: React.FC<{ open: boolean; onCancel: () => void; onSubmit: (v: any) => void }> = ({ open, onCancel, onSubmit }) => {
+const UploadModal: React.FC<{ open: boolean; namespace?: string; onCancel: () => void; onSubmit: (v: any) => void }> = ({ open, namespace, onCancel, onSubmit }) => {
   const [form] = Form.useForm();
   const onFinish = (vals: any) => onSubmit(vals);
   return (
@@ -281,7 +304,7 @@ const UploadModal: React.FC<{ open: boolean; onCancel: () => void; onSubmit: (v:
         showIcon
         style={{ marginBottom: 12 }}
         message="Private key in transit"
-        description="The CA private key is uploaded over the (TLS-protected) view connection and stored as a kubernetes.io/tls Secret in the ambari-pki namespace. Encryption-at-rest is the cluster's etcd-encryption configuration; ensure it's enabled (KMS provider recommended)."
+        description={`The CA private key is uploaded over the (TLS-protected) view connection and stored as a kubernetes.io/tls Secret in the ${namespace || 'ambari-pki'} project, which only administrators should be able to read. Encryption-at-rest is the cluster's etcd-encryption configuration; ensure it's enabled (KMS provider recommended).`}
       />
       <Form layout="vertical" form={form} onFinish={onFinish}>
         <Form.Item name="caName" label="Name" rules={[{ required: true, pattern: /^[a-z0-9-]+$/, message: 'lowercase letters, digits and dashes only' }]}>

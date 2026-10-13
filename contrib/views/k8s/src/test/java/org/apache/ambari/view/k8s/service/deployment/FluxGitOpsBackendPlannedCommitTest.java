@@ -173,7 +173,7 @@ class FluxGitOpsBackendPlannedCommitTest {
     /** A file as published on a branch of the remote, or null. */
     private String published(String branch, String path) throws Exception {
         Path clone = tmp.resolve("verify-" + System.nanoTime());
-        try (Git ignored = Git.cloneRepository().setURI(repoUrl).setBranch(branch).setDirectory(clone.toFile()).call()) {
+        try (Git ignored = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, branch, clone)) {
             Path file = clone.resolve(path);
             return Files.exists(file) ? Files.readString(file) : null;
         }
@@ -269,6 +269,24 @@ class FluxGitOpsBackendPlannedCommitTest {
     }
 
     @Test
+    void aDependencyRefusedForAnInvalidValueIsReportedWithTheDependencyItStopped() throws Exception {
+        HelmDeployRequest request = request("main");
+        request.setDependencies(new LinkedHashMap<>(Map.of("keda",
+                new LinkedHashMap<>(Map.of("chart", "keda", "namespace", "keda")))));
+        FluxGitOpsBackend.PlannedRelease planned = new FluxGitOpsBackend.PlannedRelease(planned().overrides(), Boolean.TRUE,
+                (name, namespace, repoId) -> {
+                    throw new IllegalArgumentException("the webhook URL is not a URL");
+                });
+
+        IllegalStateException stopped = assertThrows(IllegalStateException.class,
+                () -> backend().commit(request, null, planned));
+
+        assertEquals("GitOps deploy of analytics/superset stopped: dependency keda could not be prepared in namespace "
+                + "keda, so nothing was committed to Git: the webhook URL is not a URL", stopped.getMessage());
+        assertNull(published("main", RELEASE_DIR + "/helmrelease.yaml"));
+    }
+
+    @Test
     void aPlannedCommitLeavesKerberosTheTruststoreAndTheImagePullSecretToThePlan() throws Exception {
         CommandUtils commandUtils = mock(CommandUtils.class);
         FluxGitOpsBackend backend = backend();
@@ -284,6 +302,7 @@ class FluxGitOpsBackendPlannedCommitTest {
         // Neither asked of Ambari nor prepared again: the plan did it, the way a direct deploy does.
         verify(commandUtils, never()).resolveClusterName(any(), any());
         verify(commandUtils, never()).ensureKrb5ConfConfigMap(anyString(), anyString());
+        verify(commandUtils, never()).prepareKrb5ConfConfigMap(anyString(), anyString(), any());
         verify(k8s, never()).createMounts(anyString(), anyString(), anyMap());
         String helmRelease = published("main", RELEASE_DIR + "/helmrelease.yaml");
         assertFalse(helmRelease.contains("regcred"), "the plan's overrides name the pull Secret, not the backend: "

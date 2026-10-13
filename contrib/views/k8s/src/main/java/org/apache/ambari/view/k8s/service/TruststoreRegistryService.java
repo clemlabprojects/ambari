@@ -42,17 +42,21 @@ import java.util.UUID;
  * key — distinct from {@link CaRegistryService}, which stores issuing CAs *with* keys).
  *
  * <p>Each truststore is a Secret named {@code <sanitized-name>-truststore} in a single management
- * namespace (instance property {@code truststore.namespace}, falling back to {@code pki.namespace},
- * default {@code ambari-pki}) carrying {@code ca.crt} (PEM) plus a JVM-consumable
- * {@code truststore.jks}/{@code truststore.password}. Truststores flagged default
+ * namespace (see {@link PkiNamespaces#truststoreNamespace()}) carrying {@code ca.crt} (PEM) plus a
+ * JVM-consumable {@code truststore.jks}/{@code truststore.password}, labelled
+ * {@link #LABEL_RESOURCE_TYPE}={@value #RESOURCE_TYPE_TRUSTSTORE}. Truststores flagged default
  * ({@link #ANNOTATION_TRUST_DEFAULT}) are trusted by every release; others can be selected per
  * release in the install wizard. {@link TrustBundleService} merges both into the release truststore.
+ *
+ * <p>Only the Secrets of the management namespace count as truststores, for selection, for the default flag and for
+ * the trust every release gets. A Secret carrying the same label in any other namespace is not one: whoever may write
+ * Secrets in a workload project could otherwise add a trust anchor to every release KDPS deploys.</p>
  */
 public class TruststoreRegistryService {
 
     private static final Logger LOG = LoggerFactory.getLogger(TruststoreRegistryService.class);
 
-    public static final String DEFAULT_MGMT_NAMESPACE = "ambari-pki";
+    public static final String DEFAULT_MGMT_NAMESPACE = PkiNamespaces.DEFAULT_NAMESPACE;
     public static final String SUFFIX = "-truststore";
 
     public static final String LABEL_MANAGED_BY = "managed-by";
@@ -67,25 +71,21 @@ public class TruststoreRegistryService {
 
     private final ViewContext viewContext;
     private final KubernetesService kubernetesService;
+    private final PkiNamespaces namespaces;
 
     public TruststoreRegistryService(ViewContext viewContext, KubernetesService kubernetesService) {
-        this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
-        this.kubernetesService = Objects.requireNonNull(kubernetesService, "kubernetesService");
+        this(viewContext, kubernetesService, new PkiNamespaces(viewContext));
     }
 
-    /** Management namespace where operator-created truststores live. */
+    TruststoreRegistryService(ViewContext viewContext, KubernetesService kubernetesService, PkiNamespaces namespaces) {
+        this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
+        this.kubernetesService = Objects.requireNonNull(kubernetesService, "kubernetesService");
+        this.namespaces = Objects.requireNonNull(namespaces, "namespaces");
+    }
+
+    /** Management namespace where truststores created in the Truststores tab are written. */
     public String managementNamespace() {
-        Map<String, String> props = viewContext.getProperties();
-        if (props != null) {
-            String v = props.get("truststore.namespace");
-            if (v == null || v.isBlank()) {
-                v = props.get("pki.namespace");
-            }
-            if (v != null && !v.isBlank()) {
-                return v.trim();
-            }
-        }
-        return DEFAULT_MGMT_NAMESPACE;
+        return namespaces.truststoreNamespace();
     }
 
     /** Stable, DNS-1123-safe Secret name ({@code <name>-truststore}) for a truststore. */
@@ -185,7 +185,7 @@ public class TruststoreRegistryService {
 
     /** Flip the default flag on a managed truststore. Multiple truststores may be default. */
     public Map<String, Object> setDefault(String namespace, String name, boolean value) {
-        String ns = (namespace == null || namespace.isBlank()) ? managementNamespace() : namespace;
+        String ns = requireManagementNamespace(namespace, name);
         Secret secret = kubernetesService.getClient().secrets().inNamespace(ns).withName(name).get();
         if (secret == null) {
             throw new IllegalArgumentException("Truststore not found: " + ns + "/" + name);
@@ -206,7 +206,7 @@ public class TruststoreRegistryService {
 
     /** Delete a managed truststore. Refuses to delete non-managed (e.g. per-release) truststores. */
     public void delete(String namespace, String name) {
-        String ns = (namespace == null || namespace.isBlank()) ? managementNamespace() : namespace;
+        String ns = requireManagementNamespace(namespace, name);
         Secret secret = kubernetesService.getClient().secrets().inNamespace(ns).withName(name).get();
         if (secret == null) {
             throw new IllegalArgumentException("Truststore not found: " + ns + "/" + name);
@@ -216,42 +216,118 @@ public class TruststoreRegistryService {
         LOG.info("truststore-registry: DELETED {}/{}", ns, name);
     }
 
-    /** Return the {@code ca.crt} PEM of a truststore referenced by its short name (management ns). */
-    public String caPemByName(String name) {
+    /**
+     * The {@code ca.crt} PEM of a truststore created in the Truststores tab.
+     *
+     * @param ref {@code <namespace>/<name>}, as the deploy wizard sends it from the listing, or a bare name (as deploys
+     *            recorded by earlier versions and chart repositories name it), read from the management namespace;
+     *            the name with or without its {@value #SUFFIX} suffix
+     * @return the PEM bundle
+     * @throws IllegalArgumentException when the namespace is not the management namespace, or the Secret is missing,
+     *                                  was not created in the Truststores tab, or holds no {@code ca.crt}
+     */
+    public String caPemByName(String ref) {
+        Objects.requireNonNull(ref, "ref");
+        String namespace = managementNamespace();
+        String name = ref.trim();
+        int slash = name.indexOf('/');
+        if (slash >= 0) {
+            String given = name.substring(0, slash).trim();
+            name = name.substring(slash + 1).trim();
+            namespace = requireManagementNamespace(given, name);
+        }
         String secretName = secretNameFor(name);
-        return kubernetesService.readOpaqueSecretKeyAsBytes(managementNamespace(), secretName, "ca.crt")
-                .map(b -> new String(b, StandardCharsets.UTF_8))
-                .orElseThrow(() -> new IllegalArgumentException("Truststore not found or missing ca.crt: " + name));
+        Secret secret = kubernetesService.getSecret(namespace, secretName);
+        if (secret == null) {
+            throw new IllegalArgumentException("Truststore not found: " + namespace + "/" + secretName);
+        }
+        // Only truststores created in the Truststores tab: any other Secret of a reachable project, a release's own
+        // truststore for one, is not a trust anchor the operator chose.
+        if (!isManaged(secret)) {
+            throw new IllegalArgumentException("Secret " + namespace + "/" + secretName
+                    + " is not a truststore created in the Truststores tab");
+        }
+        String encoded = secret.getData() == null ? null : secret.getData().get("ca.crt");
+        if (encoded == null || encoded.isBlank()) {
+            throw new IllegalArgumentException("Truststore " + namespace + "/" + secretName + " has no ca.crt");
+        }
+        try {
+            return new String(Base64.getDecoder().decode(encoded.trim()), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException notBase64) {
+            throw new IllegalArgumentException("Truststore " + namespace + "/" + secretName + " has an unreadable ca.crt");
+        }
     }
 
-    /** Return the {@code ca.crt} PEM bundles of every truststore flagged default (management ns). */
+    /**
+     * The {@code ca.crt} PEM bundles of every truststore flagged default in the management namespace.
+     *
+     * @return the PEM bundles
+     * @throws RuntimeException when they cannot be listed
+     */
     public List<String> defaultTruststorePems() {
         List<String> out = new ArrayList<>();
         String ns = managementNamespace();
-        List<Secret> secrets;
-        try {
-            secrets = kubernetesService.getClient().secrets().inNamespace(ns)
-                    .withLabel(LABEL_RESOURCE_TYPE, RESOURCE_TYPE_TRUSTSTORE).list().getItems();
-        } catch (Exception e) {
-            LOG.warn("truststore-registry: could not list default truststores in {}: {}", ns, e.toString());
-            return out;
-        }
-        for (Secret s : secrets) {
+        for (Secret s : kubernetesService.listViewSecretsWithLabel(ns, LABEL_RESOURCE_TYPE, RESOURCE_TYPE_TRUSTSTORE)) {
             Map<String, String> ann = s.getMetadata() != null ? s.getMetadata().getAnnotations() : null;
             boolean isDefault = ann != null && Boolean.parseBoolean(ann.getOrDefault(ANNOTATION_TRUST_DEFAULT, "false"));
             if (!isDefault) continue;
             Map<String, String> data = s.getData();
-            if (data != null && data.containsKey("ca.crt")) {
-                out.add(new String(Base64.getDecoder().decode(data.get("ca.crt")), StandardCharsets.UTF_8));
+            if (data != null && data.get("ca.crt") != null) {
+                try {
+                    out.add(new String(Base64.getDecoder().decode(data.get("ca.crt").trim()), StandardCharsets.UTF_8));
+                } catch (IllegalArgumentException notBase64) {
+                    LOG.warn("truststore-registry: default truststore {}/{} has an unreadable ca.crt; skipped",
+                            s.getMetadata().getNamespace(), s.getMetadata().getName());
+                }
             }
         }
         return out;
     }
 
-    private void requireManaged(Secret secret) {
+    /**
+     * Marks the listed truststores the way they are used: one of the management namespace created in the Truststores
+     * tab is managed, and trusted by every release when flagged default. One carrying the label elsewhere is shown as
+     * any other Secret, neither selectable nor default, since a deploy would not trust it.
+     *
+     * @param listed the Secrets named {@code *}{@value #SUFFIX} the account can read; changed in place
+     * @return the same list
+     */
+    public List<KubernetesService.TruststoreSummary> markManaged(List<KubernetesService.TruststoreSummary> listed) {
+        String ns = managementNamespace();
+        for (KubernetesService.TruststoreSummary t : listed) {
+            if (t.managed && !ns.equals(t.namespace)) {
+                t.managed = false;
+                t.isDefault = false;
+            }
+        }
+        return listed;
+    }
+
+    /**
+     * The namespace a truststore of the Truststores tab is in.
+     *
+     * @param namespace the namespace given; {@code null} or blank for the management namespace
+     * @param name      the truststore, for the message
+     * @return the management namespace
+     * @throws IllegalArgumentException when another namespace is given
+     */
+    private String requireManagementNamespace(String namespace, String name) {
+        String ns = managementNamespace();
+        if (namespace == null || namespace.isBlank() || ns.equals(namespace.trim())) {
+            return ns;
+        }
+        throw new IllegalArgumentException("Truststore " + namespace.trim() + "/" + name + " is not in the truststore "
+                + "project " + ns + " set in Cluster Settings; only the truststores of that project can be trusted or "
+                + "changed. Create it again in the Truststores tab.");
+    }
+
+    private static boolean isManaged(Secret secret) {
         Map<String, String> labels = secret.getMetadata() != null ? secret.getMetadata().getLabels() : null;
-        boolean managed = labels != null && RESOURCE_TYPE_TRUSTSTORE.equals(labels.get(LABEL_RESOURCE_TYPE));
-        if (!managed) {
+        return labels != null && RESOURCE_TYPE_TRUSTSTORE.equals(labels.get(LABEL_RESOURCE_TYPE));
+    }
+
+    private void requireManaged(Secret secret) {
+        if (!isManaged(secret)) {
             throw new IllegalArgumentException("Refusing to modify a non view-managed truststore "
                     + "(only truststores created in this tab can be changed)");
         }

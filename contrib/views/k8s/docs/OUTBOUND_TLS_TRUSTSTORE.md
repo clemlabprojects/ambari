@@ -52,10 +52,29 @@ The view builds the bundle from:
    the CA the view itself uses to sign mutating-webhook serving certs and
    other in-cluster leaves.
 
-The two are merged: every cert in the Ambari truststore is appended to the
-PEM bundle, plus the Ambari internal CA if not already present (verified
-by attempted-verify against each existing entry). Result: one
-deduplicated PEM bundle covering every CA the workload could need.
+3. **The default truststores** of the Truststores page (flagged *default*),
+   in the *Truststore project*.
+4. **The truststores selected for the release** in the deploy wizard
+   (`<namespace>/<name>`), read from the *Truststore project* only.
+
+All are merged and deduplicated by fingerprint. Result: one PEM bundle
+covering every CA the workload could need.
+
+A source trusted by every release (1–3) that cannot be read is left out
+with a warning in the operation log. A truststore selected for the
+release that cannot be read — deleted, renamed, or in a project KDPS may
+not read — stops the deploy before Helm runs or anything is committed to
+Git, naming it. So does a `<releaseName>-truststore` Secret that cannot
+be written when truststores were selected, or when the service mounts the
+Secret itself (GitLab, JupyterHub).
+
+The truststores of the Truststores page live in the *Truststore project*
+(Cluster Settings → *Truststores and Company CAs*; `ambari-pki` by
+default). Only that project counts: a Secret carrying the truststore label
+in any other project is listed as a plain Secret, never selectable nor
+trusted by default, so that whoever may write Secrets in a workload project
+cannot add a trust anchor to every release. Grant write access to the
+Truststore project only to those who manage the platform's trust.
 
 To add a CA system-wide (so every future KDPS install picks it up):
 

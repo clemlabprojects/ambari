@@ -30,6 +30,8 @@ import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.TruststoreRegistryService;
+import org.apache.ambari.view.k8s.service.NamespaceScope;
+import org.apache.ambari.view.k8s.service.PkiNamespaces;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
 import org.apache.ambari.view.k8s.service.StackDefinitionService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
@@ -1015,14 +1017,16 @@ public class KubeService {
 
     /**
      * Lists Secrets matching the {@code *-truststore} convention with parsed
-     * {@code ca.crt} summaries. {@code namespace} is optional; null = cluster-wide.
+     * {@code ca.crt} summaries. {@code namespace} is optional; null = cluster-wide. Only those of the truststore
+     * project are managed (selectable in the wizard, default for every release).
      */
     @GET
     @Path("/truststores")
     @Produces(MediaType.APPLICATION_JSON)
     public Response listTruststores(@javax.ws.rs.QueryParam("namespace") String namespace) {
         try {
-            return Response.ok(getKubernetesService().listTruststores(namespace)).build();
+            return Response.ok(truststoreRegistry().markManaged(getKubernetesService().listTruststores(namespace)))
+                    .build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -1030,6 +1034,39 @@ public class KubeService {
 
     private TruststoreRegistryService truststoreRegistry() {
         return new TruststoreRegistryService(viewContext, getKubernetesService());
+    }
+
+    /**
+     * Where truststores created in the Truststores tab are written, and whether KDPS may write Secrets there: the page
+     * warns before the operator tries. Body: {namespace, canWrite, message?}.
+     */
+    @GET
+    @Path("/truststores/registry")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response truststoreRegistryStatus() {
+        try {
+            String namespace = truststoreRegistry().managementNamespace();
+            boolean canWrite = getKubernetesService().canI("create", "", "secrets", null, null, namespace);
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            out.put("namespace", namespace);
+            out.put("canWrite", canWrite);
+            if (!canWrite) {
+                out.put("message", PkiNamespaces.forbiddenMessage(namespace));
+            }
+            return Response.ok(out).build();
+        } catch (Exception e) {
+            return handleError(e);
+        }
+    }
+
+    /**
+     * A truststore change refused because KDPS may not write Secrets in the namespace: 403 with what to do. An expected
+     * situation for an account limited to its own projects, so a warning, not an unexpected error.
+     */
+    private Response truststoreRefused(String namespace, Exception e) {
+        String message = PkiNamespaces.forbiddenMessage(namespace);
+        LOG.warn("{} ({})", message, e.getMessage());
+        return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", message)).build();
     }
 
     /** Create a truststore from a public certificate PEM. Body: {name, caCertPem, default?, description?}. */
@@ -1052,6 +1089,9 @@ public class KubeService {
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
+            if (NamespaceScope.isForbidden(e)) {
+                return truststoreRefused(truststoreRegistry().managementNamespace(), e);
+            }
             return handleError(e);
         }
     }
@@ -1073,6 +1113,9 @@ public class KubeService {
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
+            if (NamespaceScope.isForbidden(e)) {
+                return truststoreRefused(namespace, e);
+            }
             return handleError(e);
         }
     }
@@ -1091,6 +1134,9 @@ public class KubeService {
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
+            if (NamespaceScope.isForbidden(e)) {
+                return truststoreRefused(namespace, e);
+            }
             return handleError(e);
         }
     }
