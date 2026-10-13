@@ -251,8 +251,9 @@ public class ContextResource {
             String url = body == null ? null : java.util.Objects.toString(body.get("cmUrl"), null);
             String user = body == null ? null : java.util.Objects.toString(body.get("cmUsername"), null);
             String pass = body == null ? null : java.util.Objects.toString(body.get("cmPassword"), null);
-            boolean verifySsl = body != null && "true".equalsIgnoreCase(
-                    java.util.Objects.toString(body.get("verifySsl"), "false"));
+            // verifySsl defaults to true unless explicitly false, as for a remote Ambari.
+            boolean verifySsl = body == null || !"false".equalsIgnoreCase(
+                    java.util.Objects.toString(body.get("verifySsl"), "true"));
             java.util.Map<String, Object> result =
                     new ContextService(viewContext).probeCdp(url, user, pass, verifySsl);
             return Response.ok(result).build();

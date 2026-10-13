@@ -26,6 +26,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -254,19 +255,23 @@ final class TagSyncRangerAccount {
         return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : null;
     }
 
-    /** A Ranger the view reaches directly, with the administrator credentials stored on the platform context. */
-    static RangerUsers direct(String rangerUrl, String adminUser, String adminPassword) {
+    /**
+     * A Ranger the view reaches directly, with the administrator credentials stored on the platform context.
+     *
+     * @param tls how the certificate of that Ranger is checked (the platform context's policy)
+     */
+    static RangerUsers direct(TlsPolicy tls, String rangerUrl, String adminUser, String adminPassword) {
         return new RangerUsers() {
             @Override
             public void ensure(String userName, String password, String owner) throws Exception {
-                OmAtlasProvisioning.ensureInternalRangerUser(rangerUrl, adminUser, adminPassword, userName, password,
-                        List.of(ROLE), owner);
+                OmAtlasProvisioning.ensureInternalRangerUser(tls, rangerUrl, adminUser, adminPassword, userName,
+                        password, List.of(ROLE), owner);
             }
 
             @Override
             public boolean disable(String userName, String owner) throws Exception {
-                return OmAtlasProvisioning.disableInternalRangerUser(rangerUrl, adminUser, adminPassword, userName,
-                        owner);
+                return OmAtlasProvisioning.disableInternalRangerUser(tls, rangerUrl, adminUser, adminPassword,
+                        userName, owner);
             }
         };
     }

@@ -18,12 +18,16 @@
 
 package org.apache.ambari.view.k8s.service.deployment;
 
+import com.sun.net.httpserver.HttpServer;
+import org.apache.ambari.view.k8s.service.ProxySupport;
 import org.apache.ambari.view.k8s.service.deployment.GitPullRequests.Api;
 import org.apache.ambari.view.k8s.service.deployment.GitPullRequests.Provider;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -32,6 +36,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Flow;
 import java.util.function.Function;
 
@@ -297,6 +302,42 @@ class GitPullRequestsTest {
                 + " requests on those Git servers only: check the repository URL and that the access token may read the"
                 + " repository, or use Direct commit.", refused.getMessage());
         assertTrue(received.stream().noneMatch(r -> r.method().equals("POST")), "nothing opened");
+    }
+
+    /**
+     * Through the client the view builds (no proxy credentials), a Git server that refuses the access token answers
+     * HTTP 401 for each API asked, once each, rather than reading as a server that cannot be reached.
+     */
+    @Test
+    void anAccessTokenTheServerRefusesIsReportedAsHttp401ForEachApiAsked() throws Exception {
+        HttpServer git = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        List<String> asked = new CopyOnWriteArrayList<>();
+        git.createContext("/", exchange -> {
+            asked.add(exchange.getRequestURI().getPath());
+            if (exchange.getRequestURI().getPath().contains("/api/v4/")) {
+                exchange.getResponseHeaders().add("WWW-Authenticate", "Bearer realm=\"gitlab\"");
+            } else if (exchange.getRequestURI().getPath().contains("/api/v1/")) {
+                exchange.getResponseHeaders().add("WWW-Authenticate", "Basic realm=\"gitea\"");
+            }
+            exchange.sendResponseHeaders(401, -1);
+            exchange.close();
+        });
+        git.start();
+        try {
+            String root = "http://127.0.0.1:" + git.getAddress().getPort();
+            GitPullRequests pullRequests = GitPullRequests.through(ProxySupport.clients(HttpClient::newBuilder,
+                    () -> ProxySupport.from(null, null, null, null, false)));
+
+            GitPullRequests.UnsupportedGitServerException refused = assertThrows(
+                    GitPullRequests.UnsupportedGitServerException.class,
+                    () -> pullRequests.open(root + "/platform/gitops.git", "main", "flux-1", "t", "expired"));
+
+            assertTrue(refused.getMessage().contains("(GitLab " + root + "/api/v4: HTTP 401; Gitea " + root
+                    + "/api/v1: HTTP 401; GitHub " + root + "/api/v3: HTTP 401)"), refused.getMessage());
+            assertEquals(3, asked.size(), "one request per API, none retried: " + asked);
+        } finally {
+            git.stop(0);
+        }
     }
 
     @Test

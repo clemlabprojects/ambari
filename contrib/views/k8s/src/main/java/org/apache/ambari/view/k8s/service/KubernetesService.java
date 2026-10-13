@@ -2396,23 +2396,6 @@ public class KubernetesService {
     }
 
     /**
-     * Install the view-wide outbound proxy (for internet Helm/Git repos), keeping the Kubernetes API
-     * host DIRECT so cluster traffic never goes through the corporate proxy. Safe to call repeatedly.
-     */
-    public void applyProxySettings() {
-        try {
-            String apiHost = null;
-            if (client != null && client.getConfiguration() != null && client.getConfiguration().getMasterUrl() != null) {
-                try { apiHost = java.net.URI.create(client.getConfiguration().getMasterUrl()).getHost(); }
-                catch (Exception ignored) { /* leave null */ }
-            }
-            getConfigurationService().buildProxySupport(apiHost).install();
-        } catch (Exception e) {
-            LOG.warn("Failed to apply outbound proxy settings: {}", e.toString());
-        }
-    }
-
-    /**
      * Whether the connected account may create ClusterRoleBindings, i.e. grant cluster-wide roles such as
      * {@code cluster-monitoring-view}. Accounts limited to their own projects may not.
      */
@@ -4318,11 +4301,6 @@ public class KubernetesService {
         this.openShiftDetectionRetryAt.set(0);
         this.monitoringTokenCache.set(null);
         this.namespaceScope.reset();
-        try {
-            applyProxySettings();
-        } catch (RuntimeException e) {
-            LOG.warn("Could not apply proxy settings to the new client: {}", e.toString());
-        }
         retire(previous);
         LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
         return true;

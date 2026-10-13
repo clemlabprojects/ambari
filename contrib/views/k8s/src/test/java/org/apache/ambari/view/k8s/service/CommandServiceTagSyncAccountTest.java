@@ -27,6 +27,7 @@ import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.om.FakeRangerAdmin;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -107,7 +108,7 @@ class CommandServiceTagSyncAccountTest {
         service.tagSyncAccounts = records;
         service.tagSyncRangers = access -> contextId -> {
             located.add(contextId);
-            return TagSyncRangerAccount.direct(ranger.url(), "admin", "admin-pw");
+            return TagSyncRangerAccount.direct(TlsPolicy.JVM_DEFAULT, ranger.url(), "admin", "admin-pw");
         };
         service.tagSyncInstance = () -> INSTANCE;
     }

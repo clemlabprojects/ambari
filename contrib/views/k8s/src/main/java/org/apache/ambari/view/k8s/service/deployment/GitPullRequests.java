@@ -39,6 +39,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * The pull requests of a Git repository (merge requests on GitLab), through the API of its Git server: GitHub
@@ -141,12 +142,22 @@ public class GitPullRequests {
         }
     }
 
-    private final HttpClient httpClient;
+    /** The client of the moment: which one may change with the outbound proxy settings. */
+    private final Supplier<HttpClient> httpClient;
     /** The API found for a repository whose server had to be asked, by repository. */
     private final Map<String, Api> found = new ConcurrentHashMap<>();
 
     public GitPullRequests(HttpClient httpClient) {
+        this.httpClient = () -> httpClient;
+    }
+
+    private GitPullRequests(Supplier<HttpClient> httpClient) {
         this.httpClient = httpClient;
+    }
+
+    /** Pull requests sent through the client {@code httpClient} gives at each request. */
+    public static GitPullRequests through(Supplier<HttpClient> httpClient) {
+        return new GitPullRequests(httpClient);
     }
 
     /** Whether a pull request in that state may still be merged: its branch may take more changes. */
@@ -441,7 +452,7 @@ public class GitPullRequests {
         IOException last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = httpClient.get().send(request, HttpResponse.BodyHandlers.ofString());
                 if (response.statusCode() >= 500 && attempt < MAX_ATTEMPTS) {
                     LOG.warn("Git server API {} returned {} for {}, trying again", request.uri().getHost(),
                             response.statusCode(), label);

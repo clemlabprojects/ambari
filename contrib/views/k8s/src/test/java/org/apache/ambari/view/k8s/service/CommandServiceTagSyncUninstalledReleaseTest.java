@@ -35,6 +35,7 @@ import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.InMemoryDataStore;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -125,7 +126,7 @@ class CommandServiceTagSyncUninstalledReleaseTest {
         ranger.addUser("admin", 0, "admin-pw", "ROLE_SYS_ADMIN");
         records = new TagSyncRangerAccountTest.MemoryRecords();
         service.tagSyncAccounts = records;
-        service.tagSyncRangers = access -> contextId -> TagSyncRangerAccount.direct(ranger.url(), "admin", "admin-pw");
+        service.tagSyncRangers = access -> contextId -> TagSyncRangerAccount.direct(TlsPolicy.JVM_DEFAULT, ranger.url(), "admin", "admin-pw");
         service.tagSyncInstance = () -> INSTANCE;
 
         // A release of its own per test: the in-flight Helm registry is shared by the whole JVM.
@@ -154,8 +155,8 @@ class CommandServiceTagSyncUninstalledReleaseTest {
     /** The account the plan of the deploy {@code grant} gave the release, and the Secret it wrote. */
     private void accountGivenByThePlanOf(String grant) {
         doReturn(null).when(k8s).getSecret(NS, TagSyncRangerAccount.secretName(rel));
-        TagSyncRangerAccount.provision(k8s, records, TagSyncRangerAccount.direct(ranger.url(), "admin", "admin-pw"),
-                contextId -> TagSyncRangerAccount.direct(ranger.url(), "admin", "admin-pw"), NS, rel, "cdp-prod",
+        TagSyncRangerAccount.provision(k8s, records, TagSyncRangerAccount.direct(TlsPolicy.JVM_DEFAULT, ranger.url(), "admin", "admin-pw"),
+                contextId -> TagSyncRangerAccount.direct(TlsPolicy.JVM_DEFAULT, ranger.url(), "admin", "admin-pw"), NS, rel, "cdp-prod",
                 null, INSTANCE, null, grant);
         doReturn(kdpsSecret()).when(k8s).getSecret(NS, TagSyncRangerAccount.secretName(rel));
     }

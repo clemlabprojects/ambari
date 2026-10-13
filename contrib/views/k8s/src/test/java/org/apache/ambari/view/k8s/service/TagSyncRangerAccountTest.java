@@ -28,6 +28,7 @@ import org.apache.ambari.view.k8s.service.om.FakeRangerAdmin;
 import org.apache.ambari.view.k8s.store.InMemoryDataStore;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -101,7 +102,7 @@ class TagSyncRangerAccountTest {
     }
 
     private TagSyncRangerAccount.RangerUsers directRanger() {
-        return TagSyncRangerAccount.direct(ranger.url(), "admin", "admin-pw");
+        return TagSyncRangerAccount.direct(TlsPolicy.JVM_DEFAULT, ranger.url(), "admin", "admin-pw");
     }
 
     private TagSyncRangerAccount.Provisioned provision(TagSyncRangerAccount.RangerUsers users, String contextId) {

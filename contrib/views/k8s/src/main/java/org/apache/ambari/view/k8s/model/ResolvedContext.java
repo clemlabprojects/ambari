@@ -58,6 +58,11 @@ public class ResolvedContext {
     // unaffected. Defaults to true (KDPS auto-configures). Meaningful for EXTERNAL/REMOTE contexts.
     private boolean autoConfigureRemote = true;
 
+    // Whether the view checks the TLS certificate and host name of the context's Ranger, Atlas and
+    // Cloudera Manager when it calls them with credentials. True unless the operator turned it off
+    // on an EXTERNAL, REMOTE or CDP context ("verifySsl": false); the managed cluster always verifies.
+    private boolean verifySsl = true;
+
     // Ranger
     private boolean rangerManaged;  // true → delegate ops to Ambari server; false → view-side REST
     private String rangerUrl;       // EXTERNAL only
@@ -146,6 +151,8 @@ public class ResolvedContext {
     public void setRangerManaged(boolean rangerManaged) { this.rangerManaged = rangerManaged; }
     public boolean isAutoConfigureRemote() { return autoConfigureRemote; }
     public void setAutoConfigureRemote(boolean autoConfigureRemote) { this.autoConfigureRemote = autoConfigureRemote; }
+    public boolean isVerifySsl() { return verifySsl; }
+    public void setVerifySsl(boolean verifySsl) { this.verifySsl = verifySsl; }
 
     public String getRangerUrl() { return rangerUrl; }
     public void setRangerUrl(String rangerUrl) { this.rangerUrl = rangerUrl; }
@@ -257,6 +264,7 @@ public class ResolvedContext {
         v.oidcAdminClientId = oidcAdminClientId;
         v.oidcVerifyTls = oidcVerifyTls;
         v.oidcPrincipalDomain = oidcPrincipalDomain;
+        v.verifySsl = verifySsl;
         v.resolvedFields = resolvedFields == null ? new java.util.LinkedHashMap<>()
                 : new java.util.LinkedHashMap<>(resolvedFields);
         v.unreadFields = unreadFields == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(unreadFields);
@@ -307,6 +315,8 @@ public class ResolvedContext {
         public String oidcAdminClientId;
         public String oidcVerifyTls;
         public String oidcPrincipalDomain;
+        /** Whether the view checks the certificates of this context's Ranger, Atlas and Cloudera Manager. */
+        public boolean verifySsl;
         public java.util.Map<String, String> resolvedFields;
         /** Names ({@code <capability>.<field>}) of the credentials that have a value, never the values. */
         public java.util.List<String> secretFieldsSet;

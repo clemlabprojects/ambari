@@ -380,15 +380,26 @@ public class ViewConfigurationService {
     public String getProxyUsername() { return settings.get(PROXY_USER_KEY); }
     public String getProxyNoProxy() { return settings.get(PROXY_NOPROXY_KEY); }
 
-    /** Build a {@link ProxySupport} from the stored settings, keeping {@code alwaysDirect} hosts direct. */
-    public ProxySupport buildProxySupport(String... alwaysDirect) {
-        String password = "";
+    /**
+     * The outbound proxy of a view instance as its settings hold it now. The clients that use it read it when they
+     * connect, so a change applies to the next connection without anything to install. Settings that cannot be read
+     * give no proxy.
+     */
+    public static ProxySupport outboundProxy(ViewContext viewContext) {
         try {
-            password = Objects.requireNonNullElse(settings.getSecret(PROXY_PASSWORD_ENC_KEY), "");
-        } catch (Exception e) {
-            LOG.warn("Failed to decrypt stored proxy password: {}", e.getMessage());
+            InstanceSettings settings = new InstanceSettings(viewContext);
+            String password = "";
+            try {
+                password = Objects.requireNonNullElse(settings.getSecret(PROXY_PASSWORD_ENC_KEY), "");
+            } catch (Exception e) {
+                LOG.warn("Failed to decrypt stored proxy password: {}", e.getMessage());
+            }
+            return ProxySupport.from(settings.get(PROXY_URL_KEY), settings.get(PROXY_USER_KEY), password,
+                    settings.get(PROXY_NOPROXY_KEY), Boolean.parseBoolean(settings.get(PROXY_ENABLED_KEY)));
+        } catch (RuntimeException e) {
+            LOG.debug("Outbound proxy settings unavailable, connecting directly: {}", e.toString());
+            return ProxySupport.from(null, null, null, null, false);
         }
-        return ProxySupport.from(getProxyUrl(), getProxyUsername(), password, getProxyNoProxy(), isProxyEnabled(), alwaysDirect);
     }
 
     public String getOpenShiftApiUrl() { return settings.get(OS_API_URL_KEY); }

@@ -2833,7 +2833,7 @@ public class CommandService {
                         + (takenBack.isEmpty() ? "" : " " + String.join(" ", takenBack)));
             }
             rangerUrl = externalRangerUrl;
-            ranger = TagSyncRangerAccount.direct(externalRangerUrl, rangerCtx.getRangerAdminUsername(),
+            ranger = TagSyncRangerAccount.direct(tlsOf(rangerCtx, "Ranger"), externalRangerUrl, rangerCtx.getRangerAdminUsername(),
                     rangerCtx.getRangerAdminPassword());
         } else if (managed) {
             rangerUrl = managedRangerUrl(rangerCtx, ambariActionClient, cluster);
@@ -4432,7 +4432,7 @@ public class CommandService {
             resources.put("tag", List.of(tag));
             String tagService = stringValue(body.get("tagServiceName"));
             if (tagService.isBlank() && direct) {
-                tagService = stringValue(org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.getTagServiceOf(
+                tagService = stringValue(org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.getTagServiceOf(tlsOf(rc, "Ranger"),
                         rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(), repo));
             }
             if (tagService.isBlank() && cluster != null) tagService = cluster + "_tag"; // Ambari's tag service naming
@@ -4476,7 +4476,7 @@ public class CommandService {
         result.put("policyType", policyType);
         result.put("accessTypes", accessTypes);
         if (direct) {
-            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(tlsOf(rc, "Ranger"),
                     rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                     serviceName, policyName, description, resources, Arrays.asList(accessTypes.split(",")),
                     users.isBlank() ? null : users, groups.isBlank() ? null : Arrays.asList(groups.split(",")),
@@ -9904,14 +9904,14 @@ public class CommandService {
                         directConfigs.putIfAbsent("username",
                                 (pluginUserName != null && !pluginUserName.isBlank()) ? pluginUserName : repoRc.getRangerAdminUsername());
                         if (pluginUserPassword != null && !pluginUserPassword.isBlank()) directConfigs.putIfAbsent("password", pluginUserPassword);
-                        long svcId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindService(
+                        long svcId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindService(tlsOf(repoRc, "Ranger"),
                                 repoRc.getRangerUrl(), repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
                                 rangerRepositoryName, serviceType, directConfigs);
                         LOG.info("Ranger plugin repository '{}' (type={}) ensured via context Ranger (direct REST, service id={})",
                                 rangerRepositoryName, serviceType, svcId);
                         TrinoImpersonationRules impersonation = null;
                         if ("trino".equalsIgnoreCase(serviceType)) {
-                            impersonation = restrictTrinoImpersonationViaRanger(repoRc.getRangerUrl(),
+                            impersonation = restrictTrinoImpersonationViaRanger(tlsOf(repoRc, "Ranger"), repoRc.getRangerUrl(),
                                     repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
                                     rangerRepositoryName, timeoutSeconds);
                         }
@@ -12951,6 +12951,16 @@ public class CommandService {
      * ({@code _platformContextId} / {@code _cluster} / {@code _baseUri} / {@code _callerHeaders}).
      * Returns null on failure (callers fall back to legacy form values).
      */
+    /**
+     * How the view checks the certificate of the {@code component} (Ranger, Atlas) of a platform context before it
+     * sends administrator credentials there: verified unless the context turned verification off.
+     *
+     * @param rc the resolved context; null for the cluster this Ambari manages, which is always verified
+     */
+    TlsPolicy tlsOf(org.apache.ambari.view.k8s.model.ResolvedContext rc, String component) {
+        return ContextService.tlsPolicyOf(ctx, rc, component);
+    }
+
     org.apache.ambari.view.k8s.model.ResolvedContext resolvePlatformContextForStep(
             Map<String, Object> childParams) {
         try {
@@ -13447,7 +13457,7 @@ public class CommandService {
             // win — direct REST; else a managed context delegates the grant to the Ambari server; else
             // there is no Ranger to grant on and we log a manual-remediation hint (non-fatal).
             if (rc != null && rc.hasDirectRangerCreds()) {
-                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(
+                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(tlsOf(rc, "Ranger"),
                         rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                         hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
                 LOG.info("OM_HIVE_BASE_INGESTION: context Ranger Hive read policy id={} for '{}' on '{}' (direct REST)",
@@ -13640,7 +13650,7 @@ public class CommandService {
                 if (direct) {
                     java.util.Map<String, java.util.List<String>> resources = gson.fromJson(g[1],
                             new TypeToken<java.util.Map<String, java.util.List<String>>>() {}.getType());
-                    long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+                    long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(tlsOf(rc, "Ranger"),
                             rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                             trinoService, policyName, description, resources, Arrays.asList(g[2].split(",")),
                             principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
@@ -14339,7 +14349,7 @@ public class CommandService {
         String atlasRestUrl = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveAtlasRestUrl(ambari, cluster);
         org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe probe =
                 (expUser != null && expPlain != null)
-                        ? org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(atlasRestUrl, expUser, expPlain)
+                        ? org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(tlsOf(null, "Atlas"), atlasRestUrl, expUser, expPlain)
                         : org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.UNKNOWN;
         boolean authActive = probe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.LOADED;
         boolean authNotLoaded = probe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.NOT_LOADED;
@@ -14464,9 +14474,11 @@ public class CommandService {
         if (atlasRestUrl.isBlank()) {
             atlasRestUrl = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveAtlasRestUrl(ambari, cluster);
         }
+        // The Atlas of the cluster this Ambari manages: its certificate is always verified.
+        TlsPolicy atlasTls = tlsOf(null, "Atlas");
         org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe probe =
                 org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(
-                        atlasRestUrl, creds.username, creds.plaintextPassword);
+                        atlasTls, atlasRestUrl, creds.username, creds.plaintextPassword);
         boolean needsRestart;
         String restartReason;
         switch (probe) {
@@ -14499,7 +14511,7 @@ public class CommandService {
                 if (ok) {
                     // Re-probe to CONFIRM the restart actually materialized + activated the user (closes the loop).
                     postProbe = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(
-                            atlasRestUrl, creds.username, creds.plaintextPassword);
+                            atlasTls, atlasRestUrl, creds.username, creds.plaintextPassword);
                     if (postProbe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.NOT_LOADED) {
                         LOG.warn("ATLAS_USER_PROVISION_OM: Atlas restarted (requestId={}) but federation user '{}' STILL gets 401 — "
                                 + "verify atlas.authentication.method.file=true is in effect and the ODP metadata.py hook ran.",
@@ -14650,6 +14662,7 @@ public class CommandService {
                 + "isKerberos={} policyName='{}'", rangerUrl, atlasService, principal, isKerberos, policyName);
 
         long policyId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindAtlasReadPolicy(
+                tlsOf(resolvePlatformContextForStep(childParams), "Ranger"),
                 rangerUrl, rangerUser, rangerPass, atlasService, policyName, principal, isKerberos,
                 java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
 
@@ -14772,7 +14785,7 @@ public class CommandService {
         // there). One grant: select on database/table/column — Hive maps DESCRIBE (and thus Superset's
         // column reflection) to 'select', the minimum that unblocks "tables list but show no columns".
         if (rc != null && rc.hasDirectRangerCreds()) {
-            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(tlsOf(rc, "Ranger"),
                     rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                     hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
             LOG.info("RANGER_POLICY_GRANT_HIVE_READ: granted select to '{}' on '{}' via context Ranger (direct REST, policy id={})",
@@ -14858,7 +14871,8 @@ public class CommandService {
             org.apache.ambari.view.k8s.service.deployment.GitClient git =
                     new org.apache.ambari.view.k8s.service.deployment.GitClient(workspace, repoUrl, branch, token, sshKey)
                             .withAuthor("KDPS", "kdps@clemlab.com")
-                            .withTimeout(FluxGitOpsBackend.gitTimeoutSeconds(ctx));
+                            .withTimeout(FluxGitOpsBackend.gitTimeoutSeconds(ctx))
+                            .withProxy(ViewConfigurationService.outboundProxy(ctx));
             git.sync();
             git.checkoutBranch(branch);
             git.writeFile(java.nio.file.Path.of(dagDir, fileName), content);
@@ -15637,7 +15651,7 @@ public class CommandService {
             if (contextId != null && !contextId.isBlank()) ctxParams.put("_platformContextId", contextId);
             org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(ctxParams);
             if (rc != null && rc.hasDirectRangerCreds()) {
-                return TagSyncRangerAccount.direct(rc.getRangerUrl().trim(), rc.getRangerAdminUsername(),
+                return TagSyncRangerAccount.direct(tlsOf(rc, "Ranger"), rc.getRangerUrl().trim(), rc.getRangerAdminUsername(),
                         rc.getRangerAdminPassword());
             }
             String cluster = stringValue(ctxParams.get("_cluster"));
@@ -15783,7 +15797,7 @@ public class CommandService {
             }
 
             if (direct) {
-                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(tlsOf(rc, "Ranger"),
                         rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                         polarisService, policyName, description, resources,
                         java.util.List.of(level[2].split(",")), principal,
@@ -15848,12 +15862,12 @@ public class CommandService {
      * view holds the admin credentials of. Same rules and order as
      * {@link #restrictTrinoImpersonationViaAmbari}.
      */
-    static TrinoImpersonationRules restrictTrinoImpersonationViaRanger(String rangerUrl, String rangerAdminUser,
+    static TrinoImpersonationRules restrictTrinoImpersonationViaRanger(TlsPolicy tls, String rangerUrl, String rangerAdminUser,
                                                                        String rangerAdminPassword,
                                                                        String rangerRepositoryName, int timeoutSeconds) {
         String selfGrantWarning = null;
         try {
-            org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureTrinoSelfImpersonationPolicy(
+            org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureTrinoSelfImpersonationPolicy(tls,
                     rangerUrl, rangerAdminUser, rangerAdminPassword, rangerRepositoryName,
                     TimeUnit.SECONDS.toMillis(timeoutSeconds));
         } catch (Exception e) {
@@ -15863,7 +15877,7 @@ public class CommandService {
 
         int revoked;
         try {
-            revoked = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.revokeTrinoImpersonationOfEveryone(
+            revoked = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.revokeTrinoImpersonationOfEveryone(tls,
                     rangerUrl, rangerAdminUser, rangerAdminPassword, rangerRepositoryName);
         } catch (Exception e) {
             throw new IllegalStateException(trinoImpersonationRevokeFailure(rangerRepositoryName, e), e);
@@ -16052,7 +16066,7 @@ public class CommandService {
         // Context Ranger creds win → direct REST against the context's Ranger (external CDP / manual);
         // otherwise a managed context delegates the grant to the Ambari server.
         if (rc != null && rc.hasDirectRangerCreds()) {
-            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(tlsOf(rc, "Ranger"),
                     rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                     trinoService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
             LOG.info("RANGER_POLICY_GRANT_TRINO_IMPERSONATE: granted impersonate to '{}' on '{}' via context Ranger (direct REST, policy id={})",

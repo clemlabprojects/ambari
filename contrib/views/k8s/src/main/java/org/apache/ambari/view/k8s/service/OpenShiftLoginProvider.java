@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.client.OAuthTokenProvider;
 import org.apache.ambari.view.k8s.utils.CompositeTrustManager;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -209,12 +210,16 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
     }
 
     private SSLContext buildSslContext() throws Exception {
+        if (insecure) {
+            // The operator asked to skip verification: the policy's trust manager also skips the host-name check,
+            // which java.net.http runs around a plain X509TrustManager, for this client only. The policy logs the
+            // warning.
+            return TlsPolicy.trustingAnyCertificate("OpenShift login at " + apiUrl)
+                    .sslContext(apiUrl == null ? null : URI.create(apiUrl).getHost());
+        }
         SSLContext ctx = SSLContext.getInstance("TLS");
         X509TrustManager tm;
-        if (insecure || caData == null || caData.isBlank()) {
-            if (insecure) {
-                LOG.warn("OpenShift login configured with insecure TLS (no CA verification).");
-            }
+        if (caData == null || caData.isBlank()) {
             tm = trustAll();
         } else {
             tm = trustManagerFor(caData);

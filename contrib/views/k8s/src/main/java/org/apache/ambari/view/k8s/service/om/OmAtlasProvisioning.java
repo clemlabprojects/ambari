@@ -26,6 +26,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,10 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 
 /**
  * Helpers shared by the Atlas-federation provisioning steps
@@ -58,6 +55,10 @@ import javax.net.ssl.X509TrustManager;
  * with the same effective inputs produces no externally-visible change.
  * That's load-bearing for the replayable-actions pattern (operator can
  * re-trigger from the UI without worrying about duplicate users/policies).
+ *
+ * <p>Every call to Ranger or Atlas carries an administrator's credentials, so each one takes the
+ * {@link TlsPolicy} of the platform context: the server certificate and host name are checked
+ * unless the operator turned verification off for that context.
  */
 public final class OmAtlasProvisioning {
 
@@ -317,9 +318,9 @@ public final class OmAtlasProvisioning {
      * (invariant), the outcome is unambiguous: 200/403 → {@link AtlasAuthProbe#LOADED};
      * 401 → {@link AtlasAuthProbe#NOT_LOADED} (a restart materializes it); anything else / error →
      * {@link AtlasAuthProbe#UNKNOWN} (fail-safe — caller keeps current behaviour, no forced restart).
-     * TLS trust matches the existing Ranger calls ({@link #configureSsl}, trust-all in dev).
+     * The certificate of Atlas is checked as {@code tls} says, like the Ranger calls.
      */
-    public static AtlasAuthProbe probeFederationUser(String atlasRestUrl, String username, String plaintextPassword) {
+    public static AtlasAuthProbe probeFederationUser(TlsPolicy tls, String atlasRestUrl, String username, String plaintextPassword) {
         if (atlasRestUrl == null || atlasRestUrl.isBlank() || username == null || username.isBlank()
                 || plaintextPassword == null || plaintextPassword.isEmpty()) {
             return AtlasAuthProbe.UNKNOWN;
@@ -328,7 +329,7 @@ public final class OmAtlasProvisioning {
         try {
             URL url = new URL(atlasRestUrl.trim().replaceAll("/+$", "") + "/api/atlas/admin/version");
             conn = (HttpURLConnection) url.openConnection();
-            configureSsl(conn);                 // trust-all (dev) + no-op on plain http
+            configureSsl(conn, tls);            // certificate checked per the context; no-op on plain http
             conn.setConnectTimeout(5_000);      // tighter than configureSsl's defaults — a probe must not stall a deploy
             conn.setReadTimeout(8_000);
             conn.setRequestMethod("GET");
@@ -370,7 +371,7 @@ public final class OmAtlasProvisioning {
      * @return the entity-policy id (the most important of the two; types
      *         policy id is logged separately)
      */
-    public static long createOrFindAtlasReadPolicy(String rangerAdminUrl,
+    public static long createOrFindAtlasReadPolicy(TlsPolicy tls, String rangerAdminUrl,
                                                    String rangerUser,
                                                    String rangerPassword,
                                                    String atlasServiceName,
@@ -384,16 +385,16 @@ public final class OmAtlasProvisioning {
         // Ranger Admin enforces that any user/group referenced in a policy MUST
         // exist in its own xuser table — Atlas-side user provisioning is a
         // separate identity store. Register first (idempotent), then grant.
-        ensureRangerUserExists(rangerAdminUrl, basic, omPrincipal);
+        ensureRangerUserExists(tls, rangerAdminUrl, basic, omPrincipal);
 
         // Per-policy timeout: split the budget so a slow first poll doesn't
         // starve the second create.
         long perPolicyMs = Math.max(5_000L, timeoutMs / 2);
 
-        long entityPolicyId = createOrFindOnePolicy(rangerAdminUrl, basic, atlasServiceName,
+        long entityPolicyId = createOrFindOnePolicy(tls, rangerAdminUrl, basic, atlasServiceName,
                 policyName + "-entities", omPrincipal, isKerberos,
                 AtlasResourceSet.ENTITIES, perPolicyMs);
-        long typePolicyId = createOrFindOnePolicy(rangerAdminUrl, basic, atlasServiceName,
+        long typePolicyId = createOrFindOnePolicy(tls, rangerAdminUrl, basic, atlasServiceName,
                 policyName + "-types", omPrincipal, isKerberos,
                 AtlasResourceSet.TYPES, perPolicyMs);
         LOG.info("OmAtlasProvisioning: Atlas read policies provisioned — entities={} types={}",
@@ -439,21 +440,21 @@ public final class OmAtlasProvisioning {
      *       POST a fresh policy with our canonical name as a fallback.</li>
      * </ol>
      */
-    private static long createOrFindOnePolicy(String rangerAdminUrl, String basic,
+    private static long createOrFindOnePolicy(TlsPolicy tls, String rangerAdminUrl, String basic,
                                               String atlasServiceName, String policyName,
                                               String omPrincipal, boolean isKerberos,
                                               AtlasResourceSet set, long timeoutMs) throws Exception {
         // Path A: append to the default Atlas policy (preferred — matches how
         // operators normally grant in the Ranger UI).
-        Long defaultId = lookupAtlasPolicyByName(rangerAdminUrl, basic, atlasServiceName,
+        Long defaultId = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, atlasServiceName,
                 set.defaultPolicyName());
         if (defaultId != null) {
-            return appendPolicyItemToExisting(rangerAdminUrl, basic, atlasServiceName,
+            return appendPolicyItemToExisting(tls, rangerAdminUrl, basic, atlasServiceName,
                     set.defaultPolicyName(), defaultId, omPrincipal, set, timeoutMs);
         }
 
         // Path B: default policy missing — fall back to creating our own.
-        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, atlasServiceName, policyName);
+        Long existing = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, atlasServiceName, policyName);
         if (existing != null) {
             LOG.info("OmAtlasProvisioning: KDPS-created Ranger policy '{}' already exists (id={}) — skip create",
                     policyName, existing);
@@ -462,7 +463,7 @@ public final class OmAtlasProvisioning {
         JsonObject policy = buildAtlasReadPolicy(atlasServiceName, policyName, omPrincipal, isKerberos, set);
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy").openConnection();
-        configureSsl(conn);
+        configureSsl(conn, tls);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Authorization", basic);
         conn.setRequestProperty("Content-Type", "application/json");
@@ -485,7 +486,7 @@ public final class OmAtlasProvisioning {
             try {
                 HttpURLConnection get = (HttpURLConnection) new URL(
                         rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
-                configureSsl(get);
+                configureSsl(get, tls);
                 get.setRequestProperty("Authorization", basic);
                 int gc = get.getResponseCode();
                 if (gc == 200) {
@@ -510,7 +511,7 @@ public final class OmAtlasProvisioning {
      *
      * <p>Idempotent — uses GET-by-name then POST.
      */
-    private static void ensureRangerUserExists(String rangerAdminUrl, String basic,
+    private static void ensureRangerUserExists(TlsPolicy tls, String rangerAdminUrl, String basic,
                                                 String userName) throws Exception {
         // Ranger macros ({USER}, {OWNER}) are resolved by Ranger at evaluation time; there is no
         // account to create for them.
@@ -518,7 +519,7 @@ public final class OmAtlasProvisioning {
         // Check existence first via the v2 xusers list filtered by name.
         HttpURLConnection check = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/xusers/users?name=" + pathSegmentEncode(userName)).openConnection();
-        configureSsl(check);
+        configureSsl(check, tls);
         check.setRequestProperty("Authorization", basic);
         int cc = check.getResponseCode();
         if (cc == 200) {
@@ -557,7 +558,7 @@ public final class OmAtlasProvisioning {
 
         HttpURLConnection post = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/xusers/secure/users").openConnection();
-        configureSsl(post);
+        configureSsl(post, tls);
         post.setRequestMethod("POST");
         post.setRequestProperty("Authorization", basic);
         post.setRequestProperty("Content-Type", "application/json");
@@ -585,14 +586,14 @@ public final class OmAtlasProvisioning {
      * the resource-set's access type (idempotent — skip if already present),
      * PUT back. Returns the policy id.
      */
-    private static long appendPolicyItemToExisting(String rangerAdminUrl, String basic,
+    private static long appendPolicyItemToExisting(TlsPolicy tls, String rangerAdminUrl, String basic,
                                                    String atlasServiceName, String policyName,
                                                    long policyId, String omPrincipal,
                                                    AtlasResourceSet set, long timeoutMs) throws Exception {
         // 1) GET the policy
         HttpURLConnection get = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
-        configureSsl(get);
+        configureSsl(get, tls);
         get.setRequestProperty("Authorization", basic);
         int gc = get.getResponseCode();
         if (gc != 200) {
@@ -638,7 +639,7 @@ public final class OmAtlasProvisioning {
         // 4) PUT back
         HttpURLConnection put = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
-        configureSsl(put);
+        configureSsl(put, tls);
         put.setRequestMethod("PUT");
         put.setRequestProperty("Authorization", basic);
         put.setRequestProperty("Content-Type", "application/json");
@@ -660,7 +661,7 @@ public final class OmAtlasProvisioning {
             try {
                 HttpURLConnection verify = (HttpURLConnection) new URL(
                         rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
-                configureSsl(verify);
+                configureSsl(verify, tls);
                 verify.setRequestProperty("Authorization", basic);
                 if (verify.getResponseCode() == 200) {
                     LOG.info("OmAtlasProvisioning: Ranger policy id={} update verified readable", policyId);
@@ -683,22 +684,22 @@ public final class OmAtlasProvisioning {
      * rejection 3010); falls back to creating a dedicated policy if the default is missing.
      * Idempotent. (MANAGED contexts grant via the Ambari server instead.)
      */
-    public static long createOrFindHiveReadPolicy(String rangerAdminUrl, String rangerUser,
+    public static long createOrFindHiveReadPolicy(TlsPolicy tls, String rangerAdminUrl, String rangerUser,
                                                   String rangerPassword, String hiveServiceName,
                                                   String policyName, String omUser,
                                                   long timeoutMs) throws Exception {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
-        ensureRangerUserExists(rangerAdminUrl, basic, omUser);
+        ensureRangerUserExists(tls, rangerAdminUrl, basic, omUser);
 
         final String DEFAULT_POLICY = "all - database, table, column";
-        Long defaultId = lookupAtlasPolicyByName(rangerAdminUrl, basic, hiveServiceName, DEFAULT_POLICY);
+        Long defaultId = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, hiveServiceName, DEFAULT_POLICY);
         if (defaultId != null) {
-            return appendHiveSelectToPolicy(rangerAdminUrl, basic, DEFAULT_POLICY, defaultId, omUser, timeoutMs);
+            return appendHiveSelectToPolicy(tls, rangerAdminUrl, basic, DEFAULT_POLICY, defaultId, omUser, timeoutMs);
         }
 
         // Default policy missing (operator deleted it) — create a dedicated one.
-        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, hiveServiceName, policyName);
+        Long existing = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, hiveServiceName, policyName);
         if (existing != null) return existing;
 
         JsonObject p = new JsonObject();
@@ -730,7 +731,7 @@ public final class OmAtlasProvisioning {
 
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy").openConnection();
-        configureSsl(conn);
+        configureSsl(conn, tls);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Authorization", basic);
         conn.setRequestProperty("Content-Type", "application/json");
@@ -756,7 +757,7 @@ public final class OmAtlasProvisioning {
      * here because the resource set is a single {@code trinouser=*}). (MANAGED contexts grant via
      * the Ambari server instead.)
      */
-    public static long createOrFindTrinoImpersonatePolicy(String rangerAdminUrl, String rangerUser,
+    public static long createOrFindTrinoImpersonatePolicy(TlsPolicy tls, String rangerAdminUrl, String rangerUser,
                                                           String rangerPassword, String trinoServiceName,
                                                           String policyName, String trinoUser,
                                                           long timeoutMs) throws Exception {
@@ -768,16 +769,16 @@ public final class OmAtlasProvisioning {
         }
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
-        ensureRangerUserExists(rangerAdminUrl, basic, trinoUser);
+        ensureRangerUserExists(tls, rangerAdminUrl, basic, trinoUser);
         // Ranger allows one policy per resource set, and a new Trino repository already owns
         // trinouser=* through its default 'all - trinouser' policy. Append to that one when present.
         final String DEFAULT_TRINOUSER_POLICY = "all - trinouser";
-        Long defaultId = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, DEFAULT_TRINOUSER_POLICY);
+        Long defaultId = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, trinoServiceName, DEFAULT_TRINOUSER_POLICY);
         if (defaultId != null) {
-            return appendAccessToPolicy(rangerAdminUrl, basic, DEFAULT_TRINOUSER_POLICY, defaultId, trinoUser, "impersonate", timeoutMs);
+            return appendAccessToPolicy(tls, rangerAdminUrl, basic, DEFAULT_TRINOUSER_POLICY, defaultId, trinoUser, "impersonate", timeoutMs);
         }
 
-        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, policyName);
+        Long existing = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, trinoServiceName, policyName);
         if (existing != null) {
             LOG.info("OmAtlasProvisioning: Ranger Trino impersonate policy '{}' already exists (id={}) — left unchanged",
                     policyName, existing);
@@ -811,7 +812,7 @@ public final class OmAtlasProvisioning {
 
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy").openConnection();
-        configureSsl(conn);
+        configureSsl(conn, tls);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Authorization", basic);
         conn.setRequestProperty("Content-Type", "application/json");
@@ -838,11 +839,11 @@ public final class OmAtlasProvisioning {
      *
      * @return the number of policies changed; 0 on a repository that never carried the rule
      */
-    public static int revokeTrinoImpersonationOfEveryone(String rangerAdminUrl, String rangerUser,
+    public static int revokeTrinoImpersonationOfEveryone(TlsPolicy tls, String rangerAdminUrl, String rangerUser,
                                                          String rangerPassword, String trinoServiceName) throws Exception {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
-        return revokeAccessOnScope(rangerAdminUrl, basic, trinoServiceName, Map.of("trinouser", List.of("*")),
+        return revokeAccessOnScope(tls, rangerAdminUrl, basic, trinoServiceName, Map.of("trinouser", List.of("*")),
                 RANGER_USER_MACRO, "impersonate", LEGACY_TRINO_SELF_IMPERSONATION_POLICY);
     }
 
@@ -857,16 +858,16 @@ public final class OmAtlasProvisioning {
      * instead of a duplicate (Ranger allows one policy per resource set). A policy of that name over
      * any other Trino users is refused rather than widened.
      */
-    public static long ensureTrinoSelfImpersonationPolicy(String rangerAdminUrl, String rangerUser,
+    public static long ensureTrinoSelfImpersonationPolicy(TlsPolicy tls, String rangerAdminUrl, String rangerUser,
                                                          String rangerPassword, String trinoServiceName,
                                                          long timeoutMs) throws Exception {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
         Map<String, List<String>> scope = Map.of("trinouser", List.of(RANGER_USER_MACRO));
 
-        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, TRINO_SELF_IMPERSONATION_POLICY);
+        Long existing = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, trinoServiceName, TRINO_SELF_IMPERSONATION_POLICY);
         if (existing != null) {
-            RangerAnswer current = rangerCall("GET", rangerAdminUrl + "/service/public/v2/api/policy/" + existing, basic, null);
+            RangerAnswer current = rangerCall(tls, "GET", rangerAdminUrl + "/service/public/v2/api/policy/" + existing, basic, null);
             if (current.code() != 200) {
                 throw new IllegalStateException("Ranger policy GET id=" + existing + " failed: HTTP " + current.code()
                         + " — " + current.body());
@@ -875,7 +876,7 @@ public final class OmAtlasProvisioning {
                 throw new IllegalStateException("Ranger policy '" + TRINO_SELF_IMPERSONATION_POLICY + "' on '"
                         + trinoServiceName + "' covers other Trino users than each user themselves; it was left unchanged");
             }
-            return appendAccessToPolicy(rangerAdminUrl, basic, TRINO_SELF_IMPERSONATION_POLICY, existing,
+            return appendAccessToPolicy(tls, rangerAdminUrl, basic, TRINO_SELF_IMPERSONATION_POLICY, existing,
                     RANGER_USER_MACRO, "impersonate", timeoutMs);
         }
 
@@ -905,7 +906,7 @@ public final class OmAtlasProvisioning {
         items.add(item);
         p.add("policyItems", items);
 
-        RangerAnswer created = rangerCall("POST", rangerAdminUrl + "/service/public/v2/api/policy", basic, p);
+        RangerAnswer created = rangerCall(tls, "POST", rangerAdminUrl + "/service/public/v2/api/policy", basic, p);
         if (created.code() >= 200 && created.code() < 300) {
             long id = JsonParser.parseString(created.body()).getAsJsonObject().get("id").getAsLong();
             LOG.info("OmAtlasProvisioning: Ranger Trino self-impersonation policy '{}' created on '{}' (id={})",
@@ -916,9 +917,9 @@ public final class OmAtlasProvisioning {
         // owns them; that policy covers exactly trinouser={USER}, so the grant goes there.
         java.util.regex.Matcher owner = java.util.regex.Pattern.compile("policy-name=\\[(.*?)\\]").matcher(created.body());
         if (created.code() == 400 && owner.find()) {
-            Long ownerId = lookupAtlasPolicyByName(rangerAdminUrl, basic, trinoServiceName, owner.group(1));
+            Long ownerId = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, trinoServiceName, owner.group(1));
             if (ownerId != null) {
-                return appendAccessToPolicy(rangerAdminUrl, basic, owner.group(1), ownerId,
+                return appendAccessToPolicy(tls, rangerAdminUrl, basic, owner.group(1), ownerId,
                         RANGER_USER_MACRO, "impersonate", timeoutMs);
             }
         }
@@ -931,11 +932,11 @@ public final class OmAtlasProvisioning {
      * resources are exactly {@code scope}, and returns how many policies changed. A policy named
      * {@code ownedPolicyName} that grants nothing afterwards is deleted rather than left empty.
      */
-    private static int revokeAccessOnScope(String rangerAdminUrl, String basic, String serviceName,
+    private static int revokeAccessOnScope(TlsPolicy tls, String rangerAdminUrl, String basic, String serviceName,
                                            Map<String, List<String>> scope, String user, String accessType,
                                            String ownedPolicyName) throws Exception {
         int changed = 0;
-        for (JsonObject policy : listServicePolicies(rangerAdminUrl, basic, serviceName)) {
+        for (JsonObject policy : listServicePolicies(tls, rangerAdminUrl, basic, serviceName)) {
             if (!isAccessPolicy(policy) || !coversExactly(policy, scope)) continue;
             JsonArray items = policy.has("policyItems") && policy.get("policyItems").isJsonArray()
                     ? policy.getAsJsonArray("policyItems") : new JsonArray();
@@ -946,7 +947,7 @@ public final class OmAtlasProvisioning {
             String policyName = policy.has("name") ? policy.get("name").getAsString() : "";
             String url = rangerAdminUrl + "/service/public/v2/api/policy/" + policyId;
             if (policyName.equals(ownedPolicyName) && grantsNothing(policy)) {
-                RangerAnswer deleted = rangerCall("DELETE", url, basic, null);
+                RangerAnswer deleted = rangerCall(tls, "DELETE", url, basic, null);
                 if ((deleted.code() < 200 || deleted.code() >= 300) && deleted.code() != 404) {
                     throw new IllegalStateException("Ranger policy delete (id=" + policyId + ") failed: HTTP "
                             + deleted.code() + " — " + deleted.body());
@@ -954,7 +955,7 @@ public final class OmAtlasProvisioning {
                 LOG.info("OmAtlasProvisioning: deleted Ranger policy '{}' (id={}) on '{}': it granted nothing once '{}' of '{}' was removed",
                         policyName, policyId, serviceName, accessType, user);
             } else {
-                RangerAnswer updated = rangerCall("PUT", url, basic, policy);
+                RangerAnswer updated = rangerCall(tls, "PUT", url, basic, policy);
                 if (updated.code() < 200 || updated.code() >= 300) {
                     throw new IllegalStateException("Ranger policy update (id=" + policyId + ") failed: HTTP "
                             + updated.code() + " — " + updated.body());
@@ -971,10 +972,10 @@ public final class OmAtlasProvisioning {
      * Every policy of the service, read page by page. Pages are merged by policy id, so a Ranger that
      * ignores the paging parameters and repeats a page still ends the listing.
      */
-    private static List<JsonObject> listServicePolicies(String rangerAdminUrl, String basic, String serviceName) throws Exception {
+    private static List<JsonObject> listServicePolicies(TlsPolicy tls, String rangerAdminUrl, String basic, String serviceName) throws Exception {
         Map<Long, JsonObject> byId = new LinkedHashMap<>();
         for (int start = 0; ; start += POLICY_PAGE_SIZE) {
-            RangerAnswer page = rangerCall("GET", rangerAdminUrl + "/service/public/v2/api/service/"
+            RangerAnswer page = rangerCall(tls, "GET", rangerAdminUrl + "/service/public/v2/api/service/"
                     + pathSegmentEncode(serviceName) + "/policy?startIndex=" + start + "&pageSize=" + POLICY_PAGE_SIZE,
                     basic, null);
             if (page.code() != 200) {
@@ -1087,9 +1088,9 @@ public final class OmAtlasProvisioning {
     /** A Ranger Admin REST answer: the status and the body (the error body on a failure). */
     private record RangerAnswer(int code, String body) {}
 
-    private static RangerAnswer rangerCall(String method, String url, String basic, JsonObject body) throws Exception {
+    private static RangerAnswer rangerCall(TlsPolicy tls, String method, String url, String basic, JsonObject body) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-        configureSsl(conn);
+        configureSsl(conn, tls);
         conn.setRequestMethod(method);
         conn.setRequestProperty("Authorization", basic);
         conn.setRequestProperty("Accept", "application/json");
@@ -1119,12 +1120,12 @@ public final class OmAtlasProvisioning {
      *                    levels, so a wrong name fails the call rather than granting nothing
      * @param accessTypes access type names as the service definition spells them
      */
-        public static long createOrFindPolicy(String rangerAdminUrl, String rangerUser, String rangerPassword,
+        public static long createOrFindPolicy(TlsPolicy tls, String rangerAdminUrl, String rangerUser, String rangerPassword,
                                           String serviceName, String policyName, String description,
                                           java.util.Map<String, java.util.List<String>> resources,
                                           java.util.List<String> accessTypes, String grantee,
                                           long timeoutMs) throws Exception {
-        return createOrFindPolicy(rangerAdminUrl, rangerUser, rangerPassword, serviceName, policyName, description,
+        return createOrFindPolicy(tls, rangerAdminUrl, rangerUser, rangerPassword, serviceName, policyName, description,
                 resources, accessTypes, grantee, null, 0, null, null, null, null, timeoutMs);
     }
 
@@ -1134,7 +1135,7 @@ public final class OmAtlasProvisioning {
      * filtering ({@code rowFilterExpr}); {@code groups} may replace or complement the user. On a tag
      * service the component-prefixed spellings apply ({@code trino:select}, {@code trino:MASK_HASH}).
      */
-    public static long createOrFindPolicy(String rangerAdminUrl, String rangerUser, String rangerPassword,
+    public static long createOrFindPolicy(TlsPolicy tls, String rangerAdminUrl, String rangerUser, String rangerPassword,
                                           String serviceName, String policyName, String description,
                                           java.util.Map<String, java.util.List<String>> resources,
                                           java.util.List<String> accessTypes, String grantee,
@@ -1144,13 +1145,13 @@ public final class OmAtlasProvisioning {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
                 if (grantee != null && !grantee.isBlank()) {
-            ensureRangerUserExists(rangerAdminUrl, basic, grantee);
+            ensureRangerUserExists(tls, rangerAdminUrl, basic, grantee);
         }
         if (groups != null) {
-            for (String g : groups) if (g != null && !g.isBlank()) ensureRangerGroupExists(rangerAdminUrl, basic, g.trim());
+            for (String g : groups) if (g != null && !g.isBlank()) ensureRangerGroupExists(tls, rangerAdminUrl, basic, g.trim());
         }
 
-        Long existing = lookupAtlasPolicyByName(rangerAdminUrl, basic, serviceName, policyName);
+        Long existing = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, serviceName, policyName);
         if (existing != null) {
             LOG.info("OmAtlasProvisioning: Ranger policy '{}' on service '{}' already exists (id={}) — left unchanged",
                     policyName, serviceName, existing);
@@ -1203,7 +1204,7 @@ public final class OmAtlasProvisioning {
 
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy").openConnection();
-        configureSsl(conn);
+        configureSsl(conn, tls);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Authorization", basic);
         conn.setRequestProperty("Content-Type", "application/json");
@@ -1222,16 +1223,16 @@ public final class OmAtlasProvisioning {
     }
 
     /** Append a Hive {@code select} grant for {@code omUser} to an existing policy (idempotent). */
-    private static long appendHiveSelectToPolicy(String rangerAdminUrl, String basic, String policyName,
+    private static long appendHiveSelectToPolicy(TlsPolicy tls, String rangerAdminUrl, String basic, String policyName,
                                                  long policyId, String omUser, long timeoutMs) throws Exception {
-        return appendAccessToPolicy(rangerAdminUrl, basic, policyName, policyId, omUser, "select", timeoutMs);
+        return appendAccessToPolicy(tls, rangerAdminUrl, basic, policyName, policyId, omUser, "select", timeoutMs);
     }
 
-    private static long appendAccessToPolicy(String rangerAdminUrl, String basic, String policyName,
+    private static long appendAccessToPolicy(TlsPolicy tls, String rangerAdminUrl, String basic, String policyName,
                                              long policyId, String omUser, String accessType, long timeoutMs) throws Exception {
         HttpURLConnection get = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
-        configureSsl(get);
+        configureSsl(get, tls);
         get.setRequestProperty("Authorization", basic);
         if (get.getResponseCode() != 200) {
             throw new IllegalStateException("Ranger policy GET id=" + policyId + " failed: " + readBody(get, true));
@@ -1267,7 +1268,7 @@ public final class OmAtlasProvisioning {
 
         HttpURLConnection put = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/policy/" + policyId).openConnection();
-        configureSsl(put);
+        configureSsl(put, tls);
         put.setRequestMethod("PUT");
         put.setRequestProperty("Authorization", basic);
         put.setRequestProperty("Content-Type", "application/json");
@@ -1284,7 +1285,7 @@ public final class OmAtlasProvisioning {
         return policyId;
     }
 
-    private static Long lookupAtlasPolicyByName(String rangerAdminUrl, String authHeader,
+    private static Long lookupAtlasPolicyByName(TlsPolicy tls, String rangerAdminUrl, String authHeader,
                                                 String atlasServiceName, String policyName) throws Exception {
         // Ranger expects RFC-3986 path-segment encoding (' ' → %20). Java's
         // URLEncoder.encode does form encoding (' ' → '+'), which Ranger 404s on
@@ -1294,7 +1295,7 @@ public final class OmAtlasProvisioning {
                 + pathSegmentEncode(atlasServiceName)
                 + "/policy/" + pathSegmentEncode(policyName);
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-        configureSsl(conn);
+        configureSsl(conn, tls);
         conn.setRequestProperty("Authorization", authHeader);
         int code = conn.getResponseCode();
         if (code == 200) {
@@ -1318,17 +1319,17 @@ public final class OmAtlasProvisioning {
      *                    may be empty — Ranger accepts a minimal repo and configs can be refined later
      * @return the Ranger service id
      */
-    public static long createOrFindService(String rangerAdminUrl, String rangerUser, String rangerPassword,
+    public static long createOrFindService(TlsPolicy tls, String rangerAdminUrl, String rangerUser, String rangerPassword,
                                            String serviceName, String serviceType,
                                            Map<String, String> configs) throws Exception {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
 
-                Long existing = lookupServiceByName(rangerAdminUrl, basic, serviceName);
+                Long existing = lookupServiceByName(tls, rangerAdminUrl, basic, serviceName);
         if (existing != null) {
             LOG.info("OmAtlasProvisioning: Ranger service '{}' already exists (id={}) — keeping it, checking its tag service",
                     serviceName, existing);
-            relinkTagServiceIfNeeded(rangerAdminUrl, basic, existing, serviceName);
+            relinkTagServiceIfNeeded(tls, rangerAdminUrl, basic, existing, serviceName);
             return existing;
         }
 
@@ -1346,7 +1347,7 @@ public final class OmAtlasProvisioning {
         // Tags flow Atlas/OpenMetadata -> tag service -> every repo linked to it, so the new repo must
         // sit on the SAME tag service as the context's Hive repo for Hive-side tags to apply to it
         // (Ranger would otherwise auto-link a default 'tag' service nothing else uses).
-        String tagService = deriveTagServiceFromHive(rangerAdminUrl, basic);
+        String tagService = deriveTagServiceFromHive(tls, rangerAdminUrl, basic);
         if (tagService != null) {
             svc.addProperty("tagService", tagService);
             LOG.info("OmAtlasProvisioning: linking Ranger service '{}' to tag service '{}' (from the Hive repo)", serviceName, tagService);
@@ -1354,7 +1355,7 @@ public final class OmAtlasProvisioning {
 
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/service").openConnection();
-        configureSsl(conn);
+        configureSsl(conn, tls);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Authorization", basic);
         conn.setRequestProperty("Content-Type", "application/json");
@@ -1377,13 +1378,13 @@ public final class OmAtlasProvisioning {
      * service (or none). Move it to the Hive repo's tag service so Hive-side tags apply to it; a repo
      * already on a non-default tag service is left alone. Best effort — never fails the caller.
      */
-    static void relinkTagServiceIfNeeded(String rangerAdminUrl, String basic, long serviceId, String serviceName) {
+    static void relinkTagServiceIfNeeded(TlsPolicy tls, String rangerAdminUrl, String basic, long serviceId, String serviceName) {
         try {
-            String want = deriveTagServiceFromHive(rangerAdminUrl, basic);
+            String want = deriveTagServiceFromHive(tls, rangerAdminUrl, basic);
             if (want == null) return;
             HttpURLConnection get = (HttpURLConnection) new URL(
                     rangerAdminUrl + "/service/public/v2/api/service/" + serviceId).openConnection();
-            configureSsl(get);
+            configureSsl(get, tls);
             get.setRequestMethod("GET");
             get.setRequestProperty("Authorization", basic);
             get.setRequestProperty("Accept", "application/json");
@@ -1394,7 +1395,7 @@ public final class OmAtlasProvisioning {
             svc.addProperty("tagService", want);
             HttpURLConnection put = (HttpURLConnection) new URL(
                     rangerAdminUrl + "/service/public/v2/api/service/" + serviceId).openConnection();
-            configureSsl(put);
+            configureSsl(put, tls);
             put.setRequestMethod("PUT");
             put.setRequestProperty("Authorization", basic);
             put.setRequestProperty("Content-Type", "application/json");
@@ -1411,10 +1412,10 @@ public final class OmAtlasProvisioning {
     }
 
         /** Ranger refuses a policy naming an unknown group: create it as an internal group (idempotent). */
-    static void ensureRangerGroupExists(String rangerAdminUrl, String basic, String groupName) throws Exception {
+    static void ensureRangerGroupExists(TlsPolicy tls, String rangerAdminUrl, String basic, String groupName) throws Exception {
         HttpURLConnection get = (HttpURLConnection) new URL(rangerAdminUrl + "/service/xusers/groups?name="
                 + java.net.URLEncoder.encode(groupName, StandardCharsets.UTF_8)).openConnection();
-        configureSsl(get);
+        configureSsl(get, tls);
         get.setRequestMethod("GET");
         get.setRequestProperty("Authorization", basic);
         get.setRequestProperty("Accept", "application/json");
@@ -1423,7 +1424,7 @@ public final class OmAtlasProvisioning {
         group.addProperty("name", groupName);
         group.addProperty("description", "Provisioned by KDPS for Ranger policies");
         HttpURLConnection post = (HttpURLConnection) new URL(rangerAdminUrl + "/service/xusers/secure/groups").openConnection();
-        configureSsl(post);
+        configureSsl(post, tls);
         post.setRequestMethod("POST");
         post.setRequestProperty("Authorization", basic);
         post.setRequestProperty("Content-Type", "application/json");
@@ -1448,13 +1449,13 @@ public final class OmAtlasProvisioning {
      *
      * @param owner the user's description, naming what it belongs to
      */
-    public static void ensureInternalRangerUser(String rangerAdminUrl, String adminUser, String adminPassword,
+    public static void ensureInternalRangerUser(TlsPolicy tls, String rangerAdminUrl, String adminUser, String adminPassword,
                                                 String userName, String password, List<String> roles,
                                                 String owner) throws Exception {
         String basic = basicAuth(adminUser, adminPassword);
         JsonArray roleList = new JsonArray();
         roles.forEach(roleList::add);
-        JsonObject user = findRangerUser(rangerAdminUrl, basic, userName);
+        JsonObject user = findRangerUser(tls, rangerAdminUrl, basic, userName);
         if (user == null) {
             JsonObject xuser = new JsonObject();
             xuser.addProperty("name", userName);
@@ -1467,7 +1468,7 @@ public final class OmAtlasProvisioning {
             xuser.addProperty("isVisible", 1);
             xuser.addProperty("userSource", 0);
             xuser.add("userRoleList", roleList);
-            RangerAnswer created = rangerCall("POST", rangerAdminUrl + "/service/xusers/secure/users", basic, xuser);
+            RangerAnswer created = rangerCall(tls, "POST", rangerAdminUrl + "/service/xusers/secure/users", basic, xuser);
             if (created.code() / 100 != 2) {
                 throw new IllegalStateException("Ranger user '" + userName + "' could not be created: HTTP "
                         + created.code() + " — " + created.body());
@@ -1480,7 +1481,7 @@ public final class OmAtlasProvisioning {
         user.addProperty("password", password);
         user.add("userRoleList", roleList);
         user.addProperty("status", 1);
-        RangerAnswer updated = rangerCall("PUT",
+        RangerAnswer updated = rangerCall(tls, "PUT",
                 rangerAdminUrl + "/service/xusers/secure/users/" + user.get("id").getAsLong(), basic, user);
         if (updated.code() / 100 != 2) {
             throw new IllegalStateException("Ranger user '" + userName + "' could not be updated: HTTP "
@@ -1499,14 +1500,14 @@ public final class OmAtlasProvisioning {
      * @param owner the description the user must have, or null to disable it whatever its description
      * @return false when Ranger has no user of that name
      */
-    public static boolean disableInternalRangerUser(String rangerAdminUrl, String adminUser, String adminPassword,
+    public static boolean disableInternalRangerUser(TlsPolicy tls, String rangerAdminUrl, String adminUser, String adminPassword,
                                                     String userName, String owner) throws Exception {
         if (userName.trim().equalsIgnoreCase(adminUser == null ? "" : adminUser.trim())) {
             throw new IllegalArgumentException("Refusing to disable '" + userName
                     + "': it is the Ranger administrator account of the platform context");
         }
         String basic = basicAuth(adminUser, adminPassword);
-        JsonObject user = findRangerUser(rangerAdminUrl, basic, userName);
+        JsonObject user = findRangerUser(tls, rangerAdminUrl, basic, userName);
         if (user == null) {
             return false;
         }
@@ -1517,7 +1518,7 @@ public final class OmAtlasProvisioning {
         user.addProperty("password", java.util.UUID.randomUUID().toString().replace("-", "") + "Kd9");
         user.add("userRoleList", roleList);
         user.addProperty("status", 0);
-        RangerAnswer updated = rangerCall("PUT",
+        RangerAnswer updated = rangerCall(tls, "PUT",
                 rangerAdminUrl + "/service/xusers/secure/users/" + user.get("id").getAsLong(), basic, user);
         if (updated.code() / 100 != 2) {
             throw new IllegalStateException("Ranger user '" + userName + "' could not be disabled: HTTP "
@@ -1531,8 +1532,8 @@ public final class OmAtlasProvisioning {
      * The Ranger user of exactly that name, or null when Ranger has none. Ranger's lookup matches names partially, so
      * the exact name is picked out of what it answers; a lookup Ranger refuses throws rather than reading as no user.
      */
-    private static JsonObject findRangerUser(String rangerAdminUrl, String basic, String userName) throws Exception {
-        RangerAnswer found = rangerCall("GET", rangerAdminUrl + "/service/xusers/users?name="
+    private static JsonObject findRangerUser(TlsPolicy tls, String rangerAdminUrl, String basic, String userName) throws Exception {
+        RangerAnswer found = rangerCall(tls, "GET", rangerAdminUrl + "/service/xusers/users?name="
                 + java.net.URLEncoder.encode(userName, StandardCharsets.UTF_8), basic, null);
         if (found.code() != 200) {
             throw new IllegalStateException("Ranger user lookup for '" + userName + "' failed: HTTP " + found.code()
@@ -1578,13 +1579,13 @@ public final class OmAtlasProvisioning {
     }
 
     /** The tag service of a Ranger repo by name, or null. */
-    public static String getTagServiceOf(String rangerAdminUrl, String rangerUser, String rangerPassword, String serviceName) {
+    public static String getTagServiceOf(TlsPolicy tls, String rangerAdminUrl, String rangerUser, String rangerPassword, String serviceName) {
         try {
             String basic = "Basic " + Base64.getEncoder().encodeToString(
                     (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
             HttpURLConnection get = (HttpURLConnection) new URL(
                     rangerAdminUrl + "/service/public/v2/api/service/name/" + java.net.URLEncoder.encode(serviceName, StandardCharsets.UTF_8)).openConnection();
-            configureSsl(get);
+            configureSsl(get, tls);
             get.setRequestMethod("GET");
             get.setRequestProperty("Authorization", basic);
             get.setRequestProperty("Accept", "application/json");
@@ -1598,11 +1599,11 @@ public final class OmAtlasProvisioning {
     }
 
     /** The tag service of the first Hive repo that has one, or null (best effort — never fails the caller). */
-    static String deriveTagServiceFromHive(String rangerAdminUrl, String basic) {
+    static String deriveTagServiceFromHive(TlsPolicy tls, String rangerAdminUrl, String basic) {
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(
                     rangerAdminUrl + "/service/public/v2/api/service?serviceType=hive").openConnection();
-            configureSsl(conn);
+            configureSsl(conn, tls);
             conn.setRequestMethod("GET");
             conn.setRequestProperty("Authorization", basic);
             conn.setRequestProperty("Accept", "application/json");
@@ -1623,10 +1624,10 @@ public final class OmAtlasProvisioning {
     }
 
     /** GET a Ranger service by name; returns its id, or null on 404. */
-    private static Long lookupServiceByName(String rangerAdminUrl, String basic, String serviceName) throws Exception {
+    private static Long lookupServiceByName(TlsPolicy tls, String rangerAdminUrl, String basic, String serviceName) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(
                 rangerAdminUrl + "/service/public/v2/api/service/name/" + pathSegmentEncode(serviceName)).openConnection();
-        configureSsl(conn);
+        configureSsl(conn, tls);
         conn.setRequestProperty("Authorization", basic);
         int code = conn.getResponseCode();
         if (code == 200) {
@@ -1715,19 +1716,13 @@ public final class OmAtlasProvisioning {
         return a;
     }
 
-    /** Disable hostname + cert verification — Ranger Admin in dev uses self-signed certs.
-     *  Production deployments should provide a real trust chain. */
-    private static void configureSsl(HttpURLConnection conn) throws Exception {
-        if (conn instanceof HttpsURLConnection https) {
-            SSLContext ctx = SSLContext.getInstance("TLS");
-            ctx.init(null, new TrustManager[]{new X509TrustManager() {
-                public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) {}
-                public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) {}
-                public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
-            }}, new SecureRandom());
-            https.setSSLSocketFactory(ctx.getSocketFactory());
-            https.setHostnameVerifier((h, s) -> true);
-        }
+    /**
+     * Checks the server certificate of one connection as {@code tls} says (the JVM trust when none is given) and sets
+     * its timeouts. Every call sends an administrator's credentials, so the certificate and the host name are checked
+     * unless the platform context turned verification off.
+     */
+    private static void configureSsl(HttpURLConnection conn, TlsPolicy tls) throws Exception {
+        (tls == null ? TlsPolicy.JVM_DEFAULT : tls).apply(conn);
         conn.setConnectTimeout(10_000);
         conn.setReadTimeout(20_000);
     }

@@ -20,19 +20,16 @@ package org.apache.ambari.view.k8s.client;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -96,7 +93,7 @@ public class KeycloakAdminClient {
         this.adminUsername = adminUsername == null ? "" : adminUsername;
         this.adminPassword = adminPassword == null ? "" : adminPassword;
         this.verifyTls     = verifyTls;
-        this.http          = buildHttpClient(verifyTls);
+        this.http          = buildHttpClient(verifyTls, this.adminUrl);
     }
 
     // -------------------------------------------------------------------------
@@ -541,23 +538,21 @@ public class KeycloakAdminClient {
                 .header("Authorization", "Bearer " + token);
     }
 
-    private static HttpClient buildHttpClient(boolean verifyTls) {
+    private static HttpClient buildHttpClient(boolean verifyTls, String adminUrl) {
         if (verifyTls) {
             return HttpClient.newBuilder()
                     .connectTimeout(TIMEOUT)
                     .build();
         }
-        // Skip TLS verification (operator-configured, e.g. internal Keycloak with self-signed cert)
+        // Skip TLS verification (operator-configured, e.g. internal Keycloak with self-signed cert). The policy's
+        // trust manager also skips the host-name check, for this client only: java.net.http checks the name
+        // around a plain X509TrustManager, which refuses a Keycloak reached by IP or by a name its certificate
+        // does not cover.
         try {
-            SSLContext sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(null, new TrustManager[]{new X509TrustManager() {
-                public void checkClientTrusted(X509Certificate[] c, String a) {}
-                public void checkServerTrusted(X509Certificate[] c, String a) {}
-                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-            }}, new java.security.SecureRandom());
             return HttpClient.newBuilder()
                     .connectTimeout(TIMEOUT)
-                    .sslContext(sslContext)
+                    .sslContext(TlsPolicy.trustingAnyCertificate("Keycloak at " + adminUrl)
+                            .sslContext(URI.create(adminUrl).getHost()))
                     .build();
         } catch (Exception e) {
             LOG.warn("KeycloakAdminClient: failed to build no-verify TLS client, falling back to default: {}", e.toString());

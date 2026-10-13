@@ -42,6 +42,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
@@ -59,6 +60,8 @@ import org.apache.ambari.view.k8s.service.ConfigResolutionService;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
 import org.apache.ambari.view.k8s.service.StackDefinitionService;
+import org.apache.ambari.view.k8s.service.ProxySupport;
+import org.apache.ambari.view.k8s.service.ViewConfigurationService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest.ConfigInstantiation;
@@ -226,7 +229,16 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * @param fluxRoot root directory where manifests will be written (simulates Git workspace).
      */
     public FluxGitOpsBackend(Path fluxRoot, KubernetesService kubernetesService, ViewContext viewContext) {
-        this(fluxRoot, kubernetesService, viewContext, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
+        this(fluxRoot, kubernetesService, viewContext, null);
+    }
+
+    /**
+     * The client of the Git providers' pull-request API (GitHub, GitLab, Gitea), through the view's outbound proxy for
+     * the hosts it proxies. The proxy settings are read at each request, so a later change applies without a restart.
+     */
+    static Supplier<HttpClient> pullRequestClient(ViewContext viewContext) {
+        return ProxySupport.clients(() -> HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)),
+                () -> ViewConfigurationService.outboundProxy(viewContext));
     }
 
     FluxGitOpsBackend(Path fluxRoot, KubernetesService kubernetesService, ViewContext viewContext, HttpClient httpClient) {
@@ -235,9 +247,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         this.viewContext = viewContext;
         this.gitCredentialService = new GitCredentialService(viewContext);
         this.releaseMetadataService = new ReleaseMetadataService(viewContext);
-        this.pullRequests = new GitPullRequests(httpClient == null
-                ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
-                : httpClient);
+        this.pullRequests = httpClient == null
+                ? GitPullRequests.through(pullRequestClient(viewContext))
+                : new GitPullRequests(httpClient);
         this.commandUtils = new CommandUtils(viewContext, kubernetesService);
         this.helmService = new HelmService(viewContext);
         this.securityProfileService = new SecurityProfileService(viewContext);
@@ -894,7 +906,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
         GitClient gitClient = new GitClient(repoDir, repoUrl, baseBranch, token, sshKey)
                 .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari")
-                .withTimeout(gitTimeoutSeconds(viewContext));
+                .withTimeout(gitTimeoutSeconds(viewContext))
+                .withProxy(ViewConfigurationService.outboundProxy(viewContext));
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "sync " + repoUrl);
 
@@ -2100,7 +2113,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         try {
         GitClient gitClient = new GitClient(repoDir, repoUrl, base, token, secrets.sshKey())
                 .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari")
-                .withTimeout(gitTimeoutSeconds(viewContext));
+                .withTimeout(gitTimeoutSeconds(viewContext))
+                .withProxy(ViewConfigurationService.outboundProxy(viewContext));
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
         // A branch the server does not have holds nothing, which says nothing of where Flux reads the release.
@@ -2500,7 +2514,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         ReentrantLock workspaceLock = lockWorkspace(namespace, releaseName);
         try {
         GitClient gitClient = new GitClient(repoDir, repoUrl, effectiveBranch, authToken, sshKey)
-                .withTimeout(gitTimeoutSeconds(viewContext));
+                .withTimeout(gitTimeoutSeconds(viewContext))
+                .withProxy(ViewConfigurationService.outboundProxy(viewContext));
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
         if (reconciledBranch != null && !gitClient.isOnServer(reconciledBranch)) {

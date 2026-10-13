@@ -542,8 +542,8 @@ public class KubeService {
     }
 
     /**
-     * Save the view-wide outbound proxy (for reaching internet Helm/Git repos from behind a corporate
-     * proxy) and apply it immediately. The Kubernetes API always stays direct. Body:
+     * Save the view-wide outbound proxy (for reaching internet Git repos from behind a corporate
+     * proxy); the next Git connection uses it. The Kubernetes API always stays direct. Body:
      * {enabled, url, username?, password?, noProxy?}.
      */
     @POST
@@ -564,10 +564,8 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", "Proxy URL is required when the proxy is enabled")).build();
         }
+        // Saved only: the Git clients read the proxy when they connect, nothing JVM-wide is installed.
         this.getConfigService().saveProxySettings(enabled, url, username, password, noProxy);
-        try { this.getKubernetesService().applyProxySettings(); } catch (Exception e) {
-            LOG.warn("/cluster/proxy: failed to apply proxy: {}", e.toString());
-        }
         return Response.ok(Collections.singletonMap("message", enabled ? "Outbound proxy enabled" : "Outbound proxy disabled")).build();
     }
 

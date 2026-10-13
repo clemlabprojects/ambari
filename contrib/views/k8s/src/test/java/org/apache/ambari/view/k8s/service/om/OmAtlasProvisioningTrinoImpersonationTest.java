@@ -21,6 +21,7 @@ package org.apache.ambari.view.k8s.service.om;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -68,11 +69,11 @@ class OmAtlasProvisioningTrinoImpersonationTest {
     }
 
     private int revoke() throws Exception {
-        return OmAtlasProvisioning.revokeTrinoImpersonationOfEveryone(ranger.url(), "admin", "pw", REPO);
+        return OmAtlasProvisioning.revokeTrinoImpersonationOfEveryone(TlsPolicy.JVM_DEFAULT, ranger.url(), "admin", "pw", REPO);
     }
 
     private long ensureSelf() throws Exception {
-        return OmAtlasProvisioning.ensureTrinoSelfImpersonationPolicy(ranger.url(), "admin", "pw", REPO, 5_000);
+        return OmAtlasProvisioning.ensureTrinoSelfImpersonationPolicy(TlsPolicy.JVM_DEFAULT, ranger.url(), "admin", "pw", REPO, 5_000);
     }
 
     @Test
@@ -230,7 +231,7 @@ class OmAtlasProvisioningTrinoImpersonationTest {
 
     @Test
     void theEveryUserGrantHelperRefusesTheMacro() {
-        assertThrows(IllegalArgumentException.class, () -> OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(
+        assertThrows(IllegalArgumentException.class, () -> OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(TlsPolicy.JVM_DEFAULT,
                 ranger.url(), "admin", "pw", REPO, "kdps-x-trino-impersonate", "{USER}", 5_000));
         assertEquals(0, ranger.requests.size());
     }
@@ -239,7 +240,7 @@ class OmAtlasProvisioningTrinoImpersonationTest {
     void theEveryUserGrantHelperStillGrantsAServicePrincipal() throws Exception {
         long defaultId = ranger.add(REPO, ALL_USERS_DEFAULT, EVERY_USER, item(List.of("trino"), "impersonate"));
 
-        OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(
+        OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(TlsPolicy.JVM_DEFAULT,
                 ranger.url(), "admin", "pw", REPO, "kdps-bi-trino-impersonate", "superset-svc", 5_000);
 
         assertEquals(List.of(List.of("trino"), List.of("superset-svc")),

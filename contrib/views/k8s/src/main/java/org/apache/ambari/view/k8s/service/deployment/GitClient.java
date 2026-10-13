@@ -20,6 +20,7 @@ package org.apache.ambari.view.k8s.service.deployment;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
+import org.apache.ambari.view.k8s.service.ProxySupport;
 import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
@@ -46,6 +47,7 @@ import org.eclipse.jgit.transport.ssh.jsch.OpenSshConfig;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.SshTransport;
+import org.eclipse.jgit.transport.TransportHttp;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
@@ -72,7 +74,7 @@ import java.util.UUID;
 
 /**
  * Pure-Java git wrapper built on JGit — no OS {@code git} binary required (more portable/robust) and
- * a single {@link TransportConfigCallback} hook where SSH (and, later, an outbound proxy) is attached.
+ * a single {@link TransportConfigCallback} hook where SSH and the outbound proxy are attached.
  *
  * <p>Auth: HTTPS remotes use the token as the username (matching the old {@code https://token@host}),
  * SSH remotes use the provided private key in memory (no key file on disk). SSH host-key checking is
@@ -109,6 +111,7 @@ public class GitClient {
     private String authorEmail;
     private int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
     private final TransportConfigCallback transportConfig;
+    private ProxySupport proxy;
 
     public GitClient(Path workspace, String repoUrl, String baseBranch, String authToken) {
         this(workspace, repoUrl, baseBranch, authToken, null);
@@ -138,6 +141,17 @@ public class GitClient {
      */
     public GitClient withTimeout(int seconds) {
         this.timeoutSeconds = seconds > 0 ? seconds : DEFAULT_TIMEOUT_SECONDS;
+        return this;
+    }
+
+    /**
+     * Sends the HTTP(S) transfers of this client through the view's outbound proxy, for the hosts it proxies. Only
+     * this client's connections are affected; SSH remotes are not proxied.
+     *
+     * @param proxy the proxy settings; null or disabled connects directly
+     */
+    public GitClient withProxy(ProxySupport proxy) {
+        this.proxy = proxy;
         return this;
     }
 
@@ -191,10 +205,7 @@ public class GitClient {
         return url == null ? null : url.replaceFirst("://[^@/]+@", "://");
     }
 
-    /**
-     * Transport callback: install the in-memory SSH key on SSH transports. This is also the single
-     * place an outbound proxy will be wired later (JGit honors a per-transport proxy here).
-     */
+    /** Transport callback: install the in-memory SSH key on SSH transports. */
     private TransportConfigCallback buildTransportConfig() {
         if (sshKey == null || sshKey.isBlank()) {
             return null;
@@ -238,8 +249,16 @@ public class GitClient {
     private <C extends TransportCommand<C, ?>> C configure(C command) {
         command.setCredentialsProvider(credentials());
         command.setTimeout(timeoutSeconds);
-        if (transportConfig != null) {
-            command.setTransportConfigCallback(transportConfig);
+        final ProxySupport outbound = proxy != null && proxy.isEnabled() ? proxy : null;
+        if (transportConfig != null || outbound != null) {
+            command.setTransportConfigCallback(transport -> {
+                if (transportConfig != null) {
+                    transportConfig.configure(transport);
+                }
+                if (outbound != null && transport instanceof TransportHttp http) {
+                    http.setHttpConnectionFactory(outbound.gitConnectionFactory());
+                }
+            });
         }
         return command;
     }

@@ -52,6 +52,30 @@ it idempotently:
 
 It is reusable beyond Atlas (Trino, etc.).
 
+## Certificate checks on the view's own calls
+
+When the view calls a context's Ranger Admin, Atlas or Cloudera Manager itself (external,
+remote and CDP contexts, or a managed context with Ranger admin credentials entered), it sends
+an administrator's credentials, so it checks the server certificate and the host name:
+
+* trusted are the JVM's CAs, the Ambari server truststore (`ssl.trustStore.*` in
+  `ambari.properties`) and the CA certificate stored on the context (`ranger.caCert`);
+* a refused certificate fails the step, or the context Preflight, with a message naming the
+  host and what to do;
+* only a context that stores `verifySsl: false` ("Verify TLS certificate(s)" switched off in
+  the Contexts page) accepts any certificate, and only on the connections made for that
+  context; each host is logged once as a warning. Every context kind, CDP included, verifies
+  by default.
+
+The Keycloak admin client (OIDC "verify TLS" off) and an OpenShift login marked insecure
+follow the same rule: they skip the certificate and host-name checks, so a server reached by
+IP address or by a name its certificate does not cover still answers, for their own
+connections only.
+
+Nothing is changed for the whole Ambari server: no JVM-wide hostname-verification switch,
+default socket factory, proxy selector or proxy authenticator (a unit test fails the build if
+one comes back). The view-wide outbound proxy is handed to the Git clients only.
+
 ## Atlas federation example
 
 For OpenMetadata → Atlas federation against a Ranger-authorized Atlas, the dispatcher issues

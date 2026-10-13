@@ -808,10 +808,13 @@ const ConfigurationPage: React.FC = () => {
                     {currentStep === 0 && (
                         <Card title="Outbound proxy (for internet Helm / Git repositories)" style={{ marginTop: 16 }}>
                             <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                                Route the view's access to <strong>internet Helm and Git repositories</strong> through a
-                                corporate proxy. Applied only to repository egress — the Kubernetes API always stays direct.
-                                Credentials are stored encrypted. (Note: bundled <code>helm</code> chart pulls are Go-based
-                                and additionally need <code>HTTPS_PROXY</code> in <code>ambari-env.sh</code>.)
+                                Route the view's access to <strong>internet Git repositories</strong> (clone, push and pull
+                                requests) through a corporate proxy. Applied only to those connections — the Kubernetes API
+                                and the rest of the Ambari server are not affected. Credentials are stored encrypted. (Note:
+                                bundled <code>helm</code> chart pulls are Go-based and need <code>HTTPS_PROXY</code> in{' '}
+                                <code>ambari-env.sh</code>. A proxy that asks for a user name and password on HTTPS
+                                connections also needs <code>-Djdk.http.auth.tunneling.disabledSchemes=</code> in the Ambari
+                                server Java options.)
                             </Paragraph>
                             <Form form={proxyForm} layout="vertical" style={{ maxWidth: 620 }}>
                                 <Form.Item name="enabled" label="Enable outbound proxy" valuePropName="checked">

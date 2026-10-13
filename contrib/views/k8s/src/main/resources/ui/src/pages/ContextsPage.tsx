@@ -116,7 +116,7 @@ export default function ContextsPage() {
         cmUrl: v.cmUrl,
         cmUsername: v.cmUsername,
         cmPassword: v.cmPassword,
-        verifySsl: v.verifySsl === true,
+        verifySsl: v.verifySsl !== false,
       });
       setProbeResult(res);
       if (res.ok) {
@@ -267,7 +267,7 @@ export default function ContextsPage() {
     } else if (ctx.kind === "CDP") {
       vals.cmUrl = ctx.config?.cmUrl;
       vals.cmUsername = ctx.config?.cmUsername;
-      vals.verifySsl = ctx.config?.verifySsl === true; // default false (CM self-signed)
+      vals.verifySsl = ctx.config?.verifySsl !== false; // default true
       vals.rangerAdminUsername = ctx.config?.rangerAdminUsername;
       vals.rangerHiveService = ctx.config?.rangerHiveService;
       vals.federationUser = ctx.config?.federationUser;
@@ -278,6 +278,7 @@ export default function ContextsPage() {
       });
       // cm/ranger/atlas passwords + capability secrets not prefilled — write-only, shown as "(unchanged)"
     } else {
+      vals.verifySsl = ctx.config?.verifySsl !== false; // default true
       externalFields().forEach(({ cap, f }) => {
         if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
       });
@@ -322,7 +323,7 @@ export default function ContextsPage() {
             cmUrl: values.cmUrl,
             cmUsername: values.cmUsername,
             clusterName: values.clusterName,
-            verifySsl: values.verifySsl === true, // default false; CM is self-signed on 7183
+            verifySsl: values.verifySsl !== false, // default true; false = accept any certificate
             autoConfigureRemote: values.autoConfigureRemote !== false, // default true
           },
           secrets: {},
@@ -345,7 +346,8 @@ export default function ContextsPage() {
         payload = {
           id: values.id, name: values.name, kind: "EXTERNAL",
           clusterName: values.clusterName, description: values.description,
-          config: {}, secrets: {},
+          // default true; false = accept any certificate from this context's Ranger and Atlas
+          config: { verifySsl: values.verifySsl !== false }, secrets: {},
         };
         externalFields().forEach(({ cap, f }) => {
           const v = values[fieldKey(cap.capability, f.name)];
@@ -545,7 +547,7 @@ export default function ContextsPage() {
                     <Text copyable>{detail.ctx.config?.cmUrl || "—"}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       discovered live from CM
-                      {detail.ctx.config?.verifySsl !== true ? " · ⚠ SSL verification off" : ""}
+                      {detail.ctx.config?.verifySsl === false ? " · ⚠ SSL verification off" : ""}
                       {detail.ctx.config?.autoConfigureRemote === false ? " · manual (preflight only)" : ""}
                     </Text>
                   </Space>
@@ -570,6 +572,7 @@ export default function ContextsPage() {
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         admin user: {r?.rangerAdminUsername || detail.ctx.config?.rangerAdminUsername || "admin"}
                         {detail.ctx.secretKeys?.includes("rangerAdminPassword") ? " · password set" : " · no password set"}
+                        {detail.ctx.config?.verifySsl === false ? " · ⚠ certificate verification off" : ""}
                       </Text>
                     </Space>}
               </Descriptions.Item>
@@ -632,7 +635,7 @@ export default function ContextsPage() {
               </Form.Item>
               <Form.Item name="verifySsl" label="Verify TLS certificate" valuePropName="checked"
                 initialValue={true}
-                tooltip="Turn OFF to accept a self-signed / untrusted certificate on the remote Ambari (trust-all). Leave ON for a CA-signed certificate.">
+                tooltip="Turn OFF to accept a self-signed / untrusted certificate on the remote Ambari, Ranger and Atlas (trust-all). Leave ON for a CA-signed certificate.">
                 <Switch checkedChildren="Verify" unCheckedChildren="Ignore SSL" />
               </Form.Item>
 
@@ -695,8 +698,8 @@ export default function ContextsPage() {
                 <Input.Password placeholder={editing ? "(unchanged)" : ""} autoComplete="new-password" />
               </Form.Item>
               <Form.Item name="verifySsl" label="Verify TLS certificate" valuePropName="checked"
-                initialValue={false}
-                tooltip="Turn OFF to accept a self-signed / untrusted CM certificate (trust-all). CM defaults to a self-signed cert on 7183, so this is usually OFF.">
+                initialValue={true}
+                tooltip="Checks the certificates of Cloudera Manager, Ranger and Atlas against the Ambari truststore and the Ranger CA certificate of this context. Turn OFF only to accept a self-signed or untrusted certificate (for example the default Cloudera Manager certificate on 7183): KDPS then sends the credentials to whatever server answers.">
                 <Switch checkedChildren="Verify" unCheckedChildren="Ignore SSL" />
               </Form.Item>
 
@@ -780,6 +783,13 @@ export default function ContextsPage() {
               (KDPS/contexts/capabilities/*.json). A company adds a capability by dropping a
               fragment file — this form picks it up. Grouping (Security/Auth, Hive, Atlas, Ranger)
               is purely presentational; the stored config key stays fieldKey(capability, name). */}
+          {watchedKind === "EXTERNAL" && (
+            <Form.Item name="verifySsl" label="Verify TLS certificates" valuePropName="checked"
+              initialValue={true}
+              tooltip="Checks the certificates of this context's Ranger and Atlas against the Ambari truststore and the Ranger CA certificate below. Turn OFF only to accept a self-signed or untrusted certificate: KDPS then sends the administrator credentials to whatever server answers.">
+              <Switch checkedChildren="Verify" unCheckedChildren="Ignore SSL" />
+            </Form.Item>
+          )}
           {watchedKind === "EXTERNAL" && renderCapabilityGroups(
             schema.flatMap((cap) =>
               (cap.fields || [])

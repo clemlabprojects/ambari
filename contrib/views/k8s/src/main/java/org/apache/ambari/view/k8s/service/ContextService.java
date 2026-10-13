@@ -37,6 +37,7 @@ import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
 import org.apache.ambari.view.k8s.store.KdpsContextRepo;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,8 +75,8 @@ public class ContextService {
     // the network with stored credentials (the "connect to remote cluster" context).
     public static final String KIND_REMOTE   = "REMOTE";
     // CDP: like REMOTE but the remote cluster is Cloudera-managed — discovery runs against its
-    // Cloudera Manager REST API instead of Ambari. Config: cmUrl, cmUsername, verifySsl, clusterName;
-    // secret: cmPassword.
+    // Cloudera Manager REST API instead of Ambari. Config: cmUrl, cmUsername, verifySsl (default
+    // true), clusterName; secret: cmPassword.
     public static final String KIND_CDP      = "CDP";
 
     private static final String SECRET_PREFIX = "context.";
@@ -614,6 +615,8 @@ public class ContextService {
                 // would perform Ranger ops itself rather than hand them to the (local) server.
                 rc.setRangerManaged(false);
                 rc.setRemoteAmbariUrl(str(parseConfig(entity.getConfigJson()).get("remoteAmbariUrl")));
+                // The "ignore self-signed" choice made for the remote Ambari also covers its Ranger and Atlas.
+                rc.setVerifySsl(verifiesCertificates(parseConfig(entity.getConfigJson())));
                 // Operator opt-out of auto-configuring the remote cluster's Ranger/Atlas (writes only).
                 rc.setAutoConfigureRemote(!"false".equalsIgnoreCase(
                         str(parseConfig(entity.getConfigJson()).get("autoConfigureRemote"))));
@@ -741,8 +744,7 @@ public class ContextService {
                 return null;
             }
             // verifySsl defaults to true; a context that opted into "ignore self-signed" stores false.
-            boolean verifySsl = !"false".equalsIgnoreCase(str(cfg.get("verifySsl")));
-            return buildClient(url, user, pass, entity.getClusterName(), verifySsl);
+            return buildClient(url, user, pass, entity.getClusterName(), verifiesCertificates(cfg));
         } catch (Exception e) {
             LOG.warn("ContextService: failed to build remote Ambari client for {}: {}",
                     entity.getId(), e.toString());
@@ -811,7 +813,8 @@ public class ContextService {
             return out;
         }
         try {
-            Map<String, Object> probe = new org.apache.ambari.view.k8s.utils.CmActionClient(url, user, pass, verifySsl).probe();
+            Map<String, Object> probe = new org.apache.ambari.view.k8s.utils.CmActionClient(url, user, pass,
+                    TlsPolicy.forContext(viewContext, verifySsl, null, "Cloudera Manager at " + url)).probe();
             if (!Boolean.TRUE.equals(probe.get("ok"))) {
                 out.put("ok", false);
                 out.put("error", humanizeConnError(new IllegalStateException(String.valueOf(probe.get("error")))));
@@ -1038,6 +1041,8 @@ public class ContextService {
         // Operator opt-out of KDPS auto-configuring the remote Ranger/Atlas (WRITE/push paths only).
         // Default true; only an explicit "false" disables. Property resolution (reads) is never gated.
         r.setAutoConfigureRemote(!"false".equalsIgnoreCase(str(config.get("autoConfigureRemote"))));
+        // Certificates of Ranger and Atlas are verified unless the operator turned it off for this context.
+        r.setVerifySsl(verifiesCertificates(config));
         r.setAtlasUrl(str(config.get("atlasUrl")));
         r.setAtlasAuthMode(defaultStr(str(config.get("atlasAuthMode")), "basic"));
         r.setAtlasAclMode(defaultStr(str(config.get("atlasAclMode")), "ranger"));
@@ -1085,6 +1090,8 @@ public class ContextService {
         Map<String, Object> config = parseConfig(entity.getConfigJson());
         r.setClusterName(str(config.get("clusterName")));
         r.setAutoConfigureRemote(!"false".equalsIgnoreCase(str(config.get("autoConfigureRemote"))));
+        // Verified unless the operator turned it off: Cloudera Manager, Ranger and Atlas are all called with credentials.
+        r.setVerifySsl(verifiesCertificates(config));
         // CM does not expose Ranger/Atlas admin creds; those stay operator-supplied.
         r.setRangerAdminUsername(defaultStr(str(config.get("rangerAdminUsername")), "admin"));
         r.setRangerAdminPassword(readSecret(entity.getId(), "rangerAdminPassword"));
@@ -1099,12 +1106,11 @@ public class ContextService {
             LOG.warn("CDP context {} has no cmUrl — nothing to discover", entity.getId());
             return r;
         }
-        boolean verifySsl = "true".equalsIgnoreCase(defaultStr(str(config.get("verifySsl")), "false"));
         String cmUser = str(config.get("cmUsername"));
         String cmPass = readSecret(entity.getId(), "cmPassword");
         try {
             org.apache.ambari.view.k8s.utils.CmActionClient cm =
-                    new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, verifySsl);
+                    new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, cmTlsPolicy(entity, config));
 
             String cluster = str(config.get("clusterName"));
             if (cluster == null || cluster.isBlank()) {
@@ -1301,7 +1307,7 @@ public class ContextService {
         if (url == null || url.isBlank()) { c.put("skipped", true); c.put("message", "No Ranger URL in context"); return c; }
         try {
             String body = httpGet(url.replaceAll("/+$", "") + "/service/public/v2/api/service",
-                    str(rc.getRangerAdminUsername()), rc.getRangerAdminPassword());
+                    str(rc.getRangerAdminUsername()), rc.getRangerAdminPassword(), tlsPolicyOf(viewContext, rc, "Ranger"));
             java.util.List<String> repos = new ArrayList<>();
             try { for (Object s : (List<?>) new com.google.gson.Gson().fromJson(body, List.class)) {
                 Object n = ((Map<?, ?>) s).get("name"); if (n != null) repos.add(String.valueOf(n)); } } catch (Exception ignore) {}
@@ -1322,7 +1328,7 @@ public class ContextService {
         if (url == null || url.isBlank()) { c.put("skipped", true); c.put("message", "No Atlas URL in context"); return c; }
         try {
             String body = httpGet(url.replaceAll("/+$", "") + "/api/atlas/admin/status",
-                    str(rc.getAtlasFederationUser()), rc.getAtlasFederationPassword());
+                    str(rc.getAtlasFederationUser()), rc.getAtlasFederationPassword(), tlsPolicyOf(viewContext, rc, "Atlas"));
             boolean active = body != null && body.contains("ACTIVE");
             c.put("ok", active);
             c.put("message", active ? "Atlas reachable + ACTIVE" : "Atlas reachable but not ACTIVE");
@@ -1334,22 +1340,17 @@ public class ContextService {
         return c;
     }
 
-    /** Minimal trust-all HTTPS GET with optional basic auth — for preflight probes of self-signed
-     * external Ranger/Atlas (mirrors the insecure read path used for remote-Ambari probes). */
-    private String httpGet(String url, String user, String password) throws Exception {
-        // Trust-all also implies skipping HTTPS endpoint-identity (hostname/SAN) checks — java.net.http
-        // enforces those independently of the TrustManager and only relaxes them via this global
-        // property (it ignores SSLParameters' endpointIdentificationAlgorithm). Self-signed Ranger/
-        // Atlas on an IP or mismatched SAN would otherwise fail preflight with a hostname error.
-        System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
-        javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
-        sc.init(null, new javax.net.ssl.TrustManager[]{ new javax.net.ssl.X509TrustManager() {
-            public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) {}
-            public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) {}
-            public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
-        }}, new java.security.SecureRandom());
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                .sslContext(sc).connectTimeout(java.time.Duration.ofSeconds(8)).build();
+    /**
+     * HTTPS GET with optional basic auth, for the preflight probes of a context's Ranger and Atlas. The certificate is
+     * checked as {@code tls} says; when the context turned verification off, only this client skips the checks.
+     */
+    static String httpGet(String url, String user, String password, TlsPolicy tls) throws Exception {
+        java.net.http.HttpClient.Builder cb = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(8));
+        if (url.regionMatches(true, 0, "https:", 0, 6)) {
+            cb.sslContext(tls.sslContext(java.net.URI.create(url).getHost()));
+        }
+        java.net.http.HttpClient client = cb.build();
         java.net.http.HttpRequest.Builder b = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
                 .timeout(java.time.Duration.ofSeconds(12)).GET();
         if (user != null && !user.isBlank() && password != null) {
@@ -1361,9 +1362,40 @@ public class ContextService {
         return resp.body();
     }
 
+    /**
+     * How the view checks the certificate of a context's {@code component} (Ranger, Atlas) when it calls it with
+     * credentials: verified unless the context turned verification off, trusting the JVM, the Ambari server truststore
+     * and the CA certificate stored on the context ({@code ranger.caCert}).
+     *
+     * @param ctx       the view context, for the Ambari server truststore
+     * @param rc        the resolved platform context; null verifies against the Ambari and JVM trust
+     * @param component what is called, for the log and the error message
+     */
+    public static TlsPolicy tlsPolicyOf(ViewContext ctx, ResolvedContext rc, String component) {
+        if (rc == null) {
+            return TlsPolicy.forContext(ctx, true, null, component);
+        }
+        String pem = rc.getResolvedFields() == null ? null : rc.getResolvedFields().get("ranger.caCert");
+        String name = rc.getName() != null && !rc.getName().isBlank() ? rc.getName() : rc.getId();
+        return TlsPolicy.forContext(ctx, rc.isVerifySsl(), pem,
+                component + (name == null ? "" : " of platform context " + name));
+    }
+
+    /** Whether a stored context config asks for certificate verification: yes unless it says {@code verifySsl: false}. */
+    static boolean verifiesCertificates(Map<String, Object> config) {
+        return config == null || !"false".equalsIgnoreCase(str(config.get("verifySsl")));
+    }
+
+    /** The TLS policy of the Cloudera Manager of a CDP context, from its stored config. */
+    private TlsPolicy cmTlsPolicy(KdpsContextEntity entity, Map<String, Object> config) {
+        return TlsPolicy.forContext(viewContext, verifiesCertificates(config), str(config.get("caCert")),
+                "Cloudera Manager of platform context " + entity.getName());
+    }
+
     private static String trimMsg(Throwable t) {
         String m = t == null ? "" : (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
-        return m.length() > 160 ? m.substring(0, 160) : m;
+        // Long enough for the advice of a refused certificate, which comes before the JDK's own detail.
+        return m.length() > 400 ? m.substring(0, 400) : m;
     }
 
     /**
@@ -1458,7 +1490,6 @@ public class ContextService {
             LOG.warn("downloadHadoopClientConfig: CDP context {} has no cmUrl", contextId);
             return;
         }
-        boolean verifySsl = "true".equalsIgnoreCase(defaultStr(str(config.get("verifySsl")), "false"));
         String cmUser = str(config.get("cmUsername"));
         String cmPass = readSecret(entity.getId(), "cmPassword");
 
@@ -1476,7 +1507,7 @@ public class ContextService {
         }
 
         org.apache.ambari.view.k8s.utils.CmActionClient cm =
-                new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, verifySsl);
+                new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, cmTlsPolicy(entity, config));
         String cluster = str(config.get("clusterName"));
         if (isBlank(cluster)) {
             List<Map<String, Object>> cl = cm.listClusters();
