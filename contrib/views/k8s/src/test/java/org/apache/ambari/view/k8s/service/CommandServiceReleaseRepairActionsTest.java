@@ -44,6 +44,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 
 import javax.ws.rs.core.MultivaluedHashMap;
 import java.io.ByteArrayInputStream;
@@ -83,6 +84,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -379,6 +381,25 @@ class CommandServiceReleaseRepairActionsTest {
         String log = awaitLog(id, "still uses the Ranger plugin configuration shared by the releases of namespace");
         assertTrue(log.contains("(ranger-trino-security, ranger-trino-audit)"), log);
         assertTrue(log.contains("upgrade the release to switch to it"), log);
+    }
+
+    @Test
+    void rangerReapplyKeepsTheHdfsAuditOfAReleaseWhosePodsGetTheHadoopConfiguration() throws Exception {
+        externalContext(false, true);
+        release("trino", "TRINO", CONTEXT, null);
+        deployedValues.put("trino", Map.of("ranger", Map.of("audit",
+                Map.of("hdfsMode", "on", "hdfsDir", "hdfs://nn01:8020/ranger/audit"))));
+
+        String id = service.planReleaseRangerRepositoryReapply(NS, "trino", new MultivaluedHashMap<>(), BASE_URI);
+
+        ArgumentCaptor<String> names = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(k8s, atLeastOnce()).createOrUpdateConfigMap(eq(NS), names.capture(), data.capture(), anyMap(), anyMap());
+        String xml = data.getAllValues().get(names.getAllValues().indexOf("trino-ranger-trino-audit"))
+                .get("ranger-trino-audit.xml");
+        assertTrue(xml.matches("(?s).*<name>xasecure.audit.destination.hdfs</name>\\s*<value>true</value>.*"), xml);
+        String log = CommandLogService.get(view.context).read(id, 0, 1 << 16).content;
+        assertFalse(log.contains("hdfs-site"), log);
     }
 
     /** The operation log is written asynchronously; waits for a line to show up. */

@@ -101,6 +101,12 @@ public class ManagedContextResolver {
                 case "atlas.aclMode":           return atlasAclMode();
                 case "atlas.rangerServiceName": return atlasManaged() ? cluster + "_atlas" : null;
                 case "ranger.url":              return rangerUrl();
+                case "ranger.auditSolrEnabled":     return rangerAuditFlag("xasecure.audit.destination.solr");
+                case "ranger.auditSolrUrls":        return rangerAvailable() ? nullIfBlank(cfg("ranger-admin-site", "ranger.audit.solr.urls")) : null;
+                case "ranger.auditSolrZookeepers":  return rangerAuditSolrZookeepers();
+                case "ranger.auditSolrCollection":  return rangerAvailable() ? nullIfBlank(cfg("ranger-env", "ranger_solr_collection_name")) : null;
+                case "ranger.auditHdfsEnabled":     return rangerAuditFlag("xasecure.audit.destination.hdfs");
+                case "ranger.auditHdfsDir":         return rangerAuditHdfsDir();
                 case "kerberos.realm":          return cfg("kerberos-env", "realm");
                 case "kerberos.kdcHost":        return cfg("kerberos-env", "kdc_hosts");
                 case "hive.metastoreUri":       return cfg("hive-site", "hive.metastore.uris");
@@ -181,12 +187,16 @@ public class ManagedContextResolver {
 
     // ----- Ranger -----
 
-    private String rangerUrl() throws Exception {
+    private boolean rangerAvailable() throws Exception {
         if (rangerResolved == null) {
             rangerHosts = ambari.getComponentHosts(cluster, "RANGER", "RANGER_ADMIN");
             rangerResolved = rangerHosts != null && !rangerHosts.isEmpty();
         }
-        if (!rangerResolved) return null;
+        return rangerResolved;
+    }
+
+    private String rangerUrl() throws Exception {
+        if (!rangerAvailable()) return null;
         String httpsPort = cfg("ranger-admin-site", "ranger.service.https.port");
         String httpPort  = cfg("ranger-admin-site", "ranger.service.http.port");
         String tlsRaw    = cfg("ranger-admin-site", "ranger.service.https.attrib.ssl.enabled");
@@ -194,6 +204,39 @@ public class ManagedContextResolver {
         String port = tls ? (blank(httpsPort) ? "6182" : httpsPort.trim())
                           : (blank(httpPort) ? "6080" : httpPort.trim());
         return (tls ? "https://" : "http://") + rangerHosts.get(0) + ":" + port;
+    }
+
+    // The audit destinations the cluster's Ranger writes to, which a Ranger plugin running outside the cluster
+    // (a Trino pod, say) follows. Ambari keeps the cluster-wide switches in ranger-env and the Solr endpoints in
+    // ranger-admin-site; every plugin of the cluster is configured from them.
+
+    /** A ranger-env audit switch as "true" or "false", or null when Ranger is not installed or the switch is unset. */
+    private String rangerAuditFlag(String property) throws Exception {
+        if (!rangerAvailable()) return null;
+        String v = t(cfg("ranger-env", property)).toLowerCase();
+        return "true".equals(v) || "false".equals(v) ? v : null;
+    }
+
+    /** The ZooKeeper ensemble of a SolrCloud audit store; Ambari writes NONE when Solr is not run as a cloud. */
+    private String rangerAuditSolrZookeepers() throws Exception {
+        if (!rangerAvailable()) return null;
+        String zk = t(cfg("ranger-admin-site", "ranger.audit.solr.zookeepers"));
+        return zk.isEmpty() || "NONE".equalsIgnoreCase(zk) ? null : zk;
+    }
+
+    /**
+     * Where plugins write HDFS audit files. Ambari may keep only the file system (hdfs://nn:8020) in ranger-env,
+     * leaving each plugin to add the directory; the Ranger convention /ranger/audit is added then.
+     */
+    private String rangerAuditHdfsDir() throws Exception {
+        if (!rangerAvailable()) return null;
+        String dir = t(cfg("ranger-env", "xasecure.audit.destination.hdfs.dir"));
+        if (dir.isEmpty()) return null;
+        int scheme = dir.indexOf("://");
+        String rest = scheme >= 0 ? dir.substring(scheme + 3) : dir;
+        int slash = rest.indexOf('/');
+        boolean hasPath = slash >= 0 && !rest.substring(slash).replace("/", "").isEmpty();
+        return hasPath ? dir : dir.replaceAll("/+$", "") + "/ranger/audit";
     }
 
     // ----- Hive -----
@@ -425,4 +468,5 @@ public class ManagedContextResolver {
 
     private static boolean blank(String s) { return s == null || s.trim().isEmpty(); }
     private static String t(String s) { return s == null ? "" : s.trim(); }
+    private static String nullIfBlank(String s) { return blank(s) ? null : s.trim(); }
 }

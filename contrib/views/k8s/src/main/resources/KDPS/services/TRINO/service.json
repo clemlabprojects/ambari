@@ -3,7 +3,7 @@
   "chart": "trinodb/trino",
   "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.16",
+  "version": "1.43.17",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -2696,6 +2696,70 @@
           "condition": { "field": "accessControl.type", "value": "ranger" },
           "autoEnableWhenContext": "atlasTags",
           "help": "Projects the Platform Context's Atlas classifications onto Trino's Ranger service so tag-based masking, row-filtering and access policies apply to Trino the way they do for Hive/Impala. On by default when the context exposes Atlas tags. KDPS gives this release a Ranger account of its own for this, kept in the Secret <release>-tagsync-ranger of the release's project, with a new password at every deploy; turning this off or uninstalling the release disables it. Ranger lets only its administrators write tags, so that account is a Ranger administrator: anyone who can read Secrets in the project can use it to change any Ranger policy. Turn this on only where those people may be Ranger administrators."
+        },
+        {
+          "name": "ranger.audit.solrMode",
+          "label": "Ranger audit to Solr",
+          "type": "select",
+          "options": [
+            { "label": "Follow the platform context", "value": "auto" },
+            { "label": "On", "value": "on" },
+            { "label": "Off", "value": "off" }
+          ],
+          "defaultValue": "auto",
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "help": "Where Trino's Ranger audit events go, so they show in the Ranger Admin audit page. 'Follow the platform context' audits to Solr when the context's Ranger does (read from the cluster for a managed or remote context, or set on the context). 'On' and 'Off' decide for this release alone."
+        },
+        {
+          "name": "ranger.audit.solrUrls",
+          "label": "Solr URLs",
+          "type": "string",
+          "defaultValue": "",
+          "omitWhenBlank": true,
+          "placeholder": "http://solr.example.com:8886/solr/ranger_audits",
+          "condition": { "field": "ranger.audit.solrMode", "value": "on" },
+          "help": "Solr endpoint(s) for the audit events, comma separated. Replaces the platform context's Solr endpoint, ZooKeeper included. Leave blank to use the platform context's."
+        },
+        {
+          "name": "ranger.audit.solrZookeepers",
+          "label": "Solr ZooKeeper",
+          "type": "string",
+          "defaultValue": "",
+          "omitWhenBlank": true,
+          "placeholder": "zk1.example.com:2181/infra-solr",
+          "condition": { "field": "ranger.audit.solrMode", "value": "on" },
+          "help": "ZooKeeper connection string (with chroot) of a SolrCloud, instead of Solr URLs. Replaces the platform context's Solr endpoint, URLs included. Leave blank to use the platform context's."
+        },
+        {
+          "name": "ranger.audit.hdfsMode",
+          "label": "Ranger audit to HDFS",
+          "type": "select",
+          "options": [
+            { "label": "Follow the platform context", "value": "auto" },
+            { "label": "On", "value": "on" },
+            { "label": "Off", "value": "off" }
+          ],
+          "defaultValue": "auto",
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "help": "Audit events written to HDFS files. 'Follow the platform context' audits to HDFS when the context's Ranger does. 'On' and 'Off' decide for this release alone. The cluster's Hadoop configuration (core-site and hdfs-site) must reach the Trino pods to resolve the HDFS address."
+        },
+        {
+          "name": "ranger.audit.hdfsDir",
+          "label": "HDFS audit directory",
+          "type": "string",
+          "defaultValue": "",
+          "omitWhenBlank": true,
+          "placeholder": "hdfs://namenode.example.com:8020/ranger/audit",
+          "condition": { "field": "ranger.audit.hdfsMode", "value": "on" },
+          "help": "Directory the audit files are written to, with the file system in front. Leave blank to use the platform context's."
+        },
+        {
+          "name": "ranger.audit.log4j",
+          "label": "Also write Ranger audit to the pod log",
+          "type": "boolean",
+          "defaultValue": true,
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "help": "Keeps writing the audit events to the Trino pod log (kubectl logs) as well as to the destinations above."
         },
         {
           "name": "nodePort.port",

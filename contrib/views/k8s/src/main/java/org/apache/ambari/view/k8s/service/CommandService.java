@@ -3029,6 +3029,20 @@ public class CommandService {
         }
     }
 
+    /** Whether the service gets the cluster's hdfs-site, which a Ranger plugin's HDFS audit writer needs. */
+    static boolean hasHdfsSiteConfigMap(List<Map<String, Object>> requiredConfigMaps) {
+        if (requiredConfigMaps == null) {
+            return false;
+        }
+        for (Map<String, Object> spec : requiredConfigMaps) {
+            Object files = spec == null ? null : spec.get("config_properties");
+            if (files instanceof Collection && ((Collection<?>) files).contains("hdfs-site")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Create or update Ranger-related ConfigMaps/Secrets required by charts.
      * The behavior is driven entirely by the service.json Ranger spec entries.
@@ -3072,6 +3086,12 @@ public class CommandService {
                 ? ambariAliasResolver
                 : new AmbariAliasResolver(ctx);
         Map<String, String> rangerObjectLabels = rangerObjectLabels(request.getReleaseName());
+        List<String> rangerAuditWarnings = new ArrayList<>();
+        // What the audit writers take over from the security entry, which comes before the audit entry: the plugin's
+        // Kerberos login and the writable directory its policy cache lives in.
+        String rangerAuditKerberosPrincipal = null;
+        String rangerAuditKerberosKeytab = null;
+        String rangerAuditSpoolBase = null;
 
         for (Map.Entry<String, Map<String, Object>> rangerEntry : rangerSpec.entrySet()) {
             Map<String, Object> spec = rangerEntry.getValue();
@@ -3129,6 +3149,7 @@ public class CommandService {
                     if (rangerPolicyCacheDir != null && rangerPolicyCacheDirHelmProperty != null
                             && !rangerPolicyCacheDir.isBlank() && !rangerPolicyCacheDirHelmProperty.isBlank()) {
                         this.commandUtils.addOverride(params, rangerPolicyCacheDirHelmProperty, rangerPolicyCacheDir);
+                        rangerAuditSpoolBase = rangerPolicyCacheDir.replaceAll("/+$", "") + "/audit";
                         rangerSecurityConfig.put(
                                 "ranger.plugin." + rangerServiceType + ".policy.cache.dir",
                                 rangerPolicyCacheDir
@@ -3198,6 +3219,8 @@ public class CommandService {
                                         "ranger.plugin." + rangerServiceType + ".ugi.initialize",
                                         "true"
                                 );
+                                rangerAuditKerberosPrincipal = rangerPrincipalFull;
+                                rangerAuditKerberosKeytab = rangerKeytabPath;
                                 rangerExtraServiceConfigs.put("policy.download.auth.users", rangerPrincipalPrimary);
                                 rangerExtraServiceConfigs.put("tag.download.auth.users", rangerPrincipalPrimary);
                             }
@@ -3302,6 +3325,24 @@ public class CommandService {
                     if (rangerDefaultsProvider != null) {
                         auditConfig.putAll(rangerDefaultsProvider.audit());
                     }
+                    // The plugin audits where the platform context's Ranger does (Solr, HDFS), unless the wizard
+                    // chose otherwise; the pod log stays on beside them.
+                    rangerAuditWarnings.addAll(RangerAuditDestinations.apply(
+                            auditConfig,
+                            rangerCtx != null ? rangerCtx.getResolvedFields() : null,
+                            effectiveValues,
+                            rangerCtx != null ? rangerCtx.getUnreadFields() : null,
+                            rangerAuditKerberosPrincipal,
+                            rangerAuditKerberosKeytab,
+                            hasHdfsSiteConfigMap(request.getRequiredConfigMaps())));
+                    if (rangerAuditSpoolBase != null) {
+                        auditConfig.put("xasecure.audit.destination.solr.batch.filespool.dir", rangerAuditSpoolBase + "/solr");
+                        auditConfig.put("xasecure.audit.destination.hdfs.batch.filespool.dir", rangerAuditSpoolBase + "/hdfs");
+                    }
+                    LOG.info("Ranger audit destinations for '{}': solr={} hdfs={} log4j={}", rangerRepositoryName,
+                            auditConfig.get("xasecure.audit.destination.solr"),
+                            auditConfig.get("xasecure.audit.destination.hdfs"),
+                            auditConfig.get("xasecure.audit.destination.log4j"));
                     xml = HadoopSiteXml.render(auditConfig);
                     xmlKey = dataKeyBase + ".xml";
                     break;
@@ -3514,7 +3555,7 @@ public class CommandService {
         // context's Ranger (TagSyncRangerAccount), puts only that account in the release's project and injects the
         // projector's connection values. The context's Ranger administrator credentials never leave the view. With
         // the toggle off, the account an earlier deploy gave the release is taken back.
-        List<String> warnings = new ArrayList<>();
+        List<String> warnings = new ArrayList<>(rangerAuditWarnings);
         try {
             warnings.addAll(applyTagSyncRangerAccount(request, params, effectiveValues, rangerCtx, externalRangerUrl,
                     ambariActionClient, cluster));
@@ -5165,6 +5206,9 @@ public class CommandService {
         rangerRequest.setServiceKey(releaseMetadata.getServiceKey());
         rangerRequest.setChart(releaseMetadata.getChartRef());
         rangerRequest.setRanger(serviceDefinition.ranger);
+        // The Hadoop configuration the release was deployed with: the audit settings are written differently for a
+        // service whose pods have no hdfs-site, so a reapply must see what the deploy saw.
+        rangerRequest.setRequiredConfigMaps(serviceDefinition.requiredConfigMaps);
         if (target.contextId() != null) {
             // The steps planned from the request read the context there too.
             rangerRequest.setFormValues(Map.of("platformContextId", target.contextId()));
