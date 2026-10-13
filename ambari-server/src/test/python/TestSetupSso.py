@@ -73,7 +73,8 @@ with patch.object(distro, "linux_distribution", return_value = MagicMock(return_
                   from ambari_server.properties import Properties
                   from ambari_server.setupSso import setup_sso, AMBARI_SSO_AUTH_ENABLED, \
                     SSO_PROVIDER_URL, SSO_CERTIFICATE, JWT_COOKIE_NAME, JWT_AUDIENCES, \
-                    SSO_ENABLED_SERVICES, SSO_MANAGE_SERVICES
+                    SSO_ENABLED_SERVICES, SSO_MANAGE_SERVICES, setup_sso_oidc, SSO_OIDC_CLIENT_ID, \
+                    SSO_OIDC_MANAGE_SERVICES, SSO_OIDC_ENABLED_SERVICES
 
 class TestSetupSso(unittest.TestCase):
   @patch("ambari_server.setupSso.is_server_runing")
@@ -607,6 +608,148 @@ class TestSetupSso(unittest.TestCase):
 
     sys.stdout = sys.__stdout__
     pass
+
+  @patch("ambari_server.setupSso.perform_changes_via_rest_api")
+  @patch("ambari_server.setupSso.get_validated_string_input")
+  @patch("ambari_server.setupSso.get_YN_input")
+  @patch("ambari_server.setupSso.get_ambari_properties")
+  @patch("ambari_server.setupSso.get_silent")
+  @patch("ambari_server.setupSso.is_server_runing")
+  @patch("ambari_server.setupSso.get_json_via_rest_api")
+  def test_oidc_service_management_cli_options_are_ignored_with_a_warning(self, get_json_via_rest_api_mock,
+                                                                          is_server_runing_mock,
+                                                                          get_silent_mock,
+                                                                          get_ambari_properties_mock,
+                                                                          get_YN_input_mock,
+                                                                          get_validated_string_input_mock,
+                                                                          perform_changes_via_rest_api_mock):
+    out = io.StringIO()
+    sys.stdout = out
+    try:
+      # Values saved by an earlier version must be cleared, not kept.
+      get_json_via_rest_api_mock.return_value = (200, {"Configuration": {"properties": {
+        SSO_OIDC_MANAGE_SERVICES: "true", SSO_OIDC_ENABLED_SERVICES: "HIVE"}}})
+      is_server_runing_mock.return_value = (True, 0)
+      get_silent_mock.return_value = False
+      get_ambari_properties_mock.return_value = Properties()
+      get_YN_input_mock.side_effect = lambda prompt, default, *args, **kwargs: default
+      get_validated_string_input_mock.side_effect = lambda prompt, default, *args, **kwargs: default
+
+      options = self._create_empty_oidc_options_mock()
+      options.sso_oidc_enabled = 'true'
+      options.sso_oidc_client_id = 'ambari'
+      options.sso_oidc_client_secret = 'secret'
+      options.sso_oidc_callback_url = 'https://ambari.example.com:8442/oidc/callback'
+      options.sso_oidc_manage_services = 'true'
+      options.sso_oidc_enabled_services = 'RANGER'
+
+      setup_sso_oidc(options)
+
+      ssoProperties = self._sent_sso_properties(perform_changes_via_rest_api_mock)
+      self.assertEqual(ssoProperties[SSO_OIDC_MANAGE_SERVICES], "false")
+      self.assertEqual(ssoProperties[SSO_OIDC_ENABLED_SERVICES], "")
+      self.assertEqual(ssoProperties[SSO_OIDC_CLIENT_ID], "ambari")
+      self.assertIn("WARNING: --sso-oidc-manage-services and --sso-oidc-enabled-services have no effect in this release",
+                    out.getvalue())
+      self.assertIn("use --sso-manage-services/--sso-enabled-services", out.getvalue())
+    finally:
+      sys.stdout = sys.__stdout__
+
+  @patch("ambari_server.setupSso.perform_changes_via_rest_api")
+  @patch("ambari_server.setupSso.get_validated_string_input")
+  @patch("ambari_server.setupSso.get_YN_input")
+  @patch("ambari_server.setupSso.get_ambari_properties")
+  @patch("ambari_server.setupSso.get_silent")
+  @patch("ambari_server.setupSso.is_server_runing")
+  @patch("ambari_server.setupSso.get_json_via_rest_api")
+  def test_interactive_oidc_setup_does_not_ask_about_cluster_services(self, get_json_via_rest_api_mock,
+                                                                      is_server_runing_mock,
+                                                                      get_silent_mock,
+                                                                      get_ambari_properties_mock,
+                                                                      get_YN_input_mock,
+                                                                      get_validated_string_input_mock,
+                                                                      perform_changes_via_rest_api_mock):
+    out = io.StringIO()
+    sys.stdout = out
+    try:
+      get_json_via_rest_api_mock.return_value = (200, {})
+      is_server_runing_mock.return_value = (True, 0)
+      get_silent_mock.return_value = False
+      get_ambari_properties_mock.return_value = Properties()
+      prompts = []
+
+      def answer_with_default(prompt, default, *args, **kwargs):
+        prompts.append(prompt)
+        return default
+
+      get_YN_input_mock.side_effect = answer_with_default
+      get_validated_string_input_mock.side_effect = answer_with_default
+
+      # Nothing on the command line: every answer comes from a prompt.
+      setup_sso_oidc(self._create_empty_oidc_options_mock())
+
+      self.assertTrue(any('configure OIDC browser-based SSO flow' in prompt for prompt in prompts))
+      self.assertFalse(any('cluster services' in prompt for prompt in prompts), prompts)
+      self.assertFalse(any('OIDC SSO enabled services' in prompt for prompt in prompts), prompts)
+
+      ssoProperties = self._sent_sso_properties(perform_changes_via_rest_api_mock)
+      self.assertEqual(ssoProperties[SSO_OIDC_MANAGE_SERVICES], "false")
+      self.assertEqual(ssoProperties[SSO_OIDC_ENABLED_SERVICES], "")
+      self.assertNotIn("WARNING", out.getvalue())
+    finally:
+      sys.stdout = sys.__stdout__
+
+  @patch("ambari_server.setupSso.perform_changes_via_rest_api")
+  @patch("ambari_server.setupSso.get_ambari_properties")
+  @patch("ambari_server.setupSso.get_silent")
+  @patch("ambari_server.setupSso.is_server_runing")
+  @patch("ambari_server.setupSso.get_json_via_rest_api")
+  def test_disabling_oidc_removes_the_oidc_service_management_keys(self, get_json_via_rest_api_mock,
+                                                                   is_server_runing_mock,
+                                                                   get_silent_mock,
+                                                                   get_ambari_properties_mock,
+                                                                   perform_changes_via_rest_api_mock):
+    out = io.StringIO()
+    sys.stdout = out
+    try:
+      get_json_via_rest_api_mock.return_value = (200, {"Configuration": {"properties": {
+        SSO_OIDC_CLIENT_ID: "ambari", SSO_OIDC_MANAGE_SERVICES: "true", SSO_OIDC_ENABLED_SERVICES: "RANGER",
+        SSO_MANAGE_SERVICES: "true"}}})
+      is_server_runing_mock.return_value = (True, 0)
+      get_silent_mock.return_value = False
+      get_ambari_properties_mock.return_value = Properties()
+
+      options = self._create_empty_oidc_options_mock()
+      options.sso_oidc_enabled = 'false'
+
+      setup_sso_oidc(options)
+
+      ssoProperties = self._sent_sso_properties(perform_changes_via_rest_api_mock)
+      self.assertNotIn(SSO_OIDC_CLIENT_ID, ssoProperties)
+      self.assertNotIn(SSO_OIDC_MANAGE_SERVICES, ssoProperties)
+      self.assertNotIn(SSO_OIDC_ENABLED_SERVICES, ssoProperties)
+      # The Knox SSO keys belong to setup-sso and are kept.
+      self.assertEqual(ssoProperties[SSO_MANAGE_SERVICES], "true")
+    finally:
+      sys.stdout = sys.__stdout__
+
+  def _sent_sso_properties(self, perform_changes_via_rest_api_mock):
+    self.assertTrue(perform_changes_via_rest_api_mock.called)
+    args, kwargs = perform_changes_via_rest_api_mock.call_args_list[0]
+    self.assertEqual(args[4], 'PUT')
+    return args[5]['Configuration']['properties']
+
+  def _create_empty_oidc_options_mock(self):
+    options = MagicMock()
+    for name in ['sso_oidc_enabled', 'sso_oidc_client_id', 'sso_oidc_client_secret', 'sso_oidc_callback_url',
+                 'sso_jwt_username_claim', 'sso_oidc_provider_url', 'sso_oidc_public_cert_file',
+                 'sso_oidc_enabled_ambari', 'sso_oidc_manage_services', 'sso_oidc_enabled_services',
+                 'sso_oidc_user_auto_create', 'sso_oidc_user_case_conversion', 'sso_oidc_user_default_role',
+                 'sso_oidc_groups_claim', 'sso_oidc_groups_auto_create', 'sso_oidc_groups_case_conversion',
+                 'sso_oidc_groups_sync_on_login', 'sso_oidc_admin_users', 'sso_oidc_admin_groups',
+                 'sso_oidc_allowed_groups']:
+      setattr(options, name, None)
+    return options
 
   def _create_empty_options_mock(self):
     options = MagicMock()

@@ -627,12 +627,13 @@ def init_setup_sso_oidc_options(parser):
                     help="Enable the OIDC browser-flow authentication for Ambari login ('true'|'false'). "
                          "Defaults to 'true' when clientId/clientSecret are set (backward compat).",
                     dest="sso_oidc_enabled_ambari")
+  # Reserved, no effect: Ambari does not push OIDC SSO to cluster services (Ranger SSO goes through
+  # Knox, see setup-sso).  Still accepted so existing scripts do not fail; setup-sso-oidc warns.
   parser.add_option('--sso-oidc-manage-services', default=None,
-                    help="Whether Ambari should push OIDC SSO config to cluster services ('true'|'false')",
+                    help=optparse.SUPPRESS_HELP,
                     dest="sso_oidc_manage_services")
   parser.add_option('--sso-oidc-enabled-services', default=None,
-                    help="Comma-delimited list of cluster services to configure with OIDC SSO (e.g. RANGER,ATLAS or * for all). "
-                         "Services not listed continue to use Knox SSO.",
+                    help=optparse.SUPPRESS_HELP,
                     dest="sso_oidc_enabled_services")
   # --- JIT (Just-In-Time) provisioning of users / groups from OIDC JWT claims ---
   parser.add_option('--sso-oidc-user-auto-create', default=None,

@@ -98,3 +98,25 @@ These services were offered by pre-release builds and are no longer in the servi
     does not replace the redeploy here.
 - The full procedure is in the Ambari OIDC guide,
   [Rotate the client secret of a service's OIDC client](../../../../ambari-server/docs/security/sso/oidc.md#rotate-a-service-oidc-client-secret).
+
+### Keycloak prerequisites
+
+- KDPS registers the OIDC clients of its releases through the Keycloak admin API, with the settings of the cluster's
+  OIDC service (`oidc-env`). Before deploying a release with OIDC sign-in:
+  - Keycloak must be reachable at `oidc_admin_url` from the Ambari server (or the Ambari pod), with its TLS certificate
+    trusted by Ambari's truststore, and the release's pods must reach the issuer URL and trust its CA.
+  - The service realm (`oidc_realm`) must exist; KDPS creates clients in it, never the realm.
+  - The Keycloak admin principal needs the `manage-clients` and `view-clients` roles on the service realm.
+  - The admin credential must be in Ambari's persistent credential store (`ambari-server setup-security`): KDPS does
+    not read the temporary store, so a credential kept only there is not found, and it is lost when Ambari restarts.
+    A confidential admin client with a service account (`oidc_admin_client_secret`) is the alternative.
+- The full list, the order to follow and the errors a missing prerequisite produces are in the Ambari OIDC guide,
+  [Keycloak prerequisites](../../../../ambari-server/docs/security/sso/oidc.md#keycloak-prerequisites).
+
+### Single sign-on for cluster services
+
+- `ambari-server setup-sso-oidc` no longer asks whether Ambari should manage OIDC single sign-on for cluster services
+  such as Ranger. That setting was never applied to any service. The `--sso-oidc-manage-services` and
+  `--sso-oidc-enabled-services` options are still accepted but only print a warning, and the stored values are cleared.
+- Single sign-on for Ranger Admin goes through Knox SSO (`ambari-server setup-sso` with `--sso-manage-services` and
+  `--sso-enabled-services`), which can federate to Keycloak.
