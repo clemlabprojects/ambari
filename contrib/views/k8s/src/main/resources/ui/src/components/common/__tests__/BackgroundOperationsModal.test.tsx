@@ -18,6 +18,7 @@
 
 import React from 'react';
 import { render, screen, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 jest.mock('../../../api/client');
 
@@ -172,4 +173,37 @@ describe('BackgroundOperationsModal', () => {
     await waitFor(() => expect(onAutoClose).toHaveBeenCalled(), { timeout: 5000 });
     expect(screen.queryByText('Committed to Git, not applied yet')).toBeNull();
   }, 10000);
+
+  describe('Abort', () => {
+    const running = {
+      id: 'cmd-abort', state: 'RUNNING', percent: 40, step: 0, message: 'Install release trino', type: 'TEST',
+      hasChildren: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as any;
+
+    const clickAbort = async () => {
+      (listCommands as jest.Mock).mockResolvedValue([running]);
+      (getCommandStatus as jest.Mock).mockResolvedValue(running);
+      render(<BackgroundOperationsModal open onClose={() => undefined} />);
+      await userEvent.click(await screen.findByRole('button', { name: 'Abort' }));
+    };
+
+    it('asks for confirmation and aborts nothing until it is given', async () => {
+      await clickAbort();
+
+      expect(await screen.findByText('Abort "Install release trino"?')).toBeTruthy();
+      expect(screen.getByText(/The step that is running now will finish, the remaining steps will be skipped, and the operation cannot be resumed/)).toBeTruthy();
+      expect(cancelCommand).not.toHaveBeenCalled();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Keep running' }));
+      expect(cancelCommand).not.toHaveBeenCalled();
+    });
+
+    it('aborts the operation once confirmed', async () => {
+      await clickAbort();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Abort operation' }));
+
+      await waitFor(() => expect(cancelCommand).toHaveBeenCalledWith('cmd-abort'));
+    });
+  });
 });

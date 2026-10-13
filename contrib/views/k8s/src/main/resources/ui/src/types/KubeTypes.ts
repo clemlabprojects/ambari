@@ -19,6 +19,10 @@ export type KubePod = {
   nodeName?: string;
   podIP?: string;
   startTime?: string;
+  /** Kind of the controller that owns the pod (StatefulSet, ReplicaSet, ...); absent for a bare pod. */
+  ownerKind?: string;
+  /** Set once the pod is being deleted, that is while it is Terminating. */
+  deletionTimestamp?: string;
   labels?: Record<string, string>;
   containers: KubePodContainerStatus[];
 };

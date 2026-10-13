@@ -17,7 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Select, Space, Table, Tag, Typography, Button, Modal, Spin, Input, Dropdown, message, Tabs, Tooltip, Switch } from 'antd';
+import { Select, Space, Table, Tag, Typography, Button, Modal, Spin, Input, Dropdown, message, Tabs, Tooltip, Switch, Alert, Checkbox } from 'antd';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { MenuProps } from 'antd';
 import {
@@ -48,6 +48,29 @@ import { DownloadOutlined } from '@ant-design/icons';
 import { ReloadOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
+
+/** A pod being deleted stays Terminating until its containers have stopped. */
+const isTerminating = (pod: KubePod): boolean => !!pod.deletionTimestamp;
+
+/** What the operator is told before a pod is restarted or deleted: where it is, and what it may cost. */
+const podShutdownNotice = (pod: KubePod, action: 'restarted' | 'deleted'): React.ReactNode => (
+  <Space direction="vertical" size={8}>
+    <span>
+      Pod <Typography.Text code>{pod.name}</Typography.Text> in namespace <Typography.Text code>{pod.namespace}</Typography.Text> will
+      be {action}. It is given its own shutdown time to stop cleanly before it is killed.
+    </span>
+    {pod.ownerKind === 'StatefulSet' && (
+      <Alert
+        type="warning"
+        showIcon
+        message="This pod belongs to a StatefulSet, typically a database or another stateful service. It is recreated with the same name and storage, and the service it provides is unavailable meanwhile."
+      />
+    )}
+    {isTerminating(pod) && (
+      <Alert type="info" showIcon message="This pod is already shutting down." />
+    )}
+  </Space>
+);
 
 /**
  * Workloads explorer: namespaces, pods, services, events.
@@ -200,10 +223,12 @@ const WorkloadsPage: React.FC = () => {
     }
   };
 
-  const onDeletePod = async (podName: string) => {
+  const onDeletePod = async (podName: string, force: boolean) => {
     if (!namespace) return;
     try {
-      await deletePod(namespace, podName, 0);
+      // Without a grace period the pod shuts down within its own, so its preStop hook and database shutdown run;
+      // only a pod that is already Terminating can be forced out.
+      await deletePod(namespace, podName, force ? 0 : undefined, force);
       message.success('Pod delete requested');
       void getPods(namespace, labelSelector || undefined).then(setPods);
     } catch (err: any) {
@@ -223,6 +248,40 @@ const WorkloadsPage: React.FC = () => {
     } catch (err: any) {
       message.error(err?.message || 'Restart failed');
     }
+  };
+
+  const confirmRestartPod = (row: KubePod) => {
+    Modal.confirm({
+      title: `Restart pod ${row.name}?`,
+      content: podShutdownNotice(row, 'restarted'),
+      okText: 'Restart',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      onOk: () => onRestartPod(row.name),
+    });
+  };
+
+  const confirmDeletePod = (row: KubePod) => {
+    const terminating = isTerminating(row);
+    // Only a pod that is already Terminating can be forced out; the choice is read when the operator confirms.
+    let force = false;
+    Modal.confirm({
+      title: `Delete pod ${row.name}?`,
+      content: (
+        <>
+          {podShutdownNotice(row, 'deleted')}
+          {terminating && (
+            <Checkbox style={{ marginTop: 12 }} onChange={(e) => { force = e.target.checked; }}>
+              Force delete (no grace period)
+            </Checkbox>
+          )}
+        </>
+      ),
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      onOk: () => onDeletePod(row.name, force),
+    });
   };
 
   const readyRatio = (p: KubePod): string => {
@@ -291,8 +350,8 @@ const WorkloadsPage: React.FC = () => {
       { key: 'describe', label: 'Describe', onClick: () => showDescribe('pod', row.name) },
       { key: 'events', label: 'Events', onClick: () => showPodEvents(row.name) },
       { type: 'divider' as const },
-      { key: 'restart', label: <span style={{ color: '#d46b08' }}>Restart</span>, onClick: () => onRestartPod(row.name) },
-      { key: 'delete', label: <span style={{ color: '#a8071a' }}>Delete</span>, onClick: () => onDeletePod(row.name) }
+      { key: 'restart', label: <span style={{ color: '#d46b08' }}>Restart</span>, onClick: () => confirmRestartPod(row) },
+      { key: 'delete', label: <span style={{ color: '#a8071a' }}>Delete</span>, onClick: () => confirmDeletePod(row) }
     ] : [
       { key: 'events', label: 'Events', onClick: () => showPodEvents(row.name) },
     ]),
@@ -302,7 +361,9 @@ const WorkloadsPage: React.FC = () => {
   // Columns for the pods table (lightweight status similar to OpenShift pod list)
   const podColumns = [
     { title: 'Name', dataIndex: 'name', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
-    { title: 'Status', dataIndex: 'phase', render: (v: string) => <Tag color={v === 'Running' ? 'green' : v === 'Pending' ? 'blue' : 'red'}>{v || 'Unknown'}</Tag> },
+    { title: 'Status', dataIndex: 'phase', render: (v: string, row: KubePod) => isTerminating(row)
+      ? <Tag color="orange">Terminating</Tag>
+      : <Tag color={v === 'Running' ? 'green' : v === 'Pending' ? 'blue' : 'red'}>{v || 'Unknown'}</Tag> },
     { title: 'Ready', dataIndex: 'containers', render: (_: any, row: KubePod) => readyRatio(row) },
     { title: 'Restarts', dataIndex: 'containers', render: (_: any, row: KubePod) => row.containers?.reduce((sum, c) => sum + (c.restartCount || 0), 0) ?? 0 },
     { title: 'Node', dataIndex: 'nodeName' },

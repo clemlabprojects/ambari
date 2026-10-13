@@ -127,7 +127,7 @@ class WorkloadsResourceRoleTest {
     assertThrows(ForbiddenException.class, () -> audit.describePod("analytics", "trino-0"));
     assertThrows(ForbiddenException.class, () -> audit.describeService("analytics", "trino"));
     assertThrows(ForbiddenException.class, () -> audit.restartPod("analytics", "trino-0"));
-    assertThrows(ForbiddenException.class, () -> audit.deletePod("analytics", "trino-0", 0));
+    assertThrows(ForbiddenException.class, () -> audit.deletePod("analytics", "trino-0", 0, true));
     verifyNoInteractions(k8s);
 
     when(k8s.tailPodLog("ambari", "db-0", null, 200)).thenReturn("log line");

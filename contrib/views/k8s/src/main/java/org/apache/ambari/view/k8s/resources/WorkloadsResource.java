@@ -30,6 +30,7 @@ import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.ws.rs.BadRequestException;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.DELETE;
@@ -39,6 +40,7 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -198,15 +200,32 @@ public class WorkloadsResource {
     public void restartPod(@PathParam("namespace") String namespace,
                            @PathParam("pod") String pod) {
         auth().checkWritePermission();
+        LOG.info("Restarting pod {}/{} for user {}", namespace, pod, ctx.getUsername());
         kube().restartPod(namespace, pod);
     }
 
+    /**
+     * Deletes a pod. Without {@code graceSeconds} the pod shuts down within its own grace period. A grace period of
+     * 0 force-deletes it, which skips the preStop hooks and can leave a StatefulSet pod running twice, so it is
+     * refused unless {@code force=true} is sent too.
+     */
     @DELETE
     @Path("/namespaces/{namespace}/pods/{pod}")
     public void deletePod(@PathParam("namespace") String namespace,
                           @PathParam("pod") String pod,
-                          @QueryParam("graceSeconds") Integer graceSeconds) {
+                          @QueryParam("graceSeconds") Integer graceSeconds,
+                          @QueryParam("force") boolean force) {
         auth().checkWritePermission();
+        if (graceSeconds != null && graceSeconds == 0 && !force) {
+            String message = "A grace period of 0 force-deletes the pod without letting it shut down. "
+                    + "Send force=true to confirm.";
+            throw new BadRequestException(message, Response.status(Response.Status.BAD_REQUEST)
+                    .type(MediaType.APPLICATION_JSON)
+                    .entity(Map.of("error", message))
+                    .build());
+        }
+        LOG.info("Deleting pod {}/{} for user {} (grace period: {})", namespace, pod, ctx.getUsername(),
+                graceSeconds == null ? "pod default" : graceSeconds + "s");
         kube().deletePod(namespace, pod, graceSeconds);
     }
 

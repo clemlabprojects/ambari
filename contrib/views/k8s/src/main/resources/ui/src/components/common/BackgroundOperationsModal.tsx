@@ -622,8 +622,18 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
                   {(op.state === 'RUNNING' || op.state === 'PENDING') ? (
                     <Button size="small" danger style={{ flexShrink: 0 }} onClick={async (e) => {
                       e.stopPropagation();
-                      try { await cancelCommand(op.id); message.success('Abort requested'); loadPage(true); }
-                      catch (err: any) { message.error(err?.message || 'Abort failed'); }
+                      Modal.confirm({
+                        title: `Abort "${op.message || op.type || op.id}"?`,
+                        content: 'The step that is running now will finish, the remaining steps will be skipped, and the '
+                          + 'operation cannot be resumed afterwards. To complete it, run the wizard again.',
+                        okText: 'Abort operation',
+                        okButtonProps: { danger: true },
+                        cancelText: 'Keep running',
+                        onOk: async () => {
+                          try { await cancelCommand(op.id); message.success('Abort requested'); loadPage(true); }
+                          catch (err: any) { message.error(err?.message || 'Abort failed'); }
+                        },
+                      });
                     }}>Abort</Button>
                   ) : (op.state === 'FAILED') ? (
                     // Resume from the failed step: re-runs that sub-step and continues, skipping the

@@ -281,6 +281,7 @@ public class CommandResource {
   @Path("/{id}/cancel")
   public Response cancel(@PathParam("id") String id) {
     auth().checkWritePermission();
+    LOG.info("Canceling command {} for user {}", id, viewContext.getUsername());
     CommandService.get(viewContext).cancel(id);
     return Response.status(Response.Status.ACCEPTED)
             .entity(Map.of("id", id, "state", "CANCELLED"))

@@ -405,9 +405,14 @@ export const describeService = async (ns: string, svc: string): Promise<string> 
   return res.text();
 };
 
-export const deletePod = async (ns: string, pod: string, graceSeconds?: number): Promise<void> => {
+/**
+ * Deletes a pod. Without `graceSeconds` the pod shuts down within its own grace period; a grace period of 0
+ * force-deletes it and the server only accepts that together with `force`.
+ */
+export const deletePod = async (ns: string, pod: string, graceSeconds?: number, force?: boolean): Promise<void> => {
   const params = new URLSearchParams();
   if (graceSeconds != null) params.set('graceSeconds', graceSeconds.toString());
+  if (force) params.set('force', 'true');
   const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}?${params.toString()}`, { method: 'DELETE', credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
 };

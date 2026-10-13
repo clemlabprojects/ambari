@@ -38,6 +38,7 @@ import io.fabric8.kubernetes.api.model.NodeAddress;
 import io.fabric8.kubernetes.api.model.NodeList;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
+import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.Quantity;
@@ -61,6 +62,7 @@ import io.fabric8.kubernetes.api.model.WatchEvent;
 import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
 import io.fabric8.kubernetes.api.model.ComponentCondition;
 import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
+import io.fabric8.kubernetes.client.dsl.PodResource;
 import io.fabric8.kubernetes.client.dsl.base.PatchContext;
 import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.kubernetes.client.Config;
@@ -1157,22 +1159,28 @@ public class KubernetesService {
     }
 
     /**
-     * Delete a pod (used for restart/cleanup).
+     * Delete a pod (used for restart/cleanup). The pod is given the shutdown time it declares
+     * ({@code terminationGracePeriodSeconds}) so a preStop hook or a database can stop cleanly; a grace period is
+     * sent only when one is asked for explicitly, and 0 force-deletes the pod without waiting for the kubelet.
+     *
+     * @param graceSeconds the grace period to impose, or {@code null} (or a negative value) for the pod's own
      */
     public void deletePod(String namespace, String podName, Integer graceSeconds) {
         checkConfiguration();
-        client.pods()
-            .inNamespace(namespace)
-            .withName(podName)
-            .withGracePeriod(graceSeconds != null ? graceSeconds : 0)
-            .delete();
+        PodResource pod = client.pods().inNamespace(namespace).withName(podName);
+        if (graceSeconds != null && graceSeconds >= 0) {
+            pod.withGracePeriod(graceSeconds).delete();
+        } else {
+            pod.delete();
+        }
     }
 
     /**
-     * Restart pod by deleting it and letting the controller recreate.
+     * Restart pod by deleting it and letting the controller recreate. The pod shuts down within its own grace
+     * period.
      */
     public void restartPod(String namespace, String podName) {
-        deletePod(namespace, podName, 0);
+        deletePod(namespace, podName, null);
     }
 
     /**
@@ -1231,7 +1239,7 @@ public class KubernetesService {
         return dto;
     }
 
-    private KubePod toKubePod(Pod pod) {
+    KubePod toKubePod(Pod pod) {
         KubePod dto = new KubePod();
         dto.name = pod.getMetadata() != null ? pod.getMetadata().getName() : null;
         dto.namespace = pod.getMetadata() != null ? pod.getMetadata().getNamespace() : null;
@@ -1240,6 +1248,15 @@ public class KubernetesService {
         dto.nodeName = pod.getSpec() != null ? pod.getSpec().getNodeName() : null;
         dto.labels = pod.getMetadata() != null && pod.getMetadata().getLabels() != null ? pod.getMetadata().getLabels() : Collections.emptyMap();
         dto.startTime = pod.getStatus() != null ? pod.getStatus().getStartTime() : null;
+        if (pod.getMetadata() != null) {
+            dto.deletionTimestamp = pod.getMetadata().getDeletionTimestamp();
+            if (pod.getMetadata().getOwnerReferences() != null) {
+                dto.ownerKind = pod.getMetadata().getOwnerReferences().stream()
+                        .filter(o -> Boolean.TRUE.equals(o.getController()))
+                        .map(OwnerReference::getKind)
+                        .findFirst().orElse(null);
+            }
+        }
         List<KubePodContainerStatus> containers = new ArrayList<>();
         if (pod.getStatus() != null && pod.getStatus().getContainerStatuses() != null) {
             pod.getStatus().getContainerStatuses().forEach(cs -> {
