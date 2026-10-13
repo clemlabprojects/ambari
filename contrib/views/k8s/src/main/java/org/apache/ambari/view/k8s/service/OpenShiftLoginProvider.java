@@ -31,6 +31,7 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 import java.io.ByteArrayInputStream;
+import javax.net.ssl.SSLException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -38,9 +39,11 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -52,11 +55,19 @@ import java.util.Optional;
  * <p>Implements fabric8's {@link OAuthTokenProvider} so it can be plugged straight into a client Config —
  * the client then fetches a fresh token per request. Requires the cluster's internal OAuth to permit the
  * password grant (i.e. {@code oc login -u -p} works); a browser-only external IdP will not.
+ *
+ * <p>The cluster certificate is always verified, against the CA given or, when none is given, the trust of the
+ * Ambari server JVM, unless the operator explicitly asked to skip verification.
  */
 public class OpenShiftLoginProvider implements OAuthTokenProvider {
 
     private static final Logger LOG = LoggerFactory.getLogger(OpenShiftLoginProvider.class);
     private static final String CHALLENGING_CLIENT_ID = "openshift-challenging-client";
+    /** What the operator can do when the cluster certificate is refused; shown by the connection test. */
+    static final String TLS_GUIDANCE = "The certificate of the OpenShift API or OAuth route is not trusted. Paste the "
+            + "cluster CA bundle (API server CA and ingress CA) into 'Cluster CA certificate', or, only if you accept "
+            + "the risk, tick 'Skip TLS verification'. Leave the CA blank only when the certificates are signed by a "
+            + "CA the Ambari server already trusts.";
     private static final long RENEW_BUFFER_MS = 60_000L; // renew ~1 min before expiry
 
     private final String apiUrl;
@@ -75,6 +86,8 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
      * {@link #getToken()} no longer logs in once it is set: the client asks for a token on every API call.
      */
     private volatile boolean credentialsRefused;
+    /** Why the last login failed, in words an operator can act on; cleared by a successful login. */
+    private volatile String lastFailure;
 
     public OpenShiftLoginProvider(String apiUrl, String username, String password, String caData, boolean insecure) {
         this.apiUrl = apiUrl != null ? apiUrl.replaceAll("/+$", "") : null;
@@ -102,6 +115,7 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
             try {
                 mint();
             } catch (Exception e) {
+                lastFailure = e.getMessage();
                 LOG.error("Failed to obtain an OpenShift token for user '{}' at {}: {}", username, apiUrl, e.toString());
             }
             return token;
@@ -122,13 +136,33 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
             try {
                 mint();
             } catch (Exception e) {
+                lastFailure = e.getMessage();
                 LOG.error("Failed to refresh OpenShift token: {}", e.toString());
             }
             return token;
         }
     }
 
+    /**
+     * @return why the last login failed, or {@code null} when it succeeded or none was made yet. A refused
+     *         certificate is explained with what the operator can do about it.
+     */
+    public String getLastFailure() {
+        return lastFailure;
+    }
+
     private void mint() throws Exception {
+        try {
+            login();
+        } catch (Exception e) {
+            if (isCertificateFailure(e)) {
+                throw new IllegalStateException(TLS_GUIDANCE + " (" + rootMessage(e) + ")", e);
+            }
+            throw e;
+        }
+    }
+
+    private void login() throws Exception {
         HttpClient http = buildHttpClient();
         String authorizeEndpoint = discoverAuthorizeEndpoint(http);
 
@@ -177,6 +211,7 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
         this.token = accessToken;
         this.expiresAtMs = System.currentTimeMillis() + (expiresInSec * 1000L);
         this.credentialsRefused = false;
+        this.lastFailure = null;
         LOG.info("Obtained OpenShift token for user '{}' (expires in {}s).", username, expiresInSec);
     }
 
@@ -196,6 +231,12 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
         String endpoint = root.path("authorization_endpoint").asText(null);
         if (endpoint == null || endpoint.isBlank()) {
             throw new IllegalStateException("OAuth metadata did not contain authorization_endpoint");
+        }
+        // The password goes to this URL in a Basic header: never to plain HTTP, whoever the metadata came from.
+        URI target = URI.create(endpoint.trim());
+        if (!"https".equalsIgnoreCase(target.getScheme())) {
+            throw new IllegalStateException("The OAuth server announced an authorization endpoint that is not HTTPS ("
+                    + endpoint + "); the login is refused so that the password is never sent unencrypted.");
         }
         return endpoint;
     }
@@ -218,14 +259,26 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
                     .sslContext(apiUrl == null ? null : URI.create(apiUrl).getHost());
         }
         SSLContext ctx = SSLContext.getInstance("TLS");
-        X509TrustManager tm;
-        if (caData == null || caData.isBlank()) {
-            tm = trustAll();
-        } else {
-            tm = trustManagerFor(caData);
-        }
+        // Never trust-all here: a blank CA means "a CA the Ambari server JVM already trusts", not "any certificate".
+        X509TrustManager tm = (caData == null || caData.isBlank()) ? defaultTrustManager() : trustManagerFor(caData);
         ctx.init(null, new TrustManager[]{ tm }, null);
         return ctx;
+    }
+
+    /**
+     * The JVM's own trust manager, which honours the Ambari server truststore when one is configured. If that store
+     * cannot be read the login fails: falling back to accepting any certificate would send the password to whoever
+     * answers.
+     */
+    private X509TrustManager defaultTrustManager() throws Exception {
+        try {
+            TrustManagerFactory def = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            def.init((KeyStore) null);
+            return (X509TrustManager) def.getTrustManagers()[0];
+        } catch (Exception e) {
+            throw new IllegalStateException("The Ambari server trust store cannot be read (" + e.getMessage()
+                    + "): paste the cluster CA bundle, or explicitly tick Skip TLS verification.", e);
+        }
     }
 
     private X509TrustManager trustManagerFor(String ca) throws Exception {
@@ -260,11 +313,22 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
         }
     }
 
-    private X509TrustManager trustAll() {
-        return new X509TrustManager() {
-            public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) { }
-            public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) { }
-            public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
-        };
+    private static boolean isCertificateFailure(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String m = t.getMessage() == null ? "" : t.getMessage().toLowerCase(Locale.ROOT);
+            if (t instanceof SSLException || t instanceof CertificateException
+                    || m.contains("pkix") || m.contains("unable to find valid certification path")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String rootMessage(Throwable e) {
+        Throwable t = e;
+        while (t.getCause() != null && t.getCause() != t) {
+            t = t.getCause();
+        }
+        return t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
     }
 }

@@ -456,17 +456,24 @@ public class ViewConfigurationService {
         if (token == null || token.isBlank()) {
             throw new IllegalStateException("Could not obtain an OpenShift token from the stored username/password.");
         }
-        String apiUrl = getOpenShiftApiUrl();
-        String caData = getOpenShiftCaData();
-        boolean insecure = isOpenShiftInsecure();
-        String clusterTls;
-        if (!insecure && caData != null && !caData.isBlank()) {
+        return openShiftKubeconfig(getOpenShiftApiUrl(), getOpenShiftCaData(), isOpenShiftInsecure(), token);
+    }
+
+    /**
+     * The kubeconfig of an OpenShift username/password login. It names how the API certificate is checked only when
+     * the operator decided so: the pasted CA, or an explicit skip. With neither it names nothing, so the clients
+     * verify against the trust they have (the JVM's for the Kubernetes client, the system roots for Helm) rather than
+     * silently accepting any certificate.
+     */
+    static String openShiftKubeconfig(String apiUrl, String caData, boolean insecure, String token) {
+        String clusterTls = "";
+        if (insecure) {
+            clusterTls = "    insecure-skip-tls-verify: true\n";
+        } else if (caData != null && !caData.isBlank()) {
             String b64 = caData.trim().startsWith("-----BEGIN")
                     ? Base64.getEncoder().encodeToString(caData.trim().getBytes(StandardCharsets.UTF_8))
                     : caData.trim().replaceAll("\\s", "");
             clusterTls = "    certificate-authority-data: " + b64 + "\n";
-        } else {
-            clusterTls = "    insecure-skip-tls-verify: true\n";
         }
         return "apiVersion: v1\n"
                 + "kind: Config\n"

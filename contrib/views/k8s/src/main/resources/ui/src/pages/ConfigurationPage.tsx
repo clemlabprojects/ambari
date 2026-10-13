@@ -82,6 +82,7 @@ const ConfigurationPage: React.FC = () => {
     const [osSaving, setOsSaving] = React.useState(false);
     const [osTesting, setOsTesting] = React.useState(false);
     const [osTestOk, setOsTestOk] = React.useState(false);
+    const osSkipTls = Form.useWatch('insecure', osForm);
 
     const osFormValues = () => ({
         apiUrl: osForm.getFieldValue('apiUrl'),
@@ -772,12 +773,21 @@ const ConfigurationPage: React.FC = () => {
                                             <Input.Password placeholder="••••••••" autoComplete="new-password" />
                                         </Form.Item>
                                         <Form.Item name="caData" label="Cluster CA certificate (PEM or base64)"
-                                            help="Optional. Leave blank and tick 'Skip TLS verification' for a self-signed cluster.">
+                                            help="Leave blank only if the API and OAuth-route certificates are signed by a CA the Ambari server already trusts; otherwise paste the CA bundle (API server CA + ingress CA).">
                                             <Input.TextArea rows={3} placeholder="-----BEGIN CERTIFICATE-----&#10;..." />
                                         </Form.Item>
                                         <Form.Item name="insecure" label="Skip TLS verification" valuePropName="checked">
                                             <Switch />
                                         </Form.Item>
+                                        {osSkipTls && (
+                                            <Alert
+                                                type="warning"
+                                                showIcon
+                                                style={{ marginBottom: 16 }}
+                                                message="Certificates are not verified"
+                                                description="Your password and the API token are sent to whatever server answers, without checking its certificate. Paste the cluster CA bundle instead and turn this off."
+                                            />
+                                        )}
                                         <Space>
                                             <Button icon={<ApiOutlined />} loading={osTesting} onClick={handleTestOpenShift}>
                                                 Test connection

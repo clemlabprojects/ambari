@@ -19,9 +19,9 @@
 package org.apache.ambari.view.k8s.service;
 
 import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
 import org.apache.ambari.view.k8s.model.ConnectionHealth;
 import org.apache.ambari.view.k8s.store.PerUserViewContext;
+import org.apache.ambari.view.k8s.utils.SelfSignedHttpsServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,8 +31,6 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -42,8 +40,6 @@ import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -65,9 +61,10 @@ class KubernetesServiceStartsWhileLoginFailsTest {
 
     PerUserViewContext view;
     String apiUrl;
+    /** The CA the saved login names, as the operator pastes it: the cluster certificate is verified. */
+    String caPem;
     /** An OpenShift API and OAuth server; it refuses the saved password unless a test changes {@link #loginAnswer}. */
-    HttpServer oauth;
-    ExecutorService oauthThreads;
+    SelfSignedHttpsServer oauth;
     final AtomicInteger passwordLogins = new AtomicInteger();
     final CountDownLatch loginReceived = new CountDownLatch(1);
     /** Holds the OAuth server's answer to a login until counted down; answers at once unless a test replaces it. */
@@ -76,14 +73,13 @@ class KubernetesServiceStartsWhileLoginFailsTest {
     volatile int loginAnswer = 401;
 
     @BeforeEach
-    void setUp() throws IOException {
-        oauth = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
-        oauthThreads = Executors.newCachedThreadPool();
-        oauth.setExecutor(oauthThreads);
-        apiUrl = "http://" + oauth.getAddress().getHostString() + ":" + oauth.getAddress().getPort();
-        oauth.createContext("/.well-known/oauth-authorization-server", exchange ->
+    void setUp() throws Exception {
+        oauth = new SelfSignedHttpsServer(true, "localhost");
+        caPem = oauth.certificatePem();
+        apiUrl = oauth.ipUrl();
+        oauth.handle("/.well-known/oauth-authorization-server", exchange ->
                 respond(exchange, 200, "{\"authorization_endpoint\":\"" + apiUrl + "/oauth/authorize\"}"));
-        oauth.createContext("/oauth/authorize", exchange -> {
+        oauth.handle("/oauth/authorize", exchange -> {
             passwordLogins.incrementAndGet();
             loginReceived.countDown();
             try {
@@ -98,22 +94,20 @@ class KubernetesServiceStartsWhileLoginFailsTest {
             respond(exchange, loginAnswer, "");
         });
         // The API server no longer accepts the token it gave (e.g. revoked when the password was changed).
-        oauth.createContext("/api", exchange -> respond(exchange, 401,
+        oauth.handle("/api", exchange -> respond(exchange, 401,
                 "{\"kind\":\"Status\",\"apiVersion\":\"v1\",\"status\":\"Failure\",\"message\":\"Unauthorized\","
                         + "\"reason\":\"Unauthorized\",\"code\":401}"));
-        oauth.start();
 
         // Each test is its own view instance: services are kept per instance name for the life of the JVM.
         view = new PerUserViewContext("login-fails-" + UUID.randomUUID(), workDir);
         view.as("alice");
-        new ViewConfigurationService(view.context).saveOpenShiftLogin(apiUrl, "kdps-deployer", "changed-since", null, false);
+        new ViewConfigurationService(view.context).saveOpenShiftLogin(apiUrl, "kdps-deployer", "changed-since", caPem, false);
     }
 
     @AfterEach
     void tearDown() {
         answerLogins.countDown();
-        oauth.stop(0);
-        oauthThreads.shutdownNow();
+        oauth.close();
     }
 
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {
@@ -162,7 +156,7 @@ class KubernetesServiceStartsWhileLoginFailsTest {
 
         // An administrator saves the login again: it is tried at once, and once more refused.
         view.as("alice");
-        new ViewConfigurationService(view.context).saveOpenShiftLogin(apiUrl, "kdps-deployer", "still-wrong", null, false);
+        new ViewConfigurationService(view.context).saveOpenShiftLogin(apiUrl, "kdps-deployer", "still-wrong", caPem, false);
         assertFalse(svc.forceReloadClient());
         assertEquals(2, passwordLogins.get());
         view.as("ops1");
@@ -172,7 +166,7 @@ class KubernetesServiceStartsWhileLoginFailsTest {
         // Saved with the right password, the view connects.
         loginAnswer = 302;
         view.as("alice");
-        new ViewConfigurationService(view.context).saveOpenShiftLogin(apiUrl, "kdps-deployer", "the-new-one", null, false);
+        new ViewConfigurationService(view.context).saveOpenShiftLogin(apiUrl, "kdps-deployer", "the-new-one", caPem, false);
         assertTrue(svc.forceReloadClient());
         assertEquals(3, passwordLogins.get());
         view.as("ops1");

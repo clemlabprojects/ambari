@@ -430,8 +430,10 @@ public class KubeService {
                     new org.apache.ambari.view.k8s.service.OpenShiftLoginProvider(apiUrl, username, password, caData, insecure);
             String token = provider.refresh();
             if (token == null || token.isBlank()) {
-                return Response.ok(Map.of("ok", false, "error",
-                        "Could not obtain a token. Check the URL/credentials, and that the cluster allows password login (oc login -u -p).")).build();
+                // The provider knows why (a refused certificate comes with what to do about it).
+                String why = provider.getLastFailure();
+                return Response.ok(Map.of("ok", false, "error", why != null && !why.isBlank() ? why
+                        : "Could not obtain a token. Check the URL/credentials, and that the cluster allows password login (oc login -u -p).")).build();
             }
             return Response.ok(Map.of("ok", true, "message", "Authenticated to OpenShift as " + username + ".")).build();
         } catch (Exception e) {

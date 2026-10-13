@@ -17,6 +17,7 @@
  */
 package org.apache.ambari.view.k8s.utils;
 
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -45,6 +46,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * An HTTPS server on the loopback address with a self-signed certificate that no truststore knows, issued for the
@@ -56,9 +59,13 @@ public final class SelfSignedHttpsServer implements AutoCloseable {
 
     /** JSON answer by request path, without the query. */
     public final Map<String, String> answers = new ConcurrentHashMap<>();
+    /** Location header by request path: such a path answers 302 to it instead of the JSON. */
+    public final Map<String, String> redirects = new ConcurrentHashMap<>();
     /** "METHOD path Authorization" of every request that got past the handshake. */
     public final List<String> requests = new CopyOnWriteArrayList<>();
     private final HttpsServer server;
+    /** Own threads, so that a handler that blocks does not hold up the other requests. */
+    private final ExecutorService threads = Executors.newCachedThreadPool();
     private final X509Certificate certificate;
 
     /**
@@ -84,6 +91,13 @@ public final class SelfSignedHttpsServer implements AutoCloseable {
             String path = exchange.getRequestURI().getPath();
             requests.add(exchange.getRequestMethod() + " " + path + " "
                     + exchange.getRequestHeaders().getFirst("Authorization"));
+            String redirect = redirects.get(path);
+            if (redirect != null) {
+                exchange.getResponseHeaders().add("Location", redirect);
+                exchange.sendResponseHeaders(302, -1);
+                exchange.close();
+                return;
+            }
             String body = answers.get(path);
             byte[] bytes = (body == null ? "{}" : body).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -92,6 +106,7 @@ public final class SelfSignedHttpsServer implements AutoCloseable {
                 out.write(bytes);
             }
         });
+        server.setExecutor(threads);
         server.start();
     }
 
@@ -103,6 +118,14 @@ public final class SelfSignedHttpsServer implements AutoCloseable {
     /** The base URL, by the name {@code localhost}. */
     public String localhostUrl() {
         return "https://localhost:" + server.getAddress().getPort();
+    }
+
+    /**
+     * Answers {@code path} (and below) with {@code handler} instead of the canned answers, for a test that needs to
+     * hold, count or vary the replies.
+     */
+    public void handle(String path, HttpHandler handler) {
+        server.createContext(path, handler);
     }
 
     public X509Certificate certificate() {
@@ -119,6 +142,7 @@ public final class SelfSignedHttpsServer implements AutoCloseable {
     @Override
     public void close() {
         server.stop(0);
+        threads.shutdownNow();
     }
 
     private static X509Certificate selfSigned(KeyPair keys, boolean withLoopbackIp, String... dnsNames) throws Exception {

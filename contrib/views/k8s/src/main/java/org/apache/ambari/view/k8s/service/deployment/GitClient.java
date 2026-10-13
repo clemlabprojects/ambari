@@ -276,6 +276,7 @@ public class GitClient {
                 try (Git git = Git.open(workspace.toFile())) {
                     StoredConfig cfg = git.getRepository().getConfig();
                     cfg.setString("remote", "origin", "url", repoUrl);
+                    noAutoGc(cfg);
                     cfg.save();
                 }
                 fetch();
@@ -295,11 +296,24 @@ public class GitClient {
                 }
             }
             try (Git git = Git.open(workspace.toFile())) {
+                StoredConfig cfg = git.getRepository().getConfig();
+                noAutoGc(cfg);
+                cfg.save();
                 switchTo(git, baseBranch);
             }
         } catch (GitAPIException e) {
             throw new IOException("git sync failed for " + redact(repoUrl) + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * No automatic garbage collection in the workspace: it is a short-lived clone that is reset to the server on every
+     * sync, and JGit's background gc after a fetch or commit could still hold gc.log.lock while the workspace is reset
+     * or deleted.
+     */
+    private static void noAutoGc(StoredConfig cfg) {
+        cfg.setInt("gc", null, "auto", 0);
+        cfg.setInt("gc", null, "autoPackLimit", 0);
     }
 
     /** Fetches every branch of the server, forgetting those it no longer has. */
