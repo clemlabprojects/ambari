@@ -406,7 +406,8 @@ public class ContextService {
             }
         } else {
             List<String> users = new ReleaseMetadataService(viewContext).findReleasesUsingProfile(LEGACY_OIDC_PROFILE);
-            if (!isLegacyBootstrapProfile(legacy.profile(), issuerUrl)) {
+            // Its row never holds its secrets: one stored apart makes it a profile the operator completed.
+            if (!isLegacyBootstrapProfile(legacy.profile(), issuerUrl) || sps.hasStoredSecrets(LEGACY_OIDC_PROFILE)) {
                 LOG.info("Kept security profile '{}': it is not the profile earlier versions created automatically",
                         LEGACY_OIDC_PROFILE);
             } else if (!users.isEmpty()) {

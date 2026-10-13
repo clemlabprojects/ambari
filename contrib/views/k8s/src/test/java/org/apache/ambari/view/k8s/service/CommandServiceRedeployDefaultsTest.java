@@ -270,6 +270,43 @@ class CommandServiceRedeployDefaultsTest {
     }
 
     @Test
+    void anUpgradeCarryingTheHiddenValuesOfTheReleaseKeepsItsDeployedPasswords() throws Exception {
+        recordRelease(null, "1.43.12");
+        Map<String, Object> deployed = kerberizedValues(null);
+        CommandService.putDotted(deployed, "auth.adminPassword", "Deployed-Pass-764");
+        CommandService.putDotted(deployed, "server.config.https.keystore.password", "Keystore-Pass-764");
+        when(k8s.getHelmReleaseValues(NS, RELEASE)).thenReturn(deployed);
+        // What GET .../values gave the upgrade wizard, sent back with one password retyped and one value changed.
+        Map<String, Object> sentBack = HiddenReleaseValues.hide(deployed, java.util.Set.of());
+        CommandService.putDotted(sentBack, "server.config.https.keystore.password", "Keystore-Pass-Retyped");
+        CommandService.putDotted(sentBack, "server.workers", 3);
+
+        submit(resyncRequest(sentBack), null, null);
+
+        Map<String, Object> values = sentRequest.get().getValues();
+        assertEquals("Deployed-Pass-764", ConfigResolutionService.getByDottedPath(values, "auth.adminPassword"),
+                "the password nobody retyped is the deployed one, not the placeholder");
+        assertEquals("Keystore-Pass-Retyped",
+                ConfigResolutionService.getByDottedPath(values, "server.config.https.keystore.password"));
+        assertEquals(3, ConfigResolutionService.getByDottedPath(values, "server.workers"));
+        assertFalse(HiddenReleaseValues.containsPlaceholder(values));
+    }
+
+    @Test
+    void aHiddenValueTheReleaseCannotGiveBackIsRefusedBeforeAnythingIsDeployed() throws Exception {
+        recordRelease(null, "1.43.12");
+        when(k8s.getHelmReleaseValues(NS, RELEASE)).thenReturn(kerberizedValues(null));
+        Map<String, Object> values = kerberizedValues(null);
+        CommandService.putDotted(values, "auth.adminPassword", HiddenReleaseValues.PLACEHOLDER);
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> submit(resyncRequest(values), null, null));
+
+        assertTrue(refused.getMessage().contains("'auth.adminPassword'"), refused.getMessage());
+        verify(direct, never()).apply(any(), any());
+    }
+
+    @Test
     void aRedeployAfterARollbackKeepsTheRolledBackChartVersion() throws Exception {
         // Recorded at 1.43.14, then rolled back with Helm to 1.43.12, which KDPS does not record.
         recordRelease(null, "1.43.14");
@@ -869,6 +906,36 @@ class CommandServiceRedeployDefaultsTest {
         Map<String, Object> sent = sentRequest.get().getValues();
         assertEquals("Key-In-Use-3", ConfigResolutionService.getByDottedPath(sent, "extraSecretEnv.SUPERSET_SECRET_KEY"));
         assertEquals(Map.of("OPENSTREETMAP_SERVER_URL", "https://tile.example.com"), sent.get("extraEnv"));
+    }
+
+    /**
+     * The upgrade wizard of a Superset release deployed before the SECRET_KEY moved reads it hidden from extraEnv and
+     * sends the placeholder where the key goes now, extraSecretEnv. The deployed key is put back there: the operator
+     * cannot see it to retype it, and a new key would leave the database passwords Superset stored undecryptable.
+     */
+    @Test
+    void anUpgradeOfAnEarlierSupersetReleaseKeepsTheSecretKeyItReadHiddenFromItsOldPlace() throws Exception {
+        recordRelease("SUPERSET", "apache/superset", null, "0.12.48");
+        Map<String, Object> deployed = new LinkedHashMap<>();
+        deployed.put("extraEnv", new LinkedHashMap<>(Map.of("SUPERSET_SECRET_KEY", "Key-In-Use-764",
+                "OPENSTREETMAP_SERVER_URL", "https://tile.example.com")));
+        when(k8s.getHelmReleaseValues(NS, RELEASE)).thenReturn(deployed);
+        Map<String, Object> sentBack = HiddenReleaseValues.hide(deployed, SensitiveFields.valuePathsOfService("SUPERSET"));
+        assertEquals(HiddenReleaseValues.PLACEHOLDER,
+                ConfigResolutionService.getByDottedPath(sentBack, "extraEnv.SUPERSET_SECRET_KEY"));
+        // What the wizard sends: the key from its seed, written by its binding to extraSecretEnv; extraEnv without it.
+        ((Map<?, ?>) sentBack.get("extraEnv")).remove("SUPERSET_SECRET_KEY");
+        CommandService.putDotted(sentBack, "extraSecretEnv.SUPERSET_SECRET_KEY", HiddenReleaseValues.PLACEHOLDER);
+        HelmDeployRequest request = resyncRequest(sentBack);
+        request.setChart("apache/superset");
+        request.setServiceKey("SUPERSET");
+
+        submit(request, "charts", null);
+
+        Map<String, Object> sent = sentRequest.get().getValues();
+        assertEquals("Key-In-Use-764", ConfigResolutionService.getByDottedPath(sent, "extraSecretEnv.SUPERSET_SECRET_KEY"));
+        assertEquals(Map.of("OPENSTREETMAP_SERVER_URL", "https://tile.example.com"), sent.get("extraEnv"));
+        assertFalse(HiddenReleaseValues.containsPlaceholder(sent));
     }
 
     /** The operation log the deploy writes its warnings into. */

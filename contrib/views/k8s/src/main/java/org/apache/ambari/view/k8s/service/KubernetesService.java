@@ -229,7 +229,6 @@ public class KubernetesService {
     private static final String MONITORING_DEFAULT_REPO_FALLBACK_ID = "monitoring-default";
     private static final String MONITORING_DEFAULT_REPO_FALLBACK_NAME = "Monitoring repository";
     private static final String MONITORING_DEFAULT_REPO_AUTO_CREATE_PROP = "monitoring.defaultRepo.autoCreate";
-    private static final String SETTINGS_KEY = "view.settings.json";
     private static final String OPENSHIFT_THANOS_URL_DEFAULT = "https://thanos-querier.openshift-monitoring.svc:9091";
     private static final String KUBERNETES_SERVICE_HOST_ENV = "KUBERNETES_SERVICE_HOST";
     private static final String KUBERNETES_SERVICE_PORT_ENV = "KUBERNETES_SERVICE_PORT";
@@ -1259,10 +1258,10 @@ public class KubernetesService {
 
     private MonitoringSettings loadMonitoringSettings() {
         try {
-            String json = settings().get(SETTINGS_KEY);
-            if (json != null && !json.isBlank()) {
+            // With the Thanos object store credentials decrypted: they are kept apart from the settings document.
+            Map<String, Object> raw = new ViewSettingsService(settings()).read();
+            if (!raw.isEmpty()) {
                 // Some clients persisted {"monitoring": {...}}; unwrap if present
-                Map<String,Object> raw = objectMapper.readValue(json, Map.class);
                 Object candidate = raw.getOrDefault("monitoring", raw);
                 MonitoringSettings s = objectMapper.convertValue(candidate, MonitoringSettings.class);
                 if (s.prometheusIngressClass == null || s.prometheusIngressClass.isBlank()) {

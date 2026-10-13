@@ -27,7 +27,7 @@ import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
-import org.apache.ambari.view.k8s.store.InstanceSettings;
+import org.apache.ambari.view.k8s.service.ViewSettingsService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -64,7 +64,8 @@ import java.util.regex.Pattern;
  * <p>Everything here is view configuration and can hold secrets (managed configuration files, the
  * monitoring object-store key, LDAP and OIDC credentials), so every endpoint requires the KDPS admin
  * role. The one exception is reading the security profiles, which the deploy wizard needs: operators
- * get them without their passwords and client secrets.
+ * get them without their passwords and client secrets. Nobody gets those back: a read only says which
+ * are set.
  */
 @Path("/configurations")
 @Produces(MediaType.APPLICATION_JSON)
@@ -268,32 +269,33 @@ public class ConfigurationResource {
     }
 
     // -------- View Settings (instance-level, shared by every user of the instance) --------
-    private static final String SETTINGS_KEY = "view.settings.json";
 
+    /**
+     * The view settings, with the Thanos object store credentials masked: only whether each one is set is returned.
+     */
     @GET
     @Path("/settings")
     public Response getSettings() {
         auth().checkConfigurationPermission();
         try {
-            String json = new InstanceSettings(viewContext).get(SETTINGS_KEY);
-            if (json == null || json.isBlank()) {
-                return Response.ok(Map.of()).build();
-            }
-            Map<?,?> parsed = objectMapper.readValue(json, Map.class);
-            return Response.ok(parsed).build();
+            return Response.ok(new ViewSettingsService(viewContext).readMasked()).build();
         } catch (Exception e) {
             LOG.error("Failed to load settings", e);
-            return Response.serverError().entity(Map.of("error", e.getMessage())).build();
+            return Response.serverError().entity(Map.of("error", String.valueOf(e.getMessage()))).build();
         }
     }
 
+    /**
+     * Saves the view settings. A Thanos credential sent back masked or blank keeps the stored one.
+     *
+     * @return 200; 400 when the settings are too large to be saved
+     */
     @POST
     @Path("/settings")
     public Response saveSettings(Map<String, Object> settings) {
         auth().checkConfigurationPermission();
         try {
-            String json = objectMapper.writeValueAsString(settings);
-            new InstanceSettings(viewContext).put(SETTINGS_KEY, json);
+            new ViewSettingsService(viewContext).save(settings);
             return Response.ok().build();
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
@@ -329,7 +331,8 @@ public class ConfigurationResource {
                 // Best-effort — never block the GET if Ambari is unreachable
             }
 
-            SecurityProfilesDTO cfg = loadProfilesFromStore();
+            // Never a stored secret, whoever asks: only whether each one is set. Saving the mask back keeps it.
+            SecurityProfilesDTO cfg = new SecurityProfileService(viewContext).loadMaskedProfiles();
             return Response.ok(auth.canConfigure() ? cfg : withoutSecrets(cfg)).build();
         } catch (Exception e) {
             LOG.error("Failed to load security config", e);
@@ -454,13 +457,10 @@ public class ConfigurationResource {
         }
     }
 
-    private SecurityProfilesDTO loadProfilesFromStore() throws Exception {
-        return new SecurityProfileService(viewContext).loadProfiles();
-    }
-
     /**
-     * A copy of the profiles without the LDAP bind passwords, the OIDC client secrets and the free-form extra
-     * properties (which may hold credentials too), for users who may deploy with a profile but not edit it.
+     * A copy of the profiles without even the mask of the LDAP bind passwords and OIDC client secrets, nor the
+     * free-form extra properties (which may hold credentials too), for users who may deploy with a profile but not
+     * edit it.
      */
     static SecurityProfilesDTO withoutSecrets(SecurityProfilesDTO profiles) {
         if (profiles == null) {

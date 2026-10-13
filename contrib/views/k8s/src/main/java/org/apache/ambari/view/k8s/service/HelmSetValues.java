@@ -115,6 +115,15 @@ public final class HelmSetValues {
             "(?i)key|.*(password|passwd|secret|token|secretkey|accesskey|accesskeyid|privatekey|sshkey|apikey"
                     + "|credentials?|keytab)");
 
+    /**
+     * Whether a value under this key is a secret by its name: a key ending in password, passwd, secret, token,
+     * secretKey, accessKey, accessKeyId, privateKey, sshKey, apiKey, credential(s) or keytab, or the key {@code key},
+     * in any case. A name such as {@code secretName} is not: it names a Secret.
+     */
+    static boolean isSecretKey(String key) {
+        return key != null && SECRET_KEY.matcher(key).matches();
+    }
+
     private static com.google.gson.JsonElement redacted(String key, com.google.gson.JsonElement element) {
         if (element.isJsonObject()) {
             com.google.gson.JsonObject out = new com.google.gson.JsonObject();

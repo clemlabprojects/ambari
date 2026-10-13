@@ -25,12 +25,15 @@ import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.Table;
-import javax.persistence.Transient;
 import java.net.URI;
 
 /**
  * Entity representing a Helm repository configuration.
  * Stores metadata for Helm repositories and registries without secret values.
+ *
+ * <p>Ambari's DataStore keeps every bean property of an entity, whatever its JPA annotations, and the view migration
+ * copies every one of them to the next version: no property may ever carry the registry secret. The request that
+ * saves a repository carries it apart ({@code HelmRepoRequest}).</p>
  */
 @Entity
 @Table(name = "k8s_helm_repo")
@@ -73,18 +76,6 @@ public class HelmRepoEntity extends BaseModel {
     private String imageRegistryHostOverride; // optional: e.g. "another.registry.com"
 
     private boolean authInvalid;
-
-    /**
-     * Transient carrier for the plain-text registry secret.
-     * Read from the JSON request body and consumed immediately by
-     * HelmRepositoryService.save(), which encrypts it into the view settings and
-     * clears it before the entity is stored: Ambari's DataStore keeps every bean
-     * property, @Transient or not. Keeping it on the entity avoids a separate
-     * wrapper DTO while still ensuring the secret never travels as a URL query
-     * parameter.
-     */
-    @Transient
-    private String plainSecret;
 
     // Getters and setters
     public String getType() { 
@@ -185,14 +176,6 @@ public class HelmRepoEntity extends BaseModel {
 
     public void setImageRegistryHostOverride(String imageRegistryHostOverride) {
         this.imageRegistryHostOverride = imageRegistryHostOverride;
-    }
-
-    public String getPlainSecret() {
-        return plainSecret;
-    }
-
-    public void setPlainSecret(String plainSecret) {
-        this.plainSecret = plainSecret;
     }
 
     public String getEffectiveRegistryHost() {

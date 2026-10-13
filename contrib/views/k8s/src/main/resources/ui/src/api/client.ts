@@ -226,6 +226,10 @@ export interface SecurityConfig {
     adBindPassword?: string;
     adUserSearchFilter?: string;
     adDomain?: string;
+    /** On a read: whether a bind password is stored (the password itself comes masked). */
+    bindPasswordSet?: boolean;
+    /** On a read: whether an Active Directory bind password is stored. */
+    adBindPasswordSet?: boolean;
   };
   oidc?: {
     issuerUrl?: string;
@@ -233,6 +237,8 @@ export interface SecurityConfig {
     clientSecret?: string;
     /** External source only: the audience the provider puts in its access tokens (blank = the client id). */
     audience?: string;
+    /** On a read: whether a client secret is stored (the secret itself comes masked). */
+    clientSecretSet?: boolean;
     scopes?: string;
     redirectUri?: string;
     userClaim?: string;

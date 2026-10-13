@@ -258,9 +258,8 @@ public class HelmResource {
                 if (metadata.getSecurityProfile() != null && !metadata.getSecurityProfile().isBlank()) {
                     try {
                         var currentProfile = securityProfileService.resolveProfile(metadata.getSecurityProfile());
-                        String currentHash = securityProfileService.fingerprint(currentProfile);
-                        String storedHash = metadata.getSecurityProfileHash();
-                        if (currentHash != null && storedHash != null && !currentHash.equals(storedHash)) {
+                        if (!securityProfileService.matchesFingerprint(currentProfile,
+                                metadata.getSecurityProfileHash())) {
                             releaseDto.securityProfileStale = true;
                         }
                     } catch (Exception ex) {
@@ -1242,6 +1241,9 @@ public class HelmResource {
             if (kubeContext == null) {
                 kubeContext = getKubeconfigContents();
             }
+            // Values read back from the release carry its secrets hidden: the deployed ones are put back.
+            HiddenReleaseValues.restore(deployRequest.getValues(), () -> kubernetesService.getHelmReleaseValues(
+                    deployRequest.getNamespace(), deployRequest.getReleaseName()));
             
             HelmService helmService = new HelmService(viewContext);
             Release deployedRelease = helmService.deployOrUpgrade(
@@ -1292,6 +1294,9 @@ public class HelmResource {
         
         deployRequest.setChart(chartReference);
         deployRequest.setValues(upgradeRequest.getValues());
+        // Values read back from the release carry its secrets hidden: the deployed ones are put back.
+        HiddenReleaseValues.restore(deployRequest.getValues(), () -> kubernetesService.getHelmReleaseValues(
+                upgradeRequest.getNamespace(), upgradeRequest.getReleaseName()));
 
         Release upgradedRelease;
         try {
@@ -1706,12 +1711,14 @@ public class HelmResource {
 
 
     /**
-     * Retrieve the computed Helm values currently applied to a release. They hold every value the release was
-     * deployed with, passwords included, so only users who may redeploy the release can read them.
+     * Retrieve the Helm values a release KDPS deployed runs with, to redeploy it (upgrade wizard, resync, security
+     * refresh, autoscaling change), so only users who may redeploy it can read them. Its secrets read as
+     * {@link HiddenReleaseValues#PLACEHOLDER}; a redeploy that sends the placeholder back keeps the deployed value. The
+     * values of a release KDPS did not deploy are not served.
      *
      * @param namespace   Kubernetes namespace of the release
      * @param releaseName name of the Helm release
-     * @return the effective values map, or an error response on failure
+     * @return the values; 404 for a release KDPS did not deploy; an error response on failure
      */
     @GET
     @Path("/{namespace}/{releaseName}/values")
@@ -1720,9 +1727,20 @@ public class HelmResource {
                               @PathParam("releaseName") String releaseName) {
         authHelper.checkWritePermission();
         try {
-            // Call the method we just added to KubernetesService
+            K8sReleaseEntity metadata = releaseMetadataService.find(namespace, releaseName);
+            boolean managed = (metadata != null && metadata.isManagedByUi())
+                    || kubernetesService.listKdpsManagedReleaseKeys(java.util.Set.of(namespace))
+                            .contains(namespace + "/" + releaseName);
+            if (!managed) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(Map.of("error", "The release " + namespace + "/" + releaseName + " was not deployed by"
+                                + " KDPS: only the values of the releases KDPS deploys are shown."))
+                        .build();
+            }
             Map<String, Object> values = this.kubernetesService.getHelmReleaseValues(namespace, releaseName);
-            return Response.ok(values).build();
+            String serviceKey = metadata == null ? null : metadata.getServiceKey();
+            return Response.ok(HiddenReleaseValues.hide(values, SensitiveFields.valuePathsOfService(serviceKey)))
+                    .build();
         } catch (Exception e) {
             return Response.serverError()
                     .entity(Collections.singletonMap("error", e.getMessage()))

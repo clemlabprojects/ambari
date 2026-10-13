@@ -30,6 +30,7 @@ import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
 import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
+import org.apache.ambari.view.k8s.store.InMemoryDataStore;
 import org.apache.ambari.view.k8s.store.SecurityProfileEntity;
 import org.junit.jupiter.api.Test;
 
@@ -216,9 +217,10 @@ class ConfigurationResourceManagedConfigTest {
     entity.setProfileJson(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(profile));
 
     ViewContext ops = ctx("ops", null);
-    DataStore store = mock(DataStore.class);
+    // The row as an earlier version stored it, secrets in clear.
+    DataStore store = new InMemoryDataStore();
+    store.store(entity);
     when(ops.getDataStore()).thenReturn(store);
-    when(store.findAll(eq(SecurityProfileEntity.class), any())).thenReturn(List.of(entity));
 
     Response r = new ConfigurationResource(ops, mock(KubernetesService.class), null).getSecurityConfig(null, null);
     assertEquals(200, r.getStatus());
@@ -230,12 +232,21 @@ class ConfigurationResourceManagedConfigTest {
     assertNull(seen.oidc.clientSecret);
     assertNull(seen.extraProperties);
 
+    // Administrators edit the profiles, yet do not get the secrets back either: only that they are set.
     ViewContext lead = ctx("lead", null);
     when(lead.getDataStore()).thenReturn(store);
     SecurityConfigDTO full = ((SecurityProfilesDTO) new ConfigurationResource(lead, mock(KubernetesService.class), null)
         .getSecurityConfig(null, null).getEntity()).profiles.get("corp");
-    assertEquals("bind-secret", full.ldap.bindPassword);
-    assertEquals("oidc-secret", full.oidc.clientSecret);
+    assertEquals("********", full.ldap.bindPassword);
+    assertEquals("********", full.ldap.adBindPassword);
+    assertEquals("********", full.oidc.clientSecret);
+    assertEquals(Boolean.TRUE, full.ldap.bindPasswordSet);
+    assertEquals(Boolean.TRUE, full.oidc.clientSecretSet);
+    assertEquals(Map.of("token", "extra-secret"), full.extraProperties);
+    String row = store.find(SecurityProfileEntity.class, "corp").getProfileJson();
+    for (String secret : List.of("bind-secret", "ad-secret", "oidc-secret")) {
+      assertFalse(row.contains(secret), "moved out of the row on the first read: " + row);
+    }
 
     assertForbidden(() -> new ConfigurationResource(ctx("audit", null), mock(KubernetesService.class), null)
         .getSecurityConfig(null, null));

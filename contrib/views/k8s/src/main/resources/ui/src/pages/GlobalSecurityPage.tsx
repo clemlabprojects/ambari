@@ -21,7 +21,7 @@ import { Alert, Button, Form, Input, Modal, Select, Space, Switch, Typography, m
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import { getSecurityConfig, getSecurityProfileUsage, getSecuritySchema, saveSecurityConfig, deleteSecurityProfile } from '../api/client';
 import type { SecurityConfig, SecurityProfiles } from '../api/client';
-import { buildProfileFields } from './globalSecurityFields';
+import { buildProfileFields, isSecretSet, SECRET_SET_PLACEHOLDER, withSecretFlags } from './globalSecurityFields';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -145,7 +145,9 @@ const GlobalSecurityPage: React.FC = () => {
     if (isBoolean) {
       input = <Switch />;
     } else if (isPassword) {
-      input = <Input.Password />;
+      // The server never sends a stored secret back: the field starts blank and says whether one is stored.
+      const stored = isSecretSet(currentProfile ? profiles[currentProfile] : undefined, String(prop?.name || ''));
+      input = <Input.Password placeholder={stored ? SECRET_SET_PLACEHOLDER : undefined} autoComplete="new-password" />;
     } else if (isSelect) {
       input = (
         <Select>
@@ -245,7 +247,8 @@ const GlobalSecurityPage: React.FC = () => {
           extraProperties[row.key] = row.value ?? '';
         }
       });
-      const nextProfiles = { ...profiles, [profileName]: { ...rest, extraProperties } };
+      const sent = { ...rest, extraProperties };
+      const nextProfiles = { ...profiles, [profileName]: sent };
       const payload: SecurityProfiles = {
         defaultProfile,
         profiles: nextProfiles,
@@ -254,7 +257,8 @@ const GlobalSecurityPage: React.FC = () => {
         loadedProfiles: Object.keys(profiles),
       };
       await saveSecurityConfig(payload);
-      setProfiles(nextProfiles);
+      const secretFields = schemaProperties.filter((p: any) => p?.type === 'password').map((p: any) => String(p.name));
+      setProfiles({ ...profiles, [profileName]: withSecretFlags(sent, profiles[profileName], secretFields) });
       message.success('Security configuration saved');
     } catch (e: any) {
       if (e?.errorFields) return;

@@ -20,10 +20,12 @@ package org.apache.ambari.view.k8s.service;
 
 import com.google.gson.Gson;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.model.CommandType;
 import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.InMemoryDataStore;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.OwnerOnlyFiles;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -166,6 +168,25 @@ class OperationFilesRetentionTest {
             assertTrue(Files.exists(paramsFile(kept)) && Files.exists(valuesFile(kept)), kept);
             assertTrue(CommandParamsStore.read(stored(kept + "-step-0")).contains(SECRET), kept);
         }
+    }
+
+    @Test
+    void theOidcClientSecretAFailedOperationKeptGoesWithItsFiles() throws Exception {
+        String old = operation("op-old", "FAILED", now.minus(Duration.ofDays(31)), "SUCCEEDED", "FAILED");
+        String recent = operation("op-recent", "FAILED", now.minus(Duration.ofDays(1)), "SUCCEEDED", "FAILED");
+        OidcClientSecrets secrets = new OidcClientSecrets(new InstanceSettings(ctx));
+        for (String id : List.of(old, recent)) {
+            // Its Keycloak registration step succeeded; the step writing the secret did not.
+            CommandEntity register = dataStore.find(CommandEntity.class, id + "-step-0");
+            register.setType(CommandType.OIDC_REGISTER_CLIENT.name());
+            dataStore.store(register);
+            secrets.keep(id + "-step-0", SECRET);
+        }
+
+        retention.sweep(now);
+
+        assertNull(secrets.read(old + "-step-0"), "no step of the operation can run again to write it");
+        assertEquals(SECRET, secrets.read(recent + "-step-0"), "still kept for Resume");
     }
 
     @Test

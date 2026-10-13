@@ -18,8 +18,9 @@
 
 package org.apache.ambari.view.k8s.service;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.ambari.view.DataStore;
+import org.apache.ambari.view.k8s.requests.HelmRepoRequest;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
@@ -28,6 +29,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.beans.Introspector;
+import java.beans.PropertyDescriptor;
 import java.nio.file.Path;
 import java.util.function.Consumer;
 
@@ -36,7 +39,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * A chart repository's credentials only ever go to the registry they were entered for: whatever secret reference a
@@ -109,17 +115,20 @@ class HelmRepositoryCredentialBindingTest {
 
     @Test
     void theSecretReferenceIsNeitherReadFromNorWrittenToJson() throws Exception {
-        ObjectMapper json = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        // As the view's REST layer binds a request body: the page also sends back what it read (authInvalid...).
+        ObjectMapper json = new ObjectMapper();
 
-        HelmRepoEntity posted = json.readValue("{\"id\":\"x\",\"type\":\"OCI\",\"name\":\"x\",\"url\":\"attacker.example\","
-                + "\"authMode\":\"basic\",\"username\":\"u\",\"secretRef\":\"openshift.password.enc\","
-                + "\"plainSecret\":\"Typed-In\"}", HelmRepoEntity.class);
+        HelmRepoRequest posted = json.readValue("{\"id\":\"x\",\"type\":\"OCI\",\"name\":\"x\","
+                + "\"url\":\"attacker.example\",\"authMode\":\"basic\",\"username\":\"u\",\"secretRef\":\"openshift.password.enc\","
+                + "\"authInvalid\":false,\"lastChecked\":null,\"plainSecret\":\"Typed-In\"}", HelmRepoRequest.class);
 
-        assertNull(posted.getSecretRef());
-        assertEquals("Typed-In", posted.getPlainSecret(), "the secret typed in still reaches the server");
+        assertNull(posted.toEntity().getSecretRef());
+        assertEquals("Typed-In", posted.plainSecret, "the secret typed in still reaches the server");
         HelmRepoEntity stored = oci("harbor", "harbor.example.com/kdps");
         stored.setSecretRef("helm.repo.secret.harbor");
-        assertFalse(json.writeValueAsString(stored).contains("secretRef"));
+        String written = json.writeValueAsString(stored);
+        assertFalse(written.contains("secretRef"), written);
+        assertFalse(written.contains("plainSecret"), written);
     }
 
     @Test
@@ -183,14 +192,25 @@ class HelmRepositoryCredentialBindingTest {
     }
 
     @Test
-    void theSecretTypedInIsNeverKeptInTheRepositoryRow() {
-        HelmRepoEntity posted = oci("harbor", "harbor.example.com/kdps");
-        posted.setPlainSecret("Registry-Token-3");
-        repositories.save(posted, posted.getPlainSecret());
+    void theSecretTypedInIsNeverKeptInTheRepositoryRow() throws Exception {
+        HelmRepoRequest posted = new HelmRepoRequest();
+        posted.id = "harbor";
+        posted.type = "OCI";
+        posted.name = "harbor";
+        posted.url = "harbor.example.com/kdps";
+        posted.authMode = "basic";
+        posted.username = "robot$kdps";
+        posted.plainSecret = "Registry-Token-3";
+        repositories.save(posted.toEntity(), posted.plainSecret);
 
+        // Ambari's DataStore stores every bean property of the entity (and the migration copies every one): the
+        // repository has none that could hold the secret, so its row has no column for it.
+        for (PropertyDescriptor property : Introspector.getBeanInfo(HelmRepoEntity.class).getPropertyDescriptors()) {
+            assertFalse(property.getName().toLowerCase(java.util.Locale.ROOT).contains("plain"), property.getName());
+        }
         HelmRepoEntity row = view.dataStore.find(HelmRepoEntity.class, "harbor");
-        assertNull(row.getPlainSecret());
         assertEquals("Registry-Token-3", repositories.readPlainSecret(row));
+        assertNotEquals("Registry-Token-3", settings.get("helm.repo.secret.harbor"), "stored encrypted");
     }
 
     @Test
@@ -209,20 +229,44 @@ class HelmRepositoryCredentialBindingTest {
     }
 
     @Test
-    void theStartupCheckClearsSecretReferencesAndSecretsEarlierVersionsKeptInRows() throws Exception {
+    void theStartupCheckClearsSecretReferencesEarlierVersionsKeptInRows() throws Exception {
         harborWithItsToken();
         HelmRepoEntity legacy = oci("x", "attacker.example");
         legacy.setSecretRef("openshift.password.enc");
-        legacy.setPlainSecret("Kept-In-Clear");
         view.dataStore.store(legacy);
 
         assertEquals(1, repositories.clearForeignSecretRefs());
 
         HelmRepoEntity cleaned = view.dataStore.find(HelmRepoEntity.class, "x");
         assertEquals("", cleaned.getSecretRef());
-        assertEquals("", cleaned.getPlainSecret());
         assertEquals("helm.repo.secret.harbor", view.dataStore.find(HelmRepoEntity.class, "harbor").getSecretRef());
         assertEquals("OpenShift-Pass-1", settings.getSecret("openshift.password.enc"));
         assertEquals(0, repositories.clearForeignSecretRefs(), "nothing left to clear");
+    }
+
+    @Test
+    void theStartupCheckNeverRemovesARepositoryRow() throws Exception {
+        harborWithItsToken();
+        repositories.save(edited("charts", "https://charts.example.com", r -> {
+            r.setType("HTTP");
+            r.setAuthMode("anonymous");
+            r.setImageProject("kdps");
+        }), null);
+        HelmRepoEntity legacy = oci("x", "attacker.example");
+        legacy.setSecretRef("openshift.password.enc");
+        view.dataStore.store(legacy);
+        // The same rows, with the calls recorded.
+        DataStore rows = spy(view.dataStore);
+        when(view.context.getDataStore()).thenReturn(rows);
+        HelmRepositoryService atStartup = new HelmRepositoryService(view.context, helm);
+
+        assertEquals(1, atStartup.clearForeignSecretRefs());
+
+        // Updated in place only: a row removed to be stored again is lost if the second write fails.
+        verify(rows, never()).remove(any());
+        assertEquals("kdps", repositories.get("charts").getImageProject());
+        assertEquals("", repositories.get("x").getSecretRef());
+        assertEquals("helm.repo.secret.harbor", repositories.get("harbor").getSecretRef());
+        assertEquals("Registry-Token-3", repositories.readPlainSecret(repositories.get("harbor")));
     }
 }

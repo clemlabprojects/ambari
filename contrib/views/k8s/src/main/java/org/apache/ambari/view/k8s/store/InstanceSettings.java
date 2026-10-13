@@ -75,7 +75,10 @@ public class InstanceSettings {
      */
     private static final Object WRITE_LOCK = new Object();
 
+    /** The view instance; {@code null} for settings read straight from a DataStore. */
     private final ViewContext viewContext;
+    /** The DataStore of settings that have no view context; {@code null} otherwise. */
+    private final DataStore ownDataStore;
     private volatile EncryptionService encryptionService;
 
     /**
@@ -91,6 +94,21 @@ public class InstanceSettings {
      */
     public InstanceSettings(ViewContext viewContext, EncryptionService encryptionService) {
         this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
+        this.ownDataStore = null;
+        this.encryptionService = encryptionService;
+    }
+
+    /**
+     * Settings read and written straight in a view instance's DataStore, for work done outside the view itself (the
+     * data migration of a view version change). No user is calling, so nothing is carried over from a user's own
+     * instance data.
+     *
+     * @param dataStore         the DataStore of the view instance
+     * @param encryptionService encrypts and decrypts the secrets; {@code null} to create one on first use
+     */
+    public InstanceSettings(DataStore dataStore, EncryptionService encryptionService) {
+        this.viewContext = null;
+        this.ownDataStore = Objects.requireNonNull(dataStore, "dataStore");
         this.encryptionService = encryptionService;
     }
 
@@ -152,6 +170,27 @@ public class InstanceSettings {
                 }
             }
             store(new KdpsSettingEntity(key, null));
+        }
+    }
+
+    /**
+     * Deletes a setting that no earlier version kept in a user's own instance data (an encrypted secret of a security
+     * profile or of an operation step): its row goes too, since there is nothing for the carry-over of {@link #get}
+     * to bring back, and such keys are written and removed often enough that empty rows would pile up.
+     *
+     * @param key the setting key
+     */
+    public void delete(String key) {
+        synchronized (WRITE_LOCK) {
+            KdpsSettingEntity row = find(key);
+            if (row == null) {
+                return;
+            }
+            try {
+                dataStore().remove(row);
+            } catch (PersistenceException e) {
+                throw new IllegalStateException("Could not remove the view setting '" + key + "'", e);
+            }
         }
     }
 
@@ -252,14 +291,14 @@ public class InstanceSettings {
 
     /** The instance data Ambari returns for the user of the current request (none for background work). */
     private Map<String, String> callersOwnData() {
-        Map<String, String> own = viewContext.getInstanceData();
+        Map<String, String> own = viewContext == null ? null : viewContext.getInstanceData();
         return own == null ? Map.of() : own;
     }
 
     // ----- DataStore access -----
 
     private KdpsSettingEntity find(String key) {
-        DataStore store = viewContext.getDataStore();
+        DataStore store = viewDataStore();
         if (store == null) {
             return null; // a context without an instance has no settings
         }
@@ -278,8 +317,12 @@ public class InstanceSettings {
         }
     }
 
+    private DataStore viewDataStore() {
+        return viewContext == null ? ownDataStore : viewContext.getDataStore();
+    }
+
     private DataStore dataStore() {
-        DataStore store = viewContext.getDataStore();
+        DataStore store = viewDataStore();
         if (store == null) {
             throw new IllegalStateException("This view context has no instance; its settings cannot be saved.");
         }

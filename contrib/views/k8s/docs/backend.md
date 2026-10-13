@@ -78,6 +78,30 @@ limitations under the License.
   ingress TLS keys, static S3 keys and the security profile's passwords: rotate them, and purge old
   `ambari-server.log` files and the log indices they were forwarded to.
 
+## Stored credentials and what the API returns
+- Kept encrypted with Ambari's master key in the instance settings, never in an entity row: the bind passwords and
+  OIDC client secret of a security profile (`secprofile.<profile>.<field>`, the profile row stores them as `null`), a
+  chart repository's registry password or token (`helm.repo.secret.<id>`; `POST /helm/repos` takes it in its body,
+  `HelmRepoRequest`, and `HelmRepoEntity` has no property for it), the Thanos object store keys
+  (`monitoring.thanos.accessKey` / `secretKey`, apart from `view.settings.json`), and the client secret Keycloak gives
+  a client a deploy registers (`oidc.client.secret.<registration step>`, deleted once `OIDC_CREATE_SECRET` has written
+  it, or when the operation's files are purged; never in the step result).
+- Never returned: `GET /contexts/{id}/resolved` sends `ResolvedContext.toClientView()`, which leaves out the Ranger
+  admin password, the Atlas federation password and the Keycloak admin client secret (`secretFieldsSet` says which are
+  set). `GET /configurations/security` and `GET /configurations/settings` send `********` and a `<field>Set` flag for
+  each stored secret; posting the mask or a blank keeps it. `GET /helm/{namespace}/{release}/values` serves only
+  releases KDPS deployed and shows their secrets (service definition password/content/sensitive fields and the values
+  they are seeded from, values under secret keys, PEM private keys) as `********`; a redeploy that sends it back gets
+  the deployed value put back on the server (in a list, by the entry's `name`, or by position while no entry was added
+  or removed), and is refused when there is none or it can no longer be matched. Bare `key` values (tolerations,
+  affinity terms, `secretKeyRef`) and keys naming a Secret (`existingSecret`, `tlsSecret`...) are not hidden.
+- Rows earlier versions wrote are cleaned: security profile rows on their first read, the step results holding a
+  Keycloak client secret and the repositories' foreign secret references when the view starts (rows are updated in
+  place, never removed and stored again); the previous view version's repository rows, step results and security profile
+  rows by the data migration, which also encrypts the Thanos keys of the shared view settings at once and removes them
+  from the copies of `view.settings.json` each user kept in their instance data (new and previous version). This version's repository tables are created without the column earlier versions kept the registry
+  secret in.
+
 ## Caches
 - HelmResource releases: in-memory 10s TTL.
 - KubernetesService: service lookups (30s), cluster stats (10s).

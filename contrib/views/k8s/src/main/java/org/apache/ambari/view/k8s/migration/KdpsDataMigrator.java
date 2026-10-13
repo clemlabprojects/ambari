@@ -17,6 +17,7 @@
  */
 package org.apache.ambari.view.k8s.migration;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -27,6 +28,9 @@ import javax.inject.Inject;
 
 import org.apache.ambari.view.DataStore;
 import org.apache.ambari.view.PersistenceException;
+import org.apache.ambari.view.k8s.service.OidcClientSecrets;
+import org.apache.ambari.view.k8s.service.SecurityProfileService;
+import org.apache.ambari.view.k8s.service.ViewSettingsService;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.KdpsSettingEntity;
 import org.apache.ambari.view.migration.ViewDataMigrationContext;
@@ -44,14 +48,18 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Every entity the new version still declares is copied with {@link AccessorCopyConverter}; entities
  * the new version dropped are skipped. Ambari itself copies the user permissions, carries over view
- * properties left at their defaults, and saves the instance once the migration is done.</p>
+ * properties left at their defaults, and saves the instance once the migration is done. The secrets the
+ * previous version kept in clear in its repository rows, Keycloak registration results and security profiles are
+ * then cleared from its own rows, which stay in Ambari's database.</p>
  *
  * <p>Settings: versions before 1.0.0.9 kept the kubeconfig pointer, OpenShift login, proxy, view settings,
  * monitoring state and every encrypted secret in Ambari's per-user instance data, so each user only saw what
  * they had saved themselves. The migration seeds the settings shared by every user ({@link InstanceSettings})
  * from all users' instance data (see {@link #sharedSettingsFrom}). The per-user instance data is still copied
- * as stored, for the carry-over {@link InstanceSettings#get} does for this release. The encryption key is
- * Ambari's master key, so encrypted values stay readable wherever they are copied.</p>
+ * as stored, for the carry-over {@link InstanceSettings#get} does for this release, except for the Thanos object
+ * store credentials the view settings document held in clear: those are encrypted in the shared settings and removed
+ * from every user's copy. The encryption key is Ambari's master key, so encrypted values stay readable wherever they
+ * are copied.</p>
  */
 public class KdpsDataMigrator implements ViewDataMigrator {
 
@@ -86,6 +94,100 @@ public class KdpsDataMigrator implements ViewDataMigrator {
         }
         migrationContext.copyAllObjects(originEntityClass, currentEntityClass, new AccessorCopyConverter());
         LOG.info("KDPS migration: copied {}", currentEntityClass.getSimpleName());
+        clearSecretsOfPreviousVersion(originEntityClass);
+    }
+
+    /**
+     * Clears, in the previous version's rows, the secrets it kept there in clear and that version no longer needs once
+     * this one runs: the registry secret a repository row kept next to the encrypted one (the previous version read
+     * the encrypted one only), the OIDC client secret a Keycloak registration step kept in its result, and the bind
+     * passwords and client secret a security profile kept in its row. Done after the copy, so this version gets the
+     * rows as they were and moves their secrets itself: it encrypts those of the profiles the first time it loads them
+     * and clears the step results ({@code CommandService#clearOidcClientSecretsFromResults}). A failure is logged and
+     * does not stop the migration.
+     */
+    private void clearSecretsOfPreviousVersion(Class<?> originEntityClass) {
+        if (originEntityClass == null) {
+            return;
+        }
+        String entity = originEntityClass.getSimpleName();
+        if (!"HelmRepoEntity".equals(entity) && !"CommandStatusEntity".equals(entity)
+                && !"SecurityProfileEntity".equals(entity)) {
+            return;
+        }
+        DataStore origin = migrationContext.getOriginDataStore();
+        if (origin == null) {
+            return;
+        }
+        int cleared = 0;
+        try {
+            for (Object row : origin.findAll(originEntityClass, null)) {
+                boolean changed = switch (entity) {
+                    case "HelmRepoEntity" -> blankProperty(row, "PlainSecret");
+                    case "SecurityProfileEntity" -> clearProfileSecrets(row);
+                    default -> clearOidcClientSecret(row);
+                };
+                if (changed) {
+                    origin.store(row);
+                    cleared++;
+                }
+            }
+            if (cleared > 0) {
+                LOG.info("KDPS migration: cleared the secrets the previous version kept in clear in {} {} row(s)",
+                        cleared, entity);
+            }
+        } catch (PersistenceException | ReflectiveOperationException | RuntimeException e) {
+            LOG.warn("KDPS migration: the secrets the previous version kept in its {} rows could not all be cleared"
+                    + " ({} cleared): {}", entity, cleared, e.toString());
+        }
+    }
+
+    /**
+     * Sets a String property of a row to empty when it holds a value. Empty rather than {@code null}: the DataStore
+     * leaves a property it is given as {@code null} unchanged.
+     *
+     * @return whether the row changed
+     */
+    private static boolean blankProperty(Object row, String property) throws ReflectiveOperationException {
+        Method getter;
+        try {
+            getter = row.getClass().getMethod("get" + property);
+        } catch (NoSuchMethodException none) {
+            return false;
+        }
+        Object value = getter.invoke(row);
+        if (!(value instanceof String text) || text.isEmpty()) {
+            return false;
+        }
+        row.getClass().getMethod("set" + property, String.class).invoke(row, "");
+        return true;
+    }
+
+    /** Removes the client secret from the result of a Keycloak registration step. @return whether the row changed */
+    private static boolean clearOidcClientSecret(Object row) throws ReflectiveOperationException {
+        Object result = row.getClass().getMethod("getResultJson").invoke(row);
+        String cleared = result instanceof String json ? OidcClientSecrets.withoutClientSecret(json) : null;
+        if (cleared == null) {
+            return false;
+        }
+        row.getClass().getMethod("setResultJson", String.class).invoke(row, cleared);
+        return true;
+    }
+
+    /**
+     * Removes the bind passwords and the client secret from a security profile row. The whole profile is written back,
+     * never {@code null}: the DataStore leaves a property it is given as {@code null} unchanged.
+     *
+     * @return whether the row changed
+     */
+    private static boolean clearProfileSecrets(Object row) throws ReflectiveOperationException {
+        Object profile = row.getClass().getMethod("getProfileJson").invoke(row);
+        String cleared = profile instanceof String json ? SecurityProfileService.rowWithoutSecrets(json) : null;
+        if (cleared == null) {
+            return false;
+        }
+        row.getClass().getMethod("setProfileJson", String.class).invoke(row, cleared);
+        return true;
     }
 
     @Override
@@ -95,6 +197,70 @@ public class KdpsDataMigrator implements ViewDataMigrator {
         int keys = byUser.values().stream().mapToInt(Map::size).sum();
         LOG.info("KDPS migration: copied {} instance data entries for {} user(s)", keys, byUser.size());
         seedSharedSettings(byUser);
+        encryptSharedThanosCredentials();
+    }
+
+    /**
+     * Earlier versions kept the Thanos object store credentials in clear in the view settings document. Those of the
+     * shared document are encrypted into settings of their own now, rather than on its first read. Then the copies of
+     * the document each user kept for themselves, in this version's instance data and in the previous version's, lose
+     * theirs: they are no longer read once the shared document exists, and only kept the credentials in clear. They
+     * are left as they are when there is no shared document, since the first read still carries one over from them.
+     * A failure is logged and does not stop the migration; the first read of the settings encrypts them then.
+     */
+    private void encryptSharedThanosCredentials() {
+        try {
+            DataStore store = migrationContext.getCurrentDataStore();
+            KdpsSettingEntity shared = store.find(KdpsSettingEntity.class, ViewSettingsService.SETTINGS_KEY);
+            if (shared == null || shared.getValue() == null) {
+                return;
+            }
+            new ViewSettingsService(new InstanceSettings(store, null)).encryptCredentialsKeptInClear();
+        } catch (PersistenceException | RuntimeException e) {
+            LOG.warn("KDPS migration: the Thanos object store credentials of the view settings could not be encrypted"
+                    + " ({}); they are encrypted the first time the settings are read", e.toString());
+            return;
+        }
+        int cleared = clearThanosCredentials(migrationContext.getCurrentInstanceDataByUser(),
+                migrationContext::putCurrentInstanceData)
+                + clearThanosCredentials(migrationContext.getOriginInstanceDataByUser(),
+                migrationContext::putOriginInstanceData);
+        if (cleared > 0) {
+            LOG.info("KDPS migration: removed the Thanos object store credentials from {} copy(ies) of the view"
+                    + " settings that users kept for themselves", cleared);
+        }
+    }
+
+    /** Writes a user's instance data entry. */
+    private interface InstanceDataWriter {
+        void put(String user, String key, String value);
+    }
+
+    /**
+     * Removes the Thanos object store credentials from each user's copy of the view settings document.
+     *
+     * @return how many copies changed
+     */
+    private static int clearThanosCredentials(Map<String, Map<String, String>> byUser, InstanceDataWriter writer) {
+        if (byUser == null) {
+            return 0;
+        }
+        int cleared = 0;
+        for (Map.Entry<String, Map<String, String>> user : byUser.entrySet()) {
+            String settings = user.getValue() == null ? null : user.getValue().get(ViewSettingsService.SETTINGS_KEY);
+            String without = ViewSettingsService.withoutCredentials(settings);
+            if (without == null) {
+                continue;
+            }
+            try {
+                writer.put(user.getKey(), ViewSettingsService.SETTINGS_KEY, without);
+                cleared++;
+            } catch (RuntimeException e) {
+                LOG.warn("KDPS migration: the Thanos object store credentials could not be removed from the view"
+                        + " settings user '{}' kept: {}", user.getKey(), e.toString());
+            }
+        }
+        return cleared;
     }
 
     /**

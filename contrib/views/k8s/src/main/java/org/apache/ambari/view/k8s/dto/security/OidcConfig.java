@@ -18,6 +18,8 @@
 
 package org.apache.ambari.view.k8s.dto.security;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /**
  * OIDC configuration.
  */
@@ -46,4 +48,10 @@ public class OidcConfig {
      * email addresses to avoid "Account already exists" on first OIDC login.
      */
     public String principalDomain;
+    /**
+     * On a read of the profiles, whether a client secret is stored: the secret itself is never sent back (see
+     * {@code SecurityProfileService#loadMaskedProfiles}). Never stored with the profile.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public Boolean clientSecretSet;
 }

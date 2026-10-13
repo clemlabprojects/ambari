@@ -23,9 +23,11 @@ import com.google.gson.reflect.TypeToken;
 import org.apache.ambari.view.DataStore;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.CommandState;
+import org.apache.ambari.view.k8s.model.CommandType;
 import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.OwnerOnlyFiles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -271,7 +273,9 @@ final class OperationFilesRetention {
     }
 
     /**
-     * Deletes the parameter files and the cached values of the commands, and marks their parameters as removed.
+     * Deletes the parameter files and the cached values of the commands, and marks their parameters as removed. The
+     * OIDC client secret a registration step of the operation got is deleted too: without its parameters, no step of
+     * the operation can run again to write it.
      *
      * @return how many files were deleted
      */
@@ -279,6 +283,13 @@ final class OperationFilesRetention {
         int deleted = 0;
         Set<Path> values = new LinkedHashSet<>();
         for (CommandEntity cmd : tree) {
+            if (CommandType.OIDC_REGISTER_CLIENT.name().equals(cmd.getType())) {
+                try {
+                    new OidcClientSecrets(new InstanceSettings(ctx)).forget(cmd.getId());
+                } catch (RuntimeException e) {
+                    LOG.warn("Could not delete the OIDC client secret kept for step {}: {}", cmd.getId(), e.toString());
+                }
+            }
             String stored = cmd.getParamsJson();
             if (stored == null || CommandParamsStore.REMOVED.equals(stored)) {
                 continue;

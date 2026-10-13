@@ -81,4 +81,30 @@ describe('GlobalSecurityPage', () => {
     expect(Object.keys(payload.profiles).sort()).toEqual(['corp-ldap', 'ctx-oidc-default']);
     expect(payload.defaultProfile).toBe('corp-ldap');
   });
+
+  it('shows a stored secret as set, never its mask, and leaves it blank so the server keeps it', async () => {
+    (getSecuritySchema as jest.Mock).mockResolvedValue({
+      properties: [
+        { name: 'mode', type: 'select', default: 'none' },
+        { name: 'ldap.url', type: 'string', displayName: 'LDAP URL', modes: ['ldap'] },
+        { name: 'ldap.bindPassword', type: 'password', displayName: 'Bind password', modes: ['ldap'] },
+      ],
+    });
+    (getSecurityConfig as jest.Mock).mockResolvedValue({
+      defaultProfile: 'corp-ldap',
+      profiles: { 'corp-ldap': { mode: 'ldap', ldap: { url: 'ldaps://ldap.corp', bindPassword: '********', bindPasswordSet: true } } },
+    });
+
+    render(<GlobalSecurityPage />);
+
+    const password = await screen.findByPlaceholderText('Set - leave blank to keep');
+    expect(password).toHaveValue('');
+    await waitFor(() => expect(saveButton()).toBeEnabled());
+    await user.click(saveButton());
+
+    await waitFor(() => expect(saveSecurityConfig).toHaveBeenCalledTimes(1));
+    const sent = (saveSecurityConfig as jest.Mock).mock.calls[0][0].profiles['corp-ldap'];
+    expect(sent.ldap.url).toBe('ldaps://ldap.corp');
+    expect(sent.ldap.bindPassword ?? '').toBe('');
+  });
 });

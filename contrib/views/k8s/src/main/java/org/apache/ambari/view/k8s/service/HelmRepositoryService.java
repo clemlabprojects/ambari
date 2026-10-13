@@ -118,9 +118,6 @@ public class HelmRepositoryService {
 
         HelmRepoEntity existing = repositoryDao.findById(entity.getId());
         String secretKey = secretKey(entity.getId());
-        // The DataStore keeps every property of the entity, the request's plain secret included: never written.
-        // Empty rather than null, since the DataStore leaves a property it is given as null unchanged.
-        entity.setPlainSecret(existing == null ? null : "");
 
         if (plainSecret != null && !plainSecret.isBlank()) {
             settings.putSecret(secretKey, plainSecret);
@@ -194,9 +191,14 @@ public class HelmRepositoryService {
     }
 
     /**
-     * Clears what earlier versions could keep in a repository row: a secret reference naming another view setting
-     * than the repository's own key (that of the OpenShift password, for one), and the plain secret of the request
-     * that saved it. Run when the view starts; a row already clean is left untouched.
+     * Clears a secret reference earlier versions could keep in a repository row naming another view setting than the
+     * repository's own key (that of the OpenShift password, for one). Run when the view starts; a row already clean is
+     * left untouched.
+     *
+     * <p>The registry secret earlier versions kept in a column of the row is not handled here. This version's rows sit
+     * in tables created without that column, the data migration copies no value into it, and it blanks it in the
+     * previous view version's rows. Rows are only ever updated in place: removing one and storing it again would lose
+     * the repository if the second write failed.</p>
      *
      * @return the number of repositories cleaned
      */
@@ -204,20 +206,12 @@ public class HelmRepositoryService {
         int cleaned = 0;
         for (HelmRepoEntity repo : repositoryDao.findAll()) {
             String ref = repo.getSecretRef();
-            boolean foreignRef = ref != null && !ref.isEmpty() && !ref.equals(secretKey(repo.getId()));
-            boolean plainKept = repo.getPlainSecret() != null && !repo.getPlainSecret().isEmpty();
-            if (!foreignRef && !plainKept) {
+            if (ref == null || ref.isEmpty() || ref.equals(secretKey(repo.getId()))) {
                 continue;
             }
-            if (foreignRef) {
-                repo.setSecretRef(NO_SECRET);
-                LOG.warn("Repository {} referred to the view setting '{}' for its credentials, which belongs to "
-                        + "something else; the reference was cleared", repo.getId(), ref);
-            }
-            if (plainKept) {
-                repo.setPlainSecret("");
-                LOG.warn("Repository {} kept its registry secret in clear in its own row; it was cleared", repo.getId());
-            }
+            repo.setSecretRef(NO_SECRET);
+            LOG.warn("Repository {} referred to the view setting '{}' for its credentials, which belongs to "
+                    + "something else; the reference was cleared", repo.getId(), ref);
             repositoryDao.update(repo);
             cleaned++;
         }

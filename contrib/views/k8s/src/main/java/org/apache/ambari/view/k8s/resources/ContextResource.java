@@ -137,7 +137,7 @@ public class ContextResource {
             AmbariActionClient client = ambariClient(headers);
             ResolvedContext rc = svc.resolve(id, client, cluster);
             // Every user of the view may read a context; none of them may read the credentials it holds.
-            return Response.ok(rc.maskSecrets()).build();
+            return Response.ok(rc.toClientView()).build();
         } catch (Exception e) {
             LOG.warn("Failed to resolve context {}: {}", id, e.toString());
             return Response.serverError().entity(java.util.Map.of("error", e.getMessage())).build();

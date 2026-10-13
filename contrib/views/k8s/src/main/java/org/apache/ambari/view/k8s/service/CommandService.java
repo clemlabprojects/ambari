@@ -254,8 +254,9 @@ public class CommandService {
 
     /**
      * On startup, clears credentials earlier versions left where they could be misused: chart repositories naming
-     * another view setting than their own secret (that of the OpenShift password, for one), and the copies of Git
-     * credentials each GitOps deploy stored and no release uses. Never fails the view.
+     * another view setting than their own secret (that of the OpenShift password, for one) or keeping the typed-in
+     * secret in their row, the OIDC client secrets kept in clear in the results of Keycloak registration steps, and
+     * the copies of Git credentials each GitOps deploy stored and no release uses. Never fails the view.
      */
     private void clearStaleCredentials() {
         try {
@@ -264,10 +265,43 @@ public class CommandService {
             LOG.warn("Could not check the stored credentials of the chart repositories: {}", e.toString());
         }
         try {
+            clearOidcClientSecretsFromResults();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not clear the OIDC client secrets earlier versions kept in step results: {}", e.toString());
+        }
+        try {
             fluxGitOpsBackend.removeOrphanedGitCredentials();
         } catch (RuntimeException e) {
             LOG.warn("Could not delete the copies of Git credentials earlier versions stored: {}", e.toString());
         }
+    }
+
+    /**
+     * Removes the client secret earlier versions kept in clear in the result of every Keycloak registration step. A
+     * step that still has to write it into the release's Secret reads it from Keycloak again when it runs.
+     *
+     * @return the number of results cleared
+     */
+    int clearOidcClientSecretsFromResults() {
+        Collection<CommandStatusEntity> all;
+        try {
+            all = dataStore.findAll(CommandStatusEntity.class, null);
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("The operations could not be read: " + e.getMessage(), e);
+        }
+        int cleared = 0;
+        for (CommandStatusEntity st : all) {
+            String result = OidcClientSecrets.withoutClientSecret(st.getResultJson());
+            if (result != null) {
+                st.setResultJson(result);
+                store(st);
+                cleared++;
+            }
+        }
+        if (cleared > 0) {
+            LOG.info("Cleared the OIDC client secret earlier versions kept in clear in {} step result(s)", cleared);
+        }
+        return cleared;
     }
 
     /**
@@ -1433,6 +1467,201 @@ public class CommandService {
         childCommandIds.add(createSecretCmdId);
 
         LOG.info("Added external OIDC secret step for entry {}: createSecretId={}", oidcEntryKey, createSecretCmdId);
+    }
+
+    /**
+     * Registers (or updates) the OIDC client of a deploy in Keycloak and reads its secret. Registering a client that
+     * exists updates it and reads its current secret, so this can run again. The audiences the deploy planned
+     * ({@code oidcAudiences}) are set on the client's tokens, none planned keeps the client's current ones, and the
+     * releases planned as calling this Trino ({@code oidcAudienceCallers}) get its audience added to theirs.
+     *
+     * @param stepId     the step, for its log
+     * @param stepParams the parameters of the registration step (those of the step writing the secret include them)
+     * @return the client id, its secret ({@code ""} for a public client) and the issuer URL its tokens carry
+     */
+    KeycloakAdminClient.OidcClientResult registerOidcClient(String stepId, Map<String, Object> stepParams)
+            throws Exception {
+        String baseUriStr = (String) stepParams.get("_baseUri");
+        if (baseUriStr == null || baseUriStr.isBlank()) {
+            throw new IllegalStateException("Missing _baseUri in OIDC_REGISTER_CLIENT params");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(stepParams.get("_callerHeaders"));
+
+        // Resolve the Keycloak admin (client-registration) settings. Generic rule mirroring
+        // the Ranger routing: when the selected platform context carries its own OIDC admin
+        // creds (EXTERNAL / REMOTE Keycloak), use them and DO NOT touch the local Ambari —
+        // this is what lets a standalone Ambari (no local oidc-env, no cluster) register
+        // clients. Otherwise read the local Ambari oidc-env exactly as before (the default
+        // managed context, unchanged).
+        org.apache.ambari.view.k8s.model.ResolvedContext oidcRc = resolvePlatformContextForStep(stepParams);
+        boolean oidcFromContext = oidcRc != null && oidcRc.hasContextOidcAdminCreds();
+        String clstr = null;
+        AmbariActionClient ambariCli = null;
+        String oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec, verifyTlsStr;
+        String adminUsername = "", adminPassword = "";
+
+        if (oidcFromContext) {
+            oidcAdminUrl   = oidcRc.getOidcAdminUrl();
+            oidcAdminRealm = (oidcRc.getOidcAdminRealm() == null || oidcRc.getOidcAdminRealm().isBlank())
+                    ? "master" : oidcRc.getOidcAdminRealm();
+            oidcRealm      = (oidcRc.getOidcRealm() == null || oidcRc.getOidcRealm().isBlank())
+                    ? "odp" : oidcRc.getOidcRealm();
+            adminClientId  = oidcRc.getOidcAdminClientId();
+            adminClientSec = oidcRc.getOidcAdminClientSecret();
+            verifyTlsStr   = oidcRc.getOidcVerifyTls();
+            LOG.info("OIDC_REGISTER_CLIENT: registering against the platform context's Keycloak "
+                    + "(adminUrl={}, realm={}, registrationClient={})", oidcAdminUrl, oidcRealm, adminClientId);
+        } else {
+            clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
+            String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
+            ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
+
+            // Load Keycloak admin settings from Ambari oidc-env config
+            oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
+            oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
+            oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
+            adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
+            String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
+            verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
+
+            if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
+                throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config "
+                        + "(and the selected platform context supplies no OIDC admin credentials).");
+            }
+            if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
+            if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
+            if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
+
+            // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
+            AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
+            char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
+            adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
+
+            // Admin username/password come from the Ambari credential store (same alias used
+            // by ConfigureOidcServerAction), never from plain-text config properties.
+            // The view can only read the persisted store. The Enable OIDC and Enable Kerberos
+            // wizards store the credential there whenever the server has a persistent credential
+            // store, as does Manage OIDC Credentials (or the credentials REST API).
+            org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
+                    oidcAliasResolver.getOidcAdminCredential(clstr);
+            adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
+            adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
+                    ? new String(oidcAdminCred.getKey()) : "";
+        }
+        boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
+
+        String desiredClientId = (String) stepParams.get("oidcClientId");
+        String redirectUri     = (String) stepParams.get("oidcRedirectUri");
+        Object publicClientObj = stepParams.get("publicClient");
+        boolean publicClient   = Boolean.parseBoolean(String.valueOf(publicClientObj));
+        Object stdFlowObj      = stepParams.get("standardFlowEnabled");
+        boolean stdFlow        = stdFlowObj == null || Boolean.parseBoolean(String.valueOf(stdFlowObj));
+        Object implFlowObj     = stepParams.get("implicitFlowEnabled");
+        boolean implFlow       = Boolean.parseBoolean(String.valueOf(implFlowObj));
+
+        validateOidcClientId(desiredClientId);
+
+        var keycloakClient = new org.apache.ambari.view.k8s.client.KeycloakAdminClient(
+                oidcAdminUrl, oidcAdminRealm, oidcRealm,
+                adminClientId, adminClientSec,
+                adminUsername, adminPassword,
+                verifyTls);
+
+        appendCommandLog(stepId, "Registering OIDC client '" + desiredClientId
+                + "' in realm '" + oidcRealm + "'");
+
+        // Planned by a deploy (an empty list included); a re-registration plans none and keeps the
+        // client's current audiences.
+        List<String> audiences = null;
+        if (stepParams.get("oidcAudiences") instanceof List<?> planned) {
+            audiences = new ArrayList<>();
+            for (Object a : planned) {
+                if (a != null && !String.valueOf(a).isBlank()) audiences.add(String.valueOf(a).trim());
+            }
+            if (!audiences.isEmpty()) {
+                appendCommandLog(stepId, "Access tokens of '" + desiredClientId
+                        + "' carry the audience(s) " + String.join(", ", audiences));
+            }
+        }
+
+        var oidcResult = keycloakClient.registerClient(
+                desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient, audiences);
+        // The releases calling this Trino with their own token, planned by the deploy.
+        addAudienceToCallers(keycloakClient, desiredClientId, stepParams.get("oidcAudienceCallers"), stepId);
+
+        String issuerUrl = oidcFromContext
+                ? oidcRc.getOidcIssuerUrl()
+                : resolveOidcIssuerUrl(ambariCli, clstr);
+        if (issuerUrl == null || issuerUrl.isBlank()) {
+            issuerUrl = oidcResult.issuerUrl();
+        }
+        return new KeycloakAdminClient.OidcClientResult(oidcResult.clientId(), oidcResult.clientSecret(), issuerUrl);
+    }
+
+    /** The client secrets registration steps got, until the next step writes them; see {@link OidcClientSecrets}. */
+    OidcClientSecrets oidcClientSecrets() {
+        return new OidcClientSecrets(new InstanceSettings(ctx));
+    }
+
+    /**
+     * Records what an OIDC_REGISTER_CLIENT step got. Its result names the client and its issuer; the client secret
+     * waits, encrypted, for the step that writes it into the release's Secret ({@link OidcClientSecrets}): the result
+     * is a plain database column kept with the operation history, so it never holds it.
+     *
+     * @param stepId     the registration step
+     * @param status     its status, whose result is set
+     * @param registered what Keycloak returned
+     */
+    void recordOidcRegistration(String stepId, CommandStatusEntity status,
+                                KeycloakAdminClient.OidcClientResult registered) {
+        oidcClientSecrets().keep(stepId, registered.clientSecret());
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("clientId", registered.clientId());
+        res.put("issuerUrl", registered.issuerUrl());
+        status.setResultJson(gson.toJson(res));
+    }
+
+    /**
+     * The client secret an OIDC_CREATE_SECRET step writes for a client its OIDC_REGISTER_CLIENT step registered. When
+     * the view no longer keeps it (an earlier run of the step wrote and deleted it, or an earlier version registered
+     * the client and its results were cleared of it), it is read from Keycloak again, which still has it.
+     *
+     * @param stepId         the OIDC_CREATE_SECRET step
+     * @param stepParams     its parameters, which include those of the registration step
+     * @param registerStepId the registration step
+     * @param registerResult the registration step's result
+     * @return the client secret; empty for a public client
+     * @throws Exception when Keycloak cannot be asked
+     */
+    String clientSecretForCreateStep(String stepId, Map<String, Object> stepParams, String registerStepId,
+                                     Map<String, Object> registerResult) throws Exception {
+        if (Boolean.parseBoolean(String.valueOf(stepParams.get("publicClient")))) {
+            return "";
+        }
+        String kept = registeredOidcClientSecret(registerStepId, registerResult);
+        if (kept != null) {
+            return kept;
+        }
+        appendCommandLog(stepId, "Reading the client secret of '" + stepParams.get("oidcClientId")
+                + "' from Keycloak again");
+        return registerOidcClient(stepId, stepParams).clientSecret();
+    }
+
+    /**
+     * The client secret an OIDC_REGISTER_CLIENT step got, for the OIDC_CREATE_SECRET step that writes it: kept
+     * encrypted apart from the step, or, for a step an earlier version ran, still in its result.
+     *
+     * @param registerStepId the registration step
+     * @param registerResult its result
+     * @return the secret, or {@code null} when neither keeps it
+     */
+    String registeredOidcClientSecret(String registerStepId, Map<String, Object> registerResult) {
+        String kept = oidcClientSecrets().read(registerStepId);
+        if (kept != null) {
+            return kept;
+        }
+        Object legacy = registerResult == null ? null : registerResult.get(OidcClientSecrets.RESULT_KEY);
+        return legacy instanceof String text ? text : null;
     }
 
     /** Step parameter naming the security profile whose external OIDC client secret the step writes. */
@@ -4975,6 +5204,12 @@ public class CommandService {
         // is done: planning the deploy already rewrites the release's TLS and truststore Secrets and its Hadoop
         // configuration, which would change under the running call for a deploy its Helm step then refuses.
         HelmOperationRegistry.requireIdle(request.getNamespace(), request.getReleaseName());
+        // Values read back from the release (resync, security refresh, autoscaling change, upgrade wizard) carry its
+        // secrets hidden: the deployed ones are put back before anything reads the values. A value the definition now
+        // places elsewhere (valueAliases) is found at its new place too, where the wizard sends the placeholder.
+        HiddenReleaseValues.restore(request.getValues(), () -> HiddenReleaseValues.withAliasTargets(
+                kubernetesService.getHelmReleaseValues(request.getNamespace(), request.getReleaseName()),
+                valueAliasesOf(request)));
         String deploymentMode = request.getDeploymentMode() == null ? "DIRECT_HELM" : request.getDeploymentMode();
         LOG.info("Submit deploy for release {} in namespace {} using deploymentMode={}",
                 request.getReleaseName(), request.getNamespace(), deploymentMode);
@@ -5282,6 +5517,29 @@ public class CommandService {
     }
 
     /** The release as an earlier deploy recorded it, or {@code null} for a first install or when it cannot be read. */
+    /**
+     * The {@code valueAliases} of the service a deploy is for, named by the request or else by the recorded release;
+     * none when neither names one or its definition cannot be read.
+     */
+    private Map<String, String> valueAliasesOf(HelmDeployRequest request) {
+        String serviceKey = request.getServiceKey();
+        if (serviceKey == null || serviceKey.isBlank()) {
+            K8sReleaseEntity recorded = recordedRelease(request);
+            serviceKey = recorded == null ? null : recorded.getServiceKey();
+        }
+        if (serviceKey == null || serviceKey.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, String> aliases = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey).valueAliases;
+            return aliases == null ? Map.of() : aliases;
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (hidden values are only put back where the release has"
+                    + " them): {}", serviceKey, ex.toString());
+            return Map.of();
+        }
+    }
+
     private K8sReleaseEntity recordedRelease(HelmDeployRequest request) {
         try {
             return new ReleaseMetadataService(ctx).find(request.getNamespace(), request.getReleaseName());
@@ -8793,6 +9051,30 @@ public class CommandService {
         // A deploy canceled before it installed its release leaves its tag projector's account to take back. A step
         // that was just starting its Helm call is given a moment to register it, which may yet install the release.
         scheduleTagSyncTakeBack(id, 0, 5);
+        forgetOidcClientSecrets(id);
+    }
+
+    /**
+     * Deletes the client secrets the Keycloak registration steps under a canceled command got: a canceled operation is
+     * never resumed, so no step of it will write them. A later deploy of the release registers the client again and
+     * reads its secret from Keycloak.
+     *
+     * @param id the canceled command
+     */
+    private void forgetOidcClientSecrets(String id) {
+        CommandEntity canceled = find(id);
+        if (canceled == null) return;
+        List<CommandEntity> tree = new ArrayList<>(plannedStepsOf(canceled));
+        tree.add(canceled);
+        for (CommandEntity step : tree) {
+            if (!CommandType.OIDC_REGISTER_CLIENT.name().equals(step.getType())) continue;
+            try {
+                oidcClientSecrets().forget(step.getId());
+            } catch (RuntimeException e) {
+                LOG.warn("Could not delete the OIDC client secret kept for canceled step {}: {}", step.getId(),
+                        e.toString());
+            }
+        }
     }
 
     /**
@@ -10783,130 +11065,16 @@ public class CommandService {
                         }
                     }
 
-                    String baseUriStr = (String) childParams.get("_baseUri");
-                    if (baseUriStr == null || baseUriStr.isBlank()) {
-                        throw new IllegalStateException("Missing _baseUri in OIDC_REGISTER_CLIENT params");
+                    var registered = registerOidcClient(child.getId(), childParams);
+                    recordOidcRegistration(child.getId(), childSt, registered);
+                    CommandStatusEntity rootNow = findCommandStatusById(root.getCommandStatusId());
+                    if (rootNow != null && CommandState.CANCELED.name().equals(rootNow.getState())) {
+                        // Canceled while Keycloak answered: no step of the operation will write the secret.
+                        oidcClientSecrets().forget(child.getId());
                     }
-                    Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-
-                    // Resolve the Keycloak admin (client-registration) settings. Generic rule mirroring
-                    // the Ranger routing: when the selected platform context carries its own OIDC admin
-                    // creds (EXTERNAL / REMOTE Keycloak), use them and DO NOT touch the local Ambari —
-                    // this is what lets a standalone Ambari (no local oidc-env, no cluster) register
-                    // clients. Otherwise read the local Ambari oidc-env exactly as before (the default
-                    // managed context, unchanged).
-                    org.apache.ambari.view.k8s.model.ResolvedContext oidcRc = resolvePlatformContextForStep(childParams);
-                    boolean oidcFromContext = oidcRc != null && oidcRc.hasContextOidcAdminCreds();
-                    String clstr = null;
-                    AmbariActionClient ambariCli = null;
-                    String oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec, verifyTlsStr;
-                    String adminUsername = "", adminPassword = "";
-
-                    if (oidcFromContext) {
-                        oidcAdminUrl   = oidcRc.getOidcAdminUrl();
-                        oidcAdminRealm = (oidcRc.getOidcAdminRealm() == null || oidcRc.getOidcAdminRealm().isBlank())
-                                ? "master" : oidcRc.getOidcAdminRealm();
-                        oidcRealm      = (oidcRc.getOidcRealm() == null || oidcRc.getOidcRealm().isBlank())
-                                ? "odp" : oidcRc.getOidcRealm();
-                        adminClientId  = oidcRc.getOidcAdminClientId();
-                        adminClientSec = oidcRc.getOidcAdminClientSecret();
-                        verifyTlsStr   = oidcRc.getOidcVerifyTls();
-                        LOG.info("OIDC_REGISTER_CLIENT: registering against the platform context's Keycloak "
-                                + "(adminUrl={}, realm={}, registrationClient={})", oidcAdminUrl, oidcRealm, adminClientId);
-                    } else {
-                        clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
-                        String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
-                        ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
-
-                        // Load Keycloak admin settings from Ambari oidc-env config
-                        oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
-                        oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
-                        oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
-                        adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
-                        String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
-                        verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
-
-                        if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
-                            throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config "
-                                    + "(and the selected platform context supplies no OIDC admin credentials).");
-                        }
-                        if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
-                        if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
-                        if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
-
-                        // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
-                        AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
-                        char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
-                        adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
-
-                        // Admin username/password come from the Ambari credential store (same alias used
-                        // by ConfigureOidcServerAction), never from plain-text config properties.
-                        // The view can only read the persisted store. The Enable OIDC and Enable Kerberos
-                        // wizards store the credential there whenever the server has a persistent credential
-                        // store, as does Manage OIDC Credentials (or the credentials REST API).
-                        org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
-                                oidcAliasResolver.getOidcAdminCredential(clstr);
-                        adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
-                        adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
-                                ? new String(oidcAdminCred.getKey()) : "";
-                    }
-                    boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
-
-                    String desiredClientId = (String) childParams.get("oidcClientId");
-                    String redirectUri     = (String) childParams.get("oidcRedirectUri");
-                    Object publicClientObj = childParams.get("publicClient");
-                    boolean publicClient   = Boolean.parseBoolean(String.valueOf(publicClientObj));
-                    Object stdFlowObj      = childParams.get("standardFlowEnabled");
-                    boolean stdFlow        = stdFlowObj == null || Boolean.parseBoolean(String.valueOf(stdFlowObj));
-                    Object implFlowObj     = childParams.get("implicitFlowEnabled");
-                    boolean implFlow       = Boolean.parseBoolean(String.valueOf(implFlowObj));
-
-                    validateOidcClientId(desiredClientId);
-
-                    var keycloakClient = new org.apache.ambari.view.k8s.client.KeycloakAdminClient(
-                            oidcAdminUrl, oidcAdminRealm, oidcRealm,
-                            adminClientId, adminClientSec,
-                            adminUsername, adminPassword,
-                            verifyTls);
-
-                    appendCommandLog(child.getId(), "Registering OIDC client '" + desiredClientId
-                            + "' in realm '" + oidcRealm + "'");
-
-                    // Planned by a deploy (an empty list included); a re-registration plans none and keeps the
-                    // client's current audiences.
-                    List<String> audiences = null;
-                    if (childParams.get("oidcAudiences") instanceof List<?> planned) {
-                        audiences = new ArrayList<>();
-                        for (Object a : planned) {
-                            if (a != null && !String.valueOf(a).isBlank()) audiences.add(String.valueOf(a).trim());
-                        }
-                        if (!audiences.isEmpty()) {
-                            appendCommandLog(child.getId(), "Access tokens of '" + desiredClientId
-                                    + "' carry the audience(s) " + String.join(", ", audiences));
-                        }
-                    }
-
-                    var oidcResult = keycloakClient.registerClient(
-                            desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient, audiences);
-                    // The releases calling this Trino with their own token, planned by the deploy.
-                    addAudienceToCallers(keycloakClient, desiredClientId, childParams.get("oidcAudienceCallers"),
-                            child.getId());
-
-                    String issuerUrl = oidcFromContext
-                            ? oidcRc.getOidcIssuerUrl()
-                            : resolveOidcIssuerUrl(ambariCli, clstr);
-                    if (issuerUrl == null || issuerUrl.isBlank()) {
-                        issuerUrl = oidcResult.issuerUrl();
-                    }
-
-                    Map<String, Object> res = new LinkedHashMap<>();
-                    res.put("clientId",   oidcResult.clientId());
-                    res.put("issuerUrl",  issuerUrl);
-                    // clientSecret intentionally NOT logged; stored encrypted via childSt.resultJson
-                    res.put("clientSecret", oidcResult.clientSecret());
-                    childSt.setResultJson(gson.toJson(res));
-                    appendCommandLog(child.getId(), "OIDC client registered successfully: clientId=" + oidcResult.clientId());
-                    LOG.info("OIDC_REGISTER_CLIENT completed: clientId={}, issuerUrl={}", oidcResult.clientId(), issuerUrl);
+                    appendCommandLog(child.getId(), "OIDC client registered successfully: clientId=" + registered.clientId());
+                    LOG.info("OIDC_REGISTER_CLIENT completed: clientId={}, issuerUrl={}", registered.clientId(),
+                            registered.issuerUrl());
                 }
 
                 case OIDC_CREATE_SECRET -> {
@@ -10922,6 +11090,7 @@ public class CommandService {
                     String clientId;
                     String clientSecret;
                     String issuerUrl;
+                    String oidcRegisterId = null;
                     if (childParams.containsKey("oidcExternalClientId")) {
                         clientId     = (String) childParams.get("oidcExternalClientId");
                         clientSecret = externalOidcClientSecret(childParams);
@@ -10956,11 +11125,12 @@ public class CommandService {
 
                         Map<String, Object> regRes = gson.fromJson(registerSt.getResultJson(), Map.class);
                         clientId     = (String) regRes.get("clientId");
-                        clientSecret = (String) regRes.get("clientSecret");
                         issuerUrl    = (String) regRes.get("issuerUrl");
                         if (clientId == null || clientId.isBlank()) {
                             throw new IllegalStateException("OIDC_REGISTER_CLIENT resultJson missing clientId");
                         }
+                        clientSecret = clientSecretForCreateStep(child.getId(), childParams, registerId, regRes);
+                        oidcRegisterId = registerId;
                     }
 
                     // Build multi-key secret payload
@@ -11030,6 +11200,10 @@ public class CommandService {
                     res.put("issuerUrl",   issuerUrl);
                     if (vaultPath != null && !vaultPath.isBlank()) res.put("vaultPath", vaultPath);
                     childSt.setResultJson(gson.toJson(res));
+                    if (oidcRegisterId != null) {
+                        // Written where the release reads it: the view no longer keeps a copy.
+                        oidcClientSecrets().forget(oidcRegisterId);
+                    }
                 }
 
                 default -> throw new IllegalStateException("Unsupported step type: " + child.getType());

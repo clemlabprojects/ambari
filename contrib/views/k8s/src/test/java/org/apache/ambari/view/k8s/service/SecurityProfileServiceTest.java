@@ -185,7 +185,7 @@ class SecurityProfileServiceTest {
 
         assertEquals(List.of("corp-ldap", "ctx-oidc-ext", "staging-ldap"),
                 service().loadProfiles().profiles.keySet().stream().sorted().toList());
-        verify(store, times(1)).remove(any());
+        verify(store, times(1)).remove(any(SecurityProfileEntity.class));
 
         // A page whose read failed showed nothing, so its save removes nothing.
         SecurityProfilesDTO blind = payload("default", Map.of("default", ldap("ldaps://ldap3.example.com")));

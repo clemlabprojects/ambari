@@ -28,6 +28,10 @@ import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/li
 import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, getPreflight, type PreflightCheck, type KubeconfigContext } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
 import InClusterServiceAccountSection from '../components/common/InClusterServiceAccountSection';
+import { MASKED_SECRET, SECRET_SET_PLACEHOLDER } from './globalSecurityFields';
+
+/** A stored credential comes masked: it is shown as a blank field, never as the mask. */
+const unmasked = (value: any) => (value === MASKED_SECRET ? '' : value);
 
 const { Title, Paragraph, Text } = Typography;
 const { Content } = Layout;
@@ -66,6 +70,8 @@ const ConfigurationPage: React.FC = () => {
     const [clusterStepCompleted, setClusterStepCompleted] = React.useState(status !== 'unconfigured');
     const [authStepSaved, setAuthStepSaved] = React.useState(false);
     const [goToDashboardLoading, setGoToDashboardLoading] = React.useState(false);
+    // Whether the Thanos object store credentials are stored: the server never sends them back, only that they are set.
+    const [thanosKeysSet, setThanosKeysSet] = React.useState({ accessKey: false, secretKey: false });
     const navigate = useNavigate();
     const [contextModalOpen, setContextModalOpen] = React.useState(false);
     const [availableContexts, setAvailableContexts] = React.useState<KubeconfigContext[]>([]);
@@ -228,6 +234,12 @@ const ConfigurationPage: React.FC = () => {
         }
     };
 
+    /** After a save: a credential typed in is now stored; one left blank kept what was stored. */
+    const rememberThanosKeys = (vals: any) => setThanosKeysSet((prev) => ({
+        accessKey: prev.accessKey || String(vals.monitoring?.thanosAccessKey ?? '').trim() !== '',
+        secretKey: prev.secretKey || String(vals.monitoring?.thanosSecretKey ?? '').trim() !== '',
+    }));
+
     const buildFullPayload = (vals: any) => ({
         monitoring: {
             autoBootstrap:              vals.monitoring?.autoBootstrap,
@@ -271,6 +283,7 @@ const ConfigurationPage: React.FC = () => {
                             await form.validateFields([['kerberos', 'injectionMode']]);
                             const vals = form.getFieldsValue(true);
                             await saveViewSettings(buildFullPayload(vals));
+                            rememberThanosKeys(vals);
                             setAuthStepSaved(true);
                             message.success('Authentication settings saved');
                         } catch (e: any) {
@@ -360,14 +373,19 @@ const ConfigurationPage: React.FC = () => {
                         thanosBucket:               settings?.monitoring?.thanos?.bucket,
                         thanosEndpoint:             settings?.monitoring?.thanos?.endpoint,
                         thanosRegion:               settings?.monitoring?.thanos?.region,
-                        thanosAccessKey:            settings?.monitoring?.thanos?.accessKey,
-                        thanosSecretKey:            settings?.monitoring?.thanos?.secretKey,
+                        // Left blank when stored (they come masked): sent back blank, they are kept.
+                        thanosAccessKey:            unmasked(settings?.monitoring?.thanos?.accessKey),
+                        thanosSecretKey:            unmasked(settings?.monitoring?.thanos?.secretKey),
                         thanosInsecure:             settings?.monitoring?.thanos?.insecure ?? false,
                         thanosHost:                 settings?.monitoring?.thanosHost,
                         thanosIngressClass:         settings?.monitoring?.thanosIngressClass ?? 'nginx',
                         thanosNodePort:             settings?.monitoring?.thanosNodePort,
                     },
                     kerberos: { injectionMode: settings?.kerberos?.injectionMode ?? 'WEBHOOK' },
+                });
+                setThanosKeysSet({
+                    accessKey: settings?.monitoring?.thanos?.accessKeySet === true,
+                    secretKey: settings?.monitoring?.thanos?.secretKeySet === true,
                 });
                 if (settings?.kerberos?.injectionMode) setAuthStepSaved(true);
             } catch { /* ignore */ }
@@ -505,6 +523,7 @@ const ConfigurationPage: React.FC = () => {
                                 try {
                                     const vals = form.getFieldsValue(true);
                                     await saveViewSettings(buildFullPayload(vals));
+                                    rememberThanosKeys(vals);
                                     message.success('Monitoring settings saved');
                                 } catch (e: any) { message.error(e?.message || 'Save failed'); }
                             }}
@@ -591,6 +610,7 @@ const ConfigurationPage: React.FC = () => {
                             try {
                                 const vals = form.getFieldsValue(true);
                                 await saveViewSettings(buildFullPayload(vals));
+                                rememberThanosKeys(vals);
                                 message.success('OpenShift settings saved');
                             } catch (e: any) { message.error(e?.message || 'Save failed'); }
                         }}
@@ -649,10 +669,10 @@ const ConfigurationPage: React.FC = () => {
                                         <Input placeholder="s3.amazonaws.com" />
                                     </Form.Item>
                                     <Form.Item name={['monitoring','thanosAccessKey']} label="Access key" className="form-compact-row">
-                                        <Input placeholder="ACCESS_KEY" />
+                                        <Input placeholder={thanosKeysSet.accessKey ? SECRET_SET_PLACEHOLDER : 'ACCESS_KEY'} autoComplete="off" />
                                     </Form.Item>
                                     <Form.Item name={['monitoring','thanosSecretKey']} label="Secret key" className="form-compact-row">
-                                        <Input.Password placeholder="SECRET_KEY" />
+                                        <Input.Password placeholder={thanosKeysSet.secretKey ? SECRET_SET_PLACEHOLDER : 'SECRET_KEY'} autoComplete="new-password" />
                                     </Form.Item>
                                 </Col>
                             </Row>
@@ -664,6 +684,7 @@ const ConfigurationPage: React.FC = () => {
                             try {
                                 const vals = await form.validateFields();
                                 await saveViewSettings(buildFullPayload(vals));
+                                rememberThanosKeys(vals);
                                 message.success('Storage settings saved');
                             } catch (e: any) {
                                 if (e?.errorFields) return;

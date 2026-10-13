@@ -20,6 +20,7 @@ package org.apache.ambari.view.k8s.resources;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.HelmRepoDTO;
+import org.apache.ambari.view.k8s.requests.HelmRepoRequest;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.HelmRepositoryService;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
@@ -68,13 +69,19 @@ public class HelmRepoResource {
     return svc.list().stream().map(HelmRepoDTO::fromEntity).collect(Collectors.toList());
   }
 
+  /**
+   * Creates or updates a repository. The registry secret comes in the body, apart from the repository, and is stored
+   * encrypted, never with it.
+   */
   @POST
-  public HelmRepoDTO save(HelmRepoEntity e) {
+  public HelmRepoDTO save(HelmRepoRequest request) {
     // Repositories decide which charts every deploy pulls, so changing one is a configuration task.
     new AuthHelper(viewContext, callerHeaders).checkConfigurationPermission();
-    // plainSecret is carried in the JSON body as a @Transient field — never in the URL.
+    if (request == null) {
+      throw new IllegalArgumentException("A repository is required");
+    }
     var svc = new HelmRepositoryService(viewContext);
-    HelmRepoEntity out = svc.save(e, e.getPlainSecret());
+    HelmRepoEntity out = svc.save(request.toEntity(), request.plainSecret);
     return HelmRepoDTO.fromEntity(out);
   }
 

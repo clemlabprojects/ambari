@@ -36,6 +36,7 @@ import org.apache.ambari.view.k8s.model.FormField;
 import org.apache.ambari.view.k8s.model.stack.StackConfig;
 import org.apache.ambari.view.k8s.model.stack.StackProperty;
 import org.apache.ambari.view.k8s.service.HelmSetValues;
+import org.apache.ambari.view.k8s.service.SensitiveFields;
 
 /**
  * The passwords and secrets of a GitOps deploy, and the split of the chart values into what may be committed to Git
@@ -69,8 +70,6 @@ final class GitOpsSecretValues {
 
     /** A path segment with an optional list index, read the same way as {@code FluxGitOpsBackend.setAtPath}. */
     private static final Pattern SEGMENT = Pattern.compile("^(?<key>[^\\[\\]]+)(\\[(?<idx>\\d+)])?$");
-    /** A {@code ${name}} reference in a binding or variable template, read the same way as the wizard reads it. */
-    private static final Pattern REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
 
     private final Set<String> paths = new LinkedHashSet<>();
     /** Paths given key by key, for keys that contain dots (e.g. {@code extraConfigs."import.yaml"}). */
@@ -220,10 +219,9 @@ final class GitOpsSecretValues {
     }
 
     /**
-     * Records where the bindings of a service definition copy its password fields: each value a binding writes from a
-     * password field, directly or through a variable built from one. Known from the definition alone, so such a copy
-     * stays out of Git even when the deploy carries no form (a redeploy of the release's values, a value typed in the
-     * YAML view). A list a binding appends to is secret as a whole; a map merged in is secret entry by entry.
+     * Records where the bindings of a service definition copy its password fields
+     * ({@link SensitiveFields#passwordCopyTargets}). Known from the definition alone, so such a copy stays out of Git
+     * even when the deploy carries no form (a redeploy of the release's values, a value typed in the YAML view).
      *
      * @param form      the form of the service definition
      * @param variables the variables of the service definition; may be null
@@ -231,144 +229,12 @@ final class GitOpsSecretValues {
      */
     void addPasswordCopies(List<FormField> form, List<Map<String, Object>> variables,
                            List<Map<String, Object>> bindings) {
-        Set<String> sources = new LinkedHashSet<>();
-        collectPasswordFields(form, sources);
-        if (sources.isEmpty() || bindings == null) {
-            return;
-        }
-        addPasswordVariables(variables, sources);
-        for (Map<String, Object> binding : bindings) {
-            if (binding == null || !(binding.get("targets") instanceof List<?> targets)) {
-                continue;
-            }
-            for (Object entry : targets) {
-                if (entry instanceof Map<?, ?> target && target.get("path") instanceof String path
-                        && target.get("from") instanceof Map<?, ?> from) {
-                    addCopyTarget(path, target.get("op"), from, sources);
-                }
-            }
-        }
+        keyPaths.addAll(SensitiveFields.passwordCopyTargets(form, variables, bindings));
     }
 
-    private static void collectPasswordFields(List<FormField> form, Set<String> names) {
-        if (form == null) {
-            return;
-        }
-        for (FormField field : form) {
-            if (field == null) {
-                continue;
-            }
-            if ("password".equals(field.type) && field.name != null && !field.name.isBlank()) {
-                names.add(field.name);
-            }
-            collectPasswordFields(field.fields, names);
-        }
-    }
-
-    /** Adds to the password sources every variable whose value comes from one of them, also through other variables. */
-    private static void addPasswordVariables(List<Map<String, Object>> variables, Set<String> sources) {
-        if (variables == null) {
-            return;
-        }
-        boolean added = true;
-        while (added) {
-            added = false;
-            for (Map<String, Object> variable : variables) {
-                if (variable != null && variable.get("name") instanceof String name && !sources.contains(name)
-                        && readsPassword(variable, sources)) {
-                    sources.add(name);
-                    added = true;
-                }
-            }
-        }
-    }
-
-    private static boolean readsPassword(Map<String, Object> variable, Set<String> sources) {
-        if (references(variable.get("template"), sources) || sources.contains(variable.get("overrideField"))) {
-            return true;
-        }
-        if (!(variable.get("from") instanceof Map<?, ?> from)) {
-            return false;
-        }
-        Object type = from.get("type");
-        if ("form".equals(type)) {
-            return sources.contains(from.get("field"));
-        }
-        if ("template".equals(type)) {
-            return references(from.get("template"), sources);
-        }
-        // A context value the operator may override with a password field.
-        return "context".equals(type) && from.get("overrideFields") instanceof List<?> fields
-                && fields.stream().anyMatch(sources::contains);
-    }
-
-    private void addCopyTarget(String path, Object op, Map<?, ?> from, Set<String> sources) {
-        List<String> keys = bindingKeys(path);
-        if (keys.isEmpty()) {
-            return;
-        }
-        Object type = from.get("type");
-        if ("form".equals(type) && sources.contains(from.get("field"))
-                || "var".equals(type) && sources.contains(from.get("name"))) {
-            keyPaths.add(keys);
-        } else if ("template".equals(type)) {
-            Object template = from.get("template");
-            if ("merge".equals(op) && template instanceof Map<?, ?> entries && path.indexOf('[') < 0) {
-                // Only the merged entries that hold the password: the map may carry other files or settings.
-                entries.forEach((key, value) -> {
-                    if (references(value, sources)) {
-                        List<String> entryKeys = new ArrayList<>(keys);
-                        entryKeys.add(String.valueOf(key));
-                        keyPaths.add(List.copyOf(entryKeys));
-                    }
-                });
-            } else if (references(template, sources)) {
-                keyPaths.add(keys);
-            }
-        }
-    }
-
-    /**
-     * The keys of a binding path down to the first list, which moves as a whole. A dot escaped with a backslash is part
-     * of the key, as the wizard reads it.
-     */
+    /** The keys of a binding path down to the first list ({@link SensitiveFields#bindingKeys}). */
     static List<String> bindingKeys(String path) {
-        List<String> keys = new ArrayList<>();
-        for (String segment : path.split("(?<!\\\\)\\.")) {
-            String key = segment.replace("\\.", ".");
-            int bracket = key.indexOf('[');
-            if (bracket >= 0) {
-                if (bracket > 0) {
-                    keys.add(key.substring(0, bracket));
-                }
-                break;
-            }
-            if (key.isBlank()) {
-                return List.of();
-            }
-            keys.add(key);
-        }
-        return List.copyOf(keys);
-    }
-
-    /** Whether a template, or any text inside it, references one of the names. */
-    private static boolean references(Object template, Set<String> names) {
-        if (template instanceof String text) {
-            Matcher m = REFERENCE.matcher(text);
-            while (m.find()) {
-                if (names.contains(m.group(1).trim())) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if (template instanceof Map<?, ?> map) {
-            return map.values().stream().anyMatch(v -> references(v, names));
-        }
-        if (template instanceof List<?> list) {
-            return list.stream().anyMatch(v -> references(v, names));
-        }
-        return false;
+        return SensitiveFields.bindingKeys(path);
     }
 
     /**

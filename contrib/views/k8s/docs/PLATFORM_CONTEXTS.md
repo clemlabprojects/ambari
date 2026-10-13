@@ -72,7 +72,7 @@ an **external** context the view calls Ranger REST directly with the context's s
 |---|---|---|
 | GET | `/contexts` | List: the virtual managed default + any external contexts |
 | GET | `/contexts/{id}` | One context |
-| GET | `/contexts/{id}/resolved` | The resolved view (live discovery for managed; secrets masked) |
+| GET | `/contexts/{id}/resolved` | The resolved view (live discovery for managed); credentials are left out, `secretFieldsSet` names those that are set |
 | POST | `/contexts` | Create/update an **external** context (managed is read-only) |
 | DELETE | `/contexts/{id}` | Delete an external context (`default` is protected) |
 

@@ -20,6 +20,33 @@ limitations under the License.
 
 ## Ambari 2.8.2.0
 
+### Stored credentials are encrypted
+
+The KDPS view now keeps these credentials encrypted with the Ambari master key, and no longer returns them to the
+browser (pages show that a value is set, and leaving the field blank keeps it):
+
+- the bind passwords of LDAP and Active Directory security profiles, and the client secret of external OIDC profiles;
+- the passwords and tokens of authenticated chart registries;
+- the Thanos object store access key and secret key;
+- the Keycloak client secret created for each release deployed with OIDC.
+
+When the view is upgraded, the copies earlier builds kept in clear in the Ambari database are encrypted or removed.
+Database backups taken before the upgrade still hold them in clear, and so may the data Ambari keeps for the previous
+version of the view. Treat those backups as sensitive, and rotate:
+
+- the Keycloak client secrets of releases deployed with an earlier build (regenerate the secret in Keycloak, then
+  redeploy the release);
+- the AD/LDAP bind passwords of your security profiles;
+- the client secrets of external OIDC security profiles;
+- the passwords and tokens of authenticated chart registries;
+- the Thanos object store keys, if you set them.
+
+After rotating, enter the new values in the view: Security Profile, Helm Repositories and Cluster Settings.
+
+**Master key:** these credentials are encrypted with the Ambari master key. If your Ambari server was set up without a
+persisted master key (`ambari-server setup-security`, option "Encrypt passwords stored in ambari.properties file", with
+the key persisted), set one up now: the next release requires it.
+
 ### Services not in this release
 
 These services were offered by pre-release builds and are no longer in the service catalog.
