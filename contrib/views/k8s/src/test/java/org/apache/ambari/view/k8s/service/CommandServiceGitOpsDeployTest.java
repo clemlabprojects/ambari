@@ -507,6 +507,110 @@ class CommandServiceGitOpsDeployTest {
     }
 
     @Test
+    void aGitOpsDeployCommitsTheImageSettingsADirectDeployPassesToHelm() throws Exception {
+        // The direct deploy first, to see what its Helm install of the release receives.
+        Map<String, String> directOverrides = new LinkedHashMap<>();
+        doAnswer(inv -> {
+            directOverrides.putAll(inv.getArgument(4));
+            return null;
+        }).when(helm).deployOrUpgrade(anyString(), eq(rel), eq(NS), anyMap(), anyMap(), any(), any(), any(),
+                eq(false), any());
+        String directId = plan(request("DIRECT_HELM", "main"), false);
+        run(directId);
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(directId, CommandType.HELM_DEPLOY),
+                statusOf(step(directId, CommandType.HELM_DEPLOY)).getMessage());
+
+        fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
+        String id = plan(request("FLUX_GITOPS", "main"), true);
+        run(id);
+
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT),
+                statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
+        String helmRelease = published("main", releaseDir() + "/helmrelease.yaml");
+        // The repository's image registry, the pull Secret as plain names and in the path the definition adds, and the
+        // image path of the definition moved onto the registry: what the direct deploy passed.
+        assertEquals("registry.example.org", directOverrides.get("global.imageRegistry"));
+        assertEquals("regcred", directOverrides.get("global.imagePullSecrets[0]"));
+        assertEquals("regcred", directOverrides.get("workers.registry.secretName"));
+        assertEquals("registry.example.org/example/sidecar:1.0", directOverrides.get("sidecar.image"));
+        for (String expected : List.of("    global:\n", "      imageRegistry: \"registry.example.org\"\n",
+                "      imagePullSecrets:\n      - \"regcred\"\n", "    imagePullSecrets:\n    - name: \"regcred\"\n",
+                "    workers:\n      registry:\n        secretName: \"regcred\"\n",
+                "    sidecar:\n      image: \"registry.example.org/example/sidecar:1.0\"\n")) {
+            assertTrue(helmRelease.contains(expected), expected + " in\n" + helmRelease);
+        }
+    }
+
+    @Test
+    void theImageRegistryAndPullSecretTheOperatorSetWinOverTheChartRepositorysInADirectAndAGitOpsDeploy()
+            throws Exception {
+        // The chart repository's registry host override, as the repository service resolves it.
+        HelmRepositoryService repositories = helm.getRepositoryService();
+        doReturn("harbor.bank/x").when(repositories).getEffectiveImageRegistry(any());
+        // The operator's own choice, carried by the security profile's extra properties into the deploy's overrides.
+        SecurityProfileEntity mirror = new SecurityProfileEntity();
+        mirror.setId("corp-ldap-mirror");
+        mirror.setViewInstance(ctx.getInstanceName());
+        mirror.setProfileJson("{\"mode\":\"ldap\",\"ldap\":{\"url\":\"ldap://dir.example.org\","
+                + "\"bindDn\":\"cn=kdps,dc=example,dc=org\",\"bindPassword\":\"" + BIND_PASSWORD + "\"},"
+                + "\"extraProperties\":{\"global.imageRegistry\":\"nexus.bank/approved\","
+                + "\"global.imagePullSecrets[0]\":\"bank-pull\"}}");
+        dataStore.store(mirror);
+
+        Map<String, String> directOverrides = new LinkedHashMap<>();
+        doAnswer(inv -> {
+            directOverrides.putAll(inv.getArgument(4));
+            return null;
+        }).when(helm).deployOrUpgrade(anyString(), eq(rel), eq(NS), anyMap(), anyMap(), any(), any(), any(),
+                eq(false), any());
+        Map<String, String> dryRunOverrides = new LinkedHashMap<>();
+        doAnswer(inv -> {
+            dryRunOverrides.putAll(inv.getArgument(4));
+            return null;
+        }).when(helm).deployOrUpgrade(anyString(), eq(rel), eq(NS), anyMap(), anyMap(), any(), any(), any(),
+                eq(true));
+        HelmDeployRequest direct = request("DIRECT_HELM", "main");
+        direct.setSecurityProfile("corp-ldap-mirror");
+        String directId = plan(direct, false);
+        run(directId);
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(directId, CommandType.HELM_DEPLOY),
+                statusOf(step(directId, CommandType.HELM_DEPLOY)).getMessage());
+        assertEquals("nexus.bank/approved", directOverrides.get("global.imageRegistry"));
+        assertEquals("bank-pull", directOverrides.get("global.imagePullSecrets[0]"));
+        assertEquals("nexus.bank/approved/example/sidecar:1.0", directOverrides.get("sidecar.image"));
+        assertEquals("regcred", directOverrides.get("imagePullSecrets[0].name"), "what the operator left unset");
+        // The dry run validates the image settings the install applies.
+        for (String path : List.of("global.imageRegistry", "global.imagePullSecrets[0]", "sidecar.image",
+                "imagePullSecrets[0].name")) {
+            assertEquals(directOverrides.get(path), dryRunOverrides.get(path), "dry run " + path);
+        }
+
+        fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
+        HelmDeployRequest gitOps = requestWithDependencies();
+        gitOps.setSecurityProfile("corp-ldap-mirror");
+        String id = planWithCommandsUrl(gitOps);
+        run(id);
+
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT),
+                statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
+        String helmRelease = published("main", releaseDir() + "/helmrelease.yaml");
+        // The operator's registry and pull Secret, the definition's image path moved onto the operator's registry, and
+        // the repository's pull Secret only where the operator set nothing: what the direct deploy passed.
+        for (String expected : List.of("      imageRegistry: \"nexus.bank/approved\"\n",
+                "      imagePullSecrets:\n      - \"bank-pull\"\n", "    imagePullSecrets:\n    - name: \"regcred\"\n",
+                "    workers:\n      registry:\n        secretName: \"regcred\"\n",
+                "    sidecar:\n      image: \"nexus.bank/approved/example/sidecar:1.0\"\n")) {
+            assertTrue(helmRelease.contains(expected), expected + " in\n" + helmRelease);
+        }
+        assertFalse(helmRelease.contains("harbor.bank/x"), helmRelease);
+        // A dependency follows the repository its chart comes from, with its own pull Secret.
+        String keda = published("main", SHARED_DIR + "/keda/keda-helmrelease.yaml");
+        assertTrue(keda.contains("    global:\n      image:\n        registry: \"harbor.bank/x\"\n"), keda);
+        assertTrue(keda.contains("name: \"regcred\""), keda);
+        verify(helm).ensureImagePullSecretFromRepo("charts", "keda", "regcred", List.of("keda-operator"));
+    }
+
+    @Test
     void nothingIsCommittedWhenAPreparationStepFails() throws Exception {
         doThrow(new IllegalStateException("exceeded quota: storage")).when(k8s).createMounts(anyString(), anyString(), anyMap());
         HelmDeployRequest request = request("FLUX_GITOPS", "main");

@@ -233,14 +233,15 @@ class FluxGitOpsBackendPlannedCommitTest {
         request.setDependencies(dependencies);
         List<String> prepared = new java.util.ArrayList<>();
         FluxGitOpsBackend.PlannedRelease planned = new FluxGitOpsBackend.PlannedRelease(planned().overrides(), Boolean.TRUE,
-                (name, namespace) -> {
-                    prepared.add(name + "@" + namespace);
+                (name, namespace, repoId) -> {
+                    prepared.add(name + "@" + namespace + " from " + repoId);
                     return Map.of("global.image.registry", "registry.example.org", "imagePullSecrets[0].name", "regcred");
                 });
 
         backend().commit(request, null, planned);
 
-        assertEquals(List.of("keda@keda"), prepared);
+        // Prepared with the chart repository its HelmRelease reads its chart from: the deploy's, as none is named.
+        assertEquals(List.of("keda@keda from charts"), prepared);
         String keda = published("main", SHARED_DIR + "/keda/keda-helmrelease.yaml");
         assertTrue(keda.contains("    global:\n      image:\n        registry: \"registry.example.org\"\n"), keda);
         assertTrue(keda.contains("    imagePullSecrets:\n    - name: \"regcred\"\n"), keda);
@@ -255,7 +256,7 @@ class FluxGitOpsBackendPlannedCommitTest {
         request.setDependencies(new LinkedHashMap<>(Map.of("keda",
                 new LinkedHashMap<>(Map.of("chart", "keda", "namespace", "keda")))));
         FluxGitOpsBackend.PlannedRelease planned = new FluxGitOpsBackend.PlannedRelease(planned().overrides(), Boolean.TRUE,
-                (name, namespace) -> {
+                (name, namespace, repoId) -> {
                     throw new IllegalStateException("secrets is forbidden");
                 });
 

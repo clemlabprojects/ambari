@@ -3,6 +3,8 @@
   "chart": "example/zz-test-gitops",
   "version": "0.0.1",
   "form": [],
+  "imagePullSecretTargets": ["workers.registry.secretName"],
+  "imageRegistryPaths": [{"path": "sidecar.image", "default": "quay.io/example/sidecar:1.0"}],
   "postDeploy": {
     "ambariViewInstance": {
       "viewName": "ZZ-TEST-VIEW",

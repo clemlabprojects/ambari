@@ -33,52 +33,52 @@ public class CommandServiceImageRegistryTest {
     @Test
     void replacesTheClemlabDefaultPrefixAsAWhole() {
         assertEquals(MIRROR + "/jupyterhub/hub",
-                CommandService.rewriteImageRegistry("registry.clemlab.com/clemlabprojects/jupyterhub/hub", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("registry.clemlab.com/clemlabprojects/jupyterhub/hub", MIRROR));
         assertEquals(MIRROR + "/jupyterhub/krb-renewer:1.0.5",
-                CommandService.rewriteImageRegistry("registry.clemlab.com/clemlabprojects/jupyterhub/krb-renewer:1.0.5", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("registry.clemlab.com/clemlabprojects/jupyterhub/krb-renewer:1.0.5", MIRROR));
     }
 
     @Test
     void replacesUpstreamHostsAndKeepsTheRepositoryPath() {
         assertEquals(MIRROR + "/jupyterhub/configurable-http-proxy",
-                CommandService.rewriteImageRegistry("quay.io/jupyterhub/configurable-http-proxy", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("quay.io/jupyterhub/configurable-http-proxy", MIRROR));
         assertEquals(MIRROR + "/pause:3.10.1",
-                CommandService.rewriteImageRegistry("registry.k8s.io/pause:3.10.1", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("registry.k8s.io/pause:3.10.1", MIRROR));
         assertEquals(MIRROR + "/kube-scheduler@sha256:abc",
-                CommandService.rewriteImageRegistry("registry.k8s.io/kube-scheduler@sha256:abc", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("registry.k8s.io/kube-scheduler@sha256:abc", MIRROR));
         assertEquals(MIRROR + "/busybox:1.36",
-                CommandService.rewriteImageRegistry("docker.io/library/busybox:1.36", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("docker.io/library/busybox:1.36", MIRROR));
         assertEquals(MIRROR + "/busybox",
-                CommandService.rewriteImageRegistry("busybox", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("busybox", MIRROR));
         assertEquals(MIRROR + "/bitnami/postgresql:18",
-                CommandService.rewriteImageRegistry("localhost:5000/bitnami/postgresql:18", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("localhost:5000/bitnami/postgresql:18", MIRROR));
     }
 
     @Test
     void leavesValuesAlreadyOnTheTargetAndEmptyInputsAlone() {
         assertEquals(MIRROR + "/jupyterhub/hub:1.0.0",
-                CommandService.rewriteImageRegistry(MIRROR + "/jupyterhub/hub:1.0.0", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry(MIRROR + "/jupyterhub/hub:1.0.0", MIRROR));
         assertEquals("registry.clemlab.com/clemlabprojects/jupyterhub/hub",
-                CommandService.rewriteImageRegistry("registry.clemlab.com/clemlabprojects/jupyterhub/hub", "registry.clemlab.com/clemlabprojects/"));
-        assertEquals("quay.io/jupyterhub/hub", CommandService.rewriteImageRegistry("quay.io/jupyterhub/hub", ""));
-        assertNull(CommandService.rewriteImageRegistry(null, MIRROR));
-        assertEquals("  ", CommandService.rewriteImageRegistry("  ", MIRROR));
+                ImageRegistryOverrides.rewriteImageRegistry("registry.clemlab.com/clemlabprojects/jupyterhub/hub", "registry.clemlab.com/clemlabprojects/"));
+        assertEquals("quay.io/jupyterhub/hub", ImageRegistryOverrides.rewriteImageRegistry("quay.io/jupyterhub/hub", ""));
+        assertNull(ImageRegistryOverrides.rewriteImageRegistry(null, MIRROR));
+        assertEquals("  ", ImageRegistryOverrides.rewriteImageRegistry("  ", MIRROR));
     }
 
     @Test
     void hostOnlyRegistryKeepsTheClemlabProjectOutOfThePath() {
         assertEquals("harbor.local/jupyterhub/hub",
-                CommandService.rewriteImageRegistry("registry.clemlab.com/clemlabprojects/jupyterhub/hub", "harbor.local"));
+                ImageRegistryOverrides.rewriteImageRegistry("registry.clemlab.com/clemlabprojects/jupyterhub/hub", "harbor.local"));
     }
 
     @Test
     void parsesPathEntriesWithAndWithoutDefaults() {
-        assertArrayEquals(new String[] {"hub.image.name", null}, CommandService.imageRegistryEntry(" hub.image.name "));
+        assertArrayEquals(new String[] {"hub.image.name", null}, ImageRegistryOverrides.imageRegistryEntry(" hub.image.name "));
         assertArrayEquals(new String[] {"proxy.chp.image.name", "registry.clemlab.com/clemlabprojects/jupyterhub/configurable-http-proxy"},
-                CommandService.imageRegistryEntry(Map.of("path", "proxy.chp.image.name", "default", "registry.clemlab.com/clemlabprojects/jupyterhub/configurable-http-proxy")));
-        assertArrayEquals(new String[] {"a.b", null}, CommandService.imageRegistryEntry(Map.of("path", "a.b", "default", " ")));
-        assertNull(CommandService.imageRegistryEntry(Map.of("default", "x")));
-        assertNull(CommandService.imageRegistryEntry(""));
-        assertNull(CommandService.imageRegistryEntry(42));
+                ImageRegistryOverrides.imageRegistryEntry(Map.of("path", "proxy.chp.image.name", "default", "registry.clemlab.com/clemlabprojects/jupyterhub/configurable-http-proxy")));
+        assertArrayEquals(new String[] {"a.b", null}, ImageRegistryOverrides.imageRegistryEntry(Map.of("path", "a.b", "default", " ")));
+        assertNull(ImageRegistryOverrides.imageRegistryEntry(Map.of("default", "x")));
+        assertNull(ImageRegistryOverrides.imageRegistryEntry(""));
+        assertNull(ImageRegistryOverrides.imageRegistryEntry(42));
     }
 }

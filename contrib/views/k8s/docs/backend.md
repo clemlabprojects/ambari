@@ -135,9 +135,17 @@ limitations under the License.
   Secret, SSO client and its Secret, Ranger plugin files and repository, Hadoop configuration, TLS keystore, ingress
   certificate, OpenShift SCC check, stack configurations, Polaris, Airflow DAG. Only the end of the plan differs:
   - `GITOPS_COMMIT` replaces the Helm dry run and install. It writes the HelmRelease to Git with every value the Helm
-    install would receive (the plan's overrides and resolved dynamic values included), and the dependencies as
+    install would receive (the plan's overrides and resolved dynamic values included): among them the chart
+    repository's image registry (its registry host override, else its host, plus its image project) in the
+    definition's `imageGlobalRegistryProperty` (default `global.imageRegistry`), the image paths listed in
+    `imageRegistryPaths` moved onto that registry, and the image pull Secret in `imagePullSecrets[0].name`, in
+    `global.imagePullSecrets[0]` as a plain name and in the definition's `imagePullSecretTargets`. The image settings
+    come from one place (`ImageRegistryOverrides`) for both modes. A registry or pull Secret path the deploy's own
+    overrides already set (a security profile's extra properties, for one) keeps that value in both modes, and the
+    image paths then follow that registry. The dependencies are written as
     HelmReleases of their own that Flux installs first (`dependsOn`). Each dependency gets what its Helm install step
-    would pass: the repository's image registry and its pull Secret (created in the dependency's namespace), its
+    would pass: the image registry of the repository its chart comes from and its own pull Secret (created in the
+    dependency's namespace), its
     fullnameOverride, its resolved dynamic values, and for the keytab webhook the CA bundle and backend URL; in the
     WEBHOOK injection mode the webhook's namespace and certificates are prepared when the deploy is planned, as for a
     direct deploy. Every HelmRelease gets `timeout: 15m`, the 900 seconds Helm gets in a direct deploy. Passwords and

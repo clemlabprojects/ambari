@@ -49,6 +49,7 @@ import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.GitCredentialService;
 import org.apache.ambari.view.k8s.service.HelmService;
+import org.apache.ambari.view.k8s.service.ImageRegistryOverrides;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.TrustBundleService;
@@ -206,10 +207,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
          *
          * @param name      the dependency, as the service definition names it
          * @param namespace the namespace it is installed in
+         * @param repoId    the chart repository the commit reads its chart from, whose image registry and credentials
+         *                  its images are pulled with
          * @return its values by Helm path
          * @throws Exception when it cannot be prepared
          */
-        Map<String, String> of(String name, String namespace) throws Exception;
+        Map<String, String> of(String name, String namespace, String repoId) throws Exception;
     }
 
     /**
@@ -1214,49 +1217,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             }
         }
 
-        // 3. Ensure image pull secret exists and inject into values. A planned deploy's step ensured it, and the
-        //    planned overrides reference it exactly as the Helm install would.
+        // 3. Ensure the image pull secret exists. The values reference it with the repository's image registry, once
+        //    the overrides are known (releaseImageOverrides). A planned deploy's step ensured it, and the planned
+        //    overrides reference it exactly as the Helm install would.
         if (planned == null && request.getSecretName() != null && !request.getSecretName().isBlank()) {
             try {
                 String effectiveRepoId = firstNonBlank(request.getRepoId(), repoName);
                 helmService.ensureImagePullSecretFromRepo(effectiveRepoId, namespace, request.getSecretName(), null);
-                
-                // Inject image pull secret into values
-                if (request.getValues() == null) {
-                    request.setValues(new LinkedHashMap<>());
-                }
-                @SuppressWarnings("unchecked")
-                Map<String, Object> values = (Map<String, Object>) request.getValues();
-                
-                // Add imagePullSecrets array if not present
-                if (!values.containsKey("imagePullSecrets")) {
-                    values.put("imagePullSecrets", new ArrayList<>());
-                }
-                @SuppressWarnings("unchecked")
-                List<Object> imagePullSecrets = (List<Object>) values.get("imagePullSecrets");
-                boolean hasSecret = imagePullSecrets.stream()
-                        .anyMatch(s -> s instanceof Map && request.getSecretName().equals(((Map<?, ?>) s).get("name")));
-                if (!hasSecret) {
-                    imagePullSecrets.add(Map.of("name", request.getSecretName()));
-                }
-                
-                // Also add to global.imagePullSecrets for compatibility
-                if (!values.containsKey("global")) {
-                    values.put("global", new LinkedHashMap<>());
-                }
-                @SuppressWarnings("unchecked")
-                Map<String, Object> global = (Map<String, Object>) values.get("global");
-                if (!global.containsKey("imagePullSecrets")) {
-                    global.put("imagePullSecrets", new ArrayList<>());
-                }
-                @SuppressWarnings("unchecked")
-                List<Object> globalImagePullSecrets = (List<Object>) global.get("imagePullSecrets");
-                boolean hasGlobalSecret = globalImagePullSecrets.stream()
-                        .anyMatch(s -> s instanceof Map && request.getSecretName().equals(((Map<?, ?>) s).get("name")));
-                if (!hasGlobalSecret) {
-                    globalImagePullSecrets.add(Map.of("name", request.getSecretName()));
-                }
-                
                 logFluxInfo(namespace, release, "automation", "Ensured image pull secret %s/%s", namespace, request.getSecretName());
             } catch (Exception ex) {
                 LOG.warn("Failed to ensure image pull secret {}/{}: {}", namespace, request.getSecretName(), ex.getMessage());
@@ -1339,13 +1306,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     Map<String, Object> depValues = depSpec.containsKey("values") && depSpec.get("values") instanceof Map
                             ? (Map<String, Object>) depSpec.get("values")
                             : new LinkedHashMap<>();
+                    // Use dependency's repoId or fall back to main repo
+                    String depRepoName = firstNonBlank(stringOrNull(depSpec.get("repoId")), repoName);
                     if (planned != null && planned.dependencyOverrides() != null) {
                         // What its Helm install would receive in a direct deploy: the repository's image registry
                         // and pull Secret (created in its namespace now), the keytab webhook's CA bundle and backend
                         // URL, its resolved dynamic values such as the Kerberos realm.
                         Map<String, String> depOverrides;
                         try {
-                            depOverrides = planned.dependencyOverrides().of(depKey, depNamespace);
+                            depOverrides = planned.dependencyOverrides().of(depKey, depNamespace, depRepoName);
                         } catch (Exception ex) {
                             throw new IllegalStateException("GitOps deploy of " + namespace + "/" + release
                                     + " stopped: dependency " + depKey + " could not be prepared in namespace "
@@ -1363,22 +1332,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         LOG.info("Dependency {} is a webhook - ensure webhook config is in values", depKey);
                     }
 
-                    // Use dependency's repoId or fall back to main repo
-                    String depRepoName = firstNonBlank(stringOrNull(depSpec.get("repoId")), repoName);
-
-                    // Inject image pull secret if specified. Not for a planned deploy: as in a direct deploy, a
-                    // dependency uses the pull Secret its own definition names, created in its namespace.
-                    if (planned == null && request.getSecretName() != null && !request.getSecretName().isBlank()) {
-                        if (!depValues.containsKey("imagePullSecrets")) {
-                            depValues.put("imagePullSecrets", new ArrayList<>());
-                        }
-                        @SuppressWarnings("unchecked")
-                        List<Object> depImagePullSecrets = (List<Object>) depValues.get("imagePullSecrets");
-                        boolean hasDepSecret = depImagePullSecrets.stream()
-                                .anyMatch(s -> s instanceof Map && request.getSecretName().equals(((Map<?, ?>) s).get("name")));
-                        if (!hasDepSecret) {
-                            depImagePullSecrets.add(Map.of("name", request.getSecretName()));
-                        }
+                    // Without a plan, the image settings its definition gives it, as a direct deploy's Helm install
+                    // of it gets them: the image registry of the repository its chart comes from, and its own pull
+                    // Secret, created in its namespace. Never the main release's Secret, which does not exist there.
+                    if (planned == null) {
+                        applyOverridesKeepingGiven(depValues, dependencyImageOverrides(depKey, depSpec, depNamespace,
+                                depRepoName));
                     }
                     
                     // Rendered once the passwords and secrets of the deploy are known, so none of them is written
@@ -1419,6 +1378,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 }
             }
         }
+        // What the operator set explicitly, which the image settings taken from the chart repository do not replace.
+        final Map<String, String> operatorOverrides = new LinkedHashMap<>(explicitOverrides);
         if (planned != null) {
             // The command plan applied the security profile it was asked for, Kerberos and the truststore with the
             // rest of the release's preparation, in the order a direct deploy applies them: applied again here, the
@@ -1521,6 +1482,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             }
         } catch (Exception ex) {
             LOG.warn("Failed to resolve dynamic tokens for {}: {}", release, ex.toString());
+        }
+        // The repository's image registry and the image pull Secret, as a direct deploy passes them to Helm. A planned
+        // deploy's overrides hold them already.
+        if (planned == null) {
+            releaseImageOverrides(request, repoName, serviceKey, mergedValues, explicitOverrides, operatorOverrides);
         }
         // The security profile's passwords are marked until the overrides are applied: record them first.
         secrets.addMarkedOverrides(explicitOverrides);
@@ -4125,6 +4091,96 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.warn("Failed to resolve dynamic overrides for release {}: {}", release, ex.toString());
         }
         return resolved.isEmpty() ? null : resolved;
+    }
+
+    /**
+     * Adds the image settings the Helm install of the release receives in a direct deploy: the chart repository's
+     * image registry, in the property the deploy names ({@code global.imageRegistry} by default), the image paths of
+     * charts that ignore that property (JupyterHub), and the image pull Secret as plain names, also in the paths the
+     * service definition adds (OpenMetadata's Airflow and OpenSearch). What the operator set explicitly is kept; the
+     * image paths then follow the registry the operator chose.
+     *
+     * @param operatorOverrides the operator's own overrides ({@code _ov}), which win
+     */
+    private void releaseImageOverrides(HelmDeployRequest request, String repoName, String serviceKey,
+                                       Map<String, Object> values, Map<String, String> overrides,
+                                       Map<String, String> operatorOverrides) {
+        String registryProperty = firstNonBlank(request.getImageGlobalRegistryProperty(),
+                ImageRegistryOverrides.DEFAULT_REGISTRY_PROPERTY).trim();
+        String registry = effectiveImageRegistry(repoName);
+        Map<String, String> image = new LinkedHashMap<>();
+        if (registry != null) {
+            image.put(registryProperty, registry);
+        }
+        ImageRegistryOverrides.addReleasePullSecret(viewContext, request.getSecretName(), serviceKey, image);
+        for (Map.Entry<String, String> setting : image.entrySet()) {
+            if (operatorOverrides.containsKey(setting.getKey())) {
+                LOG.info("Keeping the explicit override {} of {}/{} rather than the chart repository's {}",
+                        setting.getKey(), request.getNamespace(), request.getReleaseName(), setting.getValue());
+            } else {
+                overrides.put(setting.getKey(), setting.getValue());
+            }
+        }
+        ImageRegistryOverrides.applyImageRegistryPaths(viewContext, serviceKey,
+                firstNonBlank(operatorOverrides.get(registryProperty), registry), values, overrides);
+    }
+
+    /**
+     * The image settings the Helm install of a dependency receives in a direct deploy, from its definition: the
+     * image registry of the repository its chart comes from (else the definition's {@code imageRepository}), in the
+     * property the definition names, and the definition's own image pull Secret, created now in the dependency's
+     * namespace from that repository's credentials and attached to the service accounts the definition lists.
+     */
+    private Map<String, String> dependencyImageOverrides(String name, Map<String, Object> spec, String namespace,
+                                                         String repoId) {
+        Map<String, String> overrides = new LinkedHashMap<>();
+        String registryProperty = stringOrNull(spec.get("imageGlobalRegistryProperty"));
+        if (registryProperty != null && !registryProperty.isBlank()) {
+            String registry = firstNonBlank(effectiveImageRegistry(repoId), stringOrNull(spec.get("imageRepository")));
+            if (registry != null) {
+                overrides.put(registryProperty.trim(), registry.trim());
+            }
+        }
+        String secretName = stringOrNull(spec.get("secretName"));
+        if (secretName != null && !secretName.isBlank()) {
+            List<String> serviceAccounts = new ArrayList<>();
+            if (spec.get("serviceAccounts") instanceof List<?> accounts) {
+                accounts.forEach(account -> {
+                    if (account instanceof String s && !s.isBlank()) serviceAccounts.add(s);
+                });
+            }
+            try {
+                helmService.ensureImagePullSecretFromRepo(repoId, namespace, secretName, serviceAccounts);
+            } catch (Exception ex) {
+                LOG.warn("Failed to ensure image pull secret {}/{} for dependency {}: {}", namespace, secretName, name,
+                        ex.getMessage());
+            }
+            overrides.put("imagePullSecrets[0].name", secretName);
+            ImageRegistryOverrides.applyImagePullSecretTargets(viewContext, secretName, spec.get("serviceKey"),
+                    overrides);
+        }
+        return overrides;
+    }
+
+    /** The image registry of a chart repository (its registry host override, else its host, and its project), or null. */
+    private String effectiveImageRegistry(String repoId) {
+        if (repoId == null || repoId.isBlank()) return null;
+        try {
+            String registry = new HelmRepositoryService(viewContext).getEffectiveImageRegistry(repoId);
+            return registry == null || registry.isBlank() ? null : registry.trim();
+        } catch (Exception ex) {
+            LOG.warn("Could not resolve the image registry of chart repository {}: {}", repoId, ex.toString());
+            return null;
+        }
+    }
+
+    /** Applies {@code overrides} to {@code values}, except at the paths where the values already hold something. */
+    static void applyOverridesKeepingGiven(Map<String, Object> values, Map<String, String> overrides) {
+        Map<String, String> missing = new LinkedHashMap<>();
+        overrides.forEach((path, value) -> {
+            if (ImageRegistryOverrides.valueAt(values, path) == null) missing.put(path, value);
+        });
+        applyOverridesToValues(values, missing);
     }
 
     /**

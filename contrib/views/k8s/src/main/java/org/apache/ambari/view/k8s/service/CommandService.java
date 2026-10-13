@@ -10235,7 +10235,7 @@ public class CommandService {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
                         this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
+                        ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, childParams.get("serviceKey"), overrideProperties);
                     }
                     if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
                         // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
@@ -10603,11 +10603,11 @@ public class CommandService {
                     String namespace = (String) childParams.get("namespace");
                     String releaseName = (String) childParams.get("releaseName");
                     String version = (String) childParams.get("version");
-                    String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
                     Object valuesObj = childParams.get("values");
 
                     Map<String, Object> valuesMap = this.commandUtils.loadValuesFromParams(childParams);
-                    Map<String, String> overrideProperties = new HashMap<>();
+                    // The same overrides the install step applies, so the dry run validates what gets installed.
+                    Map<String, String> overrideProperties = plannedReleaseOverrides(childParams);
                     // Collect explicit override pairs encoded as:
                     //   _o_<name>_k   -> helm.path.to.override
                     //   _o_<name>_v -> value-to-set
@@ -10658,9 +10658,6 @@ public class CommandService {
 //                        }
 //                    }
 
-                    // Apply dynamic value bindings (e.g., AMBARI_KERBEROS_REALM) on top of explicit overrides
-                    this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
-
                     this.kubernetesService.createNamespace(namespace);
                     // Dependency namespaces only need webhook labels in webhook mode when Kerberos is enabled.
                     String kerberosInjectionMode = String.valueOf(
@@ -10673,33 +10670,7 @@ public class CommandService {
                         LOG.info("Skipping webhook label on dependency namespace {} (Kerberos mode={}, clusterEnabled={})",
                                 namespace, kerberosInjectionMode, kerberosClusterEnabled);
                     }
-                    Object secretName = childParams.get("secretName");
-                    if (secretName != null) {
-                        LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
-                        this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
-                        overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        // Bitnami sub-charts (e.g. Redis inside GitLab) expect global.imagePullSecrets as a list of
-                        // plain secret names (strings), not {name: ...} maps. Using the [0] index without .name
-                        // produces the correct string-list format that renderPullSecrets handles.
-                        overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
-                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
-                    }
-
-                    HelmRepoEntity repository = repositoryDao.findById(repoId);
-                    if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-                        LOG.info("Resolving Repository Name for: {}", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        overrideProperties.put(imageGlobalRegistryProperty, this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getImageRegistry(repoId), imageGlobalRegistryProperty);
-                    }else {
-                        overrideProperties.put("global.imageRegistry", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        LOG.info("Execution Action {}: Injecting 'global.imageRegistry' in values.yaml with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                    }
-
-                    // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
-                    // service definition; rewrite them onto the repository's image registry (AMBARI-690).
-                    applyImageRegistryPaths(childParams.get("serviceKey"),
-                            this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
-                            valuesMap, overrideProperties);
+                    addReleaseImageOverrides(childParams, repoId, valuesMap, overrideProperties, child.getType());
 
                     appendCommandLog(id, "Dry-run main release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
                     ScheduledFuture<?> heartbeat = startHeartbeat(id, () -> {
@@ -10864,8 +10835,9 @@ public class CommandService {
                     Map<String, Map<String, Object>> dependencySteps = gitOpsDependencySteps(childParams);
                     FluxGitOpsBackend.PlannedRelease planned = new FluxGitOpsBackend.PlannedRelease(overrideProperties,
                             kerberosParam == null ? null : isKerberosClusterEnabled(kerberosParam),
-                            (dependency, dependencyNamespace) -> dependencySteps.containsKey(dependency)
-                                    ? dependencyReleaseOverrides(dependencySteps.get(dependency), dependencyNamespace, repoId)
+                            (dependency, dependencyNamespace, dependencyRepoId) -> dependencySteps.containsKey(dependency)
+                                    ? dependencyReleaseOverrides(dependencySteps.get(dependency), dependencyNamespace,
+                                            dependencyRepoId)
                                     : Map.of());
                     appendCommandLog(id, "Committing HelmRelease " + namespace + "/" + releaseName + " to Git");
                     FluxGitOpsBackend.CommitResult commit = this.fluxGitOpsBackend.commit(
@@ -10963,11 +10935,11 @@ public class CommandService {
                     if (secretName != null) {
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
                         overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
-                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
+                        ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, childParams.get("serviceKey"), overrideProperties);
                     }
 
                     if (repoId != null && !repoId.isBlank()) {
-                        applyImageRegistryPaths(childParams.get("serviceKey"),
+                        ImageRegistryOverrides.applyImageRegistryPaths(this.ctx, childParams.get("serviceKey"),
                                 this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
                                 valuesMap, overrideProperties);
                     }
@@ -12009,7 +11981,8 @@ public class CommandService {
      *
      * @param depParams the parameters of the dependency's Helm steps ({@link CommandPlanFactory#dependencyReleaseParams})
      * @param namespace the namespace the dependency is installed in
-     * @param repoId    the deploy's chart repository, whose image registry and credentials the dependency uses
+     * @param repoId    the chart repository the dependency's chart comes from (the deploy's), whose image registry and
+     *                  credentials it uses
      */
     private Map<String, String> dependencyReleaseOverrides(Map<String, Object> depParams, String namespace,
                                                            String repoId) throws Exception {
@@ -12125,7 +12098,7 @@ public class CommandService {
             LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
             this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
             overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-            applyImagePullSecretTargets(secretName, depParams.get("serviceKey"), overrideProperties);
+            ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, depParams.get("serviceKey"), overrideProperties);
         }
         if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
             // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
@@ -12169,33 +12142,49 @@ public class CommandService {
 
     /**
      * Adds the image settings of a release step to its overrides: the image pull Secret, created in the namespace
-     * from the chart repository's credentials, the repository's image registry, and the image paths of charts that
-     * ignore {@code global.imageRegistry}.
+     * from the chart repository's credentials and also written into the value paths the service definition adds
+     * (OpenMetadata's Airflow and OpenSearch), the repository's image registry, and the image paths of charts that
+     * ignore {@code global.imageRegistry}. The Helm install and the GitOps commit both take them from here.
+     *
+     * <p>A value the step's own overrides ({@code _ov}, e.g. a security profile's extra properties) already set at one
+     * of those paths is kept: what the operator chose explicitly wins over what the chart repository gives, and the
+     * image paths then follow the registry the operator chose.
      */
     private void addReleaseImageOverrides(Map<String, Object> childParams, String repoId, Map<String, Object> valuesMap,
                                           Map<String, String> overrideProperties, String stepType) throws Exception {
         String namespace = (String) childParams.get("namespace");
         String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
+        String registryProperty = imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()
+                ? imageGlobalRegistryProperty : ImageRegistryOverrides.DEFAULT_REGISTRY_PROPERTY;
+        String registry = this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId);
+        Set<String> explicitPaths = childParams.get("_ov") instanceof Map<?, ?> ov
+                ? ov.keySet().stream().filter(Objects::nonNull).map(k -> String.valueOf(k).trim())
+                        .collect(java.util.stream.Collectors.toSet())
+                : Set.of();
+
+        Map<String, String> image = new LinkedHashMap<>();
         Object secretName = childParams.get("secretName");
         if (secretName != null) {
             LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
             this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
-            overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-            overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
+            ImageRegistryOverrides.addReleasePullSecret(this.ctx, secretName, childParams.get("serviceKey"), image);
         }
-
-        if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-            LOG.info("Resolving Repository Name for: {}", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-            overrideProperties.put(imageGlobalRegistryProperty, this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-            LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}", stepType, this.helmService.getRepositoryService().getImageRegistry(repoId), imageGlobalRegistryProperty);
-        }else {
-            overrideProperties.put("global.imageRegistry", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-            LOG.info("Execution Action {}: Injecting 'global.imageRegistry' in values.yaml with value: {}", stepType, this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
+        image.put(registryProperty, registry);
+        LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}",
+                stepType, registryProperty, registry);
+        for (Map.Entry<String, String> setting : image.entrySet()) {
+            if (explicitPaths.contains(setting.getKey())) {
+                LOG.info("Execution Action {}: keeping the explicit override {} of {} rather than the chart repository's {}",
+                        stepType, setting.getKey(), namespace, setting.getValue());
+            } else {
+                overrideProperties.put(setting.getKey(), setting.getValue());
+            }
         }
         // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
-        // service definition; rewrite them onto the repository's image registry.
-        applyImageRegistryPaths(childParams.get("serviceKey"),
-                this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
+        // service definition; rewrite them onto the image registry the release uses.
+        String releaseRegistry = explicitPaths.contains(registryProperty)
+                ? firstNonBlank(overrideProperties.get(registryProperty), registry) : registry;
+        ImageRegistryOverrides.applyImageRegistryPaths(this.ctx, childParams.get("serviceKey"), releaseRegistry,
                 valuesMap, overrideProperties);
     }
 
@@ -17492,38 +17481,6 @@ public class CommandService {
     }
 
     /**
-     * Inject the image-pull secret name into the extra helm value paths declared by
-     * the service definition's {@code imagePullSecretTargets} list. KDPS always
-     * writes two universal paths inline at the call sites
-     * ({@code imagePullSecrets[0].name} and {@code global.imagePullSecrets[0]});
-     * this method handles the chart-specific carve-outs (e.g. the airflow sub-chart
-     * inside OpenMetadata which reads {@code dependencies.airflow.registry.secretName}
-     * rather than honoring {@code global.imagePullSecrets}).
-     *
-     * <p>No-op when secretName, serviceKey, or the service.json's
-     * {@code imagePullSecretTargets} is absent — i.e. existing services unaffected.
-     */
-    private void applyImagePullSecretTargets(Object secretName, Object serviceKey,
-                                             Map<String, String> overrideProperties) {
-        if (secretName == null) return;
-        String svcKey = serviceKey == null ? null : String.valueOf(serviceKey);
-        if (svcKey == null || svcKey.isBlank()) return;
-        try {
-            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(svcKey);
-            if (def == null || def.imagePullSecretTargets == null) return;
-            for (String path : def.imagePullSecretTargets) {
-                if (path == null || path.isBlank()) continue;
-                overrideProperties.put(path, String.valueOf(secretName));
-                LOG.info("Image-pull-secret cascade: set {}='{}' from service.json imagePullSecretTargets ({})",
-                        path, secretName, svcKey);
-            }
-        } catch (Exception ex) {
-            LOG.warn("Could not load service def {} for pull-secret target injection: {}",
-                    svcKey, ex.toString());
-        }
-    }
-
-    /**
      * Translate global security configuration into Helm overrides (global.security.*).
      *
      * @param cfg    security config
@@ -18236,100 +18193,6 @@ public class CommandService {
                 Object v = formValues.get(key);
                 if (v instanceof String str && !str.isBlank()) return str.trim();
             }
-        }
-        return null;
-    }
-
-    /** Registry prefix every KDPS service definition uses for its default images. */
-    static final String DEFAULT_IMAGE_REGISTRY = "registry.clemlab.com/clemlabprojects";
-
-    /**
-     * Moves an image reference onto {@code effectiveRegistry} (host or host/project, as the Helm
-     * repository resolves it). The Clemlab default prefix is replaced as a whole; any other registry
-     * host (quay.io, registry.k8s.io, ghcr.io, docker.io) is replaced by the target, Docker Hub's
-     * {@code library/} is dropped, tags and digests are kept, and a reference already on the target
-     * registry is returned unchanged. Mirrors therefore keep the upstream repository path, which is
-     * how the Clemlab registry itself is laid out (kedacore/keda, prometheus/prometheus, ...).
-     */
-    static String rewriteImageRegistry(String image, String effectiveRegistry) {
-        if (image == null || image.isBlank() || effectiveRegistry == null || effectiveRegistry.isBlank()) return image;
-        String ref = image.trim();
-        String target = effectiveRegistry.trim().replaceAll("/+$", "");
-        if (ref.equals(target) || ref.startsWith(target + "/")) return ref;
-        String path = ref;
-        if (path.startsWith(DEFAULT_IMAGE_REGISTRY + "/")) {
-            path = path.substring(DEFAULT_IMAGE_REGISTRY.length() + 1);
-        } else {
-            int slash = path.indexOf('/');
-            if (slash > 0) {
-                String first = path.substring(0, slash);
-                if (first.contains(".") || first.contains(":") || first.equals("localhost")) {
-                    path = path.substring(slash + 1);
-                }
-            }
-            if (path.startsWith("library/")) path = path.substring("library/".length());
-        }
-        return target + "/" + path;
-    }
-
-    /**
-     * Applies {@link #rewriteImageRegistry} to every path the service definition lists in
-     * {@code imageRegistryPaths}. The current value comes from the explicit overrides first, then
-     * from the submitted values; paths without a value are left to the chart (nothing to rewrite).
-     */
-    private void applyImageRegistryPaths(Object serviceKeyObj, String effectiveRegistry,
-                                         Map<String, Object> valuesMap, Map<String, String> overrideProperties) {
-        if (serviceKeyObj == null || effectiveRegistry == null || effectiveRegistry.isBlank()) return;
-        String serviceKey = String.valueOf(serviceKeyObj).trim();
-        if (serviceKey.isEmpty() || "null".equals(serviceKey)) return;
-        List<Object> entries;
-        try {
-            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
-            entries = (def == null) ? null : def.imageRegistryPaths;
-        } catch (Exception e) {
-            LOG.warn("imageRegistryPaths: cannot load the definition of {}: {}", serviceKey, e.toString());
-            return;
-        }
-        if (entries == null || entries.isEmpty()) return;
-        for (Object entry : entries) {
-            String[] pd = imageRegistryEntry(entry);
-            if (pd == null) continue;
-            String path = pd[0], fallback = pd[1];
-            Object current = overrideProperties.get(path);
-            if (current == null && valuesMap != null) current = getByPath(valuesMap, path);
-            String value = (current instanceof String s && !s.isBlank()) ? s : null;
-            if (value == null) {
-                if (fallback == null || fallback.isBlank()) {
-                    LOG.debug("imageRegistryPaths: {} has no value in the request and no default; chart default stays", path);
-                    continue;
-                }
-                value = fallback;
-                LOG.info("imageRegistryPaths: {} not in the request; using the definition default {}", path, fallback);
-            }
-            String rewritten = rewriteImageRegistry(value, effectiveRegistry);
-            if (!rewritten.equals(value)) {
-                LOG.info("imageRegistryPaths: {} follows the repository registry: {} -> {}", path, value, rewritten);
-            }
-            if (current == null || !rewritten.equals(current)) {
-                overrideProperties.put(path, rewritten);
-            }
-        }
-    }
-
-    /**
-     * Normalises one {@code imageRegistryPaths} entry: a bare path string, or a map with
-     * {@code path} and an optional {@code default} image. Returns {path, default-or-null}, or null
-     * for an unusable entry.
-     */
-    static String[] imageRegistryEntry(Object entry) {
-        if (entry instanceof String str) {
-            return str.isBlank() ? null : new String[] {str.trim(), null};
-        }
-        if (entry instanceof Map<?, ?> m) {
-            Object path = m.get("path");
-            if (!(path instanceof String ps) || ps.isBlank()) return null;
-            Object def = m.get("default");
-            return new String[] {ps.trim(), (def instanceof String ds && !ds.isBlank()) ? ds.trim() : null};
         }
         return null;
     }
