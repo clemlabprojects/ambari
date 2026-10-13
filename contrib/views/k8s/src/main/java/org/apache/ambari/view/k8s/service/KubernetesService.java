@@ -6078,6 +6078,45 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Creates or replaces a {@code kubernetes.io/dockerconfigjson} Secret holding a registry login, such as the one a
+     * Flux HelmRepository of an OCI registry pulls charts with. No service account is patched.
+     *
+     * @param registryServer the registry host the login is for (e.g. {@code registry.example.com})
+     * @param labels         labels to set, may be {@code null}
+     * @throws RuntimeException when the Secret cannot be written
+     */
+    public void createOrUpdateDockerConfigSecret(String namespace, String secretName, String registryServer,
+                                                 String username, String password, Map<String, String> labels) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(registryServer, "registryServer");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        ObjectMeta meta = new ObjectMetaBuilder()
+                .withName(secretName)
+                .withNamespace(namespace)
+                .addToAnnotations("managed-by", "ambari-k8s-view")
+                .addToAnnotations("managed-at", Instant.now().toString())
+                .build();
+        if (labels != null && !labels.isEmpty()) {
+            meta.setLabels(new HashMap<>(labels));
+        }
+        Secret desired = new SecretBuilder()
+                .withMetadata(meta)
+                .withType("kubernetes.io/dockerconfigjson")
+                .addToData(".dockerconfigjson", Base64.getEncoder().encodeToString(
+                        dockerConfigJson(registryServer, username, password).getBytes(StandardCharsets.UTF_8)))
+                .build();
+        try {
+            client.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Wrote registry Secret '{}/{}' for {}", namespace, secretName, registryServer);
+        } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
+            throw new RuntimeException("Failed to create/update Secret " + namespace + "/" + secretName + ": "
+                    + e.getMessage(), e);
+        }
+    }
+
     /** Build dockerconfigjson content for kubernetes.io/dockerconfigjson secrets. */
     private static String dockerConfigJson(String server, String username, String password) {
         String auth = Base64.getEncoder().encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
@@ -7193,6 +7232,57 @@ public class KubernetesService {
             new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
                     .withGroup("helm.toolkit.fluxcd.io").withVersion("v2")
                     .withKind("HelmRelease").withPlural("helmreleases").withNamespaced(true).build();
+
+    /** The annotation Flux reads on an object on the cluster before it prunes it, and the value that keeps it. */
+    private static final String FLUX_PRUNE_ANNOTATION = "kustomize.toolkit.fluxcd.io/prune";
+    private static final String FLUX_PRUNE_DISABLED = "disabled";
+
+    /**
+     * The field manager of the changes KDPS makes to objects Flux applies. Flux's server-side apply removes only the
+     * fields of its own managers and of kubectl, so what this one sets stays.
+     */
+    private static final String KDPS_FIELD_MANAGER = "kdps";
+
+    /**
+     * Marks a Flux object on the cluster so that no Flux Kustomization prunes it, with the
+     * {@code kustomize.toolkit.fluxcd.io/prune: disabled} annotation. Flux reads that annotation on the object on the
+     * cluster, not in Git, when the object leaves the files a Kustomization covers: a manifest moved from a release's
+     * directory to one another Kustomization covers is only safe once the object carries it.
+     *
+     * @param context   the kind of the object (a HelmRelease, a HelmRepository)
+     * @param namespace the object's namespace
+     * @param name      the object's name
+     * @return true when the object carries the annotation, or is not on the cluster (nothing to prune); false when it
+     *         could not be read or annotated (logged)
+     */
+    public boolean keepFromFluxPrune(io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext context,
+                                     String namespace, String name) {
+        try {
+            checkNamespaceAllowed(namespace);
+            checkConfiguration();
+            var resource = client.genericKubernetesResources(context).inNamespace(namespace).withName(name);
+            GenericKubernetesResource live = resource.get();
+            if (live == null) {
+                return true;
+            }
+            Map<String, String> annotations = live.getMetadata() == null ? null : live.getMetadata().getAnnotations();
+            if (annotations != null && FLUX_PRUNE_DISABLED.equals(annotations.get(FLUX_PRUNE_ANNOTATION))) {
+                return true;
+            }
+            resource.patch(new PatchContext.Builder()
+                            .withPatchType(io.fabric8.kubernetes.client.dsl.base.PatchType.JSON_MERGE)
+                            .withFieldManager(KDPS_FIELD_MANAGER)
+                            .build(),
+                    "{\"metadata\":{\"annotations\":{\"" + FLUX_PRUNE_ANNOTATION + "\":\"" + FLUX_PRUNE_DISABLED
+                            + "\"}}}");
+            LOG.info("Marked {} {}/{} so that Flux does not prune it", context.getPlural(), namespace, name);
+            return true;
+        } catch (Exception ex) {
+            LOG.warn("Could not mark {} {}/{} so that Flux does not prune it: {}", context.getPlural(), namespace,
+                    name, ex.toString());
+            return false;
+        }
+    }
 
     /**
      * Asks Flux to reconcile a HelmRelease now, with the {@code reconcile.fluxcd.io/requestedAt} annotation, so it

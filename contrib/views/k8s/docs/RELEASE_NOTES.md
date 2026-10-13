@@ -93,6 +93,31 @@ These services were offered by pre-release builds and are no longer in the servi
 - An uninstall is refused, and the release kept, when KDPS cannot tell where Flux reads it: its base branch was deleted
   on the Git server, or it was deployed in pull request mode by an earlier version, which did not record its base
   branch, and main does not hold it. Deploy the release once more, naming its base branch, then uninstall it.
+- Each release now reads its chart from a chart source of its own, in its own namespace (`<release>-<repository>`),
+  committed in the release's directory. Two releases from the same chart repository no longer commit the same object
+  twice, which stopped a Flux Kustomization covering both from applying anything; no release refers to another
+  namespace, so Flux setups that refuse references across namespaces, or that apply each tenant's changes with an
+  account limited to its own namespaces, accept them. A platform that keeps its chart sources in one namespace sets the
+  view property "GitOps Chart Source Namespace": each chart repository then has one source there, committed once
+  under `<path prefix>/_shared/sources/`. The copies of those sources that releases deployed by an earlier version hold
+  in their directories are removed by the same commit, so setting the property needs no redeploy of those releases
+  first.
+- Dependencies that several releases share (KEDA, kube-prometheus-stack, the keytab webhook) are committed under
+  `<path prefix>/_shared/` instead of the directory of the release that first needed them, and marked so Flux never
+  prunes them. Uninstalling a release no longer removes them for the other releases, and no longer deletes the chart
+  source other releases read from the cluster. The next deploy or uninstall of a release deployed by an earlier version
+  moves its dependencies there, once it has marked each one on the cluster so that Flux does not prune it; one it
+  cannot mark (for example a dependency in a namespace its Kubernetes account may not change) stays in the release's
+  directory, marked in Git, and the next deploy or uninstall tries again.
+- Upgrade step for platforms that apply KDPS releases with one Flux Kustomization per release or per namespace,
+  instead of one over the whole path prefix: before upgrading, add a Flux Kustomization over
+  `<path prefix>/_shared` with `prune: false`. Without it, the dependencies of new deploys are never installed, the
+  releases that need them wait for them, and the chart sources of a GitOps Chart Source Namespace are never created.
+- Chart repositories that need credentials or use a private CA work in GitOps mode. KDPS writes the credentials
+  (a registry login for OCI, a user name and password for HTTP) and the CA of the KDPS truststores the repository
+  names to Secrets next to each chart source through the Kubernetes API, never to Git. A repository can instead name
+  existing Secrets (for example created by SOPS, Sealed Secrets or External Secrets). A deploy whose repository needs
+  credentials KDPS does not have is refused with a clear message instead of committing a source Flux cannot read.
 
 ### Authentication
 

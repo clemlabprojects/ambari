@@ -848,22 +848,33 @@ class FluxGitOpsBackendBranchTest {
         ArgumentCaptor<CustomResourceDefinitionContext> deleted =
                 ArgumentCaptor.forClass(CustomResourceDefinitionContext.class);
         verify(client, atLeastOnce()).genericKubernetesResources(deleted.capture());
-        assertEquals(List.of("helm.toolkit.fluxcd.io/v2 helmreleases", "source.toolkit.fluxcd.io/v1 helmrepositories"),
+        assertEquals(List.of("helm.toolkit.fluxcd.io/v2 helmreleases"),
                 deleted.getAllValues().stream().map(c -> c.getGroup() + "/" + c.getVersion() + " " + c.getPlural())
-                        .distinct().toList());
+                        .distinct().toList(), "the chart source goes with the release's directory, which Flux prunes");
     }
 
     @Test
-    void theHelmRepositoryAnotherGitOpsReleaseReadsIsKept() throws Exception {
+    void theStatusReadsTheChartSourceInTheNamespaceOfTheHelmRelease() throws Exception {
+        backend().commit(directCommit(2), null, planned());
+        Resource<GenericKubernetesResource> onCluster = helmReleaseOnCluster(true);
+        GenericKubernetesResource helmRelease = new GenericKubernetesResource();
+        helmRelease.setAdditionalProperty("spec", Map.of("chart", Map.of("spec", Map.of("sourceRef",
+                Map.of("kind", "HelmRepository", "name", RELEASE + "-charts")))));
+        helmRelease.setAdditionalProperty("status", Map.of("conditions", List.of(Map.of("type", "Ready",
+                "status", "True", "reason", "Succeeded"))));
+        when(onCluster.get()).thenReturn(helmRelease);
+
+        org.apache.ambari.view.k8s.model.HelmReleaseDTO status = backend().status(NS, RELEASE);
+
+        assertEquals(RELEASE + "-charts", status.sourceName);
+        assertEquals(NS, status.sourceNamespace, "a reference without a namespace is to the HelmRelease's own");
+        assertEquals("True", status.sourceStatus);
+    }
+
+    @Test
+    void anUninstallNeverDeletesAChartSourceFromTheCluster() throws Exception {
         when(k8s.getClient()).thenReturn(client);
         backend().commit(directCommit(2), null, planned());
-        K8sReleaseEntity other = new K8sReleaseEntity();
-        other.setId(K8sReleaseEntity.idOf("team-b", "trino"));
-        other.setNamespace("team-b");
-        other.setReleaseName("trino");
-        other.setDeploymentMode("FLUX_GITOPS");
-        other.setRepoId("charts");
-        releases.put(other.getId(), other);
 
         backend().destroy(NS, RELEASE);
 
@@ -871,7 +882,8 @@ class FluxGitOpsBackendBranchTest {
                 ArgumentCaptor.forClass(CustomResourceDefinitionContext.class);
         verify(client, atLeastOnce()).genericKubernetesResources(deleted.capture());
         assertTrue(deleted.getAllValues().stream().noneMatch(c -> "helmrepositories".equals(c.getPlural())),
-                "team-b/trino still reads the HelmRepository");
+                "not even when no other release reads its chart repository: Flux prunes the release's own source,"
+                        + " and a shared one is never removed");
     }
 
     @Test

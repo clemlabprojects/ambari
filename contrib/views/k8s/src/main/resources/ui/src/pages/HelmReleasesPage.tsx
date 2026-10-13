@@ -1028,7 +1028,7 @@ const HelmReleasesPage: React.FC = () => {
                   combined.gitPrNumber ? `PR: ${combined.gitPrNumber}` : null,
                   combined.gitPrUrl ? `PR URL: ${combined.gitPrUrl}` : null,
                   combined.gitPrState ? `PR State: ${combined.gitPrState}` : null,
-                  combined.sourceName ? `Source: ${combined.sourceNamespace || 'flux-system'}/${combined.sourceName}` : null,
+                  combined.sourceName ? `Source: ${combined.sourceNamespace || combined.namespace}/${combined.sourceName}` : null,
                   combined.sourceStatus ? `Source status: ${combined.sourceStatus}` : null,
                   combined.sourceMessage ? `Source msg: ${combined.sourceMessage}` : null,
                   combined.reconcileState ? `Reconcile: ${combined.reconcileState}` : null,

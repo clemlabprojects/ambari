@@ -87,6 +87,16 @@ import org.slf4j.LoggerFactory;
  * the base branch for each change unless the pull request of the previous change is still open. An uninstall removes
  * the release's manifests the same way: by a direct commit, or by a pull request whose merge the release's record
  * waits for.</p>
+ *
+ * <p>Layout under the path prefix: each release's directory ({@code <prefix>/<namespace>/<release>}) holds its
+ * HelmRelease and the HelmRepository it reads its chart from, named {@code <release>-<repository>} in the release's
+ * namespace, so two releases never define the same object and none refers across namespaces. The dependencies several
+ * releases share (KEDA, kube-prometheus-stack, the keytab webhook) are kept in {@link #SHARED_DIR}, with their own
+ * chart sources in their namespaces and annotated so Flux never prunes them: no release's uninstall removes them. A
+ * platform that keeps its chart sources in one namespace sets {@link #SOURCE_NAMESPACE_PROPERTY}; each chart repository
+ * then has one HelmRepository there, in {@code <prefix>/_shared/sources/}, which no uninstall removes either. A chart
+ * repository that needs credentials or trusts a private CA gets them from Secrets written next to its HelmRepository
+ * through the Kubernetes API, never from Git.</p>
  */
 public class FluxGitOpsBackend implements DeploymentBackend {
     private static final Logger LOG = LoggerFactory.getLogger(FluxGitOpsBackend.class);
@@ -132,14 +142,42 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     static final String HELM_TIMEOUT = "15m";
 
     /**
-     * The files a deploy writes into its release's directory: its HelmRelease and HelmRepository, and in
-     * {@link #DEPENDENCIES_DIR} a {@code <dependency>-helmrelease.yaml} per dependency and a
-     * {@code <repository>-helmrepository.yaml} per other chart repository. An uninstall removes these files and
-     * nothing else; a dependency file is never named {@code helmrelease.yaml}, which marks a release's directory.
+     * The files a deploy writes into its release's directory: its HelmRelease and the HelmRepository of its chart. An
+     * uninstall removes these files and nothing else. A file of {@link #SHARED_DIR} is never named
+     * {@code helmrelease.yaml}, which marks a release's directory.
      */
     static final String HELM_RELEASE_FILE = "helmrelease.yaml";
     static final String HELM_REPOSITORY_FILE = "helmrepository.yaml";
+
+    /**
+     * The directory of a release where earlier versions wrote its dependencies, a {@code <dependency>-helmrelease.yaml}
+     * per dependency and a {@code <repository>-helmrepository.yaml} per other chart repository. Moved to
+     * {@link #SHARED_DIR} by the next deploy or uninstall of the release.
+     */
     static final String DEPENDENCIES_DIR = "dependencies";
+
+    /**
+     * The directory, next to the namespaces under the path prefix, of what belongs to no release:
+     * {@code <namespace>/<dependency>-helmrelease.yaml} and {@code <namespace>/<dependency>-helmrepository.yaml} per
+     * dependency, and {@code sources/<namespace>/<repository>-helmrepository.yaml} per chart source kept in one
+     * namespace. No uninstall removes anything there. A namespace cannot be named so: Kubernetes names start with a
+     * letter or digit.
+     */
+    static final String SHARED_DIR = "_shared";
+    static final String SOURCES_DIR = "sources";
+
+    /**
+     * View property: the namespace the platform keeps its Flux chart sources in, such as flux-system. When set, every
+     * release reads its chart from one HelmRepository per chart repository there, kept in
+     * {@code <prefix>/_shared/sources/}. When left empty, each release reads its chart from a HelmRepository of its
+     * own, in its own namespace, which multi-tenant Flux setups (no references across namespaces, tenants limited to
+     * their namespaces) accept.
+     */
+    public static final String SOURCE_NAMESPACE_PROPERTY = "k8s.view.gitops.source.namespace";
+
+    /** Suffixes of the Secrets KDPS writes next to a chart source: its credentials, the CA of its server. */
+    static final String SOURCE_AUTH_SUFFIX = "-repo-auth";
+    static final String SOURCE_CA_SUFFIX = "-repo-ca";
 
     /**
      * What the command plan of a deploy prepared for its release before the commit (keytab, SSO client, Ranger,
@@ -224,6 +262,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private final GlobalConfigService globalConfigService = new GlobalConfigService();
     private final StackDefinitionService stackDefinitionService = new StackDefinitionService();
     private Duration workspaceLockWait = WORKSPACE_LOCK_WAIT;
+    /** Reads the credential KDPS stores for a chart repository. */
+    private java.util.function.Function<HelmRepoEntity, String> repositorySecret;
 
     /**
      * @param fluxRoot root directory where manifests will be written (simulates Git workspace).
@@ -253,11 +293,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         this.commandUtils = new CommandUtils(viewContext, kubernetesService);
         this.helmService = new HelmService(viewContext);
         this.securityProfileService = new SecurityProfileService(viewContext);
+        this.repositorySecret = repo -> new HelmRepositoryService(viewContext).readPlainSecret(repo);
     }
 
     /** How long an operation waits for another one on the same release ({@link #WORKSPACE_LOCK_WAIT}); for tests. */
     void setWorkspaceLockWait(Duration wait) {
         this.workspaceLockWait = wait;
+    }
+
+    /** How the credential stored for a chart repository is read; for tests. */
+    void setRepositorySecret(java.util.function.Function<HelmRepoEntity, String> repositorySecret) {
+        this.repositorySecret = repositorySecret;
     }
 
     /** The client of the Git servers' pull request APIs; for tests. */
@@ -368,7 +414,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (reason != null || managedHere) {
             return reason;
         }
-        return DependencyRules.reuseSkipReason(name, spec, request, kubernetesService, this::helmReleaseExists);
+        return DependencyRules.gitOpsReuseSkipReason(name, spec, request, kubernetesService, this::helmReleaseExists);
     }
 
     /** Whether a Helm release of that name is installed in the namespace. */
@@ -388,38 +434,224 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * The Flux HelmRepository of the release's chart repository and of each dependency's, by repository id.
+     * Checks the chart repository of a deploy and of each of its dependencies before anything is created or committed:
+     * configured in KDPS, and with what Flux pulls its charts with when it needs credentials.
      *
-     * @throws IllegalStateException when one of them is not configured in KDPS
+     * @throws IllegalStateException naming the repository and what is missing
      */
-    private Map<String, String> chartRepositoryYamls(String repoName, Map<String, Object> dependencies) {
-        Map<String, String> sources = new LinkedHashMap<>();
-        sources.put(repoName, chartRepositoryYaml(repoName));
+    private void checkChartSources(String repoName, Map<String, Object> dependencies) {
+        Set<String> ids = new java.util.LinkedHashSet<>();
+        ids.add(repoName);
         if (dependencies != null) {
             for (Object spec : dependencies.values()) {
                 Object depRepo = spec instanceof Map<?, ?> m ? m.get("repoId") : null;
-                String id = depRepo == null || String.valueOf(depRepo).isBlank() ? repoName : String.valueOf(depRepo);
-                sources.computeIfAbsent(id, this::chartRepositoryYaml);
+                ids.add(depRepo == null || String.valueOf(depRepo).isBlank() ? repoName : String.valueOf(depRepo));
             }
         }
-        return sources;
+        ids.forEach(this::checkChartSource);
     }
 
     /**
-     * The Flux HelmRepository for a chart repository configured in KDPS: its URL, and {@code type: oci} for OCI
-     * registries (Flux needs the {@code oci://} scheme and the type to pull charts from a registry).
+     * A chart repository configured in KDPS that Flux can pull from: anonymous, or with an existing Secret named for
+     * it, or with the user name and password KDPS stores for it.
      *
-     * @param repoId KDPS chart repository id
-     * @return the HelmRepository manifest
-     * @throws IllegalStateException when the repository is not configured in KDPS
+     * @throws IllegalStateException when it is not configured in KDPS, or needs credentials KDPS does not have
      */
-    String chartRepositoryYaml(String repoId) {
+    private HelmRepoEntity checkChartSource(String repoId) {
         HelmRepoEntity repo = new HelmRepositoryService(viewContext).get(repoId);
         if (repo == null || repo.getUrl() == null || repo.getUrl().isBlank()) {
             throw new IllegalStateException("Chart repository '" + repoId + "' is not configured in KDPS: add it under "
                     + "Configuration > Helm repositories before deploying with GitOps.");
         }
-        return renderHelmRepository(repoId, repo.getType(), repo.getUrl(), repo.getAuthMode());
+        if (needsCredentials(repo) && blankToNull(repo.getFluxSecretName()) == null) {
+            login(repo);
+        }
+        return repo;
+    }
+
+    /** Whether Flux needs credentials to pull charts from the repository. */
+    private static boolean needsCredentials(HelmRepoEntity repo) {
+        return repo.getAuthMode() != null && !repo.getAuthMode().isBlank()
+                && !"anonymous".equalsIgnoreCase(repo.getAuthMode().trim());
+    }
+
+    /** The user name and password Flux pulls charts with. */
+    private record Login(String username, String password) {}
+
+    /**
+     * The user name and password KDPS stores for a chart repository, which Flux pulls its charts with.
+     *
+     * @throws IllegalStateException when one of them is missing
+     */
+    private Login login(HelmRepoEntity repo) {
+        String username = blankToNull(repo.getUsername());
+        String password = blankToNull(repositorySecret.apply(repo));
+        if (username == null || password == null) {
+            throw new IllegalStateException("Chart repository '" + repo.getId() + "' needs credentials, and Flux pulls"
+                    + " its charts with a user name and password read from a Secret next to the chart source: KDPS has"
+                    + " no " + (username == null ? "user name" : "password") + " stored for it. Enter it under"
+                    + " Configuration > Helm repositories, or name there an existing Secret that holds the credentials"
+                    + " (GitOps credentials Secret), then deploy again.");
+        }
+        return new Login(username, password);
+    }
+
+    /**
+     * The namespace the platform keeps its chart sources in ({@link #SOURCE_NAMESPACE_PROPERTY}), or {@code null} when
+     * each release reads its chart from a source of its own.
+     *
+     * @throws IllegalArgumentException when the property does not name a namespace
+     */
+    String sourceNamespace() {
+        String configured = viewContext == null || viewContext.getProperties() == null ? null
+                : viewContext.getProperties().get(SOURCE_NAMESPACE_PROPERTY);
+        if (configured == null || configured.isBlank()) {
+            return null;
+        }
+        DeployRequestValidator.checkDnsLabel("The namespace of the GitOps chart sources (view property "
+                + SOURCE_NAMESPACE_PROPERTY + ")", configured.trim());
+        return configured.trim();
+    }
+
+    /**
+     * A Secret KDPS writes next to a chart source, through the Kubernetes API. Exactly one of the forms: a registry
+     * login ({@code registryServer} set), a CA ({@code caPem} set), else a user name and password.
+     */
+    private record SourceSecret(String namespace, String name, String registryServer, String username, String password,
+                                String caPem) {}
+
+    /**
+     * A Flux chart source as a deploy writes it.
+     *
+     * @param name      the HelmRepository
+     * @param namespace its namespace
+     * @param file      where its manifest is written in Git
+     * @param yaml      its manifest
+     * @param secrets   the Secrets KDPS writes next to it before the commit
+     */
+    record ChartSource(String name, String namespace, Path file, String yaml, List<SourceSecret> secrets) {
+        /** The namespace a HelmRelease in {@code helmReleaseNamespace} names in its reference: none for its own. */
+        String referencedFrom(String helmReleaseNamespace) {
+            return namespace.equals(helmReleaseNamespace) ? null : namespace;
+        }
+    }
+
+    /**
+     * The Flux HelmRepository a HelmRelease reads its chart from. By default its own, named
+     * {@code <helmRelease>-<repository>} in the HelmRelease's namespace and written to {@code file}: no two releases
+     * define the same source, and no HelmRelease refers to another namespace. With {@link #SOURCE_NAMESPACE_PROPERTY}
+     * set, the one source of the repository in that namespace, written to {@code <prefix>/_shared/sources/}.
+     *
+     * @param repoId               the KDPS chart repository
+     * @param helmRelease          the HelmRelease reading it
+     * @param helmReleaseNamespace its namespace
+     * @param file                 where a source of its own is written
+     * @param sharedDir            the {@link #SHARED_DIR} of the path prefix
+     * @param shared               whether the HelmRelease belongs to no release (a dependency), so Flux never prunes
+     *                             its source either
+     * @throws IllegalStateException when the repository is not configured in KDPS, needs credentials KDPS does not
+     *                               have, or names a truststore KDPS cannot read
+     */
+    ChartSource chartSource(String repoId, String helmRelease, String helmReleaseNamespace, Path file, Path sharedDir,
+                            boolean shared) {
+        HelmRepoEntity repo = checkChartSource(repoId);
+        String central = sourceNamespace();
+        String name = central != null ? repoId : helmRelease + "-" + repoId;
+        String namespace = central != null ? central : helmReleaseNamespace;
+        Path where = central != null ? centralSourceFile(sharedDir, central, repoId) : file;
+        List<SourceSecret> secrets = new ArrayList<>();
+        String secretRef = null;
+        if (needsCredentials(repo)) {
+            secretRef = blankToNull(repo.getFluxSecretName());
+            if (secretRef == null) {
+                Login login = login(repo);
+                secretRef = name + SOURCE_AUTH_SUFFIX;
+                boolean oci = "OCI".equalsIgnoreCase(repo.getType());
+                secrets.add(new SourceSecret(namespace, secretRef, oci ? registryServer(repo.getUrl()) : null,
+                        login.username(), login.password(), null));
+            }
+        }
+        String certSecretRef = blankToNull(repo.getFluxCertSecretName());
+        if (certSecretRef == null && blankToNull(repo.getCaTruststores()) != null) {
+            certSecretRef = name + SOURCE_CA_SUFFIX;
+            secrets.add(new SourceSecret(namespace, certSecretRef, null, null, null, truststorePem(repo)));
+        }
+        String yaml = renderHelmRepository(name, namespace, repo.getType(), repo.getUrl(), secretRef, certSecretRef,
+                shared || central != null);
+        return new ChartSource(name, namespace, where, yaml, secrets);
+    }
+
+    /**
+     * The CA certificates of the KDPS truststores a chart repository names, for the {@code ca.crt} Flux verifies its
+     * server with.
+     *
+     * @throws IllegalStateException when one of them cannot be read
+     */
+    private String truststorePem(HelmRepoEntity repo) {
+        org.apache.ambari.view.k8s.service.TruststoreRegistryService registry =
+                new org.apache.ambari.view.k8s.service.TruststoreRegistryService(viewContext, kubernetesService);
+        StringBuilder pem = new StringBuilder();
+        for (String name : repo.getCaTruststores().split(",")) {
+            if (name.isBlank()) {
+                continue;
+            }
+            try {
+                String ca = registry.caPemByName(name.trim());
+                pem.append(ca.endsWith("\n") ? ca : ca + "\n");
+            } catch (Exception ex) {
+                throw new IllegalStateException("Chart repository '" + repo.getId() + "' names the truststore '"
+                        + DeployRequestValidator.shown(name.trim()) + "' for the CA of its server, which KDPS could not"
+                        + " read, so nothing was committed to Git: " + ex.getMessage(), ex);
+            }
+        }
+        return pem.toString();
+    }
+
+    /** The registry host of an OCI chart repository URL, which its login is for. */
+    static String registryServer(String url) {
+        String host = url.trim().replaceFirst("^[a-zA-Z]+://", "");
+        int slash = host.indexOf('/');
+        return slash > 0 ? host.substring(0, slash) : host;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /**
+     * Writes the Secrets of the chart sources of a deploy, so Flux finds them once it applies the commit. Never written
+     * to Git.
+     *
+     * @throws IllegalStateException when one cannot be written; nothing is committed then
+     */
+    private void writeSourceSecrets(List<SourceSecret> secrets, String namespace, String release) {
+        Map<String, String> labels = Map.of(MANAGED_BY_LABEL, MANAGED_BY_VALUE, "app.kubernetes.io/managed-by", "kdps");
+        Set<String> written = new java.util.HashSet<>();
+        for (SourceSecret secret : secrets) {
+            if (!written.add(secret.namespace() + "/" + secret.name())) {
+                continue;
+            }
+            try {
+                if (secret.caPem() != null) {
+                    kubernetesService.createOrUpdateOpaqueSecret(secret.namespace(), secret.name(),
+                            Map.of("ca.crt", secret.caPem().getBytes(java.nio.charset.StandardCharsets.UTF_8)), labels);
+                } else if (secret.registryServer() != null) {
+                    kubernetesService.createOrUpdateDockerConfigSecret(secret.namespace(), secret.name(),
+                            secret.registryServer(), secret.username(), secret.password(), labels);
+                } else {
+                    Map<String, byte[]> data = new LinkedHashMap<>();
+                    data.put("username", secret.username().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    data.put("password", secret.password().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    kubernetesService.createOrUpdateOpaqueSecret(secret.namespace(), secret.name(), data, labels);
+                }
+                logFluxInfo(namespace, release, "secrets", "Stored what Flux reads the chart source with in Secret"
+                        + " %s/%s", secret.namespace(), secret.name());
+            } catch (Exception ex) {
+                throw new IllegalStateException("Could not store what Flux pulls the charts of " + namespace + "/"
+                        + release + " with in the Kubernetes Secret " + secret.namespace() + "/" + secret.name()
+                        + ", so nothing was committed to Git: " + ex.getMessage(), ex);
+            }
+        }
     }
 
     /** Whether a KDPS chart repository is an OCI registry. */
@@ -511,29 +743,33 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 serviceKey, request.getReleaseName(), request.getNamespace());
     }
 
-    /** Renders a Flux HelmRepository; OCI URLs get the oci:// scheme and {@code type: oci}. */
-    static String renderHelmRepository(String name, String type, String url, String authMode) {
+    /**
+     * Renders a Flux HelmRepository; OCI URLs get the oci:// scheme and {@code type: oci}.
+     *
+     * @param secretRef     the Secret of its credentials, {@code null} for none
+     * @param certSecretRef the Secret of the CA of its server, {@code null} for none
+     * @param shared        whether other releases read it, so Flux never prunes it
+     */
+    static String renderHelmRepository(String name, String namespace, String type, String url, String secretRef,
+                                       String certSecretRef, boolean shared) {
         boolean oci = "OCI".equalsIgnoreCase(type);
         String effectiveUrl = url.trim();
         if (oci) {
             effectiveUrl = "oci://" + effectiveUrl.replaceFirst("^[a-zA-Z]+://", "");
         }
-        if (authMode != null && !authMode.isBlank() && !"anonymous".equalsIgnoreCase(authMode)) {
-            LOG.warn("Chart repository {} needs credentials: Flux pulls it only with a secretRef, which KDPS does not "
-                    + "write yet; create the Secret in flux-system and reference it from HelmRepository {}", name, name);
-        }
-        return FluxManifests.helmRepository(name, effectiveUrl, oci);
+        return FluxManifests.helmRepository(name, namespace, effectiveUrl, oci, secretRef, certSecretRef, shared);
     }
 
     /**
      * Refuses a GitOps deploy that could not be committed, before anything is prepared for it: no Git repository, no
      * credentials to push to it, a working branch other than the base branch for a direct commit, a pull request on a
      * Git server KDPS cannot open one on, no chart repository or chart version, a release directory inside or above
-     * that of another release KDPS deployed to the repository. The checks {@link #commit} makes, without touching Git
-     * or changing the request.
+     * that of another release KDPS deployed to the repository, a chart repository that needs credentials KDPS does not
+     * have. The checks {@link #commit} makes, without touching Git or changing the request.
      *
      * @throws IllegalArgumentException naming what is missing
-     * @throws IllegalStateException    when a chart repository is not configured in KDPS
+     * @throws IllegalStateException    when a chart repository is not configured in KDPS, or needs credentials KDPS
+     *                                  does not have
      */
     public void checkCommittable(HelmDeployRequest request, DeploymentContext context) {
         K8sReleaseEntity existingMeta = releaseMetadataService.find(request.getNamespace(), request.getReleaseName());
@@ -555,7 +791,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         chartVersion(request, context, existingMeta,
                 firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null));
-        chartRepositoryYamls(repoName, request.getDependencies());
+        sourceNamespace();
+        checkChartSources(repoName, request.getDependencies());
         String commitMode = firstNonBlank(given.getCommitMode(),
                 existingMeta != null ? existingMeta.getGitCommitMode() : null);
         checkWorkingBranch(commitMode, given.getBranch(),
@@ -874,14 +1111,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         DeployRequestValidator.checkChartVersionIfGiven("Chart version", version);
         request.setVersion(version);
         String chart = request.getChart();
-        // Every chart source, resolved before anything is created or committed: an unknown repository stops here.
-        Map<String, String> chartSources = chartRepositoryYamls(repoName, request.getDependencies());
+        // Every chart source, checked before anything is created or committed: an unknown repository, or one whose
+        // credentials KDPS does not have, stops here.
+        sourceNamespace();
+        checkChartSources(repoName, request.getDependencies());
         String chartInSource = chartNameInSource(chart, isOciRepository(repoName));
 
         String pathOverride = git.getPathPrefix();
         String storedPath = existingMeta != null ? existingMeta.getGitPath() : null;
         Path targetDir = resolveTargetPath(pathOverride, storedPath, namespace, release);
         checkApartFromRecordedReleases(targetDir, repoUrl, namespace, release);
+        Path sharedDir = sharedDirectory(targetDir);
 
         // Resolve credentials: prefer provided, else the release's stored ones. A new one, given in clear or by the
         // pending alias a planned deploy stored it under when it was submitted, becomes the release's only once the
@@ -1025,7 +1265,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         // 4. Handle dependencies: create HelmRelease YAMLs for each dependency
-        // Dependencies are committed to Git alongside the main HelmRelease
+        // Dependencies are committed to Git with the main HelmRelease, where they belong to no release: other releases
+        // rely on the operators they install, so no uninstall removes them.
         // Note: Flux will reconcile them in parallel (no explicit ordering)
         List<DepRef> depRefs = new ArrayList<>();
         List<PendingDependency> pendingDeps = new ArrayList<>();
@@ -1034,9 +1275,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
             try {
                 logFluxInfo(namespace, release, "automation", "Processing %s dependencies", request.getDependencies().size());
-                Path depDir = targetDir.resolve(DEPENDENCIES_DIR);
-                Files.createDirectories(repoDir.resolve(depDir));
-                
+                Path legacyDepDir = targetDir.resolve(DEPENDENCIES_DIR);
+
                 for (Map.Entry<String, Object> depEntry : request.getDependencies().entrySet()) {
                     String depKey = depEntry.getKey();
                     @SuppressWarnings("unchecked")
@@ -1050,20 +1290,27 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         continue;
                     }
                     String depReleaseName = firstNonBlank(stringOrNull(depSpec.get("releaseName")), depKey);
+                    // The namespace the form picked for it, which also places its file.
+                    DependencyRules.applyNamespaceFromForm(depSpec, request.getFormValues());
+                    String depNamespace = firstNonBlank(stringOrNull(depSpec.get("namespace")), namespace);
                     // The same dependencies as a direct deploy: none on OpenShift that the platform provides, none
-                    // that the settings do not need, none already on the cluster. One this release already manages
-                    // through Flux is kept even though it is now "on the cluster": Flux installed it.
+                    // that the settings do not need, none already on the cluster. One Flux already manages is kept
+                    // even though it is now "on the cluster": Flux installed it, for this release or another one.
                     // "Manages" = published on the base branch, which Flux reads, not merely present in the local
-                    // workspace or on a pull request branch, which is not reconciled until merged.
-                    Path depFile = dependencyFile(depDir, depReleaseName, "-" + HELM_RELEASE_FILE);
+                    // workspace or on a pull request branch, which is not reconciled until merged: in the shared
+                    // directory, or in this release's own where earlier versions wrote it.
+                    Path depFile = sharedDependencyFile(sharedDir, depNamespace, depReleaseName,
+                            "-" + HELM_RELEASE_FILE);
+                    Path legacyDepFile = dependencyFile(legacyDepDir, depReleaseName, "-" + HELM_RELEASE_FILE);
                     Boolean onBase = gitClient.publishedOn(depFile, baseBranch);
-                    boolean managedHere = Boolean.TRUE.equals(onBase);
+                    boolean managedHere = Boolean.TRUE.equals(onBase)
+                            || Boolean.TRUE.equals(gitClient.publishedOn(legacyDepFile, baseBranch));
                     String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context, planned);
                     if (skipped != null) {
                         // A published file is left in place: the operator it installs (KEDA, the keytab webhook) is
                         // shared, and other releases may rely on it. One never published (e.g. in a still-open PR
                         // branch) is removed, so merging it cannot install a second copy. When the lookup failed,
-                        // nothing is deleted.
+                        // nothing is deleted. One in this release's directory moves to the shared directory below.
                         if (!managedHere && onBase != null) {
                             gitClient.deletePath(depFile);
                         }
@@ -1075,7 +1322,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // chart's version, which belongs to another chart: without one, the HelmRelease names none.
                     String depVersion = firstNonBlank(CommandService.pinnedChartVersion(stringOrNull(depSpec.get("chartVersion"))),
                             CommandService.pinnedChartVersion(stringOrNull(depSpec.get("version"))));
-                    String depNamespace = firstNonBlank(stringOrNull(depSpec.get("namespace")), namespace);
                     depRefs.add(new DepRef(depReleaseName, depNamespace));
                     
                     // Create namespace for dependency if different
@@ -1139,14 +1385,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // to Git in the dependency's values either.
                     pendingDeps.add(new PendingDependency(depReleaseName, depNamespace,
                             chartNameInSource(depChart, isOciRepository(depRepoName)), depVersion, depRepoName,
-                            depValues, depFile));
-                    if (!depRepoName.equals(repoName)) {
-                        // A dependency from another chart repository needs its own Flux source.
-                        Path depRepoFile = dependencyFile(depDir, depRepoName, "-" + HELM_REPOSITORY_FILE);
-                        gitClient.writeFile(depRepoFile, chartSources.get(depRepoName));
-                        writtenFiles.add(depRepoFile);
-                    }
-                    
+                            depValues, depFile, legacyDepFile));
+
                     logFluxInfo(namespace, release, "automation", "Added dependency HelmRelease %s/%s (chart=%s, version=%s)",
                             depNamespace, depReleaseName, depChart, firstNonBlank(depVersion, "not pinned"));
                 }
@@ -1305,7 +1545,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         List<StoredSecrets> storedDeps = new ArrayList<>();
         for (PendingDependency dep : pendingDeps) {
-            StoredSecrets depStored = storedSecrets(dep.namespace(), dep.releaseName(), repoDir.resolve(dep.file()));
+            // Its manifest as this release wrote it before: in the shared directory, or still in its own.
+            Path depManifest = repoDir.resolve(Files.exists(repoDir.resolve(dep.file())) ? dep.file()
+                    : dep.legacyFile());
+            StoredSecrets depStored = storedSecrets(dep.namespace(), dep.releaseName(), depManifest);
             depStored.documents().forEach(secrets::addStoredValues);
             storedDeps.add(depStored);
         }
@@ -1322,15 +1565,35 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             valuesSecretName = valuesSecret.name();
         }
 
-        String repoYaml = chartSources.get(repoName);
+        // The chart source of the release, and the Secrets Flux reads it with, written before the commit.
+        ChartSource source = chartSource(repoName, release, namespace, targetDir.resolve(HELM_REPOSITORY_FILE),
+                sharedDir, false);
+        List<SourceSecret> sourceSecrets = new ArrayList<>(source.secrets());
 
-        Map<String, Object> hrSpec = FluxManifests.helmReleaseSpec(chartInSource, version, repoName, depRefs,
-                valuesSecretName, split.publicValues());
+        Map<String, Object> hrSpec = FluxManifests.helmReleaseSpec(chartInSource, version, source.name(),
+                source.referencedFrom(namespace), depRefs, valuesSecretName, split.publicValues());
         String specDigest = specDigest(FluxManifests.specYaml(hrSpec));
         String hrYaml = FluxManifests.helmRelease(release, namespace, specDigest, hrSpec);
 
+        // Dependencies an earlier version wrote into this release's directory move to the shared directory, in this
+        // commit: those written above replace their old copy, the others go on as they were. One that cannot move yet
+        // is written where it is, with its chart source next to it.
+        Set<Path> stayed = migrateLegacyDependencies(gitClient, repoDir, targetDir, sharedDir,
+                pendingDeps.stream().map(PendingDependency::file).collect(Collectors.toSet()), baseBranch, namespace,
+                release);
+        Map<Path, String> sourceFiles = new LinkedHashMap<>();
+        sourceFiles.put(source.file(), source.yaml());
         for (int i = 0; i < pendingDeps.size(); i++) {
             PendingDependency dep = pendingDeps.get(i);
+            boolean inPlace = stayed.contains(dep.file());
+            Path depFile = inPlace ? dep.legacyFile() : dep.file();
+            Path depSourceFile = inPlace
+                    ? dependencyFile(dep.legacyFile().getParent(), dep.releaseName(), "-" + HELM_REPOSITORY_FILE)
+                    : sharedDependencyFile(sharedDir, dep.namespace(), dep.releaseName(), "-" + HELM_REPOSITORY_FILE);
+            ChartSource depSource = chartSource(dep.repoName(), dep.releaseName(), dep.namespace(), depSourceFile,
+                    sharedDir, true);
+            sourceSecrets.addAll(depSource.secrets());
+            sourceFiles.put(depSource.file(), depSource.yaml());
             GitOpsSecretValues.Split depSplit = secrets.splitContaining(dep.values(), storedDeps.get(i).documents());
             String depValuesSecretName = null;
             if (depSplit.hasSecrets()) {
@@ -1339,14 +1602,22 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 valuesSecrets.add(depSecret);
                 depValuesSecretName = depSecret.name();
             }
-            gitClient.writeFile(dep.file(), FluxManifests.helmRelease(dep.releaseName(), dep.namespace(), null,
-                    FluxManifests.helmReleaseSpec(dep.chart(), dep.version(), dep.repoName(), List.of(),
-                            depValuesSecretName, depSplit.publicValues())));
-            writtenFiles.add(dep.file());
+            gitClient.writeFile(depFile, FluxManifests.helmRelease(dep.releaseName(), dep.namespace(), null,
+                    FluxManifests.helmReleaseSpec(dep.chart(), dep.version(), depSource.name(),
+                            depSource.referencedFrom(dep.namespace()), List.of(), depValuesSecretName,
+                            depSplit.publicValues()), true));
+            writtenFiles.add(depFile);
         }
-        gitClient.writeFile(targetDir.resolve(HELM_REPOSITORY_FILE), repoYaml);
+        if (!source.file().equals(targetDir.resolve(HELM_REPOSITORY_FILE))) {
+            // The release reads the platform's source: one of its own, written by a deploy before, goes.
+            gitClient.deletePath(targetDir.resolve(HELM_REPOSITORY_FILE));
+        }
+        for (Map.Entry<Path, String> sourceFile : sourceFiles.entrySet()) {
+            gitClient.writeFile(sourceFile.getKey(), sourceFile.getValue());
+            writtenFiles.add(sourceFile.getKey());
+        }
+        removeCopiesOfSharedSources(gitClient, repoDir, sharedDir, namespace, release);
         gitClient.writeFile(targetDir.resolve(HELM_RELEASE_FILE), hrYaml);
-        writtenFiles.add(targetDir.resolve(HELM_REPOSITORY_FILE));
         writtenFiles.add(targetDir.resolve(HELM_RELEASE_FILE));
 
         // Fail closed: nothing that holds a password or secret is committed, whatever wrote it there.
@@ -1361,7 +1632,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         closeSupersededPullRequest(work.supersededPullRequest(), existingMeta, repoUrl, token);
 
         String headBeforeCommit = gitClient.headCommit();
-        // Written before the commit, so Flux never applies a HelmRelease whose values Secret is missing.
+        // Written before the commit, so Flux never applies a HelmRelease whose chart source or values Secret misses
+        // its Secret.
+        writeSourceSecrets(sourceSecrets, namespace, release);
         List<ValuesSecret> secretsWritten = writeValuesSecrets(valuesSecrets);
 
         String commitMsg = prMode
@@ -1834,7 +2107,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 dto.desiredGeneration = String.valueOf(hr.getMetadata().getGeneration());
             }
             String sourceName = null;
-            String sourceNamespace = "flux-system";
+            // Flux reads a reference without a namespace in the HelmRelease's own.
+            String sourceNamespace = namespace;
             Object specObj = hr.get("spec");
             if (specObj instanceof java.util.Map) {
                 java.util.Map<?, ?> spec = (java.util.Map<?, ?>) specObj;
@@ -2010,8 +2284,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * Uninstalls a GitOps release with what its record holds: its manifests come out of the branch Flux reconciles the
      * way the release was deployed, by a direct commit or through a pull request, in the release's own workspace under
      * its lock. A direct commit removes the release at once: once the removal is pushed, its Git credentials are
-     * deleted, then its HelmRelease and the HelmRepository of its chart (unless another release reads it) from the
-     * cluster, then its record. A pull request leaves the release running and its record waiting for the merge
+     * deleted, then its HelmRelease from the cluster, then its record. Its chart source goes with its directory, which
+     * Flux prunes; nothing another release reads (a shared dependency, a chart source of the platform) is removed. A
+     * pull request leaves the release running and its record waiting for the merge
      * ({@link K8sReleaseEntity#isGitPendingDelete}); the uninstall that finds the branch Flux reconciles without the
      * release finishes the removal as a direct commit does. The release's own pull request, when still open, is
      * withdrawn first, so that merging it later cannot install the release again.
@@ -2067,7 +2342,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // The branch Flux reconciles no longer holds the release. Flux removes it when it prunes what Git no longer
         // holds; deleted here too for a Flux that does not.
         deleteHelmRelease(namespace, releaseName);
-        deleteHelmRepositoryIfUnused(meta);
         try {
             releaseMetadataService.delete(namespace, releaseName);
         } catch (Exception ex) {
@@ -2130,7 +2404,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     releaseDir);
             withdrawPullRequest(meta, gitClient, repoDir, releaseDir, base, token);
             Set<NamespacedName> helmReleases = removedHelmReleases(meta);
-            deleteValuesSecrets(new java.util.LinkedHashSet<>(), helmReleases);
+            deleteValuesSecrets(ownSourceSecrets(meta), helmReleases);
             return false;
         }
         String pending = meta.isGitPendingDelete() ? meta.getGitPrNumber() : null;
@@ -2166,6 +2440,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         List<Path> files = releaseManifests(repoDir.resolve(releaseDir));
         Set<NamespacedName> helmReleases = helmReleasesIn(files);
         helmReleases.add(new NamespacedName(namespace, releaseName));
+        migrateLegacyDependencies(gitClient, repoDir, releaseDir, sharedDirectory(releaseDir), Set.of(), base,
+                namespace, releaseName);
         for (Path manifest : files) {
             gitClient.deletePath(repoDir.relativize(manifest));
         }
@@ -2304,6 +2580,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         try {
             gitClient.checkoutWorkBranch(branch, base);
             checkOwnHelmRelease(repoDir, releaseDir, namespace, releaseName);
+            migrateLegacyDependencies(gitClient, repoDir, releaseDir, sharedDirectory(releaseDir), Set.of(), base,
+                    namespace, releaseName);
             for (Path manifest : releaseManifests(repoDir.resolve(releaseDir))) {
                 gitClient.deletePath(repoDir.relativize(manifest));
             }
@@ -2320,6 +2598,20 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     + " again. " + ex.getMessage() + " Close it without merging it and delete its branch, then"
                     + " uninstall the release again.", ex);
         }
+    }
+
+    /**
+     * The Secrets KDPS writes for the chart source of a release of its own ({@link #chartSource}): those of
+     * {@code <release>-<repository>} in its namespace.
+     */
+    private static java.util.Set<NamespacedName> ownSourceSecrets(K8sReleaseEntity meta) {
+        java.util.Set<NamespacedName> secrets = new java.util.LinkedHashSet<>();
+        if (meta.getRepoId() != null && !meta.getRepoId().isBlank()) {
+            String source = meta.getReleaseName() + "-" + meta.getRepoId();
+            secrets.add(new NamespacedName(meta.getNamespace(), source + SOURCE_AUTH_SUFFIX));
+            secrets.add(new NamespacedName(meta.getNamespace(), source + SOURCE_CA_SUFFIX));
+        }
+        return secrets;
     }
 
     /**
@@ -2476,7 +2768,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * Delete the manifests of a release from Git and push the change, in the release's own workspace so it is
      * serialised with the deploys of the same release. Only the files a deploy of the release writes into its own
      * directory ({@link #releaseDirectory}) are deleted ({@link #releaseManifests}): never a blank path or the bare
-     * path prefix, nothing in another release's directory, even one below the release's, and no other file.
+     * path prefix, nothing in another release's directory, even one below the release's, no other file, and nothing of
+     * the shared directory. Dependencies an earlier version wrote into the release's directory are moved there
+     * ({@link #migrateLegacyDependencies}): other releases may rely on them.
      *
      * @param repoUrl          Git repository URL.
      * @param branch           branch to push the removal to (will be created if absent, unless it is the one Flux
@@ -2546,7 +2840,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         java.util.Set<NamespacedName> helmReleases = helmReleasesIn(files);
         helmReleases.add(new NamespacedName(namespace, releaseName));
         java.util.Set<NamespacedName> valuesSecrets = valuesSecretsIn(files);
+        valuesSecrets.addAll(sourceSecretsIn(files));
         List<Path> manifests = files.stream().map(repoDir::relativize).collect(Collectors.toList());
+        // Before the release's own chart source goes: a dependency moved as it is may read it.
+        migrateLegacyDependencies(gitClient, repoDir, releaseDir, sharedDirectory(releaseDir), Set.of(),
+                reconciledBranch, namespace, releaseName);
         logFluxInfo(namespace, releaseName, "destroy", "Removing %s", manifests);
         for (Path manifest : manifests) {
             gitClient.deletePath(manifest);
@@ -2826,6 +3124,274 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     + "' cannot name a file outside " + dependenciesDir + " in Git.");
         }
         return file;
+    }
+
+    /**
+     * The {@link #SHARED_DIR} of the path prefix a release's directory ({@code <prefix>/<namespace>/<release>}) is
+     * under.
+     */
+    static Path sharedDirectory(Path releaseDir) {
+        Path prefix = releaseDir.getParent() == null ? null : releaseDir.getParent().getParent();
+        return prefix == null ? Path.of(SHARED_DIR) : prefix.resolve(SHARED_DIR);
+    }
+
+    /**
+     * The file of a dependency, or of its chart source, in the shared directory: {@code <namespace>/<name><suffix>}.
+     *
+     * @throws IllegalArgumentException when the namespace or the name would place it anywhere else
+     */
+    static Path sharedDependencyFile(Path sharedDir, String namespace, String name, String suffix) {
+        return dependencyFile(sharedDir.resolve(pathSegment("namespace", namespace)), name, suffix);
+    }
+
+    /**
+     * The file of a chart source kept in one namespace for every release, in the shared directory:
+     * {@code sources/<namespace>/<name>-helmrepository.yaml}.
+     */
+    static Path centralSourceFile(Path sharedDir, String namespace, String name) {
+        return dependencyFile(sharedDir.resolve(SOURCES_DIR).resolve(pathSegment("namespace", namespace)), name,
+                "-" + HELM_REPOSITORY_FILE);
+    }
+
+    /**
+     * Moves the dependencies an earlier version wrote into a release's directory ({@link #DEPENDENCIES_DIR}) to the
+     * shared directory, where no uninstall removes them: the operators they install (KEDA, kube-prometheus-stack, the
+     * keytab webhook) may serve other releases. A dependency this change writes to the shared directory itself only
+     * loses its old copy; one never published on the branch Flux reconciles (only on a pull request branch) is removed,
+     * so a merge cannot install it. One moved as it is keeps reading the chart source it read, which moves along to
+     * {@code sources/}; the chart sources of the directory go otherwise. What moves is annotated so Flux never prunes
+     * it. Nothing is moved over a file the shared directory already holds.
+     * <p>
+     * Flux reads that annotation on the object on the cluster, not in Git: a Flux Kustomization that covers the
+     * release's directory but not the shared one would prune a dependency whose file leaves it, and so uninstall the
+     * operator for every release. So before a published dependency leaves the directory, its HelmRelease on the cluster
+     * is marked ({@link KubernetesService#keepFromFluxPrune}). One KDPS cannot mark stays where it is, annotated, with
+     * the chart source it reads, and the next deploy or uninstall of the release tries again.
+     *
+     * @param releaseDir       the release's directory
+     * @param written          the files of the shared directory this change writes dependencies to
+     * @param reconciledBranch the branch Flux reconciles, {@code null} when unknown
+     * @return the files of {@code written} whose dependency stays in the release's directory, where the change writes
+     *         it instead
+     * @throws IOException when the directory cannot be read or written
+     */
+    private Set<Path> migrateLegacyDependencies(GitClient gitClient, Path repoDir, Path releaseDir, Path sharedDir,
+                                                Set<Path> written, String reconciledBranch, String namespace,
+                                                String release) throws IOException {
+        Path legacyDir = repoDir.resolve(releaseDir).resolve(DEPENDENCIES_DIR);
+        if (!Files.isDirectory(legacyDir)) {
+            return Set.of();
+        }
+        List<Path> files;
+        try (java.util.stream.Stream<Path> listed = Files.list(legacyDir)) {
+            files = listed.filter(Files::isRegularFile).sorted().collect(Collectors.toList());
+        }
+        Map<NamespacedName, String> sources = new LinkedHashMap<>();
+        collectHelmRepositories(repoDir.resolve(releaseDir).resolve(HELM_REPOSITORY_FILE), sources);
+        files.stream().filter(f -> f.getFileName().toString().endsWith("-" + HELM_REPOSITORY_FILE))
+                .forEach(f -> collectHelmRepositories(f, sources));
+        Set<Path> stayed = new java.util.LinkedHashSet<>();
+        // The chart sources the dependencies that stay go on reading.
+        Set<NamespacedName> stayedSources = new java.util.LinkedHashSet<>();
+        for (Path file : files) {
+            if (!file.getFileName().toString().endsWith("-" + HELM_RELEASE_FILE)) {
+                continue;
+            }
+            Path legacy = repoDir.relativize(file);
+            List<Map<?, ?>> documents = helmReleaseDocuments(file);
+            Map<?, ?> metadata = documents.size() == 1 ? (Map<?, ?>) documents.get(0).get("metadata") : null;
+            Path target;
+            try {
+                target = metadata == null ? null : sharedDependencyFile(sharedDir,
+                        String.valueOf(metadata.get("namespace")), String.valueOf(metadata.get("name")),
+                        "-" + HELM_RELEASE_FILE);
+            } catch (IllegalArgumentException unusable) {
+                target = null;
+            }
+            if (target == null) {
+                logFluxWarn(namespace, release, "migrate", "Left %s in place: it does not hold one HelmRelease KDPS can"
+                        + " move", legacy);
+                continue;
+            }
+            NamespacedName helmRelease = new NamespacedName(String.valueOf(metadata.get("namespace")),
+                    String.valueOf(metadata.get("name")));
+            boolean unpublished = reconciledBranch != null
+                    && Boolean.FALSE.equals(gitClient.publishedOn(legacy, reconciledBranch));
+            if (!unpublished && !keptOnCluster(helmReleaseContext(), helmRelease)) {
+                gitClient.writeFile(legacy, FluxManifests.keptByFlux(Files.readString(file)));
+                stayed.add(target);
+                NamespacedName source = sourceRefOf(documents.get(0));
+                if (!written.contains(target) && source != null) {
+                    stayedSources.add(source);
+                }
+                logFluxWarn(namespace, release, "migrate", "Left %s in place: KDPS could not mark HelmRelease %s/%s on"
+                        + " the cluster so that Flux does not prune it, and a Flux Kustomization covering this"
+                        + " release's directory but not %s would uninstall it for every release once its file moved."
+                        + " The next deploy or uninstall of the release tries again.", legacy, helmRelease.namespace(),
+                        helmRelease.name(), sharedDir);
+                continue;
+            }
+            if (written.contains(target)) {
+                logFluxInfo(namespace, release, "migrate", "Replaced %s by %s", legacy, target);
+            } else if (unpublished) {
+                logFluxInfo(namespace, release, "migrate", "Removed %s, never published on %s", legacy,
+                        reconciledBranch);
+            } else if (!Files.exists(repoDir.resolve(target))) {
+                gitClient.writeFile(target, FluxManifests.keptByFlux(Files.readString(file)));
+                NamespacedName source = sourceRefOf(documents.get(0));
+                if (source != null && sources.containsKey(source)) {
+                    // Best effort: a chart source Flux prunes is applied again from its new file, and its HelmRelease
+                    // only waits for it meanwhile; nothing is uninstalled.
+                    keptOnCluster(helmRepositoryContext(), source);
+                    Path sourceTarget = centralSourceFile(sharedDir, source.namespace(), source.name());
+                    if (!Files.exists(repoDir.resolve(sourceTarget))) {
+                        gitClient.writeFile(sourceTarget, FluxManifests.keptByFlux(sources.get(source)));
+                    }
+                }
+                logFluxInfo(namespace, release, "migrate", "Moved %s to %s, where no uninstall removes it", legacy,
+                        target);
+            } else {
+                logFluxInfo(namespace, release, "migrate", "Removed %s: %s already holds it", legacy, target);
+            }
+            gitClient.deletePath(legacy);
+        }
+        for (Path file : files) {
+            if (!file.getFileName().toString().endsWith("-" + HELM_REPOSITORY_FILE)) {
+                continue;
+            }
+            Map<NamespacedName, String> defined = new LinkedHashMap<>();
+            collectHelmRepositories(file, defined);
+            if (defined.size() == 1 && stayedSources.removeAll(defined.keySet())) {
+                gitClient.writeFile(repoDir.relativize(file), FluxManifests.keptByFlux(Files.readString(file)));
+            } else {
+                gitClient.deletePath(repoDir.relativize(file));
+            }
+        }
+        // What is left was in the release's own chart source file, which this change rewrites or removes.
+        for (NamespacedName source : stayedSources) {
+            if (sources.containsKey(source)) {
+                try {
+                    gitClient.writeFile(dependencyFile(releaseDir.resolve(DEPENDENCIES_DIR), source.name(),
+                            "-" + HELM_REPOSITORY_FILE), FluxManifests.keptByFlux(sources.get(source)));
+                } catch (IllegalArgumentException unusable) {
+                    logFluxWarn(namespace, release, "migrate", "Could not keep chart source %s/%s next to the"
+                            + " dependencies left in place: %s", source.namespace(), source.name(),
+                            unusable.getMessage());
+                }
+            }
+        }
+        removeCopiesOfSharedSources(gitClient, repoDir, sharedDir, namespace, release);
+        return stayed;
+    }
+
+    /**
+     * Removes, from the directories of the releases under the path prefix, every copy of a chart source that
+     * {@code <prefix>/_shared/sources/} holds. Earlier versions committed the source of each release as
+     * {@code flux-system/<repository>} in the release's directory, and kept a copy next to the dependencies left there.
+     * Once {@code sources/} defines the same object, a Flux Kustomization over the prefix would find it twice, which
+     * kustomize refuses, and then applies nothing at all. The HelmReleases that read the copy go on reading the same
+     * object, now from {@code sources/}. Each copy is first marked on the cluster so that a Flux Kustomization covering
+     * only that release's directory does not prune it, best effort: a source Flux prunes is applied again from
+     * {@code sources/}, and its HelmReleases only wait for it meanwhile.
+     *
+     * @param sharedDir the {@link #SHARED_DIR} of the path prefix
+     * @throws IOException when the directories cannot be read
+     */
+    private void removeCopiesOfSharedSources(GitClient gitClient, Path repoDir, Path sharedDir, String namespace,
+                                             String release) throws IOException {
+        Path sourcesDir = repoDir.resolve(sharedDir).resolve(SOURCES_DIR);
+        if (!Files.isDirectory(sourcesDir)) {
+            return;
+        }
+        Map<NamespacedName, String> shared = new LinkedHashMap<>();
+        try (java.util.stream.Stream<Path> walk = Files.walk(sourcesDir, 2)) {
+            walk.filter(f -> f.getFileName().toString().endsWith("-" + HELM_REPOSITORY_FILE)).sorted()
+                    .forEach(f -> collectHelmRepositories(f, shared));
+        }
+        if (shared.isEmpty()) {
+            return;
+        }
+        Path prefix = repoDir.resolve(sharedDir).getParent();
+        Path sharedRoot = repoDir.resolve(sharedDir);
+        List<Path> copies;
+        // <namespace>/<release>/helmrepository.yaml, <namespace>/<release>/dependencies/<source>-helmrepository.yaml
+        try (java.util.stream.Stream<Path> walk = Files.walk(prefix, 4)) {
+            copies = walk.filter(Files::isRegularFile)
+                    .filter(f -> !f.startsWith(sharedRoot) && !f.startsWith(repoDir.resolve(".git")))
+                    .filter(f -> {
+                        Path relative = prefix.relativize(f);
+                        String name = f.getFileName().toString();
+                        return relative.getNameCount() == 3 && HELM_REPOSITORY_FILE.equals(name)
+                                || relative.getNameCount() == 4
+                                && DEPENDENCIES_DIR.equals(relative.getName(2).toString())
+                                && name.endsWith("-" + HELM_REPOSITORY_FILE);
+                    })
+                    .sorted()
+                    .collect(Collectors.toList());
+        }
+        for (Path copy : copies) {
+            Map<NamespacedName, String> defined = new LinkedHashMap<>();
+            collectHelmRepositories(copy, defined);
+            if (defined.size() != 1 || !shared.containsKey(defined.keySet().iterator().next())) {
+                continue;
+            }
+            NamespacedName source = defined.keySet().iterator().next();
+            keptOnCluster(helmRepositoryContext(), source);
+            gitClient.deletePath(repoDir.relativize(copy));
+            logFluxInfo(namespace, release, "sources", "Removed %s: chart source %s/%s is kept in %s",
+                    repoDir.relativize(copy), source.namespace(), source.name(), repoDir.relativize(sourcesDir));
+        }
+    }
+
+    /**
+     * Whether an object on the cluster is safe from Flux's pruning once its file moves: marked, or not on the cluster.
+     * {@code false} without a cluster to ask.
+     */
+    private boolean keptOnCluster(CustomResourceDefinitionContext context, NamespacedName object) {
+        return kubernetesService != null
+                && kubernetesService.keepFromFluxPrune(context, object.namespace(), object.name());
+    }
+
+    /** Reads the documents of a manifest file. */
+    private static final com.fasterxml.jackson.databind.ObjectReader YAML_READER =
+            new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory())
+                    .readerFor(Map.class);
+
+    /** Adds the HelmRepository of a manifest file holding one, by namespace and name, with the file's text. */
+    private static void collectHelmRepositories(Path file, Map<NamespacedName, String> sources) {
+        if (!Files.isRegularFile(file)) {
+            return;
+        }
+        try (com.fasterxml.jackson.databind.MappingIterator<Object> docs = YAML_READER.readValues(file.toFile())) {
+            List<Object> all = docs.readAll();
+            if (all.size() == 1 && all.get(0) instanceof Map<?, ?> doc && "HelmRepository".equals(doc.get("kind"))
+                    && doc.get("metadata") instanceof Map<?, ?> metadata && metadata.get("name") != null
+                    && metadata.get("namespace") != null) {
+                sources.put(new NamespacedName(String.valueOf(metadata.get("namespace")),
+                        String.valueOf(metadata.get("name"))), Files.readString(file));
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not read the HelmRepository of {}: {}", file, ex.toString());
+        }
+    }
+
+    /**
+     * The chart source a HelmRelease document reads, by namespace and name: a reference without a namespace is to the
+     * HelmRelease's own. {@code null} when it names none.
+     */
+    private static NamespacedName sourceRefOf(Map<?, ?> helmRelease) {
+        Map<?, ?> metadata = (Map<?, ?>) helmRelease.get("metadata");
+        Object spec = helmRelease.get("spec");
+        Object chart = spec instanceof Map<?, ?> s ? s.get("chart") : null;
+        Object chartSpec = chart instanceof Map<?, ?> c ? c.get("spec") : null;
+        Object ref = chartSpec instanceof Map<?, ?> cs ? cs.get("sourceRef") : null;
+        if (!(ref instanceof Map<?, ?> sourceRef) || sourceRef.get("name") == null) {
+            return null;
+        }
+        Object namespace = sourceRef.get("namespace");
+        return new NamespacedName(namespace == null || String.valueOf(namespace).isBlank()
+                ? String.valueOf(metadata.get("namespace")) : String.valueOf(namespace),
+                String.valueOf(sourceRef.get("name")));
     }
 
     /**
@@ -3372,49 +3938,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Deletes the HelmRepository of a removed release's chart repository from the cluster, unless another GitOps
-     * release KDPS deployed reads it: every release from a chart repository reads the one HelmRepository named after
-     * it. Kept when the releases cannot be read.
-     */
-    private void deleteHelmRepositoryIfUnused(K8sReleaseEntity meta) {
-        String repoId = meta.getRepoId();
-        if (repoId == null || repoId.isBlank()) {
-            return;
-        }
-        String releaseId = K8sReleaseEntity.idOf(meta.getNamespace(), meta.getReleaseName());
-        try {
-            boolean shared = releaseMetadataService.findAll().stream()
-                    .anyMatch(other -> other != null && !releaseId.equals(other.getId())
-                            && "FLUX_GITOPS".equalsIgnoreCase(other.getDeploymentMode()) && repoId.equals(other.getRepoId()));
-            if (shared) {
-                LOG.info("Kept HelmRepository {}: another GitOps release reads it", repoId);
-                return;
-            }
-        } catch (RuntimeException e) {
-            LOG.warn("Kept HelmRepository {}: the releases reading it could not be read: {}", repoId, e.toString());
-            return;
-        }
-        deleteHelmRepository(repoId);
-    }
-
-    /** Deletes a HelmRepository from the flux-system namespace (best effort). */
-    private void deleteHelmRepository(String repoName) {
-        if (kubernetesService == null || kubernetesService.getClient() == null) {
-            return;
-        }
-        try {
-            kubernetesService.getClient()
-                    .genericKubernetesResources(helmRepositoryContext())
-                    .inNamespace("flux-system")
-                    .withName(repoName)
-                    .delete();
-            LOG.info("Deleted HelmRepository {} from cluster", repoName);
-        } catch (Exception ex) {
-            LOG.warn("Could not delete HelmRepository {} from the cluster: {}", repoName, ex.toString());
-        }
-    }
-
-    /**
      * Execute a git operation with a tiny retry window to absorb transient network hiccups. A refused push, refused
      * credentials and a timeout fail at once ({@link GitClient#isRetryable}): trying again gets the same answer, or
      * waits the whole timeout again while the release's workspace stays locked.
@@ -3704,9 +4227,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     /** A namespaced object, by namespace and name. */
     public record NamespacedName(String namespace, String name) {}
 
-    /** A dependency HelmRelease, rendered once the passwords and secrets of the deploy are known. */
+    /**
+     * A dependency HelmRelease, rendered once the passwords and secrets of the deploy are known.
+     *
+     * @param file       its file in the shared directory
+     * @param legacyFile where an earlier version wrote it, in the release's own directory
+     */
     private record PendingDependency(String releaseName, String namespace, String chart, String version,
-                                     String repoName, Map<String, Object> values, Path file) {}
+                                     String repoName, Map<String, Object> values, Path file, Path legacyFile) {}
 
     /** Label naming the HelmRelease a values Secret belongs to. */
     static final String RELEASE_LABEL = "ambari.clemlab.com/release";
@@ -3989,31 +4517,52 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
     /**
      * The manifests a deploy writes into a release's directory that are there: its {@code helmrelease.yaml} and
-     * {@code helmrepository.yaml}, and the {@code <dependency>-helmrelease.yaml} and
-     * {@code <repository>-helmrepository.yaml} files of its {@code dependencies} directory. Nothing else in the
-     * directory, and nothing in a directory below it, which may be another release's or hold other content of the
-     * repository.
+     * {@code helmrepository.yaml}. Nothing else in the directory, and nothing in a directory below it, which may be
+     * another release's or hold other content of the repository; dependencies an earlier version wrote there are moved
+     * to the shared directory instead ({@link #migrateLegacyDependencies}).
      *
      * @param dir the release's directory in the Git workspace
-     * @throws IOException when its dependencies directory cannot be listed
      */
-    static List<Path> releaseManifests(Path dir) throws IOException {
+    static List<Path> releaseManifests(Path dir) {
         List<Path> found = new ArrayList<>();
         for (String name : List.of(HELM_RELEASE_FILE, HELM_REPOSITORY_FILE)) {
             if (Files.isRegularFile(dir.resolve(name))) {
                 found.add(dir.resolve(name));
             }
         }
-        Path dependencies = dir.resolve(DEPENDENCIES_DIR);
-        if (Files.isDirectory(dependencies)) {
-            try (java.util.stream.Stream<Path> files = Files.list(dependencies)) {
-                files.filter(Files::isRegularFile)
-                        .filter(file -> {
-                            String name = file.getFileName().toString();
-                            return name.endsWith("-" + HELM_RELEASE_FILE) || name.endsWith("-" + HELM_REPOSITORY_FILE);
-                        })
-                        .sorted()
-                        .forEach(found::add);
+        return found;
+    }
+
+    /**
+     * The Secrets KDPS wrote for the chart sources of manifest files of the Git workspace: their credentials and the CA
+     * of their server, by the names KDPS gives them. A Secret the repository names (one of SOPS, Sealed Secrets or
+     * External Secrets) is not among them.
+     */
+    static java.util.Set<NamespacedName> sourceSecretsIn(List<Path> files) {
+        java.util.Set<NamespacedName> found = new java.util.LinkedHashSet<>();
+        for (Path file : files) {
+            if (!Files.isRegularFile(file)) {
+                continue;
+            }
+            try (com.fasterxml.jackson.databind.MappingIterator<Object> docs = YAML_READER.readValues(file.toFile())) {
+                while (docs.hasNext()) {
+                    if (!(docs.next() instanceof Map<?, ?> doc) || !"HelmRepository".equals(doc.get("kind"))
+                            || !(doc.get("metadata") instanceof Map<?, ?> metadata) || metadata.get("name") == null
+                            || metadata.get("namespace") == null || !(doc.get("spec") instanceof Map<?, ?> spec)) {
+                        continue;
+                    }
+                    String name = String.valueOf(metadata.get("name"));
+                    for (Map.Entry<String, String> ref : Map.of("secretRef", SOURCE_AUTH_SUFFIX,
+                            "certSecretRef", SOURCE_CA_SUFFIX).entrySet()) {
+                        if (spec.get(ref.getKey()) instanceof Map<?, ?> secret
+                                && (name + ref.getValue()).equals(String.valueOf(secret.get("name")))) {
+                            found.add(new NamespacedName(String.valueOf(metadata.get("namespace")),
+                                    name + ref.getValue()));
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                LOG.warn("Could not read the HelmRepositories of {}: {}", file, ex.toString());
             }
         }
         return found;

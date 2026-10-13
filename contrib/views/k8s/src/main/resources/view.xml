@@ -100,6 +100,13 @@ limitations under the License.
         <placeholder>120</placeholder>
         <required>false</required>
     </parameter>
+    <parameter>
+        <name>k8s.view.gitops.source.namespace</name>
+        <description>Optional namespace where the platform keeps its Flux chart sources, such as flux-system. When set, every GitOps release reads its chart from one HelmRepository per chart repository in that namespace, committed once under &lt;path prefix&gt;/_shared/sources/ and never removed by an uninstall; Flux must then allow references across namespaces. When left empty, each release reads its chart from a HelmRepository of its own in its own namespace, which multi-tenant Flux setups accept.</description>
+        <label>GitOps Chart Source Namespace</label>
+        <placeholder>flux-system</placeholder>
+        <required>false</required>
+    </parameter>
     <!--
       NOTE: the Vault address/token view parameters were intentionally removed. A `<masked>`
       parameter that has no value makes Ambari's ViewContextImpl.getProperties() call

@@ -206,7 +206,7 @@ class FluxGitOpsBackendGitCredentialsTest {
         try (Git g = Git.cloneRepository().setURI(repoUrl).setBranch("main").setDirectory(byHand.toFile()).call()) {
             Files.writeString(byHand.resolve(ownDir).resolve(FluxGitOpsBackend.HELM_RELEASE_FILE),
                     FluxManifests.helmRelease("trino", NS, null, FluxManifests.helmReleaseSpec("trino", "1.43.14",
-                            "charts", List.of(), GitOpsSecretValues.secretName("trino"), Map.of())));
+                            "trino-charts", null, List.of(), GitOpsSecretValues.secretName("trino"), Map.of())));
             g.add().addFilepattern(".").call();
             g.commit().setMessage("by hand").setAuthor("ops", "ops@example.com").call();
             g.push().setRefSpecs(new RefSpec("HEAD:refs/heads/main")).call();

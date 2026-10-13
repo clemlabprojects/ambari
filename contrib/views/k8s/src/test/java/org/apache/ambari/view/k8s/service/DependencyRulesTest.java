@@ -108,4 +108,28 @@ class DependencyRulesTest {
         assertNotNull(DependencyRules.reuseSkipReason("keda", keda, request, k8s, (n, r) -> false));
         assertNotNull(DependencyRules.skipReason("keda", keda, request, k8s, (n, r) -> false));
     }
+
+    @Test
+    void aKeytabWebhookAlreadyInstalledIsReusedByAGitOpsDeployOnly() {
+        Map<String, Object> webhook = spec("isWebhook", true, "namespace", "ambari-mutating-webhooks");
+        List<String> looked = new java.util.ArrayList<>();
+        java.util.function.BiPredicate<String, String> installed = (namespace, name) -> {
+            looked.add(namespace + "/" + name);
+            return true;
+        };
+
+        String reason = DependencyRules.gitOpsReuseSkipReason("kerberos-keytab-mutating-webhook", webhook, request, k8s,
+                installed);
+
+        assertNotNull(reason, "a second HelmRelease of the webhook would clash with the one installed");
+        assertTrue(reason.contains("'kerberos-keytab-mutating-webhook' in namespace 'ambari-mutating-webhooks'"),
+                reason);
+        assertEquals(List.of("ambari-mutating-webhooks/kerberos-keytab-mutating-webhook"), looked);
+        assertNull(DependencyRules.gitOpsReuseSkipReason("kerberos-keytab-mutating-webhook", webhook, request, k8s,
+                (n, r) -> false), "not installed yet: written");
+        assertNull(DependencyRules.skipReason("kerberos-keytab-mutating-webhook", webhook, request, k8s, installed),
+                "a direct deploy keeps upgrading the webhook with each release");
+        assertNull(DependencyRules.gitOpsReuseSkipReason("ldap-proxy", spec("namespace", "analytics"), request, k8s,
+                installed), "only a webhook gets the rule");
+    }
 }

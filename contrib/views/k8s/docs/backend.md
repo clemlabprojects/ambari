@@ -154,9 +154,49 @@ limitations under the License.
   of the repository URL; a server whose name does not tell is asked which one it is. Any other Git server (Bitbucket,
   Azure DevOps) is refused before anything is pushed, and a pull request the server does not open fails the deploy
   with the server's reason.
+- Layout under the path prefix (default `clusters/default`), meant for one Flux Kustomization over the prefix:
+  - `<namespace>/<release>/helmrelease.yaml` and `helmrepository.yaml`: the release, and the chart source it reads,
+    `<release>-<repository>` in the release's namespace. The HelmRelease's `sourceRef` names no namespace.
+  - `_shared/<namespace>/<dependency>-helmrelease.yaml` and `<dependency>-helmrepository.yaml`: the dependencies the
+    releases share (KEDA, kube-prometheus-stack, the keytab webhook), each with its chart source in its own namespace,
+    annotated `kustomize.toolkit.fluxcd.io/prune: disabled`. A deploy keeps one Git already holds there (adding it to
+    `dependsOn`) even when it is on the cluster; otherwise the reuse rules apply, and in GitOps mode a keytab webhook
+    already installed as a Helm release is reused too. No uninstall changes `_shared`.
+  - `_shared/sources/<namespace>/<repository>-helmrepository.yaml`: with the view property
+    `k8s.view.gitops.source.namespace` set, the one chart source of each repository in that namespace, read by every
+    release (`sourceRef.namespace` set), annotated the same way. Flux must then allow references across namespaces.
+    Earlier versions committed a copy of the same object in each release's directory (`helmrepository.yaml`, and
+    `dependencies/<source>-helmrepository.yaml`): every deploy, and every uninstall that moves dependencies there,
+    removes the copies of a source `sources/` holds, under the whole path prefix, so kustomize never finds it twice. Each copy is annotated on the cluster first,
+    best effort, as for a moved dependency.
+  - A release deployed by an earlier version kept its dependencies in `<namespace>/<release>/dependencies/`, with its
+    chart sources in flux-system. Its next deploy or uninstall moves each dependency it does not write again to
+    `_shared` as it was, with the flux-system source it reads (to `_shared/sources/flux-system/`); one never published
+    on the base branch is removed instead. Before a published dependency leaves the release's directory, its
+    HelmRelease on the cluster is annotated `kustomize.toolkit.fluxcd.io/prune: disabled` through the Kubernetes API
+    (field manager `kdps`, which Flux's server-side apply leaves alone), and so is the chart source it keeps reading,
+    best effort: Flux reads that annotation on the cluster, so a Kustomization over the release's directory alone does
+    not uninstall the operator when the file moves out of it. A dependency KDPS cannot annotate (the account may not
+    change its namespace) stays where it is, annotated in Git, with the chart source it reads next to it
+    (`dependencies/<source>-helmrepository.yaml`, a copy when it was the release's own), and the next deploy or
+    uninstall tries again; a deploy writes such a dependency there too.
+  - Per-release or per-namespace Kustomizations need a Kustomization of their own for `_shared` (`prune: false`),
+    added before upgrading: without it, a dependency written there is never applied and the HelmRelease that
+    `dependsOn` it never installs. Hand changes to the committed manifests are overwritten by the next deploy: use the
+    Kustomization's `spec.patches` instead.
+- A chart repository that needs credentials (`authMode` basic or token) is read with a Secret next to each chart
+  source: `<source>-repo-auth`, a `kubernetes.io/dockerconfigjson` registry login for OCI or `username`/`password` for
+  HTTP, written by the view from the stored user name and password through the Kubernetes API before the commit
+  (`spec.secretRef`). The repository can name an existing Secret instead (`fluxSecretName`, for SOPS, Sealed Secrets
+  or External Secrets), which must exist in each source namespace. Without either, the deploy is refused before
+  anything is prepared. A private CA comes from the KDPS truststores the repository names (`caTruststores`), written to
+  `<source>-repo-ca` (`ca.crt`, `spec.certSecretRef`), or from an existing Secret (`fluxCertSecretName`). None of
+  these Secrets is ever written to Git; the view deletes those it wrote for a release's own source when the release is
+  removed from Git.
 - An uninstall of a GitOps release (`DELETE /helm/release/{ns}/{name}`) removes it the way it was deployed. By direct
-  commit, the removal is pushed to the base branch, then the HelmRelease and the HelmRepository of its chart (unless
-  another GitOps release reads it) are deleted from the cluster, with the release's Git credential and record. Through
+  commit, the removal is pushed to the base branch, then the HelmRelease is deleted from the cluster, with the
+  release's Git credential and record; its chart source goes with its directory, which Flux prunes, and nothing the
+  releases share is removed. Through
   a pull request, the removal is pushed to a new branch (`flux-remove-<uuid>`) from the base branch and a pull request
   into the base branch is opened: the answer is 202 with `pendingDelete`, `pullRequestUrl` and a `message`, the release
   keeps running and is shown as `PENDING_DELETE`, and nothing is removed from the cluster. Uninstalling it again while
@@ -177,20 +217,22 @@ limitations under the License.
   reference Helm resolves (an `oci://` reference, with or without a tag, or the URL of a chart archive) and refuses
   only a chart or version with a line break, another control character, or a space within the chart. The manifests
   are built as maps and written by a YAML serializer, so no value can add a key or another document; the release's
-  directory is `<path prefix>/<namespace>/<release>` and a dependency's files stay in its `dependencies` directory.
+  directory is `<path prefix>/<namespace>/<release>` and a dependency's files stay in
+  `<path prefix>/_shared/<namespace>/`.
   Each release keeps a directory of its own: a GitOps deploy whose directory would be inside, or would hold, the
   directory of another release of the same repository (as the branch holds it, or as KDPS recorded it for a release
   still in an open pull request), or whose `helmrelease.yaml` already holds another HelmRelease, is refused (400)
   before anything is prepared or committed. An uninstall deletes only the files the release's deploys write into its
-  own directory (`helmrelease.yaml`, `helmrepository.yaml` and the `-helmrelease.yaml` and `-helmrepository.yaml` files
-  of its `dependencies` directory): any other file, and the directory of a release below it, stays. A blank path, the
+  own directory (`helmrelease.yaml`, `helmrepository.yaml`; the files of a `dependencies` directory an earlier version
+  wrote are moved to `_shared`): any other file, and the directory of a release below it, stays. A blank path, the
   bare path prefix, another release's directory, or a `helmrelease.yaml` holding another HelmRelease, is refused (400)
   and nothing is removed, from Git or from the cluster. The release keeps its Polaris credential and its record, so
   the uninstall can be retried once the record is corrected.
 - Flux applies what is committed with its own rights, not with those of the account KDPS uses: by default Flux's
   controllers are cluster administrators. For production, lock Flux down to tenants (`--default-service-account`, or
   a `serviceAccountName` on each tenant's Kustomization) and use pull request mode, so a change is reviewed before
-  Flux applies it.
+  Flux applies it. Tenant Kustomizations over the releases' directories also need one over `_shared`, run by an
+  account allowed in the dependencies' namespaces (see the layout above).
 - The Secrets the preparation creates (keytabs, SSO client, Ranger plugin, Hadoop configuration, certificates,
   truststore, values Secret) are created by the view in the release namespace and deliberately kept out of Git.
   Re-applying the Git repository alone does not recreate them: redeploy the release from the view.

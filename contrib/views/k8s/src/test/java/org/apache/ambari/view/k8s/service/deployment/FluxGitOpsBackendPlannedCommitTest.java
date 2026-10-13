@@ -61,6 +61,7 @@ class FluxGitOpsBackendPlannedCommitTest {
     private static final String NS = "analytics";
     private static final String RELEASE = "superset";
     private static final String RELEASE_DIR = "clusters/default/analytics/superset";
+    private static final String SHARED_DIR = "clusters/default/_shared";
     private static final String BIND_PASSWORD = "Bind-Pass-42";
 
     @TempDir
@@ -216,7 +217,7 @@ class FluxGitOpsBackendPlannedCommitTest {
 
         // 900 seconds, as HelmService gives a direct install; Flux's default of 5 minutes fails slow first starts.
         assertTrue(published("main", RELEASE_DIR + "/helmrelease.yaml").contains("spec:\n  interval: 5m\n  timeout: 15m\n"));
-        assertTrue(published("main", RELEASE_DIR + "/dependencies/keda-helmrelease.yaml")
+        assertTrue(published("main", SHARED_DIR + "/keda/keda-helmrelease.yaml")
                 .contains("spec:\n  interval: 5m\n  timeout: 15m\n"));
     }
 
@@ -240,11 +241,12 @@ class FluxGitOpsBackendPlannedCommitTest {
         backend().commit(request, null, planned);
 
         assertEquals(List.of("keda@keda"), prepared);
-        String keda = published("main", RELEASE_DIR + "/dependencies/keda-helmrelease.yaml");
+        String keda = published("main", SHARED_DIR + "/keda/keda-helmrelease.yaml");
         assertTrue(keda.contains("    global:\n      image:\n        registry: \"registry.example.org\"\n"), keda);
         assertTrue(keda.contains("    imagePullSecrets:\n    - name: \"regcred\"\n"), keda);
         assertFalse(keda.contains("superset-pull"), "the release's pull Secret does not exist in the keda namespace: " + keda);
-        assertNull(published("main", RELEASE_DIR + "/dependencies/kerberos-keytab-mutating-webhook-helmrelease.yaml"));
+        assertNull(published("main",
+                SHARED_DIR + "/ambari-mutating-webhooks/kerberos-keytab-mutating-webhook-helmrelease.yaml"));
     }
 
     @Test

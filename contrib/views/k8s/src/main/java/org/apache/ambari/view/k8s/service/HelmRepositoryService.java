@@ -229,6 +229,29 @@ public class HelmRepositoryService {
             throw new IllegalArgumentException("url is required");
         if (entity.getAuthMode() == null || entity.getAuthMode().isBlank())
             entity.setAuthMode("anonymous");
+        checkSecretName("GitOps credentials Secret", entity.getFluxSecretName());
+        checkSecretName("GitOps CA Secret", entity.getFluxCertSecretName());
+    }
+
+    /** A Kubernetes object name (DNS subdomain), as a Secret name must be. */
+    private static final java.util.regex.Pattern SECRET_NAME = java.util.regex.Pattern.compile(
+            "[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*");
+
+    /**
+     * Refuses a Secret name Kubernetes would not accept; a blank one names no Secret.
+     *
+     * @throws IllegalArgumentException naming the field
+     */
+    public static void checkSecretName(String what, String name) {
+        if (name == null || name.isBlank()) {
+            return;
+        }
+        String trimmed = name.trim();
+        if (trimmed.length() > 253 || !SECRET_NAME.matcher(trimmed).matches()) {
+            throw new IllegalArgumentException(what + " '" + trimmed.replaceAll("\\p{Cntrl}", "?") + "' is not a"
+                    + " valid Secret name: lowercase letters, digits, '-' and '.', starting and ending with a letter or"
+                    + " digit.");
+        }
     }
 
     // Secret Management

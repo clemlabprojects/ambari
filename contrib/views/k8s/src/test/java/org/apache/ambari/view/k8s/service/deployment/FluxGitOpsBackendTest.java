@@ -63,8 +63,8 @@ public class FluxGitOpsBackendTest {
                 new FluxGitOpsBackend.DepRef("dep2", "ns2")
         );
 
-        String yaml = FluxManifests.specYaml(FluxManifests.helmReleaseSpec("trino", "1.0.0", "charts", deps, null,
-                Map.of()));
+        String yaml = FluxManifests.specYaml(FluxManifests.helmReleaseSpec("trino", "1.0.0", "trino-charts", null, deps,
+                null, Map.of()));
 
         assertTrue(yaml, yaml.contains("  dependsOn:\n  - name: dep1\n    namespace: ns1\n"
                 + "  - name: dep2\n    namespace: ns2\n"));
@@ -72,16 +72,18 @@ public class FluxGitOpsBackendTest {
 
     @Test
     public void ociChartRepositoryIsDeclaredAsAnOciHelmRepository() {
-        String yaml = FluxGitOpsBackend.renderHelmRepository("clemlab", "OCI", "registry.example.com/charts", "anonymous");
+        String yaml = FluxGitOpsBackend.renderHelmRepository("trino-clemlab", "analytics", "OCI",
+                "registry.example.com/charts", null, null, false);
 
-        assertTrue(yaml, yaml.contains("name: clemlab"));
+        assertTrue(yaml, yaml.contains("name: trino-clemlab"));
         assertTrue(yaml, yaml.contains("  type: oci\n"));
         assertTrue(yaml, yaml.contains("  url: oci://registry.example.com/charts\n"));
     }
 
     @Test
     public void ociUrlWithASchemeKeepsASingleOciScheme() {
-        String yaml = FluxGitOpsBackend.renderHelmRepository("r", "OCI", "oci://registry.example.com/charts", null);
+        String yaml = FluxGitOpsBackend.renderHelmRepository("r", "analytics", "OCI",
+                "oci://registry.example.com/charts", null, null, false);
 
         assertTrue(yaml, yaml.contains("url: oci://registry.example.com/charts"));
         assertFalse(yaml, yaml.contains("oci://oci://"));
@@ -89,7 +91,8 @@ public class FluxGitOpsBackendTest {
 
     @Test
     public void httpChartRepositoryKeepsItsUrlAndHasNoType() {
-        String yaml = FluxGitOpsBackend.renderHelmRepository("bitnami", "HTTP", "https://charts.example.com/", null);
+        String yaml = FluxGitOpsBackend.renderHelmRepository("bitnami", "analytics", "HTTP",
+                "https://charts.example.com/", null, null, false);
 
         assertTrue(yaml, yaml.contains("  url: https://charts.example.com/\n"));
         assertFalse(yaml, yaml.contains("type:"));
@@ -153,8 +156,8 @@ public class FluxGitOpsBackendTest {
 
     @Test
     public void valuesFromReadsTheReleaseValuesSecret() {
-        String yaml = FluxManifests.specYaml(FluxManifests.helmReleaseSpec("trino", "1.0.0", "charts", List.of(),
-                GitOpsSecretValues.secretName("trino"), Map.of("a", "b")));
+        String yaml = FluxManifests.specYaml(FluxManifests.helmReleaseSpec("trino", "1.0.0", "trino-charts", null,
+                List.of(), GitOpsSecretValues.secretName("trino"), Map.of("a", "b")));
 
         assertTrue(yaml, yaml.contains("  valuesFrom:\n  - kind: Secret\n    name: trino-kdps-values\n"
                 + "    valuesKey: values.yaml\n  values:\n"));
@@ -188,17 +191,26 @@ public class FluxGitOpsBackendTest {
         java.nio.file.Files.writeString(dir.resolve("helmrepository.yaml"), """
                 kind: HelmRepository
                 metadata:
-                  name: charts
-                  namespace: flux-system
+                  name: trino-charts
+                  namespace: analytics
+                spec:
+                  secretRef:
+                    name: trino-charts-repo-auth
+                  certSecretRef:
+                    name: corporate-ca
                 """);
         java.nio.file.Files.writeString(dir.resolve("broken.yaml"), "kind: [unclosed");
 
-        java.util.Set<FluxGitOpsBackend.NamespacedName> secrets =
-                FluxGitOpsBackend.valuesSecretsIn(FluxGitOpsBackend.releaseManifests(dir));
+        List<java.nio.file.Path> manifests = FluxGitOpsBackend.releaseManifests(dir);
+        java.util.Set<FluxGitOpsBackend.NamespacedName> secrets = FluxGitOpsBackend.valuesSecretsIn(manifests);
 
+        assertEquals("the release's own files: a dependency is shared, and moved rather than removed",
+                List.of(dir.resolve("helmrelease.yaml"), dir.resolve("helmrepository.yaml")), manifests);
         assertEquals("only the Secrets this view names, never one the operator referenced", java.util.Set.of(
-                new FluxGitOpsBackend.NamespacedName("analytics", "trino-kdps-values"),
-                new FluxGitOpsBackend.NamespacedName("keda", "keda-kdps-values")), secrets);
+                new FluxGitOpsBackend.NamespacedName("analytics", "trino-kdps-values")), secrets);
+        assertEquals("the credentials KDPS wrote for the chart source, not a CA Secret the operator named",
+                java.util.Set.of(new FluxGitOpsBackend.NamespacedName("analytics", "trino-charts-repo-auth")),
+                FluxGitOpsBackend.sourceSecretsIn(manifests));
         assertTrue(FluxGitOpsBackend.releaseManifests(dir.resolve("missing")).isEmpty());
     }
 

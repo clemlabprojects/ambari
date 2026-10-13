@@ -51,6 +51,7 @@ import static org.mockito.Mockito.*;
 public class FluxGitOpsBackendChartSourceTest {
 
     private static final String RELEASE_DIR = "clusters/default/analytics/trino";
+    private static final String SHARED_DIR = "clusters/default/_shared";
 
     @Rule
     public TemporaryFolder tmp = new TemporaryFolder();
@@ -171,7 +172,7 @@ public class FluxGitOpsBackendChartSourceTest {
 
         String helmRelease = published(RELEASE_DIR + "/helmrelease.yaml");
         assertTrue(helmRelease, helmRelease.contains("      chart: trino\n      version: 1.43.14\n"));
-        assertTrue(helmRelease, helmRelease.contains("        kind: HelmRepository\n        name: charts\n"));
+        assertTrue(helmRelease, helmRelease.contains("        kind: HelmRepository\n        name: trino-charts\n"));
         assertTrue(published(RELEASE_DIR + "/helmrepository.yaml").contains("url: https://charts.example.com"));
         K8sReleaseEntity recorded = releases.get(K8sReleaseEntity.idOf("analytics", "trino"));
         assertEquals("charts", recorded.getRepoId());
@@ -188,7 +189,7 @@ public class FluxGitOpsBackendChartSourceTest {
         String helmRelease = published(RELEASE_DIR + "/helmrelease.yaml");
         assertTrue("the resync is committed: " + helmRelease, helmRelease.contains("workers: 3"));
         assertTrue(helmRelease, helmRelease.contains("version: 1.43.14\n"));
-        assertTrue(helmRelease, helmRelease.contains("name: charts\n"));
+        assertTrue(helmRelease, helmRelease.contains("name: trino-charts\n"));
         assertFalse(helmRelease, helmRelease.contains("latest"));
         assertEquals("1.43.14", releases.get(K8sReleaseEntity.idOf("analytics", "trino")).getVersion());
     }
@@ -249,7 +250,7 @@ public class FluxGitOpsBackendChartSourceTest {
 
         String helmRelease = published(RELEASE_DIR + "/helmrelease.yaml");
         assertTrue(helmRelease, helmRelease.contains("      chart: trinodb/trino\n"));
-        assertTrue(helmRelease, helmRelease.contains("name: registry\n"));
+        assertTrue(helmRelease, helmRelease.contains("name: trino-registry\n"));
     }
 
     @Test
@@ -265,12 +266,12 @@ public class FluxGitOpsBackendChartSourceTest {
 
         backend().apply(request, queryParameters("charts", "1.43.14"));
 
-        String unpinned = published(RELEASE_DIR + "/dependencies/ldap-proxy-helmrelease.yaml");
+        String unpinned = published(SHARED_DIR + "/analytics/ldap-proxy-helmrelease.yaml");
         assertTrue(unpinned, unpinned.contains("      chart: ldap-proxy\n      sourceRef:\n"));
         assertFalse(unpinned, unpinned.contains("version:"));
-        String pinned = published(RELEASE_DIR + "/dependencies/pinned-helmrelease.yaml");
+        String pinned = published(SHARED_DIR + "/analytics/pinned-helmrelease.yaml");
         assertTrue(pinned, pinned.contains("      chart: pinned\n      version: 0.3.1\n      sourceRef:\n"));
-        String legacy = published(RELEASE_DIR + "/dependencies/legacy-helmrelease.yaml");
+        String legacy = published(SHARED_DIR + "/analytics/legacy-helmrelease.yaml");
         assertFalse(legacy, legacy.contains("version:"));
     }
 

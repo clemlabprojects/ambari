@@ -53,6 +53,7 @@ import {
 } from './bindings';
 import { useCapabilities } from './capabilities';
 import { applyBlankValues } from './blankValues';
+import { fluxPreview } from './fluxPreview';
 
 import type { UploadFile } from 'antd/es/upload/interface';
 
@@ -652,41 +653,23 @@ const handleServiceChange = (value: string) => {
       const formValues = form.getFieldsValue(true) || {};
       const releaseName = formValues.releaseName || initialRelease?.name || 'release';
       const ns = formValues.namespace || initialRelease?.namespace || 'default';
-      const repoName = formValues.repoId || 'repo';
+      const repoId = formValues.repoId || initialRelease?.repoId;
       const chartRef = formValues.chartOverride || formValues.chartDirect || defaultChartName || formValues.chart || 'chart';
-      const selectedRepo = repos.find(r => r.id === (formValues.repoId || initialRelease?.repoId));
-      const helmRepoUrl = formValues?.git?.repoUrl || selectedRepo?.url || 'resolved-by-backend';
       const pathPrefix = formValues?.git?.pathPrefix || 'clusters/default';
       const branch = landingBranchOf(formValues?.git);
-      const targetPath = `${pathPrefix}/${ns}/${releaseName}`;
-      const hr: any = {
-        apiVersion: 'source.toolkit.fluxcd.io/v1',
-        kind: 'HelmRepository',
-        metadata: { name: repoName, namespace: 'flux-system' },
-        spec: {
-          interval: '5m',
-          url: helmRepoUrl
-        }
-      };
-      const release: any = {
-        apiVersion: 'helm.toolkit.fluxcd.io/v2',
-        kind: 'HelmRelease',
-        metadata: { name: releaseName, namespace: ns },
-        spec: {
-          interval: '5m',
-          chart: {
-            spec: {
-              chart: chartRef,
-              sourceRef: {
-                kind: 'HelmRepository',
-                name: repoName,
-                namespace: 'flux-system'
-              }
-            }
-          },
-          values: rawValues || {}
-        }
-      };
+      // The chart repository's URL, never the Git repository's: Flux pulls the chart from it.
+      const preview = fluxPreview({
+        releaseName,
+        namespace: ns,
+        repoId,
+        repo: repos.find(r => r.id === repoId),
+        chart: chartRef,
+        values: rawValues || {},
+        pathPrefix,
+      });
+      const hr = preview.source;
+      const release = preview.release;
+      const targetPath = preview.directory;
       const docs = [
         `# Path: ${targetPath} on ${branch}`,
         yaml.stringify(hr, { aliasDuplicateObjects: false }).trim(),
@@ -1634,7 +1617,7 @@ const handleServiceChange = (value: string) => {
       {deploymentModeWatch === 'FLUX_GITOPS' && (
         <Card size="small" title="Flux manifests preview" style={{ marginBottom: 16 }}>
           <Typography.Paragraph>
-            <Text type="secondary">HelmRepository and HelmRelease that will be committed when using GitOps.</Text>
+            <Text type="secondary">HelmRepository and HelmRelease that will be committed when using GitOps. The chart source is the release's own, in its namespace; dependencies shared with other releases (KEDA, monitoring, the keytab webhook) go to the shared directory of the path prefix.</Text>
           </Typography.Paragraph>
           <Editor
             height="280px"

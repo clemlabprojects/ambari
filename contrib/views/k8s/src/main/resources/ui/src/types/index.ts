@@ -138,6 +138,12 @@ export interface HelmRepo {
   authInvalid?: boolean;
   imageProject?: string;
   imageRegistryHostOverride?: string;
+  /** GitOps: an existing Secret Flux pulls charts with, in place of the one KDPS writes. */
+  fluxSecretName?: string;
+  /** GitOps: an existing Secret holding the ca.crt of the repository's server. */
+  fluxCertSecretName?: string;
+  /** GitOps: KDPS truststores (comma-separated) holding the CA of the repository's server. */
+  caTruststores?: string;
 }
 
 export interface HelmReleasePage {

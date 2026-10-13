@@ -58,6 +58,7 @@ import static org.mockito.Mockito.*;
 public class FluxGitOpsBackendManifestSafetyTest {
 
     private static final String RELEASE_DIR = "clusters/default/analytics/trino";
+    private static final String SHARED_DIR = "clusters/default/_shared";
 
     @Rule
     public TemporaryFolder tmp = new TemporaryFolder();
@@ -176,7 +177,7 @@ public class FluxGitOpsBackendManifestSafetyTest {
     /** The HelmRelease manifest a deploy writes for {@code namespace/name}, reading its values Secret. */
     private static String helmReleaseManifest(String namespace, String name) {
         return FluxManifests.helmRelease(name, namespace, null, FluxManifests.helmReleaseSpec("trino", "1.43.14",
-                "charts", List.of(), GitOpsSecretValues.secretName(name), Map.of()));
+                "charts", "flux-system", List.of(), GitOpsSecretValues.secretName(name), Map.of()));
     }
 
     /** The record a GitOps deploy of {@code namespace/release} into {@code gitPath} leaves. */
@@ -276,11 +277,11 @@ public class FluxGitOpsBackendManifestSafetyTest {
     }
 
     /**
-     * The manifests of the golden release, as the view committed them when it still wrote them from text templates:
-     * the same text and the same spec digest, so a release deployed before gets no new commit.
+     * The manifests of the golden release: the values as the view wrote them from text templates, the chart sources in
+     * the namespaces of the HelmReleases reading them, and the dependencies where they belong to no release.
      */
     @Test
-    public void aValidDeployCommitsExactlyTheManifestsTheTemplatesWrote() throws Exception {
+    public void aValidDeployCommitsExactlyTheseManifests() throws Exception {
         backend().commit(goldenRequest(), null, goldenPlan());
 
         assertEquals("""
@@ -290,7 +291,7 @@ public class FluxGitOpsBackendManifestSafetyTest {
                   name: trino
                   namespace: analytics
                   annotations:
-                    ambari.clemlab.com/spec-digest: "05e24440d3cfc00a1184cb3f42f242a9bcb1f8cdfe8577a6fd1f97d3bf0476b3"
+                    ambari.clemlab.com/spec-digest: "874019f15308ceab3e1a50d0ae056083bc5960ea7eeee4d2979bccda69cf291d"
                 spec:
                   interval: 5m
                   timeout: 15m
@@ -305,8 +306,7 @@ public class FluxGitOpsBackendManifestSafetyTest {
                       version: 1.43.14
                       sourceRef:
                         kind: HelmRepository
-                        name: charts
-                        namespace: flux-system
+                        name: trino-charts
                   valuesFrom:
                   - kind: Secret
                     name: trino-kdps-values
@@ -349,8 +349,8 @@ public class FluxGitOpsBackendManifestSafetyTest {
                 apiVersion: source.toolkit.fluxcd.io/v1
                 kind: HelmRepository
                 metadata:
-                  name: charts
-                  namespace: flux-system
+                  name: trino-charts
+                  namespace: analytics
                 spec:
                   interval: 5m
                   url: https://charts.example.com
@@ -361,6 +361,8 @@ public class FluxGitOpsBackendManifestSafetyTest {
                 metadata:
                   name: ldap-proxy
                   namespace: analytics
+                  annotations:
+                    kustomize.toolkit.fluxcd.io/prune: disabled
                 spec:
                   interval: 5m
                   timeout: 15m
@@ -370,21 +372,34 @@ public class FluxGitOpsBackendManifestSafetyTest {
                       version: 0.1.0
                       sourceRef:
                         kind: HelmRepository
-                        name: charts
-                        namespace: flux-system
+                        name: ldap-proxy-charts
                   valuesFrom:
                   - kind: Secret
                     name: ldap-proxy-kdps-values
                     valuesKey: values.yaml
                   values:
                     replicas: 1
-                """, published(RELEASE_DIR + "/dependencies/ldap-proxy-helmrelease.yaml"));
+                """, published(SHARED_DIR + "/analytics/ldap-proxy-helmrelease.yaml"));
+        assertEquals("""
+                apiVersion: source.toolkit.fluxcd.io/v1
+                kind: HelmRepository
+                metadata:
+                  name: ldap-proxy-charts
+                  namespace: analytics
+                  annotations:
+                    kustomize.toolkit.fluxcd.io/prune: disabled
+                spec:
+                  interval: 5m
+                  url: https://charts.example.com
+                """, published(SHARED_DIR + "/analytics/ldap-proxy-helmrepository.yaml"));
         assertEquals("""
                 apiVersion: helm.toolkit.fluxcd.io/v2
                 kind: HelmRelease
                 metadata:
                   name: metrics-exporter
                   namespace: monitoring
+                  annotations:
+                    kustomize.toolkit.fluxcd.io/prune: disabled
                 spec:
                   interval: 5m
                   timeout: 15m
@@ -393,22 +408,25 @@ public class FluxGitOpsBackendManifestSafetyTest {
                       chart: kdps/metrics-exporter
                       sourceRef:
                         kind: HelmRepository
-                        name: registry
-                        namespace: flux-system
+                        name: metrics-exporter-registry
                   values:
                     port: 9100
-                """, published(RELEASE_DIR + "/dependencies/metrics-exporter-helmrelease.yaml"));
+                """, published(SHARED_DIR + "/monitoring/metrics-exporter-helmrelease.yaml"));
         assertEquals("""
                 apiVersion: source.toolkit.fluxcd.io/v1
                 kind: HelmRepository
                 metadata:
-                  name: registry
-                  namespace: flux-system
+                  name: metrics-exporter-registry
+                  namespace: monitoring
+                  annotations:
+                    kustomize.toolkit.fluxcd.io/prune: disabled
                 spec:
                   interval: 5m
                   type: oci
                   url: oci://registry.example.com/kdps
-                """, published(RELEASE_DIR + "/dependencies/registry-helmrepository.yaml"));
+                """, published(SHARED_DIR + "/monitoring/metrics-exporter-helmrepository.yaml"));
+        assertNull("nothing of a dependency is left in the release's directory",
+                published(RELEASE_DIR + "/dependencies/ldap-proxy-helmrelease.yaml"));
     }
 
     @Test
@@ -666,21 +684,26 @@ public class FluxGitOpsBackendManifestSafetyTest {
         pushByHand(Map.of(
                 "clusters/default/trino/helmrelease.yaml", helmReleaseManifest("default", "trino"),
                 "clusters/default/trino/helmrepository.yaml", FluxManifests.helmRepository("charts",
-                        "https://charts.example.com", false),
+                        "flux-system", "https://charts.example.com", false, null, null, false),
                 "clusters/default/trino/dependencies/ldap-proxy-helmrelease.yaml",
                         helmReleaseManifest("default", "ldap-proxy")));
         record("default", "trino", "clusters/default/trino");
         when(k8s.getSecret(anyString(), anyString())).thenAnswer(inv -> managedSecret(inv.getArgument(0), inv.getArgument(1)));
+        // The dependency is marked on the cluster so that Flux does not prune it, so its file may move.
+        when(k8s.keepFromFluxPrune(any(), anyString(), anyString())).thenReturn(true);
 
         backend().destroy(repoUrl, "main", "main", "clusters/default/trino", null, null, "default", "trino");
 
         assertNull(published("clusters/default/trino/helmrelease.yaml"));
         assertNull(published("clusters/default/trino/helmrepository.yaml"));
         assertNull(published("clusters/default/trino/dependencies/ldap-proxy-helmrelease.yaml"));
+        // A dependency other releases may rely on is moved where it belongs to no release, with its chart source.
+        assertNotNull(published("clusters/_shared/default/ldap-proxy-helmrelease.yaml"));
+        assertNotNull(published("clusters/_shared/sources/flux-system/charts-helmrepository.yaml"));
         assertNotNull("the release below keeps its manifests", published("clusters/default/trino/trino/helmrelease.yaml"));
         assertNotNull(published("clusters/default/trino/trino/helmrepository.yaml"));
         verify(k8s).deleteSecret("default", "trino-kdps-values");
-        verify(k8s).deleteSecret("default", "ldap-proxy-kdps-values");
+        verify(k8s, never()).deleteSecret("default", "ldap-proxy-kdps-values");
         verify(k8s, never()).deleteSecret(eq("trino"), anyString());
     }
 
@@ -692,7 +715,7 @@ public class FluxGitOpsBackendManifestSafetyTest {
         pushByHand(Map.of(
                 "clusters/default/helmrelease.yaml", helmReleaseManifest("clusters", "default"),
                 "clusters/default/helmrepository.yaml", FluxManifests.helmRepository("charts",
-                        "https://charts.example.com", false),
+                        "flux-system", "https://charts.example.com", false, null, null, false),
                 "clusters/default/flux-system/kustomization.yaml", "resources:\n- gotk-sync.yaml\n",
                 "clusters/default/notes.yaml", "owner: platform\n"));
         when(k8s.getSecret(anyString(), anyString())).thenAnswer(inv -> managedSecret(inv.getArgument(0), inv.getArgument(1)));

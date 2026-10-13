@@ -34,6 +34,9 @@ public class HelmRepoDTO {
   public String lastChecked; // ISO-8601
   public String imageProject;
   public String imageRegistryHostOverride; // optional, could even be hidden from normal UI
+  public String fluxSecretName;
+  public String fluxCertSecretName;
+  public String caTruststores;
 
   public static HelmRepoDTO fromEntity(HelmRepoEntity e) {
     HelmRepoDTO d = new HelmRepoDTO();
@@ -46,6 +49,9 @@ public class HelmRepoDTO {
     d.authInvalid = e.isAuthInvalid();
     d.imageProject = e.getImageProject();
     d.imageRegistryHostOverride = e.getImageRegistryHostOverride();
+    d.fluxSecretName = e.getFluxSecretName();
+    d.fluxCertSecretName = e.getFluxCertSecretName();
+    d.caTruststores = e.getCaTruststores();
 
     return d;
   }

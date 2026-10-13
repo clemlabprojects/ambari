@@ -148,7 +148,8 @@ public class FluxManifestsTest {
 
     private static Map<String, Object> releaseSpec(String chart, String version, List<FluxGitOpsBackend.DepRef> deps,
                                                    Map<String, Object> values) {
-        return FluxManifests.helmReleaseSpec(chart, version, "charts", deps, "trino-kdps-values", values);
+        return FluxManifests.helmReleaseSpec(chart, version, "charts", "flux-system", deps, "trino-kdps-values",
+                values);
     }
 
     private static String release(String name, String namespace, Map<String, Object> spec) {
@@ -192,7 +193,7 @@ public class FluxManifestsTest {
         values.put("replicas", 2);
 
         assertEquals(DEPENDENCY_AS_THE_TEMPLATES_WROTE_IT, FluxManifests.helmRelease("keda", "keda", null,
-                FluxManifests.helmReleaseSpec("keda", null, "kedacore", List.of(), null, values)));
+                FluxManifests.helmReleaseSpec("keda", null, "kedacore", "flux-system", List.of(), null, values)));
     }
 
     @Test
@@ -206,7 +207,8 @@ public class FluxManifestsTest {
                 spec:
                   interval: 5m
                   url: https://charts.example.com/
-                """, FluxGitOpsBackend.renderHelmRepository("charts", "HTTP", "https://charts.example.com/", null));
+                """, FluxGitOpsBackend.renderHelmRepository("charts", "flux-system", "HTTP",
+                "https://charts.example.com/", null, null, false));
         assertEquals("""
                 apiVersion: source.toolkit.fluxcd.io/v1
                 kind: HelmRepository
@@ -217,14 +219,73 @@ public class FluxManifestsTest {
                   interval: 5m
                   type: oci
                   url: oci://registry.example.com/kdps
-                """, FluxGitOpsBackend.renderHelmRepository("registry", "OCI", "registry.example.com/kdps", null));
+                """, FluxGitOpsBackend.renderHelmRepository("registry", "flux-system", "OCI",
+                "registry.example.com/kdps", null, null, false));
+    }
+
+    // ------------------------------------------------------------ chart sources of a release's own, shared objects
+
+    @Test
+    public void aSourceInTheReleaseNamespaceIsReferencedWithoutANamespace() {
+        String yaml = FluxManifests.helmRelease("trino", "analytics", null,
+                FluxManifests.helmReleaseSpec("trino", "1.43.15", "trino-charts", null, List.of(), null, Map.of()));
+
+        assertEquals(Map.of("kind", "HelmRepository", "name", "trino-charts"),
+                at(onlyDocument(yaml), "spec", "chart", "spec", "sourceRef"));
+    }
+
+    @Test
+    public void aChartSourceNamesTheSecretsOfItsCredentialsAndOfItsCa() {
+        assertEquals("""
+                apiVersion: source.toolkit.fluxcd.io/v1
+                kind: HelmRepository
+                metadata:
+                  name: trino-registry
+                  namespace: analytics
+                spec:
+                  interval: 5m
+                  type: oci
+                  url: oci://harbor.example.com/kdps
+                  secretRef:
+                    name: trino-registry-repo-auth
+                  certSecretRef:
+                    name: trino-registry-repo-ca
+                """, FluxGitOpsBackend.renderHelmRepository("trino-registry", "analytics", "OCI",
+                "https://harbor.example.com/kdps", "trino-registry-repo-auth", "trino-registry-repo-ca", false));
+    }
+
+    @Test
+    public void whatSeveralReleasesShareIsNeverPrunedByFlux() {
+        Map<String, Object> source = onlyDocument(FluxGitOpsBackend.renderHelmRepository("keda-charts", "keda", "HTTP",
+                "https://charts.example.com", null, null, true));
+        Map<String, Object> dependency = onlyDocument(FluxManifests.helmRelease("keda", "keda", null,
+                FluxManifests.helmReleaseSpec("keda", "2.18.0", "keda-charts", null, List.of(), null, Map.of()), true));
+        Map<String, Object> release = onlyDocument(FluxManifests.helmRelease("trino", "analytics", "abc",
+                FluxManifests.helmReleaseSpec("trino", "1.0.0", "trino-charts", null, List.of(), null, Map.of())));
+
+        assertEquals(Map.of("kustomize.toolkit.fluxcd.io/prune", "disabled"), at(source, "metadata", "annotations"));
+        assertEquals(Map.of("kustomize.toolkit.fluxcd.io/prune", "disabled"),
+                at(dependency, "metadata", "annotations"));
+        assertEquals("a release's own HelmRelease goes with its directory",
+                Map.of("ambari.clemlab.com/spec-digest", "abc"), at(release, "metadata", "annotations"));
+    }
+
+    @Test
+    public void aManifestMovedOutOfAReleaseDirectoryIsKeptByFlux() {
+        String moved = FluxManifests.keptByFlux(DEPENDENCY_AS_THE_TEMPLATES_WROTE_IT);
+
+        Map<String, Object> document = onlyDocument(moved);
+        assertEquals(Map.of("kustomize.toolkit.fluxcd.io/prune", "disabled"), at(document, "metadata", "annotations"));
+        assertEquals(onlyDocument(DEPENDENCY_AS_THE_TEMPLATES_WROTE_IT).get("spec"), document.get("spec"));
+        assertEquals("not one readable document: left as it is", "kind: [unclosed",
+                FluxManifests.keptByFlux("kind: [unclosed"));
     }
 
     @Test
     public void releaseWithoutValuesIsStillValidYaml() {
         // The templates wrote "values:" followed by "{}" at the start of the next line, which no YAML parser reads.
         String yaml = FluxManifests.helmRelease("keda", "keda", null,
-                FluxManifests.helmReleaseSpec("keda", "2.18.0", "kedacore", List.of(), null, Map.of()));
+                FluxManifests.helmReleaseSpec("keda", "2.18.0", "kedacore", null, List.of(), null, Map.of()));
 
         assertTrue(yaml, yaml.endsWith("  values: {}\n"));
         assertEquals(Map.of(), at(onlyDocument(yaml), "spec", "values"));
@@ -273,7 +334,8 @@ public class FluxManifestsTest {
     public void aRepositoryUrlStaysOneValue() {
         String url = "https://charts.example.com\n---\nkind: Secret";
 
-        Map<String, Object> document = onlyDocument(FluxManifests.helmRepository("charts", url, false));
+        Map<String, Object> document = onlyDocument(FluxManifests.helmRepository("charts", "flux-system", url, false,
+                null, null, false));
 
         assertEquals(url, at(document, "spec", "url"));
     }

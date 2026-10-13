@@ -43,15 +43,24 @@ import java.util.Map;
  * cannot end its line, add a key or start another document for Flux to apply.
  *
  * <p>The text is the one the view wrote from templates before: plain strings for the fields of the manifest, the chart
- * values written as {@link FluxGitOpsBackend#valuesYaml} writes them (every string double-quoted). A release deployed
- * before gets the same manifest and the same spec digest, so redeploying it commits nothing new.
+ * values written as {@link FluxGitOpsBackend#valuesYaml} writes them (every string double-quoted).
+ *
+ * <p>A HelmRelease reads its chart from a HelmRepository in its own namespace unless the platform keeps its chart
+ * sources in one namespace ({@link FluxGitOpsBackend#SOURCE_NAMESPACE_PROPERTY}): a Flux that refuses references across
+ * namespaces, or a tenant allowed in its own namespaces only, can then still apply it.
  */
 final class FluxManifests {
 
     /** How often Flux checks a HelmRelease and a HelmRepository. */
     private static final String INTERVAL = "5m";
 
-    private static final String FLUX_NAMESPACE = "flux-system";
+    /**
+     * Annotation that keeps an object on the cluster when its manifest leaves Git: Flux does not prune it. Set on the
+     * objects several releases share (a dependency such as KEDA, a chart source of the platform), whose manifest a
+     * removal by hand or a change of layout must never turn into an uninstall for every release.
+     */
+    static final String PRUNE_ANNOTATION = "kustomize.toolkit.fluxcd.io/prune";
+    static final String PRUNE_DISABLED = "disabled";
 
     private static final ObjectMapper YAML = new ObjectMapper(YAMLFactory.builder()
             .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER)
@@ -65,22 +74,36 @@ final class FluxManifests {
     }
 
     /**
-     * A Flux HelmRepository in {@code flux-system}.
+     * A Flux HelmRepository.
      *
-     * @param name the KDPS chart repository id
-     * @param url  its URL, with the {@code oci://} scheme for an OCI registry
-     * @param oci  whether it is an OCI registry, which Flux reads only with {@code type: oci}
+     * @param name          its name
+     * @param namespace     its namespace
+     * @param url           the chart repository URL, with the {@code oci://} scheme for an OCI registry
+     * @param oci           whether it is an OCI registry, which Flux reads only with {@code type: oci}
+     * @param secretRef     the Secret holding the credentials Flux pulls charts with, {@code null} for none
+     * @param certSecretRef the Secret holding the {@code ca.crt} Flux verifies the server with, {@code null} for none
+     * @param shared        whether other releases read it too, so Flux never prunes it ({@link #PRUNE_ANNOTATION})
      */
-    static String helmRepository(String name, String url, boolean oci) {
+    static String helmRepository(String name, String namespace, String url, boolean oci, String secretRef,
+                                 String certSecretRef, boolean shared) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("name", name);
-        metadata.put("namespace", FLUX_NAMESPACE);
+        metadata.put("namespace", namespace);
+        if (shared) {
+            metadata.put("annotations", Map.of(PRUNE_ANNOTATION, PRUNE_DISABLED));
+        }
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("interval", INTERVAL);
         if (oci) {
             spec.put("type", "oci");
         }
         spec.put("url", url);
+        if (secretRef != null) {
+            spec.put("secretRef", Map.of("name", secretRef));
+        }
+        if (certSecretRef != null) {
+            spec.put("certSecretRef", Map.of("name", certSecretRef));
+        }
         Map<String, Object> document = new LinkedHashMap<>();
         document.put("apiVersion", FluxGitOpsBackend.FLUX_SRC_API_VERSION);
         document.put("kind", "HelmRepository");
@@ -92,20 +115,24 @@ final class FluxManifests {
     /**
      * The spec of a HelmRelease.
      *
-     * @param chart        the chart as the Flux source knows it
-     * @param version      the chart version, {@code null} to name none
-     * @param source       the HelmRepository in {@code flux-system} the chart comes from
-     * @param dependsOn    the HelmReleases Flux installs first, may be empty
-     * @param valuesSecret the values Secret the HelmRelease reads, {@code null} for none
-     * @param values       the chart values written to Git
+     * @param chart           the chart as the Flux source knows it
+     * @param version         the chart version, {@code null} to name none
+     * @param source          the HelmRepository the chart comes from
+     * @param sourceNamespace its namespace, {@code null} when it is the HelmRelease's own: the reference then names
+     *                        none, which a Flux refusing references across namespaces accepts
+     * @param dependsOn       the HelmReleases Flux installs first, may be empty
+     * @param valuesSecret    the values Secret the HelmRelease reads, {@code null} for none
+     * @param values          the chart values written to Git
      */
-    static Map<String, Object> helmReleaseSpec(String chart, String version, String source,
+    static Map<String, Object> helmReleaseSpec(String chart, String version, String source, String sourceNamespace,
                                                List<FluxGitOpsBackend.DepRef> dependsOn, String valuesSecret,
                                                Map<String, Object> values) {
         Map<String, Object> sourceRef = new LinkedHashMap<>();
         sourceRef.put("kind", "HelmRepository");
         sourceRef.put("name", source);
-        sourceRef.put("namespace", FLUX_NAMESPACE);
+        if (sourceNamespace != null) {
+            sourceRef.put("namespace", sourceNamespace);
+        }
         Map<String, Object> chartSpec = new LinkedHashMap<>();
         chartSpec.put("chart", chart);
         if (version != null) {
@@ -163,11 +190,30 @@ final class FluxManifests {
      * @param spec       its spec ({@link #helmReleaseSpec})
      */
     static String helmRelease(String name, String namespace, String specDigest, Map<String, Object> spec) {
+        return helmRelease(name, namespace, specDigest, spec, false);
+    }
+
+    /**
+     * A HelmRelease, which Flux never prunes when {@code shared}: a dependency other releases rely on, such as KEDA.
+     *
+     * @param specDigest the {@link FluxGitOpsBackend#SPEC_DIGEST_ANNOTATION} to annotate it with, {@code null} for none
+     * @param spec       its spec ({@link #helmReleaseSpec})
+     * @param shared     whether other releases rely on it ({@link #PRUNE_ANNOTATION})
+     */
+    static String helmRelease(String name, String namespace, String specDigest, Map<String, Object> spec,
+                              boolean shared) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("name", name);
         metadata.put("namespace", namespace);
+        Map<String, Object> annotations = new LinkedHashMap<>();
         if (specDigest != null) {
-            metadata.put("annotations", Map.of(FluxGitOpsBackend.SPEC_DIGEST_ANNOTATION, new DoubleQuoted(specDigest)));
+            annotations.put(FluxGitOpsBackend.SPEC_DIGEST_ANNOTATION, new DoubleQuoted(specDigest));
+        }
+        if (shared) {
+            annotations.put(PRUNE_ANNOTATION, PRUNE_DISABLED);
+        }
+        if (!annotations.isEmpty()) {
+            metadata.put("annotations", annotations);
         }
         Map<String, Object> document = new LinkedHashMap<>();
         document.put("apiVersion", FluxGitOpsBackend.FLUX_HR_API_VERSION);
@@ -175,6 +221,30 @@ final class FluxManifests {
         document.put("metadata", metadata);
         document.put("spec", spec);
         return write(document);
+    }
+
+    /**
+     * A manifest as it is, but annotated so Flux never prunes it ({@link #PRUNE_ANNOTATION}): an object an earlier
+     * version wrote into one release's directory, moved where it belongs to no release.
+     *
+     * @param manifest the manifest, one document
+     * @return the annotated manifest, or the manifest unchanged when it is not one readable document
+     */
+    @SuppressWarnings("unchecked")
+    static String keptByFlux(String manifest) {
+        try {
+            Object document = new ObjectMapper(new YAMLFactory()).readValue(manifest, Object.class);
+            if (!(document instanceof Map<?, ?> map) || !(map.get("metadata") instanceof Map<?, ?> metadata)) {
+                return manifest;
+            }
+            Map<String, Object> annotations = metadata.get("annotations") instanceof Map<?, ?> existing
+                    ? new LinkedHashMap<>((Map<String, Object>) existing) : new LinkedHashMap<>();
+            annotations.put(PRUNE_ANNOTATION, PRUNE_DISABLED);
+            ((Map<String, Object>) metadata).put("annotations", annotations);
+            return write(document);
+        } catch (IOException | RuntimeException unreadable) {
+            return manifest;
+        }
     }
 
     private static String write(Object document) {

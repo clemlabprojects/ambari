@@ -655,7 +655,7 @@ class CommandServiceRedeployDefaultsTest {
         assertEquals(40, sha.length());
         String helmRelease = published(repoUrl, "clusters/default/analytics/trino/helmrelease.yaml");
         assertTrue(helmRelease.contains("      chart: trino\n      version: 1.43.14\n"), helmRelease);
-        assertTrue(helmRelease.contains("        kind: HelmRepository\n        name: charts\n"), helmRelease);
+        assertTrue(helmRelease.contains("        kind: HelmRepository\n        name: trino-charts\n"), helmRelease);
         assertEquals("1.43.14", releases.get(K8sReleaseEntity.idOf(NS, RELEASE)).getVersion());
     }
 

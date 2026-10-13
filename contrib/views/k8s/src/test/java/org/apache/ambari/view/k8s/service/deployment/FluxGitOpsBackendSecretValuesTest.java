@@ -271,7 +271,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         assertEquals("the Secret exists before the commit Flux applies", seedCommit,
                 remoteHeadAtSecretWrite.get("analytics/trino-kdps-values"));
 
-        String dependency = published(RELEASE_DIR + "/dependencies/ldap-proxy-helmrelease.yaml");
+        String dependency = published("clusters/default/_shared/analytics/ldap-proxy-helmrelease.yaml");
         assertNotNull(dependency);
         assertTrue(dependency, dependency.contains("name: ldap-proxy-kdps-values"));
         assertFalse(dependency.contains(BIND_PASSWORD));
@@ -392,8 +392,8 @@ public class FluxGitOpsBackendSecretValuesTest {
         assertTrue("the proposed HelmRelease reads a Secret of its own: " + proposedRelease, name.find());
         assertTrue(secretPayloads.get("analytics/" + name.group(1)).contains("Rotated-Pass-77"));
         assertFalse(proposedRelease.contains("Rotated-Pass-77"));
-        String proposedDependency = Files.readString(fluxRoot.resolve("gitops-analytics-trino").resolve(RELEASE_DIR)
-                .resolve("dependencies/ldap-proxy-helmrelease.yaml"));
+        String proposedDependency = Files.readString(fluxRoot.resolve("gitops-analytics-trino")
+                .resolve("clusters/default/_shared/analytics/ldap-proxy-helmrelease.yaml"));
         assertTrue(proposedDependency, proposedDependency.matches("(?s).*name: ldap-proxy-kdps-values-[0-9a-f]{8}\n.*"));
         assertEquals("the base branch is untouched", deployed, remoteHead());
 
@@ -512,8 +512,10 @@ public class FluxGitOpsBackendSecretValuesTest {
 
         verify(k8s).deleteSecret("analytics", "trino-kdps-values");
         verify(k8s).deleteSecret("analytics", "trino-kdps-values-1a2b3c4d");
-        verify(k8s).deleteSecret("analytics", "ldap-proxy-kdps-values");
         verify(k8s, never()).deleteSecret("analytics", "trino-truststore");
+        // The dependency stays for the other releases that rely on it, and keeps reading its values Secret.
+        assertNotNull(published("clusters/default/_shared/analytics/ldap-proxy-helmrelease.yaml"));
+        verify(k8s, never()).deleteSecret("analytics", "ldap-proxy-kdps-values");
     }
 
     @Test
@@ -607,7 +609,7 @@ public class FluxGitOpsBackendSecretValuesTest {
         String sha = backend().apply(request, null);
 
         assertEquals(sha, remoteHead());
-        String dependency = published(RELEASE_DIR + "/dependencies/metrics-proxy-helmrelease.yaml");
+        String dependency = published("clusters/default/_shared/monitoring/metrics-proxy-helmrelease.yaml");
         assertNotNull(dependency);
         assertFalse(dependency, dependency.contains("valuesFrom"));
         assertTrue(published(RELEASE_DIR + "/helmrelease.yaml").contains("name: trino-kdps-values"));

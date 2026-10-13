@@ -160,8 +160,8 @@ public final class DeployRequestValidator {
     }
 
     /**
-     * Checks a chart repository id, when one is given: a DNS-1123 label, the name the Flux HelmRepository of the
-     * repository gets.
+     * Checks a chart repository id, when one is given: a DNS-1123 label, which names the Flux HelmRepository of the
+     * repository ({@code <release>-<repository>}, or the repository alone in a namespace kept for chart sources).
      *
      * @throws IllegalArgumentException when it is not a DNS-1123 label
      */

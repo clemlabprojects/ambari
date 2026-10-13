@@ -120,6 +120,39 @@ class HelmRepositoryServiceTest {
   }
 
   @Test
+  void save_keeps_the_gitops_secrets_and_truststores_and_refuses_a_name_kubernetes_would_not_accept() {
+    var svc = new HelmRepositoryService(ctx, helm);
+    HelmRepoEntity e = new HelmRepoEntity();
+    e.setId("harbor");
+    e.setType("OCI");
+    e.setName("harbor");
+    e.setUrl("harbor.example.com/helm");
+    e.setAuthMode("basic");
+    e.setFluxSecretName("harbor-pull");
+    e.setFluxCertSecretName("corporate-ca.v2");
+    e.setCaTruststores("corp-ca, partner-ca");
+
+    svc.save(e, null);
+
+    HelmRepoEntity stored = table.get("harbor");
+    assertEquals("harbor-pull", stored.getFluxSecretName());
+    assertEquals("corporate-ca.v2", stored.getFluxCertSecretName());
+    assertEquals("corp-ca, partner-ca", stored.getCaTruststores());
+    var dto = org.apache.ambari.view.k8s.model.HelmRepoDTO.fromEntity(stored);
+    assertEquals("harbor-pull", dto.fluxSecretName);
+    assertEquals("corporate-ca.v2", dto.fluxCertSecretName);
+    assertEquals("corp-ca, partner-ca", dto.caTruststores);
+
+    e.setFluxSecretName("Harbor_Pull");
+    IllegalArgumentException refused = assertThrows(IllegalArgumentException.class, () -> svc.save(e, null));
+    assertTrue(refused.getMessage().startsWith("GitOps credentials Secret 'Harbor_Pull' is not a valid Secret name"),
+        refused.getMessage());
+    e.setFluxSecretName("");
+    e.setFluxCertSecretName("ca\n---");
+    assertThrows(IllegalArgumentException.class, () -> svc.save(e, null));
+  }
+
+  @Test
   void ensureHttpRepo_calls_client_and_clears_authInvalid() throws PersistenceException {
     var svc = new HelmRepositoryService(ctx, helm);
 

@@ -77,6 +77,24 @@ public class HelmRepoEntity extends BaseModel {
 
     private boolean authInvalid;
 
+    /**
+     * GitOps: an existing Secret Flux pulls charts with (created by SOPS, Sealed Secrets or External Secrets), in
+     * place of the one KDPS writes from the stored credentials. It must exist in every namespace of a chart source.
+     */
+    @Column(length = 253)
+    private String fluxSecretName;
+
+    /** GitOps: an existing Secret holding the {@code ca.crt} Flux verifies the repository's server with. */
+    @Column(length = 253)
+    private String fluxCertSecretName;
+
+    /**
+     * GitOps: KDPS truststores (comma-separated names) holding the CA of the repository's server, written to a
+     * {@code ca.crt} Secret next to each chart source when no CA Secret is named.
+     */
+    @Column(length = 1024)
+    private String caTruststores;
+
     // Getters and setters
     public String getType() { 
         return type; 
@@ -176,6 +194,30 @@ public class HelmRepoEntity extends BaseModel {
 
     public void setImageRegistryHostOverride(String imageRegistryHostOverride) {
         this.imageRegistryHostOverride = imageRegistryHostOverride;
+    }
+
+    public String getFluxSecretName() {
+        return fluxSecretName;
+    }
+
+    public void setFluxSecretName(String fluxSecretName) {
+        this.fluxSecretName = fluxSecretName;
+    }
+
+    public String getFluxCertSecretName() {
+        return fluxCertSecretName;
+    }
+
+    public void setFluxCertSecretName(String fluxCertSecretName) {
+        this.fluxCertSecretName = fluxCertSecretName;
+    }
+
+    public String getCaTruststores() {
+        return caTruststores;
+    }
+
+    public void setCaTruststores(String caTruststores) {
+        this.caTruststores = caTruststores;
     }
 
     public String getEffectiveRegistryHost() {

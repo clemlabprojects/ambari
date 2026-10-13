@@ -409,6 +409,9 @@ class CommandServiceGitOpsDeployTest {
         return "clusters/default/" + NS + "/" + rel;
     }
 
+    /** Where the dependencies the releases share are committed. */
+    private static final String SHARED_DIR = "clusters/default/_shared";
+
     // ------------------------------------------------------------------------------------------------ plan shape
 
     @Test
@@ -838,14 +841,14 @@ class CommandServiceGitOpsDeployTest {
 
         assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT),
                 statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
-        String webhook = published("main", releaseDir() + "/dependencies/" + WEBHOOK + "-helmrelease.yaml");
-        assertNotNull(webhook, "the webhook is committed next to the release");
+        String webhook = published("main", SHARED_DIR + "/ambari-mutating-webhooks/" + WEBHOOK + "-helmrelease.yaml");
+        assertNotNull(webhook, "the webhook is committed where it belongs to no release");
         for (String expected : List.of("timeout: 15m\n", "url: \"" + COMMANDS_URL + "\"", "krbRealm: \"EXAMPLE.ORG\"",
                 "fullnameOverride: \"keytab-webhook\"", "imageRegistry: \"registry.example.org\"", "name: \"regcred\"",
                 "caBundle: \"" + new WebHookConfigurationService(ctx, k8s).currentCaBundleBase64() + "\"")) {
             assertTrue(webhook.contains(expected), expected + " in\n" + webhook);
         }
-        String keda = published("main", releaseDir() + "/dependencies/keda-helmrelease.yaml");
+        String keda = published("main", SHARED_DIR + "/keda/keda-helmrelease.yaml");
         assertTrue(keda.contains("    global:\n      image:\n        registry: \"registry.example.org\"\n"),
                 "KEDA pulls from the repository's image registry, as with a direct deploy:\n" + keda);
         assertTrue(keda.contains("name: \"regcred\""), keda);
@@ -876,7 +879,7 @@ class CommandServiceGitOpsDeployTest {
         assertEquals(CommandState.PENDING.name(), stateOf(first, CommandType.AMBARI_VIEW_PROVISION),
                 "no post-deploy step without a ready release");
         verify(k8s, never()).requestFluxReset(anyString(), anyString());
-        assertNotNull(published("main", releaseDir() + "/dependencies/keda-helmrelease.yaml"));
+        assertNotNull(published("main", SHARED_DIR + "/keda/keda-helmrelease.yaml"));
         List<String> committed = commitsOn("main");
 
         // The operator removes the conflicting CRD and deploys the release again. Nothing new is committed, so Flux,

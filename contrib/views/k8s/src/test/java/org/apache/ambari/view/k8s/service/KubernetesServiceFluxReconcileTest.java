@@ -94,6 +94,49 @@ class KubernetesServiceFluxReconcileTest {
     }
 
     @Test
+    void anObjectWhoseFileMovesIsMarkedOnTheClusterSoFluxDoesNotPruneIt() throws Exception {
+        GenericKubernetesResource hr = new GenericKubernetesResourceBuilder()
+                .withApiVersion("helm.toolkit.fluxcd.io/v2").withKind("HelmRelease")
+                .withNewMetadata().withName("keda").withNamespace("keda")
+                .addToAnnotations("team", "platform").endMetadata()
+                .build();
+        client.genericKubernetesResources(HELM_RELEASES).inNamespace("keda").resource(hr).create();
+
+        assertTrue(service().keepFromFluxPrune(HELM_RELEASES, "keda", "keda"));
+
+        // A field manager of its own, so Flux's server-side apply leaves the annotation in place.
+        assertTrue(server.getLastRequest().getPath().contains("fieldManager=kdps"), server.getLastRequest().getPath());
+        Map<String, String> annotations = client.genericKubernetesResources(HELM_RELEASES).inNamespace("keda")
+                .withName("keda").get().getMetadata().getAnnotations();
+        assertEquals("disabled", annotations.get("kustomize.toolkit.fluxcd.io/prune"));
+        assertEquals("platform", annotations.get("team"));
+    }
+
+    @Test
+    void anObjectNotOnTheClusterHasNothingFluxCouldPrune() {
+        assertTrue(service().keepFromFluxPrune(HELM_RELEASES, "keda", "not-applied-yet"));
+    }
+
+    @Test
+    void anObjectKdpsMayNotChangeIsReportedAsNotMarked() {
+        GenericKubernetesResource hr = new GenericKubernetesResourceBuilder()
+                .withApiVersion("helm.toolkit.fluxcd.io/v2").withKind("HelmRelease")
+                .withNewMetadata().withName("keda").withNamespace("operators").endMetadata()
+                .build();
+        client.genericKubernetesResources(HELM_RELEASES).inNamespace("operators").resource(hr).create();
+        ViewContext ctx = mock(ViewContext.class, RETURNS_DEEP_STUBS);
+        when(ctx.getProperties()).thenReturn(Map.of("k8s.view.working.dir",
+                System.getProperty("java.io.tmpdir") + "/k8s-ut", "k8s.view.allowed.namespaces", "analytics"));
+        KubernetesService limited = new KubernetesService(ctx, client, mock(HelmClient.class), true);
+
+        assertFalse(limited.keepFromFluxPrune(HELM_RELEASES, "operators", "keda"));
+
+        Map<String, String> annotations = client.genericKubernetesResources(HELM_RELEASES).inNamespace("operators")
+                .withName("keda").get().getMetadata().getAnnotations();
+        assertTrue(annotations == null || !annotations.containsKey("kustomize.toolkit.fluxcd.io/prune"));
+    }
+
+    @Test
     void secretsAreListedByAllTheirLabels() {
         client.secrets().inNamespace("analytics").resource(new io.fabric8.kubernetes.api.model.SecretBuilder()
                 .withNewMetadata().withName("trino-kdps-values-1a2b3c4d").withNamespace("analytics")

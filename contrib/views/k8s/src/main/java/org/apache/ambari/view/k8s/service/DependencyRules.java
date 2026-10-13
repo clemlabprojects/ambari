@@ -148,6 +148,31 @@ public final class DependencyRules {
         return null;
     }
 
+    /**
+     * The reuse rules of a GitOps deploy: those of {@link #reuseSkipReason}, and a webhook dependency (the keytab
+     * webhook) already installed as a Helm release in its namespace is reused. Every GitOps release that declares a
+     * dependency shares one HelmRelease of it, kept where it belongs to no release; a webhook installed otherwise
+     * (directly, or by an earlier release whose manifests have not moved there yet) is not written a second time, which
+     * would give Flux two HelmReleases of one name. Direct deploys keep upgrading the webhook with each release.
+     *
+     * @return the reason shown to the operator, or {@code null}
+     */
+    public static String gitOpsReuseSkipReason(String name, Map<String, Object> spec, HelmDeployRequest request,
+                                               KubernetesService k8s, BiPredicate<String, String> releaseExists) {
+        String reason = reuseSkipReason(name, spec, request, k8s, releaseExists);
+        if (reason != null || !flag(spec, "isWebhook") || flag(spec, "skipIfReleaseExists")) {
+            return reason;
+        }
+        String namespace = text(spec, "namespace");
+        if (namespace != null && releaseExists.test(namespace, name)) {
+            LOG.info("Skipping webhook dependency '{}': Helm release {} is already installed in {}", name, name,
+                    namespace);
+            return "Skipped — the webhook is already installed as Helm release '" + name + "' in namespace '"
+                    + namespace + "'; reusing it.";
+        }
+        return null;
+    }
+
     private static boolean flag(Map<String, Object> spec, String key) {
         Object v = spec.get(key);
         return v instanceof Boolean b ? b : v != null && Boolean.parseBoolean(String.valueOf(v));
