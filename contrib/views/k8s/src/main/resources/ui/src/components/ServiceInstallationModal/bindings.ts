@@ -157,6 +157,10 @@ export const interpolate = (tpl: string, ctx: Record<string, any>): string =>
       return v == null ? '' : String(v);
     });
 
+/** The entries of a comma-separated (or one-per-line) field, trimmed, blanks dropped: "alice, bob," -> [alice, bob]. */
+export const listEntries = (raw: unknown): string[] =>
+    raw == null ? [] : String(raw).split(/[,\n]/).map(s => s.trim()).filter(s => s !== '');
+
 /* ==============================================================================================
    VARIABLE CONTEXT ENGINE
    This section builds the "Intermediate State" used for bindings.
@@ -164,7 +168,11 @@ export const interpolate = (tpl: string, ctx: Record<string, any>): string =>
    ============================================================================================== */
 
 export type VariableSpec =
-    | { name: string; from: { type: 'form'; field: string } }
+    // `format: 'jsonList'` turns a comma-separated (or one-per-line) field into the JSON array of its entries, e.g.
+    // `["alice","bob"]`, and `[]` when it holds none, so that clearing the field clears the list it writes. A template
+    // made of the variable alone writes a YAML list; the array is also a valid Python list, so a template can put free
+    // text into a Python snippet (a JupyterHub extraConfig, say) without a quote in the field breaking the code.
+    | { name: string; from: { type: 'form'; field: string; format?: 'jsonList' } }
     | { name: string; from: { type: 'mountPath'; mountKey: string; suffix?: string } }
     // `context` reads a value the KDPS engine resolved for the selected Platform Context, keyed
     // `<capability>.<field>` (e.g. `hive.metastoreUri`, `ranger.rangerUrl`, `kerberos.realm`).
@@ -225,7 +233,12 @@ export const buildVarContext = (
   (vars || []).forEach(v => {
     if ('from' in v) {
       if (v.from.type === 'form') {
-        setAtStr(ctx, v.name, getAtStr(formVals, v.from.field));
+        const raw = getAtStr(formVals, v.from.field);
+        if (v.from.format === 'jsonList') {
+          setAtStr(ctx, v.name, JSON.stringify(listEntries(raw)));
+        } else {
+          setAtStr(ctx, v.name, raw);
+        }
       } else if (v.from.type === 'mountPath') {
         const m = mounts?.[v.from.mountKey];
         const base = m?.mountPath || '/data';

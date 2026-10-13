@@ -34,6 +34,7 @@ import { gitOptionsToSubmit } from '../utils/gitOpsBranches';
 import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
 import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
+import { requiredUnlessAnyErrors } from '../components/ServiceInstallationModal/requiredUnless';
 import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPayload';
 import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecretReplacement, describeIngressTlsChange, ingressTlsChange, ingressTlsNotice, keptCertificateHostProblem, KEEP_CURRENT_TLS, offersKeepCurrentTls, securityProfileIngress, seedKeepCurrentTls, unconfirmedTlsReplacement, upgradeChartFormValues, type CurrentIngressTls } from '../components/ServiceInstallationModal/ingressTls';
 import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
@@ -758,7 +759,17 @@ const ServiceWizardPage: React.FC = () => {
   // `replaceExistingTls` is set once the operator confirmed that the deploy replaces the ingress certificate Secret:
   // only then may the server overwrite a Secret it did not mint (an uploaded or brought certificate). Upgrade/Config
   // asks before it submits; an install asks when the server refuses for an existing Secret.
+  // The form's own rules only show once a field is touched, and the steps do not validate the form: a field that must
+  // be filled in unless another one is (JupyterHub's allowed groups, without which nobody can sign in) is checked
+  // here, on what the wizard holds. True when the deploy may go ahead; otherwise each error is shown.
+  const formRulesPass = (): boolean => {
+    const errors = requiredUnlessAnyErrors(Array.isArray(def?.form) ? def.form : undefined, installValues, platform);
+    errors.forEach(error => message.error(error, 10));
+    return errors.length === 0;
+  };
+
   const doDeploy = async (atlasRestartAuthorized: boolean = true, replaceExistingTls: boolean = false) => {
+      if (!formRulesPass()) return;
       const validationError = validateTlsPayload();
       if (validationError) {
         message.error(validationError);
@@ -887,6 +898,8 @@ const ServiceWizardPage: React.FC = () => {
     () => unauthenticatedExposure(def, installValues, securityProfiles.profiles, resolvedSel),
     [def, installValues, securityProfiles, resolvedSel]);
   const handleDeploy = () => {
+      // Before any confirmation: the operator should not confirm a deploy that is then refused.
+      if (!formRulesPass()) return;
       if (!exposure) { proceedDeploy(); return; }
       const validationError = validateTlsPayload();
       if (validationError) { message.error(validationError); return; }

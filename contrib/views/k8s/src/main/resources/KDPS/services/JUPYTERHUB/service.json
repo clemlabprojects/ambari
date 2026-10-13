@@ -70,12 +70,52 @@
       "help": "Pick a cert-manager ClusterIssuer. When set the chart's Ingress gets the cert-manager.io/cluster-issuer annotation so cert-manager auto-issues a Certificate and populates spec.tls[]. Required for HTTPS to work end-to-end."
     },
     {
+      "name": "hubLoginAccess",
+      "label": "Who can sign in",
+      "type": "select",
+      "required": true,
+      "defaultValue": "groups",
+      "excludeFromValues": true,
+      "seedFromValue": "hub.config.GenericOAuthenticator.allow_all",
+      "seedValueMap": { "true": "all", "false": "groups" },
+      "options": [
+        { "label": "Members of the chosen groups", "value": "groups" },
+        { "label": "All users of the realm", "value": "all" }
+      ],
+      "help": "Which Keycloak users JupyterHub lets in. 'Members of the chosen groups' (recommended) admits the members of the allowed groups and the administrators below; everyone else gets 403 Forbidden. 'All users of the realm' admits anyone who can sign in to the Keycloak realm. Group membership comes from the 'groups' claim of the Keycloak sign-in: groups federated from LDAP or FreeIPA need a group mapper on the Keycloak user federation to appear there."
+    },
+    {
+      "name": "allowedGroups",
+      "label": "Allowed groups (comma-separated)",
+      "type": "string",
+      "excludeFromValues": true,
+      "placeholder": "data-scientists,analysts",
+      "condition": { "field": "hubLoginAccess", "value": "groups" },
+      "seedFromValues": ["hub.config.GenericOAuthenticator.allowed_groups"],
+      "requiredUnlessAny": {
+        "fields": ["adminGroups", "hubAdminUsers"],
+        "message": "Name at least one allowed group, admin group or admin user: otherwise nobody can sign in to JupyterHub."
+      },
+      "help": "Keycloak groups whose members may sign in and start a notebook server, by short name (no leading '/')."
+    },
+    {
+      "name": "adminGroups",
+      "label": "Admin groups (comma-separated)",
+      "type": "string",
+      "excludeFromValues": true,
+      "placeholder": "jupyterhub-admins",
+      "condition": { "field": "hubLoginAccess", "value": "groups" },
+      "seedFromValues": ["hub.config.GenericOAuthenticator.admin_groups"],
+      "help": "Keycloak groups whose members sign in as JupyterHub administrators, by short name. Administrators can open other users' servers, which hold those users' Kerberos credentials: keep this group small."
+    },
+    {
       "name": "hubAdminUsers",
       "label": "Admin users (comma-separated)",
       "type": "string",
       "excludeFromValues": true,
       "placeholder": "alice,bob",
-      "help": "Comma-separated Keycloak usernames that should have JupyterHub admin rights (manage user list, stop other users' servers, view all activity). Empty = no admins beyond what Keycloak claims include."
+      "seedFromSnippet": "hub.extraConfig.20-clemlab-admins",
+      "help": "Keycloak usernames that sign in as JupyterHub administrators (manage the user list, stop other users' servers, view all activity), in addition to the members of the admin groups. Administrators can open other users' servers, which hold those users' Kerberos credentials. Leave empty for no named administrators: only the admin groups then give administrator rights, and in 'All users of the realm' mode nobody has them."
     },
     {
       "name": "singleuserConfig",
@@ -203,7 +243,15 @@
       "name": "jupyterHost",             "from": { "type": "form", "field": "jupyterHost" }
     },
     { "name": "jupyterTlsClusterIssuer", "from": { "type": "form", "field": "jupyterTlsClusterIssuer" } },
-    { "name": "hubAdminUsersCsv",        "from": { "type": "form", "field": "hubAdminUsers" } },
+    { "name": "hubAdminUsersJson",       "from": { "type": "form", "field": "hubAdminUsers", "format": "jsonList" } },
+    { "name": "hubLoginAccess",          "from": { "type": "form", "field": "hubLoginAccess" } },
+    { "name": "loginAllRealmUsers",      "from": { "type": "equals", "var": "hubLoginAccess", "value": "all" } },
+    {
+      "_description": "Group-restricted sign-in is the default: anything but an explicit 'all' (an older release's form has no choice at all) keeps the hub closed to users outside the allowed groups.",
+      "name": "loginGroupsOnly",         "from": { "type": "equals", "var": "hubLoginAccess", "value": "all", "negate": true }
+    },
+    { "name": "allowedGroupsJson",       "from": { "type": "form", "field": "allowedGroups", "format": "jsonList" } },
+    { "name": "adminGroupsJson",         "from": { "type": "form", "field": "adminGroups", "format": "jsonList" } },
     { "name": "kerberosPrincipalName",   "from": { "type": "form", "field": "kerberosPrincipalName" } },
     { "name": "kerberosHostFqdn",        "from": { "type": "form", "field": "kerberosHostFqdn" } },
     { "name": "allowPrivateIpEgress",    "from": { "type": "form", "field": "allowPrivateIpEgress" } }
@@ -267,13 +315,27 @@
     },
     {
       "name": "admin-users",
-      "_description": "Pass comma-separated admins from the form to JupyterHub. Skipped silently when the field is empty.",
+      "_description": "Pass the admin usernames from the form to JupyterHub. The jsonList variable is a JSON array, which is also a Python list literal, so a quote in the field cannot break the snippet. Kept a snippet under the key earlier releases use, and written when the field is empty too (set([])): an upgrade replaces what the release runs, so emptying the field takes the administrators' rights away, and the field is seeded back from the snippet (seedFromSnippet).",
       "targets": [
         {
           "path": "hub.extraConfig.20-clemlab-admins",
-          "skipIfVarEmpty": "hubAdminUsersCsv",
-          "from": { "type": "template", "template": "c.Authenticator.admin_users = { u.strip() for u in '${hubAdminUsersCsv}'.split(',') if u.strip() }\n" }
+          "from": { "type": "template", "template": "c.Authenticator.admin_users = set(${hubAdminUsersJson})\n" }
         }
+      ]
+    },
+    {
+      "name": "sign-in-access",
+      "_description": "Who may sign in. OAuthenticator 17 refuses everyone but the admins unless an allow rule is set. Groups mode: groups come from the 'groups' claim KDPS adds to every OIDC client it registers, read from the userinfo response (auth_state 'oauth_user.groups'); manage_groups is required for that, and the deprecated claim_groups_key must not be used (without manage_groups it stops the hub from starting). The groups are YAML lists under hub.config (a traitlets Set takes a list), so an upgrade fills the form back from them. Every setting is written in both modes: an upgrade starts from the release's values, and a setting left out would keep what the release runs, e.g. the admin groups of a release switched to all users.",
+      "targets": [
+        { "path": "hub.config.GenericOAuthenticator.allow_all",             "skipIfVarEmpty": "loginAllRealmUsers", "from": { "type": "template", "template": "true" } },
+        { "path": "hub.config.GenericOAuthenticator.manage_groups",         "skipIfVarEmpty": "loginAllRealmUsers", "from": { "type": "template", "template": "false" } },
+        { "path": "hub.config.GenericOAuthenticator.allowed_groups",        "skipIfVarEmpty": "loginAllRealmUsers", "from": { "type": "template", "template": "[]" } },
+        { "path": "hub.config.GenericOAuthenticator.admin_groups",          "skipIfVarEmpty": "loginAllRealmUsers", "from": { "type": "template", "template": "[]" } },
+        { "path": "hub.config.GenericOAuthenticator.allow_all",             "skipIfVarEmpty": "loginGroupsOnly",    "from": { "type": "template", "template": "false" } },
+        { "path": "hub.config.GenericOAuthenticator.manage_groups",         "skipIfVarEmpty": "loginGroupsOnly",    "from": { "type": "template", "template": "true" } },
+        { "path": "hub.config.GenericOAuthenticator.auth_state_groups_key", "skipIfVarEmpty": "loginGroupsOnly",    "from": { "type": "template", "template": "oauth_user.groups" } },
+        { "path": "hub.config.GenericOAuthenticator.allowed_groups",        "skipIfVarEmpty": "loginGroupsOnly",    "from": { "type": "template", "template": "${allowedGroupsJson}" } },
+        { "path": "hub.config.GenericOAuthenticator.admin_groups",          "skipIfVarEmpty": "loginGroupsOnly",    "from": { "type": "template", "template": "${adminGroupsJson}" } }
       ]
     },
     {

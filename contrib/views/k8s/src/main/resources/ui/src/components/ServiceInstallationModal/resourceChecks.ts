@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import type { ResourceCheck } from '../../types/ServiceTypes';
+import type { RequiredUnlessAny, ResourceCheck } from '../../types/ServiceTypes';
 import { getAtStr } from './bindings';
 
 /** The parts of a service form field these checks read (a group holds its fields in `fields`). */
@@ -26,6 +26,8 @@ export type FormFieldDef = {
   defaultValue?: unknown;
   fields?: FormFieldDef[];
   resourceCheck?: ResourceCheck;
+  /** Mandatory while the other fields it names are all empty (see requiredUnless.ts). */
+  requiredUnlessAny?: RequiredUnlessAny;
   omitWhenBlank?: boolean;
   excludeFromValues?: boolean;
   /** What the cluster needs for the field (or group) to be shown, e.g. `kubernetes` (see fieldCapabilityAvailable). */
@@ -34,6 +36,8 @@ export type FormFieldDef = {
   keepWhenHidden?: boolean;
   /** Value paths an upgrade fills the field from when it is blank (see seedFieldsFromValues). */
   seedFromValues?: string[];
+  /** Value path of a configuration snippet an upgrade reads the field's entries back from (see seedFieldsFromValues). */
+  seedFromSnippet?: string;
 };
 
 /**

@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { applyBindingTargets, buildVarContext, deepMerge, deleteAtStr, getAtStr, setAtStr } from './bindings';
+import { applyBindingTargets, buildVarContext, deepMerge, deleteAtStr, getAtStr, listEntries, setAtStr } from './bindings';
 import type { VariableSpec } from './bindings';
 import { applyBlankValues } from './blankValues';
 import { fieldCapabilityAvailable } from './capabilities';
@@ -95,14 +95,44 @@ export function removeRetiredValues(values: any, retiredValues: Record<string, R
   }
 }
 
-const isBlank = (v: unknown) => v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+const isBlank = (v: unknown) => v === undefined || v === null || (typeof v === 'string' && v.trim() === '')
+  || (Array.isArray(v) && v.length === 0);
+
+/** A list read back for a comma-separated text field: its entries joined with ", ", anything else unchanged. */
+const asFieldValue = (v: unknown): unknown => (Array.isArray(v) ? v.map(String).join(', ') : v);
+
+/**
+ * The entries of a list a service definition wrote into a configuration snippet, or null when the snippet is not one
+ * the definition writes (edited by hand, for one). Two shapes are read: `<setting> = set(["alice","bob"])`, the JSON
+ * array of a `jsonList` variable (`set([])` for none), and `{ u.strip() for u in 'alice,bob'.split(',') ... }`, the
+ * comma-separated text earlier versions of the JupyterHub definition put in a quoted literal.
+ */
+export function snippetListEntries(snippet: unknown): string[] | null {
+  if (typeof snippet !== 'string') return null;
+  // JSON.stringify writes the array on one line, and a quoted "])" inside it cannot end the line.
+  const json = /=\s*set\((\[.*\])\)\s*$/m.exec(snippet);
+  if (json) {
+    try {
+      const list = JSON.parse(json[1]);
+      if (Array.isArray(list) && list.every(e => typeof e === 'string')) return list;
+    } catch { /* not a JSON array: not a snippet written from a jsonList */ }
+    return null;
+  }
+  const legacy = /for \w+ in '([^']*)'\.split\(','\)/.exec(snippet);
+  return legacy ? listEntries(legacy[1]) : null;
+}
 
 /**
  * Fills (in place) each blank field that declares `seedFromValues` with the first of those value paths that holds
  * something in `target`, groups included. Called on an upgrade, once `target` holds the release's values: a field kept
  * out of the values (excludeFromValues) is not in them, but the release keeps what it set elsewhere. The Superset
  * SECRET_KEY, sent in extraSecretEnv.SUPERSET_SECRET_KEY, must come back unchanged, or the database passwords Superset
- * stored with it can no longer be decrypted.
+ * stored with it can no longer be decrypted. A list found there (JupyterHub's allowed groups) comes back as the
+ * comma-separated text the field holds.
+ *
+ * A field declaring `seedFromSnippet` is filled the same way from the list in the configuration snippet at that path
+ * (see snippetListEntries): JupyterHub's admin users are written as a Python snippet, so an upgrade nobody edited would
+ * otherwise send an empty list and take the administrators' rights away.
  */
 export function seedFieldsFromValues(fields: FormFieldDef[] | undefined, target: any): void {
   for (const f of fields || []) {
@@ -110,9 +140,18 @@ export function seedFieldsFromValues(fields: FormFieldDef[] | undefined, target:
       seedFieldsFromValues(f.fields, target);
       continue;
     }
-    if (!f?.name || !Array.isArray(f.seedFromValues) || !isBlank(getAtStr(target, f.name))) continue;
-    const found = f.seedFromValues.map(p => getAtStr(target, p)).find(v => !isBlank(v));
-    if (found !== undefined) setAtStr(target, f.name, found);
+    if (!f?.name || !isBlank(getAtStr(target, f.name))) continue;
+    if (Array.isArray(f.seedFromValues)) {
+      const found = f.seedFromValues.map(p => getAtStr(target, p)).find(v => !isBlank(v));
+      if (found !== undefined) {
+        setAtStr(target, f.name, asFieldValue(found));
+        continue;
+      }
+    }
+    if (f.seedFromSnippet) {
+      const entries = snippetListEntries(getAtStr(target, f.seedFromSnippet));
+      if (entries?.length) setAtStr(target, f.name, entries.join(', '));
+    }
   }
 }
 

@@ -28,7 +28,9 @@ import { FieldSyncContext, UpgradeModeContext } from './fieldSync';
 import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery';
 import OpenShiftMonitoringNotice from './OpenShiftMonitoringNotice';
 import { resourceCheckError } from './resourceChecks';
+import { conditionMet, requiredUnlessAnyError } from './requiredUnless';
 import { patternRules } from '../../utils/nameRules';
+import type { Rule } from 'antd/lib/form';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
@@ -94,16 +96,9 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   // gate-show only when another field has a non-blank string value — useful for
   // external-auth-target groups that should only appear when the corresponding
   // URL override has been filled in.
-  const isVisible = !condition
-      ? true
-      : condition.operator === 'non-empty'
-          ? watchedValue != null && String(watchedValue).trim().length > 0
-          : condition.operator === 'empty'
-          // e.g. a field only needed when discovery found nothing
-          ? watchedValue == null || String(watchedValue).trim().length === 0
-          : Array.isArray(condition.value)
-              ? condition.value.includes(watchedValue)
-              : watchedValue === condition.value;
+  //
+  // The deploy-time check of `requiredUnlessAny` uses the same test (conditionMet), so both skip the same fields.
+  const isVisible = conditionMet(condition, watchedValue);
   if (!isVisible) return null;
   // Field-level capability gate (mirrors the option-level `capability` on selects):
   // hide the whole field when its required cluster capability/platform is absent —
@@ -346,14 +341,26 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       // the check's error message. The same for a `pattern`, whose `validationHint` is that message.
       const check = field.resourceCheck;
       const limitParts = check?.limitField ? toNameParts(check.limitField) : undefined;
-      const checkRules = check && limitParts ? [{
+      const checkRules: Rule[] = check && limitParts ? [{
         validator: (_rule: unknown, value: unknown) => {
           const error = resourceCheckError(check, value, form.getFieldValue(limitParts));
           return error ? Promise.reject(new Error(error)) : Promise.resolve();
         },
       }] : [];
-      const helpProps = limitParts
-        ? { extra: field.help, dependencies: [limitParts] }
+      // `requiredUnlessAny`: mandatory while the other fields it names are all empty, re-checked when they change.
+      const unless = field.requiredUnlessAny;
+      const unlessParts = Array.isArray(unless?.fields) ? unless!.fields.map(toNameParts) : [];
+      if (unless && unlessParts.length) {
+        checkRules.push({
+          validator: (_rule: unknown, value: unknown) => {
+            const error = requiredUnlessAnyError(unless, value, unlessParts.map(p => form.getFieldValue(p)), field.label);
+            return error ? Promise.reject(new Error(error)) : Promise.resolve();
+          },
+        });
+      }
+      const dependencies = [...(limitParts ? [limitParts] : []), ...unlessParts];
+      const helpProps = dependencies.length
+        ? { extra: field.help, dependencies }
         : field.pattern ? { extra: field.help } : { help: field.help };
       return (
         <Form.Item name={nameParts} label={field.label} rules={[...rules, ...checkRules]} {...helpProps}>

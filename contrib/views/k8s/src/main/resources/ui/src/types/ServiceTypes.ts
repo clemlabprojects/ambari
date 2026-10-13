@@ -11,6 +11,8 @@ export interface FormFieldBase {
   requiredWhenContext?: { field: string; equals: string };
   /** Compares the value with the limit in another field before the deploy (see resourceChecks.ts). */
   resourceCheck?: ResourceCheck;
+  /** Makes the field mandatory while every one of the other fields it names is empty (see requiredUnless.ts). */
+  requiredUnlessAny?: RequiredUnlessAny;
   /** Left blank, the key is left out of the chart values so the chart's own default applies. */
   omitWhenBlank?: boolean;
   /** Hint shown in an empty text field. */
@@ -19,6 +21,14 @@ export interface FormFieldBase {
   pattern?: string;
   /** Shown under the field while its value does not match {@link pattern}. */
   validationHint?: string;
+}
+/**
+ * A field that must be filled in unless one of `fields` (other form fields) is: JupyterHub's allowed groups may stay
+ * empty only when administrators are named. `message` is the error shown on the field.
+ */
+export interface RequiredUnlessAny {
+  fields: string[];
+  message?: string;
 }
 /**
  * A value that must stay under a limit held by another field (`limitField`):

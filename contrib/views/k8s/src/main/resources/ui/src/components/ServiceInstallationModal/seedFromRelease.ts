@@ -14,6 +14,10 @@ import { getAtStr, interpolate, setAtStr } from './bindings';
  * gets when the field is left blank: a deployed value equal to it is not copied into the field, so the
  * derived value keeps following its inputs (e.g. the TagSync endpoint follows the ingress host).
  *
+ * `seedValueMap` translates the deployed value (as text) into the field's own value, for a choice whose
+ * options are not the chart value itself: JupyterHub's "Who can sign in" is "all" when the release runs
+ * with `allow_all: true`. A deployed value the map does not name leaves the field at its default.
+ *
  * @returns the names of every field declaring `seedFromValue`, filled or not, which the auto-enable
  *   defaults must leave alone. A release without a value at the path runs the chart default (a first
  *   install with the switch off sends none, and neither did any release deployed before the switch was
@@ -30,6 +34,11 @@ export const seedFieldsFromRelease = (fields: any[] | undefined, state: any): st
       const deployed = getAtStr(state, f.seedFromValue);
       if (deployed == null || String(deployed).trim() === '') continue;
       if (f.seedUnlessEquals && String(deployed) === interpolate(f.seedUnlessEquals, state)) continue;
+      if (f.seedValueMap && typeof f.seedValueMap === 'object') {
+        const mapped = f.seedValueMap[String(deployed)];
+        if (mapped !== undefined) setAtStr(state, f.name, mapped);
+        continue;
+      }
       setAtStr(state, f.name, deployed);
     }
   };

@@ -75,9 +75,18 @@ Other field properties:
   private key), its value is never logged and is not kept with the deploy's operation once it is planned.
 - `seedFromValue`: For an `excludeFromValues` field whose effect is a chart value (a switch or an input that bindings copy into the values): the values path holding it, e.g. `"ranger.tagSync.enabled"`. On an upgrade the wizard fills the field from the deployed release's value at that path instead of the field's default, and the auto-enable defaults leave it alone, also when the release has no value there (it then runs the chart default), so an unchanged upgrade re-sends what runs.
 - `seedUnlessEquals`: With `seedFromValue`, a `${path}` template of the value the chart gets when the field is blank (e.g. `"https://${ingress.host}/api"`). A deployed value equal to it is not copied, so the field stays blank and the derived value keeps following its inputs.
+- `seedValueMap`: With `seedFromValue`, translates the deployed value (as text) into the field's value, for a choice
+  whose options are not the chart value itself: JupyterHub's "Who can sign in" maps `allow_all` `true` to `all` and
+  `false` to `groups`. A deployed value the map does not name leaves the field at its default.
 - `seedFromValues`: Value paths an upgrade fills the field from when it is blank, first non-blank wins. For an
   excluded field whose value a binding copies elsewhere: the Superset SECRET_KEY is kept out of the values and sent
-  in `extraSecretEnv.SUPERSET_SECRET_KEY`, so an upgrade fills it back from there and the key does not change.
+  in `extraSecretEnv.SUPERSET_SECRET_KEY`, so an upgrade fills it back from there and the key does not change. A list
+  found there comes back as comma-separated text: JupyterHub's allowed groups are filled from
+  `hub.config.GenericOAuthenticator.allowed_groups`.
+- `seedFromSnippet`: The value path of a configuration snippet holding the list a comma-separated field wrote, e.g.
+  JupyterHub's admin users in `hub.extraConfig.20-clemlab-admins`. An upgrade fills the blank field with the entries
+  of the snippet's `set([...])` (written from a `jsonList` variable) or of the quoted comma-separated text earlier
+  versions wrote; a snippet in any other shape (edited by hand) leaves the field blank.
 - `condition`: `{ "field": "<otherField>", "value": <expected> }` to show/hide.
 - `capability`: On a field or a `group`, shows it on one platform only: `"kubernetes"` (anything but a confirmed
   OpenShift cluster) or `"openshift"` (only once the cluster is confirmed to be OpenShift). On the other platform the
@@ -92,6 +101,12 @@ Other field properties:
   while it does not (the field's `help` then goes under the input). Every `releaseName` field declares Helm's rule
   for release names (at most 53 lower-case letters, digits, `-` and `.`, starting and ending with a letter or digit).
   The wizard only warns: the server refuses an invalid release, namespace, chart or chart version on its own.
+- `requiredUnlessAny`: `{ "fields": ["<otherField>", ...], "message": "<error>" }` makes a text field mandatory
+  while every one of the other fields is empty (a value counts once it has a non-blank comma-separated entry). The
+  field shows `message` inline, is re-checked when the others change, and the wizard refuses the deploy until one is
+  filled in (the deploy checks the wizard state itself, touched or not). Like `required`, it applies only while the
+  field is shown (its `condition`, or its group's, holds). JupyterHub's allowed groups use it: a
+  group-restricted hub must name an allowed group, an admin group or an admin user, or nobody could sign in.
 - `omitWhenBlank`: If true and the field is left blank, the key is left out of the Helm values so the chart's own
   default applies, instead of sending an empty string an older chart may not understand.
 - `resourceCheck`: `{ "kind": "javaHeap" | "memoryRequest" | "cpuRequest", "limitField": "<otherField>" }` compares
@@ -140,6 +155,13 @@ Defines named vars used by bindings/templates.
 - `name`: Variable name.
 - `from`: Source. Common sources:
   - `{ "type": "form", "field": "<formFieldName>" }`
+  - `{ "type": "form", "field": "<formFieldName>", "format": "jsonList" }`: the comma-separated (or one-per-line)
+    entries of the field as a JSON array, e.g. `["alice","bob"]`, and `[]` when it holds none, so emptying the field
+    empties the list. A template made of the variable alone writes a YAML list (JupyterHub's allowed groups). The array
+    is also a Python list literal: JupyterHub writes its admin users into a `hub.extraConfig` snippet as
+    `set(${var})`, so a quote in the field cannot break the hub configuration.
+  - `{ "type": "equals", "var": "<earlier variable>", "value": "<constant>", "negate": false }`: `"true"` when the
+    variable equals the constant (or differs from it, with `negate`), blank otherwise; a gate for `skipIfVarEmpty`.
   - `{ "type": "template", "template": "http://${monitoring.release}.${monitoring.namespace}.svc:9090" }`
   - `{ "type": "mountPath", "mountKey": "<key>", "suffix": "/data" }`
   - `{ "type": "lookup", "path": "<jsonPath>" }` (when pulling from discovery objects)
