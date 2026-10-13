@@ -1419,7 +1419,9 @@ public class HelmResource {
      * Uninstall a Helm release and delete its stored metadata.
      * For Flux GitOps releases, the corresponding Git manifests are removed first. On OpenShift, the RoleBindings KDPS
      * made to grant the release's service accounts an SCC are deleted once the release is gone. The Ranger account the
-     * release synced Atlas tags with, if any, is then disabled and its Secret deleted.
+     * release synced Atlas tags with, if any, is then disabled and its Secret deleted, and so is what the release signed
+     * in through OIDC with: the Secrets holding its client secret and the client KDPS registered for it in Keycloak
+     * ({@link CommandService#revokeOidcForRelease}).
      *
      * <p>A GitOps release is removed from the repository, base branch and path its metadata records, with the Git
      * credential KDPS saved for it ({@link FluxGitOpsBackend#destroy(String, String)}): a request naming another
@@ -1435,8 +1437,10 @@ public class HelmResource {
      *                     the credential stops working while the catalog and its data stay;
      *                     {@code catalog} also drops the catalog; {@code none} leaves Polaris
      *                     untouched. The object-store bucket is never deleted.
-     * @return HTTP 200 on success, with {@code polarisCleanup}, {@code sccCleanup} and {@code tagSyncCleanup} notes
-     *         when there is something left for an administrator to do; 202 when the removal of a GitOps release waits
+     * @param oidcCleanup  {@code none} leaves the release's OIDC client and its Secrets in place; anything else, or
+     *                     nothing, removes them
+     * @return HTTP 200 on success, with {@code polarisCleanup}, {@code oidcCleanup}, {@code sccCleanup} and
+     *         {@code tagSyncCleanup} notes saying what was taken back and what is left for an administrator to do; 202 when the removal of a GitOps release waits
      *         for the merge of its pull request, with {@code pendingDelete}, {@code pullRequestUrl} and a
      *         {@code message}, and nothing else done; 400, with nothing removed, when the request names a Git
      *         repository, branch or credential, or for a GitOps release whose recorded Git directory is not its own
@@ -1451,6 +1455,7 @@ public class HelmResource {
     public Response uninstall(@PathParam("namespace") String namespace,
                              @PathParam("name") String releaseName,
                              @QueryParam("polarisCleanup") String polarisCleanup,
+                             @QueryParam("oidcCleanup") String oidcCleanup,
                              @Context UriInfo uriInfo,
                              @Context HttpHeaders requestHeaders) {
         authHelper.checkWritePermission();
@@ -1583,8 +1588,22 @@ public class HelmResource {
         } catch (Exception ex) {
             LOG.warn("Atlas tag sync account cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
         }
+        // Likewise, the release's sign-in: the Secrets holding its client secret, and the client KDPS registered for it
+        // in Keycloak, which would otherwise keep accepting that secret and be silently reused by a release deployed
+        // again under the same name. Never fails the uninstall.
+        String oidcCleanupNote = null;
+        if (oidcCleanup == null || !"none".equalsIgnoreCase(oidcCleanup.trim())) {
+            try {
+                oidcCleanupNote = commandService.revokeOidcForRelease(namespace, releaseName,
+                        meta != null ? meta.getPlatformContextId() : null,
+                        requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
+            } catch (Exception ex) {
+                LOG.warn("OIDC cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+            }
+        }
         Map<String, Object> notes = new LinkedHashMap<>();
         if (polarisCleanupNote != null) notes.put("polarisCleanup", polarisCleanupNote);
+        if (oidcCleanupNote != null) notes.put("oidcCleanup", oidcCleanupNote);
         if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
         if (tagSyncCleanupNote != null) notes.put("tagSyncCleanup", tagSyncCleanupNote);
         return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();

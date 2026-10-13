@@ -864,6 +864,11 @@ class CommandServiceReleaseRepairActionsTest {
                 write(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2), null);
                 return null;
             }).when(k8s).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap());
+            doAnswer(inv -> {
+                write(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2), inv.getArgument(3));
+                return null;
+            }).when(k8s).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), nullable(Map.class),
+                    nullable(Map.class));
             doAnswer(inv -> byName.get(inv.getArgument(0) + "/" + inv.getArgument(1)))
                     .when(k8s).getSecret(anyString(), anyString());
             doAnswer(inv -> {

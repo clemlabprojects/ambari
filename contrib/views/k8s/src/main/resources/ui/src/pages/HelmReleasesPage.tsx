@@ -21,7 +21,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
-import { uninstallFollowUps } from '../utils/uninstallFollowUps';
+import { uninstallFollowUps, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
 import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import { getPods, listDeployments, type DeploymentRow } from '../api/client';
@@ -810,9 +810,16 @@ const HelmReleasesPage: React.FC = () => {
           danger: true,
           label: 'Uninstall',
           onClick: () => {
+            // Names what goes with the release: its single sign-on client and the Secrets holding its client secret.
+            const signInRemovals = uninstallSignInRemovals(record, serviceDefinition?.oidc);
             Modal.confirm({
               title: `Uninstall ${record.name}?`,
-              content: `This action will remove the release in namespace ${record.namespace}.`,
+              content: (
+                <Space direction="vertical">
+                  <span>This action will remove the release in namespace {record.namespace}.</span>
+                  {signInRemovals ? <span>{signInRemovals}</span> : null}
+                </Space>
+              ),
               okText: 'Uninstall',
               okButtonProps: { danger: true },
               cancelText: 'Cancel',
@@ -840,12 +847,13 @@ const HelmReleasesPage: React.FC = () => {
                     return;
                   }
                   message.success(`Release ${record.name} uninstalled successfully.`);
-                  // What KDPS did not take back itself (an SCC grant made by an administrator or still used by another
-                  // release, a Ranger account it could not disable): what to do, and the commands that do it.
+                  // What KDPS took back (the Polaris principal, the single sign-on client and its Secrets) and what it
+                  // did not (an SCC grant made by an administrator or still used by another release, a Ranger account
+                  // or a client it could not remove): what to do, and the commands that do it.
                   const followUps = uninstallFollowUps(notes);
                   if (followUps.length > 0) {
                     Modal.info({
-                      title: followUps.length === 1 ? followUps[0].title : 'Left for an administrator',
+                      title: followUps.length === 1 ? followUps[0].title : `After uninstalling ${record.name}`,
                       width: 760,
                       content: (
                         <div>

@@ -191,8 +191,9 @@ public class CommandService {
      */
     java.util.function.Function<Map<String, Object>, TagSyncRangerAccount.RangerLocator> tagSyncRangers;
     /**
-     * What tells this KDPS instance apart in the names of tag sync accounts (see {@link TagSyncRangerAccount#userName});
-     * package-private so tests can name accounts the same on every run.
+     * What tells this KDPS instance apart in the names of tag sync accounts (see {@link TagSyncRangerAccount#userName})
+     * and in the mark of the Keycloak clients it registers (see {@link #oidcClientMarker}); package-private so tests
+     * can name accounts the same on every run.
      */
     java.util.function.Supplier<String> tagSyncInstance;
     /**
@@ -1535,74 +1536,7 @@ public class CommandService {
      */
     KeycloakAdminClient.OidcClientResult registerOidcClient(String stepId, Map<String, Object> stepParams)
             throws Exception {
-        String baseUriStr = (String) stepParams.get("_baseUri");
-        if (baseUriStr == null || baseUriStr.isBlank()) {
-            throw new IllegalStateException("Missing _baseUri in OIDC_REGISTER_CLIENT params");
-        }
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(stepParams.get("_callerHeaders"));
-
-        // Resolve the Keycloak admin (client-registration) settings. Generic rule mirroring
-        // the Ranger routing: when the selected platform context carries its own OIDC admin
-        // creds (EXTERNAL / REMOTE Keycloak), use them and DO NOT touch the local Ambari —
-        // this is what lets a standalone Ambari (no local oidc-env, no cluster) register
-        // clients. Otherwise read the local Ambari oidc-env exactly as before (the default
-        // managed context, unchanged).
-        org.apache.ambari.view.k8s.model.ResolvedContext oidcRc = resolvePlatformContextForStep(stepParams);
-        boolean oidcFromContext = oidcRc != null && oidcRc.hasContextOidcAdminCreds();
-        String clstr = null;
-        AmbariActionClient ambariCli = null;
-        String oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec, verifyTlsStr;
-        String adminUsername = "", adminPassword = "";
-
-        if (oidcFromContext) {
-            oidcAdminUrl   = oidcRc.getOidcAdminUrl();
-            oidcAdminRealm = (oidcRc.getOidcAdminRealm() == null || oidcRc.getOidcAdminRealm().isBlank())
-                    ? "master" : oidcRc.getOidcAdminRealm();
-            oidcRealm      = (oidcRc.getOidcRealm() == null || oidcRc.getOidcRealm().isBlank())
-                    ? "odp" : oidcRc.getOidcRealm();
-            adminClientId  = oidcRc.getOidcAdminClientId();
-            adminClientSec = oidcRc.getOidcAdminClientSecret();
-            verifyTlsStr   = oidcRc.getOidcVerifyTls();
-            LOG.info("OIDC_REGISTER_CLIENT: registering against the platform context's Keycloak "
-                    + "(adminUrl={}, realm={}, registrationClient={})", oidcAdminUrl, oidcRealm, adminClientId);
-        } else {
-            clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
-            String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
-            ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
-
-            // Load Keycloak admin settings from Ambari oidc-env config
-            oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
-            oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
-            oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
-            adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
-            String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
-            verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
-
-            if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
-                throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config "
-                        + "(and the selected platform context supplies no OIDC admin credentials).");
-            }
-            if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
-            if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
-            if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
-
-            // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
-            AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
-            char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
-            adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
-
-            // Admin username/password come from the Ambari credential store (same alias used
-            // by ConfigureOidcServerAction), never from plain-text config properties.
-            // The view can only read the persisted store. The Enable OIDC and Enable Kerberos
-            // wizards store the credential there whenever the server has a persistent credential
-            // store, as does Manage OIDC Credentials (or the credentials REST API).
-            org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
-                    oidcAliasResolver.getOidcAdminCredential(clstr);
-            adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
-            adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
-                    ? new String(oidcAdminCred.getKey()) : "";
-        }
-        boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
+        KeycloakAdmin admin = resolveKeycloakAdmin(stepParams);
 
         String desiredClientId = (String) stepParams.get("oidcClientId");
         String redirectUri     = (String) stepParams.get("oidcRedirectUri");
@@ -1615,14 +1549,10 @@ public class CommandService {
 
         validateOidcClientId(desiredClientId);
 
-        var keycloakClient = new org.apache.ambari.view.k8s.client.KeycloakAdminClient(
-                oidcAdminUrl, oidcAdminRealm, oidcRealm,
-                adminClientId, adminClientSec,
-                adminUsername, adminPassword,
-                verifyTls);
+        var keycloakClient = admin.client(null);
 
         appendCommandLog(stepId, "Registering OIDC client '" + desiredClientId
-                + "' in realm '" + oidcRealm + "'");
+                + "' in realm '" + admin.realm() + "'");
 
         // Planned by a deploy (an empty list included); a re-registration plans none and keeps the
         // client's current audiences.
@@ -1638,18 +1568,139 @@ public class CommandService {
             }
         }
 
+        // Marked with its release and this KDPS instance, so that the uninstall of the release deletes it, and a
+        // client of the same id another cluster or view registered in the realm is not taken over.
+        KeycloakAdminClient.ClientMarker marker = oidcClientMarker(stringValue(stepParams.get("namespace")),
+                stringValue(stepParams.get("releaseName")));
         var oidcResult = keycloakClient.registerClient(
-                desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient, audiences);
+                desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient, audiences, marker);
         // The releases calling this Trino with their own token, planned by the deploy.
         addAudienceToCallers(keycloakClient, desiredClientId, stepParams.get("oidcAudienceCallers"), stepId);
 
-        String issuerUrl = oidcFromContext
-                ? oidcRc.getOidcIssuerUrl()
-                : resolveOidcIssuerUrl(ambariCli, clstr);
+        String issuerUrl = admin.fromContext()
+                ? admin.context().getOidcIssuerUrl()
+                : resolveOidcIssuerUrl(admin.ambari(), admin.cluster());
         if (issuerUrl == null || issuerUrl.isBlank()) {
             issuerUrl = oidcResult.issuerUrl();
         }
-        return new KeycloakAdminClient.OidcClientResult(oidcResult.clientId(), oidcResult.clientSecret(), issuerUrl);
+        return new KeycloakAdminClient.OidcClientResult(oidcResult.clientId(), oidcResult.clientSecret(), issuerUrl,
+                admin.realm());
+    }
+
+    /**
+     * The Keycloak administrator OIDC clients are registered and deleted with, and where.
+     *
+     * @param context the platform context supplying the administrator; null when it comes from the managed cluster's
+     *                {@code oidc-env}
+     * @param ambari  the Ambari server of the managed cluster; null when the context supplies the administrator
+     * @param cluster the managed cluster; null when the context supplies the administrator
+     */
+    record KeycloakAdmin(String adminUrl, String adminRealm, String realm, String adminClientId,
+                         String adminClientSecret, String adminUsername, String adminPassword, boolean verifyTls,
+                         org.apache.ambari.view.k8s.model.ResolvedContext context, AmbariActionClient ambari,
+                         String cluster) {
+
+        boolean fromContext() {
+            return context != null;
+        }
+
+        /**
+         * A client for this administrator.
+         *
+         * @param inRealm the realm to work in; null or blank for {@link #realm()}
+         */
+        KeycloakAdminClient client(String inRealm) {
+            return new KeycloakAdminClient(adminUrl, adminRealm,
+                    inRealm == null || inRealm.isBlank() ? realm : inRealm,
+                    adminClientId, adminClientSecret, adminUsername, adminPassword, verifyTls);
+        }
+    }
+
+    /**
+     * Resolves the Keycloak administrator (client-registration) settings for an OIDC step or an uninstall. Generic
+     * rule mirroring the Ranger routing: when the selected platform context ({@code _platformContextId}) carries its
+     * own OIDC admin creds (EXTERNAL / REMOTE Keycloak), use them and do not touch the local Ambari: this is what lets
+     * a standalone Ambari (no local oidc-env, no cluster) register clients. Otherwise read the local Ambari oidc-env
+     * (the default managed context), through the Ambari server {@code _baseUri} and {@code _callerHeaders} reach.
+     *
+     * @throws IllegalStateException when neither supplies an administrator
+     */
+    KeycloakAdmin resolveKeycloakAdmin(Map<String, Object> stepParams) throws Exception {
+        org.apache.ambari.view.k8s.model.ResolvedContext oidcRc = resolvePlatformContextForStep(stepParams);
+        if (oidcRc != null && oidcRc.hasContextOidcAdminCreds()) {
+            String oidcAdminUrl   = oidcRc.getOidcAdminUrl();
+            String oidcAdminRealm = (oidcRc.getOidcAdminRealm() == null || oidcRc.getOidcAdminRealm().isBlank())
+                    ? "master" : oidcRc.getOidcAdminRealm();
+            String oidcRealm      = (oidcRc.getOidcRealm() == null || oidcRc.getOidcRealm().isBlank())
+                    ? "odp" : oidcRc.getOidcRealm();
+            String adminClientId  = oidcRc.getOidcAdminClientId();
+            LOG.info("OIDC: using the platform context's Keycloak (adminUrl={}, realm={}, registrationClient={})",
+                    oidcAdminUrl, oidcRealm, adminClientId);
+            return new KeycloakAdmin(oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId,
+                    oidcRc.getOidcAdminClientSecret(), "", "", !"false".equalsIgnoreCase(oidcRc.getOidcVerifyTls()),
+                    oidcRc, null, null);
+        }
+
+        String baseUriStr = (String) stepParams.get("_baseUri");
+        if (baseUriStr == null || baseUriStr.isBlank()) {
+            throw new IllegalStateException("KDPS has no access to the Ambari server, whose oidc-env names the"
+                    + " Keycloak administrator of the managed cluster (no _baseUri)");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(stepParams.get("_callerHeaders"));
+        String clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
+        String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
+        AmbariActionClient ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
+
+        // Load Keycloak admin settings from Ambari oidc-env config
+        String oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
+        String oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
+        String oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
+        String adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
+        String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
+        String verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
+
+        if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
+            throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config "
+                    + "(and the selected platform context supplies no OIDC admin credentials).");
+        }
+        if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
+        if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
+        if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
+
+        // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
+        AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
+        char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
+        String adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
+
+        // Admin username/password come from the Ambari credential store (same alias used
+        // by ConfigureOidcServerAction), never from plain-text config properties.
+        // The view can only read the persisted store. The Enable OIDC and Enable Kerberos
+        // wizards store the credential there whenever the server has a persistent credential
+        // store, as does Manage OIDC Credentials (or the credentials REST API).
+        org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
+                oidcAliasResolver.getOidcAdminCredential(clstr);
+        String adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
+        String adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
+                ? new String(oidcAdminCred.getKey()) : "";
+        return new KeycloakAdmin(oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec,
+                adminUsername, adminPassword, !"false".equalsIgnoreCase(verifyTlsStr), null, ambariCli, clstr);
+    }
+
+    /**
+     * The mark KDPS writes on the Keycloak client of a release: the release, and this KDPS instance (see
+     * {@link KeycloakAdminClient.ClientMarker}). Null when the step does not name its release, or the instance id
+     * cannot be kept: the client is then neither checked nor marked, and an uninstall reports it instead of deleting
+     * it.
+     */
+    KeycloakAdminClient.ClientMarker oidcClientMarker(String namespace, String releaseName) {
+        if (namespace == null || namespace.isBlank() || releaseName == null || releaseName.isBlank()) return null;
+        try {
+            return KeycloakAdminClient.ClientMarker.of(namespace, releaseName, tagSyncInstance.get());
+        } catch (RuntimeException e) {
+            LOG.warn("The OIDC client of {}/{} is not marked as this KDPS instance's: {}", namespace, releaseName,
+                    e.toString());
+            return null;
+        }
     }
 
     /** The client secrets registration steps got, until the next step writes them; see {@link OidcClientSecrets}. */
@@ -1672,6 +1723,7 @@ public class CommandService {
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("clientId", registered.clientId());
         res.put("issuerUrl", registered.issuerUrl());
+        if (registered.realm() != null) res.put("realm", registered.realm());
         status.setResultJson(gson.toJson(res));
     }
 
@@ -11734,8 +11786,10 @@ public class CommandService {
                     String clientId;
                     String clientSecret;
                     String issuerUrl;
+                    String realm = null;
                     String oidcRegisterId = null;
-                    if (childParams.containsKey("oidcExternalClientId")) {
+                    boolean externalOidc = childParams.containsKey("oidcExternalClientId");
+                    if (externalOidc) {
                         clientId     = (String) childParams.get("oidcExternalClientId");
                         clientSecret = externalOidcClientSecret(childParams);
                         issuerUrl    = (String) childParams.get("oidcExternalIssuerUrl");
@@ -11770,6 +11824,7 @@ public class CommandService {
                         Map<String, Object> regRes = gson.fromJson(registerSt.getResultJson(), Map.class);
                         clientId     = (String) regRes.get("clientId");
                         issuerUrl    = (String) regRes.get("issuerUrl");
+                        realm        = regRes.get("realm") instanceof String r ? r : null;
                         if (clientId == null || clientId.isBlank()) {
                             throw new IllegalStateException("OIDC_REGISTER_CLIENT resultJson missing clientId");
                         }
@@ -11786,11 +11841,15 @@ public class CommandService {
                         secretData.put("issuer_url", issuerUrl.getBytes(StandardCharsets.UTF_8));
                     }
 
-                    Map<String, String> secretLabels = Map.of(
-                            "managed-by",                  "ambari-k8s-view",
-                            "ambari.clemlab.com/type",     "oidc-client",
-                            "ambari.clemlab.com/clientId", clientId
-                    );
+                    // Labelled as the release's, and annotated with what its uninstall removes with it (see
+                    // revokeOidcForRelease): the release's record is gone by then.
+                    String providerSecretName = "true".equals(childParams.get("oidcGitlabOmniauth"))
+                            ? (String) childParams.get("oidcProviderSecretName") : null;
+                    Map<String, String> secretLabels = oidcSecretLabels(stringValue(childParams.get("releaseName")));
+                    Map<String, String> secretAnnotations = oidcSecretAnnotations(clientId,
+                            realm != null ? realm : realmOfIssuer(issuerUrl),
+                            stringValue(childParams.get("_platformContextId")), externalOidc, providerSecretName,
+                            vaultPath);
 
                     try {
                         this.kubernetesService.createNamespace(namespace);
@@ -11802,7 +11861,8 @@ public class CommandService {
                     String previousClientSecret = reRegistration
                             ? secretValue(namespace, secretName, "client_secret") : null;
 
-                    this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData);
+                    this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData, secretLabels,
+                            secretAnnotations);
                     appendCommandLog(child.getId(), "K8s Secret '" + namespace + "/" + secretName + "' created/updated");
                     if (reRegistration && !Objects.equals(previousClientSecret, clientSecret != null ? clientSecret : "")) {
                         String releaseName = stringValue(childParams.get("releaseName"));
@@ -11815,14 +11875,14 @@ public class CommandService {
                     Map<String, Object> res = new LinkedHashMap<>();
 
                     // GitLab OmniAuth: create a provider secret with the full YAML provider config
-                    if ("true".equals(childParams.get("oidcGitlabOmniauth"))) {
-                        String providerSecretName = (String) childParams.get("oidcProviderSecretName");
+                    if (providerSecretName != null) {
                         String callbackUrl = (String) childParams.get("oidcGitlabCallbackUrl");
-                        if (providerSecretName != null && !providerSecretName.isBlank()) {
+                        if (!providerSecretName.isBlank()) {
                             String providerYaml = buildGitlabOmniauthProviderYaml(clientId, clientSecret, issuerUrl, callbackUrl);
                             Map<String, byte[]> providerData = new LinkedHashMap<>();
                             providerData.put("provider", providerYaml.getBytes(StandardCharsets.UTF_8));
-                            this.kubernetesService.createOrUpdateOpaqueSecret(namespace, providerSecretName, providerData);
+                            this.kubernetesService.createOrUpdateOpaqueSecret(namespace, providerSecretName, providerData,
+                                    secretLabels, secretAnnotations);
                             appendCommandLog(child.getId(), "K8s Secret '" + namespace + "/" + providerSecretName + "' (GitLab OmniAuth) created/updated");
                             LOG.info("OIDC_CREATE_SECRET: GitLab OmniAuth secret '{}/{}' written", namespace, providerSecretName);
                             res.put("gitlabProviderSecretName", providerSecretName);
@@ -16745,6 +16805,306 @@ public class CommandService {
                 platformContextId, tagSyncRangersFor(callerHeaders)).note();
     }
 
+    /** Labels of the Secrets holding the OIDC client of a release, and GitLab's OmniAuth provider built from it. */
+    static final String OIDC_LABEL_MANAGED_BY = "app.kubernetes.io/managed-by";
+    static final String OIDC_MANAGED_BY_KDPS = "kdps";
+    static final String OIDC_LABEL_INSTANCE = "app.kubernetes.io/instance";
+    static final String OIDC_LABEL_TYPE = "ambari.clemlab.com/type";
+    static final String OIDC_TYPE_CLIENT = "oidc-client";
+
+    /**
+     * Annotations on those Secrets, recording what the uninstall of the release removes with them: the client and the
+     * realm it is in, the platform context whose Keycloak registered it, whether it was registered by KDPS
+     * ({@code internal}) or supplied by a security profile ({@code external}), GitLab's OmniAuth provider Secret and
+     * the Vault copy. They live with the Secrets because the release's record is deleted with the release.
+     */
+    static final String OIDC_ANN_CLIENT_ID       = "kdps.clemlab.com/oidc-client-id";
+    static final String OIDC_ANN_REALM           = "kdps.clemlab.com/oidc-realm";
+    static final String OIDC_ANN_CONTEXT         = "kdps.clemlab.com/oidc-context";
+    static final String OIDC_ANN_SOURCE          = "kdps.clemlab.com/oidc-source";
+    static final String OIDC_ANN_PROVIDER_SECRET = "kdps.clemlab.com/oidc-provider-secret";
+    static final String OIDC_ANN_VAULT_PATH      = "kdps.clemlab.com/oidc-vault-path";
+    static final String OIDC_SOURCE_INTERNAL = "internal";
+    static final String OIDC_SOURCE_EXTERNAL = "external";
+
+    /** The annotation every Secret the view writes carries, since before it labelled them. */
+    private static final String VIEW_MANAGED_BY_ANNOTATION = "managed-by";
+    private static final String VIEW_MANAGED_BY_VALUE = "ambari-k8s-view";
+
+    /** The labels of the Secrets holding the OIDC client of a release. */
+    static Map<String, String> oidcSecretLabels(String releaseName) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put(OIDC_LABEL_MANAGED_BY, OIDC_MANAGED_BY_KDPS);
+        if (releaseName != null && !releaseName.isBlank()) labels.put(OIDC_LABEL_INSTANCE, releaseName);
+        labels.put(OIDC_LABEL_TYPE, OIDC_TYPE_CLIENT);
+        return labels;
+    }
+
+    /**
+     * The annotations of the Secrets holding the OIDC client of a release (see {@link #OIDC_ANN_CLIENT_ID}).
+     *
+     * @param contextId the platform context; blank for the managed cluster
+     */
+    static Map<String, String> oidcSecretAnnotations(String clientId, String realm, String contextId, boolean external,
+                                                     String providerSecretName, String vaultPath) {
+        Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put(OIDC_ANN_CLIENT_ID, clientId);
+        if (realm != null && !realm.isBlank()) annotations.put(OIDC_ANN_REALM, realm);
+        annotations.put(OIDC_ANN_CONTEXT, contextId == null || contextId.isBlank()
+                ? ContextService.DEFAULT_CONTEXT_ID : contextId);
+        annotations.put(OIDC_ANN_SOURCE, external ? OIDC_SOURCE_EXTERNAL : OIDC_SOURCE_INTERNAL);
+        if (providerSecretName != null && !providerSecretName.isBlank()) {
+            annotations.put(OIDC_ANN_PROVIDER_SECRET, providerSecretName);
+        }
+        if (vaultPath != null && !vaultPath.isBlank()) annotations.put(OIDC_ANN_VAULT_PATH, vaultPath);
+        return annotations;
+    }
+
+    /** The Keycloak realm an issuer URL names ({@code .../realms/<realm>}), or null. */
+    static String realmOfIssuer(String issuerUrl) {
+        if (issuerUrl == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("/realms/([^/?#]+)").matcher(issuerUrl);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** One Keycloak client a release's Secrets name. */
+    private record OidcClientRef(String clientId, String realm, String contextId) {}
+
+    /**
+     * Removes what a release was given to sign in through OIDC, once the release is uninstalled: the Secrets holding
+     * its client ({@code <release>-oidc-client}, and GitLab's {@code <release>-omniauth-provider}), their Vault copy,
+     * and the client KDPS registered in Keycloak. Driven from the uninstall endpoint, like
+     * {@link #revokePolarisForRelease}, and read from the Secrets' own annotations (see {@link #OIDC_ANN_CLIENT_ID}).
+     *
+     * <ul>
+     *   <li>A client KDPS registered is deleted only when its mark names this release and this KDPS instance (see
+     *       {@link KeycloakAdminClient#deleteClient}). One without a mark, registered by an earlier version, is never
+     *       deleted: it is reported with the command that deletes it.</li>
+     *   <li>A client a security profile supplied ({@code external}) belongs to that identity provider, which is never
+     *       called.</li>
+     *   <li>The Secrets and the Vault copy are removed in every case, Keycloak unreachable or its administrator
+     *       credential expired included. A Secret written before KDPS labelled them is removed when its name is the
+     *       release's and the view's annotation says the view wrote it.</li>
+     * </ul>
+     *
+     * <p>Failures are reported, never thrown: the release is already gone.
+     *
+     * @param platformContextId the release's platform context as the view recorded it, for a Secret that does not name
+     *                          the context of its client
+     * @param callerHeaders     the uninstalling user's request headers, through which the Keycloak of the managed
+     *                          cluster is reached (its administrator is in the Ambari server's {@code oidc-env})
+     * @return what was removed and what is left for an administrator to do, or null when the release had no OIDC
+     *         client Secret
+     */
+    public String revokeOidcForRelease(String namespace, String releaseName, String platformContextId,
+                                       MultivaluedMap<String, String> callerHeaders) {
+        try {
+            return revokeOidc(namespace, releaseName, platformContextId, callerHeaders);
+        } catch (RuntimeException e) {
+            LOG.warn("OIDC cleanup for {}/{} failed: {}", namespace, releaseName, e.toString());
+            return "The single sign-on cleanup of " + namespace + "/" + releaseName + " failed (" + reasonOf(e)
+                    + "). Delete the Secrets " + releaseName + "-oidc-client and " + releaseName
+                    + "-omniauth-provider if they are left, and the release's client in Keycloak.";
+        }
+    }
+
+    private String revokeOidc(String namespace, String releaseName, String platformContextId,
+                              MultivaluedMap<String, String> callerHeaders) {
+        // The Secrets KDPS wrote for the release's sign-in, by name.
+        Map<String, io.fabric8.kubernetes.api.model.Secret> owned = new LinkedHashMap<>();
+        try {
+            List<io.fabric8.kubernetes.api.model.Secret> labelled =
+                    kubernetesService.listSecretsWithLabel(namespace, OIDC_LABEL_TYPE, OIDC_TYPE_CLIENT);
+            for (io.fabric8.kubernetes.api.model.Secret secret : labelled == null
+                    ? List.<io.fabric8.kubernetes.api.model.Secret>of() : labelled) {
+                Map<String, String> labels = labelsOf(secret);
+                if (OIDC_MANAGED_BY_KDPS.equals(labels.get(OIDC_LABEL_MANAGED_BY))
+                        && releaseName.equals(labels.get(OIDC_LABEL_INSTANCE))) {
+                    owned.put(secret.getMetadata().getName(), secret);
+                }
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("OIDC cleanup for {}/{}: the labelled Secrets could not be listed ({}); looking them up by name",
+                    namespace, releaseName, e.toString());
+        }
+        // GitLab's provider Secret as its client's Secret names it, and the Secrets earlier versions wrote unlabelled.
+        Set<String> byName = new LinkedHashSet<>();
+        for (io.fabric8.kubernetes.api.model.Secret secret : owned.values()) {
+            String provider = annotationsOf(secret).get(OIDC_ANN_PROVIDER_SECRET);
+            if (provider != null && !provider.isBlank()) byName.add(provider);
+        }
+        byName.add(releaseName + "-oidc-client");
+        byName.add(releaseName + "-omniauth-provider");
+        for (String name : byName) {
+            if (owned.containsKey(name)) continue;
+            io.fabric8.kubernetes.api.model.Secret secret;
+            try {
+                secret = kubernetesService.getSecret(namespace, name);
+            } catch (RuntimeException e) {
+                LOG.warn("OIDC cleanup for {}/{}: Secret {} could not be read: {}", namespace, releaseName, name,
+                        e.toString());
+                continue;
+            }
+            // Only the view's own: a Secret of that name the operator made stays.
+            if (secret != null && VIEW_MANAGED_BY_VALUE.equals(annotationsOf(secret).get(VIEW_MANAGED_BY_ANNOTATION))) {
+                owned.put(name, secret);
+            }
+        }
+        if (owned.isEmpty()) return null;
+
+        // What the Secrets say is to be removed with them, read before they are deleted.
+        Set<OidcClientRef> registered = new LinkedHashSet<>();
+        Set<String> external = new LinkedHashSet<>();
+        Set<String> vaultPaths = new LinkedHashSet<>();
+        List<String> keycloakNotes = new ArrayList<>();
+        for (io.fabric8.kubernetes.api.model.Secret secret : owned.values()) {
+            Map<String, String> ann = annotationsOf(secret);
+            String clientId = ann.get(OIDC_ANN_CLIENT_ID);
+            if (clientId == null || clientId.isBlank()) {
+                // Written by an earlier version, which did not record where its client is: it is reported, not
+                // looked for (it may belong to an external identity provider).
+                String legacyClient = secretValue(secret, "client_id");
+                if (legacyClient != null && !legacyClient.isBlank()) {
+                    String realm = realmOfIssuer(secretValue(secret, "issuer_url"));
+                    keycloakNotes.add("The Secret " + secret.getMetadata().getName() + " was written by an earlier"
+                            + " KDPS version, which did not record where its single sign-on client '" + legacyClient
+                            + "' is registered, so the client was left as it is. If KDPS registered it in Keycloak and"
+                            + " nothing else uses it, delete it: " + kcadmDeleteCommand(legacyClient, realm));
+                }
+                continue;
+            }
+            String vaultPath = ann.get(OIDC_ANN_VAULT_PATH);
+            if (vaultPath != null && !vaultPath.isBlank()) vaultPaths.add(vaultPath.trim());
+            if (OIDC_SOURCE_EXTERNAL.equals(ann.get(OIDC_ANN_SOURCE))) {
+                external.add(clientId);
+            } else {
+                String contextId = ann.get(OIDC_ANN_CONTEXT);
+                registered.add(new OidcClientRef(clientId, ann.get(OIDC_ANN_REALM),
+                        contextId == null || contextId.isBlank() ? platformContextId : contextId));
+            }
+        }
+
+        // The Secrets go in every case: the client secret they hold must not outlive the release.
+        List<String> removed = new ArrayList<>();
+        List<String> left = new ArrayList<>();
+        for (String name : owned.keySet()) {
+            try {
+                kubernetesService.deleteSecret(namespace, name);
+                removed.add(name);
+            } catch (RuntimeException e) {
+                LOG.warn("OIDC cleanup for {}/{}: Secret {} could not be deleted: {}", namespace, releaseName, name,
+                        e.toString());
+                left.add(name);
+            }
+        }
+        List<String> secretNotes = new ArrayList<>();
+        if (!removed.isEmpty()) {
+            secretNotes.add("Removed the Secret" + (removed.size() > 1 ? "s " : " ") + String.join(", ", removed)
+                    + " holding the client secret.");
+        }
+        if (!left.isEmpty()) {
+            secretNotes.add("Could not remove the Secret" + (left.size() > 1 ? "s " : " ") + String.join(", ", left)
+                    + " holding the client secret. Delete " + (left.size() > 1 ? "them" : "it") + ": oc delete secret "
+                    + String.join(" ", left) + " -n " + namespace);
+        }
+        for (String path : vaultPaths) {
+            secretNotes.add(oidcVaultCopyNote(path));
+        }
+
+        for (String clientId : external) {
+            keycloakNotes.add("The single sign-on client '" + clientId + "' comes from the security profile's"
+                    + " identity provider, which KDPS does not manage: it was left as it is there.");
+        }
+        for (OidcClientRef ref : registered) {
+            keycloakNotes.add(deleteKeycloakClientOfRelease(namespace, releaseName, ref, callerHeaders));
+        }
+
+        List<String> notes = new ArrayList<>(keycloakNotes);
+        notes.addAll(secretNotes);
+        String note = String.join("\n", notes);
+        LOG.info("OIDC cleanup for {}/{}: {}", namespace, releaseName, note);
+        return note;
+    }
+
+    /** Deletes the Keycloak client of a release when its mark says it is this release's; says what was done. */
+    private String deleteKeycloakClientOfRelease(String namespace, String releaseName, OidcClientRef ref,
+                                                 MultivaluedMap<String, String> callerHeaders) {
+        String realm = ref.realm();
+        KeycloakAdminClient.ClientMarker marker = oidcClientMarker(namespace, releaseName);
+        if (marker == null) {
+            return "The single sign-on client '" + ref.clientId() + "' was left in Keycloak: KDPS could not read the"
+                    + " id of this instance, which the client must be marked with to be deleted. If nothing else uses"
+                    + " it, delete it: " + kcadmDeleteCommand(ref.clientId(), realm);
+        }
+        String contextId = ref.contextId() == null ? "" : ref.contextId().trim();
+        try {
+            if (!contextId.isBlank() && !ContextService.DEFAULT_CONTEXT_ID.equals(contextId)
+                    && !ContextService.NO_CONTEXT_ID.equals(contextId) && new ContextService(ctx).get(contextId) == null) {
+                return "The single sign-on client '" + ref.clientId() + "' was left in Keycloak: the platform context '"
+                        + contextId + "' whose Keycloak registered it no longer exists in KDPS. Delete it in that"
+                        + " Keycloak: " + kcadmDeleteCommand(ref.clientId(), realm);
+            }
+            Map<String, Object> params = new LinkedHashMap<>(ambariAccessOf(callerHeaders));
+            if (!contextId.isBlank()) params.put("_platformContextId", contextId);
+            KeycloakAdminClient keycloak = resolveKeycloakAdmin(params).client(realm);
+            realm = keycloak.realm();
+            String where = "'" + ref.clientId() + "' in Keycloak realm '" + realm + "'";
+            return switch (keycloak.deleteClient(ref.clientId(), marker)) {
+                case DELETED -> "Removed the single sign-on client " + where + ".";
+                case NOT_FOUND -> "The single sign-on client " + where + " was already gone.";
+                case NOT_MARKED -> "Kept the single sign-on client " + where + ": it was registered before KDPS marked"
+                        + " the clients it registers, so KDPS cannot tell that it is this release's. If nothing else"
+                        + " uses it, delete it: " + kcadmDeleteCommand(ref.clientId(), realm);
+                case MARKED_FOR_ANOTHER -> "Kept the single sign-on client " + where + ": it belongs to another"
+                        + " release, or to another KDPS sharing the realm.";
+            };
+        } catch (Exception e) {
+            LOG.warn("OIDC cleanup for {}/{}: Keycloak client {} not deleted: {}", namespace, releaseName,
+                    ref.clientId(), e.toString());
+            return "The single sign-on client '" + ref.clientId() + "' could not be removed from Keycloak ("
+                    + reasonOf(e) + "). It still signs users in with its old secret: delete it in Keycloak: "
+                    + kcadmDeleteCommand(ref.clientId(), realm);
+        }
+    }
+
+    /** The Keycloak admin CLI command deleting a client by its client id. */
+    static String kcadmDeleteCommand(String clientId, String realm) {
+        String r = realm == null || realm.isBlank() ? "<realm>" : realm;
+        return "kcadm.sh delete clients/$(kcadm.sh get clients -r " + r + " -q clientId=" + clientId
+                + " --fields id --format csv --noquotes) -r " + r;
+    }
+
+    /**
+     * Says where the Vault copy of a release's client credentials was written. The uninstall never deletes it: the
+     * path comes from an annotation on a Secret that anyone able to edit Secrets in the release namespace can change,
+     * and the view's Vault token must not delete a path such a user chose.
+     */
+    private static String oidcVaultCopyNote(String vaultPath) {
+        return "If a copy of the client credentials was written to Vault at '" + vaultPath
+                + "', it was not removed: delete it in Vault.";
+    }
+
+    private static Map<String, String> labelsOf(io.fabric8.kubernetes.api.model.Secret secret) {
+        return secret == null || secret.getMetadata() == null || secret.getMetadata().getLabels() == null
+                ? Map.of() : secret.getMetadata().getLabels();
+    }
+
+    private static Map<String, String> annotationsOf(io.fabric8.kubernetes.api.model.Secret secret) {
+        return secret == null || secret.getMetadata() == null || secret.getMetadata().getAnnotations() == null
+                ? Map.of() : secret.getMetadata().getAnnotations();
+    }
+
+    /** A key of a Secret, decoded; null when absent or unreadable. */
+    private static String secretValue(io.fabric8.kubernetes.api.model.Secret secret, String key) {
+        try {
+            String encoded = secret.getData() == null ? null : secret.getData().get(key);
+            return encoded == null ? null
+                    : new String(java.util.Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     /**
      * The Ranger of tag sync accounts, reached with a user's request headers. The Ambari server is only asked for its
      * cluster once a Ranger is needed: a release that never synced Atlas tags costs nothing.
@@ -16768,8 +17128,7 @@ public class CommandService {
             access.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
             access.put("_cluster", cluster);
         } catch (Exception e) {
-            LOG.warn("Atlas tag sync account: no Ambari access ({}); the managed cluster's Ranger cannot be reached.",
-                    e.toString());
+            LOG.warn("No Ambari access ({}); the managed cluster's Ranger and Keycloak cannot be reached.", e.toString());
         }
         return access;
     }

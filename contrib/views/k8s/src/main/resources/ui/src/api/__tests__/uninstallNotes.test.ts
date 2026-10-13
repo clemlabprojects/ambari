@@ -56,4 +56,15 @@ describe('uninstallHelm', () => {
 
     expect(notes.tagSyncCleanup).toBe(note);
   });
+
+  it('returns the note on the single sign-on client of the release', async () => {
+    const note = "Kept the single sign-on client 'trino-data' in Keycloak realm 'odp': it was registered before KDPS"
+      + ' marked the clients it registers.';
+    answer(JSON.stringify({ oidcCleanup: note, polarisCleanup: "Removed the Polaris principal 'trino'." }));
+
+    const notes = await uninstallHelm('trino', 'data');
+
+    expect(notes.oidcCleanup).toBe(note);
+    expect(notes.polarisCleanup).toBe("Removed the Polaris principal 'trino'.");
+  });
 });

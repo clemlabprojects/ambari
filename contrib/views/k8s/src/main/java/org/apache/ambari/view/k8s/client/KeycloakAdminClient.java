@@ -38,14 +38,15 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Minimal Keycloak Admin REST client used by OIDC_REGISTER_CLIENT steps.
+ * Minimal Keycloak Admin REST client used by OIDC_REGISTER_CLIENT steps and by the uninstall of a release.
  * Parallels AmbariActionClient: one instance per operation, no pooling.
  *
  * Supported operations:
  *   - Obtain admin access token (client_credentials or password grant)
- *   - Create or update a Keycloak client in a realm
+ *   - Create or update a Keycloak client in a realm, marked with the release and the KDPS instance it belongs to
  *   - Retrieve the client secret
- *   - Optionally delete a client
+ *   - Add an audience to the access tokens of an existing client
+ *   - Delete a client, only when its mark names the release and KDPS instance asking ({@link #deleteClient})
  *
  * All HTTP calls are synchronous (java.net.http.HttpClient).
  */
@@ -106,8 +107,70 @@ public class KeycloakAdminClient {
     public record OidcClientResult(
             String clientId,
             String clientSecret,
-            String issuerUrl
-    ) {}
+            String issuerUrl,
+            String realm
+    ) {
+        /** A result that does not say which realm the client is in. */
+        public OidcClientResult(String clientId, String clientSecret, String issuerUrl) {
+            this(clientId, clientSecret, issuerUrl, null);
+        }
+    }
+
+    /** Client attribute naming the release a client was registered for, as {@code <namespace>/<release>}. */
+    public static final String MARKER_RELEASE_ATTRIBUTE = "kdps.release";
+    /** Client attribute naming the KDPS instance that registered a client. */
+    public static final String MARKER_INSTANCE_ATTRIBUTE = "kdps.instance";
+
+    /**
+     * What KDPS writes on a client it registers for a release: the release, and the KDPS instance that deployed it.
+     * Several clusters or views may share a realm, and the client id of a release ({@code <release>-<namespace>})
+     * can be the same in each: the mark tells a client this KDPS may update or delete from one it must leave alone.
+     *
+     * @param release  the release, as {@code <namespace>/<release>}
+     * @param instance the KDPS instance
+     */
+    public record ClientMarker(String release, String instance) {
+
+        public static ClientMarker of(String namespace, String releaseName, String instance) {
+            return new ClientMarker(namespace + "/" + releaseName, instance);
+        }
+
+        /** The mark a client representation carries; both parts null when it has none. */
+        static ClientMarker of(Map<String, Object> clientRep) {
+            Object attributes = clientRep == null ? null : clientRep.get("attributes");
+            if (!(attributes instanceof Map<?, ?> attrs)) {
+                return new ClientMarker(null, null);
+            }
+            return new ClientMarker(blankToNull(attrs.get(MARKER_RELEASE_ATTRIBUTE)),
+                    blankToNull(attrs.get(MARKER_INSTANCE_ATTRIBUTE)));
+        }
+
+        /** Whether the client carries any part of a mark. */
+        boolean present() {
+            return release != null || instance != null;
+        }
+
+        private static String blankToNull(Object value) {
+            return value == null || String.valueOf(value).isBlank() ? null : String.valueOf(value);
+        }
+    }
+
+    /** What {@link #deleteClient} did. */
+    public enum DeleteOutcome {
+        /** The client was deleted. */
+        DELETED,
+        /** The realm has no such client (anymore). */
+        NOT_FOUND,
+        /** The client carries no mark, as those earlier KDPS versions registered: it was kept. */
+        NOT_MARKED,
+        /** The client is marked for another release or another KDPS instance: it was kept. */
+        MARKED_FOR_ANOTHER
+    }
+
+    /** The realm where this client registers and deletes clients. */
+    public String realm() {
+        return realm;
+    }
 
     /**
      * Register or update an OIDC client in the target realm.
@@ -150,10 +213,53 @@ public class KeycloakAdminClient {
                                            boolean implicitFlowEnabled,
                                            boolean serviceAccountsEnabled,
                                            List<String> audiences) throws Exception {
+        return registerClient(desiredClientId, redirectUri, publicClient, standardFlowEnabled, implicitFlowEnabled,
+                serviceAccountsEnabled, audiences, null);
+    }
+
+    /**
+     * {@link #registerClient(String, String, boolean, boolean, boolean, boolean, List)} that marks the client with the
+     * release and KDPS instance it belongs to, which is what lets the uninstall of that release delete it
+     * ({@link #deleteClient}). A client of that id already marked for another release or KDPS instance is refused,
+     * not taken over: another cluster or view sharing the realm uses it. One without a mark, as earlier KDPS versions
+     * registered them, is updated but left unmarked, since nothing tells whose it is: an uninstall then reports it
+     * instead of deleting it.
+     *
+     * @param marker the mark, or null to neither check nor set one
+     * @throws IllegalStateException when the realm has a client of that id marked for another release or instance
+     */
+    public OidcClientResult registerClient(String desiredClientId,
+                                           String redirectUri,
+                                           boolean publicClient,
+                                           boolean standardFlowEnabled,
+                                           boolean implicitFlowEnabled,
+                                           boolean serviceAccountsEnabled,
+                                           List<String> audiences,
+                                           ClientMarker marker) throws Exception {
         String token = obtainAdminToken();
 
         // Check if client already exists
-        String existingUuid = findClientUuid(token, desiredClientId);
+        Map<String, Object> existing = findClient(token, desiredClientId);
+        String existingUuid = existing == null ? null : (String) existing.get("id");
+
+        ClientMarker stamp = marker;
+        if (existing != null && marker != null) {
+            ClientMarker found = ClientMarker.of(existing);
+            if (!found.present()) {
+                LOG.warn("KeycloakAdminClient: client '{}' in realm '{}' carries no KDPS mark (registered by an earlier"
+                        + " KDPS version, or by hand): updated but not marked for {}, so an uninstall will not delete"
+                        + " it", desiredClientId, realm, marker.release());
+                stamp = null;
+            } else if (!found.equals(marker)) {
+                String owner = Objects.equals(found.instance(), marker.instance())
+                        ? "release " + found.release()
+                        : "release " + found.release() + " of another KDPS instance (" + found.instance() + ")";
+                throw new IllegalStateException("The Keycloak client '" + desiredClientId + "' in realm '" + realm
+                        + "' belongs to " + owner + ", not to release " + marker.release() + ". KDPS leaves it as it"
+                        + " is. Deploy the release under another name or namespace, or delete that client in Keycloak"
+                        + " if nothing uses it anymore.");
+            }
+        }
 
         List<Map<String, Object>> audienceMappers;
         if (audiences != null) {
@@ -165,7 +271,7 @@ public class KeycloakAdminClient {
         }
         Map<String, Object> clientRep = buildClientRepresentation(
                 desiredClientId, redirectUri, publicClient, standardFlowEnabled, implicitFlowEnabled, serviceAccountsEnabled,
-                audienceMappers);
+                audienceMappers, stamp);
 
         if (existingUuid != null) {
             LOG.info("KeycloakAdminClient: client '{}' already exists (uuid={}), updating", desiredClientId, existingUuid);
@@ -183,7 +289,53 @@ public class KeycloakAdminClient {
         String issuerUrl = adminUrl + "/realms/" + enc(realm);
         LOG.info("KeycloakAdminClient: client '{}' registered in realm '{}', issuerUrl={}",
                 desiredClientId, realm, issuerUrl);
-        return new OidcClientResult(desiredClientId, secret, issuerUrl);
+        return new OidcClientResult(desiredClientId, secret, issuerUrl, realm);
+    }
+
+    /**
+     * Deletes the client a release registered, once the release is uninstalled. The client is read first and deleted
+     * only when its mark names that release and this KDPS instance: a client without a mark (registered by an earlier
+     * KDPS version, or by hand) or marked for another release or instance is kept, and the caller says so.
+     *
+     * @param targetClientId the client id
+     * @param expectedMarker the release and KDPS instance the client must be marked for
+     * @return what was done
+     * @throws Exception when Keycloak cannot be reached, refuses the admin credential or the deletion
+     */
+    public DeleteOutcome deleteClient(String targetClientId, ClientMarker expectedMarker) throws Exception {
+        Objects.requireNonNull(targetClientId, "targetClientId");
+        Objects.requireNonNull(expectedMarker, "expectedMarker");
+        String token = obtainAdminToken();
+        String uuid = findClientUuid(token, targetClientId);
+        if (uuid == null) return DeleteOutcome.NOT_FOUND;
+
+        String url = adminUrl + "/admin/realms/" + enc(realm) + "/clients/" + uuid;
+        HttpResponse<String> read = http.send(bearer(token, url).GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (read.statusCode() == 404) return DeleteOutcome.NOT_FOUND;
+        if (read.statusCode() != 200) {
+            throw new IllegalStateException("Keycloak GET /clients/" + uuid + " returned HTTP " + read.statusCode()
+                    + ": " + trim(read.body()));
+        }
+        ClientMarker found = ClientMarker.of(JSON.readValue(read.body(), new TypeReference<Map<String, Object>>() {}));
+        if (!found.present()) {
+            LOG.info("KeycloakAdminClient: client '{}' in realm '{}' carries no KDPS mark; kept", targetClientId, realm);
+            return DeleteOutcome.NOT_MARKED;
+        }
+        if (!found.equals(expectedMarker)) {
+            LOG.info("KeycloakAdminClient: client '{}' in realm '{}' is marked for {} (instance {}), not {}; kept",
+                    targetClientId, realm, found.release(), found.instance(), expectedMarker.release());
+            return DeleteOutcome.MARKED_FOR_ANOTHER;
+        }
+
+        HttpResponse<String> resp = http.send(bearer(token, url).DELETE().build(), HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() == 404) return DeleteOutcome.NOT_FOUND;
+        if (resp.statusCode() / 100 != 2) {
+            throw new IllegalStateException("Keycloak DELETE /clients/" + uuid + " returned HTTP " + resp.statusCode()
+                    + ": " + trim(resp.body()));
+        }
+        LOG.info("KeycloakAdminClient: deleted client '{}' (uuid={}) of {} from realm '{}'", targetClientId, uuid,
+                expectedMarker.release(), realm);
+        return DeleteOutcome.DELETED;
     }
 
     /**
@@ -293,6 +445,15 @@ public class KeycloakAdminClient {
      * Returns the internal UUID of an existing client, or null if not found.
      */
     private String findClientUuid(String token, String targetClientId) throws Exception {
+        Map<String, Object> client = findClient(token, targetClientId);
+        return client == null ? null : (String) client.get("id");
+    }
+
+    /**
+     * Returns the representation of an existing client as the client search lists it (attributes included), or null
+     * if not found.
+     */
+    private Map<String, Object> findClient(String token, String targetClientId) throws Exception {
         String url = adminUrl + "/admin/realms/" + enc(realm)
                 + "/clients?clientId=" + enc(targetClientId) + "&exact=true";
 
@@ -307,7 +468,7 @@ public class KeycloakAdminClient {
 
         List<Map<String, Object>> list = JSON.readValue(resp.body(), new TypeReference<>() {});
         if (list == null || list.isEmpty()) return null;
-        return (String) list.get(0).get("id");
+        return list.get(0);
     }
 
     /**
@@ -427,15 +588,22 @@ public class KeycloakAdminClient {
         return mappers;
     }
 
-    /** The client representation sent to Keycloak on a create and on an update. */
+    /**
+     * The client representation sent to Keycloak on a create and on an update.
+     *
+     * @param marker the release and KDPS instance written in the client's attributes; null writes none (Keycloak keeps
+     *               the attributes an update does not send)
+     */
     static Map<String, Object> buildClientRepresentation(String id,
                                                           String redirectUri,
                                                           boolean publicClient,
                                                           boolean standardFlowEnabled,
                                                           boolean implicitFlowEnabled,
                                                           boolean serviceAccountsEnabled,
-                                                          List<Map<String, Object>> audienceMappers) {
+                                                          List<Map<String, Object>> audienceMappers,
+                                                          ClientMarker marker) {
         java.util.LinkedHashMap<String, Object> rep = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashMap<String, Object> attributes = new java.util.LinkedHashMap<>();
         rep.put("clientId", id);
         rep.put("enabled", true);
         rep.put("publicClient", publicClient);
@@ -474,11 +642,15 @@ public class KeycloakAdminClient {
                 // so an exact "/" + "/login/" list rejected some with "Invalid redirect uri". A
                 // bare-origin + wildcard pair (Keycloak '*' matches any sub-path) covers them all
                 // while still confining post-logout redirects to the service's own host.
-                rep.put("attributes", new java.util.LinkedHashMap<>(Map.of(
-                        "post.logout.redirect.uris",
-                        postLogoutBase + "##" + postLogoutBase + "/*"
-                )));
+                attributes.put("post.logout.redirect.uris", postLogoutBase + "##" + postLogoutBase + "/*");
             }
+        }
+        if (marker != null) {
+            attributes.put(MARKER_RELEASE_ATTRIBUTE, marker.release());
+            attributes.put(MARKER_INSTANCE_ATTRIBUTE, marker.instance());
+        }
+        if (!attributes.isEmpty()) {
+            rep.put("attributes", attributes);
         }
         // Ensure the ID token + userinfo response include the "groups" claim so
         // Superset (and any KDPS service relying on AUTH_ROLES_MAPPING) can map

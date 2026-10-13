@@ -24,6 +24,7 @@ import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.deployment.GitPushRejectedException;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.junit.jupiter.api.BeforeEach;
@@ -97,7 +98,7 @@ class HelmResourceUninstallTest {
     private Response uninstall() {
         // No Git parameter: the release is removed from Git with what its record names (see
         // HelmResourceUninstallGitOpsTest).
-        return resource.uninstall(NS, RELEASE, null, null, null);
+        return resource.uninstall(NS, RELEASE, null, null, null, null);
     }
 
     @Test
@@ -118,6 +119,7 @@ class HelmResourceUninstallTest {
             verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
             verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
             verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+            verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
             verify(releaseMetadata, never()).delete(anyString(), anyString());
         }
     }
@@ -135,6 +137,7 @@ class HelmResourceUninstallTest {
         assertTrue(String.valueOf(((Map<?, ?>) response.getEntity()).get("error")).contains("team-b/trino"));
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -155,6 +158,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -170,6 +174,7 @@ class HelmResourceUninstallTest {
                 ((Map<?, ?>) response.getEntity()).get("error"));
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -185,6 +190,7 @@ class HelmResourceUninstallTest {
         verify(commandService).revokePolarisForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(commandService).removeSccGrantsForRelease(eq(NS), eq(RELEASE), any());
         verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
+        verify(commandService).revokeOidcForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(releaseMetadata).delete(NS, RELEASE);
     }
 
@@ -247,6 +253,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
         verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
     }
@@ -269,6 +276,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -295,7 +303,64 @@ class HelmResourceUninstallTest {
         verify(commandService, times(1)).removeSccGrantsForRelease(eq(NS), eq(RELEASE), any());
         verify(commandService, times(1)).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), eq("cdp-prod"),
                 any());
+        verify(commandService, times(1)).revokeOidcForRelease(eq(NS), eq(RELEASE), eq("cdp-prod"), any());
         verify(releaseMetadata, times(1)).delete(NS, RELEASE);
         verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
+    }
+
+    @Test
+    void theSignInOfTheReleaseIsRemovedOnTheRecordedContextAndSaysWhatWasDone() throws Exception {
+        K8sReleaseEntity meta = new K8sReleaseEntity();
+        meta.setId(K8sReleaseEntity.idOf(NS, RELEASE));
+        meta.setNamespace(NS);
+        meta.setReleaseName(RELEASE);
+        meta.setPlatformContextId("cdp-prod");
+        when(releaseMetadata.find(NS, RELEASE)).thenReturn(meta);
+        String note = "Removed the single sign-on client 'trino-team-a' in Keycloak realm 'odp'.\n"
+                + "Removed the Secret trino-oidc-client holding the client secret.";
+        when(commandService.revokeOidcForRelease(NS, RELEASE, "cdp-prod", null)).thenReturn(note);
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        assertEquals(note, ((Map<?, ?>) response.getEntity()).get("oidcCleanup"));
+        // Taken back once the release is gone, from the record read before it is deleted.
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(commandService, releaseMetadata);
+        order.verify(commandService).destroyViaBackend(eq(NS), eq(RELEASE), any());
+        order.verify(releaseMetadata).delete(NS, RELEASE);
+        order.verify(commandService).revokeOidcForRelease(NS, RELEASE, "cdp-prod", null);
+    }
+
+    @Test
+    void anUninstallAskingToKeepTheSignInLeavesIt() throws Exception {
+        Response response = resource.uninstall(NS, RELEASE, null, " None ", null, null);
+
+        assertEquals(200, response.getStatus());
+        verify(commandService).destroyViaBackend(eq(NS), eq(RELEASE), any());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void anOidcCleanupThatThrowsDoesNotFailTheUninstall() throws Exception {
+        when(commandService.revokeOidcForRelease(anyString(), anyString(), any(), any()))
+                .thenThrow(new IllegalStateException("unexpected"));
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
+    }
+
+    @Test
+    void anUninstallRefusedBecauseAHelmOperationIsRunningKeepsTheSignIn() throws Exception {
+        doThrow(new HelmOperationRegistry.ReleaseBusyException(NS, RELEASE))
+                .when(commandService).destroyViaBackend(eq(NS), eq(RELEASE), any());
+
+        Response response = uninstall();
+
+        assertEquals(409, response.getStatus());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+        verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 }

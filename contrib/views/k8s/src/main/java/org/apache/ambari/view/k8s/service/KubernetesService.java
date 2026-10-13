@@ -6582,6 +6582,17 @@ public class KubernetesService {
      */
     public void createOrUpdateOpaqueSecret(String namespace, String secretName, Map<String, byte[]> binaryData,
                                            Map<String, String> labels) {
+        createOrUpdateOpaqueSecret(namespace, secretName, binaryData, labels, null);
+    }
+
+    /**
+     * Create/update a Secret with multiple keys (binary), labels and annotations, such as those that tell what to
+     * remove with the Secret when its release is uninstalled. An update replaces the whole Secret, so labels and
+     * annotations an earlier write set and this one does not are dropped. The view's own {@code managed-by} and
+     * {@code managed-at} annotations are always set.
+     */
+    public void createOrUpdateOpaqueSecret(String namespace, String secretName, Map<String, byte[]> binaryData,
+                                           Map<String, String> labels, Map<String, String> annotations) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(secretName, "secretName");
         Objects.requireNonNull(binaryData, "binaryData");
@@ -6603,6 +6614,11 @@ public class KubernetesService {
             if (labels != null && !labels.isEmpty()) {
                 if (meta.getLabels() == null) meta.setLabels(new HashMap<>());
                 meta.getLabels().putAll(labels);
+            }
+            if (annotations != null && !annotations.isEmpty()) {
+                Map<String, String> merged = new LinkedHashMap<>(annotations);
+                merged.putAll(meta.getAnnotations());
+                meta.setAnnotations(merged);
             }
 
             Secret desired = new SecretBuilder()

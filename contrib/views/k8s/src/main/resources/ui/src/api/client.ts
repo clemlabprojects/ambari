@@ -1538,7 +1538,7 @@ export async function submitHelmDeploy(payload: {
   return response.json() as Promise<{id: string}>;
 }
 
-/** What an uninstall could not take back itself and leaves to an administrator. */
+/** What an uninstall took back, and what it could not take back itself and leaves to an administrator. */
 export interface UninstallNotes {
   /** The removal of a GitOps release waits for its pull request to be merged: the release keeps running until then. */
   pendingDelete?: boolean;
@@ -1546,8 +1546,10 @@ export interface UninstallNotes {
   pullRequestUrl?: string;
   /** What finishes the removal. */
   message?: string;
-  /** Polaris access the release keeps. */
+  /** What became of the release's Polaris access: the principal removed, or what is left to remove in Polaris. */
   polarisCleanup?: string;
+  /** What became of the release's single sign-on: the Keycloak client and the Secrets holding its client secret removed, or what is left to remove by hand. */
+  oidcCleanup?: string;
   /** OpenShift SCC grants that KDPS did not take back (made outside KDPS, or still used by another release), with the platform team's commands. */
   sccCleanup?: string;
   /** The Ranger account of the release's Atlas tag sync that KDPS could not disable, or a Ranger password to change. */

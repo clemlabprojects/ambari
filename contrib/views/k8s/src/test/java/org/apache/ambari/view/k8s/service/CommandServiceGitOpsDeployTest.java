@@ -1343,7 +1343,7 @@ class CommandServiceGitOpsDeployTest {
         assertEquals(CommandState.FAILED.name(), run(id).getState());
 
         verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-oidc-client"), argThat((Map<String, byte[]> data) ->
-                OIDC_SECRET.equals(new String(data.get("client_secret"), StandardCharsets.UTF_8))));
+                OIDC_SECRET.equals(new String(data.get("client_secret"), StandardCharsets.UTF_8))), any(), any());
         List<Path> files = new ArrayList<>();
         for (String commandId : commandIds(id)) {
             Path file = paramsFile(commandId);
