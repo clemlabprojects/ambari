@@ -137,6 +137,21 @@ These services were offered by pre-release builds and are no longer in the servi
   names to Secrets next to each chart source through the Kubernetes API, never to Git. A repository can instead name
   existing Secrets (for example created by SOPS, Sealed Secrets or External Secrets). A deploy whose repository needs
   credentials KDPS does not have is refused with a clear message instead of committing a source Flux cannot read.
+- GitOps over SSH checks the Git server's host key. KDPS only connects to a server presenting the key given in the new
+  "Git server host key (known_hosts line)" field (the deploy forms, and the Git repositories page for a saved SSH
+  repository), as printed by `ssh-keyscan [-p port] host` or read from the server's `/etc/ssh/ssh_host_ed25519_key.pub`.
+  Without one, the deploy is refused and its message shows the key the server presented and its SHA-256 fingerprint:
+  check it with the Git server's administrator, then paste the line the message gives. A server presenting another key
+  is refused, for the deploy and for the uninstall. The key is recorded for the release once a deploy has reached Git,
+  so later deploys and the uninstall need nothing more. Trusting the key presented on the first deploy, without
+  checking it, is offered as an explicit option; the key is then recorded and required from then on.
+- Upgrade step for releases already deployed over SSH: deploy them once with the Git server's host key, or their next
+  deploy is refused with the key to check, and their uninstall is refused until such a deploy has recorded the key.
+- SSH deploy keys as `ssh-keygen` writes them now work: Ed25519 (recommended), ECDSA and RSA keys in OpenSSH format
+  (`-----BEGIN OPENSSH PRIVATE KEY-----`) or PEM format, signed with SHA-2 as current OpenSSH servers require. The key
+  must have no passphrase. KDPS no longer reads anything from the SSH settings of the user Ambari runs as (its keys,
+  known hosts or `~/.ssh/config`). HTTPS with an access token remains the simplest transport when the Git server's
+  certificate is in a KDPS truststore.
 
 ### Authentication
 

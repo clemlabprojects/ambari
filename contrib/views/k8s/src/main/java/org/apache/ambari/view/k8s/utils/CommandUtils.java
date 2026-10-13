@@ -344,12 +344,16 @@ public class CommandUtils {
                 Object authToken = gitMap.get("authToken");
                 Object sshKey = gitMap.get("sshKey");
                 Object commitMode = gitMap.get("commitMode");
+                Object sshKnownHosts = gitMap.get("sshKnownHosts");
+                Object trustHostKeyOnFirstUse = gitMap.get("trustHostKeyOnFirstUse");
                 if (repoUrl instanceof String) opts.setRepoUrl((String) repoUrl);
                 if (baseBranch instanceof String) opts.setBaseBranch((String) baseBranch);
                 if (pathPrefix instanceof String) opts.setPathPrefix((String) pathPrefix);
                 if (authToken instanceof String) opts.setAuthToken((String) authToken);
                 if (sshKey instanceof String) opts.setSshKey((String) sshKey);
                 if (commitMode instanceof String) opts.setCommitMode((String) commitMode);
+                if (sshKnownHosts instanceof String) opts.setSshKnownHosts((String) sshKnownHosts);
+                if (trustHostKeyOnFirstUse instanceof Boolean) opts.setTrustHostKeyOnFirstUse((Boolean) trustHostKeyOnFirstUse);
                 req.setGit(opts);
             } else if (git instanceof String s && !s.isBlank()) {
                 try {
@@ -362,12 +366,16 @@ public class CommandUtils {
                         Object authToken = gitObj.get("authToken");
                         Object sshKey = gitObj.get("sshKey");
                         Object commitMode = gitObj.get("commitMode");
+                        Object sshKnownHosts = gitObj.get("sshKnownHosts");
+                        Object trustHostKeyOnFirstUse = gitObj.get("trustHostKeyOnFirstUse");
                         if (repoUrl instanceof String) opts.setRepoUrl((String) repoUrl);
                         if (baseBranch instanceof String) opts.setBaseBranch((String) baseBranch);
                         if (pathPrefix instanceof String) opts.setPathPrefix((String) pathPrefix);
                         if (authToken instanceof String) opts.setAuthToken((String) authToken);
                         if (sshKey instanceof String) opts.setSshKey((String) sshKey);
                         if (commitMode instanceof String) opts.setCommitMode((String) commitMode);
+                        if (sshKnownHosts instanceof String) opts.setSshKnownHosts((String) sshKnownHosts);
+                        if (trustHostKeyOnFirstUse instanceof Boolean) opts.setTrustHostKeyOnFirstUse((Boolean) trustHostKeyOnFirstUse);
                         req.setGit(opts);
                     }
                 } catch (Exception ignore) {

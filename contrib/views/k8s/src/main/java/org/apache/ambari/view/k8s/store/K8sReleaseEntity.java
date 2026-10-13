@@ -153,6 +153,10 @@ public class K8sReleaseEntity extends BaseModel {
     @Transient
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /** Git metadata key of the Git server's SSH host keys, the one attribute that gives way when the column is full. */
+    @Transient
+    private static final String SSH_KNOWN_HOSTS = "sshKnownHosts";
+
     // Basic columns
     public String getNamespace() {
         return namespace;
@@ -327,7 +331,12 @@ public class K8sReleaseEntity extends BaseModel {
         return cache;
     }
 
-    /** Write one git attribute, re-serialising the column. A null/blank value removes the key. */
+    /**
+     * Write one git attribute, re-serialising the column. A null/blank value removes the key. The Git server's SSH host
+     * keys give way to any other attribute that would no longer fit the column with them: the DataStore refuses a
+     * longer value when the release is stored, by then after Git was changed, while the host keys stay recorded with
+     * the release's Git credential.
+     */
     private void putGitMeta(String key, String value) {
         Map<String, String> meta = gitMeta();
         if (value == null || value.isBlank()) {
@@ -336,7 +345,12 @@ public class K8sReleaseEntity extends BaseModel {
             meta.put(key, value);
         }
         try {
-            this.gitMetaJson = meta.isEmpty() ? null : MAPPER.writeValueAsString(meta);
+            String json = meta.isEmpty() ? null : MAPPER.writeValueAsString(meta);
+            if (json != null && json.length() > InstanceSettings.MAX_VALUE_LENGTH && !SSH_KNOWN_HOSTS.equals(key)
+                    && meta.remove(SSH_KNOWN_HOSTS) != null) {
+                json = meta.isEmpty() ? null : MAPPER.writeValueAsString(meta);
+            }
+            this.gitMetaJson = json;
         } catch (Exception e) {
             // Should not happen for a Map<String,String>; keep the previous JSON rather than corrupting it.
         }
@@ -419,6 +433,27 @@ public class K8sReleaseEntity extends BaseModel {
 
     public void setGitCredentialAlias(String gitCredentialAlias) {
         putGitMeta("credentialAlias", gitCredentialAlias);
+    }
+
+    /**
+     * The SSH host keys of the release's Git server, as known_hosts lines (null when none is recorded): a connection
+     * over SSH requires the server to present one of them.
+     */
+    public String getGitSshKnownHosts() {
+        return gitMeta().get(SSH_KNOWN_HOSTS);
+    }
+
+    /**
+     * Records the SSH host keys of the release's Git server. When the metadata would no longer fit its column, the
+     * release keeps no host keys at all ({@link #getGitSshKnownHosts} gives null), rather than the previous ones: those
+     * may be keys the server no longer presents, and would take precedence over the current ones recorded with the
+     * release's Git credential. Dropped later when another Git attribute needs the room ({@link #putGitMeta}).
+     */
+    public void setGitSshKnownHosts(String knownHosts) {
+        putGitMeta(SSH_KNOWN_HOSTS, knownHosts);
+        if (gitMetaJson != null && gitMetaJson.length() > InstanceSettings.MAX_VALUE_LENGTH) {
+            putGitMeta(SSH_KNOWN_HOSTS, null);
+        }
     }
 
     public String getGitCommitMode() {

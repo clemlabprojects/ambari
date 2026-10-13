@@ -19,6 +19,7 @@ package org.apache.ambari.view.k8s.service.deployment;
 
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
+import com.jcraft.jsch.KeyPair;
 import com.jcraft.jsch.Session;
 import org.apache.ambari.view.k8s.service.ProxySupport;
 import org.eclipse.jgit.api.CheckoutCommand;
@@ -42,12 +43,15 @@ import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.PushResult;
-import org.eclipse.jgit.transport.ssh.jsch.JschConfigSessionFactory;
-import org.eclipse.jgit.transport.ssh.jsch.OpenSshConfig;
+import org.eclipse.jgit.errors.TransportException;
+import org.eclipse.jgit.transport.ssh.jsch.JschSession;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
+import org.eclipse.jgit.transport.RemoteSession;
+import org.eclipse.jgit.transport.SshSessionFactory;
 import org.eclipse.jgit.transport.SshTransport;
 import org.eclipse.jgit.transport.TransportHttp;
+import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
@@ -77,8 +81,10 @@ import java.util.UUID;
  * a single {@link TransportConfigCallback} hook where SSH and the outbound proxy are attached.
  *
  * <p>Auth: HTTPS remotes use the token as the username (matching the old {@code https://token@host}),
- * SSH remotes use the provided private key in memory (no key file on disk). SSH host-key checking is
- * relaxed ("no") for unattended GitOps — the classic JSch provider has no OpenSSH "accept-new".
+ * SSH remotes use the provided private key in memory (no key file on disk). Over SSH, the Git server must present a
+ * host key configured for the repository ({@link #withHostKeys}): any other is refused, as is a server whose key KDPS
+ * cannot check, with a message showing the key it presented ({@link GitHostKeys}). Nothing is read from the SSH
+ * settings of the user Ambari runs as ({@code ~/.ssh}): neither its keys, its known hosts nor its configuration.
  *
  * <p>Every clone, fetch and push gives up once the server has sent nothing for {@link #withTimeout the timeout}:
  * JGit's own default waits forever, so a Git server or proxy that stops answering would hold the caller (and the
@@ -100,7 +106,8 @@ public class GitClient {
      */
     private static final List<String> NOT_RETRYABLE_MESSAGES = List.of(
             "timed out", "time out", "timeout",
-            "not authorized", "authentication", "auth fail", "auth cancel", "not permitted", "forbidden");
+            "not authorized", "authentication", "auth fail", "auth cancel", "not permitted", "forbidden",
+            "host key", "private key");
 
     private final Path workspace;
     private final String repoUrl;
@@ -112,6 +119,10 @@ public class GitClient {
     private int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
     private final TransportConfigCallback transportConfig;
     private ProxySupport proxy;
+    private String knownHosts;
+    private boolean trustHostKeyOnFirstUse;
+    /** The host keys this client checks the server's against, set up on its first SSH connection. */
+    private GitHostKeys hostKeys;
 
     public GitClient(Path workspace, String repoUrl, String baseBranch, String authToken) {
         this(workspace, repoUrl, baseBranch, authToken, null);
@@ -153,6 +164,38 @@ public class GitClient {
     public GitClient withProxy(ProxySupport proxy) {
         this.proxy = proxy;
         return this;
+    }
+
+    /**
+     * The SSH host keys of the Git server, as known_hosts lines ({@code host type key}, or {@code type key} for the
+     * repository's host): over SSH, a server presenting any other key is refused.
+     *
+     * @param knownHosts the lines; {@code null} or blank when none is configured, and the server is then refused
+     *                   unless {@link #withHostKeyTrustOnFirstUse trust on first use} was chosen
+     * @throws IllegalArgumentException when a line is not a host key
+     */
+    public GitClient withHostKeys(String knownHosts) {
+        GitHostKeys.check(knownHosts);
+        this.knownHosts = knownHosts == null || knownHosts.isBlank() ? null : knownHosts;
+        return this;
+    }
+
+    /**
+     * Whether, with no host key configured, the first key the Git server presents is accepted, and then required for
+     * the rest of this client's operations. The caller records it ({@link #capturedHostKey}) so that it is enforced
+     * from then on. Without a configured key and without this, an SSH connection is refused.
+     */
+    public GitClient withHostKeyTrustOnFirstUse(boolean trust) {
+        this.trustHostKeyOnFirstUse = trust;
+        return this;
+    }
+
+    /**
+     * The host key accepted on first use ({@link #withHostKeyTrustOnFirstUse}), as a known_hosts line to record for the
+     * repository; {@code null} when none was: a host key was configured, or no SSH connection was made.
+     */
+    public synchronized String capturedHostKey() {
+        return hostKeys == null ? null : hostKeys.captured();
     }
 
     /** The timeout of clones, fetches and pushes, in seconds. */
@@ -205,24 +248,13 @@ public class GitClient {
         return url == null ? null : url.replaceFirst("://[^@/]+@", "://");
     }
 
-    /** Transport callback: install the in-memory SSH key on SSH transports. */
+    /**
+     * Transport callback: SSH transports connect through {@link SshSessions}, with the in-memory SSH key and the host
+     * keys configured for the repository. Installed whether or not a key is given: an SSH remote never falls back to
+     * JGit's default, which reads the keys, known hosts and configuration of the user Ambari runs as.
+     */
     private TransportConfigCallback buildTransportConfig() {
-        if (sshKey == null || sshKey.isBlank()) {
-            return null;
-        }
-        final JschConfigSessionFactory sshFactory = new JschConfigSessionFactory() {
-            @Override
-            protected void configure(OpenSshConfig.Host host, Session session) {
-                configureSession(session);
-            }
-            @Override
-            protected JSch createDefaultJSch(FS fs) throws JSchException {
-                JSch jsch = super.createDefaultJSch(fs);
-                jsch.addIdentity("kdps-gitops",
-                        sshKey.getBytes(StandardCharsets.UTF_8), null, null);
-                return jsch;
-            }
-        };
+        final SshSessionFactory sshFactory = new SshSessions();
         return transport -> {
             if (transport instanceof SshTransport) {
                 ((SshTransport) transport).setSshSessionFactory(sshFactory);
@@ -230,13 +262,96 @@ public class GitClient {
         };
     }
 
+    /** The host keys of this client, for the Git server at {@code host:port}. */
+    private synchronized GitHostKeys hostKeys(String host, int port) {
+        if (hostKeys == null) {
+            hostKeys = new GitHostKeys(knownHosts, host, port, trustHostKeyOnFirstUse);
+        }
+        return hostKeys;
+    }
+
     /**
-     * Settings of an SSH session to the Git server. Classic JSch has no "accept-new", so strict host-key checking is
-     * off for unattended automation. Keepalives notice a connection the network dropped without closing it (a
-     * firewall that forgot it, say) even while no data is expected, which the timeout of the transfer alone does not.
+     * Opens SSH sessions to the Git server with a JSch of its own: the deploy key given to this client as its only
+     * identity, and the host keys configured for the repository as the only ones it accepts.
+     */
+    private final class SshSessions extends SshSessionFactory {
+
+        @Override
+        public RemoteSession getSession(URIish uri, CredentialsProvider credentialsProvider, FS fs, int tms)
+                throws TransportException {
+            int port = uri.getPort() > 0 ? uri.getPort() : 22;
+            String server = uri.getHost() + (port == 22 ? "" : ":" + port);
+            JSch jsch = new JSch();
+            if (sshKey != null && !sshKey.isBlank()) {
+                // A key pasted into a form may come with Windows line ends or without its final one.
+                byte[] key = (sshKey.replace("\r\n", "\n").trim() + "\n").getBytes(StandardCharsets.UTF_8);
+                try {
+                    KeyPair pair = KeyPair.load(jsch, key, null);
+                    boolean encrypted = pair.isEncrypted();
+                    pair.dispose();
+                    if (encrypted) {
+                        throw new TransportException(uri, "the SSH private key given for the Git repository is"
+                                + " protected by a passphrase, which KDPS cannot enter. Give a deploy key without a"
+                                + " passphrase.");
+                    }
+                    jsch.addIdentity("kdps-gitops", key, null, null);
+                } catch (JSchException e) {
+                    // The key itself is never part of the message.
+                    throw new TransportException(uri, "the SSH private key given for the Git repository could not"
+                            + " be read. Give a private key without a passphrase, Ed25519, ECDSA or RSA, in OpenSSH"
+                            + " format ('-----BEGIN OPENSSH PRIVATE KEY-----', what ssh-keygen writes) or PEM format.");
+                }
+            }
+            GitHostKeys keys;
+            try {
+                keys = hostKeys(uri.getHost(), port);
+            } catch (IllegalArgumentException e) {
+                throw new TransportException(uri, e.getMessage(), e);
+            }
+            jsch.setHostKeyRepository(keys);
+            // A refusal reported below is this connection's, never one of an earlier connection of this client.
+            keys.forgetLastCheck();
+            String user = uri.getUser() != null && !uri.getUser().isBlank() ? uri.getUser()
+                    : System.getProperty("user.name");
+            Session session = null;
+            try {
+                session = jsch.getSession(user, uri.getHost(), port);
+                if (uri.getPass() != null) {
+                    session.setPassword(uri.getPass());
+                }
+                configureSession(session);
+                session.setConfig("server_host_key", keys.preferredAlgorithms(session.getConfig("server_host_key")));
+                session.connect(tms);
+                return new JschSession(session, uri);
+            } catch (JSchException e) {
+                if (session != null && session.isConnected()) {
+                    session.disconnect();
+                }
+                String rejection = keys.rejection(server);
+                if (rejection != null) {
+                    LOG.warn("Refused the Git server {}: {}", server, rejection);
+                    throw new TransportException(uri, rejection, e);
+                }
+                throw new TransportException(uri, e.getMessage(), e);
+            }
+        }
+
+        @Override
+        public String getType() {
+            return "jsch";
+        }
+    }
+
+    /**
+     * Settings of an SSH session to the Git server. The host key must be one this client accepts ({@link GitHostKeys}):
+     * never "no", with which JSch would also take a key that changed. Keepalives notice a connection the network
+     * dropped without closing it (a firewall that forgot it, say) even while no data is expected, which the timeout of
+     * the transfer alone does not.
      */
     static void configureSession(Session session) {
-        session.setConfig("StrictHostKeyChecking", "no");
+        session.setConfig("StrictHostKeyChecking", "yes");
+        // Each connection tries the one deploy key once; a refusal is reported, not tried again.
+        session.setConfig("MaxAuthTries", "1");
         try {
             session.setServerAliveInterval(SERVER_ALIVE_INTERVAL_MS);
         } catch (JSchException e) {

@@ -1209,6 +1209,44 @@ class CommandServiceGitOpsDeployTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void theHostKeyOfTheDagRepositoryReachesTheDagPublishStep() {
+        String hostKey = "git.example.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+        HelmDeployRequest request = fullRequest("FLUX_GITOPS");
+        Map<String, Object> airflow = (Map<String, Object>) request.getFormValues().get("airflow");
+        airflow.put("dagRepo", "git@git.example.org:data/dags.git");
+        airflow.put("dagRepoHostKey", hostKey);
+
+        String id = plan(request, true);
+
+        assertEquals(hostKey, paramsOf(step(id, CommandType.DBT_PUBLISH_AIRFLOW_DAG)).get("gitSshKnownHosts"));
+    }
+
+    @Test
+    void theGitServerHostKeyTravelsWithThePlannedDeployAndIsRecordedOnceItReachedGit() throws Exception {
+        credentialStore(true);
+        fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
+        String hostKey = "git.example.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+        HelmDeployRequest request = request("FLUX_GITOPS", "main");
+        request.getGit().setAuthToken(TOKEN);
+        request.getGit().setSshKnownHosts("# git.example.org:22 SSH-2.0-OpenSSH_9.7\n" + hostKey + "\n");
+
+        String id = service.gitOpsDeploy(request, "charts", "0.0.1", null, null, null, null);
+        awaitEnd(id);
+
+        // A public key, not a secret: kept with the deploy, unlike the token.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> git = (Map<String, Object>) paramsOf(step(id, CommandType.GITOPS_COMMIT)).get("git");
+        assertTrue(String.valueOf(git.get("sshKnownHosts")).contains(hostKey), String.valueOf(git));
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT),
+                statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
+        String alias = GitCredentialService.releaseAlias(ctx.getInstanceName(), NS, rel);
+        assertEquals(hostKey, dataStore.find(K8sReleaseEntity.class, K8sReleaseEntity.idOf(NS, rel)).getGitSshKnownHosts(),
+                "recorded for the release, comments left out");
+        verify(gitCredentials).storeKnownHosts(alias, hostKey);
+    }
+
+    @Test
     void everyDeployOfAReleaseKeepsItsNewGitCredentialInPlaceUntilItReachesGit() throws Exception {
         Map<String, String> stored = credentialStore(true);
         String pending = GitCredentialService.pendingAlias(ctx.getInstanceName(), NS, rel);

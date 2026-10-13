@@ -235,14 +235,35 @@ class GitClientServerFailureTest {
     }
 
     @Test
-    void sshSessionsToTheGitServerSendKeepalives() throws Exception {
+    void sshSessionsToTheGitServerSendKeepalivesAndCheckItsHostKey() throws Exception {
         Session session = new JSch().getSession("git", "git.example.com", 22);
 
         GitClient.configureSession(session);
 
         assertEquals(30_000, session.getServerAliveInterval());
         assertEquals(4, session.getServerAliveCountMax());
-        assertEquals("no", session.getConfig("StrictHostKeyChecking"));
+        // Never "no", with which a changed host key would be taken too.
+        assertEquals("yes", session.getConfig("StrictHostKeyChecking"));
+    }
+
+    @Test
+    void aDeployKeyThatCannotBeUsedIsReportedWithoutItsContentBeforeAnyConnection() throws Exception {
+        // Port 9 of the loopback: nothing answers, and nothing needs to, since the key is refused first.
+        String url = "ssh://git@127.0.0.1:9/platform/gitops.git";
+        String garbage = "-----BEGIN OPENSSH PRIVATE KEY-----\nbm90IGEga2V5\n-----END OPENSSH PRIVATE KEY-----";
+        IOException unreadable = assertThrows(IOException.class,
+                () -> new GitClient(tmp.resolve("ws-a"), url, "main", null, garbage).sync());
+        assertTrue(unreadable.getMessage().contains("SSH private key given for the Git repository could not be read"),
+                unreadable.getMessage());
+        assertFalse(unreadable.getMessage().contains("bm90IGEga2V5"), "the key is never shown");
+        assertFalse(GitClient.isRetryable(unreadable));
+
+        com.jcraft.jsch.KeyPair pair = com.jcraft.jsch.KeyPair.genKeyPair(new JSch(), com.jcraft.jsch.KeyPair.ECDSA, 256);
+        java.io.ByteArrayOutputStream encrypted = new java.io.ByteArrayOutputStream();
+        pair.writePrivateKey(encrypted, "a passphrase".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        IOException withPassphrase = assertThrows(IOException.class, () -> new GitClient(tmp.resolve("ws-b"), url,
+                "main", null, encrypted.toString(java.nio.charset.StandardCharsets.UTF_8)).sync());
+        assertTrue(withPassphrase.getMessage().contains("protected by a passphrase"), withPassphrase.getMessage());
     }
 
     @Test
@@ -255,6 +276,8 @@ class GitClientServerFailureTest {
         assertFalse(GitClient.isRetryable(new IOException("git push failed", new org.eclipse.jgit.errors.TransportException(
                 "https://git.example.com/a.git: git-receive-pack not permitted on 'https://git.example.com/a.git/'"))));
         assertFalse(GitClient.isRetryable(new IOException("git sync failed", new IOException("Auth fail"))));
+        assertFalse(GitClient.isRetryable(new IOException("git sync failed", new org.eclipse.jgit.errors.TransportException(
+                "ssh://git@git.example.com/a.git: No SSH host key is configured for the Git server git.example.com"))));
         assertFalse(GitClient.isRetryable(new GitPushRejectedException("https://git.example.com/a.git", "main",
                 RemoteRefUpdate.Status.REJECTED_OTHER_REASON, "protected branch", null)));
 

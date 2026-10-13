@@ -26,6 +26,7 @@ import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,6 +34,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -72,6 +74,7 @@ import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
 import org.apache.ambari.view.k8s.utils.CommandUtils;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
+import org.eclipse.jgit.transport.URIish;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,6 +108,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     // Retry configuration constants
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final long RETRY_BASE_DELAY_MS = 500L;
+
+    /** URL schemes JGit reaches a Git repository with over SSH. */
+    private static final Set<String> SSH_SCHEMES = Set.of("ssh", "git+ssh", "ssh+git");
 
     /**
      * How many times a change is pushed when the branch keeps moving on the server meanwhile (other deploys pushing
@@ -906,6 +912,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (isPullRequestMode(commitMode)) {
             GitPullRequests.candidates(repoUrl.trim());
         }
+        GitHostKeys.check(given.getSshKnownHosts());
         GitSecrets gitSecrets = gitSecrets(given, repoUrl.trim(), request.getNamespace(), request.getReleaseName(),
                 existingMeta);
         checkGitAccess(repoUrl.trim(), commitMode, gitSecrets.token(), gitSecrets.sshKey());
@@ -954,16 +961,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * The Git credentials a deploy pushes with.
+     * The Git credentials a deploy pushes with, and the SSH host keys the Git server must present.
      *
-     * @param alias the credential store alias they were read from, {@code null} when given with the deploy
+     * @param alias      the credential store alias they were read from, {@code null} when given with the deploy
+     * @param knownHosts known_hosts lines of the Git server, {@code null} when none is given or recorded
      */
-    private record GitSecrets(String token, String sshKey, String alias) {}
+    private record GitSecrets(String token, String sshKey, String alias, String knownHosts) {}
 
     /**
      * The token or SSH key given with the deploy, else the one stored for the release, and the token stored next to
-     * an SSH key. A stored secret is only read from an alias of the release itself and for the Git host it was
-     * entered for ({@link #storedSecret}); an alias the deploy names next to a token or key it gives is not used.
+     * an SSH key. The Git server's host keys likewise: given with the deploy, else, when the deploy goes to the SSH
+     * server the release was recorded on ({@link #sameSshServer}), recorded for the release or with its credential.
+     * A stored secret is only read from an alias of the release itself and for the Git host it was entered for
+     * ({@link #storedSecret}); an alias the deploy names next to a token or key it gives is not used.
      *
      * @param repoUrl      the repository the deploy pushes to
      * @param existingMeta the release as recorded, {@code null} for a new one
@@ -993,22 +1003,53 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 token = storedSecret(tokenAlias, repoUrl, namespace, release, existingMeta);
             }
         }
-        return new GitSecrets(token, sshKey, alias);
+        // The host keys recorded for the release are those of the server it was deployed to: a deploy to another one
+        // has none, so the server's key is checked or trusted on first use as for a new release.
+        String recordedHostKeys = null;
+        if (existingMeta != null && sameSshServer(existingMeta.getGitRepoUrl(), repoUrl)) {
+            recordedHostKeys = firstNonBlank(existingMeta.getGitSshKnownHosts(), gitCredentialService.knownHosts(
+                    firstNonBlank(alias, existingMeta.getGitCredentialAlias())));
+        }
+        return new GitSecrets(token, sshKey, alias, firstNonBlank(git.getSshKnownHosts(), recordedHostKeys));
     }
 
     /**
-     * The Git credentials stored for a release, for the repository its metadata records: what an uninstall, a pull
-     * request poll or any other operation without a deploy request uses.
+     * Whether two Git repository URLs are reached over SSH on the same server: the same host ({@link
+     * GitCredentialService#hostOf}) and port.
+     */
+    static boolean sameSshServer(String repoUrl, String otherRepoUrl) {
+        if (!isSshRepoUrl(repoUrl) || !isSshRepoUrl(otherRepoUrl)) {
+            return false;
+        }
+        String host = GitCredentialService.hostOf(repoUrl);
+        return host != null && host.equals(GitCredentialService.hostOf(otherRepoUrl))
+                && sshPort(repoUrl) == sshPort(otherRepoUrl);
+    }
+
+    /** The SSH port of a Git repository URL, 22 when it names none. */
+    private static int sshPort(String repoUrl) {
+        try {
+            int port = new URIish(repoUrl.trim()).getPort();
+            return port > 0 ? port : 22;
+        } catch (URISyntaxException e) {
+            return -1;
+        }
+    }
+
+    /**
+     * The Git credentials stored for a release, for the repository its metadata records, and the host keys recorded
+     * for its Git server: what an uninstall, a pull request poll or any other operation without a deploy request uses.
      */
     private GitSecrets recordedGitSecrets(K8sReleaseEntity meta) {
         String alias = meta.getGitCredentialAlias();
         // Without a repository nothing is sent anywhere: a removal from Git is then skipped.
         if (alias == null || alias.isBlank() || meta.getGitRepoUrl() == null || meta.getGitRepoUrl().isBlank()) {
-            return new GitSecrets(null, null, null);
+            return new GitSecrets(null, null, null, meta.getGitSshKnownHosts());
         }
         String resolved = storedSecret(alias, meta.getGitRepoUrl(), meta.getNamespace(), meta.getReleaseName(), meta);
         boolean sshKey = resolved != null && resolved.contains("BEGIN");
-        return new GitSecrets(sshKey ? null : resolved, sshKey ? resolved : null, alias);
+        return new GitSecrets(sshKey ? null : resolved, sshKey ? resolved : null, alias,
+                firstNonBlank(meta.getGitSshKnownHosts(), gitCredentialService.knownHosts(alias)));
     }
 
     /**
@@ -1112,7 +1153,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     static void checkGitAccess(String repoUrl, String commitMode, String token, String sshKey) {
         boolean isHttps = repoUrl.startsWith("https://") || repoUrl.startsWith("http://");
-        boolean isSsh = repoUrl.startsWith("git@") || repoUrl.startsWith("ssh://");
+        boolean isSsh = isSshRepoUrl(repoUrl);
         boolean hasToken = token != null && !token.isBlank();
         boolean hasSshKey = sshKey != null && !sshKey.isBlank();
         if (isPullRequestMode(commitMode) && !hasToken) {
@@ -1249,10 +1290,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // does the closing of one this deploy no longer goes through.
         WorkBranch work = workBranch(prMode, git.getBranch(), baseBranch, existingMeta, repoUrl, token);
 
+        // Over SSH the Git server must present a host key given or recorded for the release. Without one, only an
+        // explicit trust on first use lets the deploy accept the key presented, which is then recorded and required.
         GitClient gitClient = new GitClient(repoDir, repoUrl, baseBranch, token, sshKey)
                 .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari")
                 .withTimeout(gitTimeoutSeconds(viewContext))
-                .withProxy(ViewConfigurationService.outboundProxy(viewContext));
+                .withProxy(ViewConfigurationService.outboundProxy(viewContext))
+                .withHostKeys(gitSecrets.knownHosts())
+                .withHostKeyTrustOnFirstUse(gitSecrets.knownHosts() == null
+                        && Boolean.TRUE.equals(git.getTrustHostKeyOnFirstUse()));
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "sync " + repoUrl);
 
@@ -1725,6 +1771,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         boolean committed = commitSha != null;
         String alias = keepGitCredential(git, gitSecrets, repoUrl, namespace, release);
+        String hostKeys = firstNonBlank(GitHostKeys.compact(gitSecrets.knownHosts()), gitClient.capturedHostKey());
+        if (alias != null) {
+            gitCredentialService.storeKnownHosts(alias, hostKeys);
+        }
         // A change that did not land where Flux reads is applied anyway once Git already holds it there: a pull request
         // merged since, which a redeploy then finds with nothing new to commit.
         boolean appliedNow = appliedOnCommit || (!committed && hrYaml.equals(
@@ -1768,6 +1818,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         LOG.warn("Failed to record the Git credential of {}/{}: {}", namespace, release, ex.toString());
                     }
                 }
+                recordHostKeys(namespace, release, hostKeys);
                 // The branch that holds the release: the base branch once it does, else the pull request's.
                 return new CommitResult("NO_CHANGES",
                         firstNonBlank(gitClient.headCommit(), existingMeta != null ? existingMeta.getGitCommitSha() : null),
@@ -1836,6 +1887,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     prState
             );
             releaseMetadataService.recordTruststoreRefs(namespace, release, request.getTruststoreRefs());
+            recordHostKeys(namespace, release, hostKeys);
             // Exactly where the change went: a direct commit forgets an earlier pull request, and a deploy ends a
             // removal that waited for its merge.
             releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
@@ -2457,7 +2509,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         GitClient gitClient = new GitClient(repoDir, repoUrl, base, token, secrets.sshKey())
                 .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari")
                 .withTimeout(gitTimeoutSeconds(viewContext))
-                .withProxy(ViewConfigurationService.outboundProxy(viewContext));
+                .withProxy(ViewConfigurationService.outboundProxy(viewContext))
+                .withHostKeys(secrets.knownHosts());
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
         // A branch the server does not have holds nothing, which says nothing of where Flux reads the release.
@@ -2704,16 +2757,25 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * Refuses, before anything is removed, the uninstall of a GitOps release whose recorded Git credential cannot be
      * used to remove it from Git: one KDPS did not save for the release, one entered for another Git server than the
      * repository recorded, or one no longer in Ambari's credential store. Removed from KDPS anyway, the release would
-     * stay in Git, where Flux keeps applying it, with nothing left in KDPS to remove it.
+     * stay in Git, where Flux keeps applying it, with nothing left in KDPS to remove it. Over SSH, also a release with
+     * no host key recorded for its Git server, as one deployed by an earlier version: the removal would be refused
+     * when connecting, and an uninstall cannot give the host key.
      *
      * @param meta the release's metadata
      * @throws IllegalStateException saying why, and that deploying the release again with its Git token or SSH key
-     *                               lets it be uninstalled
+     *                               (or the Git server's host key) lets it be uninstalled
      */
     public void checkRemovable(K8sReleaseEntity meta) {
         String reason;
         try {
             GitSecrets secrets = recordedGitSecrets(meta);
+            if (secrets.sshKey() != null && secrets.knownHosts() == null && isSshRepoUrl(meta.getGitRepoUrl())) {
+                throw new IllegalStateException("KDPS cannot remove " + meta.getNamespace() + "/"
+                        + meta.getReleaseName() + " from Git, so nothing was removed: no SSH host key is recorded for"
+                        + " its Git server, and KDPS only connects to a Git server whose host key it can check."
+                        + " Deploy the release again once, giving the Git server host key (or choosing to trust the"
+                        + " key the Git server presents), then uninstall it.");
+            }
             if (secrets.alias() == null || secrets.token() != null || secrets.sshKey() != null) {
                 return;
             }
@@ -2724,6 +2786,30 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         throw new IllegalStateException("KDPS cannot remove " + meta.getNamespace() + "/" + meta.getReleaseName()
                 + " from Git with the Git credential recorded for it, so nothing was removed. " + reason
                 + " Deploy the release again once, giving its Git access token or SSH key, then uninstall it.");
+    }
+
+    /**
+     * Whether a Git repository URL is reached over SSH, read as JGit reads it when it picks a transport: a URL with a
+     * host and the scheme {@code ssh}, {@code git+ssh} or {@code ssh+git}, or the scp-like {@code [user@]host:path}.
+     */
+    static boolean isSshRepoUrl(String repoUrl) {
+        if (repoUrl == null || repoUrl.isBlank()) {
+            return false;
+        }
+        URIish uri;
+        try {
+            uri = new URIish(repoUrl.trim());
+        } catch (URISyntaxException e) {
+            return false;
+        }
+        if (uri.getHost() == null || uri.getHost().isEmpty()) {
+            return false;
+        }
+        String scheme = uri.getScheme();
+        if (scheme == null) {
+            return uri.getPath() != null && !uri.getPath().isEmpty();
+        }
+        return SSH_SCHEMES.contains(scheme.toLowerCase(Locale.ROOT));
     }
 
     /**
@@ -2755,8 +2841,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         GitSecrets secrets = recordedGitSecrets(meta);
         String base = recordedBaseBranch(meta);
-        destroy(repoUrl, base, base, meta.getGitPath(), secrets.token(), secrets.sshKey(), meta.getNamespace(),
-                meta.getReleaseName());
+        destroy(repoUrl, base, base, meta.getGitPath(), secrets.token(), secrets.sshKey(), secrets.knownHosts(),
+                meta.getNamespace(), meta.getReleaseName());
         forgetGitCredentials(meta);
     }
 
@@ -2776,6 +2862,21 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         aliases.add(GitCredentialService.pendingTokenAlias(instance, meta.getNamespace(), meta.getReleaseName()));
         for (String alias : aliases) {
             forgetAlias(alias, meta.getNamespace(), meta.getReleaseName());
+        }
+    }
+
+    /**
+     * Records the Git server's host keys a deploy connected with for the release, which its later operations (the
+     * uninstall included) then require.
+     */
+    private void recordHostKeys(String namespace, String release, String hostKeys) {
+        if (hostKeys == null) {
+            return;
+        }
+        try {
+            releaseMetadataService.recordGitSshKnownHosts(namespace, release, hostKeys);
+        } catch (Exception ex) {
+            LOG.warn("Failed to record the Git server host keys of {}/{}: {}", namespace, release, ex.toString());
         }
     }
 
@@ -2866,6 +2967,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     public void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath,
                         String authToken, String sshKey,
                         String namespace, String releaseName) throws Exception {
+        destroy(repoUrl, branch, reconciledBranch, repoPath, authToken, sshKey, null, namespace, releaseName);
+    }
+
+    /**
+     * As {@link #destroy(String, String, String, String, String, String, String, String)}, over SSH with the host keys
+     * the Git server must present.
+     *
+     * @param sshKnownHosts known_hosts lines of the Git server; {@code null} when none is recorded, and an SSH
+     *                      connection is then refused with the key the server presented
+     */
+    public void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath,
+                        String authToken, String sshKey, String sshKnownHosts,
+                        String namespace, String releaseName) throws Exception {
         if (repoUrl == null || repoUrl.isBlank()) {
             LOG.warn("Flux destroy skipped because repoUrl is missing");
             return;
@@ -2878,7 +2992,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         try {
         GitClient gitClient = new GitClient(repoDir, repoUrl, effectiveBranch, authToken, sshKey)
                 .withTimeout(gitTimeoutSeconds(viewContext))
-                .withProxy(ViewConfigurationService.outboundProxy(viewContext));
+                .withProxy(ViewConfigurationService.outboundProxy(viewContext))
+                .withHostKeys(sshKnownHosts);
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
         if (reconciledBranch != null && !gitClient.isOnServer(reconciledBranch)) {

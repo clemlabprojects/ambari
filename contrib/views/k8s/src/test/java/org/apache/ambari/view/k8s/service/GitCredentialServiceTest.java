@@ -191,6 +191,26 @@ class GitCredentialServiceTest {
     }
 
     @Test
+    void theGitServerHostKeysFollowTheSecretTheyWereRecordedWith() throws Exception {
+        String alias = GitCredentialService.releaseAlias("kdps", "analytics", "trino");
+        String pending = GitCredentialService.pendingAlias("kdps", "analytics", "trino");
+        String line = "[gitea.internal]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9ok";
+        assertNull(credentials.knownHosts(alias));
+
+        credentials.storeSecret(pending, "-----BEGIN OPENSSH PRIVATE KEY-----", "ssh://git@gitea.internal:2222/p/g.git");
+        assertTrue(credentials.storeKnownHosts(pending, line));
+        assertFalse(credentials.storeKnownHosts(pending, " "), "nothing to record");
+        assertEquals(line, credentials.knownHosts(pending));
+
+        assertEquals(alias, credentials.promote(pending, alias));
+        assertEquals(line, credentials.knownHosts(alias), "promoted with the key");
+        assertNull(credentials.knownHosts(pending));
+
+        assertTrue(credentials.removeSecret(alias));
+        assertNull(credentials.knownHosts(alias), "forgotten with the key");
+    }
+
+    @Test
     void removingASecretDeletesItsEntryAndItsHostButNeverAnEntryKdpsDidNotCreate() throws Exception {
         String alias = GitCredentialService.releaseAlias("kdps", "analytics", "trino");
         credentials.storeSecret(alias, "glpat-Token", "https://git.example.org/platform/gitops.git");

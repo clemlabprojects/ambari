@@ -192,11 +192,20 @@ limitations under the License.
             <groupId>org.eclipse.jgit</groupId>
             <artifactId>org.eclipse.jgit.ssh.jsch</artifactId>
             <version>6.10.0.202406032230-r</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.jcraft</groupId>
+                    <artifactId>jsch</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
+        <!-- The maintained fork of JSch, in the same com.jcraft.jsch package. The original 0.1.55 (2018) reads no
+             OpenSSH-format private key (the ssh-keygen default), has no Ed25519 and signs with SHA-1 only, which
+             current OpenSSH servers refuse. -->
         <dependency>
-            <groupId>com.jcraft</groupId>
+            <groupId>com.github.mwiede</groupId>
             <artifactId>jsch</artifactId>
-            <version>0.1.55</version>
+            <version>0.2.24</version>
         </dependency>
         <dependency>
             <groupId>io.fabric8</groupId>
@@ -237,6 +246,12 @@ limitations under the License.
                 <exclusion>
                     <groupId>org.eclipse.jetty</groupId>
                     <artifactId>jetty-util</artifactId>
+                </exclusion>
+                <!-- Git over SSH uses the maintained JSch fork declared above, in the same package. A second copy
+                     of com.jcraft.jsch in WEB-INF/lib would let the view load either one. -->
+                <exclusion>
+                    <groupId>com.jcraft</groupId>
+                    <artifactId>jsch</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -407,6 +422,34 @@ limitations under the License.
                         <exclude>docs/**/*.md</exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+
+            <!-- The original com.jcraft:jsch shares its package with the maintained fork the view ships. The Ambari
+                 view class loader lists WEB-INF/lib jars in no fixed order, so a dependency that brings it back would
+                 silently make Git over SSH run the old library again. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>ban-original-jsch</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <excludes>
+                                        <exclude>com.jcraft:jsch</exclude>
+                                    </excludes>
+                                    <message>com.jcraft:jsch duplicates com.github.mwiede:jsch on the view class path; exclude it from the dependency that brings it in.</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Unit tests -->

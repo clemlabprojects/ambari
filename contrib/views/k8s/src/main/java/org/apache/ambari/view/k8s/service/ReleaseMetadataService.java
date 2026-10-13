@@ -359,6 +359,26 @@ public class ReleaseMetadataService {
         releaseRepository.update(e);
     }
 
+    /**
+     * Records the SSH host keys of a GitOps release's Git server, which its later operations require the server to
+     * present.
+     *
+     * @param knownHosts known_hosts lines; null or blank changes nothing
+     */
+    public void recordGitSshKnownHosts(String namespace, String releaseName, String knownHosts) {
+        if (knownHosts == null || knownHosts.isBlank()) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || knownHosts.equals(e.getGitSshKnownHosts())) return;
+        e.setGitSshKnownHosts(knownHosts);
+        if (!knownHosts.equals(e.getGitSshKnownHosts())) {
+            // The keys recorded before are removed all the same, so that the later operations read the current ones
+            // from the Git credential rather than keys the server may no longer present.
+            LOG.warn("The Git server host keys of {}/{} were not recorded with the release: its Git metadata is full;"
+                    + " they stay recorded with its Git credential", namespace, releaseName);
+        }
+        releaseRepository.update(e);
+    }
+
     /** The truststores recorded for a release, or {@code null} when no selection was ever recorded. */
     public java.util.List<String> truststoreRefs(String namespace, String releaseName) {
         K8sReleaseEntity e = find(namespace, releaseName);

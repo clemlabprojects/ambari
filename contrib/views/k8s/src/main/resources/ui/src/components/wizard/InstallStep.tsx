@@ -25,6 +25,8 @@ import { ExternalAuthTargetsContext, ContextLinkedFieldsContext, ResolvedContext
 import { FieldSyncContext, UpgradeModeContext } from '../ServiceInstallationModal/fieldSync';
 import { BASE_BRANCH_TOOLTIP, COMMIT_MODE_LABELS, DEFAULT_BASE_BRANCH, WORKING_BRANCH_TOOLTIP, opensPullRequest, workingBranchProblem } from '../../utils/gitOpsBranches';
 import { namespaceRules, releaseNameRules } from '../../utils/nameRules';
+import GitSshFields from '../common/GitSshFields';
+import { savedRepoGitFields } from '../../utils/gitSsh';
 
 interface InstallStepProps {
   definition: any;
@@ -169,7 +171,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
                             form.setFieldsValue({
                               git: {
                                 ...form.getFieldValue('git'),
-                                repoUrl: repo.url,
+                                ...savedRepoGitFields(repo),
                               }
                             });
                           }
@@ -229,9 +231,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
                 <Form.Item name={['git','authToken']} label="Auth token">
                   <Input.Password placeholder="Personal access token (optional if using SSH)" />
                 </Form.Item>
-                <Form.Item name={['git','sshKey']} label="SSH private key">
-                  <Input.TextArea rows={3} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
-                </Form.Item>
+                <GitSshFields />
               </Card>
             )}
         </Form>

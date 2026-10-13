@@ -8821,7 +8821,9 @@ public class CommandService {
                         {"dagPath", "airflow.dagPath"},
                         {"dagSchedule", "airflow.schedule"},
                         {"kubeConnectionId", "airflow.kubeConnectionId"},
-                        {"runTimeoutMinutes", "airflow.runTimeoutMinutes"}}) {
+                        {"runTimeoutMinutes", "airflow.runTimeoutMinutes"},
+                        // Over SSH, the host keys the DAG repository's server must present.
+                        {"gitSshKnownHosts", "airflow.dagRepoHostKey"}}) {
                     String v = stringValue(ConfigResolutionService.getByDottedPath(fvDag, pair[1]));
                     if (!v.isBlank()) dp.put(pair[0], v);
                 }
@@ -16177,6 +16179,9 @@ public class CommandService {
      * <p>Replayable: the file name and its contents come from the release, so re-installing the same
      * release rewrites identical text and the commit is skipped. Nothing is pushed when the content
      * has not moved.
+     *
+     * <p>Over SSH, the repository's server must present one of the host keys given with the release
+     * ({@code airflow.dagRepoHostKey}); without one the publish is refused, naming the key presented.
      */
     private String publishDbtAirflowDag(Map<String, Object> childParams) throws Exception {
         String releaseName = (String) childParams.get("releaseName");
@@ -16195,6 +16200,7 @@ public class CommandService {
         String kubeConn  = (String) childParams.get("kubeConnectionId");
         String token     = (String) childParams.get("gitToken");
         String sshKey    = (String) childParams.get("gitSshKey");
+        String knownHosts = (String) childParams.get("gitSshKnownHosts");
         int timeoutMin   = 60;
         Object rawTimeout = childParams.get("runTimeoutMinutes");
         if (rawTimeout != null) {
@@ -16212,7 +16218,8 @@ public class CommandService {
                     new org.apache.ambari.view.k8s.service.deployment.GitClient(workspace, repoUrl, branch, token, sshKey)
                             .withAuthor("KDPS", "kdps@clemlab.com")
                             .withTimeout(FluxGitOpsBackend.gitTimeoutSeconds(ctx))
-                            .withProxy(ViewConfigurationService.outboundProxy(ctx));
+                            .withProxy(ViewConfigurationService.outboundProxy(ctx))
+                            .withHostKeys(knownHosts);
             git.sync();
             git.checkoutBranch(branch);
             git.writeFile(java.nio.file.Path.of(dagDir, fileName), content);

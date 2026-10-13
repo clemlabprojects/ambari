@@ -24,17 +24,20 @@ import {
 } from "antd";
 import { DeleteOutlined, ReloadOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import { required, url } from "../utils/formRules";
+import { HOST_KEY_LABEL, HOST_KEY_PLACEHOLDER, HOST_KEY_TOOLTIP, hostKeyProblem, isSshRepoUrl } from "../utils/gitSsh";
 import './Page.css';
 
 const { Title, Text } = Typography;
 
-interface GitRepo {
+export interface GitRepo {
   id: string;
   name: string;
   url: string;
   type: 'HTTPS' | 'SSH';
   credentialAlias?: string;
   description?: string;
+  /** SSH only: the Git server's host keys, as known_hosts lines, filled into the deploy forms. */
+  hostKey?: string;
 }
 
 const STORAGE_KEY = 'k8s-view-git-repos';
@@ -73,7 +76,7 @@ export default function GitRepositoriesPage() {
   const openEdit = (r: GitRepo) => {
     setEditingRepo(r);
     form.resetFields();
-    form.setFieldsValue({ id: r.id, name: r.name, url: r.url, type: r.type, description: r.description });
+    form.setFieldsValue({ id: r.id, name: r.name, url: r.url, type: r.type, description: r.description, hostKey: r.hostKey });
     setModalOpen(true);
   };
 
@@ -87,12 +90,14 @@ export default function GitRepositoriesPage() {
     setSaving(true);
     try {
       const entity = values;
+      const type = entity.type || (isSshRepoUrl(entity.url) ? 'SSH' : 'HTTPS');
       const repo: GitRepo = {
         id: entity.id,
         name: entity.name,
         url: entity.url,
-        type: entity.type || (entity.url?.startsWith('git@') || entity.url?.startsWith('ssh://') ? 'SSH' : 'HTTPS'),
+        type,
         description: entity.description,
+        hostKey: type === 'SSH' && entity.hostKey?.trim() ? entity.hostKey.trim() : undefined,
       };
       const updated = repos.find(r => r.id === repo.id)
         ? repos.map(r => r.id === repo.id ? repo : r)
@@ -124,7 +129,16 @@ export default function GitRepositoriesPage() {
     { title: "Name", dataIndex: "name", key: "name", width: 200 },
     {
       title: "Type", dataIndex: "type", key: "type", width: 90,
-      render: (t: string) => <Tag color={t === 'SSH' ? 'purple' : 'blue'}>{t}</Tag>,
+      render: (t: string, r: GitRepo) => (
+        <Space size={4}>
+          <Tag color={t === 'SSH' ? 'purple' : 'blue'}>{t}</Tag>
+          {t === 'SSH' && !r.hostKey && (
+            <Tooltip title="No host key saved: a deploy over SSH is refused until one is given.">
+              <Tag color="orange">no host key</Tag>
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
     {
       title: "Repository URL", dataIndex: "url", key: "url",
@@ -226,6 +240,24 @@ export default function GitRepositoriesPage() {
                 : 'https://gitlab.example.com/org/repo.git'
             } />
           </Form.Item>
+
+          {/* The host key is public: saved with the repository and filled into the deploy forms. Over SSH, KDPS only
+              connects to a server presenting it. */}
+          {typeWatch === 'SSH' && (
+            <Form.Item
+              name="hostKey"
+              label={HOST_KEY_LABEL}
+              tooltip={HOST_KEY_TOOLTIP}
+              rules={[{
+                validator: (_, value) => {
+                  const problem = hostKeyProblem(value);
+                  return problem ? Promise.reject(new Error(problem)) : Promise.resolve();
+                },
+              }]}
+            >
+              <Input.TextArea rows={3} placeholder={HOST_KEY_PLACEHOLDER} />
+            </Form.Item>
+          )}
 
           {/* Credentials are not saved with a repository: the deploy that uses it gives its token or SSH key, which
               KDPS then keeps for that release only. */}

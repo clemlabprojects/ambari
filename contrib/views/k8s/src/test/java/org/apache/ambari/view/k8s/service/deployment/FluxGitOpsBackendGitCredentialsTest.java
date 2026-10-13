@@ -332,6 +332,72 @@ class FluxGitOpsBackendGitCredentialsTest {
     }
 
     @Test
+    void anSshReleaseWithoutARecordedHostKeyIsNotRemoved() throws Exception {
+        backend().apply(deploy(1, "glpat-First"), null);
+        // As an earlier version left a release deployed over SSH: its deploy key stored, no host key recorded.
+        K8sReleaseEntity meta = recorded();
+        String alias = GitCredentialService.releaseAlias("kdps", NS, RELEASE);
+        String sshRepo = "ssh://git@git.example.org:2222/platform/gitops.git";
+        credentials.storeSecret(alias, "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----",
+                sshRepo);
+        meta.setGitRepoUrl(sshRepo);
+        meta.setGitSshKnownHosts(null);
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class, () -> backend().checkRemovable(meta));
+        assertTrue(refused.getMessage().startsWith("KDPS cannot remove analytics/superset from Git, so nothing was"
+                + " removed: no SSH host key is recorded for its Git server"), refused.getMessage());
+        assertTrue(refused.getMessage().endsWith("Deploy the release again once, giving the Git server host key (or"
+                + " choosing to trust the key the Git server presents), then uninstall it."), refused.getMessage());
+        // Every form of URL Git reaches over SSH.
+        for (String url : List.of("git@git.example.org:platform/gitops.git", "git.example.org:platform/gitops.git",
+                "git+ssh://git@git.example.org:2222/platform/gitops.git",
+                "ssh+git://git.example.org:2222/platform/gitops.git")) {
+            meta.setGitRepoUrl(url);
+            assertThrows(IllegalStateException.class, () -> backend().checkRemovable(meta), url);
+        }
+
+        // Once a deploy recorded the host key, for the release or with its credential, the uninstall goes ahead.
+        String hostKey = "[git.example.org]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+        meta.setGitRepoUrl(sshRepo);
+        meta.setGitSshKnownHosts(hostKey);
+        backend().checkRemovable(meta);
+        meta.setGitSshKnownHosts(null);
+        credentials.storeKnownHosts(alias, hostKey);
+        backend().checkRemovable(meta);
+    }
+
+    @Test
+    void sshRepositoryUrlsAreToldFromOthers() {
+        assertTrue(FluxGitOpsBackend.isSshRepoUrl("ssh://git@git.example.org:2222/platform/gitops.git"));
+        assertTrue(FluxGitOpsBackend.isSshRepoUrl("git@git.example.org:platform/gitops.git"));
+        assertTrue(FluxGitOpsBackend.isSshRepoUrl("gitea@git.example.org:platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.isSshRepoUrl("https://git.example.org/platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.isSshRepoUrl("https://user@git.example.org/platform/gitops.git"));
+        assertTrue(FluxGitOpsBackend.isSshRepoUrl("git.example.org:platform/gitops.git"));
+        assertTrue(FluxGitOpsBackend.isSshRepoUrl("git+ssh://git@git.example.org/platform/gitops.git"));
+        assertTrue(FluxGitOpsBackend.isSshRepoUrl("ssh+git://git.example.org/platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.isSshRepoUrl("file:///tmp/remote.git"));
+        assertFalse(FluxGitOpsBackend.isSshRepoUrl("/tmp/remote.git"));
+        assertFalse(FluxGitOpsBackend.isSshRepoUrl("C:/repos/remote.git"));
+        assertFalse(FluxGitOpsBackend.isSshRepoUrl("git://git.example.org/platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.isSshRepoUrl(null));
+    }
+
+    @Test
+    void recordedHostKeysOnlyServeTheSshServerTheyWereRecordedFor() {
+        String recorded = "ssh://git@git.example.org:2222/platform/gitops.git";
+        assertTrue(FluxGitOpsBackend.sameSshServer(recorded, "ssh://git@GIT.example.org:2222/other/repo.git"));
+        assertTrue(FluxGitOpsBackend.sameSshServer("git@git.example.org:platform/gitops.git",
+                "ssh://git@git.example.org:22/platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.sameSshServer(recorded, "ssh://git@other.example.org:2222/platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.sameSshServer(recorded, "ssh://git@git.example.org:2223/platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.sameSshServer(recorded, "git@git.example.org:platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.sameSshServer("https://git.example.org/platform/gitops.git",
+                "git@git.example.org:platform/gitops.git"));
+        assertFalse(FluxGitOpsBackend.sameSshServer(null, recorded));
+    }
+
+    @Test
     void aNewTokenReplacesTheCopyAnEarlierVersionStored() throws Exception {
         backend().apply(deploy(1, null), null);
         // As an earlier version recorded it: a copy under an alias of its own.

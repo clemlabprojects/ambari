@@ -143,6 +143,12 @@ public class HelmDeployRequest {
         // pushes with the key and opens its pull request with the token. Set by the view when it stores the token;
         // the value a request sends is discarded.
         private String authTokenAlias;
+        // The Git server's SSH host keys, as known_hosts lines: over SSH, a server presenting any other key is refused.
+        // Public keys, not secrets: kept with the deploy and recorded for the release.
+        private String sshKnownHosts;
+        // With no host key given or recorded for the release: accept the key the Git server presents to this deploy,
+        // and record it so that later operations require it.
+        private Boolean trustHostKeyOnFirstUse;
 
         public String getRepoUrl() { return repoUrl; }
         public void setRepoUrl(String repoUrl) { this.repoUrl = repoUrl; }
@@ -162,6 +168,10 @@ public class HelmDeployRequest {
         public void setCredentialAlias(String credentialAlias) { this.credentialAlias = credentialAlias; }
         public String getAuthTokenAlias() { return authTokenAlias; }
         public void setAuthTokenAlias(String authTokenAlias) { this.authTokenAlias = authTokenAlias; }
+        public String getSshKnownHosts() { return sshKnownHosts; }
+        public void setSshKnownHosts(String sshKnownHosts) { this.sshKnownHosts = sshKnownHosts; }
+        public Boolean getTrustHostKeyOnFirstUse() { return trustHostKeyOnFirstUse; }
+        public void setTrustHostKeyOnFirstUse(Boolean trustHostKeyOnFirstUse) { this.trustHostKeyOnFirstUse = trustHostKeyOnFirstUse; }
     }
 
     // Getters and Setters

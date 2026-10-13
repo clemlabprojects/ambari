@@ -275,6 +275,20 @@ limitations under the License.
 - A deploy may name a saved Git credential (`git.credentialAlias`) only when it is one the view saved (alias starting
   with `gitops-` or `git-`) or the one the release already uses; any other alias of Ambari's credential store is
   refused (400) and never read. `git.authTokenAlias` is set by the view only: a value sent with a deploy is discarded.
+- Over SSH, Git operations (deploy, uninstall, the dbt Airflow DAG publish) only connect to a server presenting a host
+  key given as known_hosts lines (`git.sshKnownHosts`; `airflow.dagRepoHostKey` for the DAG repository). A line
+  without a host (`type key`) is for the repository's host and port. Marked lines (`@revoked`, `@cert-authority`)
+  are refused: SSH would trust a revoked key as a plain one. An uninstall of an SSH release with no host key recorded
+  is refused (409) before anything is removed: deploy it once with the key first. Without a key the operation is refused, naming the
+  key the server presented, its SHA-256 fingerprint and the line to configure; another key is refused as changed.
+  `git.trustHostKeyOnFirstUse` accepts the first key presented when none is given or recorded. Once a deploy has
+  reached Git, the keys are recorded in the release's Git metadata and with its Git credential alias, and later
+  operations use them: a deploy only to the same SSH host and port (a move to another Git server needs its key or
+  trust on first use), and the metadata copy gives way when the other Git metadata needs its 3000 characters. New
+  keys that do not fit there remove the copy, so later operations use those recorded with the credential alias.
+  Repositories reached over SSH are those JGit reaches over SSH: `ssh://`, `git+ssh://`, `ssh+git://` and the scp-like
+  `[user@]host:path`. The SSH client is a JSch of its own per connection (com.github.mwiede:jsch): the deploy key as
+  its only identity, nothing read from `~/.ssh` of the Ambari user, `StrictHostKeyChecking=yes`.
 
 ## Notable Behaviors
 - Ranger: merged via ConfigResolutionService.mergeRangerOverrides() into params.

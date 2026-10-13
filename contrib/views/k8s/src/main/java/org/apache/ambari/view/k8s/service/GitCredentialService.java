@@ -41,7 +41,9 @@ import org.slf4j.LoggerFactory;
  * so the store holds one copy per release. A deploy that gives a new one keeps it under the release's pending alias
  * ({@link #pendingAlias}) until it has reached Git with it ({@link #promote}): a mistyped token or a failed move to
  * another Git server leaves the release with the credential that worked. The host of the Git repository a secret was
- * entered for is recorded with its alias ({@link #boundHost}): a stored secret is only ever sent back to that host.</p>
+ * entered for is recorded with its alias ({@link #boundHost}): a stored secret is only ever sent back to that host.
+ * So are the SSH host keys of that Git server ({@link #knownHosts}), which a connection over SSH requires the server to
+ * present.</p>
  */
 public class GitCredentialService {
 
@@ -65,6 +67,9 @@ public class GitCredentialService {
 
     /** View setting holding the host of the Git repository the secret under an alias was entered for. */
     private static final String HOST_SETTING_PREFIX = "gitops.credential.host.";
+
+    /** View setting holding the SSH host keys of the Git server the secret under an alias is used with. */
+    private static final String KNOWN_HOSTS_SETTING_PREFIX = "gitops.credential.knownhosts.";
 
     /** View setting set once the copies left by earlier versions were deleted. */
     private static final String LEGACY_CLEANUP_DONE = "gitops.credential.legacyCleanupDone";
@@ -239,8 +244,50 @@ public class GitCredentialService {
         if (secret == null || host == null || !store(alias, secret, host)) {
             return null;
         }
+        String knownHosts = knownHosts(pendingAlias);
+        if (knownHosts != null) {
+            storeKnownHosts(alias, knownHosts);
+        }
         removeSecret(pendingAlias);
         return alias;
+    }
+
+    /**
+     * Records the SSH host keys of the Git server the secret under an alias is used with, replacing those recorded.
+     * Public keys, not secrets: kept in the view's settings next to the host ({@link #boundHost}).
+     *
+     * @param alias      the alias
+     * @param knownHosts known_hosts lines; {@code null} or blank changes nothing
+     * @return whether they were recorded
+     */
+    public boolean storeKnownHosts(String alias, String knownHosts) {
+        if (alias == null || alias.isBlank() || knownHosts == null || knownHosts.isBlank()) {
+            return false;
+        }
+        if (knownHosts.length() > InstanceSettings.MAX_VALUE_LENGTH) {
+            LOG.warn("Did not record the Git server host keys of credential alias {}: they are too long", alias);
+            return false;
+        }
+        try {
+            settings.put(knownHostsSetting(alias), knownHosts);
+            return true;
+        } catch (RuntimeException e) {
+            LOG.warn("Failed to record the Git server host keys of credential alias {}: {}", alias, e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * The SSH host keys of the Git server recorded with an alias ({@link #storeKnownHosts}).
+     *
+     * @return known_hosts lines, or {@code null} when none were recorded
+     */
+    public String knownHosts(String alias) {
+        if (alias == null || alias.isBlank()) {
+            return null;
+        }
+        String value = settings.get(knownHostsSetting(alias));
+        return value == null || value.isBlank() ? null : value;
     }
 
     /** Stores a secret under an alias with the host it is for; {@code false} when nothing usable was stored. */
@@ -316,6 +363,9 @@ public class GitCredentialService {
         try {
             if (settings.get(hostSetting(alias)) != null) {
                 settings.remove(hostSetting(alias));
+            }
+            if (settings.get(knownHostsSetting(alias)) != null) {
+                settings.remove(knownHostsSetting(alias));
             }
         } catch (RuntimeException e) {
             LOG.warn("Failed to forget the Git host of credential alias {}: {}", alias, e.toString());
@@ -403,5 +453,9 @@ public class GitCredentialService {
 
     private static String hostSetting(String alias) {
         return HOST_SETTING_PREFIX + alias.toLowerCase(Locale.ROOT);
+    }
+
+    private static String knownHostsSetting(String alias) {
+        return KNOWN_HOSTS_SETTING_PREFIX + alias.toLowerCase(Locale.ROOT);
     }
 }

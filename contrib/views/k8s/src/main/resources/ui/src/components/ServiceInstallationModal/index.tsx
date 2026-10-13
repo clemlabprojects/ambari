@@ -32,7 +32,9 @@ import { serviceIcon } from '../../assets/services';
 import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
-import { getGitRepos } from '../../pages/GitRepositoriesPage';
+import { getGitRepos, type GitRepo } from '../../pages/GitRepositoriesPage';
+import GitSshFields from '../common/GitSshFields';
+import { savedRepoGitFields } from '../../utils/gitSsh';
 import { operationNotices, waitingForMerge } from '../common/operationOutcome';
 
 import * as pako from 'pako';
@@ -223,7 +225,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   const [selectedServiceKey, setSelectedServiceKey] = useState<string>('');
 
   const [repos, setRepos] = useState<HelmRepo[]>([]);
-  const [gitRepos, setGitRepos] = useState<Array<{ id: string; name: string; url: string; credentialAlias?: string }>>([]);
+  const [gitRepos, setGitRepos] = useState<GitRepo[]>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [installMode, setInstallMode] = useState<'repo' | 'direct'>('repo');
   const [overrideChart, setOverrideChart] = useState(false);
@@ -1300,7 +1302,7 @@ const handleServiceChange = (value: string) => {
                     form.setFieldsValue({
                       git: {
                         ...form.getFieldValue('git'),
-                        repoUrl: repo.url,
+                        ...savedRepoGitFields(repo),
                       }
                     });
                   }
@@ -1369,9 +1371,7 @@ const handleServiceChange = (value: string) => {
           <Form.Item name={['git','authToken']} label="Auth token" tooltip="HTTPS personal access token (stored securely)" >
             <Input.Password placeholder="Token (optional if using SSH key)" />
           </Form.Item>
-          <Form.Item name={['git','sshKey']} label="SSH private key" tooltip="PEM private key (optional)" >
-            <Input.TextArea rows={3} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
-          </Form.Item>
+          <GitSshFields />
         </Card>
       )}
 
