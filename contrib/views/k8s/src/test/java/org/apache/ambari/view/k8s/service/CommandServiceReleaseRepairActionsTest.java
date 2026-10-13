@@ -81,9 +81,12 @@ import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -357,6 +360,37 @@ class CommandServiceReleaseRepairActionsTest {
         assertEquals(CONTEXT, params.get("_platformContextId"));
         assertNull(params.get("_cluster"));
         assertTrue(ambari.requests.isEmpty(), "the managed cluster is not asked: " + ambari.requests);
+    }
+
+    @Test
+    void rangerReapplyWritesTheReleaseOwnPluginConfigurationAndLeavesTheSharedOneAlone() throws Exception {
+        externalContext(false, true);
+        release("trino", "TRINO", CONTEXT, null);
+        // Deployed by an earlier version: the release mounts the configuration shared by the namespace.
+        deployedValues.put("trino", Map.of("ranger", Map.of(
+                "securityConfigMapName", "ranger-trino-security",
+                "auditConfigMapName", "ranger-trino-audit")));
+
+        String id = service.planReleaseRangerRepositoryReapply(NS, "trino", new MultivaluedHashMap<>(), BASE_URI);
+
+        verify(k8s).createOrUpdateConfigMap(eq(NS), eq("trino-ranger-trino-security"), anyMap(), anyMap(), anyMap());
+        verify(k8s, never()).createOrUpdateConfigMap(eq(NS), eq("ranger-trino-security"), anyMap(), anyMap(), anyMap());
+        verify(k8s, never()).createOrUpdateConfigMap(eq(NS), eq("ranger-trino-audit"), anyMap(), anyMap(), anyMap());
+        String log = awaitLog(id, "still uses the Ranger plugin configuration shared by the releases of namespace");
+        assertTrue(log.contains("(ranger-trino-security, ranger-trino-audit)"), log);
+        assertTrue(log.contains("upgrade the release to switch to it"), log);
+    }
+
+    /** The operation log is written asynchronously; waits for a line to show up. */
+    private String awaitLog(String commandId, String expected) throws InterruptedException {
+        String content = "";
+        for (int i = 0; i < 200; i++) {
+            content = CommandLogService.get(view.context).read(commandId, 0, 1 << 16).content;
+            if (content.contains(expected)) return content;
+            Thread.sleep(25);
+        }
+        fail("'" + expected + "' never reached the log of " + commandId + ": " + content);
+        return content;
     }
 
     @Test

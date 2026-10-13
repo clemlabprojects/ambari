@@ -2892,8 +2892,92 @@ public class CommandService {
     }
 
     /**
+     * The name of a Ranger plugin object of a release, from its service.json name: {@code {{releaseName}}} and
+     * {@code {{namespace}}} filled in, so that two releases in one namespace never write over each other's plugin
+     * configuration. With no release (or namespace) the placeholder and the dash next to it drop out, which gives
+     * the plain name, such as {@code ranger-trino-security}: the file name inside the object.
+     *
+     * @param template the name in service.json, possibly with placeholders; null gives null
+     * @param releaseName the release, or null for the plain name
+     * @param namespace the release's namespace, or null for the plain name
+     * @return the object name
+     */
+    static String rangerObjectName(String template, String releaseName, String namespace) {
+        if (template == null) {
+            return null;
+        }
+        String release = releaseName == null ? "" : releaseName.trim();
+        String ns = namespace == null ? "" : namespace.trim();
+        String name = template.trim()
+                .replace("{{releaseName}}", release)
+                .replace("{{namespace}}", ns)
+                .replaceAll("-{2,}", "-");
+        return name.replaceAll("^[-.]+|[-.]+$", "");
+    }
+
+    /**
+     * Labels of the Ranger plugin objects of a release, naming the release so they can be told apart from another
+     * release's in the same namespace, and removed with it.
+     */
+    static Map<String, String> rangerObjectLabels(String releaseName) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("managed-by", "ambari-k8s-view");
+        if (releaseName != null && !releaseName.isBlank()) {
+            labels.put("app.kubernetes.io/instance", releaseName.trim());
+        }
+        return labels;
+    }
+
+    /**
+     * The Ranger plugin objects the deployed values of a release still mount although they are not its own: those an
+     * earlier version shared by every release of the namespace. They stay mounted until the release is upgraded,
+     * which points it at its own.
+     *
+     * @param rangerSpec the release's service.json Ranger block
+     * @param releaseValues the values the release was deployed with
+     * @return the shared object names the release still mounts, in spec order
+     */
+    static List<String> sharedRangerObjectsStillMounted(Map<String, Map<String, Object>> rangerSpec,
+                                                        Map<String, Object> releaseValues,
+                                                        String releaseName, String namespace) {
+        List<String> shared = new ArrayList<>();
+        if (rangerSpec == null || releaseValues == null || releaseValues.isEmpty()) {
+            return shared;
+        }
+        for (Map<String, Object> spec : rangerSpec.values()) {
+            if (spec == null) {
+                continue;
+            }
+            addIfStillShared(shared, spec.get("cm_name"), spec.get("helm_values_property"),
+                    releaseValues, releaseName, namespace);
+            addIfStillShared(shared, spec.get("ranger_plugin_credential_provider_secretName"),
+                    spec.get("ranger_plugin_credential_provider_secretName_helm_prop"),
+                    releaseValues, releaseName, namespace);
+        }
+        return shared;
+    }
+
+    private static void addIfStillShared(List<String> shared, Object nameTemplate, Object helmProperty,
+                                         Map<String, Object> releaseValues, String releaseName, String namespace) {
+        if (nameTemplate == null || helmProperty == null || String.valueOf(helmProperty).isBlank()) {
+            return;
+        }
+        Object deployed = ConfigResolutionService.getByDottedPath(releaseValues, String.valueOf(helmProperty).trim());
+        String own = rangerObjectName(String.valueOf(nameTemplate), releaseName, namespace);
+        if (deployed == null || String.valueOf(deployed).isBlank() || own == null || own.isBlank()) {
+            return;
+        }
+        String mounted = String.valueOf(deployed).trim();
+        if (!mounted.equals(own) && !shared.contains(mounted)) {
+            shared.add(mounted);
+        }
+    }
+
+    /**
      * Create or update Ranger-related ConfigMaps/Secrets required by charts.
      * The behavior is driven entirely by the service.json Ranger spec entries.
+     * Each release gets objects of its own (see {@link #rangerObjectName}); the shared ones an earlier version wrote
+     * are left in place for the releases that still mount them.
      *
      * @param request deploy request containing the Ranger spec
      * @param params mutable params map used to store Helm overrides and Ranger metadata
@@ -2931,6 +3015,7 @@ public class CommandService {
         AmbariAliasResolver aliasResolver = ambariAliasResolver != null
                 ? ambariAliasResolver
                 : new AmbariAliasResolver(ctx);
+        Map<String, String> rangerObjectLabels = rangerObjectLabels(request.getReleaseName());
 
         for (Map.Entry<String, Map<String, Object>> rangerEntry : rangerSpec.entrySet()) {
             Map<String, Object> spec = rangerEntry.getValue();
@@ -2946,15 +3031,19 @@ public class CommandService {
                 continue;
             }
 
-            String name = resolveStringValue(spec.get("cm_name"), null);
+            String nameTemplate = resolveStringValue(spec.get("cm_name"), null);
             String kind = resolveStringValue(spec.get("cm_type"), null);
-            if (name == null || name.isBlank() || kind == null || kind.isBlank()) {
+            if (nameTemplate == null || nameTemplate.isBlank() || kind == null || kind.isBlank()) {
                 LOG.warn("Skipping Ranger entry {} because cm_name/cm_type is missing", rangerEntry.getKey());
                 continue;
             }
+            // The object belongs to the release (its name carries the release name), but the key inside it keeps
+            // the plain file name, which is what the chart mounts by subPath whatever the object is called.
+            String name = rangerObjectName(nameTemplate, request.getReleaseName(), request.getNamespace());
+            String dataKeyBase = rangerObjectName(nameTemplate, null, null);
             boolean asSecret = "secret".equalsIgnoreCase(kind);
             boolean doCreation = true;
-            String xmlKey = name + ".xml";
+            String xmlKey = dataKeyBase + ".xml";
             String xml = null;
 
             switch (type) {
@@ -3062,6 +3151,9 @@ public class CommandService {
                     } else if (!kerberosClusterEnabled) {
                         String rangerPluginUserName = resolveStringValue(spec.get("plugin_username"), null);
                         if (rangerPluginUserName != null && !rangerPluginUserName.isBlank()) {
+                            // Unlike the other Ranger objects this Secret stays shared by the namespace: every
+                            // release logs in as the same Ranger user, which keeps the password it was created
+                            // with, so a password of each release's own would not match it.
                             String pluginPasswordSecretName = resolveStringValue(
                                     spec.get("plugin_password_secret_name"),
                                     "ranger-plugin-rest-client-password"
@@ -3142,7 +3234,7 @@ public class CommandService {
                         this.commandUtils.addOverride(params, helmValuesProperty, name);
                     }
                     xml = HadoopSiteXml.render(rangerSecurityConfig);
-                    xmlKey = name + ".xml";
+                    xmlKey = dataKeyBase + ".xml";
                     break;
                 }
                 case "ranger-audit": {
@@ -3155,7 +3247,7 @@ public class CommandService {
                         auditConfig.putAll(rangerDefaultsProvider.audit());
                     }
                     xml = HadoopSiteXml.render(auditConfig);
-                    xmlKey = name + ".xml";
+                    xmlKey = dataKeyBase + ".xml";
                     break;
                 }
                 case "ranger-policymgr-ssl": {
@@ -3174,9 +3266,10 @@ public class CommandService {
                     if (credProviderFile != null && credProviderFileHelm != null) {
                         this.commandUtils.addOverride(params, credProviderFileHelm, credProviderFile);
                     }
-                    String credProviderSecretName = resolveStringValue(
-                            spec.get("ranger_plugin_credential_provider_secretName"),
-                            null
+                    String credProviderSecretName = rangerObjectName(
+                            resolveStringValue(spec.get("ranger_plugin_credential_provider_secretName"), null),
+                            request.getReleaseName(),
+                            request.getNamespace()
                     );
                     String credProviderSecretNameHelm = resolveStringValue(
                             spec.get("ranger_plugin_credential_provider_secretName_helm_prop"),
@@ -3195,13 +3288,15 @@ public class CommandService {
                             char[] truststorePass = aliasResolver.resolve(ctx, truststorePassProp);
                             RangerCredentialWriter writer = new RangerCredentialWriter(kubernetesService);
                             String jceksPath = credProviderPath + "/" + credProviderFile;
+                            Map<String, String> credLabels = new LinkedHashMap<>(rangerObjectLabels);
+                            credLabels.put("app", rangerServiceType);
                             Map<String, String> props = writer.ensureJceksSecretForTruststorePassword(
                                     request.getNamespace(),
                                     credProviderSecretName,
                                     jceksPath,
                                     RangerCredentialWriter.DEFAULT_ALIAS,
                                     truststorePass,
-                                    Map.of("app", rangerServiceType),
+                                    credLabels,
                                     Map.of("purpose", "ranger-ssl-password")
                             );
                             policymgrSsl.put("xasecure.policymgr.clientssl.truststore.password", "crypted");
@@ -3216,7 +3311,7 @@ public class CommandService {
                         this.commandUtils.addOverride(params, helmValuesProperty, name);
                     }
                     xml = HadoopSiteXml.render(policymgrSsl);
-                    xmlKey = name + "-" + rangerServiceType + ".xml";
+                    xmlKey = dataKeyBase + "-" + rangerServiceType + ".xml";
                     break;
                 }
                 case "ranger-admin-truststore": {
@@ -3225,7 +3320,11 @@ public class CommandService {
                         this.commandUtils.addOverride(params, helmValuesSecretNameKey, name);
                     }
                     String helmValuesPasswordSecretKey = resolveStringValue(spec.get("truststore_password_helm_values_property"), null);
-                    String helmValuesPasswordSecretValue = resolveStringValue(spec.get("truststore_password_secret_name"), null);
+                    String helmValuesPasswordSecretValue = rangerObjectName(
+                            resolveStringValue(spec.get("truststore_password_secret_name"), null),
+                            request.getReleaseName(),
+                            request.getNamespace()
+                    );
                     if (helmValuesPasswordSecretKey != null && helmValuesPasswordSecretValue != null) {
                         this.commandUtils.addOverride(params, helmValuesPasswordSecretKey, helmValuesPasswordSecretValue);
                     }
@@ -3257,7 +3356,7 @@ public class CommandService {
                                         truststorePass,
                                         helmValuesFileValue,
                                         365,
-                                        null
+                                        rangerObjectLabels
                                 );
                             }
                             if (helmValuesPasswordSecretValue != null && !helmValuesPasswordSecretValue.isBlank()
@@ -3266,7 +3365,10 @@ public class CommandService {
                                         request.getNamespace(),
                                         helmValuesPasswordSecretValue,
                                         helmValuesPasswordValue,
-                                        new String(truststorePass).getBytes(StandardCharsets.UTF_8)
+                                        new String(truststorePass).getBytes(StandardCharsets.UTF_8),
+                                        rangerObjectLabels,
+                                        null,
+                                        Boolean.TRUE
                                 );
                             }
                         } catch (Exception ex) {
@@ -3297,7 +3399,7 @@ public class CommandService {
                                 Map<String, byte[]> data = new LinkedHashMap<>();
                                 data.put(helmValuesFileValue, merged);
                                 data.put("ca.crt", org.apache.ambari.view.k8s.utils.TlsChainCapture.toPem(extra).getBytes(StandardCharsets.UTF_8));
-                                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data);
+                                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data, rangerObjectLabels);
                             }
                         } catch (Exception ex) {
                             LOG.warn("Ranger truststore for '{}': could not add the external Ranger CA: {}", rangerRepositoryName, ex.toString());
@@ -3323,7 +3425,7 @@ public class CommandService {
                 if (asSecret) {
                     Map<String, byte[]> data = new LinkedHashMap<>();
                     data.put(xmlKey, xml.getBytes(StandardCharsets.UTF_8));
-                    kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data);
+                    kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data, rangerObjectLabels);
                 } else {
                     Map<String, String> data = new LinkedHashMap<>();
                     data.put(xmlKey, xml);
@@ -3331,7 +3433,7 @@ public class CommandService {
                             request.getNamespace(),
                             name,
                             data,
-                            Map.of("managed-by", "ambari-k8s-view"),
+                            rangerObjectLabels,
                             Map.of()
                     );
                 }
@@ -4914,6 +5016,16 @@ public class CommandService {
                 ambariAliasResolver
         );
         rangerWarnings.forEach(w -> appendCommandLog(commandId, "WARNING: " + w));
+        // Reapplying runs no Helm upgrade, so a release deployed by an earlier version keeps mounting the
+        // configuration shared by the namespace; that one is left alone, since other releases may use it.
+        List<String> stillShared = sharedRangerObjectsStillMounted(serviceDefinition.ranger, releaseValues,
+                releaseName, namespace);
+        if (!stillShared.isEmpty()) {
+            appendCommandLog(commandId, "WARNING: Release " + releaseName + " still uses the Ranger plugin"
+                    + " configuration shared by the releases of namespace " + namespace + " ("
+                    + String.join(", ", stillShared) + "). Its own copy was written now; upgrade the release to"
+                    + " switch to it. The shared copy was not changed.");
+        }
 
         List<String> childCommandIds = new ArrayList<>();
         // Plan the Ranger repository creation step with current values. The managed cluster's configuration only
