@@ -849,7 +849,11 @@ export const getViewSettings = async (): Promise<any> => {
   return response.json();
 };
 
-export const saveViewSettings = async (settings: any): Promise<void> => {
+/**
+ * Saves the view settings. The answer carries a `warning` when the settings were saved but need the administrator's
+ * attention (the keytab webhook's account kept while the webhook is still installed, for instance).
+ */
+export const saveViewSettings = async (settings: any): Promise<{ warning?: string }> => {
   const response = await apiFetch(`${API_BASE_URL}/configurations/settings`, {
     method: 'POST',
     credentials: 'include',
@@ -859,6 +863,13 @@ export const saveViewSettings = async (settings: any): Promise<void> => {
   if (!response.ok) {
     const txt = await response.text();
     throw new Error(txt || 'Failed to save settings');
+  }
+  const txt = await response.text();
+  try {
+    const answer = txt ? JSON.parse(txt) : {};
+    return typeof answer?.warning === 'string' ? { warning: answer.warning } : {};
+  } catch {
+    return {};
   }
 };
 

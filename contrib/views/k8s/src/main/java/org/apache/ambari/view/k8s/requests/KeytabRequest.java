@@ -29,6 +29,8 @@ public class KeytabRequest {
 
     // Optional: correlation to a parent command (e.g., Helm deploy root)
     private String parentCommandId;
+    // The Helm release of the pod; the keytab webhook names it, and only releases KDPS deployed get keytabs from it
+    private String releaseName;
 
     public void validate() {
         Objects.requireNonNull(principal, "principal");
@@ -61,4 +63,6 @@ public class KeytabRequest {
 
     public String getParentCommandId() { return parentCommandId; }
     public void setParentCommandId(String parentCommandId) { this.parentCommandId = parentCommandId; }
+    public String getReleaseName() { return releaseName; }
+    public void setReleaseName(String releaseName) { this.releaseName = releaseName; }
 }

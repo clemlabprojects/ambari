@@ -86,7 +86,6 @@ public class WebHookConfigurationService {
 
     private final ViewContext viewContext;
     private final KubernetesService kubernetesService;
-    private final ViewConfigurationService configurationService;
 
     // Per-directory in-JVM lock map
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> CA_LOCKS = new ConcurrentHashMap<>();
@@ -98,7 +97,6 @@ public class WebHookConfigurationService {
     public WebHookConfigurationService(ViewContext viewContext, KubernetesService kubernetesService) {
         this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
         this.kubernetesService = Objects.requireNonNull(kubernetesService, "kubernetesService");
-        this.configurationService = new ViewConfigurationService(viewContext);
     }
 
     /**
@@ -279,40 +277,52 @@ public class WebHookConfigurationService {
     }
 
     /**
-     * ensure the ambari mutating webhook username/password are stored correctly as secret in k8s/openshift
-
-     * @param namespace the target namespace
-     * @param secretName the creds username/password
+     * The private key of the webhook's client certificate, as stored in its Secret.
+     *
+     * @param namespace  the webhook's namespace
+     * @param secretName the client certificate's Secret ({@code client.key})
+     * @return the key (PEM)
+     * @throws IllegalStateException when the Secret or its key is missing
      */
-    public void ensureWebhookSecret(
-                                           String namespace,
-                                           String secretName,
-                                           String userName,
-                                           String password) {
+    public String readClientPrivateKeyPem(String namespace, String secretName) {
+        Secret secret = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
+        String key = secret == null || secret.getData() == null ? null : secret.getData().get("client.key");
+        if (key == null || key.isBlank()) {
+            throw new IllegalStateException("Secret " + namespace + "/" + secretName + " holds no client.key");
+        }
+        return new String(getDecoder().decode(key), StandardCharsets.UTF_8);
+    }
 
-        Map<String,String> data = new LinkedHashMap<>();
-        data.put("username", base64(userName));
-        data.put("password", base64(password));
+    /**
+     * Deletes a Secret the view wrote, when it exists.
+     *
+     * @return true when a Secret was deleted
+     */
+    public boolean deleteSecretIfPresent(String namespace, String secretName) {
+        if (kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get() == null) {
+            return false;
+        }
+        kubernetesClient().secrets().inNamespace(namespace).withName(secretName).delete();
+        LOG.info("Deleted Secret {}/{}", namespace, secretName);
+        return true;
+    }
 
-        Secret desired = new SecretBuilder()
-                .withNewMetadata()
-                .withName(secretName).withNamespace(namespace)
-                .addToLabels("managed-by", "ambari-k8s-view")
-                .addToLabels("component", "webhook-ambari-credentials")
-                .endMetadata()
-                .withType("Opaque")
-                .addToData(data)
-                .build();
-
-        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
-        if (existing == null) {
-            kubernetesClient().secrets().inNamespace(namespace).resource(desired).create();
-            LOG.info("Created webhook credentials Secret {}/{}", namespace, secretName);
-        } else {
-            kubernetesClient().secrets().inNamespace(namespace).resource(desired).createOrReplace();
-            LOG.info("Updated webhook credentials Secret {}/{}", namespace, secretName);
+    /**
+     * The certificate of the view's internal CA (PEM), read without creating the CA.
+     *
+     * @param viewContext the view instance
+     * @return the certificate; null when the view has not created its CA yet
+     */
+    public static String certificateAuthorityPem(ViewContext viewContext) {
+        Path certificate = caDirectory(viewContext).resolve(DEFAULT_CA_CERT_FILENAME);
+        try {
+            return Files.exists(certificate) ? Files.readString(certificate, StandardCharsets.UTF_8) : null;
+        } catch (IOException e) {
+            LOG.warn("Could not read the view's internal CA {}: {}", certificate, e.toString());
+            return null;
         }
     }
+
     // -------------------- New rotation-aware helpers --------------------
 
     /** Return base64(der) of current CA (no rotation). */
@@ -368,7 +378,8 @@ public class WebHookConfigurationService {
     }
 
     /**
-     * Ensure/rotate client mTLS secret if absent/invalid/expiring within minDaysLeft.
+     * Ensure/rotate client mTLS secret if absent/invalid/expiring within minDaysLeft. A renewed certificate keeps the
+     * key the Secret already holds, when that key is usable (see {@link #renewClientMtlsSecretIfPresent}).
      */
     public void ensureOrRotateClientMtlsSecret(String namespace,
                                                String secretName,
@@ -378,17 +389,75 @@ public class WebHookConfigurationService {
                                                int validityDays,
                                                int minDaysLeft,
                                                Map<String,String> extraLabels) {
+        issueClientMtlsSecretIfDue(namespace, secretName, subjectCommonName, dnsSans, uriSans, validityDays, minDaysLeft,
+                extraLabels, true);
+    }
+
+    /**
+     * Renews the client mTLS Secret when it exists and its certificate is unreadable, was issued by an earlier CA, or
+     * expires within {@code minDaysLeft}; a missing Secret is left missing. The new certificate is issued for the key
+     * the Secret already holds, which is kept byte for byte: the keytab webhook's Ambari password is derived from that
+     * key, so the renewal needs no Ambari administrator and does not change the password under the running webhook.
+     * Only the view's Kubernetes access and its internal CA are used.
+     *
+     * @return true when a new certificate was written
+     */
+    public boolean renewClientMtlsSecretIfPresent(String namespace,
+                                                  String secretName,
+                                                  String subjectCommonName,
+                                                  int validityDays,
+                                                  int minDaysLeft,
+                                                  Map<String,String> extraLabels) {
+        return issueClientMtlsSecretIfDue(namespace, secretName, subjectCommonName, List.of(), List.of(), validityDays,
+                minDaysLeft, extraLabels, false);
+    }
+
+    /**
+     * The expiry of the certificate in a client mTLS Secret.
+     *
+     * @return when it expires; null when the Secret or its certificate is missing or unreadable
+     */
+    public Instant clientCertificateNotAfter(String namespace, String secretName) {
+        Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
+        String crt = existing == null || existing.getData() == null ? null : existing.getData().get("client.crt");
+        if (crt == null) {
+            return null;
+        }
+        try {
+            return parseCertificateFromPem(new String(getDecoder().decode(crt), StandardCharsets.UTF_8))
+                    .getNotAfter().toInstant();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean issueClientMtlsSecretIfDue(String namespace,
+                                               String secretName,
+                                               String subjectCommonName,
+                                               List<String> dnsSans,
+                                               List<String> uriSans,
+                                               int validityDays,
+                                               int minDaysLeft,
+                                               Map<String,String> extraLabels,
+                                               boolean createIfAbsent) {
         Objects.requireNonNull(namespace);
         Objects.requireNonNull(secretName);
 
         Secret existing = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
+        if (existing == null && !createIfAbsent) {
+            return false;
+        }
         boolean needIssue = true;
+        X509Certificate current = null;
 
         if (existing != null && existing.getData() != null && existing.getData().get("client.crt") != null) {
             try {
                 String crtPem = new String(getDecoder().decode(existing.getData().get("client.crt")), StandardCharsets.UTF_8);
                 X509Certificate crt = parseCertificateFromPem(crtPem);
-                if (!expiresBefore(crt, minDaysLeft)) {
+                current = crt;
+                if (!issuedByCurrentAuthority(crt)) {
+                    LOG.info("Client mTLS Secret {}/{} was issued by an earlier CA, will reissue", namespace, secretName);
+                } else if (!expiresBefore(crt, minDaysLeft)) {
                     needIssue = false;
                     LOG.info("Client mTLS Secret up-to-date (notAfter={}) {}/{}",
                             crt.getNotAfter().toInstant(), namespace, secretName);
@@ -402,17 +471,28 @@ public class WebHookConfigurationService {
             }
         }
 
-        if (!needIssue) return;
+        if (!needIssue) return false;
 
         CertificateAuthorityMaterial ca = ensureAmbariCertificateAuthority();
-        ClientCertificateMaterial client = issueClientCertificate(
-                subjectCommonName, dnsSans, uriSans, validityDays);
+        String keyData = existing == null || existing.getData() == null ? null : existing.getData().get("client.key");
+        PublicKey kept = current == null ? null : publicKeyIfPaired(keyData, current.getPublicKey());
+        String certificatePem;
+        String keyDataOut;
+        if (kept != null) {
+            certificatePem = toPemCertificate(signClientCertificate(kept, subjectCommonName, safeList(dnsSans),
+                    safeList(uriSans), validityDays, ca));
+            keyDataOut = keyData;
+        } else {
+            ClientCertificateMaterial client = issueClientCertificate(subjectCommonName, dnsSans, uriSans, validityDays);
+            certificatePem = client.clientCertificatePem();
+            keyDataOut = base64(client.clientPrivateKeyPem());
+        }
 
         Map<String,String> labels = new LinkedHashMap<>();
         labels.put("managed-by", "ambari-k8s-view");
         if (extraLabels != null) labels.putAll(extraLabels);
 
-        X509Certificate c = parseCertificateFromPem(client.clientCertificatePem());
+        X509Certificate c = parseCertificateFromPem(certificatePem);
         Map<String,String> ann = rotationAnnotations(c, null);
 
         Secret desired = new SecretBuilder()
@@ -422,14 +502,39 @@ public class WebHookConfigurationService {
                 .addToAnnotations(ann)
                 .endMetadata()
                 .withType("Opaque")
-                .addToData("client.crt", base64(client.clientCertificatePem()))
-                .addToData("client.key", base64(client.clientPrivateKeyPem()))
-                .addToData("ca.crt",     base64(client.certificateAuthorityCertificatePem()))
+                .addToData("client.crt", base64(certificatePem))
+                .addToData("client.key", keyDataOut)
+                .addToData("ca.crt",     base64(ca.caCertificatePem()))
                 .build();
 
         kubernetesClient().secrets().inNamespace(namespace).resource(desired).createOrReplace();
-        LOG.info("Issued/rotated client mTLS Secret {}/{} (notAfter={})",
-                namespace, secretName, c.getNotAfter().toInstant());
+        LOG.info("Issued/rotated client mTLS Secret {}/{} (notAfter={}, {})", namespace, secretName,
+                c.getNotAfter().toInstant(), kept != null ? "same key" : "new key");
+        return true;
+    }
+
+    /**
+     * The certificate's public key when the stored private key is its pair, else null: a key that does not match, or
+     * cannot be read, is replaced by a new one.
+     */
+    private static PublicKey publicKeyIfPaired(String keyData, PublicKey certificateKey) {
+        if (keyData == null || keyData.isBlank()) {
+            return null;
+        }
+        try {
+            PrivateKey key = parsePrivateKeyFromPem(new String(getDecoder().decode(keyData), StandardCharsets.UTF_8));
+            byte[] probe = "kdps-client-key-check".getBytes(StandardCharsets.UTF_8);
+            Signature signer = Signature.getInstance("SHA256withECDSA");
+            signer.initSign(key);
+            signer.update(probe);
+            byte[] signature = signer.sign();
+            Signature verifier = Signature.getInstance("SHA256withECDSA");
+            verifier.initVerify(certificateKey);
+            verifier.update(probe);
+            return verifier.verify(signature) ? certificateKey : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -451,7 +556,9 @@ public class WebHookConfigurationService {
             try {
                 String crtPem = new String(getDecoder().decode(existing.getData().get("tls.crt")), StandardCharsets.UTF_8);
                 X509Certificate crt = parseCertificateFromPem(crtPem);
-                if (!expiresBefore(crt, minDaysLeft)) {
+                if (!issuedByCurrentAuthority(crt)) {
+                    LOG.info("Client mTLS Secret {}/{} was issued by an earlier CA, will reissue", namespace, secretName);
+                } else if (!expiresBefore(crt, minDaysLeft)) {
                     needIssue = false;
                     LOG.info("Serving TLS Secret up-to-date (notAfter={}) {}/{}",
                             crt.getNotAfter().toInstant(), namespace, secretName);
@@ -717,6 +824,16 @@ public class WebHookConfigurationService {
 
     // -------------------- Helpers --------------------
 
+    /** Whether the view's current internal CA signed the certificate: one signed by a rotated-out CA is not accepted. */
+    private boolean issuedByCurrentAuthority(X509Certificate cert) {
+        try {
+            cert.verify(parseCertificateFromPem(ensureAmbariCertificateAuthority().caCertificatePem()).getPublicKey());
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private static boolean expiresBefore(X509Certificate cert, int days) {
         Instant cutoff = Instant.now().plus(days, ChronoUnit.DAYS);
         return cert.getNotAfter().toInstant().isBefore(cutoff);
@@ -776,13 +893,16 @@ public class WebHookConfigurationService {
     }
 
     private Path resolveCaDirectory() {
+        return caDirectory(viewContext);
+    }
+
+    private static Path caDirectory(ViewContext viewContext) {
         // Priority: ambari.property k8s.view.webhook.ca.dir → else use view resource path + "/ca"
         String configured = viewContext.getAmbariProperty("k8s.view.webhook.ca.dir");
         if (configured != null && !configured.isBlank()) {
             return Paths.get(configured);
         }
-        String base = configurationService.getConfigurationDirectoryPath();
-        return Paths.get(base, "ca");
+        return Paths.get(ViewConfigurationService.workingDirectory(viewContext), "ca");
     }
 
     // Small utility to wrap checked IO without deprecated doPrivileged

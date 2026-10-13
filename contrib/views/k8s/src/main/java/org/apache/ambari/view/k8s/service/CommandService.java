@@ -123,6 +123,11 @@ public class CommandService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String VIEW_SETTINGS_KEY = "view.settings.json";
+    /**
+     * ConfigMap a WEBHOOK-mode deploy writes in its namespace: {@code <release>.commandId} names the deploy operation
+     * whose Ambari credentials issue the keytabs the webhook asks for the release's pods. Only the view reads it.
+     */
+    static final String CORRELATION_CONFIGMAP = "k8s-view-metadata";
     private static final String KERBEROS_INJECTION_MODE_WEBHOOK = "WEBHOOK";
     private static final String KERBEROS_INJECTION_MODE_PRE_PROVISIONED = "PRE_PROVISIONED";
     /** Key of the operation result that marks a deploy refused after its steps were stored, before any of them ran. */
@@ -157,6 +162,11 @@ public class CommandService {
      * already holds one for the principal.
      */
     static final String FORCE_REISSUE_PARAM = "forceReissue";
+    /**
+     * Step parameter of a keytab webhook request: the release of the pod, named when the operation fails because no
+     * Ambari credentials are kept to issue the keytab, so the operator knows which release to redeploy.
+     */
+    static final String WEBHOOK_RELEASE_PARAM = "webhookRelease";
     /**
      * Result entry of a keytab issuing step that wrote no keytab yet: the SHA-256 of the keytab the release's Secret
      * held before the operation, or {@link #NO_PRIOR_KEYTAB}. The step writing the Secret compares the new keytab with
@@ -271,8 +281,8 @@ public class CommandService {
         this.tagSyncAccounts = TagSyncRangerAccount.recordsIn(new InstanceSettings(ctx));
         this.tagSyncRangers = this::tagSyncRangersOf;
         this.tagSyncInstance = () -> TagSyncRangerAccount.instanceId(new InstanceSettings(ctx));
-        this.keytabWebhookPreparation = callerHeaders -> org.apache.ambari.view.k8s.utils.WebHookBootstrap
-                .prepareWebhookPrereqs(ctx, kubernetesService, "keytab-webhook", callerHeaders);
+        this.keytabWebhookPreparation = callerHeaders -> WebHookBootstrap
+                .prepareWebhookPrereqs(ctx, kubernetesService, WebHookBootstrap.KEYTAB_WEBHOOK, callerHeaders);
         // Dispatcher registry (can be extended later)
         this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), new GitOpsPlanBackend(this, fluxGitOpsBackend));
         this.deploymentBackends.put(DeploymentMode.DIRECT_HELM.name(), new HelmDirectBackend(this));
@@ -283,6 +293,10 @@ public class CommandService {
         this.operationFiles = new OperationFilesRetention(ctx, dataStore);
         this.startupSweep = this.workers.submit(() -> {
             takeBackTagSyncAccountsAfterStart();
+            // Earlier versions kept the password of the keytab webhook's Ambari administrator account in a Secret.
+            WebHookBootstrap.removeLegacyCredentialsAtStart(ctx, kubernetesService);
+            // The keytab webhook's client certificate must not expire between two deploys: renewed here, then daily.
+            WebHookBootstrap.renewClientCertificateIfDue(ctx, kubernetesService);
             // Before the retention: the parameters it reads to tell which cached values are in use are then readable.
             try {
                 new LegacyEncryptionMigration(ctx, dataStore, null).run(Instant.now());
@@ -296,6 +310,8 @@ public class CommandService {
                 LOG.warn("Could not apply the retention of operation files: {}", e.toString());
             }
         });
+        this.timer.scheduleWithFixedDelay(() -> workers.submit(
+                () -> WebHookBootstrap.renewClientCertificateIfDue(ctx, kubernetesService)), 1, 1, TimeUnit.DAYS);
         LOG.info("CommandService initialized for {}. Consider adding DB indexes on command.id, command_status_id, created_at and pruning terminal commands periodically to keep polling fast.", ctx.getInstanceName());
     }
 
@@ -689,9 +705,10 @@ public class CommandService {
 
     /**
      * Prepares the keytab webhook of a deploy that installs it (WEBHOOK Kerberos injection mode): its own namespace
-     * with an mTLS client Secret, a serving certificate and the Ambari CA bundle. Prepared when the webhook is about to
-     * be installed rather than at kubeconfig upload: in the default PRE_PROVISIONED mode nothing uses that namespace,
-     * and on OpenShift sites where namespaces cannot be created on the fly it must not be required at all.
+     * with an mTLS client Secret, a serving certificate, the Ambari CA bundle, and its Ambari account, which may only
+     * open this view instance (set up with the deploying administrator's credentials). Prepared when the webhook is
+     * about to be installed rather than at kubeconfig upload: in the default PRE_PROVISIONED mode nothing uses that
+     * namespace, and on OpenShift sites where namespaces cannot be created on the fly it must not be required at all.
      *
      * @throws IllegalArgumentException when they cannot be prepared, saying what the operator can do
      */
@@ -4600,10 +4617,143 @@ public class CommandService {
 
     // -------------------- Public API --------------------
 
+    /**
+     * Submits a keytab request an operator made on the keytab endpoint. The keytab is issued with the operator's own
+     * Ambari credentials, and only for a release KDPS deployed ({@link KeytabRequestPolicy}).
+     *
+     * @param req           the principal, the namespace and Secret that receive the keytab, optionally the release
+     * @param callerHeaders the operator's request headers, whose Ambari credentials issue the keytab
+     * @param baseUri       the local Ambari API base
+     * @return the id of the queued operation
+     * @throws KeytabRequestPolicy.RefusedException when the request is not for a release KDPS deployed
+     */
     public String submitKeytabRequest(KeytabRequest req,
                                       MultivaluedMap<String,String> callerHeaders,
                                       URI baseUri) {
         Objects.requireNonNull(req, "KeytabRequest");
+        KeytabRequestPolicy.check(req, releasesIn(req.getNamespace()), false);
+        return enqueueKeytabRequest(req, AmbariActionClient.headersToPersistableMap(callerHeaders), null, null,
+                baseUri);
+    }
+
+    /**
+     * Submits a keytab request of the view's keytab webhook, which the caller authenticated by its client certificate.
+     * The request must be for a release KDPS deployed and may only write the pod's own keytab Secret
+     * ({@link KeytabRequestPolicy}). The webhook holds no Ambari permission: the keytab is issued with the Ambari
+     * credentials the release's deploy was made with, kept encrypted with that operation while it runs, which is when
+     * the deploy creates the release's pods. The request records that deploy ({@code deployCommandId}) but runs as an
+     * operation of its own: added to the deploy's steps, the deploy would run it a second time. The operation the
+     * webhook names is ignored.
+     *
+     * <p>When those credentials are no longer kept (a pod created after the deploy ended), the request is still
+     * queued: a keytab another Secret of the namespace holds for the principal is copied without asking Ambari, and
+     * only issuing a new one fails, asking for a redeploy.
+     *
+     * @param req     the request as the webhook sent it
+     * @param baseUri the local Ambari API base
+     * @return the id of the queued operation
+     * @throws KeytabRequestPolicy.RefusedException when the request is not for a release KDPS deployed
+     */
+    public String submitWebhookKeytabRequest(KeytabRequest req, URI baseUri) {
+        Objects.requireNonNull(req, "KeytabRequest");
+        K8sReleaseEntity release = KeytabRequestPolicy.check(req, releasesIn(req.getNamespace()), true);
+        DeployIdentity deploy = deployIdentity(release);
+        req.setParentCommandId(null);
+        if (deploy == null) {
+            LOG.warn("No Ambari credentials are kept for the deploy of release {}/{}: the keytab of {} can only be "
+                    + "copied from another Secret of the namespace, not issued. Redeploy the release to issue it.",
+                    release.getNamespace(), release.getReleaseName(), req.getPrincipal());
+        }
+        return enqueueKeytabRequest(req, deploy == null ? Map.of() : deploy.callerHeaders(),
+                deploy == null ? null : deploy.commandId(), release.getReleaseName(), baseUri);
+    }
+
+    /** The releases KDPS recorded in a namespace. */
+    private List<K8sReleaseEntity> releasesIn(String namespace) {
+        List<K8sReleaseEntity> releases = new ArrayList<>();
+        if (namespace == null) {
+            return releases;
+        }
+        for (K8sReleaseEntity release : new ReleaseMetadataService(ctx).findAll()) {
+            if (namespace.equals(release.getNamespace())) {
+                releases.add(release);
+            }
+        }
+        return releases;
+    }
+
+    /**
+     * A deploy operation of a release and the Ambari credentials it was made with (encrypted, as persisted).
+     *
+     * @param commandId     the deploy's root operation
+     * @param callerHeaders its {@code _callerHeaders} parameter
+     */
+    record DeployIdentity(String commandId, Object callerHeaders) {}
+
+    /**
+     * The latest deploy of a release that still keeps the Ambari credentials it was made with: the one the deploy
+     * published in the namespace's correlation ConfigMap (read with the view's own Kubernetes account), else the one
+     * recorded with the release. A deploy counts only when its parameters name that same release.
+     *
+     * @param release a release KDPS deployed
+     * @return the deploy and its credentials; null when none keeps them
+     */
+    DeployIdentity deployIdentity(K8sReleaseEntity release) {
+        List<String> candidates = new ArrayList<>();
+        String correlated = correlatedDeployId(release.getNamespace(), release.getReleaseName());
+        if (correlated != null) candidates.add(correlated);
+        if (release.getDeploymentId() != null && !candidates.contains(release.getDeploymentId())) {
+            candidates.add(release.getDeploymentId());
+        }
+        Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+        for (String id : candidates) {
+            try {
+                CommandEntity deploy = find(id);
+                String raw = deploy == null ? null : resolveParamsJson(deploy);
+                if (raw == null || raw.isBlank() || CommandParamsStore.wasRemoved(raw)) {
+                    continue;
+                }
+                Map<String, Object> params = gson.fromJson(raw, mapType);
+                if (params == null || !release.getNamespace().equals(params.get("namespace"))
+                        || !release.getReleaseName().equals(params.get("releaseName"))) {
+                    continue;
+                }
+                Object callerHeaders = params.get("_callerHeaders");
+                if (callerHeaders instanceof Map<?, ?> persisted && !persisted.isEmpty()) {
+                    return new DeployIdentity(id, callerHeaders);
+                }
+            } catch (Exception e) {
+                LOG.warn("Could not read the deploy {} of release {}/{}: {}", id, release.getNamespace(),
+                        release.getReleaseName(), e.toString());
+            }
+        }
+        return null;
+    }
+
+    /** The deploy operation the view published for a release in its namespace's correlation ConfigMap, or null. */
+    private String correlatedDeployId(String namespace, String releaseName) {
+        try {
+            io.fabric8.kubernetes.client.KubernetesClient client = kubernetesService.getClient();
+            io.fabric8.kubernetes.api.model.ConfigMap correlation = client == null ? null
+                    : client.configMaps().inNamespace(namespace).withName(CORRELATION_CONFIGMAP).get();
+            String id = correlation == null || correlation.getData() == null ? null
+                    : correlation.getData().get(releaseName + ".commandId");
+            return id == null || id.isBlank() ? null : id.trim();
+        } catch (Exception e) {
+            LOG.info("Could not read ConfigMap {}/{}: {}", namespace, CORRELATION_CONFIGMAP, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Queues the two steps of a keytab request: issue the keytab with Ambari, then write it to the Secret.
+     *
+     * @param persistedCallerHeaders the Ambari credentials that issue the keytab, already persistable
+     * @param deployCommandId        the deploy whose credentials they are, recorded for traceability; null for none
+     * @param webhookRelease         the release of the pod, for a request of the keytab webhook; null for an operator's
+     */
+    private String enqueueKeytabRequest(KeytabRequest req, Object persistedCallerHeaders, String deployCommandId,
+                                        String webhookRelease, URI baseUri) {
         Objects.requireNonNull(req.getPrincipal(), "principal");
         Objects.requireNonNull(req.getNamespace(), "namespace");
         Objects.requireNonNull(req.getSecretName(), "secretName");
@@ -4629,9 +4779,15 @@ public class CommandService {
         if (req.getParentCommandId() != null && !req.getParentCommandId().isBlank()) {
             params.put("parentCommandId", req.getParentCommandId());
         }
+        if (deployCommandId != null) {
+            params.put("deployCommandId", deployCommandId);
+        }
+        if (webhookRelease != null) {
+            params.put(WEBHOOK_RELEASE_PARAM, webhookRelease);
+        }
 
-        // persist caller session/headers + baseUri to reuse in worker
-        params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        // the Ambari credentials that issue the keytab (already persistable) + baseUri, reused in the worker
+        params.put("_callerHeaders", persistedCallerHeaders);
         params.put("_baseUri", baseUri != null ? baseUri.toString() : null);
 
         // status for root
@@ -9328,10 +9484,11 @@ public class CommandService {
             LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
 
-        // Publish correlation ConfigMap so the mutating webhook can attach keytab requests to this command tree.
+        // Publish the correlation ConfigMap: the keytabs the webhook asks for this release's pods are issued with this
+        // deploy's Ambari credentials. Only the view reads it.
         if (isWebhookInjectionMode(kerberosInjectionMode)) {
             try {
-                String cmName = "k8s-view-metadata";
+                String cmName = CORRELATION_CONFIGMAP;
                 Map<String, String> data = new HashMap<>();
                 data.put(request.getReleaseName() + ".commandId", id);
                 this.kubernetesService.createOrUpdateConfigMap(
@@ -10391,6 +10548,8 @@ public class CommandService {
                         LOG.info("Injecting backend.url property with value: {} for webhook dependency", backend_url);
                         overrideProperties.put("backend.url", backend_url);
                         overrideProperties.put("webhook.caBundle", this.webHookConfigurationService.currentCaBundleBase64());
+                        overrideProperties.put(WebHookBootstrap.ACCOUNT_USERNAME_VALUE, WebHookBootstrap.webhookUserName(
+                                ctx, WebHookBootstrap.KEYTAB_WEBHOOK));
                     }
                     if (!images.isEmpty() && secretName == null) {
                         throw new IllegalStateException("Image pull secret (secretName) must be defined when images are specified for dependency: " + chartName);
@@ -11484,6 +11643,23 @@ public class CommandService {
                         }
                     }
 
+                    // Auth headers from the original caller session
+                    Map<String,String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                    String webhookRelease = stringValue(childParams.get(WEBHOOK_RELEASE_PARAM));
+                    if (authHeaders.isEmpty() && !webhookRelease.isEmpty()) {
+                        // The webhook holds no Ambari permission: a pod created after its release's deploy ended
+                        // only gets a keytab another Secret holds. Said here, in the operation and the server log,
+                        // since Kubernetes only shows a pod waiting for its keytab Secret.
+                        String noCredentials = "Cannot issue the keytab of " + principalFqdn + " for a pod of release "
+                                + childParams.get("namespace") + "/" + webhookRelease + ": no other Secret of the "
+                                + "namespace holds a keytab of that principal the KDC accepts, and the keytab webhook "
+                                + "may not ask Ambari for one (only a deploy of the release can). Redeploy the release "
+                                + "(Upgrade/Config, no change needed) so its pods get their keytab.";
+                        LOG.error(noCredentials);
+                        appendCommandLog(id, noCredentials);
+                        throw new IllegalStateException(noCredentials);
+                    }
+
                     String baseUriStr = (String) childParams.get("_baseUri");
                     if (baseUriStr == null || baseUriStr.isBlank()) {
                         throw new IllegalStateException("Missing baseUri in command params (_baseUri)");
@@ -11492,9 +11668,6 @@ public class CommandService {
 
                     // Build Ambari API base from the same host the View is running on
                     String ambariApiBase = baseUri.resolve("/api/v1").toString();
-
-                    // Auth headers from the original caller session
-                    Map<String,String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
 
                     // Resolve target cluster (bound view or auto-discover)
                     String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
@@ -12295,6 +12468,9 @@ public class CommandService {
             String backend_url = (String) depParams.get("backend.url");
             overrideProperties.put("backend.url", backend_url);
             overrideProperties.put("webhook.caBundle", this.webHookConfigurationService.currentCaBundleBase64());
+            // The Ambari account the webhook signs in with, which the view creates (see WebHookBootstrap).
+            overrideProperties.put(WebHookBootstrap.ACCOUNT_USERNAME_VALUE,
+                    WebHookBootstrap.webhookUserName(ctx, WebHookBootstrap.KEYTAB_WEBHOOK));
             LOG.info("Injecting backend.url property with value: {} for webhook dependency", backend_url);
             LOG.info("Injecting webhook.caBundle with CurrentCA");
         }

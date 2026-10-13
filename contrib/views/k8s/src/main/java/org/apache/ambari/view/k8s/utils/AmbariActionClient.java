@@ -55,7 +55,8 @@ public class AmbariActionClient {
     private final String clusterName;
     private final Map<String,String> defaultHeaders;
     private static final String AMBARI_ADMINISTRATOR = "AMBARI.ADMINISTRATOR";
-    private final String permissionName = AMBARI_ADMINISTRATOR;
+    /** The view permission that lets an account open a view instance, and nothing else. */
+    private static final String VIEW_USER = "VIEW.USER";
 
     /**
      * Query, appended to {@code /users/<name>}, that lists every privilege of a user: those granted to the user's
@@ -64,7 +65,6 @@ public class AmbariActionClient {
      */
     public static final String PRIVILEGES_QUERY = "/privileges?fields=PrivilegeInfo/permission_name,PrivilegeInfo/type";
     private Map<String,AmbariConfigPropertiesTypes> defaultConfigTypes;
-    public record WebhookCreds(String username, String password) {}
 
     /**
      * When false, the read-path methods used against a REMOTE context's Ambari
@@ -490,18 +490,13 @@ public class AmbariActionClient {
 
 
     /**
-     * Ensures that an Ambari local user exists, sets its password, and optionally grants
-     * AMBARI.ADMINISTRATOR privileges. All calls rely on the caller-provided cookie session.
+     * Ensures that an Ambari local user exists with the given password. All calls rely on this client's headers, which
+     * must be those of an Ambari administrator. The user gets no privilege here.
      *
      * @param username      Ambari local username
      * @param password      password to set
-     * @param requireAdmin  true to ensure the user has AMBARI.ADMINISTRATOR
      */
-    public void createWebhookAmbariUser(
-            String username,
-            String password,
-            boolean requireAdmin
-    ) throws Exception {
+    public void createWebhookAmbariUser(String username, String password) throws Exception {
         Objects.requireNonNull(username, "username");
         Objects.requireNonNull(password, "password");
         if (!userExists(username)) {
@@ -516,14 +511,106 @@ public class AmbariActionClient {
                 createUser(username, password);
             }
         }
+    }
 
-        if (requireAdmin) {
-            boolean isAdmin = isAmbariAdministrator(username);
-            if (!isAdmin) {
-                LOG.info("User '{}' lacks {}; granting.", username, permissionName);
-                grantAmbariAdminPrivilege(username);
-            } else {
-                LOG.info("User '{}' already has {}.", username, permissionName);
+    /**
+     * Removes the Ambari Administrator role granted to the user by name. A role the user gets through a group is left:
+     * it was not granted for this account.
+     *
+     * @param username Ambari user name
+     * @return true when a privilege was removed
+     * @throws Exception when Ambari cannot be read or refuses a change
+     */
+    public boolean revokeAmbariAdministrator(String username) throws Exception {
+        String url = ambariApiBase + "/users/" + encodePathSegment(username) + "/privileges?fields=PrivilegeInfo/*";
+        List<String> granted = new ArrayList<>();
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+            JsonObject root = itemsAnswer(new String(is.readAllBytes(), StandardCharsets.UTF_8), url);
+            for (JsonElement el : root.getAsJsonArray("items")) {
+                JsonObject pi = el.isJsonObject() ? el.getAsJsonObject().getAsJsonObject("PrivilegeInfo") : null;
+                if ("AMBARI".equalsIgnoreCase(jsonString(pi, "type"))
+                        && AMBARI_ADMINISTRATOR.equalsIgnoreCase(jsonString(pi, "permission_name"))
+                        && "USER".equalsIgnoreCase(jsonString(pi, "principal_type"))
+                        && username.equals(jsonString(pi, "principal_name"))
+                        && jsonString(pi, "privilege_id") != null) {
+                    granted.add(jsonString(pi, "privilege_id"));
+                }
+            }
+        }
+        for (String privilegeId : granted) {
+            send(ambariApiBase + "/privileges/" + encodePathSegment(privilegeId), "DELETE", null);
+            LOG.info("Removed {} from Ambari user '{}' (privilege {})", AMBARI_ADMINISTRATOR, username, privilegeId);
+        }
+        return !granted.isEmpty();
+    }
+
+    /**
+     * Grants the user {@code VIEW.USER} on one view instance, which lets the account open that instance and nothing
+     * else. Nothing is changed when the user already has it.
+     *
+     * @param viewName     the view, e.g. {@code K8S-VIEW}
+     * @param viewVersion  the view version
+     * @param instanceName the view instance
+     * @param username     Ambari user name
+     * @throws Exception when Ambari cannot be read or refuses the change
+     */
+    public void grantViewInstanceUser(String viewName, String viewVersion, String instanceName, String username)
+            throws Exception {
+        String url = ambariApiBase + "/views/" + encodePathSegment(viewName) + "/versions/"
+                + encodePathSegment(viewVersion) + "/instances/" + encodePathSegment(instanceName) + "/privileges";
+        String query = url + "?fields=PrivilegeInfo/permission_name,PrivilegeInfo/principal_name,"
+                + "PrivilegeInfo/principal_type";
+        try (InputStream is = stream.readFrom(query, "GET", (String) null, withStdHeaders(null))) {
+            JsonObject root = itemsAnswer(new String(is.readAllBytes(), StandardCharsets.UTF_8), query);
+            for (JsonElement el : root.getAsJsonArray("items")) {
+                JsonObject pi = el.isJsonObject() ? el.getAsJsonObject().getAsJsonObject("PrivilegeInfo") : null;
+                if (VIEW_USER.equalsIgnoreCase(jsonString(pi, "permission_name"))
+                        && "USER".equalsIgnoreCase(jsonString(pi, "principal_type"))
+                        && username.equals(jsonString(pi, "principal_name"))) {
+                    LOG.info("Ambari user '{}' already has {} on view instance {}", username, VIEW_USER, instanceName);
+                    return;
+                }
+            }
+        }
+        JsonObject info = new JsonObject();
+        info.addProperty("permission_name", VIEW_USER);
+        info.addProperty("principal_name", username);
+        info.addProperty("principal_type", "USER");
+        JsonObject privilege = new JsonObject();
+        privilege.add("PrivilegeInfo", info);
+        JsonArray body = new JsonArray();
+        body.add(privilege);
+        send(url, "POST", body.toString());
+        LOG.info("Granted {} on view instance {} to Ambari user '{}'", VIEW_USER, instanceName, username);
+    }
+
+    /**
+     * Deletes an Ambari user. Nothing happens when the user does not exist.
+     *
+     * @param username Ambari user name
+     * @return true when the user was deleted
+     * @throws Exception when Ambari refuses the deletion
+     */
+    public boolean deleteUser(String username) throws Exception {
+        if (!userExists(username)) {
+            return false;
+        }
+        send(ambariApiBase + "/users/" + encodePathSegment(username), "DELETE", null);
+        LOG.info("Deleted Ambari user '{}'", username);
+        return true;
+    }
+
+    /**
+     * Sends a change to Ambari and fails on an error answer: the view's stream provider may hand the body of an HTTP
+     * error back instead of throwing.
+     */
+    private void send(String url, String method, String body) throws Exception {
+        Map<String, String> headers = body == null ? withStdHeaders(null)
+                : withStdHeaders(Map.of("Content-Type", "application/json"));
+        try (InputStream is = stream.readFrom(url, method, body, headers)) {
+            String answer = is == null ? "" : new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            if (!answer.isBlank() && answer.trim().startsWith("{")) {
+                answer(answer, url);
             }
         }
     }
@@ -779,28 +866,19 @@ public class AmbariActionClient {
     }
 
     /**
-     * helper method to check if a user does already exist in ambari's server internal database
+     * Whether a user exists in Ambari's internal database. Only an explicit "not found" means it does not: any other
+     * error (a refusal, for one, which the view's stream provider hands back as a body) is thrown, so that a caller
+     * deleting the user never takes "not allowed to look" for "already gone".
+     *
      * @param username the username to check existence for
-     * @return true or false
+     * @return true when Ambari knows the user, false when it answers 404
+     * @throws Exception when Ambari answers any other error, or something that is not a user
      */
     public boolean userExists(String username) throws Exception {
-        final String url = ambariApiBase + "/users/" + encode(username);
+        final String url = ambariApiBase + "/users/" + encodePathSegment(username);
+        final String body;
         try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
-            final String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            // Success shape:
-            // { "href": ".../api/v1/users/<user>", "Users": { "user_name": "<user>", ... } }
-            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-            if (root.has("Users")) {
-                JsonObject users = root.getAsJsonObject("Users");
-                String name = users.has("user_name") ? users.get("user_name").getAsString() : null;
-                return name != null && name.equals(username);
-            }
-            // Error shape often is: { "status":404, "message":"..." }
-            if (root.has("status") && root.get("status").getAsInt() == 404) {
-                return false;
-            }
-            // Defensive: if neither shape matched, treat as not found.
-            return false;
+            body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
         } catch (Exception e) {
             // Some Ambari builds throw on 404; normalize that to "not exists".
             String msg = String.valueOf(e.getMessage());
@@ -809,6 +887,23 @@ public class AmbariActionClient {
             }
             throw e;
         }
+        // Success shape:
+        // { "href": ".../api/v1/users/<user>", "Users": { "user_name": "<user>", ... } }
+        // Error shape: { "status":404, "message":"..." }
+        JsonElement parsed = JsonParser.parseString(body);
+        if (parsed.isJsonObject()) {
+            JsonObject root = parsed.getAsJsonObject();
+            JsonElement status = root.get("status");
+            if (status != null && status.isJsonPrimitive() && status.getAsJsonPrimitive().isNumber()
+                    && status.getAsInt() == 404) {
+                return false;
+            }
+            root = answer(body, url);
+            if (root.has("Users") && root.get("Users").isJsonObject()) {
+                return username.equalsIgnoreCase(jsonString(root.getAsJsonObject("Users"), "user_name"));
+            }
+        }
+        throw new IOException("Unexpected answer from " + url + ": no user");
     }
 
     /**
@@ -1008,33 +1103,6 @@ public class AmbariActionClient {
         }
         return false;
     }
-    /**
-     * Grants AMBARI.ADMINISTRATOR to the user via POST /api/v1/privileges.
-     * @param username
-     * @throws Exception
-     */
-    public void grantAmbariAdminPrivilege(String username) throws Exception {
-        String url = ambariApiBase + "/privileges";
-
-        JsonObject root  = new JsonObject();
-        JsonObject info  = new JsonObject();
-        info.addProperty("permission_name", "AMBARI.ADMINISTRATOR");
-        info.addProperty("principal_name",  username);
-        info.addProperty("principal_type",  "USER");
-        info.addProperty("type",            "AMBARI");
-        root.add("PrivilegeInfo", info);
-
-        try (InputStream is = stream.readFrom(
-                url,
-                "POST",
-                root.toString(),
-                withStdHeaders(Map.of("Content-Type", "application/json"))
-        )) {
-            String resp = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            LOG.debug("grantAmbariAdminPrivilege('{}') response: {}", username, resp);
-        }
-    }
-
     /**
      * static method to convert MultiValueMap from javax rs core to Classical MAP
      * @param h

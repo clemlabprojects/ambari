@@ -297,10 +297,11 @@ const ConfigurationPage: React.FC = () => {
                         try {
                             await form.validateFields([['kerberos', 'injectionMode']]);
                             const vals = form.getFieldsValue(true);
-                            await saveViewSettings(buildFullPayload(vals));
+                            const { warning } = await saveViewSettings(buildFullPayload(vals));
                             rememberThanosKeys(vals);
                             setAuthStepSaved(true);
-                            message.success('Authentication settings saved');
+                            if (warning) message.warning(`Authentication settings saved. ${warning}`, 15);
+                            else message.success('Authentication settings saved');
                         } catch (e: any) {
                             if (e?.errorFields) return;
                             message.error(e?.message || 'Save failed');
@@ -918,6 +919,12 @@ const ConfigurationPage: React.FC = () => {
                                 <Paragraph>
                                     Choose how Kerberos keytabs are delivered to pods. Webhook mode injects keytabs at
                                     admission time; pre-provisioned mode creates a Secret before Helm install.
+                                </Paragraph>
+                                <Paragraph type="secondary">
+                                    Leaving Webhook mode: redeploy every release deployed in Webhook mode, or its pods are
+                                    refused when they restart or scale once the webhook's Ambari account is removed. KDPS
+                                    keeps that account while the keytab webhook is still installed in the cluster; uninstall
+                                    the webhook, then save these settings again to remove it.
                                 </Paragraph>
                                 <Form.Item label="Kerberos keytab injection mode" name={['kerberos','injectionMode']} className="form-compact-row" style={{ maxWidth: 360 }}>
                                     <Select options={[

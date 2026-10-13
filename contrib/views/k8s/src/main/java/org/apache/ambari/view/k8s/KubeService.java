@@ -250,6 +250,10 @@ public class KubeService {
                 }
             } else {
                 LOG.info("/cluster/config: Kerberos injection mode {}; keytab webhook prerequisites not needed", injectionMode);
+                // An account an earlier WEBHOOK setup left behind is withdrawn while an administrator is at hand;
+                // kept, with a warning in the log, while the webhook is still installed.
+                WebHookBootstrap.retireWebhookAccess(this.viewContext, this.getKubernetesService(),
+                        headers == null ? null : headers.getRequestHeaders());
             }
             return Response.ok(Collections.singletonMap("message", "Configuration saved.")).build();
 

@@ -26,15 +26,19 @@ import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.KeytabWebhookAuthenticator;
 import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.service.IngressTlsSecretGuard;
+import org.apache.ambari.view.k8s.service.KeytabRequestPolicy;
+import org.apache.ambari.view.k8s.service.WebHookConfigurationService;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
+import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +48,7 @@ import javax.ws.rs.*;
 import javax.ws.rs.core.*;
 import java.net.URI;
 import java.util.LinkedHashMap;
+import java.time.Instant;
 import java.util.Map;
 
 @Path("/")
@@ -51,6 +56,10 @@ import java.util.Map;
 public class CommandResource {
 
   private static final Logger LOG = LoggerFactory.getLogger(CommandResource.class);
+
+  /** The answer to a keytab request whose webhook proof does not check out; the reason goes to the view's log. */
+  static final String WEBHOOK_NOT_AUTHENTICATED = "This keytab request claims to come from the KDPS keytab webhook, "
+          + "but it is not signed with the client certificate KDPS issued to the webhook.";
 
   private final ViewContext viewContext;
 
@@ -349,7 +358,13 @@ public class CommandResource {
    * Submit an async request to generate a keytab via Ambari Server action, then
    * create/update a Kubernetes Opaque Secret with the resulting keytab.
    *
-   * Returns 202 with a Location header to poll the command status.
+   * <p>Two callers are accepted. The view's keytab webhook proves on each request that it holds the client
+   * certificate the view issued to it ({@link KeytabWebhookAuthenticator}); its keytab is issued with the Ambari
+   * credentials of the release's deploy. An operator's keytab is issued with the operator's own credentials. Either
+   * way the keytab must be for a release KDPS deployed ({@link KeytabRequestPolicy}).
+   *
+   * @return 202 with a Location header to poll the command status; 403 when the caller is neither the webhook nor an
+   *         operator, or the request is not for a release KDPS deployed
    */
   @POST
   @Path("/kerberos/keytab")
@@ -357,15 +372,39 @@ public class CommandResource {
   public Response requestKeytab(@Context HttpHeaders headers,
                                 @Context UriInfo ui,
                                 KeytabRequest req) {
-    // The keytab webhook calls this endpoint with its own Ambari account, which the role lists do not name.
-    auth().checkKeytabRequestPermission();
-    // Delegate to the scheduler in CommandService.
-    // Headers are forwarded for caller authentication; the URI is the LOCAL Ambari API base
-    // (see AmbariLoopbackUrlResolver — required when Ambari sits behind a reverse proxy).
-    final String commandId = CommandService.get(viewContext).submitKeytabRequest(
-            req,
-            headers.getRequestHeaders(),
-            AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext));
+    MultivaluedMap<String, String> requestHeaders = headers == null ? null : headers.getRequestHeaders();
+    // A request claiming to come from the webhook is proven by its certificate or refused, never taken as the caller's.
+    boolean fromWebhook = KeytabWebhookAuthenticator.claimsWebhook(requestHeaders);
+    if (!fromWebhook) {
+      auth().checkWritePermission();
+    }
+    if (req == null) {
+      return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "No keytab request.")).build();
+    }
+    // The URI is the LOCAL Ambari API base (see AmbariLoopbackUrlResolver — required when Ambari sits behind a
+    // reverse proxy).
+    URI ambariApi = AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext);
+    final String commandId;
+    try {
+      if (fromWebhook) {
+        try {
+          new KeytabWebhookAuthenticator(WebHookConfigurationService.certificateAuthorityPem(viewContext),
+                  WebHookBootstrap.CLIENT_CERTIFICATE_CN).authenticate(requestHeaders, req, Instant.now());
+        } catch (KeytabWebhookAuthenticator.RefusedException refused) {
+          LOG.warn("Keytab request for {} in namespace {} REFUSED: it claims to come from the keytab webhook, but {}",
+                  req.getPrincipal(), req.getNamespace(), refused.getMessage());
+          throw AuthHelper.forbidden(WEBHOOK_NOT_AUTHENTICATED);
+        }
+        commandId = CommandService.get(viewContext).submitWebhookKeytabRequest(req, ambariApi);
+      } else {
+        // The operator's own Ambari credentials issue the keytab.
+        commandId = CommandService.get(viewContext).submitKeytabRequest(req, requestHeaders, ambariApi);
+      }
+    } catch (KeytabRequestPolicy.RefusedException refused) {
+      LOG.warn("Keytab request for {} in namespace {} REFUSED: {}", req.getPrincipal(), req.getNamespace(),
+              refused.getMessage());
+      throw AuthHelper.forbidden(refused.getMessage());
+    }
 
     // Build a stable href to this command’s status endpoint within the View
     final String base = getCommandsUrl(ui);

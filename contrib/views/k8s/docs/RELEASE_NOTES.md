@@ -167,6 +167,64 @@ These services were offered by pre-release builds and are no longer in the servi
   Audience, or its Client ID when that is blank: set it to the audience your identity provider issues (an application
   ID URI such as `api://...`, for instance) and make sure the applications calling Trino get tokens with it.
 
+### Kerberos keytab webhook (WEBHOOK injection mode)
+
+This concerns only sites that set **Settings > Kerberos injection mode** to WEBHOOK. The default, PRE_PROVISIONED,
+does not use the keytab webhook and is not affected.
+
+Earlier builds created the Ambari local account `webhook-user` with the **Ambari Administrator** role, wrote its password
+into the Secret `ambari-mutating-webhooks/webhook-user`, and the webhook chart let the webhook read, change and delete
+every Secret of the Kubernetes cluster. Anyone able to read that Secret could sign in to Ambari as an administrator.
+Now:
+
+- The webhook proves each keytab request with the client certificate KDPS issues to it; KDPS refuses a request it
+  cannot verify.
+- Each KDPS view instance gives its webhook an Ambari account of its own, `webhook-user-<instance>` (the instance name
+  in lower case). It may only open that view instance (View User), and its password is derived from that
+  certificate's key: no password is stored in Kubernetes. View instances that manage different Kubernetes clusters
+  no longer share one account.
+- Keytabs are issued with the Ambari credentials of the operator who deployed the release, only for releases KDPS
+  deployed, only for principals named after the release's namespace, and only into the pod's own keytab Secret
+  (`keytab-<pod>`). The webhook itself cannot have a keytab issued: the deploy's credentials are kept only while the
+  deploy runs. A pod created after its deploy ended (a restart, a scale-out, a drained node) gets a copy of the keytab
+  another Secret of the namespace holds for the same principal. When there is none, or the KDC no longer accepts it,
+  the pod waits for its keytab Secret, and the keytab operation in KDPS (and the Ambari server log) fails naming the
+  release to redeploy: redeploy it (Upgrade/Config, no change needed).
+- The webhook's client certificate is valid for a year. KDPS renews it for the same key, so the account's password
+  does not change, once fewer than 90 days are left: at a WEBHOOK-mode deploy, when the view starts, and daily
+  after that, with no deploy needed. If a renewal fails, the Ambari server log says so, as an error once fewer than
+  30 days are left. An expired certificate makes KDPS refuse the webhook's keytab requests, and the Kubernetes cluster
+  then refuses every new Kerberized pod; redeploying a release in WEBHOOK mode renews it.
+- The webhook chart (0.2.0, image 1.0.0.10) creates no ClusterRole or ClusterRoleBinding and mounts no ServiceAccount
+  token: the webhook makes no Kubernetes API call.
+
+After the upgrade:
+
+1. In every KDPS view instance that uses the WEBHOOK mode, redeploy each Kerberized Trino or Superset release
+   (Upgrade/Config, no change needed). The deploy installs the new webhook and sets up its own account. The first such
+   deploy on the Ambari server also deletes the account `webhook-user` that earlier versions shared between all the view
+   instances, an Ambari Administrator: from then on, the earlier webhook of an instance not yet redeployed refuses the
+   pods of its releases when they restart or scale, until that instance redeploys. Its pods cannot restart anyway:
+   KDPS deletes the password Secret they mount when it starts. In GitOps mode, check that the keytab webhook's
+   HelmRelease under `_shared/` names chart 0.2.0 once the deploy is committed.
+2. In Ambari, **Manage Ambari > Users**, check that `webhook-user` is gone (or, if you set
+   `k8s.view.webhooks.keytab-webhook.backend.webhookUsername`, the account of that name), and that no
+   `webhook-user-<instance>` account is an Ambari Administrator.
+3. If you leave the WEBHOOK mode, first redeploy every release deployed in WEBHOOK mode: once the webhook's account is
+   removed, the webhook refuses their pods when they restart or scale. Saving **Settings** with another injection
+   mode removes the account of that view instance only, and only once the keytab webhook is no longer installed in the
+   Kubernetes cluster: while it is, KDPS keeps the account and says so. Uninstall the webhook, then save the settings
+   again. Removing an account takes an Ambari administrator: when a view administrator who is not one saves the
+   settings, KDPS keeps the account and says so.
+4. In each Kubernetes cluster where the WEBHOOK mode was used, check that the Secret
+   `ambari-mutating-webhooks/webhook-user` is gone (KDPS deletes it when it starts, and at the next WEBHOOK deploy;
+   with several view instances it may be left in some clusters: delete it by hand there), and that the webhook can no longer read Secrets:
+   `kubectl auth can-i get secrets --as=system:serviceaccount:ambari-mutating-webhooks:keytab-webhook -A` must answer
+   `no`.
+5. The earlier password was readable by anyone allowed to read Secrets in `ambari-mutating-webhooks` (namespace
+   administrators, backup and GitOps tools). Review the Ambari audit log for actions of `webhook-user` you do not
+   expect.
+
 ### OIDC client secrets
 
 - The **Rotate Secrets** button is removed from Admin > OIDC. It only ran OIDC provisioning again, which reads each

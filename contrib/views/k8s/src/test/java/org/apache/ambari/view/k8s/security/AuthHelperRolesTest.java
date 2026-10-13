@@ -155,62 +155,15 @@ class AuthHelperRolesTest {
 
   // ----- the keytab webhook's own account -----------------------------------------------------------------------
 
-  private static final String WEBHOOK_USER_SETTING = "k8s.view.webhooks.keytab-webhook.backend.webhookUsername";
-
-  @Test
-  void theKeytabWebhookAccountMayStillAskForKeytabsOnceTheListsAreSet() {
-    // In the WEBHOOK injection mode the webhook asks for each pod's keytab with the Ambari administrator account the
-    // view created for it; that account is in neither list.
-    Predicate<String> ambariAdmins = "webhook-user"::equals;
-    AuthHelper webhook = new AuthHelper(ctx("webhook-user", "admin", "ops"), ambariAdmins);
-    AuthHelper audit = new AuthHelper(ctx("audit", "admin", "ops"), ambariAdmins);
-    AuthHelper ops = new AuthHelper(ctx("ops", "admin", "ops"), ambariAdmins);
-
-    assertDoesNotThrow(webhook::checkKeytabRequestPermission);
-    assertDoesNotThrow(ops::checkKeytabRequestPermission);
-    ForbiddenException refused = assertThrows(ForbiddenException.class, audit::checkKeytabRequestPermission);
-    assertEquals(403, refused.getResponse().getStatus());
-    assertEquals(AuthHelper.WRITE_DENIED, ((Map<?, ?>) refused.getResponse().getEntity()).get("error"));
-  }
-
   @Test
   void theKeytabWebhookAccountGetsNothingElse() {
-    AuthHelper webhook = new AuthHelper(ctx("webhook-user", "admin", "ops"), "webhook-user"::equals);
+    // The webhook's Ambari account has no KDPS role: its keytab requests are authenticated by its client certificate
+    // (see CommandResourceKeytabRoleTest), never by its name.
+    AuthHelper webhook = new AuthHelper(ctx("webhook-user", "admin", "ops"), user -> false);
 
     assertRole("VIEWER", false, false, webhook);
     assertThrows(ForbiddenException.class, webhook::checkWritePermission);
     assertThrows(ForbiddenException.class, webhook::checkConfigurationPermission);
-  }
-
-  @Test
-  void theWebhookAccountNameAloneIsNotEnough() {
-    // An ordinary account that happens to have the webhook's name, synced from a directory say, gains nothing.
-    AuthHelper namesake = new AuthHelper(ctx("webhook-user", "admin", "ops"), user -> false);
-
-    assertThrows(ForbiddenException.class, namesake::checkKeytabRequestPermission);
-  }
-
-  @Test
-  void aRenamedWebhookAccountIsTheOneRecognised() {
-    ViewContext renamed = ctx("kdps-webhook", "admin", "ops");
-    when(renamed.getAmbariProperty(WEBHOOK_USER_SETTING)).thenReturn("kdps-webhook");
-    ViewContext oldName = ctx("webhook-user", "admin", "ops");
-    when(oldName.getAmbariProperty(WEBHOOK_USER_SETTING)).thenReturn("kdps-webhook");
-
-    assertDoesNotThrow(new AuthHelper(renamed, user -> true)::checkKeytabRequestPermission);
-    assertThrows(ForbiddenException.class, new AuthHelper(oldName, user -> true)::checkKeytabRequestPermission);
-  }
-
-  @Test
-  void anOperatorAsksForKeytabsWithoutAnyAmbariLookup() {
-    AtomicInteger lookups = new AtomicInteger();
-    AuthHelper ops = new AuthHelper(ctx("ops", "admin", "ops"), user -> {
-      lookups.incrementAndGet();
-      return false;
-    });
-
-    assertDoesNotThrow(ops::checkKeytabRequestPermission);
-    assertEquals(0, lookups.get());
   }
 
   @Test

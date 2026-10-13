@@ -24,6 +24,7 @@ import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
+import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.ConfigurationBootstrapService;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
@@ -32,6 +33,7 @@ import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.ViewSettingsService;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
+import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -290,9 +292,13 @@ public class ConfigurationResource {
     }
 
     /**
-     * Saves the view settings. A Thanos credential sent back masked or blank keeps the stored one.
+     * Saves the view settings. A Thanos credential sent back masked or blank keeps the stored one. When the Kerberos
+     * injection mode saved is not WEBHOOK, the Ambari account the view created for the keytab webhook is removed,
+     * with the saving administrator's credentials, unless the webhook is still installed (see
+     * {@link WebHookBootstrap#retireWebhookAccess}).
      *
-     * @return 200; 400 when the settings are too large to be saved
+     * @return 200, with a {@code warning} when the webhook's account was kept; 400 when the settings are too large to
+     *         be saved
      */
     @POST
     @Path("/settings")
@@ -300,6 +306,13 @@ public class ConfigurationResource {
         auth().checkConfigurationPermission();
         try {
             new ViewSettingsService(viewContext).save(settings);
+            if (!"WEBHOOK".equals(CommandService.resolveKerberosInjectionMode(viewContext))) {
+                String warning = WebHookBootstrap.retireWebhookAccess(viewContext, kubernetesService,
+                        callerHeaders == null ? null : callerHeaders.getRequestHeaders());
+                if (warning != null) {
+                    return Response.ok(Map.of("warning", warning)).build();
+                }
+            }
             return Response.ok().build();
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());

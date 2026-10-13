@@ -23,7 +23,6 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.UserPermissions;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
-import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,8 +50,8 @@ import java.util.stream.Collectors;
  * properties. When {@code view.admin.users} is empty, the Ambari administrators are the view admins,
  * so a view instance that was never configured stays closed to every other user granted access to it.
  * Ambari is asked with the caller's own credentials: build the helper with the request's headers.
- * The one account outside the lists is the view's own keytab webhook, which may ask for keytabs
- * (see {@link #checkKeytabRequestPermission()}).
+ * The view's own keytab webhook has no role: its Ambari account only reaches the view, which
+ * authenticates its keytab requests by its client certificate ({@link KeytabWebhookAuthenticator}).
  *
  * <p>Ambari itself only lets users that were granted the view instance reach these endpoints; the
  * {@code <roles>} of a non-automatic view instance are ignored, so nothing here can rely on Ambari
@@ -266,32 +265,6 @@ public class AuthHelper {
             LOG.warn("Write permission DENIED for user '{}'.", viewContext.getUsername());
             throw forbidden(WRITE_DENIED);
         }
-    }
-
-    /**
-     * Assert that the current user may ask for a pod's Kerberos keytab: an operator, or the Ambari account of the
-     * view's own keytab webhook. In the WEBHOOK injection mode that webhook asks for the keytab of every pod it
-     * mutates. Its account is in neither role list, so without this exception setting the lists would stop every
-     * Kerberized pod from getting its keytab.
-     *
-     * @throws ForbiddenException (HTTP 403 with an {@code error} message) for any other caller
-     */
-    public void checkKeytabRequestPermission() {
-        if (canWrite() || isKeytabWebhookAccount()) {
-            return;
-        }
-        LOG.warn("Keytab request DENIED for user '{}'.", viewContext.getUsername());
-        throw forbidden(WRITE_DENIED);
-    }
-
-    /**
-     * Whether the caller is the keytab webhook's Ambari account. The name alone is not enough: the account must also
-     * be an Ambari administrator, as the view creates it, so an ordinary user who happens to have that name (from a
-     * directory sync, say) gains nothing.
-     */
-    private boolean isKeytabWebhookAccount() {
-        String webhookUser = WebHookBootstrap.webhookUserName(viewContext, WebHookBootstrap.KEYTAB_WEBHOOK);
-        return webhookUser.equals(ambariUserName()) && isAmbariAdministrator();
     }
 
     /**
