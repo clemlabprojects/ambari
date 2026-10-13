@@ -9368,6 +9368,20 @@ public class CommandService {
     }
 
     /**
+     * Whether Helm still holds the release, in any state (deployed, failed, pending or uninstalling).
+     *
+     * <p>Unlike {@link #directHelmStatus}, a release that cannot be listed is not taken for an absent one: the
+     * failure is thrown, so an uninstall that failed is never mistaken for one that finished.</p>
+     *
+     * @throws Exception when Helm cannot list the releases of the namespace
+     */
+    public boolean directHelmReleaseExists(String namespace, String releaseName) throws Exception {
+        final String kubeconfigContent = new ViewConfigurationService(ctx).getKubeconfigContents();
+        return helmService.list(namespace, kubeconfigContent).stream()
+                .anyMatch(r -> releaseName.equals(r.getName()));
+    }
+
+    /**
      * Step parameter holding the release metadata a deploy records once its Helm step has applied it: chart,
      * version, security profile and its hash, global configuration fingerprint, endpoints, catalogs and truststores.
      */

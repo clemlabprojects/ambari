@@ -45,6 +45,15 @@ export function uninstallFollowUps(notes: UninstallNotes | undefined): Uninstall
   return out;
 }
 
+/**
+ * What the uninstall confirmation says of the release's Polaris access, taken back once the release is gone (the
+ * default Polaris cleanup of an uninstall).
+ */
+export const UNINSTALL_POLARIS_REVOCATION = 'If it was given access to a Polaris catalog, KDPS also revokes its '
+  + 'Polaris principal and role once the release is removed, so its catalog credential stops working. The catalog and '
+  + 'its data are kept. If the removal fails, the release keeps its access and its record, and you can uninstall it '
+  + 'again once the cause is fixed.';
+
 /** An `oidc[]` entry of a service definition, as far as the uninstall confirmation reads it. */
 type OidcEntry = Record<string, any>;
 

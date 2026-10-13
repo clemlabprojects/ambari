@@ -21,7 +21,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
-import { uninstallFollowUps, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
+import { UNINSTALL_POLARIS_REVOCATION, uninstallFollowUps, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
 import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import { getPods, listDeployments, type DeploymentRow } from '../api/client';
@@ -850,6 +850,7 @@ const HelmReleasesPage: React.FC = () => {
               content: (
                 <Space direction="vertical">
                   <span>This action will remove the release in namespace {record.namespace}.</span>
+                  <span>{UNINSTALL_POLARIS_REVOCATION}</span>
                   {signInRemovals ? <span>{signInRemovals}</span> : null}
                 </Space>
               ),
@@ -876,7 +877,7 @@ const HelmReleasesPage: React.FC = () => {
                         </Space>
                       ),
                     });
-                    await refresh();
+                    await fetchReleases();
                     return;
                   }
                   message.success(`Release ${record.name} uninstalled successfully.`);
@@ -900,9 +901,21 @@ const HelmReleasesPage: React.FC = () => {
                       ),
                     });
                   }
+                  await fetchReleases();
                   await refresh();
                 } catch (e: any) {
-                  message.error(e?.message || 'Error during uninstallation');
+                  // The server says why the release could not be removed. It is still installed, and keeps its
+                  // record and its catalog access, so the list is reloaded to show it is still there.
+                  Modal.error({
+                    title: `${record.name} was not uninstalled`,
+                    width: 640,
+                    content: (
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, margin: 0 }}>
+                        {e?.message || 'Error during uninstallation'}
+                      </pre>
+                    ),
+                  });
+                  await fetchReleases();
                 }
               }
             });

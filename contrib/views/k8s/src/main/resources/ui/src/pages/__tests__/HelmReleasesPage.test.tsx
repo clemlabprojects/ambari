@@ -150,6 +150,86 @@ describe('HelmReleasesPage uninstall through a pull request', () => {
 });
 
 /**
+ * An uninstall the cluster or Git refuses leaves the release installed, with its record and its Polaris access: the
+ * page shows the reason and reloads the list, where the release still is. One that succeeds says what became of the
+ * release's Polaris access, and the release leaves the list.
+ */
+describe('HelmReleasesPage uninstall outcome', () => {
+  const user = userEvent.setup();
+  const trino = {
+    id: 'analytics/trino', name: 'trino', namespace: 'analytics', chart: 'trino-1.43.16', version: '1.43.16',
+    status: 'deployed', managedByUi: true, deploymentMode: 'DIRECT_HELM', serviceKey: 'TRINO',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    invalidateCapabilities();
+    (getAvailableServices as jest.Mock).mockResolvedValue({});
+    (getClusterCapabilities as jest.Mock).mockResolvedValue({ platform: 'kubernetes' });
+    (getReleaseTlsState as jest.Mock).mockResolvedValue([]);
+    (getReleaseStatus as jest.Mock).mockResolvedValue({});
+    (getReleaseActionRefusals as jest.Mock).mockResolvedValue({ refusals: {} });
+  });
+
+  /** Opens the uninstall confirmation of the release; returns the dialog. */
+  const openConfirm = async () => {
+    render(
+      <PermissionsContext.Provider value={{ permissions: { canWrite: true, canConfigure: true } as any, loading: false }}>
+        <MemoryRouter><HelmReleasesPage /></MemoryRouter>
+      </PermissionsContext.Provider>);
+    await screen.findByText('trino');
+    await user.click(screen.getByRole('button', { name: 'more' }));
+    // Modals of earlier cases can still be in the document: take the menu's item, then this case's confirmation.
+    const before = screen.queryAllByText('Uninstall trino?').length;
+    await user.click(await screen.findByRole('menuitem', { name: /Uninstall/ }));
+    await waitFor(() => expect(screen.queryAllByText('Uninstall trino?').length).toBeGreaterThan(before));
+    const dialogs = await screen.findAllByRole('dialog');
+    return dialogs.filter((d) => d.textContent?.includes('Uninstall trino?')).pop() as HTMLElement;
+  };
+
+  it('says the Polaris principal is revoked before uninstalling', async () => {
+    (getHelmReleases as jest.Mock).mockResolvedValue({ items: [trino], total: 1 });
+
+    const confirm = await openConfirm();
+
+    expect(within(confirm).getByText(/revokes its Polaris principal and role/)).toBeTruthy();
+  });
+
+  it('shows why the release could not be uninstalled and keeps it listed', async () => {
+    (getHelmReleases as jest.Mock).mockResolvedValue({ items: [trino], total: 1 });
+    const reason = 'Uninstall failed: 502: Helm could not uninstall analytics/trino: another operation'
+      + ' (install/upgrade/rollback) is in progress. The release is still installed and keeps its record and its'
+      + ' catalog access. Fix the cause, then uninstall it again.';
+    (uninstallHelm as jest.Mock).mockRejectedValue(new Error(reason));
+
+    const confirm = await openConfirm();
+    const loads = (getHelmReleases as jest.Mock).mock.calls.length;
+    await user.click(within(confirm).getByRole('button', { name: 'Uninstall' }));
+
+    expect(await screen.findByText('trino was not uninstalled')).toBeTruthy();
+    expect(screen.getByText(reason)).toBeTruthy();
+    await waitFor(() => expect((getHelmReleases as jest.Mock).mock.calls.length).toBeGreaterThan(loads));
+    expect(screen.getAllByText('trino').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Release trino uninstalled successfully.')).toBeNull();
+  });
+
+  it('shows what became of the Polaris access and reloads the list', async () => {
+    (getHelmReleases as jest.Mock)
+      .mockResolvedValueOnce({ items: [trino], total: 1 })
+      .mockResolvedValue({ items: [], total: 0 });
+    (uninstallHelm as jest.Mock).mockResolvedValue({
+      polarisCleanup: "Removed the Polaris principal 'trino-analytics' and its role.",
+    });
+
+    const confirm = await openConfirm();
+    await user.click(within(confirm).getByRole('button', { name: 'Uninstall' }));
+
+    expect(await screen.findByText("Removed the Polaris principal 'trino-analytics' and its role.")).toBeTruthy();
+    await waitFor(() => expect(getHelmReleases).toHaveBeenCalledTimes(2));
+  });
+});
+
+/**
  * The repair actions of a release run against the platform context it was deployed on. The page asks the backend,
  * when the menu opens, which of them that context cannot perform, and disables those with the reason.
  */

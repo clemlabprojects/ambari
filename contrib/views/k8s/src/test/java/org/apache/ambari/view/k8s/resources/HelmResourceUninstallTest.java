@@ -53,7 +53,8 @@ import static org.mockito.Mockito.when;
  * The uninstall of a GitOps release from the Releases page: when the Git directory recorded for the release is not
  * its own, or holds another release's HelmRelease, nothing is removed. Its manifests stay in Git and Flux keeps running it, so it keeps its Polaris catalog
  * credential and its record, from which the uninstall is retried once the record is corrected. The same when Git
- * refuses or cannot take the removal, or another GitOps operation on the release holds its workspace.
+ * refuses or cannot take the removal, or another GitOps operation on the release holds its workspace. A direct Helm
+ * release whose uninstall failed keeps them too while Helm still holds it, and is cleaned up once it is gone.
  */
 class HelmResourceUninstallTest {
 
@@ -93,6 +94,38 @@ class HelmResourceUninstallTest {
         meta.setGitPath(gitPath);
         when(releaseMetadata.find(NS, RELEASE)).thenReturn(meta);
         return meta;
+    }
+
+    /** The release as a direct Helm deploy recorded it. */
+    private K8sReleaseEntity recordedDirect() {
+        K8sReleaseEntity meta = new K8sReleaseEntity();
+        meta.setId(K8sReleaseEntity.idOf(NS, RELEASE));
+        meta.setNamespace(NS);
+        meta.setReleaseName(RELEASE);
+        meta.setDeploymentMode("DIRECT_HELM");
+        when(releaseMetadata.find(NS, RELEASE)).thenReturn(meta);
+        return meta;
+    }
+
+    /** What the direct backend throws when Helm fails: the Helm error, wrapped twice on the way up. */
+    private static RuntimeException helmFailure(String helmMessage) {
+        return new RuntimeException(new RuntimeException(new IllegalStateException(helmMessage)));
+    }
+
+    private void assertNothingTakenBack() {
+        verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
+        verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(releaseMetadata, never()).delete(anyString(), anyString());
+    }
+
+    private void assertEverythingTakenBack() {
+        verify(commandService).revokePolarisForRelease(eq(NS), eq(RELEASE), any(), any());
+        verify(commandService).removeSccGrantsForRelease(eq(NS), eq(RELEASE), any());
+        verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
+        verify(commandService).revokeOidcForRelease(eq(NS), eq(RELEASE), any(), any());
+        verify(releaseMetadata).delete(NS, RELEASE);
     }
 
     private Response uninstall() {
@@ -151,9 +184,12 @@ class HelmResourceUninstallTest {
 
         Response response = uninstall();
 
-        assertEquals(500, response.getStatus());
-        String error = String.valueOf(((Map<?, ?>) response.getEntity()).get("error"));
+        assertEquals(502, response.getStatus());
+        Map<?, ?> answer = (Map<?, ?>) response.getEntity();
+        String error = String.valueOf(answer.get("error"));
         assertTrue(error.contains("Not allowed to push to protected branch main"), "Git's own message: " + error);
+        assertEquals(RELEASE, answer.get("release"));
+        assertEquals(NS, answer.get("namespace"));
         // Flux keeps running the release from Git: it keeps its catalog credential, its SCCs and its record.
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
@@ -362,5 +398,86 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
+    }
+
+    @Test
+    void aDirectReleaseHelmCannotUninstallKeepsItsCatalogAccessAndRecord() throws Exception {
+        recordedDirect();
+        doThrow(helmFailure("uninstall: secrets \"sh.helm.release.v1.trino.v3\" is forbidden: User"
+                + " \"system:serviceaccount:kdps:ambari\" cannot delete resource \"secrets\""))
+                .when(commandService).destroyViaBackend(NS, RELEASE, "DIRECT_HELM");
+        when(commandService.directHelmReleaseExists(NS, RELEASE)).thenReturn(true);
+
+        Response response = uninstall();
+
+        assertEquals(502, response.getStatus());
+        Map<?, ?> answer = (Map<?, ?>) response.getEntity();
+        String error = String.valueOf(answer.get("error"));
+        assertTrue(error.startsWith("Helm could not uninstall team-a/trino: uninstall: secrets"), error);
+        assertTrue(error.contains("cannot delete resource \"secrets\""), "Helm's own reason: " + error);
+        assertTrue(error.contains("still installed"), error);
+        assertTrue(!error.contains("RuntimeException") && !error.contains("IllegalStateException"),
+                "no exception class names: " + error);
+        assertEquals(RELEASE, answer.get("release"));
+        assertEquals(NS, answer.get("namespace"));
+        // Trino keeps running: its Polaris principal, its SCCs, its sign-in and its record stay.
+        assertNothingTakenBack();
+    }
+
+    @Test
+    void aDirectReleaseWhoseStateCannotBeCheckedIsKept() throws Exception {
+        recordedDirect();
+        doThrow(helmFailure("Kubernetes cluster unreachable: context deadline exceeded"))
+                .when(commandService).destroyViaBackend(NS, RELEASE, "DIRECT_HELM");
+        when(commandService.directHelmReleaseExists(NS, RELEASE))
+                .thenThrow(new IllegalStateException("Kubernetes cluster unreachable"));
+
+        Response response = uninstall();
+
+        assertEquals(502, response.getStatus());
+        assertTrue(String.valueOf(((Map<?, ?>) response.getEntity()).get("error"))
+                .contains("context deadline exceeded"));
+        assertNothingTakenBack();
+    }
+
+    @Test
+    void aDirectReleaseThatIsUninstalledIsCleanedUp() throws Exception {
+        recordedDirect();
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        verify(commandService).destroyViaBackend(NS, RELEASE, "DIRECT_HELM");
+        assertEverythingTakenBack();
+        verify(commandService, never()).directHelmReleaseExists(anyString(), anyString());
+    }
+
+    @Test
+    void aDirectReleaseGoneAlthoughHelmFailedIsCleanedUp() throws Exception {
+        // Such as a partial uninstall: Helm deleted the release record, then failed on one of its resources.
+        recordedDirect();
+        doThrow(helmFailure("uninstallation completed with 1 error(s): timed out waiting for the condition"))
+                .when(commandService).destroyViaBackend(NS, RELEASE, "DIRECT_HELM");
+        when(commandService.directHelmReleaseExists(NS, RELEASE)).thenReturn(false);
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        assertEverythingTakenBack();
+    }
+
+    @Test
+    void aStaleRecordOfAReleaseHelmDoesNotKnowIsCleanedUp() throws Exception {
+        // Helm cannot list the namespace, but its own answer says the release is not there.
+        recordedDirect();
+        doThrow(helmFailure("uninstall: Release not loaded: trino: release: not found"))
+                .when(commandService).destroyViaBackend(NS, RELEASE, "DIRECT_HELM");
+        when(commandService.directHelmReleaseExists(NS, RELEASE))
+                .thenThrow(new IllegalStateException("secrets is forbidden: cannot list resource \"secrets\""));
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        assertEverythingTakenBack();
     }
 }

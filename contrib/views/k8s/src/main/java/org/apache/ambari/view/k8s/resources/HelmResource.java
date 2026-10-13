@@ -1487,9 +1487,11 @@ public class HelmResource {
      *         repository, branch or credential, or for a GitOps release whose recorded Git directory is not its own
      *         or holds another release's HelmRelease; 409, with nothing removed, while another Helm operation or
      *         GitOps operation on the release is running or when the Git credential recorded for a GitOps release
-     *         cannot be used to remove it from Git; 500, with the release's credentials, SCC grants, tag sync account
-     *         and record kept, when Git refused or could not take the removal of a GitOps release; or an error
-     *         response on failure
+     *         cannot be used to remove it from Git; 502, with {@code error}, {@code release} and {@code namespace},
+     *         when Git refused or could not take the removal of a GitOps release, or Helm could not uninstall a
+     *         release that is still installed: the release then keeps its Polaris credential, SCC grants, tag sync
+     *         account, sign-in and record, from which the uninstall is retried. A direct Helm release found to be
+     *         gone although Helm reported a failure is cleaned up as if the uninstall had succeeded.
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
@@ -1509,8 +1511,7 @@ public class HelmResource {
         }
         K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
         String polarisCleanupNote = null;
-        // Refused before anything is removed: the cleanup below (Polaris credential, release metadata) runs even
-        // when the uninstall fails, and must not run for a release that is still installed.
+        // Refused before anything is removed: the release keeps everything it uses while another operation runs.
         try {
             HelmOperationRegistry.requireIdle(namespace, releaseName);
         } catch (HelmOperationRegistry.ReleaseBusyException busy) {
@@ -1571,11 +1572,7 @@ public class HelmResource {
                     // Git refused or could not take the removal: the manifests stay in Git and Flux keeps running
                     // the release.
                     LOG.warn("Flux destroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
-                    return Response.serverError().entity(Map.of(
-                            "error", "Flux destroy failed: " + ex.getMessage(),
-                            "release", releaseName,
-                            "namespace", namespace
-                    )).build();
+                    return uninstallFailed(namespace, releaseName, "Flux destroy failed: " + ex.getMessage());
                 }
                 K8sReleaseEntity after = releaseMetadataService.find(namespace, releaseName);
                 if (after != null && after.isGitPendingDelete()) {
@@ -1585,7 +1582,24 @@ public class HelmResource {
                 }
             } else {
                 // Use backend dispatcher (defaults to direct Helm).
-                commandService.destroyViaBackend(namespace, releaseName, meta != null ? meta.getDeploymentMode() : null);
+                try {
+                    commandService.destroyViaBackend(namespace, releaseName,
+                            meta != null ? meta.getDeploymentMode() : null);
+                } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+                    throw busy;
+                } catch (RuntimeException ex) {
+                    // Helm also fails on a release that is already gone, such as one a partial uninstall removed
+                    // before failing, or a stale record: that one is finished below like any other removal.
+                    if (!directReleaseGone(namespace, releaseName, ex)) {
+                        String reason = rootMessage(ex);
+                        LOG.warn("Helm uninstall failed for {}/{}: {}", namespace, releaseName, reason);
+                        return uninstallFailed(namespace, releaseName, "Helm could not uninstall " + namespace + "/"
+                                + releaseName + ": " + reason + ". The release is still installed and keeps its"
+                                + " record and its catalog access. Fix the cause, then uninstall it again.");
+                    }
+                    LOG.info("Helm uninstall of {}/{} failed, but the release is no longer installed: finishing the"
+                            + " removal ({})", namespace, releaseName, rootMessage(ex));
+                }
             }
         } catch (HelmOperationRegistry.ReleaseBusyException busy) {
             // An operation on the release started since the check above: the release is untouched.
@@ -1648,6 +1662,51 @@ public class HelmResource {
         if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
         if (tagSyncCleanupNote != null) notes.put("tagSyncCleanup", tagSyncCleanupNote);
         return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
+    }
+
+    /**
+     * What an uninstall that could not remove the release answers: 502, since the cluster or the Git server refused
+     * or could not take the removal, with the reason, the release and its namespace. The release list is read again:
+     * a failed removal can still have moved the release to another state (uninstalling, failed).
+     */
+    static Response uninstallFailed(String namespace, String releaseName, String error) {
+        RELEASE_CACHE.clear();
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("error", error);
+        answer.put("release", releaseName);
+        answer.put("namespace", namespace);
+        return Response.status(502).entity(answer).build(); // Bad Gateway, which JAX-RS 1 does not name
+    }
+
+    /**
+     * Whether a direct Helm release whose uninstall failed is gone all the same. Helm is asked first; when it cannot
+     * list the namespace, only its own "release: not found" answer counts: any other doubt keeps the release, its
+     * record and its credentials.
+     */
+    boolean directReleaseGone(String namespace, String releaseName, Throwable failure) {
+        try {
+            return !commandService.directHelmReleaseExists(namespace, releaseName);
+        } catch (Exception listing) {
+            LOG.warn("Could not check whether {}/{} is still installed: {}", namespace, releaseName,
+                    listing.toString());
+        }
+        for (Throwable t = failure; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t.getMessage() != null && t.getMessage().toLowerCase(Locale.ROOT).contains("release: not found")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The innermost message of a failure, without the wrapping exception class names. */
+    static String rootMessage(Throwable failure) {
+        String message = null;
+        for (Throwable t = failure; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t.getMessage() != null && !t.getMessage().isBlank()) {
+                message = t.getMessage();
+            }
+        }
+        return message != null ? message.trim() : failure.getClass().getSimpleName();
     }
 
     /** What an uninstall that waits for the merge of its removal pull request answers. */

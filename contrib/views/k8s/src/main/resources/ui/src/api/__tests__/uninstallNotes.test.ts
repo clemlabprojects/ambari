@@ -42,6 +42,15 @@ describe('uninstallHelm', () => {
     await expect(uninstallHelm('om', 'data')).rejects.toThrow(`Uninstall failed: 409: ${reason}`);
   });
 
+  it('tells why the cluster could not remove the release, which is kept', async () => {
+    const reason = 'Helm could not uninstall data/trino: another operation (install/upgrade/rollback) is in progress.'
+      + ' The release is still installed and keeps its record and its catalog access. Fix the cause, then uninstall'
+      + ' it again.';
+    answer(JSON.stringify({ error: reason, release: 'trino', namespace: 'data' }), 502);
+
+    await expect(uninstallHelm('trino', 'data')).rejects.toThrow(`Uninstall failed: 502: ${reason}`);
+  });
+
   it('gives the status when a refusal has no reason', async () => {
     answer('', 500);
 
