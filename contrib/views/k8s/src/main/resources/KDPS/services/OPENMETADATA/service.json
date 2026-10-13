@@ -1654,7 +1654,7 @@
       "name": "atlasFederation",
       "label": "Atlas Federation",
       "type": "group",
-      "help": "Federate an Apache Atlas catalog through OpenMetadata. The post-install Job creates the Atlas metadataService, the matching databaseService, and an Airflow-scheduled ingestion pipeline. Requires the bundled ingestion runner (section above). Pre-req on the Atlas side: a local user (default 'openmetadata-ingestion') must exist. Use seed-atlas-user.sh until Atlas user management lands in the Ambari Atlas service.",
+      "help": "Federate an Apache Atlas catalog through OpenMetadata. The post-install Job creates the Atlas metadataService, the matching databaseService, and an Airflow-scheduled ingestion pipeline. Requires the bundled ingestion runner (section above). OpenMetadata signs in to Atlas with a user name and password: either through the file-based user store of Atlas (when it is already enabled, or when you allow it below) or, on an Atlas that signs users in against LDAP, with an LDAP service account you provide in a Secret.",
       "fields": [
         {
           "name": "atlasFederation.enabled",
@@ -1664,6 +1664,29 @@
           "autoEnableWhenContext": "atlas",
           "advisor": "recommend_atlas",
           "help": "When ON, KDPS federates the Atlas of the selected Platform Context into OpenMetadata: it provisions the federation user, grants read access (Ranger or simple authz), and registers the Atlas service + ingestion pipeline via OM REST. The Atlas URL, authentication and authorization all come from the Platform Context selected for this deployment — there is nothing else to configure here."
+        },
+        {
+          "name": "atlasFederation.existingSecret",
+          "label": "Existing Secret (service account)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Optional. Name of a Secret in this release's namespace with the keys 'username' and 'password' for the account OpenMetadata signs in to Atlas with. Required when Atlas signs users in against LDAP: the account must be an existing LDAP service account, and nothing is created or changed in Atlas (this applies even if Atlas also has file authentication on). With Ranger, KDPS grants the account read access; with the Atlas simple authorizer it does not, so add the account (or a group it belongs to) to Atlas's atlas-simple-authz-policy.json yourself. On an Atlas that has file authentication and no LDAP, it replaces the password KDPS would generate for the federation user. The Secret is read when the federation steps run, after the chart is installed, so it may be created by the install (for example by external-secrets). Blank = KDPS creates and manages the account.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "atlasFederation.allowFileAuth",
+          "label": "Allow Atlas file authentication",
+          "type": "boolean",
+          "defaultValue": false,
+          "excludeFromValues": true,
+          "help": "Only needed when Atlas has no file-based user store enabled and no LDAP service account Secret is given above (for example a Kerberos-only Atlas). When ticked, KDPS turns Atlas file authentication on in Ambari and creates a dedicated non-administrator user for OpenMetadata. WARNING: with file authentication on, the Atlas scripts also add a local administrator account to Atlas, a password-based way in next to Kerberos or LDAP. Leave it off to keep Atlas as it is: the deployment then stops with a message instead of changing Atlas.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
         },
         {
           "name": "atlasFederation.schedule",

@@ -46,6 +46,9 @@ public class ResolvedContext {
     // Atlas
     private String atlasUrl;        // scheme://host:port (no trailing slash)
     private String atlasAuthMode;   // basic | ldap | kerberos | none
+    // Atlas signs users in against LDAP. atlasAuthMode names only the first method on (file before LDAP), and how
+    // OpenMetadata signs in to Atlas depends on LDAP being on even when file authentication is on too.
+    private boolean atlasLdapAuth;
     private String atlasAclMode;    // ranger | simple
     private boolean atlasManaged;   // Atlas is an Ambari-managed service in this context
     private String atlasRangerServiceName; // Ranger service repo name for Atlas (e.g. <cluster>_atlas)
@@ -134,6 +137,9 @@ public class ResolvedContext {
 
     public String getAtlasAuthMode() { return atlasAuthMode; }
     public void setAtlasAuthMode(String atlasAuthMode) { this.atlasAuthMode = atlasAuthMode; }
+
+    public boolean isAtlasLdapAuth() { return atlasLdapAuth; }
+    public void setAtlasLdapAuth(boolean atlasLdapAuth) { this.atlasLdapAuth = atlasLdapAuth; }
 
     public String getAtlasAclMode() { return atlasAclMode; }
     public void setAtlasAclMode(String atlasAclMode) { this.atlasAclMode = atlasAclMode; }
@@ -248,6 +254,7 @@ public class ResolvedContext {
         v.lastContactAt = lastContactAt;
         v.atlasUrl = atlasUrl;
         v.atlasAuthMode = atlasAuthMode;
+        v.atlasLdapAuth = atlasLdapAuth;
         v.atlasAclMode = atlasAclMode;
         v.atlasManaged = atlasManaged;
         v.atlasRangerServiceName = atlasRangerServiceName;
@@ -299,6 +306,7 @@ public class ResolvedContext {
         public String lastContactAt;
         public String atlasUrl;
         public String atlasAuthMode;
+        public boolean atlasLdapAuth;
         public String atlasAclMode;
         public boolean atlasManaged;
         public String atlasRangerServiceName;

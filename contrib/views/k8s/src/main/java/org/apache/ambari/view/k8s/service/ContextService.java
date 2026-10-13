@@ -971,6 +971,7 @@ public class ContextService {
                     authMode = "none";
                 }
                 r.setAtlasAuthMode(authMode);
+                r.setAtlasLdapAuth("true".equalsIgnoreCase(trim(ldapOn)));
 
                 String authzImpl = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authorizer.impl");
                 r.setAtlasAclMode(authzImpl != null && authzImpl.trim().toLowerCase().contains("ranger") ? "ranger" : "simple");

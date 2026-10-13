@@ -488,6 +488,8 @@ export interface ResolvedContext {
   clusterName?: string;
   atlasUrl?: string;
   atlasAuthMode?: string;
+  /** Atlas signs users in against LDAP, also when file authentication (reported first in atlasAuthMode) is on too. */
+  atlasLdapAuth?: boolean;
   atlasAclMode?: string;
   atlasManaged?: boolean;
   atlasRangerServiceName?: string;
@@ -1186,6 +1188,10 @@ export interface AtlasFederationCheck {
   release?: string;
   ok: boolean;
   federationConfigured: boolean;
+  /** How OpenMetadata signs in to Atlas: a user in Atlas's file user store, or an LDAP service account. */
+  federationAuth?: 'file' | 'ldap';
+  /** False when nothing is kept in Atlas for the release (LDAP service account): "Fix & restart Atlas" does not apply. */
+  fixRestartAvailable?: boolean;
   restartPending?: boolean;
   federationUserActive?: boolean;
   checks: AtlasFederationCheckItem[];

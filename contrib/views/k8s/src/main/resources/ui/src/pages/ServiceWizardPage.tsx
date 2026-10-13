@@ -40,6 +40,7 @@ import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecr
 import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
 import { deployFormValues } from './deployFormValues';
 import { normalizeTruststoreRefs, truststoreRef } from './truststoreRefs';
+import { federationManualGrantNotice, federationMayTurnOnFileAuth, federationRefusalNotice, federationWritesAtlasUserStore } from './atlasFederationAuth';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
@@ -893,6 +894,20 @@ const ServiceWizardPage: React.FC = () => {
   // Non-federation deploys and upgrades are unaffected — they deploy immediately, default authorized.
   const [atlasRestartModalOpen, setAtlasRestartModalOpen] = React.useState(false);
   const atlasFederationOn = !!((installValues as any)?.atlasFederation?.enabled);
+  // On an Atlas that signs users in against LDAP, with a service account Secret, Atlas is not changed: no restart.
+  const atlasFederationRestarts = atlasFederationOn
+    && federationWritesAtlasUserStore(installValues as any, resolvedSel);
+  // Turning Atlas file authentication on is confirmed on its own, on installs and upgrades alike.
+  const atlasFileAuthMayTurnOn = federationMayTurnOnFileAuth(installValues as any, resolvedSel);
+  // Federation is switched on by default on a context with Atlas, but a Kerberos-only Atlas, or an LDAP Atlas without
+  // a service account Secret, refuses it unless the operator allows file authentication: say so before the deploy.
+  const atlasFederationRefusal = useMemo(
+    () => federationRefusalNotice(installValues as any, resolvedSel),
+    [installValues, resolvedSel]);
+  // An LDAP service account on Atlas's simple authorizer is left for the operator to grant: say so before the deploy.
+  const atlasFederationManualGrant = useMemo(
+    () => federationManualGrantNotice(installValues as any, resolvedSel),
+    [installValues, resolvedSel]);
 
   // A service whose Ingress publishes it without sign-in (no security profile with an authentication mode): shown on
   // the Chart Settings step, and the deploy goes ahead only once the operator confirmed it.
@@ -902,6 +917,27 @@ const ServiceWizardPage: React.FC = () => {
   const handleDeploy = () => {
       // Before any confirmation: the operator should not confirm a deploy that is then refused.
       if (!formRulesPass()) return;
+      if (atlasFederationRefusal) {
+        Modal.confirm({
+          title: atlasFederationRefusal.title,
+          icon: <WarningOutlined />,
+          width: 560,
+          content: (
+            <div>
+              {atlasFederationRefusal.lines.map((line, i) => (
+                <p key={i} style={{ marginBottom: 8 }}>{line}</p>
+              ))}
+            </div>
+          ),
+          okText: 'Turn off Atlas federation',
+          cancelText: 'Back',
+          onOk: () => {
+            setInstallValues((prev: any) => ({ ...prev, atlasFederation: { ...(prev?.atlasFederation || {}), enabled: false } }));
+            message.info('Atlas federation is turned off. Click Deploy again to continue.');
+          },
+        });
+        return;
+      }
       if (!exposure) { proceedDeploy(); return; }
       const validationError = validateTlsPayload();
       if (validationError) { message.error(validationError); return; }
@@ -922,8 +958,35 @@ const ServiceWizardPage: React.FC = () => {
         onOk: () => { proceedDeploy(); },
       });
   };
-  const proceedDeploy = () => {
-      if (atlasFederationOn && !isUpgrade) { setAtlasRestartModalOpen(true); return; }
+  const proceedDeploy = (fileAuthConfirmed = false) => {
+      if (atlasFileAuthMayTurnOn && !fileAuthConfirmed) {
+        Modal.confirm({
+          title: 'Turn on Atlas file authentication?',
+          icon: <WarningOutlined />,
+          width: 560,
+          content: (
+            <div>
+              <p style={{ marginBottom: 8 }}>
+                You allowed KDPS to turn on Atlas file authentication if it is off, so that OpenMetadata can sign in to
+                Atlas with a dedicated non-administrator user.
+              </p>
+              <p style={{ marginBottom: 8 }}>
+                With file authentication on, the Atlas scripts also add a local administrator account to Atlas: a
+                password-based way in next to Kerberos or LDAP. Review that account once the deployment is done.
+              </p>
+              <p style={{ marginBottom: 0 }}>
+                To keep Atlas as it is, cancel and untick "Allow Atlas file authentication".
+              </p>
+            </div>
+          ),
+          okText: 'Turn on file authentication',
+          okButtonProps: { danger: true },
+          cancelText: 'Cancel',
+          onOk: () => { proceedDeploy(true); },
+        });
+        return;
+      }
+      if (atlasFederationRestarts && !isUpgrade) { setAtlasRestartModalOpen(true); return; }
       // An upgrade that replaces the release's ingress certificate says which Secret goes, and goes ahead only once
       // the operator confirmed it.
       const tlsChange = upgradesIngressTls ? ingressTlsChange(installValues, currentIngressTls) : null;
@@ -958,6 +1021,16 @@ const ServiceWizardPage: React.FC = () => {
       message={ingressTlsInfo.title}
       description={ingressTlsInfo.lines.map((line, i) => <div key={i}>{line}</div>)} />
   ) : null;
+  const atlasFederationRefusalAlert = atlasFederationRefusal ? (
+    <Alert style={{ marginBottom: 12 }} type="warning" showIcon icon={<WarningOutlined />}
+      message={atlasFederationRefusal.title}
+      description={atlasFederationRefusal.lines.map((line, i) => <div key={i}>{line}</div>)} />
+  ) : null;
+  const atlasFederationManualGrantAlert = atlasFederationManualGrant ? (
+    <Alert style={{ marginBottom: 12 }} type="warning" showIcon icon={<WarningOutlined />}
+      message={atlasFederationManualGrant.title}
+      description={atlasFederationManualGrant.lines.map((line, i) => <div key={i}>{line}</div>)} />
+  ) : null;
   const exposureAlert = exposure ? (
     <Alert style={{ marginBottom: 12 }} type="warning" showIcon icon={<WarningOutlined />}
       message={exposure.title}
@@ -972,6 +1045,8 @@ const ServiceWizardPage: React.FC = () => {
       { title: 'Chart Settings', content: (
         <>
           {exposureAlert}
+          {atlasFederationRefusalAlert}
+          {atlasFederationManualGrantAlert}
           {ingressTlsAlert}
           <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} upgrade={!!isUpgrade} />
         </>
@@ -979,7 +1054,7 @@ const ServiceWizardPage: React.FC = () => {
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
       { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} contextLabel={resolvedSel ? `${resolvedSel.name}${resolvedSel.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` : undefined} /> },
     ];
-  }, [def, installValues, repos, configs, configOverrides, isUpgrade, currentIngressTls, exposure]);
+  }, [def, installValues, repos, configs, configOverrides, isUpgrade, currentIngressTls, exposure, atlasFederationRefusal, atlasFederationManualGrant]);
 
   // Disable Next if any password field reports invalid (empty, unconfirmed, or
   // mismatched). PropertyRenderer pushes the boolean validity here via its

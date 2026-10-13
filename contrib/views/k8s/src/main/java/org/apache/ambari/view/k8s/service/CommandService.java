@@ -5486,20 +5486,8 @@ public class CommandService {
         // what would happen on a fresh install: ATLAS_USER_PROVISION_OM /
         // ATLAS_SIMPLE_AUTHZ_GRANT_OM / RANGER_POLICY_CREATE_ATLAS_OM_READ (whichever
         // apply for the discovered (auth, acl) modes) BEFORE OM_ATLAS_FEDERATION_REGISTER.
-        try {
-            HelmDeployRequest reqForDispatch = new HelmDeployRequest();
-            reqForDispatch.setNamespace(namespace);
-            reqForDispatch.setReleaseName(releaseName);
-            queueAtlasFederationProvisioningSteps(rootCommand, reqForDispatch, rootParams,
-                    clusterName, ambariActionClient);
-        } catch (Exception ex) {
-            LOG.warn("Atlas federation reapply: provisioning dispatch failed ({}). "
-                    + "Continuing with bare OM_ATLAS_FEDERATION_REGISTER step.", ex.toString());
-        }
-
-        // createOmAtlasFederationRegister self-manages rootCommand.childListJson +
-        // re-stores the root, so we don't need to do it again after this call.
-        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, rootParams);
+        queueAtlasFederationReapplySteps(rootCommand, rootParams, namespace, releaseName,
+                clusterName, ambariActionClient);
 
         scheduleNow(commandId);
         return commandId;
@@ -9247,32 +9235,7 @@ public class CommandService {
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
                                 "atlasFederation.enabled");
                         if (enabledRaw != null && "true".equalsIgnoreCase(String.valueOf(enabledRaw))) {
-                            try {
-                                queueAtlasFederationProvisioningSteps(
-                                        rootCommand, request, params, cluster, ambariActionClient);
-                            } catch (Exception ex) {
-                                LOG.warn("Atlas federation provisioning dispatch failed for '{}': {} "
-                                        + "(continuing with bare OM_ATLAS_FEDERATION_REGISTER step)",
-                                        request.getReleaseName(), ex.toString());
-                            }
-                            // Always queue the OM-side REST registration last. Thread the platform
-                            // context + Ambari params so the register step resolves Atlas URL/creds
-                            // from the context instead of per-service form fields.
-                            Map<String, Object> atlasParams = new LinkedHashMap<>();
-                            atlasParams.put("releaseName", request.getReleaseName());
-                            atlasParams.put("namespace", request.getNamespace());
-                            atlasParams.put("serviceKey", request.getServiceKey());
-                            String pcId = stringValue(ConfigResolutionService.getByDottedPath(
-                                    request.getFormValues() != null ? request.getFormValues()
-                                            : Collections.emptyMap(), "platformContextId"));
-                            if (!pcId.isBlank()) atlasParams.put("_platformContextId", pcId);
-                            if (params.get("_cluster") != null) atlasParams.put("_cluster", params.get("_cluster"));
-                            if (params.get("_baseUri") != null) atlasParams.put("_baseUri", params.get("_baseUri"));
-                            if (params.get("_callerHeaders") != null) atlasParams.put("_callerHeaders", params.get("_callerHeaders"));
-                            this.commandPlanFactory.createOmAtlasFederationRegister(
-                                    rootCommand, atlasParams);
-                            LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER post-deploy step for release '{}'",
-                                    request.getReleaseName());
+                            queueAtlasFederationSteps(rootCommand, request, params, cluster, ambariActionClient);
                         }
                     }
                 }
@@ -14359,6 +14322,11 @@ public class CommandService {
         if (releaseName == null || releaseName.isBlank() || namespace == null || namespace.isBlank()) {
             throw new IllegalStateException("Missing releaseName/namespace in OM_ATLAS_FEDERATION_REGISTER params");
         }
+        // Atlas offers OpenMetadata no way to sign in that the operator allowed: say why, instead of a 401 later.
+        String federationBlocked = stringValue(childParams.get("_atlasFederationBlocked"));
+        if (!federationBlocked.isBlank()) {
+            throw new IllegalStateException(federationBlocked);
+        }
 
         // Two callers, two value sources:
         //   1. Deploy-time (createOmAtlasFederationRegister via submitDeploy):
@@ -14430,6 +14398,11 @@ public class CommandService {
             String existingSecret = stringValue(
                     ConfigResolutionService.getByDottedPath(values, "atlasFederation.existingSecret"));
             if (!existingSecret.isBlank()) {
+                // An LDAP service account can only come from this Secret: signing in with another source's
+                // credentials would be refused by Atlas, so a missing or incomplete Secret is reported as such.
+                if ("ldap".equals(stringValue(childParams.get("_atlasAuthMode")))) {
+                    ldapServiceAccountUsername(namespace, existingSecret.trim());
+                }
                 io.fabric8.kubernetes.api.model.Secret sec =
                         this.kubernetesService.getSecret(namespace, existingSecret);
                 if (sec != null && sec.getData() != null && sec.getData().containsKey("password")) {
@@ -14437,6 +14410,13 @@ public class CommandService {
                             java.util.Base64.getDecoder().decode(sec.getData().get("password")),
                             java.nio.charset.StandardCharsets.UTF_8);
                     credsSource = "operator-secret:" + existingSecret;
+                    // The Secret names the account the password belongs to (e.g. an LDAP service account).
+                    if (sec.getData().containsKey("username")) {
+                        String secretUser = new String(
+                                java.util.Base64.getDecoder().decode(sec.getData().get("username")),
+                                java.nio.charset.StandardCharsets.UTF_8).trim();
+                        if (!secretUser.isBlank()) atlasUsername = secretUser;
+                    }
                 }
             }
         }
@@ -14477,6 +14457,8 @@ public class CommandService {
                     + "'" + releaseName + "-atlas-federation' that this step falls back to).");
         }
         LOG.info("OM_ATLAS_FEDERATION_REGISTER: using credentials source={} username={}", credsSource, atlasUsername);
+        String authzNotice = federationAuthzNotice(childParams, atlasUsername);
+        if (authzNotice != null) LOG.warn("OM_ATLAS_FEDERATION_REGISTER: {}", authzNotice);
 
         // databaseServiceNames is bound as a list (csvToList) in the OM service.json;
         // tolerate both list and CSV-string shapes for robustness.
@@ -14541,6 +14523,13 @@ public class CommandService {
         resultMap.put("deployStatus", result.deployStatus);
         resultMap.put("triggerStatus", result.triggerStatus);
         putBotTokenLifetimeWarning(resultMap, botToken);
+        if (authzNotice != null) {
+            // On the step's warnings, so the operator reads it in the deploy's log.
+            List<Object> warnings = new ArrayList<>();
+            if (resultMap.get("warnings") instanceof List<?> earlier) warnings.addAll(earlier);
+            warnings.add(authzNotice);
+            resultMap.put("warnings", warnings);
+        }
         return gson.toJson(resultMap);
     }
 
@@ -15354,14 +15343,20 @@ public class CommandService {
      * OM_ATLAS_FEDERATION_REGISTER step (which the caller queues after this
      * returns).
      *
-     * <p>Step matrix (Ambari-managed Atlas):
+     * <p>Step matrix (Ambari-managed Atlas). OpenMetadata signs in to Atlas with a user name and password,
+     * so how it does depends on what Atlas offers ({@link org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning#planFederationAuth}):
      * <pre>
-     *   basic   + simple   → ATLAS_USER_PROVISION_OM, ATLAS_SIMPLE_AUTHZ_GRANT_OM
-     *   basic   + ranger   → ATLAS_USER_PROVISION_OM, RANGER_POLICY_CREATE_ATLAS_OM_READ
-     *   kerberos + simple  → (no user provision)    , ATLAS_SIMPLE_AUTHZ_GRANT_OM (principal-based)
-     *   kerberos + ranger  → (no user provision)    , RANGER_POLICY_CREATE_ATLAS_OM_READ (principal-based)
-     *   ldap     + any     → (no user provision)    , ACL step keyed on the operator-typed LDAP user
+     *   ldap + operator Secret   + ranger → (no user provision), ACL step keyed on the Secret's LDAP account
+     *   ldap + operator Secret   + simple → (no user provision), the deploy's log tells the operator to grant the
+     *                                       account in atlas-simple-authz-policy.json by hand
+     *       (an LDAP Atlas with a Secret takes these two rows even when file auth is also on, unless an earlier
+     *       deploy already put the Secret's account in the file user store: that account is then kept in step)
+     *   file auth on             + simple → ATLAS_USER_PROVISION_OM, ATLAS_SIMPLE_AUTHZ_GRANT_OM
+     *   file auth on             + ranger → ATLAS_USER_PROVISION_OM, RANGER_POLICY_CREATE_ATLAS_OM_READ
+     *   file auth off, allowed   + any    → as above; the user-provision step turns file auth on (operator's choice)
+     *   anything else                     → FederationAuthUnavailableException (Kerberos-only Atlas, or LDAP without a service account)
      * </pre>
+     * File authentication is never turned on without the operator's say-so.
      *
      * <p>External Atlas (no Ambari-managed Atlas in the cluster) skips everything;
      * the caller's OM_ATLAS_FEDERATION_REGISTER step uses operator-supplied creds.
@@ -15393,6 +15388,89 @@ public class CommandService {
         return false;
     }
 
+    /**
+     * Queues the Atlas federation of a deploy: the Atlas-side steps, then the OpenMetadata registration last. When
+     * Atlas offers OpenMetadata no way to sign in that the operator allowed, no Atlas-side step is queued and the
+     * registration step carries the reason, so the deploy fails with it.
+     */
+    void queueAtlasFederationSteps(CommandEntity rootCommand, HelmDeployRequest request, Map<String, Object> params,
+                                   String cluster, AmbariActionClient ambariActionClient) {
+        String federationBlocked = queueAtlasFederationProvisioning(rootCommand, request, params, cluster,
+                ambariActionClient);
+        // Thread the platform context + Ambari params so the register step resolves Atlas URL/creds
+        // from the context instead of per-service form fields.
+        Map<String, Object> atlasParams = new LinkedHashMap<>();
+        atlasParams.put("releaseName", request.getReleaseName());
+        atlasParams.put("namespace", request.getNamespace());
+        atlasParams.put("serviceKey", request.getServiceKey());
+        String pcId = stringValue(ConfigResolutionService.getByDottedPath(
+                request.getFormValues() != null ? request.getFormValues()
+                        : Collections.emptyMap(), "platformContextId"));
+        if (!pcId.isBlank()) atlasParams.put("_platformContextId", pcId);
+        if (params.get("_cluster") != null) atlasParams.put("_cluster", params.get("_cluster"));
+        if (params.get("_baseUri") != null) atlasParams.put("_baseUri", params.get("_baseUri"));
+        if (params.get("_callerHeaders") != null) atlasParams.put("_callerHeaders", params.get("_callerHeaders"));
+        if (federationBlocked != null) atlasParams.put("_atlasFederationBlocked", federationBlocked);
+        if (params.get("_atlasAuthMode") != null) atlasParams.put("_atlasAuthMode", params.get("_atlasAuthMode"));
+        if (params.get("_atlasAclMode") != null) atlasParams.put("_atlasAclMode", params.get("_atlasAclMode"));
+        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, atlasParams);
+        LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER post-deploy step for release '{}'", request.getReleaseName());
+    }
+
+    /**
+     * Queues the Atlas federation of a release again from what it was deployed with: the Atlas-side steps planned
+     * from the release's live values (the Secret OpenMetadata signs in with), then the OpenMetadata registration.
+     */
+    void queueAtlasFederationReapplySteps(CommandEntity rootCommand, Map<String, Object> rootParams,
+                                          String namespace, String releaseName,
+                                          String clusterName, AmbariActionClient ambariActionClient) {
+        Map<String, Object> liveValues = null;
+        try {
+            liveValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        } catch (Exception ex) {
+            LOG.warn("Atlas federation reapply: could not read the values of '{}/{}' ({}). "
+                    + "Continuing with bare OM_ATLAS_FEDERATION_REGISTER step.", namespace, releaseName, ex.toString());
+        }
+        if (liveValues != null) {
+            HelmDeployRequest reqForDispatch = new HelmDeployRequest();
+            reqForDispatch.setNamespace(namespace);
+            reqForDispatch.setReleaseName(releaseName);
+            // Whether Atlas file authentication is on is read from Atlas itself; the values only say which
+            // Secret OpenMetadata signs in with.
+            reqForDispatch.setFormValues(liveValues);
+            String federationBlocked = queueAtlasFederationProvisioning(rootCommand, reqForDispatch, rootParams,
+                    clusterName, ambariActionClient);
+            if (federationBlocked != null) rootParams.put("_atlasFederationBlocked", federationBlocked);
+        }
+        // createOmAtlasFederationRegister self-manages rootCommand.childListJson +
+        // re-stores the root, so we don't need to do it again after this call.
+        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, rootParams);
+    }
+
+    /**
+     * Plans the Atlas-side federation steps ({@link #queueAtlasFederationProvisioningSteps}).
+     *
+     * @return why OpenMetadata cannot sign in to Atlas, or null when the steps were planned (or skipped on a
+     *         failure the registration step may still get past)
+     */
+    private String queueAtlasFederationProvisioning(CommandEntity rootCommand, HelmDeployRequest request,
+                                                    Map<String, Object> params, String cluster,
+                                                    AmbariActionClient ambariActionClient) {
+        try {
+            queueAtlasFederationProvisioningSteps(rootCommand, request, params, cluster, ambariActionClient);
+            return null;
+        } catch (org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException ex) {
+            // The registration step fails with the reason, so the operator sees it on the deploy.
+            LOG.warn("Atlas federation for '{}' cannot go ahead: {}", request.getReleaseName(), ex.getMessage());
+            return ex.getMessage();
+        } catch (Exception ex) {
+            LOG.warn("Atlas federation provisioning dispatch failed for '{}': {} "
+                    + "(continuing with bare OM_ATLAS_FEDERATION_REGISTER step)",
+                    request.getReleaseName(), ex.toString());
+            return null;
+        }
+    }
+
     private void queueAtlasFederationProvisioningSteps(CommandEntity rootCommand,
                                                        HelmDeployRequest request,
                                                        Map<String, Object> params,
@@ -15418,42 +15496,43 @@ public class CommandService {
             return;
         }
 
-        // Resolve auth + acl modes from Atlas config (mirrors DiscoveryResource priority:
-        // basic > ldap > kerberos — matches what OM's Atlas connector can actually use).
-        String kerberosOn = ambariActionClient.getDesiredConfigProperty(cluster,
-                "application-properties", "atlas.authentication.method.kerberos");
-        String ldapOn = ambariActionClient.getDesiredConfigProperty(cluster,
-                "application-properties", "atlas.authentication.method.ldap");
-        String fileOn = ambariActionClient.getDesiredConfigProperty(cluster,
-                "application-properties", "atlas.authentication.method.file");
-        String authMode;
-        if ("true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "")) {
-            authMode = "basic";
-        } else if ("true".equalsIgnoreCase(ldapOn != null ? ldapOn.trim() : "")) {
-            authMode = "ldap";
-        } else if ("true".equalsIgnoreCase(kerberosOn != null ? kerberosOn.trim() : "")) {
-            authMode = "kerberos";
-        } else {
-            authMode = "none";
+        // OM's Atlas connector ONLY speaks HTTP Basic (no kerberos/SSO), so it needs either Atlas file
+        // authentication or an LDAP-backed Atlas with a service account. KDPS never turns file authentication
+        // on by itself: the ODP Atlas scripts then add a local administrator to the user store, which on a
+        // Kerberos or LDAP cluster is a new way in. It is on already, or the operator allowed it in the wizard.
+        Map<String, Object> federationForm = request.getFormValues() != null
+                ? request.getFormValues() : java.util.Collections.emptyMap();
+        String existingSecret = stringValue(ConfigResolutionService.getByDottedPath(
+                federationForm, "atlasFederation.existingSecret"));
+        boolean allowFileAuth = "true".equalsIgnoreCase(stringValue(ConfigResolutionService.getByDottedPath(
+                federationForm, "atlasFederation.allowFileAuth")));
+        // The Secret's account is read here only to recognise a release whose earlier deploy put it in Atlas's file
+        // user store. The Secret may not exist yet (the install can create it, e.g. through external-secrets): the
+        // steps read it when they run.
+        String[] secretCredentials = existingSecret.isBlank() ? null
+                : federationSecretCredentials(request.getNamespace(), existingSecret.trim());
+        org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth federationAuth =
+                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.planFederationAuth(
+                        ambariActionClient, cluster, !existingSecret.isBlank(),
+                        secretCredentials != null ? secretCredentials[0] : null, allowFileAuth);
+        if (federationAuth == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.NONE) {
+            throw new org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException(
+                    org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.federationAuthUnavailableMessage(
+                            ambariActionClient, cluster));
         }
+        boolean fileUserStore = federationAuth != org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.LDAP_ACCOUNT;
+        String authMode = fileUserStore ? "basic" : "ldap";
         String authzImpl = ambariActionClient.getDesiredConfigProperty(cluster,
                 "application-properties", "atlas.authorizer.impl");
         String aclMode = (authzImpl != null && authzImpl.trim().toLowerCase().contains("ranger"))
                 ? "ranger" : "simple";
 
-        LOG.info("Atlas federation dispatch: cluster='{}' detected authMode={} aclMode={} (Ambari-managed Atlas)",
-                cluster, authMode, aclMode);
-
-        // OM's Atlas connector ONLY speaks HTTP Basic (no kerberos/SSO). When Atlas is Ambari-managed
-        // and federation is enabled, KDPS makes the Basic path work regardless of the currently-
-        // detected authMode: the user-provision step asserts atlas.authentication.method.file=true
-        // (idempotent; coexists with kerberos/ldap) and provisions the federation user. So drive the
-        // Basic provisioning path even if file auth is currently off — otherwise federation would be
-        // silently skipped on a kerberos/ldap-only Atlas and OM could never authenticate.
-        if (!"basic".equals(authMode)) {
-            LOG.info("Atlas federation dispatch: current authMode='{}' is not Basic, but OM requires it — KDPS will enable "
-                    + "file auth (coexisting with existing methods) and provision the federation user.", authMode);
-            authMode = "basic";
+        LOG.info("Atlas federation dispatch: cluster='{}' federationAuth={} authMode={} aclMode={} (Ambari-managed Atlas)",
+                cluster, federationAuth, authMode, aclMode);
+        if (federationAuth == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.FILE_OPT_IN) {
+            LOG.warn("Atlas federation dispatch: the operator allowed Atlas file authentication to be turned on for the "
+                    + "federation user. The ODP Atlas scripts add a local administrator account to Atlas's user store "
+                    + "while file authentication is on.");
         }
 
         // Stash discovered modes on params so each step body can re-read them
@@ -15461,16 +15540,16 @@ public class CommandService {
         params.put("_atlasAuthMode", authMode);
         params.put("_atlasAclMode", aclMode);
 
-        // ----- 1) User provision (KDPS enables file auth + provisions the Basic user) -----
-        if ("basic".equals(authMode)) {
+        // ----- 1) User provision (the Basic user lives in Atlas's file user store) -----
+        if (fileUserStore) {
             Map<String, Object> stepParams = new LinkedHashMap<>(params);
             stepParams.put("_atlasFederationRole", "ROLE_USER");
+            // Only an operator's explicit choice lets the step turn file authentication on.
+            stepParams.put("_atlasEnableFileAuth", String.valueOf(
+                    federationAuth == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.FILE_OPT_IN));
             // ④ operator-provided federation Secret (e.g. Vault via external-secrets) — the same
             //    Secret the OM-side connection reads (atlasFederation.existingSecret), keeping the
             //    Atlas-side hash and OM-side password in sync. Blank ⇒ KDPS generates + manages it.
-            String existingSecret = stringValue(ConfigResolutionService.getByDottedPath(
-                    request.getFormValues() != null ? request.getFormValues() : java.util.Collections.emptyMap(),
-                    "atlasFederation.existingSecret"));
             if (!existingSecret.isBlank()) stepParams.put("_atlasFederationSecret", existingSecret);
             // ② operator's deploy-time Atlas-restart authorization (confirmation modal). Default:
             //    authorized; "false" ⇒ the step writes config but skips the restart (and warns).
@@ -15480,32 +15559,33 @@ public class CommandService {
             // Atlas REST URL for the post-write auth-probe — prefer the form's federation hostPort
             // (exactly what the OM connector will hit); the step derives it from cluster config when blank.
             String atlasHostPort = stringValue(ConfigResolutionService.getByDottedPath(
-                    request.getFormValues() != null ? request.getFormValues() : java.util.Collections.emptyMap(),
-                    "atlasFederation.hostPort"));
+                    federationForm, "atlasFederation.hostPort"));
             if (!atlasHostPort.isBlank()) stepParams.put("_atlasHostPort", atlasHostPort);
             this.commandPlanFactory.createAtlasUserProvisionOm(rootCommand, stepParams);
-            LOG.info("Atlas federation dispatch: queued ATLAS_USER_PROVISION_OM (federationSecret={}, restartAuthorized={})",
+            LOG.info("Atlas federation dispatch: queued ATLAS_USER_PROVISION_OM (federationSecret={}, restartAuthorized={}, "
+                            + "enableFileAuth={})",
                     existingSecret.isBlank() ? "<kdps-managed>" : existingSecret,
-                    restartAuth != null ? restartAuth : "<default:true>");
+                    restartAuth != null ? restartAuth : "<default:true>",
+                    stepParams.get("_atlasEnableFileAuth"));
+        } else {
+            LOG.info("Atlas federation dispatch: Atlas signs users in against LDAP — OpenMetadata uses the service account "
+                    + "in Secret '{}'; nothing is provisioned or changed in Atlas's user store.", existingSecret);
         }
 
         // ----- 2) ACL grant — simple OR ranger -----
         if ("simple".equals(aclMode)) {
-            if ("basic".equals(authMode)) {
+            if (fileUserStore) {
                 // The simple-authz grant only makes sense if we have a user identity
                 // recorded in atlas-env (which ATLAS_USER_PROVISION_OM just did).
                 this.commandPlanFactory.createAtlasSimpleAuthzGrantOm(rootCommand, params);
                 LOG.info("Atlas federation dispatch: queued ATLAS_SIMPLE_AUTHZ_GRANT_OM");
             } else {
-                // Kerberos / LDAP + simple authz: requires writing the principal/user
-                // into simple-authz-policy.json directly. Out of scope for this
-                // iteration — log a clear warning so the operator knows the
-                // federation will fail authz unless they patch the file by hand.
-                LOG.warn("Atlas federation dispatch: ({},{}) requires writing principal '{}' into "
-                                + "atlas-simple-authz-policy.json manually — KDPS does not yet automate "
-                                + "this combination. The OM_ATLAS_FEDERATION_REGISTER REST call will "
-                                + "likely return 403 until the operator grants access.",
-                        authMode, aclMode, "openmetadata");
+                // The simple-authz grant comes from the federation user in atlas-env, which an LDAP account never
+                // gets, so the operator grants it by hand. The registration step repeats this on the deploy's log,
+                // naming the account read from the Secret then (it may not exist yet).
+                LOG.warn("Atlas federation dispatch: {}", simpleAuthzManualGrantNotice(
+                        secretCredentials != null && secretCredentials[0] != null
+                                ? "'" + secretCredentials[0] + "'" : "the account in Secret '" + existingSecret.trim() + "'"));
             }
         } else if ("ranger".equals(aclMode)) {
             Map<String, Object> stepParams = new LinkedHashMap<>(params);
@@ -15538,15 +15618,17 @@ public class CommandService {
                 }
                 principal = "oma-ing-" + request.getNamespace() + "@"
                         + (kerbRealm == null ? "REALM-MISSING" : kerbRealm.trim());
-            } else if ("basic".equals(authMode)) {
+                stepParams.put("_omPrincipal", principal);
+            } else if (existingSecret.isBlank()) {
                 principal = "openmetadata-federation";  // matches ATLAS_USER_PROVISION_OM default
-            } else /* ldap */ {
-                principal = stringValue(ConfigResolutionService.getByDottedPath(
-                        request.getValues() != null ? request.getValues() : Collections.emptyMap(),
-                        "atlasFederation.username"));
-                if (principal.isBlank()) principal = "openmetadata-federation";
+                stepParams.put("_omPrincipal", principal);
+            } else {
+                // The account of the operator's Secret: the LDAP service account, or the user written to Atlas's
+                // file user store. The grant step reads it when it runs, after the install that may create the Secret.
+                principal = "<from Secret '" + existingSecret.trim() + "'>";
+                stepParams.put("_omPrincipalSecret", existingSecret.trim());
+                stepParams.put("namespace", request.getNamespace());
             }
-            stepParams.put("_omPrincipal", principal);
 
             String atlasRepo = rc.getAtlasRangerServiceName();
             if (atlasRepo == null || atlasRepo.isBlank()) {
@@ -15573,6 +15655,101 @@ public class CommandService {
                         principal, atlasRepo, rc.getName());
             }
         }
+    }
+
+    /**
+     * The Atlas user a federation Ranger grant names. When it is the account of the operator's Secret, it is read from
+     * that Secret now, as the step runs: the Secret may have been created by the install, after the steps were planned.
+     *
+     * @throws org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException when an LDAP
+     *         service account Secret is still missing or incomplete
+     */
+    String federationPrincipalForStep(Map<String, Object> childParams) {
+        String secretName = stringValue(childParams.get("_omPrincipalSecret"));
+        if (secretName.isBlank()) return stringValue(childParams.get("_omPrincipal"));
+        String namespace = stringValue(childParams.get("namespace"));
+        return "ldap".equals(stringValue(childParams.get("_atlasAuthMode")))
+                ? ldapServiceAccountUsername(namespace, secretName)
+                : fileUserStoreUsername(namespace, secretName);
+    }
+
+    /**
+     * What the operator must still do when OpenMetadata signs in to Atlas with an LDAP service account and Atlas uses
+     * its simple authorizer: KDPS grants nothing there, since the stack only adds the file-store federation user to the
+     * policy file.
+     *
+     * @param account the account OpenMetadata signs in with, as the operator should look for it
+     */
+    static String simpleAuthzManualGrantNotice(String account) {
+        return "Atlas on this cluster uses its simple authorizer, and KDPS grants nothing to an LDAP service account "
+                + "there: add " + account + " (or a group it belongs to) with read access to Atlas's "
+                + "atlas-simple-authz-policy.json and restart Atlas. Until then Atlas refuses OpenMetadata's reads, "
+                + "unless the account is already in a group the policy grants.";
+    }
+
+    /**
+     * The notice the registration step puts on the deploy's log for the account it signs in with, or null when
+     * KDPS granted that account read access itself (see {@link #simpleAuthzManualGrantNotice}).
+     */
+    static String federationAuthzNotice(Map<String, Object> childParams, String account) {
+        boolean manualGrant = "ldap".equals(stringValue(childParams.get("_atlasAuthMode")))
+                && "simple".equals(stringValue(childParams.get("_atlasAclMode")));
+        return manualGrant ? simpleAuthzManualGrantNotice("'" + account + "'") : null;
+    }
+
+    /**
+     * The user OpenMetadata signs in with against Atlas's file user store, decided the way the provision step does:
+     * the {@code username} in the operator's Secret when that Secret carries a password, else the default. The Ranger
+     * grant must name this same user, or Atlas denies every read of the federation.
+     */
+    private String fileUserStoreUsername(String namespace, String secretName) {
+        String fallback = "openmetadata-federation";
+        if (secretName == null || secretName.isBlank()) return fallback;
+        io.fabric8.kubernetes.api.model.Secret sec;
+        try {
+            sec = kubernetesService.getSecret(namespace, secretName.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+        Map<String, String> data = sec != null && sec.getData() != null ? sec.getData() : Collections.emptyMap();
+        if (data.get("password") == null || data.get("username") == null) return fallback;
+        String username = new String(java.util.Base64.getDecoder().decode(data.get("username")),
+                java.nio.charset.StandardCharsets.UTF_8).trim();
+        return username.isBlank() ? fallback : username;
+    }
+
+    /**
+     * The LDAP service account OpenMetadata signs in to Atlas with, read from the operator's Secret.
+     *
+     * @throws org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException when the Secret
+     *         is not there, cannot be read, or lacks a {@code username} or a {@code password}
+     */
+    private String ldapServiceAccountUsername(String namespace, String secretName) {
+        String where = "Secret '" + namespace + "/" + secretName + "'";
+        io.fabric8.kubernetes.api.model.Secret sec;
+        try {
+            sec = kubernetesService.getSecret(namespace, secretName);
+        } catch (Exception e) {
+            throw new org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException(
+                    "OpenMetadata signs in to Atlas through LDAP with the account in " + where
+                            + ", but that Secret could not be read (" + e.getMessage() + ").");
+        }
+        if (sec == null) {
+            throw new org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException(
+                    "OpenMetadata signs in to Atlas through LDAP with the account in " + where
+                            + ", but that Secret does not exist. Create it with the keys 'username' and 'password' first.");
+        }
+        Map<String, String> data = sec.getData() != null ? sec.getData() : Collections.emptyMap();
+        String username = "";
+        if (data.get("username") != null) {
+            username = new String(java.util.Base64.getDecoder().decode(data.get("username")),
+                    java.nio.charset.StandardCharsets.UTF_8).trim();
+        }
+        if (username.isBlank() || data.get("password") == null) {
+            throw new org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException(
+                    where + " must hold both 'username' and 'password' (the LDAP service account OpenMetadata signs in to Atlas with).");
+        }
+        return username;
     }
 
     // ---------------------------------------------------------------------
@@ -15621,60 +15798,115 @@ public class CommandService {
      * <p>Checks: (1) {@code atlas.authentication.method.file=true} (OM's connector is Basic-only);
      * (2) the {@code openmetadata.federation.username} in atlas-env matches the release's K8s Secret;
      * (3) the password hash in atlas-env matches the Secret's password; (4) whether ATLAS_SERVER has
-     * a pending stale-config restart. Returns a never-null report consumed by the KDPS view.
+     * a pending stale-config restart. On a release whose OpenMetadata signs in through LDAP with the operator's
+     * service account Secret ({@link org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth#LDAP_ACCOUNT})
+     * checks 1 to 3 do not apply: nothing is kept in Atlas for it, and the live probe is made with that account. When
+     * that Atlas uses its simple authorizer, a warning says the account must be granted in its policy file by hand.
+     * Returns a never-null report consumed by the KDPS view.
      */
     public Map<String, Object> checkAtlasFederationConfig(String namespace, String releaseName,
             Map<String, java.util.List<String>> callerHeaders, java.net.URI baseUri) throws Exception {
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        return checkAtlasFederationConfig(namespace, releaseName, cluster, ambari);
+    }
+
+    Map<String, Object> checkAtlasFederationConfig(String namespace, String releaseName, String cluster,
+                                                   AmbariActionClient ambari) throws Exception {
         Map<String, Object> report = new LinkedHashMap<>();
         java.util.List<Map<String, Object>> checks = new java.util.ArrayList<>();
         report.put("namespace", namespace);
         report.put("release", releaseName);
         report.put("checks", checks);
 
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
-        String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
-        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
-
-        // Expected user/hash from the release's federation Secret (operator-provided or KDPS-managed).
-        String secretName = releaseName + "-atlas-federation";
-        String expUser = null, expHash = null, expPlain = null;
+        // How OpenMetadata signs in is decided as the deploy decided it: from the Secret named in the release's
+        // values and the sign-in methods Atlas has on.
+        String operatorSecret = "";
         try {
-            io.fabric8.kubernetes.api.model.Secret sec = kubernetesService.getSecret(namespace, secretName);
-            if (sec != null && sec.getData() != null) {
-                java.util.Base64.Decoder dec = java.util.Base64.getDecoder();
-                if (sec.getData().containsKey("username"))
-                    expUser = new String(dec.decode(sec.getData().get("username")), java.nio.charset.StandardCharsets.UTF_8);
-                if (sec.getData().containsKey("password")) {
-                    expPlain = new String(dec.decode(sec.getData().get("password")), java.nio.charset.StandardCharsets.UTF_8);
-                    expHash = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.sha256Hex(expPlain);
-                }
+            operatorSecret = federationExistingSecret(namespace, releaseName);
+        } catch (Exception e) {
+            LOG.warn("checkAtlasFederationConfig({}/{}): could not read the release values ({}); checking the "
+                    + "KDPS-managed federation user.", namespace, releaseName, e.toString());
+        }
+        String[] operatorCredentials = operatorSecret.isBlank() ? null
+                : federationSecretCredentials(namespace, operatorSecret);
+        boolean ldapAccount = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.planFederationAuth(
+                ambari, cluster, !operatorSecret.isBlank(), operatorCredentials != null ? operatorCredentials[0] : null, false)
+                == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.LDAP_ACCOUNT;
+        report.put("federationAuth", ldapAccount ? "ldap" : "file");
+        // Nothing is kept in Atlas for an LDAP service account, so there is nothing for KDPS to re-assert.
+        report.put("fixRestartAvailable", !ldapAccount);
+
+        // Expected user/password: the LDAP account in the operator's Secret; for the file user store the same Secret
+        // the provision step takes (the operator's when it carries a password, else the KDPS-managed one).
+        String[] expected = null;
+        if (ldapAccount) {
+            expected = operatorCredentials;
+        } else {
+            if (!operatorSecret.isBlank() && !operatorSecret.equals(releaseName + "-atlas-federation")) {
+                expected = operatorCredentials;
             }
-        } catch (Exception ignore) { /* secret may be absent on a non-federated release */ }
-        report.put("federationConfigured", expUser != null);
+            if (expected == null || expected[1] == null) {
+                expected = federationSecretCredentials(namespace, releaseName + "-atlas-federation");
+            }
+            // A Secret with a password and no username gets the default user, as in the provision step.
+            if (expected != null && expected[1] != null && expected[0] == null) expected[0] = "openmetadata-federation";
+        }
+        String expUser = expected != null ? expected[0] : null;
+        String expPlain = expected != null ? expected[1] : null;
+        String expHash = expPlain != null ? org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.sha256Hex(expPlain) : null;
+        // A release naming an LDAP service account is federated even when its Secret is broken: the check says why.
+        report.put("federationConfigured", ldapAccount || expUser != null);
 
         String fileOn = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authentication.method.file");
         boolean fileOk = "true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "");
-        checks.add(driftCheck("atlas.method.file", fileOk, "critical",
-                fileOk ? "Atlas file-based (Basic) auth is enabled."
-                        : "Atlas file-based auth is DISABLED (atlas.authentication.method.file=" + fileOn + "). OM's connector "
-                          + "only speaks HTTP Basic, so ingestion will get 401.",
-                fileOk ? null : "Re-run the OM deploy (KDPS re-asserts it idempotently) or set "
-                          + "atlas.authentication.method.file=true in Ambari and restart Atlas."));
+        boolean userOk = true;
+        boolean hashOk = true;
+        boolean simpleAuthzManual = false;
+        if (ldapAccount) {
+            boolean accountOk = expUser != null && expPlain != null;
+            checks.add(driftCheck("atlas.method.ldap", accountOk, "critical",
+                    accountOk
+                            ? "Atlas signs users in against LDAP; OpenMetadata uses the service account '" + expUser
+                              + "' from Secret '" + operatorSecret + "', so no user is kept in Atlas."
+                            : "OpenMetadata signs in to Atlas through LDAP with the account in Secret '" + operatorSecret
+                              + "', but that Secret is missing or lacks 'username' or 'password'.",
+                    accountOk ? null : "Create the Secret with the LDAP service account's 'username' and 'password'."));
+            // KDPS cannot tell from here whether the policy grants the account (it may do so through an LDAP group),
+            // so this is a reminder rather than a failure.
+            String authzImpl = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authorizer.impl");
+            simpleAuthzManual = authzImpl == null || !authzImpl.trim().toLowerCase().contains("ranger");
+            if (simpleAuthzManual) {
+                checks.add(driftCheck("atlas.authz.simple", false, "warning",
+                        "Atlas uses its simple authorizer, and KDPS grants nothing there to an LDAP service account.",
+                        simpleAuthzManualGrantNotice(expUser != null ? "'" + expUser + "'"
+                                : "the account in Secret '" + operatorSecret + "'")));
+            }
+        } else {
+            checks.add(driftCheck("atlas.method.file", fileOk, "critical",
+                    fileOk ? "Atlas file-based (Basic) auth is enabled."
+                            : "Atlas file-based auth is DISABLED (atlas.authentication.method.file=" + fileOn + "). OM's connector "
+                              + "only speaks HTTP Basic, so ingestion will get 401.",
+                    fileOk ? null : "KDPS does not turn Atlas file authentication on by itself (it adds a local administrator "
+                              + "account to Atlas). Either enable it in Ambari and restart Atlas, or upgrade the release with "
+                              + "an LDAP service account Secret (Atlas on LDAP) or 'Allow Atlas file authentication' ticked."));
 
-        String liveUser = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.username");
-        String liveHash = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.password_hash");
-        boolean userOk = expUser != null && expUser.equals(liveUser);
-        checks.add(driftCheck("atlas.federation.user", userOk, "critical",
-                (liveUser == null || liveUser.isBlank())
-                        ? "No openmetadata.federation.username present in atlas-env."
-                        : "atlas-env user='" + liveUser + "'" + (userOk ? " matches the release Secret."
-                          : " does NOT match the release Secret user '" + expUser + "'."),
-                userOk ? null : "Re-run the OM Atlas-federation step (actions/om-atlas-federation) to re-provision the user."));
-        boolean hashOk = expHash != null && expHash.equals(liveHash);
-        checks.add(driftCheck("atlas.federation.passwordHash", hashOk, "critical",
-                hashOk ? "Federation password hash in atlas-env matches the release Secret."
-                        : "Federation password hash in atlas-env does NOT match the release Secret (password rotated or edited by hand).",
-                hashOk ? null : "Re-run the OM Atlas-federation step so atlas-env and the Secret are re-synced, then restart Atlas."));
+            String liveUser = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.username");
+            String liveHash = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.password_hash");
+            userOk = expUser != null && expUser.equals(liveUser);
+            checks.add(driftCheck("atlas.federation.user", userOk, "critical",
+                    (liveUser == null || liveUser.isBlank())
+                            ? "No openmetadata.federation.username present in atlas-env."
+                            : "atlas-env user='" + liveUser + "'" + (userOk ? " matches the release Secret."
+                              : " does NOT match the release Secret user '" + expUser + "'."),
+                    userOk ? null : "Re-run the OM Atlas-federation step (actions/om-atlas-federation) to re-provision the user."));
+            hashOk = expHash != null && expHash.equals(liveHash);
+            checks.add(driftCheck("atlas.federation.passwordHash", hashOk, "critical",
+                    hashOk ? "Federation password hash in atlas-env matches the release Secret."
+                            : "Federation password hash in atlas-env does NOT match the release Secret (password rotated or edited by hand).",
+                    hashOk ? null : "Re-run the OM Atlas-federation step so atlas-env and the Secret are re-synced, then restart Atlas."));
+        }
 
         boolean restartPending = ambari.componentRestartRequired(cluster, "ATLAS", "ATLAS_SERVER");
         report.put("restartPending", restartPending);
@@ -15696,23 +15928,59 @@ public class CommandService {
         boolean authActive = probe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.LOADED;
         boolean authNotLoaded = probe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.NOT_LOADED;
         report.put("federationUserActive", authActive);
+        String refusedDetail = ldapAccount
+                ? "Atlas refuses the LDAP service account '" + expUser + "' (HTTP 401) at " + atlasRestUrl + "."
+                : "Federation user '" + expUser + "' is NOT loaded in Atlas's running store (HTTP 401) at " + atlasRestUrl + ". "
+                  + "atlas-env is correct, but Atlas hasn't materialized users-credentials.properties (regenerated only on restart).";
+        String refusedRemediation = ldapAccount
+                ? "Check the account in LDAP (it exists, is not locked, its password is the one in Secret '"
+                  + operatorSecret + "'). KDPS keeps nothing in Atlas for it, so restarting Atlas does not help."
+                : "Restart ATLAS_SERVER (the ODP hook writes the user into users-credentials.properties), or re-run the OM "
+                  + "Atlas-federation deploy with restart authorized — the deploy now self-heals via this same probe.";
         checks.add(driftCheck("atlas.federation.authProbe", authActive, authNotLoaded ? "critical" : "warning",
                 authActive
-                    ? "Federation user '" + expUser + "' authenticates to Atlas (" + atlasRestUrl + ") — federation is LIVE."
+                    ? (simpleAuthzManual
+                        ? "LDAP service account '" + expUser + "' signs in to Atlas (" + atlasRestUrl + "); whether it may "
+                          + "read depends on atlas-simple-authz-policy.json (see the simple authorizer check)."
+                        : "Federation user '" + expUser + "' authenticates to Atlas (" + atlasRestUrl + ") — federation is LIVE.")
                 : authNotLoaded
-                    ? "Federation user '" + expUser + "' is NOT loaded in Atlas's running store (HTTP 401) at " + atlasRestUrl + ". "
-                      + "atlas-env is correct, but Atlas hasn't materialized users-credentials.properties (regenerated only on restart)."
+                    ? refusedDetail
                     : "Could not probe Atlas auth at " + atlasRestUrl + " (no creds / unreachable) — inconclusive.",
-                authNotLoaded
-                    ? "Restart ATLAS_SERVER (the ODP hook writes the user into users-credentials.properties), or re-run the OM "
-                      + "Atlas-federation deploy with restart authorized — the deploy now self-heals via this same probe."
-                    : null));
+                authNotLoaded ? refusedRemediation : null));
 
         boolean ok = checks.stream().allMatch(c -> Boolean.TRUE.equals(c.get("ok")) || !"critical".equals(c.get("severity")));
         report.put("ok", ok);
-        LOG.info("checkAtlasFederationConfig({}/{}): ok={} fileOk={} userOk={} hashOk={} restartPending={} authProbe={}",
-                namespace, releaseName, ok, fileOk, userOk, hashOk, restartPending, probe);
+        LOG.info("checkAtlasFederationConfig({}/{}): ok={} federationAuth={} fileOk={} userOk={} hashOk={} restartPending={} "
+                        + "authProbe={}",
+                namespace, releaseName, ok, report.get("federationAuth"), fileOk, userOk, hashOk, restartPending, probe);
         return report;
+    }
+
+    /** The Secret the release's OpenMetadata signs in to Atlas with, from its deployed values; blank when none is named. */
+    private String federationExistingSecret(String namespace, String releaseName) {
+        Map<String, Object> values = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        return stringValue(ConfigResolutionService.getByDottedPath(
+                values != null ? values : Collections.emptyMap(), "atlasFederation.existingSecret")).trim();
+    }
+
+    /**
+     * The {@code username} (trimmed, as the deploy reads it) and {@code password} in a federation Secret; either is
+     * null when absent, and the whole result is null when the Secret cannot be read or does not exist.
+     */
+    private String[] federationSecretCredentials(String namespace, String secretName) {
+        io.fabric8.kubernetes.api.model.Secret sec;
+        try {
+            sec = kubernetesService.getSecret(namespace, secretName);
+        } catch (Exception e) {
+            return null;  // absent on a release that is not federated
+        }
+        if (sec == null || sec.getData() == null) return null;
+        java.util.Base64.Decoder dec = java.util.Base64.getDecoder();
+        String user = sec.getData().containsKey("username")
+                ? new String(dec.decode(sec.getData().get("username")), java.nio.charset.StandardCharsets.UTF_8).trim() : null;
+        String password = sec.getData().containsKey("password")
+                ? new String(dec.decode(sec.getData().get("password")), java.nio.charset.StandardCharsets.UTF_8) : null;
+        return new String[] {user == null || user.isBlank() ? null : user, password};
     }
 
     private static Map<String, Object> driftCheck(String id, boolean ok, String severity, String detail, String remediation) {
@@ -15727,20 +15995,40 @@ public class CommandService {
 
     /**
      * One-click "Fix &amp; restart Atlas" from the config-check modal. Re-asserts the federation config
-     * idempotently (file auth + atlas-env user/hash from the release Secret) and submits an ATLAS_SERVER
-     * restart, returning the Ambari request id so the UI can poll progress. Non-blocking. The federation
-     * user becomes active once Atlas finishes restarting (the ODP metadata.py hook materializes it).
+     * idempotently (atlas-env user/hash from the Secret the release signs in with; Atlas file auth is never turned
+     * on here, it must already be on) and submits an ATLAS_SERVER restart, returning the Ambari request id so the
+     * UI can poll progress. Non-blocking. The federation user becomes active once Atlas finishes restarting (the
+     * ODP metadata.py hook materializes it). Refused for a release that signs in through LDAP with a service
+     * account: nothing is kept in Atlas for it.
      */
     public Map<String, Object> fixAndRestartAtlasFederation(String namespace, String releaseName,
             Map<String, java.util.List<String>> callerHeaders, java.net.URI baseUri) throws Exception {
         Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
         String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
         AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        return fixAndRestartAtlasFederation(namespace, releaseName, cluster, ambari);
+    }
 
+    Map<String, Object> fixAndRestartAtlasFederation(String namespace, String releaseName, String cluster,
+                                                     AmbariActionClient ambari) throws Exception {
+        // The user re-asserted is the one the deploy wrote: from the operator's Secret when the release names one.
+        String operatorSecret = federationExistingSecret(namespace, releaseName);
+        String[] operatorCredentials = operatorSecret.isBlank() ? null
+                : federationSecretCredentials(namespace, operatorSecret);
+        if (org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.planFederationAuth(
+                ambari, cluster, !operatorSecret.isBlank(), operatorCredentials != null ? operatorCredentials[0] : null, false)
+                == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.LDAP_ACCOUNT) {
+            throw new IllegalStateException("OpenMetadata signs in to Atlas through LDAP with the service account in Secret '"
+                    + operatorSecret + "'. KDPS keeps nothing in Atlas for it, so there is nothing to fix or restart: "
+                    + "check the account in LDAP.");
+        }
+        // Re-asserts the user only: Atlas file authentication is left as it is, and when it is off the
+        // operator is told to decide (see applyFileAuthDecision) instead of KDPS turning it on again.
+        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.applyFileAuthDecision(
+                ambari, cluster, false);
         org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.Credentials creds =
                 org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveOrCreate(
-                        this.kubernetesService.getClient(), namespace, releaseName, null);
-        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureFileAuthEnabled(ambari, cluster);
+                        this.kubernetesService.getClient(), namespace, releaseName, null, operatorSecret);
         boolean envChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
                 ambari, cluster, creds.username, creds.passwordSha256Hex, "ROLE_USER");
 
@@ -15771,17 +16059,37 @@ public class CommandService {
     }
 
     String provisionAtlasUserForOm(Map<String, Object> childParams) throws Exception {
+        String cluster = (String) childParams.get("_cluster");
+        String baseUriStr = (String) childParams.get("_baseUri");
+        AmbariActionClient ambari = null;
+        if (cluster != null && baseUriStr != null) {
+            Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+            java.net.URI baseUri = java.net.URI.create(baseUriStr);
+            ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        }
+        return provisionAtlasUserForOm(childParams, ambari);
+    }
+
+    String provisionAtlasUserForOm(Map<String, Object> childParams, AmbariActionClient ambari) throws Exception {
         String releaseName = (String) childParams.get("releaseName");
         String namespace   = (String) childParams.get("namespace");
         String cluster     = (String) childParams.get("_cluster");
-        if (releaseName == null || namespace == null || cluster == null) {
-            throw new IllegalStateException("Missing releaseName/namespace/_cluster in ATLAS_USER_PROVISION_OM params");
+        if (releaseName == null || namespace == null || cluster == null || ambari == null) {
+            throw new IllegalStateException("Missing releaseName/namespace/_cluster/_baseUri in ATLAS_USER_PROVISION_OM params");
         }
         String overrideUsername = stringValue(childParams.get("_atlasFederationUsername"));
         String role = stringValue(childParams.get("_atlasFederationRole"));
         if (role.isBlank()) role = "ROLE_USER";
 
-        // 1. Resolve federation credentials. The operator may supply their own Secret
+        // 1. File-based auth: OM's Atlas connector only speaks HTTP Basic, but it is turned on only when
+        //    the operator allowed it (never silently — the ODP scripts then add a local administrator
+        //    to Atlas). When it is off and not allowed, the step fails with the reason before anything
+        //    is written, also for a step planned before the operator had that choice.
+        boolean allowFileAuth = "true".equalsIgnoreCase(stringValue(childParams.get("_atlasEnableFileAuth")));
+        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.applyFileAuthDecision(
+                ambari, cluster, allowFileAuth);
+
+        // 2. Resolve federation credentials. The operator may supply their own Secret
         //    (e.g. Vault-synced via external-secrets) through atlasFederation.existingSecret; else
         //    KDPS generates + manages <release>-atlas-federation. Same Secret feeds the OM side.
         String operatorSecret = stringValue(childParams.get("_atlasFederationSecret"));
@@ -15789,14 +16097,8 @@ public class CommandService {
                 org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveOrCreate(
                         this.kubernetesService.getClient(), namespace, releaseName, overrideUsername, operatorSecret);
 
-        // 2. Ambari config (both merge-idempotent → no-op causes no new config version):
-        //    (a) assert file-based auth is enabled — OM's Atlas connector only speaks HTTP Basic;
-        //    (b) write the federation user's hash into atlas-env (→ users-credentials.properties).
-        String baseUriStr = (String) childParams.get("_baseUri");
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-        java.net.URI baseUri = java.net.URI.create(baseUriStr);
-        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
-        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureFileAuthEnabled(ambari, cluster);
+        // Write the federation user's hash into atlas-env (→ users-credentials.properties); merge-idempotent,
+        // so a no-op causes no new config version.
         boolean envChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
                 ambari, cluster, creds.username, creds.passwordSha256Hex, role);
 
@@ -15993,7 +16295,7 @@ public class CommandService {
         String atlasService = stringValue(childParams.get("_atlasRangerServiceName"));
         if (atlasService.isBlank()) atlasService = (cluster == null ? "" : cluster) + "_atlas";
 
-        String principal = stringValue(childParams.get("_omPrincipal"));
+        String principal = federationPrincipalForStep(childParams);
         boolean isKerberos = "kerberos".equalsIgnoreCase(stringValue(childParams.get("_atlasAuthMode")));
         if (principal.isBlank()) {
             throw new IllegalStateException("Missing _omPrincipal in RANGER_POLICY_CREATE_ATLAS_OM_READ params.");
@@ -16047,7 +16349,7 @@ public class CommandService {
         String atlasService = stringValue(childParams.get("_atlasRangerServiceName"));
         if (atlasService.isBlank()) atlasService = cluster + "_atlas";
 
-        String principal = stringValue(childParams.get("_omPrincipal"));
+        String principal = federationPrincipalForStep(childParams);
         if (principal.isBlank()) {
             throw new IllegalStateException("Missing _omPrincipal in RANGER_POLICY_GRANT_VIA_AMBARI params.");
         }

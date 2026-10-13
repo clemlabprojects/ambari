@@ -144,9 +144,11 @@ public final class OmAtlasProvisioning {
             Secret op = k8s.secrets().inNamespace(namespace).withName(operatorSecretName.trim()).get();
             Map<String, String> od = (op != null) ? op.getData() : null;
             if (od != null && od.containsKey("password")) {
+                // Trimmed like the sign-in side does: a username saved with --from-file ends in a newline.
                 String user = od.containsKey("username")
-                        ? new String(Base64.getDecoder().decode(od.get("username")), StandardCharsets.UTF_8)
+                        ? new String(Base64.getDecoder().decode(od.get("username")), StandardCharsets.UTF_8).trim()
                         : defaultUser;
+                if (user.isBlank()) user = defaultUser;
                 String pw = new String(Base64.getDecoder().decode(od.get("password")), StandardCharsets.UTF_8);
                 LOG.info("OmAtlasProvisioning: using operator-provided Secret '{}/{}' (e.g. Vault via external-secrets) "
                                 + "for OM Atlas federation user '{}' — KDPS will not generate a password.",
@@ -248,7 +250,10 @@ public final class OmAtlasProvisioning {
      *
      * <p>Non-breaking by design: Atlas runs file/kerberos/ldap auth simultaneously, so enabling file
      * auth never disables the others, and KDPS only ever asserts {@code true} (never flips to false).
-     * OM's Atlas connector only speaks HTTP Basic, so file auth is a hard requirement for federation.
+     *
+     * <p>Not to be called on its own: turning file auth on makes the ODP Atlas scripts add a local
+     * administrator account to the user store, so it is the operator's decision. Use
+     * {@link #applyFileAuthDecision}, which only gets here once the operator allowed it.
      *
      * @return {@code true} iff the config actually changed (i.e. an Atlas restart is now warranted).
      */
@@ -265,6 +270,110 @@ public final class OmAtlasProvisioning {
         LOG.info("OmAtlasProvisioning: ensured Atlas file-based auth is enabled for OM federation "
                 + "(method.file=true; existing filename preserved); configChanged={}", changed);
         return changed;
+    }
+
+    /** How OpenMetadata signs in to the Atlas of the cluster. */
+    public enum FederationAuth {
+        /**
+         * Atlas file authentication is already on, and either no LDAP service account was given or an earlier deploy
+         * already put that account in the file user store: the federation user goes in (or stays in) its user store.
+         */
+        FILE,
+        /** Atlas signs users in against LDAP: OpenMetadata uses a dedicated LDAP service account, nothing changes in Atlas. */
+        LDAP_ACCOUNT,
+        /** Atlas file authentication is off and the operator allowed KDPS to turn it on for the federation user. */
+        FILE_OPT_IN,
+        /** OpenMetadata has no way to sign in: it speaks HTTP Basic only, and Atlas offers nothing it may use. */
+        NONE
+    }
+
+    /** Raised when OpenMetadata cannot be given a way to sign in to Atlas without a change the operator did not allow. */
+    public static final class FederationAuthUnavailableException extends IllegalStateException {
+        public FederationAuthUnavailableException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Decides how OpenMetadata signs in to Atlas, from the authentication methods the cluster has on.
+     * OpenMetadata's Atlas connector only speaks HTTP Basic, so it needs either Atlas file authentication
+     * or an LDAP-backed Atlas with a service account. Atlas file authentication is never turned on by
+     * KDPS by itself: the ODP Atlas scripts then write a local administrator into the user store, which
+     * on a Kerberos or LDAP cluster would be a new way in. It is on only when it already was, or when the
+     * operator allowed it ({@code allowFileAuth}).
+     *
+     * @param operatorSecret         true when the operator named the Secret holding the account OpenMetadata signs in
+     *                               with; on an LDAP Atlas that is an LDAP service account, whether or not file
+     *                               authentication is also on
+     * @param operatorSecretUsername the {@code username} in that Secret, or null when it is not known (no Secret named,
+     *                               or the Secret is not there yet)
+     * @param allowFileAuth          true when the operator allowed KDPS to turn Atlas file authentication on
+     */
+    public static FederationAuth planFederationAuth(AmbariActionClient ambari, String cluster, boolean operatorSecret,
+                                                    String operatorSecretUsername, boolean allowFileAuth) throws Exception {
+        boolean ldapOn = isOn(ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authentication.method.ldap"));
+        boolean fileOn = isOn(ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authentication.method.file"));
+        // On an LDAP Atlas the operator's Secret holds a directory account, even when file authentication is also on
+        // (it is on by default in the Atlas stack): writing that account into the file user store would shadow the
+        // directory account with a local one and copy its password hash into the Ambari config.
+        if (ldapOn && operatorSecret) {
+            // Earlier versions did write it there. When the file user store already holds the Secret's account, Atlas
+            // signs OpenMetadata in with that local copy: keep it in step with the Secret, or a rotated password is
+            // refused by the stale local copy.
+            if (fileOn && operatorSecretUsername != null && !operatorSecretUsername.isBlank()
+                    && operatorSecretUsername.trim().equals(trimmed(
+                            ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.username")))) {
+                LOG.warn("OmAtlasProvisioning: Atlas on cluster '{}' signs users in against LDAP, but its file user store "
+                        + "already holds the account '{}' from an earlier deploy; that local account is kept in step with "
+                        + "the operator's Secret.", cluster, operatorSecretUsername.trim());
+                return FederationAuth.FILE;
+            }
+            return FederationAuth.LDAP_ACCOUNT;
+        }
+        if (fileOn) {
+            return FederationAuth.FILE;
+        }
+        return allowFileAuth ? FederationAuth.FILE_OPT_IN : FederationAuth.NONE;
+    }
+
+    /** The message that tells the operator why OpenMetadata cannot sign in to Atlas and what to choose. */
+    public static String federationAuthUnavailableMessage(AmbariActionClient ambari, String cluster) throws Exception {
+        boolean ldapOn = isOn(ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authentication.method.ldap"));
+        return "OpenMetadata can only sign in to Atlas with a user name and password, and Atlas on this cluster "
+                + (ldapOn ? "uses LDAP sign-in" : "does not offer password sign-in")
+                + ". KDPS does not turn on Atlas file authentication by itself: it adds a local administrator account "
+                + "to Atlas. " + (ldapOn
+                        ? "Set 'Existing Secret' to a Secret holding an LDAP service account (keys 'username' and 'password') "
+                          + "so OpenMetadata signs in through LDAP, or "
+                        : "")
+                + "tick 'Allow Atlas file authentication' to let KDPS turn it on for a dedicated federation user.";
+    }
+
+    /**
+     * Applies the file-authentication decision for the federation user: leaves Atlas alone when file
+     * authentication is already on, turns it on only when the operator allowed it, and otherwise
+     * refuses instead of changing Atlas.
+     *
+     * @return {@code true} iff the Atlas config changed (an Atlas restart is then warranted)
+     */
+    public static boolean applyFileAuthDecision(AmbariActionClient ambari, String cluster, boolean allowFileAuth) throws Exception {
+        if (isOn(ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authentication.method.file"))) {
+            return false;
+        }
+        if (!allowFileAuth) {
+            throw new FederationAuthUnavailableException(federationAuthUnavailableMessage(ambari, cluster));
+        }
+        LOG.warn("OmAtlasProvisioning: turning on Atlas file authentication on cluster '{}' because the operator allowed it; "
+                + "the ODP Atlas scripts add a local administrator account to Atlas's user store when it is on.", cluster);
+        return ensureFileAuthEnabled(ambari, cluster);
+    }
+
+    private static boolean isOn(String value) {
+        return value != null && "true".equalsIgnoreCase(value.trim());
+    }
+
+    private static String trimmed(String value) {
+        return value == null ? "" : value.trim();
     }
 
     /** Result of a live federation-user auth probe against Atlas. */

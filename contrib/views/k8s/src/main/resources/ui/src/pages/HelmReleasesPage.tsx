@@ -45,6 +45,7 @@ import { useCapabilities } from '../components/ServiceInstallationModal/capabili
 import TrinoCatalogsModal from '../components/common/TrinoCatalogsModal';
 import RangerPolicyModal from '../components/common/RangerPolicyModal';
 import TrinoAutoscalingModal from '../components/common/TrinoAutoscalingModal';
+import { atlasFixRestartOffered } from './atlasFederationAuth';
 import './Page.css';
 
 const { Title, Text } = Typography;
@@ -1584,7 +1585,14 @@ const HelmReleasesPage: React.FC = () => {
                     {atlasCheck.report.federationUserActive === true && <Tag color="green">Federation LIVE</Tag>}
                     {atlasCheck.report.federationUserActive === false && <Tag color="red">Federation user NOT loaded</Tag>}
                   </div>
-                  {(atlasCheck.report.federationUserActive === false || atlasCheck.report.restartPending || !atlasCheck.report.ok) && (
+                  {atlasCheck.report.federationAuth === 'ldap' && (
+                    <Typography.Paragraph type="secondary" style={{ marginBottom: 14 }}>
+                      OpenMetadata signs in to Atlas through LDAP with a service account: KDPS keeps nothing in Atlas for
+                      it, so a sign-in problem is fixed in LDAP or in the Secret, not by restarting Atlas.
+                    </Typography.Paragraph>
+                  )}
+                  {atlasFixRestartOffered(atlasCheck.report)
+                    && (atlasCheck.report.federationUserActive === false || atlasCheck.report.restartPending || !atlasCheck.report.ok) && (
                     <div style={{ marginBottom: 14 }}>
                       <Button
                         type="primary"
