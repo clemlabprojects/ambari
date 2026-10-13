@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { uninstallFollowUps } from '../utils/uninstallFollowUps';
 import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
@@ -30,6 +30,7 @@ import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import { gitOptionsForRelease, releaseRedeployPayload } from './releaseRedeploy';
 import { offersCatalogs } from './releaseCatalogs';
+import { repairActionState, type RepairAction, type RepairActionState } from './releaseRepairActions';
 import { offeredOnPlatform } from './catalogPlatforms';
 import type { MenuProps } from 'antd';
 import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined, DatabaseOutlined } from '@ant-design/icons';
@@ -77,6 +78,8 @@ const HelmReleasesPage: React.FC = () => {
   const [catalogsRelease, setCatalogsRelease] = useState<HelmRelease | null>(null);
   const [autoscalingRelease, setAutoscalingRelease] = useState<HelmRelease | null>(null);
   const [policyRelease, setPolicyRelease] = useState<HelmRelease | null>(null);
+  // Why the repair actions of a release cannot run, by "<namespace>/<name>", read when its menu opens.
+  const [actionRefusals, setActionRefusals] = useState<Record<string, Record<string, string>>>({});
 
   // When the detail modal opens, pull the release's live pods + deployments (by the Helm instance
   // label) so the modal shows real health/workloads instead of mostly-empty Flux reconcile metadata.
@@ -643,6 +646,34 @@ const HelmReleasesPage: React.FC = () => {
       return <Skeleton active paragraph={{ rows: 6 }} style={{ padding: 16 }} />;
     }
 
+    /** Whether the service of a release declares any of the repair actions (keytabs, OIDC client, Ranger repository). */
+    const offersRepairActions = (record: HelmRelease) => {
+      const serviceDefinition = record.serviceKey ? serviceDefinitions[record.serviceKey] : undefined;
+      return !!((serviceDefinition?.kerberos && serviceDefinition.kerberos.length > 0)
+        || (serviceDefinition?.oidc && serviceDefinition.oidc.length > 0)
+        || (serviceDefinition?.ranger && Object.keys(serviceDefinition.ranger).length > 0));
+    };
+
+    // Asks the backend, when the menu of a release opens, which repair actions its platform context cannot perform.
+    const loadActionRefusals = async (record: HelmRelease) => {
+      try {
+        const answer = await getReleaseActionRefusals(record.namespace, record.name);
+        setActionRefusals(prev => ({ ...prev, [`${record.namespace}/${record.name}`]: answer?.refusals || {} }));
+      } catch {
+        // The actions stay enabled; running one says why it cannot run.
+      }
+    };
+
+    const repairItem = (key: string, icon: React.ReactNode, label: string, state: RepairActionState, onClick: () => void) => ({
+      key,
+      icon,
+      disabled: state.disabled,
+      label: state.reason
+        ? <Tooltip title={state.reason} placement="left"><span>{label}</span></Tooltip>
+        : label,
+      onClick,
+    });
+
     const buildMenuItems = (record: HelmRelease): MenuProps['items'] => {
       // Resolve the service definition to know which post-install actions are supported.
       const serviceDefinition = record.serviceKey ? serviceDefinitions[record.serviceKey] : undefined;
@@ -650,6 +681,8 @@ const HelmReleasesPage: React.FC = () => {
       const supportsRangerReapply = !!(serviceDefinition?.ranger && Object.keys(serviceDefinition.ranger).length > 0);
       const supportsOidcRegistration = !!(serviceDefinition?.oidc && serviceDefinition.oidc.length > 0);
       const upgradeTargetVersion = upgradeAvailableFor(record);
+      const refusals = actionRefusals[`${record.namespace}/${record.name}`];
+      const repairState = (action: RepairAction) => repairActionState(refusals, action);
 
       return ([
         ...(upgradeTargetVersion ? [{
@@ -738,24 +771,12 @@ const HelmReleasesPage: React.FC = () => {
           label: 'Adopt into KDPS view',
           onClick: () => triggerAdopt(record)
         }] : []),
-        ...(supportsKerberosRegeneration ? [{
-          key: 'regenerate-keytabs',
-          icon: <KeyOutlined />,
-          label: 'Regenerate keytabs',
-          onClick: () => triggerKeytabRegeneration(record)
-        }] : []),
-        ...(supportsOidcRegistration ? [{
-          key: 'register-oidc',
-          icon: <SafetyCertificateOutlined />,
-          label: 'Re-register OIDC client',
-          onClick: () => triggerOidcRegistration(record)
-        }] : []),
-        ...(supportsRangerReapply ? [{
-          key: 'reapply-ranger',
-          icon: <SafetyCertificateOutlined />,
-          label: 'Reapply Ranger repository',
-          onClick: () => triggerRangerRepositoryReapply(record)
-        }] : []),
+        ...(supportsKerberosRegeneration ? [repairItem('regenerate-keytabs', <KeyOutlined />, 'Regenerate keytabs',
+          repairState('keytabs'), () => triggerKeytabRegeneration(record))] : []),
+        ...(supportsOidcRegistration ? [repairItem('register-oidc', <SafetyCertificateOutlined />, 'Re-register OIDC client',
+          repairState('oidc'), () => triggerOidcRegistration(record))] : []),
+        ...(supportsRangerReapply ? [repairItem('reapply-ranger', <SafetyCertificateOutlined />, 'Reapply Ranger repository',
+          repairState('ranger'), () => triggerRangerRepositoryReapply(record))] : []),
         ...(record.serviceKey === 'OPENMETADATA' ? [{
           key: 'check-atlas-federation',
           icon: <SafetyCertificateOutlined />,
@@ -1117,7 +1138,8 @@ const HelmReleasesPage: React.FC = () => {
             const menuItems = buildMenuItems(record);
             return (
             <PermissionGuard requires="canWrite">
-                <Dropdown menu={{ items: menuItems }} trigger={['click']}>
+                <Dropdown menu={{ items: menuItems }} trigger={['click']}
+                    onOpenChange={(open) => { if (open && offersRepairActions(record)) void loadActionRefusals(record); }}>
                     <Button type="text" icon={<MoreOutlined />} />
                 </Dropdown>
             </PermissionGuard>

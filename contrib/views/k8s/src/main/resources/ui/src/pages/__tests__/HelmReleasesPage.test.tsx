@@ -27,13 +27,17 @@ jest.mock('../../api/client', () => ({
   getReleaseTlsState: jest.fn(),
   getReleaseStatus: jest.fn(),
   uninstallHelm: jest.fn(),
+  getReleaseActionRefusals: jest.fn(),
 }));
 jest.mock('../../assets/services', () => ({ serviceIcon: () => '' }));
 jest.mock('../../context/ClusterStatusContext', () => ({
   useClusterStatus: () => ({ status: 'connected', refresh: jest.fn(), nodes: [], events: [] }),
 }));
 
-import { getAvailableServices, getClusterCapabilities, getHelmReleases, getReleaseStatus, getReleaseTlsState, uninstallHelm } from '../../api/client';
+import {
+  getAvailableServices, getClusterCapabilities, getHelmReleases, getReleaseActionRefusals, getReleaseStatus,
+  getReleaseTlsState, uninstallHelm,
+} from '../../api/client';
 import { invalidateCapabilities } from '../../components/ServiceInstallationModal/capabilities';
 import { PermissionsContext } from '../../context/PermissionsContext';
 import HelmReleasesPage from '../HelmReleasesPage';
@@ -115,6 +119,7 @@ describe('HelmReleasesPage uninstall through a pull request', () => {
     (getHelmReleases as jest.Mock).mockResolvedValue({ items: [trino], total: 1 });
     (getReleaseTlsState as jest.Mock).mockResolvedValue([]);
     (getReleaseStatus as jest.Mock).mockResolvedValue({});
+    (getReleaseActionRefusals as jest.Mock).mockResolvedValue({ refusals: {} });
   });
 
   it('shows the pull request that removes the release, which keeps running until it is merged', async () => {
@@ -141,5 +146,54 @@ describe('HelmReleasesPage uninstall through a pull request', () => {
     expect(screen.getByRole('link', { name: 'https://git.example.org/platform/gitops/pulls/7' })).toBeTruthy();
     expect(screen.queryByText('Release trino uninstalled successfully.')).toBeNull();
     expect(uninstallHelm).toHaveBeenCalledWith('trino', 'analytics', expect.any(URLSearchParams));
+  });
+});
+
+/**
+ * The repair actions of a release run against the platform context it was deployed on. The page asks the backend,
+ * when the menu opens, which of them that context cannot perform, and disables those with the reason.
+ */
+describe('HelmReleasesPage repair actions', () => {
+  const user = userEvent.setup();
+  const reason = 'Kerberos for release analytics/trino does not come from the cluster this Ambari manages but from its'
+    + " platform context 'CDP production': KDPS does not issue its keytabs.";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    invalidateCapabilities();
+    (getReleaseStatus as jest.Mock).mockResolvedValue({});
+  });
+
+  it('disables an action the release\'s platform context cannot perform, and keeps the others', async () => {
+    (getAvailableServices as jest.Mock).mockResolvedValue({
+      TRINO: { label: 'Trino', chart: 'trinodb/trino', kerberos: [{ key: 'coordinator' }], oidc: [{ key: 'trino' }] },
+    });
+    (getClusterCapabilities as jest.Mock).mockResolvedValue({ platform: 'kubernetes' });
+    (getHelmReleases as jest.Mock).mockResolvedValue({
+      items: [{
+        id: 'analytics/trino', name: 'trino', namespace: 'analytics', chart: 'trino-1.43.16', version: '1.43.16',
+        status: 'deployed', managedByUi: true, serviceKey: 'TRINO', platformContextId: 'cdp-prod',
+      }],
+      total: 1,
+    });
+    (getReleaseTlsState as jest.Mock).mockResolvedValue([]);
+    (getReleaseActionRefusals as jest.Mock).mockResolvedValue({ refusals: { keytabs: reason } });
+    render(
+      <PermissionsContext.Provider value={{ permissions: { canWrite: true, canConfigure: true } as any, loading: false }}>
+        <MemoryRouter><HelmReleasesPage /></MemoryRouter>
+      </PermissionsContext.Provider>);
+    await screen.findByText('trino');
+    await waitFor(() => expect(getAvailableServices).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+
+    const row = screen.getByText('trino').closest('tr') as HTMLElement;
+    const buttons = within(row).getAllByRole('button');
+    await user.click(buttons[buttons.length - 1]);
+
+    await waitFor(() => expect(getReleaseActionRefusals).toHaveBeenCalledWith('analytics', 'trino'));
+    const keytabs = await screen.findByRole('menuitem', { name: /Regenerate keytabs/ });
+    await waitFor(() => expect(keytabs.getAttribute('aria-disabled')).toBe('true'));
+    const oidc = screen.getByRole('menuitem', { name: /Re-register OIDC client/ });
+    expect(oidc.getAttribute('aria-disabled')).not.toBe('true');
   });
 });

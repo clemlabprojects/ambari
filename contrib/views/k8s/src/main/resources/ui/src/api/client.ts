@@ -1115,6 +1115,16 @@ export const registerReleaseOidcClient = async (namespace: string, releaseName: 
 };
 
 /**
+ * Why "Regenerate keytabs" (`keytabs`), "Re-register OIDC client" (`oidc`) and "Reapply Ranger repository" (`ranger`)
+ * cannot run for a deployed release: the platform context it runs on cannot perform them, or it was deployed without
+ * OIDC login. An action left out can run.
+ */
+export const getReleaseActionRefusals = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/availability`;
+  return fetchJson<{ refusals: Record<string, string> }>(requestPath);
+};
+
+/**
  * Re-apply the Ranger repository configuration for a deployed release.
  * The backend replays the same install-time Ranger action without a Helm upgrade.
  */

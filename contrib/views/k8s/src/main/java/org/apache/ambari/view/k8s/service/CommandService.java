@@ -140,6 +140,28 @@ public class CommandService {
      * deploy would plan them; the commit computes from them what each dependency's HelmRelease receives.
      */
     static final String GITOPS_DEPENDENCY_STEPS = "dependencySteps";
+    /**
+     * Step parameter of "Regenerate keytabs": the keytab is issued again by the KDC even when the release's Secret
+     * already holds one for the principal.
+     */
+    static final String FORCE_REISSUE_PARAM = "forceReissue";
+    /**
+     * Result entry of a keytab issuing step that wrote no keytab yet: the SHA-256 of the keytab the release's Secret
+     * held before the operation, or {@link #NO_PRIOR_KEYTAB}. The step writing the Secret compares the new keytab with
+     * it, not with the Secret it reads again on each attempt: a retried step finds its own keytab there already.
+     */
+    static final String PRIOR_KEYTAB_SHA256 = "priorKeytabSha256";
+    /** Value of {@link #PRIOR_KEYTAB_SHA256} when the Secret held no keytab before the operation. */
+    static final String NO_PRIOR_KEYTAB = "none";
+    /**
+     * Label of the keytab Secrets KDPS writes, naming their principal by a hash (a label value cannot hold '@' or
+     * '/'). Releases of one service in a namespace share the principal, so their Secrets must hold the same key.
+     */
+    static final String KEYTAB_PRINCIPAL_LABEL = "kdps.clemlab.com/principal";
+    /** Label of the keytab Secrets KDPS writes, naming the release that uses the Secret. */
+    static final String KEYTAB_RELEASE_LABEL = "kdps.clemlab.com/release";
+    /** Annotation KDPS sets on every Secret it writes; only those are read or rewritten as keytab siblings. */
+    private static final String VIEW_MANAGED_BY = "ambari-k8s-view";
 
     // External dependencies (adapters) — injected
     private final HelmService helmService;
@@ -173,6 +195,11 @@ public class CommandService {
      * package-private so tests can name accounts the same on every run.
      */
     java.util.function.Supplier<String> tagSyncInstance;
+    /**
+     * Tells whether a keytab still logs its principal in to the KDC, before a stored keytab is reused or copied;
+     * package-private so tests, which have no KDC, can replace it.
+     */
+    KeytabLogin keytabLogin = CommandService::loginWithKeytab;
     /** Taking back the tag sync account of a deploy that did not install its release, and resuming it, one at a time. */
     private final Object tagSyncTakeBackLock = new Object();
     private final Map<String, DeploymentBackend> deploymentBackends = new ConcurrentHashMap<>();
@@ -1294,12 +1321,33 @@ public class CommandService {
                                               AmbariActionClient ambariActionClient,
                                               String cluster,
                                               String serviceKey) {
+        if (securityCfg != null && securityCfg.oidc != null) {
+            return true;
+        }
+        return hasConfiguredOidcProvider(securityCfg, resolvePlatformContextForStep(params),
+                stringValue(params == null ? null : params.get("_platformContextId")), ambariActionClient, cluster,
+                serviceKey);
+    }
+
+    /**
+     * {@link #hasConfiguredOidcProvider(SecurityConfigDTO, Map, AmbariActionClient, String, String)} with the platform
+     * context already resolved.
+     *
+     * @param oidcCtx           the resolved platform context; null for the managed default or when it could not be
+     *                          resolved
+     * @param selectedContextId the id of the selected platform context; null or blank for the managed default
+     */
+    private boolean hasConfiguredOidcProvider(SecurityConfigDTO securityCfg,
+                                              org.apache.ambari.view.k8s.model.ResolvedContext oidcCtx,
+                                              String selectedContextId,
+                                              AmbariActionClient ambariActionClient,
+                                              String cluster,
+                                              String serviceKey) {
         // (a) security profile OIDC
         if (securityCfg != null && securityCfg.oidc != null) {
             return true;
         }
         // (b) platform context OIDC admin creds (external/remote Keycloak)
-        org.apache.ambari.view.k8s.model.ResolvedContext oidcCtx = resolvePlatformContextForStep(params);
         if (oidcCtx != null && oidcCtx.hasContextOidcAdminCreds()) {
             return true;
         }
@@ -1310,7 +1358,6 @@ public class CommandService {
         // (non-idempotent). For an external context OIDC is opt-in: it comes ONLY from a selected security
         // profile (a) or the context's own OIDC admin creds (b). To use the internal Keycloak for an
         // external backend, an operator selects the MANAGED context instead.
-        String selectedContextId = stringValue(params == null ? null : params.get("_platformContextId"));
         boolean externalContextSelected = selectedContextId != null && !selectedContextId.isBlank()
                 && !ContextService.DEFAULT_CONTEXT_ID.equals(selectedContextId);
         if (!externalContextSelected && ambariActionClient != null && cluster != null && !cluster.isBlank()) {
@@ -1912,6 +1959,240 @@ public class CommandService {
     }
 
     /**
+     * The values of the service definition's variables that OIDC templates (redirect URIs) use, read from the
+     * parameters, the form and the chart values of {@code params} (see {@link #resolveServiceVariablesFromParams}).
+     * A variable still without a value is read back from the chart values through the binding that writes it
+     * unchanged to a chart path: JupyterHub's {@code jupyterHost} is a form field kept out of the chart values, but
+     * its binding puts it in {@code ingress.hosts[0]}, which the deployed values of a release keep.
+     *
+     * @param serviceDefinition the service definition; may be null
+     * @param params            the operation's parameters, with the chart values under {@code valuesPath}
+     * @return variable name to value, for the variables a value was found for
+     */
+    @SuppressWarnings("unchecked")
+    Map<String, String> resolveOidcTemplateVariables(StackServiceDef serviceDefinition, Map<String, Object> params) {
+        if (serviceDefinition == null) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, String> resolved = resolveServiceVariablesFromParams(serviceDefinition.variables, params);
+        if (serviceDefinition.variables == null || serviceDefinition.bindings == null) {
+            return resolved;
+        }
+        Map<String, Object> chartValues = null;
+        for (Map<String, Object> variable : serviceDefinition.variables) {
+            String name = resolveStringValue(variable.get("name"), null);
+            if (name == null || name.isBlank() || resolved.containsKey(name)) continue;
+            String writtenAsIs = "${" + name + "}";
+            for (Map<String, Object> binding : serviceDefinition.bindings) {
+                Object targets = binding == null ? null : binding.get("targets");
+                if (!(targets instanceof List<?> targetList)) continue;
+                for (Object target : targetList) {
+                    if (!(target instanceof Map<?, ?> t) || !(t.get("from") instanceof Map<?, ?> from)) continue;
+                    String path = resolveStringValue(t.get("path"), null);
+                    // Escaped dots name keys that hold a dot, which this lookup does not follow.
+                    if (path == null || path.contains("\\") || !"template".equals(from.get("type"))
+                            || !writtenAsIs.equals(from.get("template"))) {
+                        continue;
+                    }
+                    if (chartValues == null) {
+                        chartValues = this.commandUtils.loadValuesFromParams(params);
+                    }
+                    Object value = getByPath(chartValues, path);
+                    if (value != null && !(value instanceof Map) && !(value instanceof List)
+                            && !String.valueOf(value).isBlank()) {
+                        resolved.put(name, String.valueOf(value));
+                        break;
+                    }
+                }
+                if (resolved.containsKey(name)) break;
+            }
+        }
+        return resolved;
+    }
+
+    /**
+     * What planning the OIDC steps of one {@code oidc[]} entry decided, which the deploy needs to wire the chart.
+     *
+     * @param entryKey           the entry's key ({@code entry-<n>} for an entry without one)
+     * @param secretName         the Secret holding the client credentials
+     * @param gitlabOmniauth     whether the entry configures GitLab's OmniAuth provider instead of
+     *                           {@code global.security.auth.*}
+     * @param providerSecretName the Secret holding GitLab's OmniAuth provider; null for other services
+     * @param audience           the audience the service's tokens are minted for: an external profile's JWT audience
+     *                           (else its client id), or the client KDPS registers
+     */
+    record PlannedOidcEntry(String entryKey, String secretName, boolean gitlabOmniauth, String providerSecretName,
+                            String audience) {}
+
+    /**
+     * Plans the OIDC steps of one {@code oidc[]} entry of a service definition, the same way for a deploy and for
+     * "Re-register OIDC client" on a deployed release: with an external OIDC profile, only the step writing the
+     * profile's client credentials to the release's Secret; otherwise the registration of the client in Keycloak
+     * (with the entry's flow flags, and GitLab's OmniAuth provider Secret and callback) and the Secret.
+     *
+     * <p>A deploy also plans the audiences the client's access tokens carry ({@link #oidcTokenAudiences}) and the
+     * releases calling this Trino with their own token ({@link #trinoJwtCallers}). A re-registration plans neither:
+     * the registration then keeps the audience mappers the client has, which its last deploy set.
+     *
+     * @param params          the operation's parameters, copied into the steps
+     * @param entry           the {@code oidc[]} entry
+     * @param index           the entry's position (1-based), naming an entry without a key
+     * @param oidcRealm       the realm templates render {@code {{realm}}} with
+     * @param templateVars    the service variables templates render, see {@link #resolveOidcTemplateVariables}
+     * @param securityCfg     the release's security profile; may be null
+     * @param securityProfile the name of that profile; may be null
+     * @param logId           the operation whose log says what was planned
+     * @param deploy          the deploy request the audiences are planned from; null for a re-registration
+     * @return what the chart wiring needs, or null when the entry is disabled
+     * @throws IllegalArgumentException when the redirect URI keeps a variable no value was found for: registered
+     *                                  as it is, it would replace the working redirect URI of the client in Keycloak
+     */
+    private PlannedOidcEntry planOidcEntrySteps(CommandEntity rootCommand,
+                                                List<String> childCommandIds,
+                                                Map<String, Object> params,
+                                                Map<String, Object> entry,
+                                                int index,
+                                                String releaseName,
+                                                String namespace,
+                                                String oidcRealm,
+                                                Map<String, String> templateVars,
+                                                SecurityConfigDTO securityCfg,
+                                                String securityProfile,
+                                                String logId,
+                                                HelmDeployRequest deploy) {
+        if (!isEntryEnabled(entry.get("enabled"))) {
+            LOG.info("Skipping disabled OIDC entry {}", entry.getOrDefault("key", index));
+            return null;
+        }
+        String entryKey  = resolveStringValue(entry.get("key"), "entry-" + index);
+        String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
+        String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
+        String secretName = renderOidcTemplate(secretT, releaseName, namespace, oidcRealm);
+
+        boolean gitlabOmniauth = Boolean.TRUE.equals(entry.get("gitlabOmniauth"))
+                || "true".equalsIgnoreCase(String.valueOf(entry.get("gitlabOmniauth")));
+
+        Map<String, Object> extraOidcParams = new LinkedHashMap<>();
+        // Forward client flow flags declared in service.json oidc[] entry.
+        // Defaults match the historical KeycloakAdminClient behavior
+        // (publicClient=false, standardFlowEnabled=true, implicitFlowEnabled=false).
+        extraOidcParams.put("publicClient",
+                Boolean.TRUE.equals(entry.get("publicClient"))
+                        || "true".equalsIgnoreCase(String.valueOf(entry.get("publicClient"))));
+        Object stdFlowEntry = entry.get("standardFlowEnabled");
+        extraOidcParams.put("standardFlowEnabled",
+                stdFlowEntry == null || Boolean.parseBoolean(String.valueOf(stdFlowEntry)));
+        extraOidcParams.put("implicitFlowEnabled",
+                Boolean.TRUE.equals(entry.get("implicitFlowEnabled"))
+                        || "true".equalsIgnoreCase(String.valueOf(entry.get("implicitFlowEnabled"))));
+        String providerSecretName = null;
+        if (gitlabOmniauth) {
+            providerSecretName = releaseName + "-omniauth-provider";
+            extraOidcParams.put("oidcGitlabOmniauth", "true");
+            extraOidcParams.put("oidcProviderSecretName", providerSecretName);
+            // The actual callback URL is filled in below once we've resolved
+            // the redirect URI via the service-definition variable pipeline
+            // (which knows how to substitute gitlabDomain etc.).
+        }
+
+        boolean oidcIsExternal = securityCfg != null
+                && securityCfg.oidc != null
+                && "external".equalsIgnoreCase(securityCfg.oidc.source);
+        // The audience the service's tokens are minted for: for an external provider the profile's
+        // JWT audience, else its client id; the client KDPS registers otherwise.
+        String entryAudience;
+        if (oidcIsExternal) {
+            // External OIDC: no Keycloak registration — write the secret directly from profile credentials
+            entryAudience = externalJwtAudience(securityCfg.oidc);
+            appendOidcExternalSecretStep(rootCommand, childCommandIds, params,
+                    securityCfg.oidc.clientId, securityProfile, securityCfg.oidc.issuerUrl,
+                    secretName, entryKey, vaultPath, extraOidcParams);
+        } else {
+            // Internal OIDC: register client in Keycloak, then create secret
+            String clientIdT  = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
+            String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
+            String clientId   = renderOidcTemplate(clientIdT, releaseName, namespace, oidcRealm);
+            validateOidcClientId(clientId);
+            String redirectUri = renderOidcTemplate(redirectT, releaseName, namespace, oidcRealm, templateVars);
+            if (redirectUri.contains("{{")) {
+                throw new IllegalArgumentException("The OIDC redirect URI of release " + namespace + "/" + releaseName
+                        + " is incomplete: '" + redirectUri + "' keeps a value that was not found in the release's"
+                        + " settings. The OIDC client is left as it is in Keycloak. Set the missing host with"
+                        + " Upgrade / Config, which registers the client again.");
+            }
+            entryAudience = clientId;
+            if (deploy != null) {
+                // The audiences the client's access tokens carry (see oidcTokenAudiences); null keeps the
+                // ones the client already has.
+                List<String> audiences = oidcTokenAudiences(entry, clientId, deploy.getFormValues(),
+                        deploy.getValues());
+                if (audiences != null) {
+                    extraOidcParams.put("oidcAudiences", audiences);
+                } else {
+                    appendCommandLog(logId, "KDPS cannot tell which audience the Trino this release connects to"
+                            + " with its OIDC service token requires (it is not a KDPS release, or the deploy"
+                            + " does not name it): the OIDC client " + clientId + " keeps the token audiences"
+                            + " it has. That Trino must accept them, or its JWT authenticator refuses the token.");
+                }
+                // The releases already calling this service with their own token (Superset's Trino
+                // connection) were registered before it checked this audience: their clients get it before
+                // the upgrade restarts the service, so they keep connecting without being redeployed first.
+                if (jwtAudiencePath(entry) != null) {
+                    List<Map<String, String>> callers = trinoJwtCallers(namespace, releaseName, oidcRealm);
+                    if (!callers.isEmpty()) {
+                        extraOidcParams.put("oidcAudienceCallers", callers);
+                        appendCommandLog(logId, "Release(s) " + callerNames(callers) + " call this Trino with"
+                                + " their OIDC service token: KDPS adds the audience '" + clientId + "' to"
+                                + " their tokens before the upgrade, since Trino then accepts only that one.");
+                    }
+                }
+            }
+            // A re-registration plans no audiences: the client keeps the audience mappers its last deploy set.
+            if (gitlabOmniauth) {
+                // The provider YAML written by OIDC_CREATE_SECRET needs the
+                // same callback URL that we register with Keycloak. Earlier
+                // code path tried to read gitlab.global.hosts.domain straight
+                // out of `params`, which doesn't hold the nested chart values
+                // tree at this point — it returned an empty string and the
+                // resulting YAML pointed at `http://gitlab./users/...`,
+                // breaking the OAuth flow. Reusing the resolved redirectUri
+                // is the single source of truth and keeps Keycloak's
+                // registered URI and GitLab's emitted URI byte-identical.
+                extraOidcParams.put("oidcGitlabCallbackUrl", redirectUri);
+            }
+            appendOidcRegistrationSteps(rootCommand, childCommandIds, params,
+                    clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
+        }
+        return new PlannedOidcEntry(entryKey, secretName, gitlabOmniauth, providerSecretName, entryAudience);
+    }
+
+    /**
+     * Whether the deployed values of a release show that it was deployed with OIDC login: the deploy wires every
+     * service either through {@code global.security.auth.mode=oidc} or, for GitLab, through its OmniAuth provider.
+     *
+     * @param oidcEntries    the {@code oidc[]} entries of the service definition
+     * @param deployedValues the release's deployed values
+     */
+    static boolean deployedWithOidc(List<Map<String, Object>> oidcEntries, Map<String, Object> deployedValues) {
+        if (oidcEntries == null || deployedValues == null) {
+            return false;
+        }
+        for (Map<String, Object> entry : oidcEntries) {
+            if (!isEntryEnabled(entry.get("enabled"))) continue;
+            boolean gitlabOmniauth = Boolean.TRUE.equals(entry.get("gitlabOmniauth"))
+                    || "true".equalsIgnoreCase(String.valueOf(entry.get("gitlabOmniauth")));
+            Object wired = gitlabOmniauth
+                    ? ConfigResolutionService.getByDottedPath(deployedValues, "gitlab.global.appConfig.omniauth.enabled")
+                    : ConfigResolutionService.getByDottedPath(deployedValues, "global.security.auth.mode");
+            if (gitlabOmniauth ? "true".equalsIgnoreCase(String.valueOf(wired))
+                    : "oidc".equalsIgnoreCase(String.valueOf(wired))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Validate that a client ID contains only safe characters.
      * Prevents injection via templates.
      */
@@ -1934,6 +2215,103 @@ public class CommandService {
     }
 
     /**
+     * The platform context a deployed release runs against, as "Regenerate keytabs", "Re-register OIDC client" and
+     * "Reapply Ranger repository" see it: the context the release was deployed on, never the one Ambari defaults
+     * to. Without it, those actions would write to the Ranger, Keycloak or KDC of the cluster this Ambari manages,
+     * whatever the release uses.
+     *
+     * @param contextId   the context's id; null for the cluster this Ambari manages
+     * @param kind        MANAGED, EXTERNAL, REMOTE, CDP or NONE (deployed without a platform context)
+     * @param contextName the context's name, for messages
+     * @param resolved    the resolved context; null for the cluster this Ambari manages, which the steps read from
+     *                    Ambari themselves, or when it could not be resolved
+     * @param cluster     the cluster this Ambari manages; null when there is none and the context does not need it
+     * @param ambari      a client of this Ambari for that cluster; null without a cluster
+     */
+    record ReleaseActionTarget(String contextId, String kind, String contextName,
+                               org.apache.ambari.view.k8s.model.ResolvedContext resolved, String cluster,
+                               AmbariActionClient ambari) {
+        boolean managed() {
+            return ContextService.KIND_MANAGED.equals(kind);
+        }
+
+        /** Puts the context and Ambari access into an operation's parameters, which every step resolves them from. */
+        void putInto(Map<String, Object> params, URI baseUri, MultivaluedMap<String, String> callerHeaders) {
+            if (contextId != null) params.put("_platformContextId", contextId);
+            if (cluster != null) params.put("_cluster", cluster);
+            params.put("_baseUri", baseUri.toString());
+            params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        }
+    }
+
+    /**
+     * Resolves, once, the platform context of a deployed release for one of its actions. The cluster this Ambari
+     * manages is only required when the release runs on it: an Ambari that manages no cluster still serves releases
+     * deployed on another context.
+     *
+     * @param releaseMetadata the release's record
+     * @param action          the action, for messages (e.g. "OIDC client registration")
+     * @throws IllegalArgumentException when the release's context no longer exists, or when the release runs on the
+     *                                  managed cluster and this Ambari manages none
+     * @throws IllegalStateException    when the managed cluster cannot be looked up
+     */
+    ReleaseActionTarget releaseActionTarget(K8sReleaseEntity releaseMetadata, String action,
+                                            MultivaluedMap<String, String> callerHeaders, URI baseUri) {
+        String release = releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName();
+        String contextId = stringValue(releaseMetadata.getPlatformContextId()).trim();
+        if (contextId.isBlank() || ContextService.DEFAULT_CONTEXT_ID.equals(contextId)) {
+            contextId = null;
+        }
+        String kind;
+        String contextName;
+        if (contextId == null) {
+            kind = ContextService.KIND_MANAGED;
+            contextName = "the cluster this Ambari manages";
+        } else if (ContextService.NO_CONTEXT_ID.equals(contextId)) {
+            kind = ContextService.KIND_NONE;
+            contextName = "no platform context";
+        } else {
+            org.apache.ambari.view.k8s.store.KdpsContextEntity entity = new ContextService(ctx).get(contextId);
+            if (entity == null) {
+                throw new IllegalArgumentException("The platform context '" + contextId + "' that release " + release
+                        + " was deployed on no longer exists, so its " + action + " cannot run. Restore the context,"
+                        + " or move the release to another one with Upgrade / Config.");
+            }
+            kind = entity.getKind() == null ? ContextService.KIND_EXTERNAL : entity.getKind();
+            contextName = entity.getName() == null || entity.getName().isBlank() ? contextId : entity.getName();
+        }
+        boolean managed = ContextService.KIND_MANAGED.equals(kind);
+
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String cluster = null;
+        try {
+            cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        } catch (Exception ex) {
+            if (managed && ex instanceof CommandUtils.NoAmbariClusterException) {
+                throw new IllegalArgumentException("Release " + release + " runs on the cluster this Ambari manages,"
+                        + " but this Ambari manages no cluster, so its " + action + " cannot run.", ex);
+            }
+            if (managed) {
+                throw new IllegalStateException("Unable to resolve Ambari cluster name for " + action + ".", ex);
+            }
+            // The release does not run on the managed cluster: nothing of it is needed.
+            LOG.info("{} of {}: no Ambari cluster ({}); the release runs on platform context '{}'", action, release,
+                    ex.toString(), contextId);
+        }
+        AmbariActionClient ambari = cluster == null ? null
+                : new AmbariActionClient(ctx, baseUri.toString(), cluster, authHeaders);
+
+        org.apache.ambari.view.k8s.model.ResolvedContext resolved = null;
+        if (!managed && !ContextService.KIND_NONE.equals(kind)) {
+            Map<String, Object> contextParams = new LinkedHashMap<>();
+            new ReleaseActionTarget(contextId, kind, contextName, null, cluster, null)
+                    .putInto(contextParams, baseUri, callerHeaders);
+            resolved = resolvePlatformContextForStep(contextParams);
+        }
+        return new ReleaseActionTarget(contextId, kind, contextName, resolved, cluster, ambari);
+    }
+
+    /**
      * Submit a standalone OIDC client re-registration for an already-deployed release.
      * Parallel to submitReleaseKeytabRegeneration().
      */
@@ -1941,6 +2319,26 @@ public class CommandService {
                                                 String releaseName,
                                                 MultivaluedMap<String, String> callerHeaders,
                                                 URI baseUri) {
+        String commandId = planReleaseOidcRegistration(namespace, releaseName, callerHeaders, baseUri);
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Plans and stores "Re-register OIDC client" for a deployed release, without running it: the steps a deploy
+     * plans for the release's {@code oidc[]} entries, against the Keycloak of the release's platform context and with
+     * the release's deployed values (its host names and ingress TLS), or the Secret step alone for an external OIDC
+     * profile.
+     *
+     * @return the operation's id
+     * @throws IllegalArgumentException when the release was deployed without OIDC login, or nothing can register its
+     *                                  client: its platform context has no Keycloak administrator credentials, or
+     *                                  OIDC is off on the managed cluster
+     */
+    String planReleaseOidcRegistration(String namespace,
+                                       String releaseName,
+                                       MultivaluedMap<String, String> callerHeaders,
+                                       URI baseUri) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
@@ -1959,21 +2357,27 @@ public class CommandService {
                     "Service definition for " + releaseMetadata.getServiceKey() + " has no OIDC entries.");
         }
 
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
-        String clusterName;
-        try {
-            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
-        } catch (Exception ex) {
-            throw new IllegalStateException("Unable to resolve Ambari cluster name.", ex);
-        }
-        AmbariActionClient ambariClient =
-                new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
+        // The deployed values say whether the deploy wired OIDC login, and hold what the redirect URIs and the
+        // TLS pre-flight of the registration need (host names, ingress TLS).
+        Map<String, Object> released = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        Map<String, Object> deployedValues = released == null ? new LinkedHashMap<>() : new LinkedHashMap<>(released);
+        refuseIfDeployedWithoutOidc(releaseMetadata, serviceDefinition, deployedValues);
+        ReleaseActionTarget target = releaseActionTarget(releaseMetadata, "OIDC client registration",
+                callerHeaders, baseUri);
+        SecurityConfigDTO securityCfg = releaseSecurityProfile(releaseMetadata);
+        refuse(oidcRegistrationRefusal(releaseMetadata, target, securityCfg));
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = target.resolved();
+        boolean contextKeycloak = rc != null && rc.hasContextOidcAdminCreds();
 
         String oidcRealm = "";
-        try {
-            oidcRealm = ambariClient.getDesiredConfigProperty(clusterName, "oidc-env", "oidc_realm");
-        } catch (Exception ex) {
-            LOG.warn("Could not read oidc_realm from cluster {}: {}", clusterName, ex.toString());
+        if (contextKeycloak) {
+            oidcRealm = rc.getOidcRealm() == null || rc.getOidcRealm().isBlank() ? "odp" : rc.getOidcRealm();
+        } else if (target.ambari() != null) {
+            try {
+                oidcRealm = target.ambari().getDesiredConfigProperty(target.cluster(), "oidc-env", "oidc_realm");
+            } catch (Exception ex) {
+                LOG.warn("Could not read oidc_realm from cluster {}: {}", target.cluster(), ex.toString());
+            }
         }
 
         final String commandId = UUID.randomUUID().toString();
@@ -1999,45 +2403,218 @@ public class CommandService {
         rootParams.put("releaseName", releaseName);
         rootParams.put("namespace", namespace);
         rootParams.put("serviceKey", releaseMetadata.getServiceKey());
-        rootParams.put("_cluster", clusterName);
-        rootParams.put("_baseUri", baseUri.toString());
-        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
-        rootParams.put("oidcRealm", oidcRealm);
+        target.putInto(rootParams, baseUri, callerHeaders);
+        rootParams.put("oidcRealm", oidcRealm == null ? "" : oidcRealm);
+        // The registration's TLS pre-flight reads the chart values of the operation, as for a deploy.
+        rootParams.put("valuesPath", kubernetesService.getConfigurationService()
+                .writeCacheFile("values-" + commandId, gson.toJson(deployedValues)));
+
+        Map<String, String> templateVars = resolveOidcTemplateVariables(serviceDefinition, rootParams);
+        if (serviceDefinition.variables != null) {
+            // A host the deployed values do not hold is read from the release's Ingress.
+            List<Map<String, Object>> unresolved = serviceDefinition.variables.stream()
+                    .filter(v -> !templateVars.containsKey(resolveStringValue(v.get("name"), "")))
+                    .toList();
+            resolveServiceVariablesFromCluster(unresolved, namespace, releaseName).forEach(templateVars::putIfAbsent);
+        }
 
         List<String> childCommandIds = new ArrayList<>();
         boolean stepsAdded = false;
-
         int idx = 0;
         for (Map<String, Object> entry : serviceDefinition.oidc) {
             idx++;
-            if (!isEntryEnabled(entry.get("enabled"))) continue;
-            String entryKey  = resolveStringValue(entry.get("key"), "entry-" + idx);
-            String clientIdT = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
-            String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
-            String redirectT = resolveStringValue(entry.get("redirectUriTemplate"), "");
-            String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
-
-            String clientId   = renderOidcTemplate(clientIdT,  releaseName, namespace, oidcRealm);
-            String secretName = renderOidcTemplate(secretT,     releaseName, namespace, oidcRealm);
-            Map<String, String> reRegExtraVars = resolveServiceVariablesFromCluster(
-                    serviceDefinition.variables, namespace, releaseName);
-            String redirectUri= renderOidcTemplate(redirectT,   releaseName, namespace, oidcRealm, reRegExtraVars);
-
-            appendOidcRegistrationSteps(rootCommand, childCommandIds, rootParams,
-                    clientId, redirectUri, secretName, entryKey, vaultPath, Collections.emptyMap());
-            stepsAdded = true;
+            if (planOidcEntrySteps(rootCommand, childCommandIds, rootParams, entry, idx, releaseName, namespace,
+                    oidcRealm, templateVars, securityCfg, releaseMetadata.getSecurityProfile(), commandId,
+                    null) != null) {
+                stepsAdded = true;
+            }
         }
 
         if (!stepsAdded) {
-            throw new IllegalStateException("No OIDC entries were scheduled for release " + releaseName);
+            throw new IllegalArgumentException("No OIDC entries were scheduled for release " + releaseName);
         }
 
         rootCommand.setParamsJson(gson.toJson(rootParams));
         rootCommand.setChildListJson(gson.toJson(childCommandIds));
         store(rootStatus);
         store(rootCommand);
-        scheduleNow(commandId);
         return commandId;
+    }
+
+    /**
+     * Refuses "Re-register OIDC client" for a release whose deployed values show it was deployed without OIDC login.
+     *
+     * @throws IllegalArgumentException when it was
+     */
+    private static void refuseIfDeployedWithoutOidc(K8sReleaseEntity releaseMetadata, StackServiceDef serviceDefinition,
+                                                    Map<String, Object> deployedValues) {
+        if (!deployedWithOidc(serviceDefinition.oidc, deployedValues)) {
+            throw new IllegalArgumentException("Release " + releaseMetadata.getNamespace() + "/"
+                    + releaseMetadata.getReleaseName() + " was deployed without OIDC login, so it has no OIDC client"
+                    + " to register. To turn OIDC login on, use Upgrade / Config with an OIDC security profile.");
+        }
+    }
+
+    /**
+     * Why "Re-register OIDC client" cannot run for a release deployed with OIDC login, or null when it can.
+     *
+     * @param target      the release's platform context
+     * @param securityCfg the release's security profile; may be null
+     */
+    private String oidcRegistrationRefusal(K8sReleaseEntity releaseMetadata, ReleaseActionTarget target,
+                                           SecurityConfigDTO securityCfg) {
+        String release = releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName();
+        boolean oidcIsExternal = securityCfg != null && securityCfg.oidc != null
+                && "external".equalsIgnoreCase(securityCfg.oidc.source);
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = target.resolved();
+        // Only the managed cluster registers clients in the Keycloak of Ambari's oidc-env: another context does it
+        // in its own Keycloak, with its administrator credentials, or not at all.
+        if (!oidcIsExternal && !target.managed() && (rc == null || !rc.hasContextOidcAdminCreds())) {
+            return "The platform context '" + target.contextName() + "' of release " + release + " has no Keycloak"
+                    + " administrator credentials, so KDPS cannot register its OIDC client. Add them to the context,"
+                    + " or register the client in that Keycloak yourself.";
+        }
+        if (!hasConfiguredOidcProvider(securityCfg, rc, target.contextId(), target.ambari(), target.cluster(),
+                releaseMetadata.getServiceKey())) {
+            return "OIDC is not enabled on the cluster this Ambari manages (its oidc-env has no Keycloak administration"
+                    + " URL), so there is no Keycloak to register the OIDC client of " + release + " with.";
+        }
+        return null;
+    }
+
+    /** Why "Regenerate keytabs" cannot run for a release, or null when it can. */
+    private String keytabRegenerationRefusal(K8sReleaseEntity releaseMetadata, String kerberosInjectionMode,
+                                             ReleaseActionTarget target) {
+        String release = releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName();
+        if (!KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(kerberosInjectionMode)) {
+            return "Kerberos regeneration is only supported in PRE_PROVISIONED mode (current: " + kerberosInjectionMode
+                    + ").";
+        }
+        // A release on another platform context gets its Kerberos only from the keytab Secret the operator gives,
+        // never from the KDC of the cluster this Ambari manages: nothing to issue here.
+        if (!target.managed()) {
+            return "Kerberos for release " + release + " does not come from the cluster this Ambari manages but from "
+                    + (ContextService.KIND_NONE.equals(target.kind()) ? "no platform context"
+                            : "its platform context '" + target.contextName() + "'")
+                    + ": KDPS does not issue its keytabs. Rotate the keytab in the Secret the release was deployed with,"
+                    + " then restart the release.";
+        }
+        boolean kerberosClusterEnabled = false;
+        try {
+            kerberosClusterEnabled = "true".equalsIgnoreCase(target.ambari().getDesiredConfigProperty(
+                    target.cluster(), "cluster-env", "security_enabled"));
+        } catch (Exception ex) {
+            LOG.warn("Failed to determine Kerberos state for cluster {}: {}", target.cluster(), ex.toString());
+        }
+        if (!kerberosClusterEnabled) {
+            return "Kerberos is disabled on cluster " + target.cluster() + "; keytab regeneration skipped.";
+        }
+        return null;
+    }
+
+    /** Why "Reapply Ranger repository" cannot run for a release, or null when it can. */
+    private static String rangerReapplyRefusal(K8sReleaseEntity releaseMetadata, ReleaseActionTarget target) {
+        String release = releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName();
+        if (ContextService.KIND_NONE.equals(target.kind())) {
+            return "Release " + release + " was deployed without a platform context, so it has no Ranger to configure.";
+        }
+        if (!target.managed() && (target.resolved() == null || !target.resolved().hasDirectRangerCreds())) {
+            return "The platform context '" + target.contextName() + "' of release " + release + " has no Ranger"
+                    + " administrator credentials, so KDPS cannot reach its Ranger. Add them to the context, or create"
+                    + " the release's repository in that Ranger yourself.";
+        }
+        return null;
+    }
+
+    private static void refuse(String refusal) {
+        if (refusal != null) {
+            throw new IllegalArgumentException(refusal);
+        }
+    }
+
+    /**
+     * Why each of "Regenerate keytabs" ({@code keytabs}), "Re-register OIDC client" ({@code oidc}) and "Reapply
+     * Ranger repository" ({@code ranger}) cannot run for a deployed release, for the Releases page to disable them
+     * with the reason. Only the actions the release's service declares are looked at; one missing from the answer can
+     * run, or could not be checked and says why when it runs.
+     *
+     * @return action to the reason it cannot run
+     */
+    public Map<String, String> releaseActionRefusals(String namespace, String releaseName,
+                                                     MultivaluedMap<String, String> callerHeaders, URI baseUri) {
+        Map<String, String> refusals = new LinkedHashMap<>();
+        K8sReleaseEntity releaseMetadata = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
+            return refusals;
+        }
+        StackServiceDef serviceDefinition =
+                new StackDefinitionService(ctx).getServiceDefinition(releaseMetadata.getServiceKey());
+        if (serviceDefinition == null) {
+            return refusals;
+        }
+        List<String> declared = new ArrayList<>();
+        if (serviceDefinition.kerberos != null && !serviceDefinition.kerberos.isEmpty()) declared.add("keytabs");
+        if (serviceDefinition.oidc != null && !serviceDefinition.oidc.isEmpty()) declared.add("oidc");
+        if (serviceDefinition.ranger != null && !serviceDefinition.ranger.isEmpty()) declared.add("ranger");
+        if (declared.isEmpty()) {
+            return refusals;
+        }
+        ReleaseActionTarget target;
+        try {
+            target = releaseActionTarget(releaseMetadata, "repair actions", callerHeaders, baseUri);
+        } catch (IllegalArgumentException refused) {
+            declared.forEach(action -> refusals.put(action, refused.getMessage()));
+            return refusals;
+        } catch (RuntimeException unknown) {
+            LOG.info("Could not tell which actions release {}/{} can run: {}", namespace, releaseName, unknown.toString());
+            return refusals;
+        }
+        if (declared.contains("keytabs")) {
+            putIfPresent(refusals, "keytabs",
+                    keytabRegenerationRefusal(releaseMetadata, resolveKerberosInjectionModeFromSettings(), target));
+        }
+        if (declared.contains("oidc")) {
+            try {
+                Map<String, Object> deployedValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+                refuseIfDeployedWithoutOidc(releaseMetadata, serviceDefinition, deployedValues);
+                putIfPresent(refusals, "oidc",
+                        oidcRegistrationRefusal(releaseMetadata, target, releaseSecurityProfile(releaseMetadata)));
+            } catch (IllegalArgumentException refused) {
+                refusals.put("oidc", refused.getMessage());
+            } catch (RuntimeException unknown) {
+                LOG.info("Could not tell whether release {}/{} can re-register its OIDC client: {}", namespace,
+                        releaseName, unknown.toString());
+            }
+        }
+        if (declared.contains("ranger")) {
+            putIfPresent(refusals, "ranger", rangerReapplyRefusal(releaseMetadata, target));
+        }
+        return refusals;
+    }
+
+    private static void putIfPresent(Map<String, String> map, String key, String value) {
+        if (value != null) {
+            map.put(key, value);
+        }
+    }
+
+    /**
+     * The security profile a release was deployed with, or null when it was deployed with none.
+     *
+     * @throws IllegalArgumentException when that profile no longer exists
+     */
+    private SecurityConfigDTO releaseSecurityProfile(K8sReleaseEntity releaseMetadata) {
+        String profile = releaseMetadata.getSecurityProfile();
+        if (profile == null || profile.isBlank()) {
+            return null;
+        }
+        try {
+            return new SecurityProfileService(ctx).requireProfile(profile);
+        } catch (IllegalArgumentException missing) {
+            throw new IllegalArgumentException("The security profile '" + profile + "' that release "
+                    + releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName() + " was deployed with no"
+                    + " longer exists. Redeploy the release with Upgrade / Config and an existing profile.", missing);
+        }
     }
 
     /** Null-safe enabled check used for both kerberos and oidc entries. */
@@ -3036,19 +3613,22 @@ public class CommandService {
         if (existingServiceConfigs != null && !existingServiceConfigs.isEmpty()) {
             rangerServiceConfigs.putAll(existingServiceConfigs);
         }
-        if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
-            Map<String, String> computedConfigs = configResolutionService.computeExtraRangerConfigs(
-                    rangerPluginSettingsSpec,
-                    params,
-                    effectiveValues,
-                    ambariActionClient,
-                    cluster
-            );
-            if (computedConfigs != null && !computedConfigs.isEmpty()) {
-                rangerServiceConfigs.putAll(computedConfigs);
-            }
-        } else {
-            LOG.warn("Ambari client unavailable; skipping Ranger extra config resolution for release {}", request.getReleaseName());
+        boolean withAmbari = ambariActionClient != null && cluster != null && !cluster.isBlank();
+        if (!withAmbari) {
+            // Configs read from Ambari are left out (for a release on another platform context they would be the
+            // managed cluster's); those built from the chart values are still set.
+            LOG.info("No Ambari cluster for the Ranger repository of release {}; its configs read from Ambari are left out",
+                    request.getReleaseName());
+        }
+        Map<String, String> computedConfigs = configResolutionService.computeExtraRangerConfigs(
+                rangerPluginSettingsSpec,
+                params,
+                effectiveValues,
+                withAmbari ? ambariActionClient : null,
+                withAmbari ? cluster : null
+        );
+        if (computedConfigs != null && !computedConfigs.isEmpty()) {
+            rangerServiceConfigs.putAll(computedConfigs);
         }
 
         // Persist ranger metadata into params for the child command step.
@@ -3985,6 +4565,24 @@ public class CommandService {
                                                   String releaseName,
                                                   MultivaluedMap<String, String> callerHeaders,
                                                   URI baseUri) {
+        String commandId = planReleaseKeytabRegeneration(namespace, releaseName, callerHeaders, baseUri);
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Plans and stores "Regenerate keytabs" for a deployed release, without running it: the keytab steps of a deploy,
+     * made to issue a new keytab even where the release's Secret holds one.
+     *
+     * @return the operation's id
+     * @throws IllegalArgumentException when the release's keytabs do not come from the cluster this Ambari manages
+     *                                  (another platform context, whose keytab Secret the operator provides), or when
+     *                                  that cluster cannot issue them
+     */
+    String planReleaseKeytabRegeneration(String namespace,
+                                         String releaseName,
+                                         MultivaluedMap<String, String> callerHeaders,
+                                         URI baseUri) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
@@ -3996,32 +4594,12 @@ public class CommandService {
 
         String kerberosInjectionMode = resolveKerberosInjectionModeFromSettings();
         if (!KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(kerberosInjectionMode)) {
-            throw new IllegalStateException("Kerberos regeneration is only supported in PRE_PROVISIONED mode (current: " + kerberosInjectionMode + ").");
+            throw new IllegalArgumentException("Kerberos regeneration is only supported in PRE_PROVISIONED mode (current: " + kerberosInjectionMode + ").");
         }
-
-        // Resolve Ambari cluster and initialize client for Kerberos checks.
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
-        String clusterName;
-        try {
-            // Resolve Ambari cluster name from the view base URI and caller headers.
-            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
-        } catch (Exception ex) {
-            LOG.warn("Failed to resolve Ambari cluster name for keytab regeneration on {}/{}: {}",
-                    namespace, releaseName, ex.toString());
-            throw new IllegalStateException("Unable to resolve Ambari cluster name for keytab regeneration.", ex);
-        }
-        AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
-
-        boolean kerberosClusterEnabled = false;
-        try {
-            String securityEnabledValue = ambariActionClient.getDesiredConfigProperty(clusterName, "cluster-env", "security_enabled");
-            kerberosClusterEnabled = "true".equalsIgnoreCase(securityEnabledValue);
-        } catch (Exception ex) {
-            LOG.warn("Failed to determine Kerberos state for cluster {}: {}", clusterName, ex.toString());
-        }
-        if (!kerberosClusterEnabled) {
-            throw new IllegalStateException("Kerberos is disabled on cluster " + clusterName + "; keytab regeneration skipped.");
-        }
+        ReleaseActionTarget target = releaseActionTarget(releaseMetadata, "keytab regeneration", callerHeaders, baseUri);
+        refuse(keytabRegenerationRefusal(releaseMetadata, kerberosInjectionMode, target));
+        String clusterName = target.cluster();
+        AmbariActionClient ambariActionClient = target.ambari();
 
         StackDefinitionService stackDefinitionService = new StackDefinitionService(ctx);
         StackServiceDef serviceDefinition = stackDefinitionService.getServiceDefinition(releaseMetadata.getServiceKey());
@@ -4059,8 +4637,9 @@ public class CommandService {
         rootParams.put("namespace", namespace);
         rootParams.put("serviceKey", releaseMetadata.getServiceKey());
         rootParams.put("kerberosInjectionMode", kerberosInjectionMode);
-        rootParams.put("_cluster", clusterName);
-        rootParams.put("_baseUri", baseUri.toString());
+        // Without it, the keytab step reuses the keytab the Secret holds and nothing is regenerated.
+        rootParams.put(FORCE_REISSUE_PARAM, true);
+        target.putInto(rootParams, baseUri, callerHeaders);
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
 
         List<String> childCommandIds = new ArrayList<>();
@@ -4073,6 +4652,8 @@ public class CommandService {
 
         int kerberosEntryIndex = 0;
         boolean keytabStepsAdded = false;
+        java.util.Set<String> plannedKeytabSecrets = new java.util.HashSet<>();
+        java.util.Set<String> issuedPrincipals = new java.util.HashSet<>();
         // Create keytab generation steps for each Kerberos entry.
         for (Map<String, Object> kerberosEntry : kerberosEntries) {
             kerberosEntryIndex++;
@@ -4107,13 +4688,26 @@ public class CommandService {
             );
             String keyNameInSecret = resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab");
 
+            // Entries sharing a principal and a Secret (Trino's coordinator and workers) need one keytab, and
+            // issuing it twice could change the key twice.
+            if (!plannedKeytabSecrets.add(principalFqdn + "|" + secretName)) {
+                LOG.info("Keytab of {} in Secret {} already planned; entry {} shares it", principalFqdn, secretName, entryKey);
+                continue;
+            }
+            // A principal is issued once; another Secret holding it gets that keytab copied.
+            Map<String, Object> stepParams = rootParams;
+            if (!issuedPrincipals.add(principalFqdn)) {
+                stepParams = new LinkedHashMap<>(rootParams);
+                stepParams.put(FORCE_REISSUE_PARAM, false);
+            }
+
             LOG.info("Regenerating keytab for entry {}: principal={}, secret={}, keyName={}",
                     entryKey, principalFqdn, secretName, keyNameInSecret);
 
             appendPreProvisionedKeytabSteps(
                     rootCommand,
                     childCommandIds,
-                    rootParams,
+                    stepParams,
                     principalFqdn,
                     namespace,
                     secretName,
@@ -4132,8 +4726,6 @@ public class CommandService {
 
         store(rootStatus);
         store(rootCommand);
-
-        scheduleNow(commandId);
         return commandId;
     }
 
@@ -4151,6 +4743,23 @@ public class CommandService {
                                                        String releaseName,
                                                        MultivaluedMap<String, String> callerHeaders,
                                                        URI baseUri) {
+        String commandId = planReleaseRangerRepositoryReapply(namespace, releaseName, callerHeaders, baseUri);
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Plans and stores "Reapply Ranger repository" for a deployed release, without running it: the Ranger repository
+     * step of a deploy, against the Ranger of the release's platform context.
+     *
+     * @return the operation's id
+     * @throws IllegalArgumentException when no Ranger can be reached for the release: deployed without a platform
+     *                                  context, or on a context without Ranger administrator credentials
+     */
+    String planReleaseRangerRepositoryReapply(String namespace,
+                                              String releaseName,
+                                              MultivaluedMap<String, String> callerHeaders,
+                                              URI baseUri) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
@@ -4167,17 +4776,12 @@ public class CommandService {
             throw new IllegalArgumentException("Service definition for " + releaseMetadata.getServiceKey() + " has no Ranger spec.");
         }
 
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
-        String clusterName;
-        try {
-            // Resolve Ambari cluster name from the view base URI and caller headers.
-            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
-        } catch (Exception ex) {
-            LOG.warn("Failed to resolve Ambari cluster name for Ranger reapply on {}/{}: {}",
-                    namespace, releaseName, ex.toString());
-            throw new IllegalStateException("Unable to resolve Ambari cluster name for Ranger reapply.", ex);
-        }
-        AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
+        // The Ranger the release was deployed against: the managed cluster's goes through the Ambari server, another
+        // context's is reached over REST with its administrator credentials. Never the managed cluster's in its place.
+        ReleaseActionTarget target = releaseActionTarget(releaseMetadata, "Ranger reapply", callerHeaders, baseUri);
+        refuse(rangerReapplyRefusal(releaseMetadata, target));
+        String clusterName = target.cluster();
+        AmbariActionClient ambariActionClient = target.ambari();
 
         Map<String, Object> releaseValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
         Map<String, Object> effectiveValues = releaseValues != null ? releaseValues : Collections.emptyMap();
@@ -4202,6 +4806,10 @@ public class CommandService {
         rangerRequest.setServiceKey(releaseMetadata.getServiceKey());
         rangerRequest.setChart(releaseMetadata.getChartRef());
         rangerRequest.setRanger(serviceDefinition.ranger);
+        if (target.contextId() != null) {
+            // The steps planned from the request read the context there too.
+            rangerRequest.setFormValues(Map.of("platformContextId", target.contextId()));
+        }
 
         final String commandId = UUID.randomUUID().toString();
         final String now = Instant.now().toString();
@@ -4229,14 +4837,10 @@ public class CommandService {
         rootParams.put("serviceKey", releaseMetadata.getServiceKey());
         rootParams.put("repoId", releaseMetadata.getRepoId());
         rootParams.put("version", releaseMetadata.getVersion());
-        rootParams.put("_cluster", clusterName);
-        rootParams.put("_baseUri", baseUri.toString());
-        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
         // The Ranger the release was deployed against: without it the default context is resolved, and a release on
         // an external platform would get its repository, and its Atlas tag sync account, on the managed cluster's.
-        if (releaseMetadata.getPlatformContextId() != null && !releaseMetadata.getPlatformContextId().isBlank()) {
-            rootParams.put("_platformContextId", releaseMetadata.getPlatformContextId());
-        }
+        // Set before the Ranger resources are planned, which read the context's Ranger from it.
+        target.putInto(rootParams, baseUri, callerHeaders);
 
         AmbariAliasResolver ambariAliasResolver = new AmbariAliasResolver(ctx);
         List<String> rangerWarnings = materializeRangerResources(
@@ -4250,15 +4854,16 @@ public class CommandService {
         rangerWarnings.forEach(w -> appendCommandLog(commandId, "WARNING: " + w));
 
         List<String> childCommandIds = new ArrayList<>();
-        // Plan the Ranger repository creation step with current values.
+        // Plan the Ranger repository creation step with current values. The managed cluster's configuration only
+        // completes the repository of a release on that cluster: another context's Ranger gets its own settings.
         planRangerRepositoryCreation(
                 rootCommand,
                 childCommandIds,
                 rangerRequest,
                 rootParams,
                 effectiveValues,
-                ambariActionClient,
-                clusterName
+                target.managed() ? ambariActionClient : null,
+                target.managed() ? clusterName : null
         );
 
         if (childCommandIds.isEmpty()) {
@@ -4270,8 +4875,6 @@ public class CommandService {
 
         store(rootStatus);
         store(rootCommand);
-
-        scheduleNow(commandId);
         return commandId;
     }
 
@@ -7904,6 +8507,7 @@ public class CommandService {
                         keytab.keyNameInSecret(),
                         keytab.entryKey()
                 );
+                warnOfSharedPrincipal(id, request.getNamespace(), request.getReleaseName(), keytab);
 
                 // Only one secret can be wired to global.security.kerberos.keytab.* today.
                 if (!helmOverridesApplied) {
@@ -7956,111 +8560,25 @@ public class CommandService {
                 boolean oidcIsExternal = securityCfg != null
                         && securityCfg.oidc != null
                         && "external".equalsIgnoreCase(securityCfg.oidc.source);
-                String externalClientId     = oidcIsExternal && securityCfg.oidc.clientId     != null ? securityCfg.oidc.clientId     : null;
                 String externalIssuerUrl    = oidcIsExternal && securityCfg.oidc.issuerUrl    != null ? securityCfg.oidc.issuerUrl    : null;
+                Map<String, String> oidcTemplateVars = resolveOidcTemplateVariables(oidcServiceDef, params);
 
                 boolean oidcStepsAdded = false;
                 boolean oidcHelmOverridesApplied = false;
                 int oidcIdx = 0;
                 for (Map<String, Object> entry : oidcEntries) {
                     oidcIdx++;
-                    if (!isEntryEnabled(entry.get("enabled"))) {
-                        LOG.info("Skipping disabled OIDC entry {}", entry.getOrDefault("key", oidcIdx));
+                    PlannedOidcEntry planned = planOidcEntrySteps(rootCommand, childCommands, params, entry, oidcIdx,
+                            request.getReleaseName(), request.getNamespace(), oidcRealm, oidcTemplateVars,
+                            securityCfg, resolvedSecurityProfile, id, request);
+                    if (planned == null) {
                         continue;
                     }
-                    String entryKey  = resolveStringValue(entry.get("key"), "entry-" + oidcIdx);
-                    String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
-                    String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
-                    String secretName = renderOidcTemplate(secretT, request.getReleaseName(), request.getNamespace(), oidcRealm);
-
-                    boolean gitlabOmniauth = Boolean.TRUE.equals(entry.get("gitlabOmniauth"))
-                            || "true".equalsIgnoreCase(String.valueOf(entry.get("gitlabOmniauth")));
-
-                    Map<String, Object> extraOidcParams = new LinkedHashMap<>();
-                    // Forward client flow flags declared in service.json oidc[] entry.
-                    // Defaults match the historical KeycloakAdminClient behavior
-                    // (publicClient=false, standardFlowEnabled=true, implicitFlowEnabled=false).
-                    extraOidcParams.put("publicClient",
-                            Boolean.TRUE.equals(entry.get("publicClient"))
-                                    || "true".equalsIgnoreCase(String.valueOf(entry.get("publicClient"))));
-                    Object stdFlowEntry = entry.get("standardFlowEnabled");
-                    extraOidcParams.put("standardFlowEnabled",
-                            stdFlowEntry == null || Boolean.parseBoolean(String.valueOf(stdFlowEntry)));
-                    extraOidcParams.put("implicitFlowEnabled",
-                            Boolean.TRUE.equals(entry.get("implicitFlowEnabled"))
-                                    || "true".equalsIgnoreCase(String.valueOf(entry.get("implicitFlowEnabled"))));
-                    String providerSecretName = null;
-                    if (gitlabOmniauth) {
-                        providerSecretName = request.getReleaseName() + "-omniauth-provider";
-                        extraOidcParams.put("oidcGitlabOmniauth", "true");
-                        extraOidcParams.put("oidcProviderSecretName", providerSecretName);
-                        // The actual callback URL is filled in below once we've resolved
-                        // the redirect URI via the service-definition variable pipeline
-                        // (which knows how to substitute gitlabDomain etc.).
-                    }
-
-                    // The audience the service's tokens are minted for: for an external provider the profile's
-                    // JWT audience, else its client id; the client KDPS registers otherwise.
-                    String entryAudience;
-                    if (oidcIsExternal) {
-                        // External OIDC: no Keycloak registration — write the secret directly from profile credentials
-                        entryAudience = externalJwtAudience(securityCfg.oidc);
-                        appendOidcExternalSecretStep(rootCommand, childCommands, params,
-                                externalClientId, resolvedSecurityProfile, externalIssuerUrl,
-                                secretName, entryKey, vaultPath, extraOidcParams);
-                    } else {
-                        // Internal OIDC: register client in Keycloak, then create secret
-                        String clientIdT  = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
-                        String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
-                        String clientId   = renderOidcTemplate(clientIdT, request.getReleaseName(), request.getNamespace(), oidcRealm);
-                        validateOidcClientId(clientId);
-                        entryAudience = clientId;
-                        // The audiences the client's access tokens carry (see oidcTokenAudiences); null keeps the
-                        // ones the client already has.
-                        List<String> audiences = oidcTokenAudiences(entry, clientId, request.getFormValues(),
-                                request.getValues());
-                        if (audiences != null) {
-                            extraOidcParams.put("oidcAudiences", audiences);
-                        } else {
-                            appendCommandLog(id, "KDPS cannot tell which audience the Trino this release connects to"
-                                    + " with its OIDC service token requires (it is not a KDPS release, or the deploy"
-                                    + " does not name it): the OIDC client " + clientId + " keeps the token audiences"
-                                    + " it has. That Trino must accept them, or its JWT authenticator refuses the token.");
-                        }
-                        // The releases already calling this service with their own token (Superset's Trino
-                        // connection) were registered before it checked this audience: their clients get it before
-                        // the upgrade restarts the service, so they keep connecting without being redeployed first.
-                        if (jwtAudiencePath(entry) != null) {
-                            List<Map<String, String>> callers =
-                                    trinoJwtCallers(request.getNamespace(), request.getReleaseName(), oidcRealm);
-                            if (!callers.isEmpty()) {
-                                extraOidcParams.put("oidcAudienceCallers", callers);
-                                appendCommandLog(id, "Release(s) " + callerNames(callers) + " call this Trino with"
-                                        + " their OIDC service token: KDPS adds the audience '" + clientId + "' to"
-                                        + " their tokens before the upgrade, since Trino then accepts only that one.");
-                            }
-                        }
-                        Map<String, String> oidcExtraVars = resolveServiceVariablesFromParams(
-                                oidcServiceDef != null ? oidcServiceDef.variables : null, params);
-                        String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm, oidcExtraVars);
-                        if (redirectUri.contains("{{")) {
-                            LOG.warn("OIDC redirectUri still contains unresolved tokens after variable substitution: {}", redirectUri);
-                        }
-                        if (gitlabOmniauth) {
-                            // The provider YAML written by OIDC_CREATE_SECRET needs the
-                            // same callback URL that we register with Keycloak. Earlier
-                            // code path tried to read gitlab.global.hosts.domain straight
-                            // out of `params`, which doesn't hold the nested chart values
-                            // tree at this point — it returned an empty string and the
-                            // resulting YAML pointed at `http://gitlab./users/...`,
-                            // breaking the OAuth flow. Reusing the resolved redirectUri
-                            // is the single source of truth and keeps Keycloak's
-                            // registered URI and GitLab's emitted URI byte-identical.
-                            extraOidcParams.put("oidcGitlabCallbackUrl", redirectUri);
-                        }
-                        appendOidcRegistrationSteps(rootCommand, childCommands, params,
-                                clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
-                    }
+                    boolean gitlabOmniauth = planned.gitlabOmniauth();
+                    String providerSecretName = planned.providerSecretName();
+                    String secretName = planned.secretName();
+                    String entryKey = planned.entryKey();
+                    String entryAudience = planned.audience();
                     oidcStepsAdded = true;
 
                     // A service that checks the audience of the JWTs it accepts takes only tokens minted for its own
@@ -10256,6 +10774,8 @@ public class CommandService {
                         this.kubernetesService.tagHelmReleaseSecrets(namespace, releaseName);
                         releaseTagger.interrupt();
                     }
+                    // Read before the metadata below replaces the flag with the current fingerprint.
+                    boolean restartPods = restartFlagged(namespace, releaseName);
                     // Helm has applied the deploy: only now does the release metadata describe what runs.
                     if (childParams.get(RELEASE_METADATA_PARAM) instanceof Map<?, ?> plannedMetadata) {
                         try {
@@ -10263,6 +10783,9 @@ public class CommandService {
                         } catch (Exception ex) {
                             LOG.warn("Failed to record release metadata after deploy for {}/{}: {}", namespace, releaseName, ex.toString());
                         }
+                    }
+                    if (restartPods) {
+                        restartFlaggedRelease(id, namespace, releaseName, plannedGlobalConfigVersion(childParams));
                     }
 
                     /** storing metadata for the deployed helm release **/
@@ -10342,6 +10865,7 @@ public class CommandService {
                             gitOpsRequestFromParams(childParams, valuesMap), gitOpsContext, planned);
 
                     // Git holds the deploy now: the release metadata describes what Flux runs, or will once merged.
+                    boolean restartPods = restartFlagged(namespace, releaseName);
                     if (childParams.get(RELEASE_METADATA_PARAM) instanceof Map<?, ?> plannedMetadata) {
                         try {
                             recordReleaseMetadata(namespace, releaseName, plannedMetadata, valuesMap);
@@ -10349,6 +10873,10 @@ public class CommandService {
                             LOG.warn("Failed to record release metadata after the GitOps commit for {}/{}: {}",
                                     namespace, releaseName, ex.toString());
                         }
+                    }
+                    if (restartPods) {
+                        // The pods are restarted once Flux has applied the commit: until then the release stays flagged.
+                        markRestartRequired(namespace, releaseName);
                     }
                     stepDoneMessage = describeGitOpsCommit(commit);
                     appendCommandLog(id, stepDoneMessage);
@@ -10381,6 +10909,10 @@ public class CommandService {
                     } catch (Exception ex) {
                         LOG.warn("Could not label the Helm Secret or Ingresses of {}/{}: {}", namespace, releaseName,
                                 ex.toString());
+                    }
+                    if (restartFlagged(namespace, releaseName)) {
+                        // The wait step carries only the release name: the planned metadata is the operation's.
+                        restartFlaggedRelease(id, namespace, releaseName, plannedGlobalConfigVersion(rootParams));
                     }
                 }
                 case HELM_UPGRADE -> {
@@ -10709,16 +11241,32 @@ public class CommandService {
                     // if it already holds this keytab, REUSE it and DO NOT call the KDC. Re-issuing
                     // would rotate the principal's key and invalidate the stored keytab — the
                     // "Preauthentication failed" desync. We only issue (create + key) when the Secret
-                    // is absent. No retrieve ACL / salt / KVNO bookkeeping; works for MIT/IPA/AD.
+                    // is absent. Works for MIT/IPA/AD.
+                    // "Regenerate keytabs" asks for a new keytab on purpose: no reuse then.
+                    // A stored keytab is reused only while the KDC still accepts its key (one login check), and a
+                    // keytab another release of the namespace holds for the same principal is copied, not issued
+                    // again, so the two releases keep the same key.
+                    boolean forceReissue = "true".equalsIgnoreCase(String.valueOf(childParams.get(FORCE_REISSUE_PARAM)));
                     {
                         String reuseNs  = (String) childParams.get("namespace");
                         String reuseSec = (String) childParams.get("secretName");
                         String reuseKey = (String) childParams.get("keyNameInSecret");
                         if (reuseKey == null || reuseKey.isBlank()) reuseKey = "service.keytab";
-                        if (reuseNs != null && !reuseNs.isBlank() && reuseSec != null && !reuseSec.isBlank()) {
+                        if (forceReissue) {
+                            appendCommandLog(id, "Issuing a new keytab for " + principalFqdn + " (regeneration requested)");
+                        } else if (reuseNs != null && !reuseNs.isBlank() && reuseSec != null && !reuseSec.isBlank()) {
                             try {
                                 Optional<byte[]> existing =
                                         this.kubernetesService.readOpaqueSecretKeyAsBytes(reuseNs, reuseSec, reuseKey);
+                                Integer rejectedVersion = null;
+                                if (isReusableKeytab(existing, principalFqdn)
+                                        && Boolean.FALSE.equals(keytabLogin.authenticates(existing.get(), principalFqdn))) {
+                                    appendCommandLog(id, "The keytab in Secret " + reuseNs + "/" + reuseSec
+                                            + " no longer logs " + principalFqdn + " in (its key changed in the KDC,"
+                                            + " or the KDC no longer knows the principal)");
+                                    rejectedVersion = keytabKeyVersion(existing.get(), principalFqdn);
+                                    existing = Optional.empty();
+                                }
                                 // Reuse ONLY when the stored keytab is actually for the principal we're about
                                 // to issue. If the principal scheme changed (e.g. AMBARI-564 renamed
                                 // trino-coordinator-<ns> → trino-<ns>), the old Secret holds a keytab for a
@@ -10744,6 +11292,14 @@ public class CommandService {
                                             + "requested '{}' (principal scheme changed) — re-issuing to self-heal (the new principal "
                                             + "does not exist in the KDC, so this creates it and overwrites the Secret)",
                                             reuseNs, reuseSec, principalFqdn);
+                                }
+                                Map<String, Object> copied = siblingKeytabToCopy(id, reuseNs, reuseSec, principalFqdn,
+                                        rejectedVersion);
+                                if (copied != null) {
+                                    String prior = priorKeytabSha256(reuseNs, reuseSec, reuseKey);
+                                    if (prior != null) copied.put(PRIOR_KEYTAB_SHA256, prior);
+                                    childSt.setResultJson(gson.toJson(copied));
+                                    break; // the key the other releases hold: no KDC issuance
                                 }
                             } catch (Exception reuseCheck) {
                                 LOG.warn("KEYTAB_ISSUE_PRINCIPAL: could not check Secret '{}/{}' for reuse ({}); proceeding to issue",
@@ -10792,6 +11348,10 @@ public class CommandService {
 
                     String context = "Generate ad-hoc keytab for " + principalFqdn;
 
+                    // Read before the KDC is asked: from here on, the Secret may already hold the keytab issued now.
+                    String priorKeytab = priorKeytabSha256((String) childParams.get("namespace"),
+                            (String) childParams.get("secretName"), (String) childParams.get("keyNameInSecret"));
+
                     // Client that talks to Ambari’s REST API with the caller session
                     var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
                     LOG.info("submitting principal request creation {} to ambari server", principalFqdn);
@@ -10833,6 +11393,7 @@ public class CommandService {
                     res.put("requestId", reqId);
                     res.put("payloadRef", payloadMetadata.payloadRef());
                     res.put("payloadSha256", payloadMetadata.payloadSha256());
+                    if (priorKeytab != null) res.put(PRIOR_KEYTAB_SHA256, priorKeytab);
                     childSt.setResultJson(gson.toJson(res));
                 }
 
@@ -10900,6 +11461,8 @@ public class CommandService {
 
                     Map<String,Object> issuerRes =
                             gson.fromJson(issuerSt.getResultJson(), java.util.Map.class);
+                    String keytabPrincipal = stringValue(childParams.get("principalFqdn"));
+                    String keytabRelease = stringValue(childParams.get("releaseName"));
 
                     // Generate-once/reuse: the issuer found the keytab already present in the Secret
                     // and skipped the KDC (no re-key, no payload). Just confirm it's still there.
@@ -10910,12 +11473,52 @@ public class CommandService {
                             LOG.info("KEYTAB_CREATE_SECRET: reusing keytab already in Secret '{}/{}' (no re-key, nothing to write)",
                                     namespace, secretName);
                             appendCommandLog(id, "Keytab Secret " + namespace + "/" + secretName + " already present; reused");
+                            labelKeytabSecret(namespace, secretName, keyNameInSecret, present.get(), keytabRelease,
+                                    keytabPrincipal);
                             break; // step complete
                         }
                         // Raced: Secret vanished after the issue-time check and there is no payload to
                         // write. Fail so a re-run re-issues from scratch (Secret absent -> real issue).
                         throw new IllegalStateException("Keytab reuse expected Secret '" + namespace + "/" + secretName
                                 + "' but it is now missing; re-run the operation to re-issue the keytab.");
+                    }
+
+                    // The issuer found the keytab in the Secret of another release using the same principal: copy it.
+                    if (issuerRes != null && issuerRes.get("copiedFrom") != null) {
+                        String copiedFrom = String.valueOf(issuerRes.get("copiedFrom"));
+                        String copiedKey = stringValue(issuerRes.get("copiedKey"));
+                        if (copiedKey.isBlank()) copiedKey = keyNameInSecret;
+                        Optional<byte[]> source =
+                                this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, copiedFrom, copiedKey);
+                        if (source.isEmpty() || !stringValue(issuerRes.get("payloadSha256")).equals(sha256Hex(source.get()))) {
+                            throw new IllegalStateException("The keytab of Secret " + namespace + "/" + copiedFrom
+                                    + " changed or disappeared while it was copied; run the operation again.");
+                        }
+                        String before = keytabBeforeOperation(issuerRes,
+                                this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret));
+                        try {
+                            this.kubernetesService.createNamespace(namespace);
+                        } catch (Exception ignore) {
+                            // ignore: namespace may already exist or user may not want auto-create
+                        }
+                        this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, keyNameInSecret,
+                                source.get(), keytabSecretLabels(keytabRelease, keytabPrincipal), null, Boolean.TRUE);
+                        Optional<byte[]> written =
+                                this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
+                        String copiedSha256 = sha256Hex(source.get());
+                        if (written.isEmpty() || !copiedSha256.equals(sha256Hex(written.get()))) {
+                            throw new CommandUtils.RetryableException("Secret verification failed: the copied keytab is not in "
+                                    + namespace + "/" + secretName);
+                        }
+                        flagKeytabRestart(root, id, namespace, keytabRelease, before, copiedSha256);
+                        java.util.Map<String,Object> copyRes = new java.util.LinkedHashMap<>();
+                        copyRes.put("secretName", secretName);
+                        copyRes.put("namespace", namespace);
+                        copyRes.put("dataKey", keyNameInSecret);
+                        copyRes.put("copiedFrom", copiedFrom);
+                        copyRes.put("verifiedSha256", copiedSha256);
+                        childSt.setResultJson(gson.toJson(copyRes));
+                        break; // step complete
                     }
 
                     String payloadRef = issuerRes == null ? null : (String) issuerRes.get("payloadRef");
@@ -10939,8 +11542,14 @@ public class CommandService {
                     String verifiedSha256 = null;
                     Optional<byte[]> existingSecretBytes =
                             this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
+                    // On a retry, the Secret may already hold this step's keytab: what it held before comes from the
+                    // issuer. The sibling Secrets and the restart flag are handled as soon as the keytab is stored,
+                    // before the payload is acknowledged, so a failed acknowledgement cannot skip them.
+                    String keytabBefore = keytabBeforeOperation(issuerRes, existingSecretBytes);
                     if (existingSecretBytes.isPresent() && payloadSha256.equals(sha256Hex(existingSecretBytes.get()))) {
                         LOG.info("KEYTAB_CREATE_SECRET: Secret '{}/{}' already contains the expected keytab payload", namespace, secretName);
+                        afterKeytabStored(root, id, namespace, secretName, keytabPrincipal, keytabRelease, keytabBefore,
+                                existingSecretBytes.get(), payloadSha256);
                         try {
                             ambariActionClient.ackAdhocKeytabPayload(payloadRef);
                         } catch (Exception ackEx) {
@@ -10961,6 +11570,8 @@ public class CommandService {
                                 LOG.info("KEYTAB_CREATE_SECRET: payload '{}' already acknowledged; accepting matching Secret '{}/{}'",
                                         payloadRef, namespace, secretName);
                                 verifiedSha256 = payloadSha256;
+                                afterKeytabStored(root, id, namespace, secretName, keytabPrincipal, keytabRelease,
+                                        keytabBefore, secretBytesAfterReadFailure.get(), verifiedSha256);
                             } else if (isPayloadUnavailableError(payloadEx)) {
                                 throw new IllegalStateException(
                                         String.format("Keytab payload '%s' is no longer available and Secret '%s/%s' could not be verified",
@@ -10984,7 +11595,8 @@ public class CommandService {
 
                             try {
                                 this.kubernetesService.createOrUpdateOpaqueSecret(
-                                        namespace, secretName, keyNameInSecret, keytabBytes
+                                        namespace, secretName, keyNameInSecret, keytabBytes,
+                                        keytabSecretLabels(keytabRelease, keytabPrincipal), null, Boolean.TRUE
                                 );
 
                                 Optional<byte[]> verifiedSecretBytes =
@@ -10996,6 +11608,8 @@ public class CommandService {
                                 if (!payloadSha256.equals(verifiedSha256)) {
                                     throw new CommandUtils.RetryableException("Secret verification failed: stored keytab hash does not match issued payload");
                                 }
+                                afterKeytabStored(root, id, namespace, secretName, keytabPrincipal, keytabRelease,
+                                        keytabBefore, keytabBytes, verifiedSha256);
 
                                 try {
                                     ambariActionClient.ackAdhocKeytabPayload(payloadRef);
@@ -11203,8 +11817,20 @@ public class CommandService {
                         this.kubernetesService.createNamespace(namespace);
                     } catch (Exception ignore) {}
 
+                    // A re-registration usually keeps the client secret (Keycloak updates the client in place); it
+                    // only changes when the client was created anew, and then the release's pods still hold the old one.
+                    boolean reRegistration = CommandType.REGISTER_OIDC_CLIENT.name().equals(root.getType());
+                    String previousClientSecret = reRegistration
+                            ? secretValue(namespace, secretName, "client_secret") : null;
+
                     this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData);
                     appendCommandLog(child.getId(), "K8s Secret '" + namespace + "/" + secretName + "' created/updated");
+                    if (reRegistration && !Objects.equals(previousClientSecret, clientSecret != null ? clientSecret : "")) {
+                        String releaseName = stringValue(childParams.get("releaseName"));
+                        markRestartRequired(namespace, releaseName);
+                        appendCommandLog(id, "The OIDC client secret of " + namespace + "/" + releaseName
+                                + " changed: restart the release (Resync / restart) so its pods use the new one.");
+                    }
                     LOG.info("OIDC_CREATE_SECRET: Secret '{}/{}' written for client '{}'", namespace, secretName, clientId);
 
                     Map<String, Object> res = new LinkedHashMap<>();
@@ -12014,28 +12640,41 @@ public class CommandService {
      * True when the MIT/IPA keytab bytes contain an entry for {@code wantedPrincipal} ({@code primary@REALM},
      * where a service principal's primary is {@code service/instance}). Used by the KEYTAB_ISSUE_PRINCIPAL
      * reuse short-circuit to re-issue (self-heal) when the stored keytab is for a DIFFERENT principal than
-     * requested — e.g. after the principal scheme changed on an upgrade (AMBARI-564).
+     * requested — e.g. after the principal scheme changed on an upgrade.
      *
-     * <p>Parses the standard {@code 0x0502} (big-endian) keytab format. On any parse failure — or an
-     * unrecognised format — returns {@code true}, i.e. assume it matches and keep the safe
-     * "reuse, do not re-key" behaviour; we only force a re-issue when we can positively confirm the
-     * requested principal is absent.
+     * <p>Bytes that cannot be parsed do not match: reusing them could leave the release with a keytab that does not
+     * log in, while issuing it again repairs it.
      *
      * @param keytab          raw keytab bytes from the Secret
      * @param wantedPrincipal the principal about to be issued ({@code primary@REALM})
-     * @return true if the keytab contains the principal, or the bytes cannot be confidently parsed
+     * @return true if the keytab parses and contains the principal
      */
-    private boolean keytabContainsPrincipal(byte[] keytab, String wantedPrincipal) {
-        if (keytab == null || keytab.length < 2 || wantedPrincipal == null || wantedPrincipal.isBlank()) {
-            return true;
+    static boolean keytabContainsPrincipal(byte[] keytab, String wantedPrincipal) {
+        Integer kvno = keytabKeyVersion(keytab, wantedPrincipal);
+        return kvno != null && kvno >= 0;
+    }
+
+    /**
+     * The highest key version a keytab holds for a principal, read from the standard {@code 0x0502} (big-endian)
+     * keytab format.
+     *
+     * @param keytab    raw keytab bytes
+     * @param principal the principal ({@code primary@REALM})
+     * @return the key version; -1 when the keytab parses but holds no key of the principal; null when the bytes are
+     *         not a keytab this method can read
+     */
+    static Integer keytabKeyVersion(byte[] keytab, String principal) {
+        if (keytab == null || keytab.length < 2 || principal == null || principal.isBlank()) {
+            return null;
         }
         try {
             java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(keytab).order(java.nio.ByteOrder.BIG_ENDIAN);
             int v0 = buf.get() & 0xff;
             int v1 = buf.get() & 0xff;
             if (v0 != 0x05 || v1 != 0x02) {
-                return true; // not the format we parse → don't force a re-key
+                return null;
             }
+            int highest = -1;
             while (buf.remaining() >= 4) {
                 int size = buf.getInt();
                 if (size == 0) {
@@ -12045,34 +12684,542 @@ public class CommandService {
                     buf.position(Math.min(buf.limit(), buf.position() + (-size)));
                     continue;
                 }
-                int entryStart = buf.position();
                 if (size > buf.remaining()) {
-                    return true; // truncated/unexpected → be safe
+                    return null; // truncated
                 }
+                int entryStart = buf.position();
+                int entryEnd = entryStart + size;
                 int numComponents = buf.getShort() & 0xffff;
-                int realmLen = buf.getShort() & 0xffff;
-                byte[] realmB = new byte[realmLen];
-                buf.get(realmB);
-                String realm = new String(realmB, StandardCharsets.UTF_8);
+                String realm = countedString(buf);
                 StringBuilder primary = new StringBuilder();
                 for (int i = 0; i < numComponents; i++) {
-                    int clen = buf.getShort() & 0xffff;
-                    byte[] cb = new byte[clen];
-                    buf.get(cb);
                     if (i > 0) {
                         primary.append('/');
                     }
-                    primary.append(new String(cb, StandardCharsets.UTF_8));
+                    primary.append(countedString(buf));
                 }
-                if ((primary + "@" + realm).equals(wantedPrincipal)) {
-                    return true;
+                buf.getInt();                   // name type
+                buf.getInt();                   // timestamp
+                int kvno = buf.get() & 0xff;    // 8-bit key version
+                buf.getShort();                 // key type
+                int keyLength = buf.getShort() & 0xffff;
+                buf.position(buf.position() + keyLength);
+                // A 32-bit key version may follow the key; when set, it is the real one (the 8-bit one wraps).
+                if (entryEnd - buf.position() >= 4) {
+                    int kvno32 = buf.getInt();
+                    if (kvno32 != 0) {
+                        kvno = kvno32;
+                    }
                 }
-                buf.position(entryStart + size); // skip nameType/timestamp/vno/keyblock
+                if ((primary + "@" + realm).equals(principal)) {
+                    highest = Math.max(highest, kvno);
+                }
+                buf.position(entryEnd);
             }
-            return false; // parsed OK, principal not present
+            return highest;
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read a keytab ({}); it is treated as not holding {}", e.toString(), principal);
+            return null;
+        }
+    }
+
+    private static String countedString(java.nio.ByteBuffer buf) {
+        int length = buf.getShort() & 0xffff;
+        byte[] bytes = new byte[length];
+        buf.get(bytes);
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    /** Tells whether a keytab still logs its principal in to the KDC. */
+    @FunctionalInterface
+    interface KeytabLogin {
+        /**
+         * @return true when the KDC accepts the keytab's key, false when it rejects it (the key changed in the KDC
+         *         since the keytab was issued, or the principal no longer exists there), null when it cannot be told
+         *         (no Kerberos configuration, KDC unreachable)
+         */
+        Boolean authenticates(byte[] keytab, String principal);
+    }
+
+    /**
+     * One Kerberos login of the principal with the keytab, from the Ambari server, which has the cluster's krb5.conf.
+     * One attempt only: failed logins count toward an Active Directory account lockout.
+     */
+    static Boolean loginWithKeytab(byte[] keytab, String principal) {
+        java.nio.file.Path file = null;
+        try {
+            try {
+                file = java.nio.file.Files.createTempFile("kdps-keytab-check", ".keytab",
+                        java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                                java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+            } catch (UnsupportedOperationException notPosix) {
+                file = java.nio.file.Files.createTempFile("kdps-keytab-check", ".keytab");
+            }
+            java.nio.file.Files.write(file, keytab);
+            Map<String, String> options = new LinkedHashMap<>();
+            options.put("useKeyTab", "true");
+            options.put("keyTab", file.toString());
+            options.put("principal", principal);
+            options.put("storeKey", "false");
+            options.put("doNotPrompt", "true");
+            options.put("isInitiator", "true");
+            javax.security.auth.login.AppConfigurationEntry[] entries = {
+                    new javax.security.auth.login.AppConfigurationEntry("com.sun.security.auth.module.Krb5LoginModule",
+                            javax.security.auth.login.AppConfigurationEntry.LoginModuleControlFlag.REQUIRED, options)};
+            javax.security.auth.login.Configuration configuration = new javax.security.auth.login.Configuration() {
+                @Override
+                public javax.security.auth.login.AppConfigurationEntry[] getAppConfigurationEntry(String name) {
+                    return entries;
+                }
+            };
+            javax.security.auth.login.LoginContext login = new javax.security.auth.login.LoginContext(
+                    "kdps-keytab-check", new javax.security.auth.Subject(), null, configuration);
+            login.login();
+            login.logout();
+            return Boolean.TRUE;
+        } catch (javax.security.auth.login.LoginException e) {
+            Boolean verdict = failedKeytabLoginVerdict(e);
+            if (Boolean.FALSE.equals(verdict)) {
+                LOG.info("The KDC rejects the stored keytab of {}: {}", principal, e.getMessage());
+            } else {
+                LOG.info("Could not check the stored keytab of {} against the KDC ({}); it is used as it is",
+                        principal, e.getMessage());
+            }
+            return verdict;
         } catch (Exception e) {
-            LOG.warn("keytabContainsPrincipal: parse failed ({}); assuming match to avoid a re-key", e.toString());
-            return true;
+            LOG.info("Could not check the stored keytab of {} against the KDC ({}); it is used as it is",
+                    principal, e.toString());
+            return null;
+        } finally {
+            if (file != null) {
+                try {
+                    java.nio.file.Files.deleteIfExists(file);
+                } catch (java.io.IOException ignored) {
+                    // a temporary file the JVM's temp cleanup removes
+                }
+            }
+        }
+    }
+
+    /**
+     * What a failed keytab login says about the keytab: false when the KDC gave a definite answer against it (its key
+     * changed in the KDC, or the principal no longer exists there), null when the failure tells nothing about the
+     * keytab (no Kerberos configuration, KDC unreachable, clock skew). An unknown principal is definite too: the
+     * stored keytab can never log in again, and the principal must be created anew.
+     *
+     * @param failure the login failure, whose cause chain carries the KDC's error
+     * @return {@link Boolean#FALSE} or null
+     */
+    static Boolean failedKeytabLoginVerdict(Throwable failure) {
+        StringBuilder reasons = new StringBuilder();
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            reasons.append(' ').append(String.valueOf(t.getMessage()).toLowerCase(Locale.ROOT));
+        }
+        String why = reasons.toString();
+        if (why.contains("pre-authentication") || why.contains("preauthentication")
+                || why.contains("integrity check") || why.contains("checksum failed")
+                || why.contains("specified version of key is not available")
+                || why.contains("client not found") || why.contains("principal_unknown")) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    /** The value of the label naming a keytab Secret's principal: a label value cannot hold '@' or '/'. */
+    static String keytabPrincipalLabel(String principal) {
+        return sha256Hex(principal.getBytes(StandardCharsets.UTF_8)).substring(0, 40);
+    }
+
+    /** The labels of a keytab Secret KDPS writes for {@code release} and {@code principal}. */
+    static Map<String, String> keytabSecretLabels(String release, String principal) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("app.kubernetes.io/managed-by", VIEW_MANAGED_BY);
+        labels.put(KEYTAB_PRINCIPAL_LABEL, keytabPrincipalLabel(principal));
+        if (release != null && release.matches("[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?")) {
+            labels.put(KEYTAB_RELEASE_LABEL, release);
+        }
+        return labels;
+    }
+
+    /** A keytab read from a Secret: the data key holding it and its bytes. */
+    record StoredKeytab(String secretName, String key, byte[] bytes, String release) {}
+
+    /**
+     * The other keytab Secrets KDPS wrote in {@code namespace} for {@code principal}: releases of one service in a
+     * namespace share its principal, so all their Secrets must hold the same key. Empty when they cannot be listed.
+     *
+     * <p>Secrets written before KDPS labelled them with their principal are found by the keytab they hold, and are
+     * labelled on the way, so a regeneration also reaches the releases deployed before the labels existed.
+     *
+     * @param ownSecret the Secret of the release at hand, left out
+     */
+    List<StoredKeytab> siblingKeytabs(String namespace, String ownSecret, String principal) {
+        List<StoredKeytab> siblings = new ArrayList<>();
+        List<io.fabric8.kubernetes.api.model.Secret> secrets;
+        try {
+            secrets = kubernetesService.listSecretsWithLabel(namespace, KEYTAB_PRINCIPAL_LABEL,
+                    keytabPrincipalLabel(principal));
+        } catch (Exception e) {
+            LOG.warn("Could not list the keytab Secrets of {} in {}: {}", principal, namespace, e.toString());
+            return siblings;
+        }
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (io.fabric8.kubernetes.api.model.Secret secret : secrets == null
+                ? List.<io.fabric8.kubernetes.api.model.Secret>of() : secrets) {
+            if (secret == null || secret.getMetadata() == null || secret.getData() == null) continue;
+            String name = secret.getMetadata().getName();
+            Map<String, String> annotations = secret.getMetadata().getAnnotations();
+            if (name == null || name.equals(ownSecret) || annotations == null
+                    || !VIEW_MANAGED_BY.equals(annotations.get("managed-by"))) {
+                continue;
+            }
+            seen.add(name);
+            Map<String, String> labels = secret.getMetadata().getLabels();
+            String release = labels == null ? null : labels.get(KEYTAB_RELEASE_LABEL);
+            StoredKeytab found = storedKeytabOf(secret, principal, release);
+            siblings.add(found != null ? found : new StoredKeytab(name, null, null, release));
+        }
+        List<io.fabric8.kubernetes.api.model.Secret> unlabelled;
+        try {
+            unlabelled = kubernetesService.listViewManagedSecretsWithoutLabel(namespace, KEYTAB_PRINCIPAL_LABEL);
+        } catch (Exception e) {
+            LOG.warn("Could not list the unlabelled Secrets of namespace {}: {}", namespace, e.toString());
+            return siblings;
+        }
+        for (io.fabric8.kubernetes.api.model.Secret secret : unlabelled == null
+                ? List.<io.fabric8.kubernetes.api.model.Secret>of() : unlabelled) {
+            if (secret == null || secret.getMetadata() == null || secret.getData() == null) continue;
+            String name = secret.getMetadata().getName();
+            if (name == null || name.equals(ownSecret) || !seen.add(name)) continue;
+            StoredKeytab found = storedKeytabOf(secret, principal, null);
+            if (found == null) continue;
+            found = new StoredKeytab(name, found.key(), found.bytes(), keytabSecretRelease(namespace, name, principal));
+            siblings.add(found);
+            // Rewriting a Secret with several entries would drop the others: only a keytab-only Secret is labelled.
+            if (secret.getData().size() == 1) {
+                labelKeytabSecret(namespace, name, found.key(), found.bytes(), found.release(), principal);
+            }
+        }
+        return siblings;
+    }
+
+    /** The keytab of {@code principal} a Secret holds, or null when none of its entries is one. */
+    private static StoredKeytab storedKeytabOf(io.fabric8.kubernetes.api.model.Secret secret, String principal,
+                                               String release) {
+        for (Map.Entry<String, String> data : secret.getData().entrySet()) {
+            if (data.getValue() == null) continue;
+            try {
+                byte[] bytes = java.util.Base64.getDecoder().decode(data.getValue());
+                if (keytabContainsPrincipal(bytes, principal)) {
+                    return new StoredKeytab(secret.getMetadata().getName(), data.getKey(), bytes, release);
+                }
+            } catch (IllegalArgumentException notBase64) {
+                // not a keytab entry
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The release of the namespace whose keytab Secret is {@code secretName}, from the Secret names the Kerberos
+     * entries of each recorded release resolve to; null when no release record names it.
+     */
+    private String keytabSecretRelease(String namespace, String secretName, String principal) {
+        String realm = principal.contains("@") ? principal.substring(principal.indexOf('@') + 1) : "";
+        try {
+            StackDefinitionService definitions = new StackDefinitionService(ctx);
+            for (K8sReleaseEntity record : new ReleaseMetadataService(ctx).findAll()) {
+                if (record == null || !namespace.equals(record.getNamespace()) || record.getReleaseName() == null
+                        || record.getServiceKey() == null || record.getServiceKey().isBlank()) {
+                    continue;
+                }
+                StackServiceDef definition = definitions.getServiceDefinition(record.getServiceKey());
+                if (definition == null || definition.kerberos == null || definition.kerberos.isEmpty()) continue;
+                for (Map<String, Object> entry
+                        : normalizeKerberosEntries(buildKerberosSpecMapFromServiceDefinition(definition.kerberos))) {
+                    String serviceName = resolveStringValue(entry.get("serviceName"), record.getReleaseName());
+                    if (secretName.equals(resolveKerberosEntrySecretName(entry, serviceName, namespace,
+                            record.getReleaseName(), realm))) {
+                        return record.getReleaseName();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.info("Could not find the release of keytab Secret {}/{}: {}", namespace, secretName, e.toString());
+        }
+        return null;
+    }
+
+    /**
+     * The keytab another release of the namespace holds for the principal, to copy into this release's Secret instead
+     * of issuing it: issuing it again may change the principal's key in the KDC and break the other releases.
+     *
+     * @param commandId       the operation, whose log says what was decided
+     * @param ownSecret       the Secret of the release at hand
+     * @param rejectedVersion the key version of the release's own keytab, which the KDC just rejected; null when
+     *                        there was none. The copy must then hold a newer key: no second login is attempted, since
+     *                        failed logins count toward an account lockout.
+     * @return the step's result naming the Secret to copy from, or null to issue the keytab
+     */
+    Map<String, Object> siblingKeytabToCopy(String commandId, String namespace, String ownSecret, String principal,
+                                            Integer rejectedVersion) {
+        StoredKeytab newest = null;
+        int newestVersion = -1;
+        for (StoredKeytab sibling : siblingKeytabs(namespace, ownSecret, principal)) {
+            Integer version = sibling.bytes() == null ? null : keytabKeyVersion(sibling.bytes(), principal);
+            if (version != null && version > newestVersion) {
+                newest = sibling;
+                newestVersion = version;
+            }
+        }
+        if (newest == null) {
+            return null;
+        }
+        String source = namespace + "/" + newest.secretName();
+        boolean usable = rejectedVersion != null
+                ? newestVersion > rejectedVersion
+                : !Boolean.FALSE.equals(keytabLogin.authenticates(newest.bytes(), principal));
+        if (!usable) {
+            appendCommandLog(commandId, "The keytab of " + principal + " in Secret " + source
+                    + " is outdated too: issuing a new one");
+            return null;
+        }
+        appendCommandLog(commandId, "Copying the keytab of " + principal + " from Secret " + source
+                + (newest.release() == null ? "" : " (release " + newest.release() + ")")
+                + ": releases of the namespace share the principal, and issuing it again could change its key");
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("copiedFrom", newest.secretName());
+        result.put("copiedKey", newest.key());
+        result.put("payloadSha256", sha256Hex(newest.bytes()));
+        return result;
+    }
+
+    /**
+     * After a keytab was issued for {@code principal}, rewrites the other keytab Secrets of the principal in the
+     * namespace that hold an older key: issuing it may have changed the key in the KDC (a new key version), which
+     * makes their keytabs fail at the next login. Their releases are flagged for a restart.
+     *
+     * @param commandId the operation, whose log says what was rewritten
+     * @param issued    the issued keytab
+     */
+    void syncSiblingKeytabs(String commandId, String namespace, String ownSecret, String principal, byte[] issued) {
+        Integer issuedVersion = keytabKeyVersion(issued, principal);
+        if (issuedVersion == null || issuedVersion < 0) {
+            return;
+        }
+        for (StoredKeytab sibling : siblingKeytabs(namespace, ownSecret, principal)) {
+            Integer version = sibling.bytes() == null ? null : keytabKeyVersion(sibling.bytes(), principal);
+            if (version != null && version >= issuedVersion) {
+                continue;
+            }
+            String key = sibling.key() != null ? sibling.key() : "service.keytab";
+            try {
+                kubernetesService.createOrUpdateOpaqueSecret(namespace, sibling.secretName(), key, issued,
+                        keytabSecretLabels(sibling.release(), principal), null, Boolean.TRUE);
+            } catch (Exception e) {
+                appendCommandLog(commandId, "WARNING: could not write the new keytab of " + principal + " to Secret "
+                        + namespace + "/" + sibling.secretName() + ", which now holds an outdated key: " + e.getMessage()
+                        + ". Run Regenerate keytabs on the release using that Secret.");
+                continue;
+            }
+            String release = sibling.release() == null ? "" : sibling.release();
+            if (!release.isBlank()) {
+                markRestartRequired(namespace, release);
+            }
+            appendCommandLog(commandId, "Secret " + namespace + "/" + sibling.secretName() + " also holds the keytab of "
+                    + principal + ": rewrote it with the new key (version " + issuedVersion + ")"
+                    + (release.isBlank() ? "." : "; restart release " + release + " (Resync / restart) so it uses it."));
+        }
+    }
+
+    /**
+     * Flags a release for a restart on the Releases page ("Resync / restart"), after something its pods read at
+     * startup changed outside a deploy: its keytab or its OIDC client secret. The next deploy of the release clears it.
+     */
+    private void markRestartRequired(String namespace, String releaseName) {
+        try {
+            new ReleaseMetadataService(ctx).markRestartRequired(namespace, releaseName);
+        } catch (Exception e) {
+            LOG.warn("Could not flag release {}/{} for a restart: {}", namespace, releaseName, e.toString());
+        }
+    }
+
+    /**
+     * Warns in a deploy's log when another release of the namespace already holds a keytab of the principal the
+     * deploy issues: principals are named per namespace, so the releases share it and must keep the same key.
+     */
+    private void warnOfSharedPrincipal(String commandId, String namespace, String releaseName, PlannedKeytab keytab) {
+        List<String> others = siblingKeytabs(namespace, keytab.secretName(), keytab.principalFqdn()).stream()
+                .map(StoredKeytab::release)
+                .filter(release -> release != null && !release.isBlank() && !release.equals(releaseName))
+                .distinct()
+                .toList();
+        if (!others.isEmpty()) {
+            appendCommandLog(commandId, "WARNING: release(s) " + String.join(", ", others) + " in namespace "
+                    + namespace + " already use the Kerberos principal " + keytab.principalFqdn() + ". Releases of"
+                    + " one service in a namespace share it: this release gets a copy of their keytab, and"
+                    + " regenerating the keytab of any of them rewrites the others' and flags them for a restart.");
+        }
+    }
+
+    /**
+     * The SHA-256 of the keytab a release's Secret holds, as a keytab issuing step records it before the operation
+     * writes one (see {@link #PRIOR_KEYTAB_SHA256}); null when it cannot be read.
+     */
+    private String priorKeytabSha256(String namespace, String secretName, String key) {
+        if (namespace == null || namespace.isBlank() || secretName == null || secretName.isBlank()) {
+            return null;
+        }
+        try {
+            Optional<byte[]> held = kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName,
+                    key == null || key.isBlank() ? "service.keytab" : key);
+            return held.isPresent() ? sha256Hex(held.get()) : NO_PRIOR_KEYTAB;
+        } catch (Exception e) {
+            LOG.info("Could not read keytab Secret {}/{} before issuing: {}", namespace, secretName, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * The SHA-256 of the keytab the release's Secret held before the operation, null when it held none: as the issuing
+     * step recorded it, else (for an operation planned before it recorded it) the keytab the Secret holds now.
+     */
+    private static String keytabBeforeOperation(Map<String, Object> issuerResult, Optional<byte[]> current) {
+        Object recorded = issuerResult == null ? null : issuerResult.get(PRIOR_KEYTAB_SHA256);
+        if (recorded != null) {
+            return NO_PRIOR_KEYTAB.equals(recorded) ? null : String.valueOf(recorded);
+        }
+        return current.isPresent() ? sha256Hex(current.get()) : null;
+    }
+
+    /**
+     * Once a keytab step stored a new keytab in the release's Secret: gives it to the other Secrets of the principal
+     * that hold an older key, and flags the release for a restart when its keytab changed. Repeating it is harmless,
+     * so a retried step does it again.
+     */
+    private void afterKeytabStored(CommandEntity root, String commandId, String namespace, String secretName,
+                                   String principal, String releaseName, String beforeSha256, byte[] stored,
+                                   String storedSha256) {
+        if (principal != null && !principal.isBlank()) {
+            syncSiblingKeytabs(commandId, namespace, secretName, principal, stored);
+        }
+        flagKeytabRestart(root, commandId, namespace, releaseName, beforeSha256, storedSha256);
+    }
+
+    /**
+     * After a keytab step changed the keytab in a release's Secret, flags the release for a restart: its pods read
+     * the keytab at startup, and Kubernetes does not refresh a Secret already mounted in a running pod when it is
+     * recreated. After "Regenerate keytabs", the release is restarted by its next Resync / restart. In a deploy that
+     * replaced the keytab of a running release, the deploy restarts the pods itself once Helm has applied it, since a
+     * Helm upgrade whose values did not change leaves them running. A keytab written where there was none needs no
+     * restart: no pod could start without it.
+     *
+     * @param beforeSha256 the SHA-256 of the keytab the Secret held before the operation; null when there was none
+     * @param afterSha256  the SHA-256 of the keytab the Secret holds now
+     */
+    private void flagKeytabRestart(CommandEntity root, String commandId, String namespace, String releaseName,
+                                   String beforeSha256, String afterSha256) {
+        boolean changed = beforeSha256 == null || !beforeSha256.equals(afterSha256);
+        if (!changed || releaseName == null || releaseName.isBlank()) {
+            return;
+        }
+        if (CommandType.REGENERATE_KEYTABS.name().equals(root.getType())) {
+            markRestartRequired(namespace, releaseName);
+            appendCommandLog(commandId, "The keytab of " + namespace + "/" + releaseName
+                    + " changed: restart the release (Resync / restart) so its pods use it.");
+        } else if (beforeSha256 != null) {
+            markRestartRequired(namespace, releaseName);
+            appendCommandLog(commandId, "The keytab of " + namespace + "/" + releaseName
+                    + " changed: its pods are restarted once the deploy is applied, so they use it.");
+        }
+    }
+
+    /** Whether the record of a release flags it for a restart (see {@link #markRestartRequired}). */
+    private boolean restartFlagged(String namespace, String releaseName) {
+        try {
+            return ReleaseMetadataService.restartMarked(new ReleaseMetadataService(ctx).find(namespace, releaseName));
+        } catch (Exception e) {
+            LOG.warn("Could not read the restart flag of release {}/{}: {}", namespace, releaseName, e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Restarts the pods of a release that was flagged for a restart, once a deploy (the Resync / restart of the
+     * Releases page) has applied it, and only then clears the flag. The deploy alone does not restart them: a Helm
+     * upgrade whose values did not change leaves the pods running, with the keytab or client secret they read at
+     * startup. When the pods cannot be restarted, the release stays flagged.
+     *
+     * @param commandId           the operation, whose log says what was restarted
+     * @param globalConfigVersion the global configuration fingerprint the deploy records, which replaces the flag
+     */
+    private void restartFlaggedRelease(String commandId, String namespace, String releaseName,
+                                       String globalConfigVersion) {
+        List<String> restarted;
+        try {
+            restarted = kubernetesService.restartReleaseWorkloads(namespace, releaseName);
+        } catch (Exception e) {
+            markRestartRequired(namespace, releaseName);
+            appendCommandLog(commandId, "WARNING: could not restart the pods of release " + namespace + "/"
+                    + releaseName + ": " + e.getMessage() + ". They still use the keytab or client secret they"
+                    + " started with: run Resync / restart again, or restart them by hand.");
+            return;
+        }
+        if (restarted.isEmpty()) {
+            markRestartRequired(namespace, releaseName);
+            appendCommandLog(commandId, "WARNING: release " + namespace + "/" + releaseName + " has no Deployment,"
+                    + " StatefulSet or DaemonSet to restart; restart its pods by hand so they use the new keytab or"
+                    + " client secret.");
+            return;
+        }
+        try {
+            new ReleaseMetadataService(ctx).clearRestartRequired(namespace, releaseName, globalConfigVersion);
+        } catch (Exception e) {
+            LOG.warn("Could not clear the restart flag of release {}/{}: {}", namespace, releaseName, e.toString());
+        }
+        appendCommandLog(commandId, "Restarted the pods of release " + namespace + "/" + releaseName
+                + " so they use the new keytab or client secret: " + String.join(", ", restarted));
+    }
+
+    /** The global configuration fingerprint a deploy records for its release, from its planned metadata. */
+    private static String plannedGlobalConfigVersion(Map<String, Object> params) {
+        Object metadata = params == null ? null : params.get(RELEASE_METADATA_PARAM);
+        return metadata instanceof Map<?, ?> m && m.get("globalConfigVersion") != null
+                ? String.valueOf(m.get("globalConfigVersion")) : null;
+    }
+
+    /**
+     * Labels a keytab Secret an earlier version wrote without the labels naming its principal and release, so the
+     * other releases of the principal find it. Best effort: the keytab is rewritten unchanged.
+     */
+    private void labelKeytabSecret(String namespace, String secretName, String key, byte[] keytab, String releaseName,
+                                   String principal) {
+        if (principal == null || principal.isBlank()) {
+            return;
+        }
+        try {
+            io.fabric8.kubernetes.api.model.Secret secret = kubernetesService.getSecret(namespace, secretName);
+            Map<String, String> labels = secret == null || secret.getMetadata() == null ? null
+                    : secret.getMetadata().getLabels();
+            if (secret == null || (labels != null && labels.containsKey(KEYTAB_PRINCIPAL_LABEL))) {
+                return;
+            }
+            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, key, keytab,
+                    keytabSecretLabels(releaseName, principal), null, Boolean.TRUE);
+        } catch (Exception e) {
+            LOG.info("Could not label keytab Secret {}/{}: {}", namespace, secretName, e.toString());
+        }
+    }
+
+    /** A key of a Secret as UTF-8 text; null when the Secret or the key is absent or cannot be read. */
+    private String secretValue(String namespace, String secretName, String key) {
+        try {
+            return kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, key)
+                    .map(bytes -> new String(bytes, StandardCharsets.UTF_8))
+                    .orElse(null);
+        } catch (Exception e) {
+            LOG.debug("Could not read {} of Secret {}/{}: {}", key, namespace, secretName, e.toString());
+            return null;
         }
     }
 

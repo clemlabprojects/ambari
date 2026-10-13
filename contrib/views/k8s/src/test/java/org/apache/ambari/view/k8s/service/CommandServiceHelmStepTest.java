@@ -423,6 +423,37 @@ class CommandServiceHelmStepTest {
         assertEquals("globals-after", e.getGlobalConfigVersion());
         assertEquals(List.of("corporate-ca", "partner-ca"), e.getTruststoreRefs());
         assertEquals("{\"hive\":{\"id\":\"c1\",\"hash\":\"h1\"}}", e.getCatalogRefsJson());
+        verify(k8s, never()).restartReleaseWorkloads(anyString(), anyString());
+    }
+
+    @Test
+    void aResyncOfAReleaseFlaggedForARestartRestartsItsPodsAndOnlyThenClearsTheFlag() {
+        knownRelease();
+        new ReleaseMetadataService(ctx).markRestartRequired(NS, rel);
+        when(upgradeCall()).thenReturn(mock(Release.class));
+        when(k8s.restartReleaseWorkloads(NS, rel)).thenReturn(List.of("Deployment " + rel + "-web"));
+        String id = deployOperation();
+
+        service.runNextStep(id);
+
+        assertEquals(CommandState.SUCCEEDED.name(), statusOf(id + "-step").getState(), statusOf(id + "-step").getMessage());
+        verify(k8s).restartReleaseWorkloads(NS, rel);
+        assertFalse(ReleaseMetadataService.restartMarked(metadata()));
+        assertEquals("globals-after", metadata().getGlobalConfigVersion());
+    }
+
+    @Test
+    void aReleaseWhosePodsCouldNotBeRestartedStaysFlagged() {
+        knownRelease();
+        new ReleaseMetadataService(ctx).markRestartRequired(NS, rel);
+        when(upgradeCall()).thenReturn(mock(Release.class));
+        when(k8s.restartReleaseWorkloads(NS, rel)).thenThrow(new IllegalStateException("deployments is forbidden"));
+        String id = deployOperation();
+
+        service.runNextStep(id);
+
+        assertEquals(CommandState.SUCCEEDED.name(), statusOf(id + "-step").getState(), statusOf(id + "-step").getMessage());
+        assertTrue(ReleaseMetadataService.restartMarked(metadata()), "the pods still hold the old keytab");
     }
 
     @Test

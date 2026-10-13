@@ -7007,6 +7007,114 @@ public class KubernetesService {
     }
 
     /**
+     * The Secrets of one namespace carrying a label with the given value.
+     *
+     * @param namespace  the namespace
+     * @param labelKey   the label
+     * @param labelValue its value
+     * @return the Secrets, with their data
+     */
+    public List<Secret> listSecretsWithLabel(String namespace, String labelKey, String labelValue) {
+        checkConfiguration();
+        checkNamespaceAllowed(namespace);
+        return executeWithAuthRetry("list the Secrets labelled " + labelKey + " in namespace " + namespace,
+                () -> client.secrets().inNamespace(namespace).withLabel(labelKey, labelValue).list().getItems());
+    }
+
+    /**
+     * The Secrets the view wrote in one namespace that do not carry a label, such as those an earlier version of the
+     * view wrote before it labelled them.
+     *
+     * @param namespace the namespace
+     * @param labelKey  the label the Secrets lack
+     * @return the Secrets annotated managed-by=ambari-k8s-view, with their data
+     */
+    public List<Secret> listViewManagedSecretsWithoutLabel(String namespace, String labelKey) {
+        checkConfiguration();
+        checkNamespaceAllowed(namespace);
+        // Helm keeps each revision of a release in a Secret labelled owner=helm, often large: left out by the server.
+        List<Secret> secrets = executeWithAuthRetry("list the Secrets without label " + labelKey + " in namespace "
+                + namespace, () -> client.secrets().inNamespace(namespace).withoutLabel(labelKey)
+                .withLabelNotIn("owner", "helm").list().getItems());
+        List<Secret> managed = new ArrayList<>();
+        for (Secret secret : secrets == null ? List.<Secret>of() : secrets) {
+            if (secret.getMetadata() == null || "helm.sh/release.v1".equals(secret.getType())
+                    || (secret.getMetadata().getLabels() != null
+                        && "helm".equals(secret.getMetadata().getLabels().get("owner")))) {
+                continue;
+            }
+            Map<String, String> annotations = secret.getMetadata().getAnnotations();
+            if (annotations != null && "ambari-k8s-view".equals(annotations.get("managed-by"))) {
+                managed.add(secret);
+            }
+        }
+        return managed;
+    }
+
+    /** The pod template annotation whose new value makes a workload roll its pods, as kubectl rollout restart does. */
+    static final String RESTARTED_AT_ANNOTATION = "kdps.clemlab.com/restartedAt";
+
+    /**
+     * Restarts the pods of a Helm release the way {@code kubectl rollout restart} does: stamps the pod template of each
+     * of its Deployments, StatefulSets and DaemonSets with the current time, and each workload then replaces its pods
+     * following its own update strategy. A Helm upgrade whose values did not change leaves the pods running, so this
+     * is how pods pick up a keytab or a client secret that changed in a Secret they read at startup.
+     *
+     * @param namespace   the release's namespace
+     * @param releaseName the Helm release, named by the meta.helm.sh/release-name annotation Helm puts on what it
+     *                    installs, or by the app.kubernetes.io/instance label
+     * @return the workloads restarted, as "Kind name"; empty when the release has none
+     */
+    public List<String> restartReleaseWorkloads(String namespace, String releaseName) {
+        checkConfiguration();
+        checkNamespaceAllowed(namespace);
+        String patch = "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"" + RESTARTED_AT_ANNOTATION
+                + "\":\"" + Instant.now() + "\"}}}}}";
+        PatchContext merge = PatchContext.of(io.fabric8.kubernetes.client.dsl.base.PatchType.JSON_MERGE);
+        return executeWithAuthRetry("restart the pods of release " + releaseName + " in namespace " + namespace, () -> {
+            List<String> restarted = new ArrayList<>();
+            var deployments = client.apps().deployments().inNamespace(namespace);
+            for (HasMetadata workload : deployments.list().getItems()) {
+                if (belongsToRelease(workload, namespace, releaseName)) {
+                    deployments.withName(workload.getMetadata().getName()).patch(merge, patch);
+                    restarted.add("Deployment " + workload.getMetadata().getName());
+                }
+            }
+            var statefulSets = client.apps().statefulSets().inNamespace(namespace);
+            for (HasMetadata workload : statefulSets.list().getItems()) {
+                if (belongsToRelease(workload, namespace, releaseName)) {
+                    statefulSets.withName(workload.getMetadata().getName()).patch(merge, patch);
+                    restarted.add("StatefulSet " + workload.getMetadata().getName());
+                }
+            }
+            var daemonSets = client.apps().daemonSets().inNamespace(namespace);
+            for (HasMetadata workload : daemonSets.list().getItems()) {
+                if (belongsToRelease(workload, namespace, releaseName)) {
+                    daemonSets.withName(workload.getMetadata().getName()).patch(merge, patch);
+                    restarted.add("DaemonSet " + workload.getMetadata().getName());
+                }
+            }
+            return restarted;
+        });
+    }
+
+    /** Whether a resource was installed by a Helm release, see {@link #restartReleaseWorkloads}. */
+    private static boolean belongsToRelease(HasMetadata resource, String namespace, String releaseName) {
+        ObjectMeta meta = resource.getMetadata();
+        if (meta == null || meta.getName() == null) {
+            return false;
+        }
+        Map<String, String> annotations = meta.getAnnotations();
+        String helmRelease = annotations == null ? null : annotations.get("meta.helm.sh/release-name");
+        if (helmRelease != null) {
+            String releaseNamespace = annotations.get("meta.helm.sh/release-namespace");
+            return helmRelease.equals(releaseName) && (releaseNamespace == null || releaseNamespace.equals(namespace));
+        }
+        Map<String, String> labels = meta.getLabels();
+        return labels != null && releaseName.equals(labels.get("app.kubernetes.io/instance"));
+    }
+
+    /**
      * Lists Kubernetes Secrets matching a label selector.
      * Used for discovering Managed Configurations.
      * Returns a list of maps {label: "Name (ns)", value: "secretName", ...metadata}

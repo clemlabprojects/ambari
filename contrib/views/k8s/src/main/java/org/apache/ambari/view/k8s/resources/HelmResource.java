@@ -244,10 +244,10 @@ public class HelmResource {
                 releaseDto.catalogRefs = org.apache.ambari.view.k8s.service.TrinoCatalogService.parseRefs(metadata.getCatalogRefsJson());
                 releaseDto.repoId = metadata.getRepoId();
                 releaseDto.chartRef = metadata.getChartRef();
-                releaseDto.restartRequired =
-                        currentGlobalFingerprint != null
+                releaseDto.restartRequired = ReleaseMetadataService.restartMarked(metadata)
+                        || (currentGlobalFingerprint != null
                                 && metadata.getGlobalConfigVersion() != null
-                                && !currentGlobalFingerprint.equals(metadata.getGlobalConfigVersion());
+                                && !currentGlobalFingerprint.equals(metadata.getGlobalConfigVersion()));
                 if (metadata.getServiceKey() == null || metadata.getServiceKey().isBlank()) {
                     releaseDto.restartRequired = false;
                 }
@@ -975,6 +975,34 @@ public class HelmResource {
         } catch (Exception ex) {
             LOG.warn("Ambari request progress poll failed for request {}: {}", requestId, ex.toString());
             return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * Why "Regenerate keytabs", "Re-register OIDC client" and "Reapply Ranger repository" cannot run for a release,
+     * so the Releases page disables them with the reason: a release on another platform context than the managed
+     * cluster, one deployed without OIDC login, a context without the credentials an action needs.
+     *
+     * @return HTTP 200 with {@code refusals}: action ({@code keytabs}, {@code oidc}, {@code ranger}) to the reason;
+     *         an action left out can run
+     */
+    @GET
+    @Path("/releases/{namespace}/{release}/actions/availability")
+    public Response releaseActionAvailability(@PathParam("namespace") String namespace,
+                                              @PathParam("release") String releaseName,
+                                              @Context HttpHeaders requestHeaders,
+                                              @Context UriInfo uriInfo) {
+        try {
+            authHelper.checkWritePermission();
+            return Response.ok(Map.of("refusals", commandService.releaseActionRefusals(namespace, releaseName,
+                    requestHeaders.getRequestHeaders(), uriInfo.getBaseUri()))).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage()))
+                    .build();
+        } catch (Exception ex) {
+            LOG.warn("Could not tell which actions release {}/{} can run: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", String.valueOf(ex.getMessage()))).build();
         }
     }
 

@@ -150,6 +150,47 @@ public class ReleaseMetadataService {
     }
 
     /**
+     * What the global configuration version of a release record holds once the release must be restarted: something
+     * its pods read at startup (its keytab, its OIDC client secret) changed outside a deploy. It never equals a
+     * configuration fingerprint, so the Releases page offers "Resync / restart" until a deploy has restarted the
+     * release's pods and recorded the current fingerprint (see {@link #clearRestartRequired}).
+     */
+    public static final String RESTART_REQUIRED_MARKER = "restart-required";
+
+    /**
+     * Flags a release for a restart, see {@link #RESTART_REQUIRED_MARKER}. Does nothing for a release without a
+     * record.
+     */
+    public void markRestartRequired(String namespace, String name) {
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        if (entity == null || RESTART_REQUIRED_MARKER.equals(entity.getGlobalConfigVersion())) {
+            return;
+        }
+        entity.setGlobalConfigVersion(RESTART_REQUIRED_MARKER);
+        releaseRepository.update(entity);
+    }
+
+    /**
+     * Clears the restart flag of a release once its pods were restarted, see {@link #RESTART_REQUIRED_MARKER}. Does
+     * nothing for a release that is not flagged.
+     *
+     * @param globalConfigVersion the global configuration fingerprint the release was deployed with
+     */
+    public void clearRestartRequired(String namespace, String name, String globalConfigVersion) {
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        if (!restartMarked(entity)) {
+            return;
+        }
+        entity.setGlobalConfigVersion(globalConfigVersion);
+        releaseRepository.update(entity);
+    }
+
+    /** Whether a release record says the release must be restarted, see {@link #RESTART_REQUIRED_MARKER}. */
+    public static boolean restartMarked(K8sReleaseEntity entity) {
+        return entity != null && RESTART_REQUIRED_MARKER.equals(entity.getGlobalConfigVersion());
+    }
+
+    /**
      * Return all managed releases recorded in the datastore.
      */
     public List<K8sReleaseEntity> findAll() {
