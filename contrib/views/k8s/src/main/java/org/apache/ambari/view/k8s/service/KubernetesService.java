@@ -89,6 +89,7 @@ import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.utils.CompositeTrustManager;
+import org.apache.ambari.view.k8s.utils.KubeconfigGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
@@ -376,6 +377,18 @@ public class KubernetesService {
         }
     }
 
+    /**
+     * Thrown while connecting when the saved configuration itself cannot be used, as opposed to a cluster that cannot
+     * be reached: a kubeconfig that cannot be read, or whose user only has a credential KDPS leaves out (a command, a
+     * file of the Ambari server). Trying again cannot help until a new configuration is saved, so its message, which
+     * says what to change, is what the operator is shown.
+     */
+    public static final class UnusableConfigurationException extends IllegalStateException {
+        public UnusableConfigurationException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
     private void checkConfiguration() {
         connectIfConfigured();
         if (!isConfigured) {
@@ -388,6 +401,8 @@ public class KubernetesService {
                         ? "KDPS is not connected to the cluster: the cluster refused the saved OpenShift username and "
                                 + "password. To avoid locking the account, KDPS does not log in with them again until "
                                 + "an administrator saves the OpenShift login again on the Cluster settings page."
+                        : unusableConfiguration != null
+                        ? "KDPS is not connected to the cluster: " + unusableConfiguration
                         : "KDPS is not connected to the cluster: it could not connect with the saved configuration and "
                                 + "tries again " + nextAttemptIn() + ".");
             }
@@ -429,6 +444,12 @@ public class KubernetesService {
      * that cannot be reached.
      */
     private volatile boolean masterKeyMissing;
+    /**
+     * Why the saved configuration cannot be used ({@link UnusableConfigurationException}), when that is what made the
+     * last attempt to connect fail; {@code null} otherwise. Requests are then answered with what to change, not with a
+     * cluster that cannot be reached for now.
+     */
+    private volatile String unusableConfiguration;
     /** Wait after the first failed attempt; it doubles after each further failure, up to {@link #CONNECT_RETRY_MAX_MS}. */
     static final long CONNECT_RETRY_MS = 30_000L;
     static final long CONNECT_RETRY_MAX_MS = 15 * 60_000L;
@@ -762,6 +783,10 @@ public class KubernetesService {
                 LOG.debug("pingCluster: the saved OpenShift login was refused; reporting UNAUTHENTICATED.");
                 return ConnectionHealth.unauthenticated("KDPS does not log in with the refused password again, "
                         + "so that the account is not locked.");
+            }
+            if (unusableConfiguration != null) {
+                LOG.debug("pingCluster: the saved configuration cannot be used; reporting UNREACHABLE.");
+                return ConnectionHealth.notConnected(unusableConfiguration);
             }
             LOG.debug("pingCluster: view is configured but not connected; reporting UNREACHABLE.");
             return ConnectionHealth.notConnected("KDPS tries again " + nextAttemptIn() + ".");
@@ -3899,7 +3924,16 @@ public class KubernetesService {
      * instance). Falls back to the kubeconfig's current-context when no context has been selected.
      */
     private Config buildConfigForSelectedContext(String kubeconfigContent) {
-        String selectedContext = configurationService.getContextToConnectWith();
+        return buildConfig(kubeconfigContent, configurationService.getContextToConnectWith());
+    }
+
+    /**
+     * The client Config for {@code selectedContext} of {@code savedKubeconfig}, built from the kubeconfig as KDPS writes
+     * it again ({@link KubeconfigGuard#canonical}): a command or a file path of its users is not part of it, since the
+     * client would run the one and read the other on the Ambari server.
+     */
+    static Config buildConfig(String savedKubeconfig, String selectedContext) {
+        String kubeconfigContent = KubeconfigGuard.canonical(savedKubeconfig);
         Config cfg;
         if (selectedContext != null && !selectedContext.isBlank()) {
             LOG.info("Building Kubernetes client for selected kubeconfig context '{}'.", selectedContext);
@@ -3928,6 +3962,46 @@ public class KubernetesService {
             LOG.warn("Could not pin CA onto the client Config: {}", e.toString());
         }
         return cfg;
+    }
+
+    /**
+     * Fails with the reason when the user of the connection context only had a credential that KDPS leaves out (a
+     * command, a file of the Ambari server): it is not in {@code config}, so the client would only meet a bare
+     * "Unauthorized" with nothing pointing at the cause. A user that also has a token, or a certificate with its key,
+     * is fine.
+     *
+     * @param model            the saved kubeconfig, as read by {@link KubeconfigGuard#parse}
+     * @param selectedContext  the context selected in KDPS, or {@code null} for the current-context
+     * @param config           the client configuration built from the kubeconfig KDPS writes again
+     * @throws UnusableConfigurationException when the connection would be left without any credential
+     */
+    static void requireCredentialOtherThanACommand(io.fabric8.kubernetes.api.model.Config model, String selectedContext,
+                                                   Config config) {
+        if (model == null || model.getContexts() == null || model.getUsers() == null) {
+            return;
+        }
+        // A client certificate without its key cannot authenticate: when the key was a file, it was left out.
+        boolean hasClientCertificate = (config.getClientCertData() != null || config.getClientCertFile() != null)
+                && (config.getClientKeyData() != null || config.getClientKeyFile() != null);
+        boolean hasCredential = config.getOauthToken() != null || config.getAutoOAuthToken() != null
+                || hasClientCertificate || config.getUsername() != null;
+        if (hasCredential) {
+            return;
+        }
+        String contextName = selectedContext != null && !selectedContext.isBlank() ? selectedContext : model.getCurrentContext();
+        String user = model.getContexts().stream()
+                .filter(c -> c.getName() != null && c.getName().equals(contextName))
+                .map(c -> c.getContext() == null ? null : c.getContext().getUser())
+                .filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        java.util.List<String> leftOut = model.getUsers().stream()
+                .filter(u -> u.getName() != null && u.getName().equals(user))
+                .map(u -> KubeconfigGuard.leftOut(u.getUser()))
+                .findFirst().orElse(java.util.List.of());
+        if (!leftOut.isEmpty()) {
+            throw new UnusableConfigurationException("The saved kubeconfig cannot be used. "
+                    + KubeconfigGuard.userFieldMessage("User '" + user + "'", leftOut.get(0)) + " Upload a new kubeconfig.",
+                    null);
+        }
     }
 
     /**
@@ -4002,7 +4076,7 @@ public class KubernetesService {
     }
 
     /** CA data of the cluster referenced by {@code contextName} (or the current-context when null). */
-    private String clusterCaForContext(io.fabric8.kubernetes.api.model.Config model, String contextName) {
+    private static String clusterCaForContext(io.fabric8.kubernetes.api.model.Config model, String contextName) {
         if (model == null) {
             return null;
         }
@@ -4291,14 +4365,17 @@ public class KubernetesService {
         KubernetesClient previous = this.client;
         KubernetesClient fresh;
         boolean noMasterKey = false;
+        String unusable = null;
         try {
             fresh = buildClientFromSavedConfiguration();
         } catch (Exception e) {
             LOG.warn("Failed to reinitialize Kubernetes client: {}", e.getMessage());
             noMasterKey = causedByMissingMasterKey(e);
+            unusable = e instanceof UnusableConfigurationException ? e.getMessage() : null;
             fresh = null;
         }
         this.masterKeyMissing = noMasterKey;
+        this.unusableConfiguration = unusable;
         if (fresh == null) {
             this.isConfigured = false;
             this.client = null;
@@ -4321,6 +4398,16 @@ public class KubernetesService {
         retire(previous);
         LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
         return true;
+    }
+
+    /**
+     * Why the saved configuration cannot be used, when that is what made the last attempt to connect fail: a sentence
+     * for the operator that says what to change.
+     *
+     * @return the reason, or {@code null} when the last attempt connected or failed for another reason
+     */
+    public String unusableConfiguration() {
+        return unusableConfiguration;
     }
 
     /** Whether {@code e}, or one of its causes, is the missing Ambari master key. */
@@ -4387,14 +4474,21 @@ public class KubernetesService {
         // same view) fails with `PKIX path building failed`.  Bug only manifested on
         // FIRST upload after server restart (when the constructor's "View is not
         // configured" path had skipped this work).  See KubernetesService(ViewContext).
-        io.fabric8.kubernetes.api.model.Config kubeconfigModel =
-            Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
+        io.fabric8.kubernetes.api.model.Config kubeconfigModel;
+        try {
+            kubeconfigModel = KubeconfigGuard.parse(kubeconfigContent);
+        } catch (IllegalArgumentException e) {
+            throw new UnusableConfigurationException(
+                    "The saved kubeconfig cannot be used. " + e.getMessage() + " Upload a new kubeconfig.", e);
+        }
         java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
         if (!allClusterCaData.isEmpty()) {
             installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
         }
 
         Config finalConfiguration = buildConfigForSelectedContext(kubeconfigContent);
+        requireCredentialOtherThanACommand(kubeconfigModel, configurationService.getContextToConnectWith(),
+                finalConfiguration);
         loadK8sPropsAsSystemProperties(viewContext);
         if (openShiftLogin) {
             finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());

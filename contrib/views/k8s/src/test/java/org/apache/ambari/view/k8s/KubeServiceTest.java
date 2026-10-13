@@ -250,6 +250,21 @@ class KubeServiceTest {
   }
 
   @Test
+  void selectingAContextOfASavedKubeconfigThatCannotBeUsedSaysWhatToChange(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.listAvailableContexts()).thenReturn(java.util.List.of(Map.of("name", "eks")));
+    when(k8s.forceReloadClient()).thenReturn(false);
+    String reason = "The saved kubeconfig cannot be used. User 'eks-admin' gets its credentials by running a command "
+        + "(exec). KDPS does not run commands on the Ambari server: use a kubeconfig with a token or a client "
+        + "certificate. Upload a new kubeconfig.";
+    when(k8s.unusableConfiguration()).thenReturn(reason);
+
+    Response r = api.selectKubeconfigContext(null, Map.of("context", "eks"));
+    assertEquals(400, r.getStatus());
+    assertEquals("Context 'eks' was saved, but KDPS could not build a connection from it. " + reason, error(r));
+  }
+
+  @Test
   void aFileThatIsNotAKubeconfigIsRefusedBeforeReplacingTheSavedOne(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
 
@@ -260,6 +275,107 @@ class KubeServiceTest {
     try (var files = java.nio.file.Files.walk(workDir)) {
       assertTrue(files.noneMatch(p -> p.getFileName().toString().startsWith("kubeconfig")), "nothing was saved");
     }
+  }
+
+  @Test
+  void aKubeconfigWhoseUserRunsACommandIsRefusedAndNothingIsSaved(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    String withExec = KUBECONFIG.replace("    token: t\n",
+        "    exec: {apiVersion: client.authentication.k8s.io/v1, command: /bin/sh, args: [-c, id]}\n");
+    assertNotEquals(KUBECONFIG, withExec);
+
+    Response r = upload(api, withExec);
+    assertEquals(400, r.getStatus());
+    assertTrue(error(r).contains("running a command (exec)"), error(r));
+    assertTrue(error(r).contains("User 'u'"), "the user is named: " + error(r));
+    assertTrue(error(r).contains("previous configuration is unchanged"), error(r));
+    verifyNoInteractions(k8s);
+    try (var files = java.nio.file.Files.walk(workDir)) {
+      assertTrue(files.noneMatch(p -> p.getFileName().toString().startsWith("kubeconfig")), "nothing was saved");
+    }
+  }
+
+  @Test
+  void aKubeconfigWhoseUserHasAnAuthProviderIsRefused(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    String withProvider = KUBECONFIG.replace("    token: t\n",
+        "    auth-provider: {name: gcp, config: {cmd-path: /bin/sh}}\n");
+
+    Response r = upload(api, withProvider);
+    assertEquals(400, r.getStatus());
+    assertTrue(error(r).contains("auth-provider"), error(r));
+    verifyNoInteractions(k8s);
+  }
+
+  @Test
+  void aKubeconfigWhoseUserReadsATokenFileIsRefusedAndNothingIsSaved(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    String withTokenFile = KUBECONFIG.replace("    token: t\n", "    tokenFile: /etc/ambari-server/conf/password.dat\n");
+    assertNotEquals(KUBECONFIG, withTokenFile);
+
+    Response r = upload(api, withTokenFile);
+    assertEquals(400, r.getStatus());
+    assertTrue(error(r).contains("tokenFile"), error(r));
+    assertTrue(error(r).contains("token itself"), error(r));
+    assertTrue(error(r).contains("previous configuration is unchanged"), error(r));
+    verifyNoInteractions(k8s);
+    try (var files = java.nio.file.Files.walk(workDir)) {
+      assertTrue(files.noneMatch(p -> p.getFileName().toString().startsWith("kubeconfig")), "nothing was saved");
+    }
+  }
+
+  @Test
+  void aKubeconfigWhoseUserReadsItsClientKeyFromAFileIsRefused(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    String withKeyFile = KUBECONFIG.replace("    token: t\n",
+        "    client-certificate-data: Y2VydA==\n    client-key: /etc/ambari-server/keys/ca.key\n");
+    assertNotEquals(KUBECONFIG, withKeyFile);
+
+    Response r = upload(api, withKeyFile);
+    assertEquals(400, r.getStatus());
+    assertTrue(error(r).contains("User 'u'") && error(r).contains("(client-key)"), error(r));
+    assertTrue(error(r).contains("client-key-data"), "says what to use instead: " + error(r));
+    verifyNoInteractions(k8s);
+  }
+
+  @Test
+  void aKubeconfigThatHidesACommandBehindAnAliasMergeKeyOrTagIsRefused(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    String exec = "{exec: {command: /bin/sh, args: [-c, id]}}";
+    String noUsers = KUBECONFIG.substring(0, KUBECONFIG.indexOf("users:"));
+    java.util.List<String> crafted = java.util.List.of(
+        "x-hidden: &e " + exec + "\n" + noUsers + "users:\n- name: u\n  user: *e\n",
+        "x-hidden: &e " + exec + "\n" + noUsers + "users:\n- name: u\n  user: {<<: *e}\n",
+        // base64 of "users" and "user": Go's YAML decodes a !!binary key, so Helm would read them as those sections.
+        noUsers + "!!binary dXNlcnM=:\n- name: u\n  user: " + exec + "\n",
+        noUsers + "users:\n- name: u\n  !!binary dXNlcg==: " + exec + "\n",
+        // a field the kubeconfig model does not know, whatever it resembles
+        noUsers + "users:\n- name: u\n  user: {Exec: {command: /bin/sh}}\n");
+    for (String kubeconfig : crafted) {
+      Response r = upload(api, kubeconfig);
+      assertEquals(400, r.getStatus(), kubeconfig);
+      assertTrue(error(r).contains("(exec)") || error(r).contains("does not recognise"), error(r));
+      assertTrue(error(r).contains("previous configuration is unchanged"), error(r));
+    }
+    verifyNoInteractions(k8s);
+    try (var files = java.nio.file.Files.walk(workDir)) {
+      assertTrue(files.noneMatch(p -> p.getFileName().toString().startsWith("kubeconfig")), "nothing was saved");
+    }
+  }
+
+  @Test
+  void aTabIndentedJsonKubeconfigIsAccepted(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    // What jq --tab writes: the clients read it, although a YAML parser refuses a tab.
+    KubeService api = apiAsViewAdmin(workDir);
+    reconnects();
+    String json = "{\n\t\"apiVersion\": \"v1\",\n\t\"kind\": \"Config\",\n\t\"current-context\": \"a\",\n"
+        + "\t\"clusters\": [{\"name\": \"a\", \"cluster\": {\"server\": \"https://a:6443\"}}],\n"
+        + "\t\"contexts\": [{\"name\": \"a\", \"context\": {\"cluster\": \"a\", \"user\": \"u\"}}],\n"
+        + "\t\"users\": [{\"name\": \"u\", \"user\": {\"token\": \"t\"}}]\n}\n";
+
+    Response r = upload(api, json);
+    assertEquals(200, r.getStatus(), String.valueOf(r.getEntity()));
+    verify(k8s).forceReloadClient();
   }
 
   @Test

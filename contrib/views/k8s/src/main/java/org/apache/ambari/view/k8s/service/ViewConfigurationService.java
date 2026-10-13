@@ -23,6 +23,7 @@ import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
 import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
+import org.apache.ambari.view.k8s.utils.KubeconfigGuard;
 import org.apache.ambari.view.k8s.utils.OwnerOnlyFiles;
 import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.slf4j.Logger;
@@ -546,18 +547,21 @@ public class ViewConfigurationService {
     /**
      * The kubeconfig every consumer should connect with (Helm, deploys, the Kubernetes client): the saved file with
      * its {@code current-context} set to the context selected in KDPS. Helm follows {@code current-context}, so
-     * without this a multi-context kubeconfig made Helm target another cluster than the rest of KDPS.
+     * without this a multi-context kubeconfig made Helm target another cluster than the rest of KDPS. It is the
+     * kubeconfig as KDPS writes it again ({@link KubeconfigGuard#canonical}), never the saved text: a command or a path
+     * to a file of the Ambari server is not part of it.
      *
      * @return kubeconfig contents
+     * @throws IllegalArgumentException when the saved kubeconfig cannot be read as one
      */
     public String getKubeconfigContents() {
-        return withCurrentContext(getRawKubeconfigContents(), getContextToConnectWith());
+        return withCurrentContext(KubeconfigGuard.canonical(getRawKubeconfigContents()), getContextToConnectWith());
     }
 
     /**
      * Returns {@code kubeconfig} with {@code current-context} set to {@code context}, or unchanged when no context is
      * selected, it is already current, it is not declared in the file, or the file cannot be parsed. Only that key
-     * changes; every other field (exec plugins, extensions) is kept.
+     * changes; every other field (extensions, for one) is kept.
      *
      * @param kubeconfig kubeconfig as YAML or JSON
      * @param context    the context to make current, may be {@code null}
@@ -592,7 +596,8 @@ public class ViewConfigurationService {
 
     /**
      * The kubeconfig as saved (uploaded file, synthesized OpenShift login or synthesized from the pod's
-     * ServiceAccount), without the selected context applied. For showing the file and listing its contexts.
+     * ServiceAccount), without the selected context applied. For showing the file and listing its contexts only: a
+     * client is given {@link #getKubeconfigContents()}.
      *
      * @return kubeconfig contents
      */

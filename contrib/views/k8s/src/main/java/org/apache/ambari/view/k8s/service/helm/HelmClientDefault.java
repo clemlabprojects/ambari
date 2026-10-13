@@ -25,6 +25,7 @@ import com.marcnuri.helm.Helm;
 import com.marcnuri.helm.SearchCommand;
 import com.marcnuri.helm.SearchResult;
 
+import org.apache.ambari.view.k8s.utils.KubeconfigGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,7 +72,7 @@ public class HelmClientDefault implements HelmClient {
         LOG.debug("Listing releases in namespace: '{}'", namespace);
         var command = Helm.list()
             .withNamespace(namespace)
-            .withKubeConfigContents(kubeconfigContents);
+            .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents));
         
         if (namespace != null) {
             command = command.withNamespace(namespace);
@@ -93,7 +94,7 @@ public class HelmClientDefault implements HelmClient {
                 .withName(releaseName)
                 .withNamespace(namespace)
                 .withTimeout(timeoutSeconds)
-                .withKubeConfigContents(kubeconfigContents)
+                .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
                 .withValuesFile(valuesFile);
 
             if (createNamespace) installCommand = installCommand.createNamespace();
@@ -130,7 +131,7 @@ public class HelmClientDefault implements HelmClient {
                 .withName(releaseName)
                 .withNamespace(namespace)
                 .withTimeout(timeoutSeconds)
-                .withKubeConfigContents(kubeconfigContents)
+                .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
                 .withValuesFile(valuesFile);
 
             if (atomic) upgradeCommand = upgradeCommand.atomic();
@@ -156,7 +157,7 @@ public class HelmClientDefault implements HelmClient {
     public void uninstall(String releaseName, String namespace, String kubeconfigContents) {
         Helm.uninstall(releaseName)
             .withNamespace(namespace)
-            .withKubeConfigContents(kubeconfigContents)
+            .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
             .call();
     }
 
@@ -345,13 +346,17 @@ public class HelmClientDefault implements HelmClient {
         return "helm";
     }
 
-    private static Path writeKubeconfigToTempFile(String contents) {
+    // package-private so tests can read back what the helm CLI is given
+    static Path writeKubeconfigToTempFile(String contents) {
         if (contents == null || contents.isBlank()) {
             throw new IllegalArgumentException("kubeconfig contents are required for helm CLI invocation");
         }
+        // The helm binary runs an exec credential plugin or auth provider command as the Ambari account: it only ever
+        // reads the kubeconfig as KDPS writes it again. Done before the file exists, so an unreadable one leaves nothing.
+        String safeContents = KubeconfigGuard.canonical(contents);
         try {
             Path tempFile = Files.createTempFile("kubeconfig-", ".yaml");
-            Files.writeString(tempFile, contents, java.nio.charset.StandardCharsets.UTF_8);
+            Files.writeString(tempFile, safeContents, java.nio.charset.StandardCharsets.UTF_8);
             try {
                 Files.setPosixFilePermissions(tempFile,
                         java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));

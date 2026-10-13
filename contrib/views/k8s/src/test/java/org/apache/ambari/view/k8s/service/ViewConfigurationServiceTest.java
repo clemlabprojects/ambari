@@ -72,7 +72,9 @@ class ViewConfigurationServiceTest {
         "config.yaml"
     );
 
-    assertEquals(yaml, svc.getKubeconfigContents()); // OK
+    assertEquals(yaml, svc.getRawKubeconfigContents()); // OK
+    // clients get the kubeconfig as KDPS writes it again, never the saved text
+    assertEquals(org.apache.ambari.view.k8s.utils.KubeconfigGuard.canonical(yaml), svc.getKubeconfigContents());
     assertNotNull(svc.getKubeconfigPath());          // OK
   }
 
@@ -139,6 +141,41 @@ class ViewConfigurationServiceTest {
     assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(work)));
     assertFalse(Files.readString(saved.toPath()).contains("clusters"), "encrypted on disk");
     assertEquals(KUBECONFIG, svc.getRawKubeconfigContents());
+  }
+
+  @Test
+  void aSavedKubeconfigWithACredentialCommandIsHandedOutWithoutIt() throws Exception {
+    // A file saved before uploads were checked: it is on disk, so what clients get must be safe all the same.
+    String withExec = "apiVersion: v1\nkind: Config\ncurrent-context: a\nclusters:\n- name: a\n  cluster: {server: 'https://a:6443'}\n"
+        + "contexts:\n- name: a\n  context: {cluster: a, user: u}\n"
+        + "users:\n- name: u\n  user:\n    token: t\n    exec: {command: /bin/sh, args: [-c, id]}\n";
+    ViewConfigurationService svc = serviceIn(workDir);
+    svc.saveKubeconfigFile(new ByteArrayInputStream(withExec.getBytes(StandardCharsets.UTF_8)), "kubeconfig.yaml");
+
+    String handedOut = svc.getKubeconfigContents();
+    assertFalse(handedOut.contains("exec"), handedOut);
+    assertFalse(handedOut.contains("/bin/sh"), handedOut);
+    assertTrue(handedOut.contains("token: \"t\"") || handedOut.contains("token: t"), "the token stays: " + handedOut);
+    assertEquals(withExec, svc.getRawKubeconfigContents(), "the file as saved is what the context list reads");
+  }
+
+  @Test
+  void aSavedTabIndentedJsonKubeconfigIsHandedOutAndAnUnreadableOneSaysWhy() throws Exception {
+    // Saved by an earlier version, which accepted what the clients read: JSON indented with tabs (jq --tab).
+    String json = "{\n\t\"kind\": \"Config\",\n\t\"current-context\": \"a\",\n"
+        + "\t\"clusters\": [{\"name\": \"a\", \"cluster\": {\"server\": \"https://a:6443\"}}],\n"
+        + "\t\"contexts\": [{\"name\": \"a\", \"context\": {\"cluster\": \"a\", \"user\": \"u\"}}],\n"
+        + "\t\"users\": [{\"name\": \"u\", \"user\": {\"token\": \"t\"}}]\n}\n";
+    ViewConfigurationService svc = serviceIn(workDir);
+    svc.saveKubeconfigFile(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), "kubeconfig.yaml");
+
+    io.fabric8.kubernetes.client.Config connected = io.fabric8.kubernetes.client.Config.fromKubeconfig(svc.getKubeconfigContents());
+    assertEquals("https://a:6443/", connected.getMasterUrl());
+
+    svc.saveKubeconfigFile(new ByteArrayInputStream("users: [unclosed".getBytes(StandardCharsets.UTF_8)), "kubeconfig.yaml");
+    IllegalArgumentException e = assertThrows(IllegalArgumentException.class, svc::getKubeconfigContents,
+        "the saved text is never handed out unread");
+    assertTrue(e.getMessage().startsWith("The kubeconfig cannot be read"), e.getMessage());
   }
 
   @Test

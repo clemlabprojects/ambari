@@ -23,6 +23,7 @@ import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.PerUserViewContext;
+import org.apache.ambari.view.k8s.utils.KubeconfigGuard;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -89,7 +90,7 @@ class SharedConfigurationTwoUsersTest {
         view.as("ops1");
         ViewConfigurationService configuration = new ViewConfigurationService(view.context);
         assertTrue(configuration.isConfigured(), "ops1 must not be sent to the configuration page");
-        assertEquals(KUBECONFIG, configuration.getKubeconfigContents());
+        assertEquals(KubeconfigGuard.canonical(KUBECONFIG), configuration.getKubeconfigContents());
 
         HelmRepositoryService repositories = new HelmRepositoryService(view.context, mock(HelmClient.class));
         assertEquals("registry-token", repositories.readPlainSecret(repositories.get("harbor")),
@@ -106,7 +107,7 @@ class SharedConfigurationTwoUsersTest {
             view.as(inherited);
             ViewConfigurationService configuration = new ViewConfigurationService(view.context);
             assertTrue(configuration.isConfigured(), "configured for " + inherited);
-            assertEquals(KUBECONFIG, configuration.getKubeconfigContents());
+            assertEquals(KubeconfigGuard.canonical(KUBECONFIG), configuration.getKubeconfigContents());
             assertEquals("ranger-secret", new ContextService(view.context).readSecret("ext", "rangerAdminPassword"));
         }
     }

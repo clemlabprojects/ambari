@@ -39,6 +39,7 @@ import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
+import org.apache.ambari.view.k8s.utils.KubeconfigGuard;
 import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 
@@ -190,6 +191,15 @@ public class KubeService {
                 return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
                         "This file is not a valid kubeconfig; the previous configuration is unchanged.")).build();
             }
+            // A command (exec, auth-provider) would run as the Ambari account, and a file path would make the clients read
+            // the Ambari server's disk. A field the kubeconfig model does not know is refused too: KDPS would not pass it
+            // on, so the file saved would not be the one used.
+            java.util.List<String> problems = KubeconfigGuard.problems(kubeconfig);
+            if (!problems.isEmpty()) {
+                LOG.warn("/cluster/config: kubeconfig refused: {}", problems);
+                return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                        String.join(" ", problems) + " The previous configuration is unchanged.")).build();
+            }
             java.util.List<String> contextNames = kubeconfig.getContexts() == null ? java.util.List.of()
                     : kubeconfig.getContexts().stream().map(io.fabric8.kubernetes.api.model.NamedContext::getName)
                         .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toList());
@@ -274,11 +284,9 @@ public class KubeService {
      */
     private static io.fabric8.kubernetes.api.model.Config parseKubeconfig(byte[] bytes) {
         try {
-            Object parsed = io.fabric8.kubernetes.client.utils.Serialization.unmarshal(
-                    new String(bytes, java.nio.charset.StandardCharsets.UTF_8), io.fabric8.kubernetes.api.model.Config.class);
-            if (!(parsed instanceof io.fabric8.kubernetes.api.model.Config c)
-                    || !"Config".equals(c.getKind())
-                    || c.getClusters() == null || c.getClusters().isEmpty()) {
+            io.fabric8.kubernetes.api.model.Config c =
+                    KubeconfigGuard.parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+            if (!"Config".equals(c.getKind()) || c.getClusters() == null || c.getClusters().isEmpty()) {
                 return null;
             }
             return c;
@@ -309,15 +317,21 @@ public class KubeService {
      */
     private Response reconnect(String saved, String whatToCheck) {
         boolean built;
+        // When the saved configuration itself is the problem (a kubeconfig whose user only runs a command, for one),
+        // the operator is told what to change rather than pointed at the server log.
+        String unusable = null;
         try {
-            built = this.getKubernetesService().forceReloadClient();
+            KubernetesService service = this.getKubernetesService();
+            built = service.forceReloadClient();
+            unusable = built ? null : service.unusableConfiguration();
         } catch (Exception e) {
             LOG.warn("Kubernetes client rebuild failed: {}", e.toString());
             built = false;
         }
         if (!built) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
-                    saved + ", but KDPS could not build a connection from it. " + whatToCheck)).build();
+                    saved + ", but KDPS could not build a connection from it. "
+                            + (unusable != null ? unusable : whatToCheck))).build();
         }
         org.apache.ambari.view.k8s.model.ConnectionHealth health = this.getKubernetesService().pingCluster();
         if (!health.isConnected()) {
