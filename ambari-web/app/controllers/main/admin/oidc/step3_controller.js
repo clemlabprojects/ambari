@@ -69,25 +69,87 @@ App.OidcEnableWizardStep3Controller = Em.Controller.extend({
 
   /**
    * Store Keycloak admin username/password in the cluster credential store.
-   * Proceeds to provisioning regardless of the credential store outcome so
-   * that clusters without a credential store configured are not blocked.
+   *
+   * The credential goes to the persisted store whenever the server has one: Ambari reads it
+   * again for every service installed or removed later, and the Kubernetes view can only read
+   * the persisted store. Without a persisted store the credential is kept temporarily and the
+   * user is warned that it expires. Provisioning is not started when the credential could not
+   * be stored, since it would fail without it.
    *
    * @param {Em.Object} content
    * @param {string} clusterName
    */
   _storeCredentials: function (content, clusterName) {
-    var resource = credentialsUtils.createCredentialResource(
-      content.get('adminUsername'),
-      content.get('adminPassword'),
-      'temporary'
+    var self = this;
+    this._resolveStoreType(clusterName).done(function (storeType) {
+      var resource = credentialsUtils.createCredentialResource(
+        content.get('adminUsername'),
+        content.get('adminPassword'),
+        storeType
+      );
+      credentialsUtils.createOrUpdateCredentials(
+        clusterName,
+        credentialsUtils.ALIAS.OIDC_CREDENTIALS,
+        resource
+      ).done(function (stored, result) {
+        if (!stored) {
+          self._onStoreCredentialsFailed(result);
+        } else if (storeType === credentialsUtils.STORE_TYPES.PERSISTENT) {
+          self._runProvisioning(clusterName);
+        } else {
+          self._showTemporaryStoreWarning(function () {
+            self._runProvisioning(clusterName);
+          });
+        }
+      }).fail(function (error) {
+        self._onStoreCredentialsFailed(error);
+      });
+    });
+  },
+
+  /**
+   * Resolve the store type for the OIDC admin credential: <code>persisted</code> when the server
+   * has a persistent credential store, <code>temporary</code> otherwise (also when the store
+   * information cannot be read).
+   *
+   * @param {string} clusterName
+   * @returns {$.Deferred} promise resolved with the store type
+   */
+  _resolveStoreType: function (clusterName) {
+    var dfd = $.Deferred();
+    credentialsUtils.isStorePersisted(clusterName).done(function (persisted) {
+      dfd.resolve(persisted === true ? credentialsUtils.STORE_TYPES.PERSISTENT : credentialsUtils.STORE_TYPES.TEMPORARY);
+    }).fail(function () {
+      dfd.resolve(credentialsUtils.STORE_TYPES.TEMPORARY);
+    });
+    return dfd.promise();
+  },
+
+  /**
+   * Warn that a temporary credential expires, then continue once the user acknowledges it.
+   *
+   * @param {Function} callback
+   */
+  _showTemporaryStoreWarning: function (callback) {
+    App.showAlertPopup(
+      Em.I18n.t('admin.oidc.credentials.temporary.header'),
+      Em.I18n.t('admin.oidc.credentials.temporary.body'),
+      callback
     );
-    credentialsUtils.createOrUpdateCredentials(
-      clusterName,
-      credentialsUtils.ALIAS.OIDC_CREDENTIALS,
-      resource
-    ).always(function () {
-      this._runProvisioning(clusterName);
-    }.bind(this));
+  },
+
+  /**
+   * Show why the credential could not be stored and let the user try again.
+   *
+   * @param {*} error error returned by the credential store request
+   */
+  _onStoreCredentialsFailed: function (error) {
+    var body = Em.I18n.t('admin.oidc.credentials.store.error.body');
+    if (typeof error === 'string' && error) {
+      body += ' ' + Em.I18n.t('admin.oidc.credentials.store.error.reason').format(error);
+    }
+    this.set('isSubmitDisabled', false);
+    App.showAlertPopup(Em.I18n.t('admin.oidc.credentials.store.error.header'), body);
   },
 
   /**

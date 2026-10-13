@@ -273,8 +273,13 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
     this.get('oidcCredentialsStoreConfigs').forEach(function(item) {
       var configObject = App.config.createDefaultConfig(item.name, 'oidc-env.xml', false);
       $.extend(configObject, item);
+      if (item.name === 'oidc_admin_principal') {
+        configObject.hintMessage = this.get('isStorePersisted') ?
+          Em.I18n.t('admin.oidc.credentials.store.hint.persisted') :
+          Em.I18n.t('admin.oidc.credentials.store.hint.temporary');
+      }
       properties.push(configObject);
-    });
+    }, this);
 
     return properties;
   },
@@ -495,13 +500,40 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
       return $.Deferred().resolve().promise();
     }
 
+    // The OIDC credential does not follow the "Save Admin Credentials" choice made for the KDC:
+    // Ambari needs it again for every service installed or removed later, and the Kubernetes
+    // view can only read the persisted store, so it is persisted whenever the server can.
+    var persisted = !!this.get('isStorePersisted');
     var resource = credentialsUtils.createCredentialResource(
       principal,
       password,
-      this._getStorageTypeValue(configs)
+      persisted ? credentialsUtils.STORE_TYPES.PERSISTENT : credentialsUtils.STORE_TYPES.TEMPORARY
     );
+    var dfd = $.Deferred();
+    var resolve = function () {
+      dfd.resolve();
+    };
 
-    return credentialsUtils.createOrUpdateCredentials(App.get('clusterName'), this.get('oidcCredentialAlias'), resource);
+    credentialsUtils.createOrUpdateCredentials(App.get('clusterName'), this.get('oidcCredentialAlias'), resource)
+      .done(function (stored) {
+        if (!stored) {
+          App.showAlertPopup(
+            Em.I18n.t('admin.oidc.credentials.store.error.header'),
+            Em.I18n.t('admin.oidc.credentials.store.error.kerberos.body'),
+            resolve
+          );
+        } else if (!persisted) {
+          App.showAlertPopup(
+            Em.I18n.t('admin.oidc.credentials.temporary.header'),
+            Em.I18n.t('admin.oidc.credentials.temporary.body'),
+            resolve
+          );
+        } else {
+          resolve();
+        }
+      })
+      .fail(resolve);
+    return dfd.promise();
   },
 
   /**

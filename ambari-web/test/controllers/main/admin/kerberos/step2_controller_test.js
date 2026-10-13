@@ -19,6 +19,7 @@
 var App = require('app');
 var setups = require('test/init_model_test');
 var testHelpers = require('test/helpers');
+var credentialsUtils = require('utils/credentials');
 
 function getController() {
   return App.KerberosWizardStep2Controller.create({
@@ -855,6 +856,100 @@ describe('App.KerberosWizardStep2Controller', function() {
             }
           }]
         }
+      });
+    });
+  });
+
+  describe("#createOIDCCredentials()", function () {
+    var storeResult;
+    var configs;
+
+    function setStorePersisted(persisted) {
+      controller.reopen({
+        isStorePersisted: function () {
+          return persisted;
+        }.property()
+      });
+    }
+
+    beforeEach(function () {
+      App.set('clusterName', 'c1');
+      storeResult = $.Deferred();
+      configs = [
+        {name: 'persist_credentials', value: 'false'},
+        {name: 'oidc_admin_principal', value: 'kc-admin'},
+        {name: 'oidc_admin_password', value: 'kc-secret'}
+      ];
+      sinon.stub(controller, 'shouldConfigureOidc').returns(true);
+      sinon.stub(credentialsUtils, 'createOrUpdateCredentials').returns(storeResult.promise());
+      sinon.stub(App, 'showAlertPopup');
+    });
+
+    afterEach(function () {
+      controller.shouldConfigureOidc.restore();
+      credentialsUtils.createOrUpdateCredentials.restore();
+      App.showAlertPopup.restore();
+    });
+
+    it("OIDC credential is persisted even when the KDC credential is not", function () {
+      setStorePersisted(true);
+      var done = sinon.spy();
+      controller.createOIDCCredentials(configs).done(done);
+      storeResult.resolve(true);
+      expect(credentialsUtils.createOrUpdateCredentials.getCall(0).args).to.eql([
+        'c1',
+        'oidc.admin.credential',
+        {principal: 'kc-admin', key: 'kc-secret', type: 'persisted'}
+      ]);
+      expect(App.showAlertPopup.called).to.be.false;
+      expect(done.calledOnce).to.be.true;
+    });
+
+    it("OIDC credential is temporary with a warning when the store is not persisted", function () {
+      setStorePersisted(false);
+      var done = sinon.spy();
+      controller.createOIDCCredentials(configs).done(done);
+      storeResult.resolve(true);
+      expect(credentialsUtils.createOrUpdateCredentials.getCall(0).args[2].type).to.equal('temporary');
+      expect(App.showAlertPopup.getCall(0).args[0]).to.equal(Em.I18n.t('admin.oidc.credentials.temporary.header'));
+      expect(done.called).to.be.false;
+      App.showAlertPopup.getCall(0).args[2]();
+      expect(done.calledOnce).to.be.true;
+    });
+
+    it("failed store write is reported before the wizard continues", function () {
+      setStorePersisted(true);
+      var done = sinon.spy();
+      controller.createOIDCCredentials(configs).done(done);
+      storeResult.resolve(false, 'Internal Server Error');
+      var args = App.showAlertPopup.getCall(0).args;
+      expect(args[0]).to.equal(Em.I18n.t('admin.oidc.credentials.store.error.header'));
+      expect(args[1]).to.equal(Em.I18n.t('admin.oidc.credentials.store.error.kerberos.body'));
+      expect(done.called).to.be.false;
+      args[2]();
+      expect(done.calledOnce).to.be.true;
+    });
+
+    it("nothing is stored when OIDC is not configured", function () {
+      controller.shouldConfigureOidc.returns(false);
+      controller.createOIDCCredentials(configs);
+      expect(credentialsUtils.createOrUpdateCredentials.called).to.be.false;
+    });
+  });
+
+  describe("#generateOIDCAdminProperties()", function () {
+
+    [true, false].forEach(function (persisted) {
+      it("admin username hint when the store is " + (persisted ? "persisted" : "temporary"), function () {
+        controller.reopen({
+          isStorePersisted: function () {
+            return persisted;
+          }.property()
+        });
+        var principal = controller.generateOIDCAdminProperties().findProperty('name', 'oidc_admin_principal');
+        expect(principal.hintMessage).to.equal(Em.I18n.t(persisted ?
+          'admin.oidc.credentials.store.hint.persisted' :
+          'admin.oidc.credentials.store.hint.temporary'));
       });
     });
   });

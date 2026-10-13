@@ -67,6 +67,7 @@ var files = [
   'test/controllers/main/admin/kerberos/step7_controller_test',
   'test/controllers/main/admin/kerberos/step8_controller_test',
   'test/controllers/main/admin/oidc_test',
+  'test/controllers/main/admin/oidc/step3_controller_test',
   'test/controllers/main/admin/service_auto_start_test',
   'test/controllers/main/admin/stack_and_upgrade_controller_test',
   'test/controllers/main/admin/stack_upgrade_history_controller_test',
