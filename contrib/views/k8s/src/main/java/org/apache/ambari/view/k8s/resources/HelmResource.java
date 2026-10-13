@@ -204,21 +204,26 @@ public class HelmResource {
         // that sort past the first page — e.g. superset/trino on a 38-release cluster where the first
         // page held none. Metadata is captured here and reused in the loop below (no second lookup).
         final java.util.Map<String, K8sReleaseEntity> metaByKey = new java.util.HashMap<>();
-        final List<Release> effective = new ArrayList<>();
+        final List<HelmReleaseDTO> effective = new ArrayList<>();
         for (Release r : releases) {
             String key = r.getNamespace() + "/" + r.getName();
             K8sReleaseEntity md = releaseMetadataService.find(r.getNamespace(), r.getName());
             metaByKey.put(key, md);
             boolean managed = kdpsManaged.contains(key) || (md != null && md.isManagedByUi());
             if (!managedOnly || managed) {
-                effective.add(r);
+                effective.add(HelmReleaseDTO.from(r));
             }
+        }
+        for (HelmReleaseDTO removed : removalsNotListed(namespace, metaByKey.keySet())) {
+            String key = removed.namespace + "/" + removed.name;
+            metaByKey.put(key, releaseMetadataService.find(removed.namespace, removed.name));
+            effective.add(removed);
         }
 
         int total = effective.size();
         int from = Math.min(Math.max(offset, 0), total);
         int to = Math.min(from + Math.max(limit, 1), total);
-        List<Release> page = effective.subList(from, to);
+        List<HelmReleaseDTO> page = effective.subList(from, to);
 
         List<HelmReleaseDTO> releaseList = new ArrayList<>();
         // Use a small thread pool to parallelize heavy lookups (status, endpoints, version).
@@ -227,8 +232,7 @@ public class HelmResource {
         List<Future<?>> workerFutures = new ArrayList<>();
         LOG.info("Refreshing Helm releases with parallel workers: {} item(s), pool size {}", page.size(), poolSize);
 
-        for (Release release : page) {
-            HelmReleaseDTO releaseDto = HelmReleaseDTO.from(release);
+        for (HelmReleaseDTO releaseDto : page) {
 
             boolean kdpsLabelled = kdpsManaged.contains(releaseDto.namespace + "/" + releaseDto.name);
             K8sReleaseEntity metadata = metaByKey.get(releaseDto.namespace + "/" + releaseDto.name);
@@ -249,13 +253,7 @@ public class HelmResource {
                 }
                 releaseDto.securityProfile = metadata.getSecurityProfile();
                 releaseDto.deploymentMode = metadata.getDeploymentMode();
-                releaseDto.gitCommitSha = metadata.getGitCommitSha();
-                releaseDto.gitBranch = metadata.getGitBranch();
-                releaseDto.gitPath = metadata.getGitPath();
-                releaseDto.gitRepoUrl = metadata.getGitRepoUrl();
-                releaseDto.gitPrUrl = metadata.getGitPrUrl();
-                releaseDto.gitPrNumber = metadata.getGitPrNumber();
-                releaseDto.gitPrState = metadata.getGitPrState();
+                copyGitRecord(metadata, releaseDto);
 
                 if (metadata.getSecurityProfile() != null && !metadata.getSecurityProfile().isBlank()) {
                     try {
@@ -315,6 +313,9 @@ public class HelmResource {
                             }
                             if (refreshed.gitPrUrl != null) {
                                 releaseDto.gitPrUrl = refreshed.gitPrUrl;
+                            }
+                            if (refreshed.gitPendingDelete != null) {
+                                releaseDto.gitPendingDelete = refreshed.gitPendingDelete;
                             }
                         }
                     }
@@ -380,6 +381,62 @@ public class HelmResource {
         }
 
         return new HelmReleasesResponse(releaseList, total);
+    }
+
+    /**
+     * What KDPS recorded of a GitOps release's Git state, for the Releases page: where its manifests are, the base
+     * branch Flux reconciles and the commit mode, which a redeploy from the page sends back, and the pull request of
+     * its last change or of its removal. A base branch only assumed, for a release recorded before base branches were,
+     * is shown but flagged, and not sent back: recorded as the release's, it would be taken for where Flux reads it.
+     * Nothing for a release deployed with Helm.
+     */
+    static void copyGitRecord(K8sReleaseEntity metadata, HelmReleaseDTO dto) {
+        dto.gitCommitSha = metadata.getGitCommitSha();
+        dto.gitBranch = metadata.getGitBranch();
+        dto.gitPath = metadata.getGitPath();
+        dto.gitRepoUrl = metadata.getGitRepoUrl();
+        dto.gitPrUrl = metadata.getGitPrUrl();
+        dto.gitPrNumber = metadata.getGitPrNumber();
+        dto.gitPrState = metadata.getGitPrState();
+        if ("FLUX_GITOPS".equalsIgnoreCase(metadata.getDeploymentMode())) {
+            dto.gitBaseBranch = FluxGitOpsBackend.recordedBaseBranch(metadata);
+            dto.gitBaseBranchAssumed = FluxGitOpsBackend.knownBaseBranch(metadata) == null;
+            dto.gitCommitMode = metadata.getGitCommitMode() == null || metadata.getGitCommitMode().isBlank()
+                    ? "DIRECT_COMMIT" : metadata.getGitCommitMode();
+            dto.gitPendingDelete = metadata.isGitPendingDelete();
+        }
+    }
+
+    /**
+     * The GitOps releases whose removal waits for its pull request and that Helm no longer lists: Flux removed them
+     * from the cluster once the removal was merged. Listed from their record, so the uninstall that finishes their
+     * removal (the Polaris credential, the SCC grants, the Git credential, the record) can still be run from the page.
+     *
+     * @param namespace the namespace listed, or {@code null} for all
+     * @param listed    the releases Helm listed, as {@code <namespace>/<name>}
+     */
+    private List<HelmReleaseDTO> removalsNotListed(String namespace, java.util.Set<String> listed) {
+        List<HelmReleaseDTO> rows = new ArrayList<>();
+        try {
+            for (K8sReleaseEntity meta : releaseMetadataService.findAll()) {
+                if (meta == null || !meta.isGitPendingDelete()
+                        || listed.contains(meta.getNamespace() + "/" + meta.getReleaseName())
+                        || (namespace != null && !namespace.isEmpty() && !namespace.equals(meta.getNamespace()))) {
+                    continue;
+                }
+                HelmReleaseDTO row = new HelmReleaseDTO();
+                row.id = meta.getReleaseName();
+                row.name = meta.getReleaseName();
+                row.namespace = meta.getNamespace();
+                row.chart = meta.getChartRef();
+                row.version = meta.getVersion();
+                row.status = "PENDING_DELETE";
+                rows.add(row);
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not list the GitOps releases whose removal waits for its merge: {}", ex.toString());
+        }
+        return rows;
     }
 
     /**
@@ -473,13 +530,7 @@ public class HelmResource {
                 status.serviceKey = metadata.getServiceKey();
                 status.platformContextId = metadata.getPlatformContextId();
                 status.deploymentMode = metadata.getDeploymentMode();
-                status.gitCommitSha = metadata.getGitCommitSha();
-                status.gitBranch = metadata.getGitBranch();
-                status.gitPath = metadata.getGitPath();
-                status.gitRepoUrl = metadata.getGitRepoUrl();
-                status.gitPrUrl = metadata.getGitPrUrl();
-                status.gitPrNumber = metadata.getGitPrNumber();
-                status.gitPrState = metadata.getGitPrState();
+                copyGitRecord(metadata, status);
                 status.securityProfile = metadata.getSecurityProfile();
             }
             return Response.ok(status).build();
@@ -1337,9 +1388,12 @@ public class HelmResource {
      * made to grant the release's service accounts an SCC are deleted once the release is gone. The Ranger account the
      * release synced Atlas tags with, if any, is then disabled and its Secret deleted.
      *
-     * <p>A GitOps release is removed from the repository, branch and path its metadata records, with the Git
-     * credential KDPS saved for it: a request naming another repository, branch or credential is refused, so the
-     * stored credential never goes elsewhere and no credential travels in the URL.</p>
+     * <p>A GitOps release is removed from the repository, base branch and path its metadata records, with the Git
+     * credential KDPS saved for it ({@link FluxGitOpsBackend#destroy(String, String)}): a request naming another
+     * repository, branch or credential is refused, so the stored credential never goes elsewhere and no credential
+     * travels in the URL. A release deployed by direct commit is removed from the base branch at once. One deployed
+     * through pull requests gets a pull request removing it, and keeps running, with its record, its credentials and
+     * its grants, until that pull request is merged: the uninstall run again then finishes the removal.</p>
      *
      * @param namespace    Kubernetes namespace of the release
      * @param releaseName  name of the Helm release to uninstall
@@ -1349,13 +1403,15 @@ public class HelmResource {
      *                     {@code catalog} also drops the catalog; {@code none} leaves Polaris
      *                     untouched. The object-store bucket is never deleted.
      * @return HTTP 200 on success, with {@code polarisCleanup}, {@code sccCleanup} and {@code tagSyncCleanup} notes
-     *         when there is something left for an administrator to do; 400, with nothing removed, when the request
-     *         names a Git repository, branch or credential, or for a GitOps release whose recorded Git directory is
-     *         not its own or holds another release's HelmRelease; 409, with nothing removed, while another Helm
-     *         operation or GitOps operation on the release is running or when the Git credential recorded for a
-     *         GitOps release cannot be used to remove it from Git; 500, with the release's credentials, SCC grants,
-     *         tag sync account and record kept, when Git refused or could not take the removal of a GitOps release;
-     *         or an error response on failure
+     *         when there is something left for an administrator to do; 202 when the removal of a GitOps release waits
+     *         for the merge of its pull request, with {@code pendingDelete}, {@code pullRequestUrl} and a
+     *         {@code message}, and nothing else done; 400, with nothing removed, when the request names a Git
+     *         repository, branch or credential, or for a GitOps release whose recorded Git directory is not its own
+     *         or holds another release's HelmRelease; 409, with nothing removed, while another Helm operation or
+     *         GitOps operation on the release is running or when the Git credential recorded for a GitOps release
+     *         cannot be used to remove it from Git; 500, with the release's credentials, SCC grants, tag sync account
+     *         and record kept, when Git refused or could not take the removal of a GitOps release; or an error
+     *         response on failure
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
@@ -1407,23 +1463,21 @@ public class HelmResource {
                 return Response.status(Response.Status.CONFLICT).entity(Map.of("error", refused.getMessage())).build();
             }
         }
-        boolean refusedAsBusy = false;
-        boolean refusedAsNotOwn = false;
-        boolean gitRemovalFailed = false;
-        // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
+        // If this was deployed via Flux GitOps, the Flux backend removes the release from Git first, then from the
+        // cluster. A refused or failed removal returns at once: the release keeps its Polaris catalog credential, its
+        // Git credentials, its SCC grants and its record, from which the uninstall is retried.
         try {
             if (gitOps) {
                 try {
                     // The values Secrets stay while the branch Flux reconciles still holds the release: a removal
-                    // pushed to a pull request branch is not applied until merged. Only the manifests the release
-                    // wrote into its own directory, as checked above, are removed, with what its metadata records.
-                    fluxGitOpsBackend.removeFromGit(meta);
-                    LOG.info("Requested Flux GitOps destroy for {}/{} (repo={}, branch={}, path={})",
-                            namespace, releaseName, meta.getGitRepoUrl(), meta.getGitBranch(), meta.getGitPath());
+                    // proposed in a pull request is not applied until merged. Only the manifests the release wrote
+                    // into its own directory, as checked above, are removed, with what its metadata records.
+                    fluxGitOpsBackend.destroy(namespace, releaseName);
+                    LOG.info("Requested Flux GitOps destroy for {}/{} (repo={}, mode={}, path={})", namespace,
+                            releaseName, meta.getGitRepoUrl(), meta.getGitCommitMode(), meta.getGitPath());
                 } catch (FluxGitOpsBackend.NotOwnDirectoryException refused) {
                     // Found once the branch is read, such as another HelmRelease in the release's directory:
                     // nothing was removed, so the release keeps its credentials and its record, as above.
-                    refusedAsNotOwn = true;
                     LOG.warn("Uninstall of {}/{} refused: {}", namespace, releaseName, refused.getMessage());
                     return Response.status(Response.Status.BAD_REQUEST).entity(Map.of(
                             "error", refused.getMessage(),
@@ -1432,14 +1486,11 @@ public class HelmResource {
                     )).build();
                 } catch (FluxGitOpsBackend.GitOpsBusyException busy) {
                     // Another deploy or uninstall of the release holds its Git workspace: nothing was removed.
-                    refusedAsBusy = true;
                     LOG.warn("Uninstall of {}/{} refused (409): {}", namespace, releaseName, busy.getMessage());
                     return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
                 } catch (Exception ex) {
                     // Git refused or could not take the removal: the manifests stay in Git and Flux keeps running
-                    // the release, so it keeps its catalog credential, its Git credentials, its SCC grants and its
-                    // record, from which the uninstall is retried.
-                    gitRemovalFailed = true;
+                    // the release.
                     LOG.warn("Flux destroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
                     return Response.serverError().entity(Map.of(
                             "error", "Flux destroy failed: " + ex.getMessage(),
@@ -1447,35 +1498,38 @@ public class HelmResource {
                             "namespace", namespace
                     )).build();
                 }
+                K8sReleaseEntity after = releaseMetadataService.find(namespace, releaseName);
+                if (after != null && after.isGitPendingDelete()) {
+                    // Flux keeps running the release until the pull request is merged: it keeps everything it uses.
+                    RELEASE_CACHE.clear();
+                    return Response.status(Response.Status.ACCEPTED).entity(pendingRemoval(after)).build();
+                }
             } else {
                 // Use backend dispatcher (defaults to direct Helm).
                 commandService.destroyViaBackend(namespace, releaseName, meta != null ? meta.getDeploymentMode() : null);
             }
         } catch (HelmOperationRegistry.ReleaseBusyException busy) {
             // An operation on the release started since the check above: the release is untouched.
-            refusedAsBusy = true;
             return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
-        } finally {
-            if (!refusedAsBusy && !refusedAsNotOwn && !gitRemovalFailed) {
-                // A release that was given Polaris catalog access leaves a working credential behind
-                // unless it is taken back. Done after the release itself is gone, and never allowed to
-                // fail the uninstall: an unreachable Polaris must not leave a half-removed release.
-                try {
-                    polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup,
-                            requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
-                } catch (Exception ex) {
-                    LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
-                }
-                try {
-                    if (meta != null) {
-                        releaseMetadataService.delete(namespace, releaseName);
-                    }
-                } catch (Exception ex) {
-                    LOG.warn("Failed to delete metadata for {}/{} after uninstall: {}", namespace, releaseName, ex.toString());
-                }
-                RELEASE_CACHE.clear(); // invalidate cache after mutation
-            }
         }
+        // A release that was given Polaris catalog access leaves a working credential behind unless it is taken back.
+        // Done after the release itself is gone, and never allowed to fail the uninstall: an unreachable Polaris must
+        // not leave a half-removed release.
+        try {
+            polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup,
+                    requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
+        } catch (Exception ex) {
+            LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+        }
+        // Only once the release is gone: a failed or refused removal keeps the record the uninstall is retried from.
+        try {
+            if (meta != null) {
+                releaseMetadataService.delete(namespace, releaseName);
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to delete metadata for {}/{} after uninstall: {}", namespace, releaseName, ex.toString());
+        }
+        RELEASE_CACHE.clear(); // invalidate cache after mutation
         // Only once the release is gone: its pods no longer need the OpenShift SCCs KDPS granted to its service
         // accounts. Never fails the uninstall; grants KDPS did not make are listed for the platform team instead.
         String sccCleanupNote = null;
@@ -1501,6 +1555,22 @@ public class HelmResource {
         if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
         if (tagSyncCleanupNote != null) notes.put("tagSyncCleanup", tagSyncCleanupNote);
         return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
+    }
+
+    /** What an uninstall that waits for the merge of its removal pull request answers. */
+    static Map<String, Object> pendingRemoval(K8sReleaseEntity meta) {
+        String base = FluxGitOpsBackend.recordedBaseBranch(meta);
+        String pullRequest = meta.getGitPrUrl() != null && !meta.getGitPrUrl().isBlank()
+                ? meta.getGitPrUrl() : "#" + meta.getGitPrNumber();
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("pendingDelete", true);
+        if (meta.getGitPrUrl() != null && !meta.getGitPrUrl().isBlank()) {
+            answer.put("pullRequestUrl", meta.getGitPrUrl());
+        }
+        answer.put("message", "The removal of " + meta.getNamespace() + "/" + meta.getReleaseName() + " is proposed in"
+                + " pull request " + pullRequest + " into " + base + ". The release keeps running until it is merged;"
+                + " uninstall it again then to finish removing it from the cluster and KDPS.");
+        return answer;
     }
 
     /** Query parameters earlier versions read on an uninstall to override what a GitOps release records. */

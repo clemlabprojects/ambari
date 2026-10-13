@@ -41,6 +41,7 @@ import { untar } from 'js-untar';
 import VolumeEditor from './VolumeEditor';
 import DynamicFormField from './DynamicFormField';
 import { UpgradeModeContext } from './fieldSync';
+import { BASE_BRANCH_TOOLTIP, COMMIT_MODE_LABELS, DEFAULT_BASE_BRANCH, WORKING_BRANCH_TOOLTIP, gitOptionsToSubmit, landingBranchOf, opensPullRequest, workingBranchProblem } from '../../utils/gitOpsBranches';
 import type { BindingSpec } from './types';
 import {
   makeTargetsPatch,
@@ -195,6 +196,9 @@ type ServiceInstallationModalProps = {
     deploymentMode?: string;
     gitRepoUrl?: string;
     gitBranch?: string;
+    gitBaseBranch?: string;
+    gitBaseBranchAssumed?: boolean;
+    gitCommitMode?: string;
     gitPath?: string;
     gitPrNumber?: string;
   };
@@ -273,10 +277,12 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     if (mode === 'upgrade' && initialRelease) {
       form.setFieldsValue({ releaseName: initialRelease.name, namespace: initialRelease.namespace });
       form.setFieldsValue({ deploymentMode: initialRelease?.deploymentMode || 'DIRECT_HELM' });
+      // The base branch and commit mode the release was deployed with; never its working branch, which the server
+      // chooses again for each change, nor a base branch only assumed, which the server would record as the release's.
       const gitDefaults = initialRelease.gitRepoUrl ? {
         repoUrl: initialRelease.gitRepoUrl,
-        branch: initialRelease.gitBranch,
-        commitMode: initialRelease.gitPrNumber ? 'PR_MODE' : 'DIRECT_COMMIT'
+        baseBranch: initialRelease.gitBaseBranchAssumed ? undefined : initialRelease.gitBaseBranch,
+        commitMode: initialRelease.gitCommitMode || 'DIRECT_COMMIT'
       } : {};
       form.setFieldsValue({
         git: { ...(form.getFieldValue('git') || {}), ...gitDefaults },
@@ -468,14 +474,15 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
       const currentGit = form.getFieldValue('git') || {};
       form.setFieldsValue({
         git: {
-          baseBranch: currentGit.baseBranch || 'main',
+          // An upgrade left empty keeps the release's base branch on the server; a new release starts on main.
+          baseBranch: currentGit.baseBranch || (mode === 'upgrade' ? undefined : 'main'),
           pathPrefix: currentGit.pathPrefix || 'clusters/default',
           commitMode: currentGit.commitMode || 'DIRECT_COMMIT',
           ...currentGit
         }
       });
     }
-  }, [deploymentModeWatch, form]);
+  }, [deploymentModeWatch, form, mode]);
 
   useEffect(() => {
     if (!visible) {
@@ -650,7 +657,7 @@ const handleServiceChange = (value: string) => {
       const selectedRepo = repos.find(r => r.id === (formValues.repoId || initialRelease?.repoId));
       const helmRepoUrl = formValues?.git?.repoUrl || selectedRepo?.url || 'resolved-by-backend';
       const pathPrefix = formValues?.git?.pathPrefix || 'clusters/default';
-      const branch = formValues?.git?.branch || formValues?.git?.baseBranch || 'main';
+      const branch = landingBranchOf(formValues?.git);
       const targetPath = `${pathPrefix}/${ns}/${releaseName}`;
       const hr: any = {
         apiVersion: 'source.toolkit.fluxcd.io/v1',
@@ -681,7 +688,7 @@ const handleServiceChange = (value: string) => {
         }
       };
       const docs = [
-        `# Path: ${targetPath} (branch ${branch})`,
+        `# Path: ${targetPath} on ${branch}`,
         yaml.stringify(hr, { aliasDuplicateObjects: false }).trim(),
         yaml.stringify(release, { aliasDuplicateObjects: false }).trim()
       ].join('\n---\n');
@@ -839,7 +846,7 @@ const handleServiceChange = (value: string) => {
             serviceKey: undefined,
             repoId: initialRelease?.repoId || form.getFieldValue('repoId'),
             deploymentMode: form.getFieldValue('deploymentMode') || 'DIRECT_HELM',
-            git: form.getFieldValue('git') || undefined
+            git: gitOptionsToSubmit(form.getFieldValue('git')) || undefined
         };
 
         if (initialRelease?.version) {
@@ -1052,7 +1059,7 @@ const handleServiceChange = (value: string) => {
             // Only send when explicitly selected; prevents implicit profile attachment.
             securityProfile: allValues.securityProfile || undefined,
             deploymentMode: allValues.deploymentMode || 'DIRECT_HELM',
-            git: allValues.git || undefined,
+            git: gitOptionsToSubmit(allValues.git) || undefined,
         };
       } // End Deploy Mode Logic
 
@@ -1336,8 +1343,8 @@ const handleServiceChange = (value: string) => {
           <Form.Item name={['git','repoUrl']} label="Git repository URL" rules={[{ required: true, message: 'Git repository is required in GitOps mode' }]}>
             <Input placeholder="https://git.example.com/org/cluster-config.git" />
           </Form.Item>
-          <Form.Item name={['git','baseBranch']} label="Base branch" tooltip="Branch to base commits/PRs on">
-            <Input placeholder="main" />
+          <Form.Item name={['git','baseBranch']} label="Base branch" tooltip={BASE_BRANCH_TOOLTIP}>
+            <Input placeholder={DEFAULT_BASE_BRANCH} />
           </Form.Item>
           <Form.Item
             name={['git','pathPrefix']}
@@ -1350,14 +1357,31 @@ const handleServiceChange = (value: string) => {
           >
             <Input placeholder="clusters/default" />
           </Form.Item>
-          <Form.Item name={['git','branch']} label="Working branch" tooltip="If empty, a branch will be generated automatically">
-            <Input placeholder="feature/ambari-flux" />
-          </Form.Item>
           <Form.Item name={['git','commitMode']} label="Commit mode" initialValue="DIRECT_COMMIT">
             <Select>
-              <Option value="DIRECT_COMMIT">Direct commit</Option>
-              <Option value="PR_MODE">Open PR (token required)</Option>
+              <Option value="DIRECT_COMMIT">{COMMIT_MODE_LABELS.DIRECT_COMMIT}</Option>
+              <Option value="PR_MODE">{COMMIT_MODE_LABELS.PR_MODE}</Option>
             </Select>
+          </Form.Item>
+          {/* Only a pull request has a working branch: a direct commit goes to the base branch. */}
+          <Form.Item noStyle shouldUpdate={(prev, next) => prev?.git?.commitMode !== next?.git?.commitMode}>
+            {() => opensPullRequest(form.getFieldValue('git')) ? (
+              <Form.Item
+                name={['git','branch']}
+                label="Working branch"
+                tooltip={WORKING_BRANCH_TOOLTIP}
+                preserve={false}
+                dependencies={[['git','baseBranch']]}
+                rules={[({ getFieldValue }) => ({
+                  validator: (_, value) => {
+                    const problem = workingBranchProblem({ ...(getFieldValue('git') || {}), branch: value });
+                    return problem ? Promise.reject(new Error(problem)) : Promise.resolve();
+                  },
+                })]}
+              >
+                <Input placeholder="Left empty: a new branch for each change" />
+              </Form.Item>
+            ) : null}
           </Form.Item>
           <Form.Item name={['git','authToken']} label="Auth token" tooltip="HTTPS personal access token (stored securely)" >
             <Input.Password placeholder="Token (optional if using SSH key)" />

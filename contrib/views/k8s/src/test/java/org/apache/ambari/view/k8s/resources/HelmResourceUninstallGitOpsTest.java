@@ -115,7 +115,7 @@ class HelmResourceUninstallGitOpsTest {
 
         assertEquals(200, response.getStatus());
         verify(flux).checkRemovable(trino);
-        verify(flux).removeFromGit(trino);
+        verify(flux).destroy("analytics", "trino-uninstall-test");
         verify(flux, never()).destroy(any(), any(), any(), any(), any(), any(), any(), any());
         verify(metadata).delete("analytics", "trino-uninstall-test");
     }
@@ -130,7 +130,7 @@ class HelmResourceUninstallGitOpsTest {
         assertEquals(409, response.getStatus());
         assertEquals("KDPS cannot remove analytics/trino-uninstall-test from Git",
                 ((Map<?, ?>) response.getEntity()).get("error"));
-        verify(flux, never()).removeFromGit(any());
+        verify(flux, never()).destroy(anyString(), anyString());
         verify(metadata, never()).delete(anyString(), anyString());
         verifyNoInteractions(commands);
     }

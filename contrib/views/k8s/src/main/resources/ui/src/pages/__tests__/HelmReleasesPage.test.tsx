@@ -25,13 +25,15 @@ jest.mock('../../api/client', () => ({
   getClusterCapabilities: jest.fn(),
   getHelmReleases: jest.fn(),
   getReleaseTlsState: jest.fn(),
+  getReleaseStatus: jest.fn(),
+  uninstallHelm: jest.fn(),
 }));
 jest.mock('../../assets/services', () => ({ serviceIcon: () => '' }));
 jest.mock('../../context/ClusterStatusContext', () => ({
   useClusterStatus: () => ({ status: 'connected', refresh: jest.fn(), nodes: [], events: [] }),
 }));
 
-import { getAvailableServices, getClusterCapabilities, getHelmReleases } from '../../api/client';
+import { getAvailableServices, getClusterCapabilities, getHelmReleases, getReleaseStatus, getReleaseTlsState, uninstallHelm } from '../../api/client';
 import { invalidateCapabilities } from '../../components/ServiceInstallationModal/capabilities';
 import { PermissionsContext } from '../../context/PermissionsContext';
 import HelmReleasesPage from '../HelmReleasesPage';
@@ -90,5 +92,54 @@ describe('HelmReleasesPage install picker', () => {
   it('hides nothing when the platform could not be detected', async () => {
     const dialog = await openPicker(undefined);
     expect(within(dialog).getByText('GitLab CE')).toBeTruthy();
+  });
+});
+
+/**
+ * The uninstall of a GitOps release deployed through pull requests opens a pull request removing it: the page says so,
+ * with the pull request, rather than reporting the release uninstalled.
+ */
+describe('HelmReleasesPage uninstall through a pull request', () => {
+  const user = userEvent.setup();
+  const trino = {
+    id: 'trino', name: 'trino', namespace: 'analytics', chart: 'trino-1.43.14', version: '1.43.14',
+    status: 'deployed', managedByUi: true, deploymentMode: 'FLUX_GITOPS', gitCommitMode: 'PR_MODE',
+    gitBaseBranch: 'main', gitRepoUrl: 'https://git.example.org/platform/gitops.git',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    invalidateCapabilities();
+    (getAvailableServices as jest.Mock).mockResolvedValue({});
+    (getClusterCapabilities as jest.Mock).mockResolvedValue({ platform: 'kubernetes' });
+    (getHelmReleases as jest.Mock).mockResolvedValue({ items: [trino], total: 1 });
+    (getReleaseTlsState as jest.Mock).mockResolvedValue([]);
+    (getReleaseStatus as jest.Mock).mockResolvedValue({});
+  });
+
+  it('shows the pull request that removes the release, which keeps running until it is merged', async () => {
+    (uninstallHelm as jest.Mock).mockResolvedValue({
+      pendingDelete: true,
+      pullRequestUrl: 'https://git.example.org/platform/gitops/pulls/7',
+      message: 'The removal of analytics/trino is proposed in pull request '
+        + 'https://git.example.org/platform/gitops/pulls/7 into main. The release keeps running until it is merged;'
+        + ' uninstall it again then to finish removing it from the cluster and KDPS.',
+    });
+    render(
+      <PermissionsContext.Provider value={{ permissions: { canWrite: true, canConfigure: true } as any, loading: false }}>
+        <MemoryRouter><HelmReleasesPage /></MemoryRouter>
+      </PermissionsContext.Provider>);
+    await screen.findByText('trino');
+
+    await user.click(screen.getByRole('button', { name: 'more' }));
+    await user.click(await screen.findByText('Uninstall'));
+    const confirm = await screen.findByRole('dialog');
+    await user.click(within(confirm).getByRole('button', { name: 'Uninstall' }));
+
+    expect(await screen.findByText('Removal of trino proposed in a pull request')).toBeTruthy();
+    expect(screen.getByText(/The release keeps running until it is merged/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'https://git.example.org/platform/gitops/pulls/7' })).toBeTruthy();
+    expect(screen.queryByText('Release trino uninstalled successfully.')).toBeNull();
+    expect(uninstallHelm).toHaveBeenCalledWith('trino', 'analytics', expect.any(URLSearchParams));
   });
 });

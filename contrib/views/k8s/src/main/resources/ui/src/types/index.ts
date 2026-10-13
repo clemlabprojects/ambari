@@ -41,6 +41,10 @@ export interface HelmRelease {
   deploymentMode?: string; // DIRECT_HELM | FLUX_GITOPS
   gitCommitSha?: string;
   gitBranch?: string;
+  gitBaseBranch?: string; // the branch Flux reconciles, which every change of the release lands on
+  gitBaseBranchAssumed?: boolean; // no base branch is recorded: main is only assumed, and never sent back as one
+  gitCommitMode?: string; // DIRECT_COMMIT | PR_MODE, as the release was last deployed
+  gitPendingDelete?: boolean; // the uninstall waits for its removal pull request to be merged
   gitPath?: string;
   gitRepoUrl?: string;
   gitPrUrl?: string;

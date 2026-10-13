@@ -29,6 +29,7 @@ import org.apache.ambari.view.k8s.model.CommandStatus;
 import org.apache.ambari.view.k8s.model.CommandType;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.resources.CommandResource;
+import org.apache.ambari.view.k8s.service.deployment.FakePullRequests;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
@@ -581,9 +582,28 @@ class CommandServiceGitOpsDeployTest {
         assertEquals(committed, commitsOn("main"));
     }
 
+    /**
+     * A deploy proposed in a pull request from {@code flux-work}, with the token that opens it on the Git server, whose
+     * pull requests the returned fake holds.
+     */
+    private HelmDeployRequest proposedOnFluxWork(FakePullRequests pullRequests) throws Exception {
+        if (gitCredentials == null) {
+            credentialStore(true);
+        }
+        Field backendField = CommandService.class.getDeclaredField("fluxGitOpsBackend");
+        backendField.setAccessible(true);
+        Field pullRequestsField = FluxGitOpsBackend.class.getDeclaredField("pullRequests");
+        pullRequestsField.setAccessible(true);
+        pullRequestsField.set(backendField.get(service), pullRequests);
+        HelmDeployRequest request = request("FLUX_GITOPS", "flux-work");
+        request.getGit().setCommitMode("PR_MODE");
+        request.getGit().setAuthToken(TOKEN);
+        return request;
+    }
+
     @Test
     void aChangeWaitingForAMergeHasNotSetAGeneratedPasswordYet() throws Exception {
-        String id = plan(request("FLUX_GITOPS", "flux-work"), true);
+        String id = plan(proposedOnFluxWork(new FakePullRequests()), true);
         // As a deploy of a service with a generated administrator password plans it (see
         // CommandServiceGeneratedSecretsTest): the chart is asked to set it on the account.
         CommandEntity root = dataStore.find(CommandEntity.class, id);
@@ -602,13 +622,16 @@ class CommandServiceGitOpsDeployTest {
 
     @Test
     void aChangeWaitingForAMergeEndsTheOperationAfterTheCommitAndRunsNothingThatNeedsIt() throws Exception {
-        String id = plan(request("FLUX_GITOPS", "flux-work"), true);
+        FakePullRequests pullRequests = new FakePullRequests();
+        String id = plan(proposedOnFluxWork(pullRequests), true);
 
         CommandStatusEntity end = run(id);
 
         assertEquals(CommandState.SUCCEEDED.name(), end.getState(), end.getMessage());
-        assertTrue(end.getMessage().startsWith("Waiting for branch flux-work of " + repoUrl
+        assertTrue(end.getMessage().startsWith("Waiting for the pull request " + FakePullRequests.url("1")
                 + " to be merged into branch main: Flux applies the change once it is merged."), end.getMessage());
+        assertEquals("flux-work", pullRequests.last().head());
+        assertEquals("main", pullRequests.last().base());
         assertTrue(end.getMessage().contains("Not run until then: Flux: wait for HelmRelease " + rel
                 + " to be ready, Ambari: provision view instance for " + rel), end.getMessage());
         assertEquals(CommandState.CANCELED.name(), stateOf(id, CommandType.FLUX_WAIT_READY));
@@ -639,8 +662,9 @@ class CommandServiceGitOpsDeployTest {
             g.merge().include(g.getRepository().resolve("refs/remotes/origin/flux-work")).call();
             g.push().setRefSpecs(new RefSpec("HEAD:refs/heads/main")).call();
         }
+        pullRequests.merge("1");
         fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
-        String again = plan(request("FLUX_GITOPS", "flux-work"), true);
+        String again = plan(proposedOnFluxWork(pullRequests), true);
 
         run(again);
 

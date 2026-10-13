@@ -124,8 +124,13 @@ class FluxGitOpsBackendPlannedCommitTest {
         }).when(k8s).createOrUpdateOpaqueSecret(anyString(), anyString(), anyString(), any(byte[].class), anyMap(), any(), any());
     }
 
+    /** The pull requests of the Git server, which a pull request deploy opens. */
+    private final FakePullRequests pullRequests = new FakePullRequests();
+
     private FluxGitOpsBackend backend() {
-        return new FluxGitOpsBackend(tmp.resolve("flux"), k8s, ctx);
+        FluxGitOpsBackend backend = new FluxGitOpsBackend(tmp.resolve("flux"), k8s, ctx);
+        backend.setPullRequests(pullRequests);
+        return backend;
     }
 
     /** A Superset deploy as its GITOPS_COMMIT step rebuilds it, committed to {@code branch}, Flux reading main. */
@@ -322,9 +327,12 @@ class FluxGitOpsBackendPlannedCommitTest {
 
     @Test
     void aChangeMergedSinceItWasCommittedIsAppliedOnTheNextDeploy() throws Exception {
-        FluxGitOpsBackend.CommitResult proposed = backend().commit(request("flux-work"), null, planned());
+        HelmDeployRequest pullRequest = request("flux-work");
+        pullRequest.getGit().setCommitMode("PR_MODE");
+        pullRequest.getGit().setAuthToken("t0k");
+        FluxGitOpsBackend.CommitResult proposed = backend().commit(pullRequest, null, planned());
         assertTrue(proposed.committed());
-        assertFalse(proposed.appliedOnCommit(), "a working branch waits to be merged into main");
+        assertFalse(proposed.appliedOnCommit(), "a pull request waits to be merged into main");
         assertEquals("main", proposed.baseBranch());
 
         // The operator merges the working branch into main.
@@ -333,8 +341,12 @@ class FluxGitOpsBackendPlannedCommitTest {
             g.merge().include(g.getRepository().resolve("refs/remotes/origin/flux-work")).call();
             g.push().setRefSpecs(new RefSpec("HEAD:refs/heads/main")).call();
         }
+        pullRequests.merge("1");
 
-        FluxGitOpsBackend.CommitResult redeployed = backend().commit(request("flux-work"), null, planned());
+        HelmDeployRequest redeploy = request(null);
+        redeploy.getGit().setCommitMode("PR_MODE");
+        redeploy.getGit().setAuthToken("t0k");
+        FluxGitOpsBackend.CommitResult redeployed = backend().commit(redeploy, null, planned());
 
         assertFalse(redeployed.committed());
         assertTrue(redeployed.appliedOnCommit(), "main now holds the release as planned");
@@ -342,7 +354,7 @@ class FluxGitOpsBackendPlannedCommitTest {
 
     @Test
     void whetherADeployCanBeCommittedIsCheckedWithoutGitAndWithoutChangingTheRequest() throws Exception {
-        HelmDeployRequest request = request("flux-work");
+        HelmDeployRequest request = request("main");
         request.getGit().setBaseBranch(null);
 
         backend().checkCommittable(request, null);
@@ -360,12 +372,39 @@ class FluxGitOpsBackendPlannedCommitTest {
                 () -> backend().checkCommittable(unknownRepository, null));
         assertTrue(refused.getMessage().startsWith("Chart repository 'mirror' is not configured in KDPS"), refused.getMessage());
 
-        HelmDeployRequest pullRequestWithoutToken = request("main");
+        HelmDeployRequest pullRequestWithoutToken = request(null);
         pullRequestWithoutToken.getGit().setRepoUrl("https://git.example.org/platform/gitops.git");
         pullRequestWithoutToken.getGit().setCommitMode("PR_MODE");
         pullRequestWithoutToken.getGit().setSshKey("-----BEGIN OPENSSH PRIVATE KEY-----");
-        assertEquals("PR mode requires an HTTPS token", assertThrows(IllegalArgumentException.class,
-                () -> backend().checkCommittable(pullRequestWithoutToken, null)).getMessage());
+        assertEquals("Pull request mode needs an access token of the Git server: KDPS opens the pull request with it."
+                + " Give the token with the deploy (over SSH, next to the SSH key).", assertThrows(
+                        IllegalArgumentException.class,
+                        () -> backend().checkCommittable(pullRequestWithoutToken, null)).getMessage());
+
+        // A direct commit goes to the branch Flux reconciles: a working branch is refused before anything is prepared.
+        IllegalArgumentException directElsewhere = assertThrows(IllegalArgumentException.class,
+                () -> backend().checkCommittable(request("flux-work"), null));
+        assertTrue(directElsewhere.getMessage().startsWith("Direct commit pushes the change to the base branch main"),
+                directElsewhere.getMessage());
+
+        // A pull request from the base branch itself would push the change to the branch Flux reconciles unreviewed.
+        HelmDeployRequest pullRequestFromMain = request(" main ");
+        pullRequestFromMain.getGit().setCommitMode("PR_MODE");
+        pullRequestFromMain.getGit().setAuthToken("t0k");
+        IllegalArgumentException fromBase = assertThrows(IllegalArgumentException.class,
+                () -> backend().checkCommittable(pullRequestFromMain, null));
+        assertTrue(fromBase.getMessage().startsWith("A pull request is opened from its working branch into the base"
+                + " branch main, which Flux reconciles, so the working branch cannot be main as well"),
+                fromBase.getMessage());
+
+        // Nor is a pull request accepted on a Git server KDPS cannot open one on.
+        HelmDeployRequest bitbucket = request(null);
+        bitbucket.getGit().setRepoUrl("https://bitbucket.org/platform/gitops.git");
+        bitbucket.getGit().setCommitMode("PR_MODE");
+        bitbucket.getGit().setAuthToken("t0k");
+        GitPullRequests.UnsupportedGitServerException unsupported = assertThrows(
+                GitPullRequests.UnsupportedGitServerException.class, () -> backend().checkCommittable(bitbucket, null));
+        assertTrue(unsupported.getMessage().contains("bitbucket.org is Bitbucket"), unsupported.getMessage());
     }
 
     // ---------------------------------------------------------------- reading the HelmRelease on the cluster
@@ -687,14 +726,14 @@ class FluxGitOpsBackendPlannedCommitTest {
 
     @Test
     void thePullRequestCallsGoToTheHostTheCredentialIsBoundTo() {
-        assertEquals("code.gitlab.example", FluxGitOpsBackend.pullRequestRepoUri(
+        assertEquals("code.gitlab.example", GitPullRequests.repositoryUri(
                 "https://code.gitlab.example/platform/gitops.git").getHost(), "a host holding .git stays as it is");
-        assertEquals("/platform/gitops", FluxGitOpsBackend.pullRequestRepoUri(
+        assertEquals("/platform/gitops", GitPullRequests.repositoryUri(
                 "https://code.gitlab.example/platform/gitops.git/").getPath());
-        assertEquals("https://git.example.org/platform/gitops", FluxGitOpsBackend.pullRequestRepoUri(
+        assertEquals("https://git.example.org/platform/gitops", GitPullRequests.repositoryUri(
                 "git@git.example.org:platform/gitops.git").toString());
-        assertNull(FluxGitOpsBackend.pullRequestRepoUri("https://attacker.example#@git.example.org/x.git"));
-        assertNull(FluxGitOpsBackend.pullRequestRepoUri("https://git.example.org.git"), "the suffix is not the host");
-        assertNull(FluxGitOpsBackend.pullRequestRepoUri(repoUrl), "a local repository has no pull requests");
+        assertNull(GitPullRequests.repositoryUri("https://attacker.example#@git.example.org/x.git"));
+        assertNull(GitPullRequests.repositoryUri("https://git.example.org.git"), "the suffix is not the host");
+        assertNull(GitPullRequests.repositoryUri(repoUrl), "a local repository has no pull requests");
     }
 }

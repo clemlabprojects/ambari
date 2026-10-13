@@ -108,12 +108,43 @@ limitations under the License.
     `dependsOn` names, and one Flux gave up on fails the step at once with that dependency's cause, or is asked to try
     again by a redeploy or resume. The post-deploy steps (Ranger grants, TagSync, OpenMetadata and Atlas registration,
     view provisioning) run after it.
-  - When the change waits for a merge (pull request mode, or a working branch Flux does not reconcile), the operation
-    ends SUCCEEDED after the commit. Its result, returned as `result` by `GET /commands/{id}` and the operations list,
+  - When the change waits for a merge (pull request mode), the operation ends SUCCEEDED after the commit. Its result, returned as `result` by `GET /commands/{id}` and the operations list,
     says so (`waitingForMerge`, `message`, `pullRequestUrl`, `branch`, `notRun`), and the remaining steps are marked as
     not run. The UI shows that message, and the pull request link, instead of reporting the deploy completed.
     Redeploying the release once the change is merged runs them: the commit then finds nothing to change. Only
     operations return a result: those of their steps stay internal.
+- Every GitOps change lands on the base branch, the branch Flux reconciles (`git.baseBranch`, recorded with the
+  release; a redeploy that names none keeps the recorded one, else `main`). A direct commit (`DIRECT_COMMIT`) is pushed
+  to it; a deploy naming another working branch is refused (400), and so is one whose base branch the server does not
+  have, unless the repository has no branch at all yet. A pull request (`PR_MODE`, which needs the Git
+  server's access token) goes on the branch of the release's previous pull request while that one is open, otherwise
+  on a new branch (`flux-<uuid>`, or the working branch the deploy names, which cannot be the base branch) started from
+  the base branch as the server holds it, and a pull request into the base branch is opened; the branch, the pull
+  request number and its URL are recorded. The previous pull request is joined only when it was opened into the same
+  base branch. A deploy that no longer goes through the release's open pull request (direct commit, another base
+  branch, another working branch) closes it before anything is committed, and is refused when it cannot. A base branch
+  only assumed (`main` for a pull request release recorded before base branches were) is never recorded by a redeploy
+  that names none, and the Releases page flags it (`gitBaseBranchAssumed`) and does not send it back. A deploy with nothing new to commit still records its commit mode and base
+  branch, which the next deploys and the uninstall follow. Pull requests are opened through the API of the Git server: github.com through api.github.com, another
+  GitHub server through `/api/v3`, GitLab through `/api/v4` and Gitea through `/api/v1`, with the port and context path
+  of the repository URL; a server whose name does not tell is asked which one it is. Any other Git server (Bitbucket,
+  Azure DevOps) is refused before anything is pushed, and a pull request the server does not open fails the deploy
+  with the server's reason.
+- An uninstall of a GitOps release (`DELETE /helm/release/{ns}/{name}`) removes it the way it was deployed. By direct
+  commit, the removal is pushed to the base branch, then the HelmRelease and the HelmRepository of its chart (unless
+  another GitOps release reads it) are deleted from the cluster, with the release's Git credential and record. Through
+  a pull request, the removal is pushed to a new branch (`flux-remove-<uuid>`) from the base branch and a pull request
+  into the base branch is opened: the answer is 202 with `pendingDelete`, `pullRequestUrl` and a `message`, the release
+  keeps running and is shown as `PENDING_DELETE`, and nothing is removed from the cluster. Uninstalling it again while
+  the pull request is open changes nothing, after it was closed unmerged proposes the removal again, and once the base
+  branch no longer holds the release finishes the uninstall. A deploy of the release is refused while its removal pull
+  request is open; once that pull request is closed unmerged, the release is no longer shown as `PENDING_DELETE`, and
+  a deploy, even with nothing new, ends the wait for the removal. The release's own pull request, when still open, is
+  closed first (without an access token, the release is removed from its branch instead), so merging it later cannot
+  install the release again. A removal Git refuses keeps the release and its record (500), and so does an uninstall
+  that cannot tell where Flux reads the release while its HelmRelease is still on the cluster: a base branch the
+  server no longer has, or `main` assumed for a pull request release recorded before its base branch was and not
+  holding it. Deploying the release once, naming its base branch, then lets it be uninstalled.
 - Every deploy, in either mode and from the UI or the API, is refused (400) before anything is prepared when a name
   would not be accepted by Helm or Kubernetes: the release name (Helm's rule, at most 53 characters), the namespace,
   and the name and namespace of each dependency (DNS-1123 labels). A GitOps deploy also needs chart repository ids

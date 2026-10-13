@@ -387,7 +387,7 @@ public class K8sReleaseEntity extends BaseModel {
 
     /**
      * The base branch of a GitOps release, which Flux reconciles (null when never recorded). The working branch
-     * ({@link #getGitBranch}) may be another one, still to merge.
+     * ({@link #getGitBranch}) is another one for a pull request, still to merge.
      */
     public String getGitBaseBranch() {
         return gitMeta().get("baseBranch");
@@ -451,6 +451,45 @@ public class K8sReleaseEntity extends BaseModel {
 
     public void setGitPrState(String gitPrState) {
         putGitMeta("prState", gitPrState);
+    }
+
+    /**
+     * Whether the uninstall of a GitOps release waits for its removal to be merged into the branch Flux reconciles: the
+     * release still runs, and its pull request is the one recorded ({@link #getGitPrUrl}).
+     */
+    public boolean isGitPendingDelete() {
+        return "true".equals(gitMeta().get("pendingDelete"));
+    }
+
+    public void setGitPendingDelete(boolean pendingDelete) {
+        putGitMeta("pendingDelete", pendingDelete ? "true" : null);
+    }
+
+    /**
+     * The HelmReleases a removal waiting for its merge takes out of Git, as {@code <namespace>/<name>}: the release's
+     * and its dependencies'. Their values Secrets are deleted once it is merged, when Git no longer names them.
+     * {@code null} when none is recorded.
+     */
+    public java.util.List<String> getGitRemovedHelmReleases() {
+        String json = gitMeta().get("removedHelmReleases");
+        if (json == null) {
+            return null;
+        }
+        try {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            MAPPER.readTree(json).forEach(n -> names.add(n.asText()));
+            return names;
+        } catch (Exception malformed) {
+            return null;
+        }
+    }
+
+    public void setGitRemovedHelmReleases(java.util.List<String> names) {
+        try {
+            putGitMeta("removedHelmReleases", names == null || names.isEmpty() ? null : MAPPER.writeValueAsString(names));
+        } catch (Exception e) {
+            // A list of strings always serialises; keep the previous value otherwise.
+        }
     }
 
     // ---------- Endpoints stored as JSON array ----------

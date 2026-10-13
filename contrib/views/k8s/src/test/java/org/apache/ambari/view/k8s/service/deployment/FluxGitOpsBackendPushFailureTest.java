@@ -134,8 +134,12 @@ class FluxGitOpsBackendPushFailureTest {
         executor.shutdownNow();
     }
 
+    /** The pull requests of the Git server, which a pull request deploy opens. */
+    private final FakePullRequests pullRequests = new FakePullRequests();
+
     private FluxGitOpsBackend backend() throws Exception {
         FluxGitOpsBackend backend = new FluxGitOpsBackend(tmp.resolve("flux"), k8s, ctx);
+        backend.setPullRequests(pullRequests);
         // A token given with a deploy is stored in Ambari's credential store, not reachable from a test.
         GitCredentialService credentials = mock(GitCredentialService.class);
         when(credentials.storeSecret(anyString(), anyString(), anyString())).thenAnswer(inv -> inv.getArgument(0));
@@ -166,6 +170,14 @@ class FluxGitOpsBackendPushFailureTest {
 
     private static HelmDeployRequest request(String repoUrl) {
         return request(repoUrl, RELEASE, "main");
+    }
+
+    /** A change proposed in a pull request from the working branch {@code branch}, with the token that opens it. */
+    private static HelmDeployRequest proposedOn(String repoUrl, String branch) {
+        HelmDeployRequest request = request(repoUrl, RELEASE, branch);
+        request.getGit().setCommitMode("PR_MODE");
+        request.getGit().setAuthToken("t0k");
+        return request;
     }
 
     /** What the command plan prepared: Kerberos, and an LDAP bind password that goes to the values Secret. */
@@ -336,15 +348,16 @@ class FluxGitOpsBackendPushFailureTest {
         String repoUrl = bareRepo.toUri().toString();
 
         GitPushRejectedException refused = assertThrows(GitPushRejectedException.class,
-                () -> backend().commit(request(repoUrl, RELEASE, "kdps/trino"), null, planned()));
+                () -> backend().commit(proposedOn(repoUrl, "kdps/trino"), null, planned()));
         assertTrue(refused.getMessage().contains("kdps/trino"), refused.getMessage());
         assertTrue(releases.isEmpty(), "no release metadata for a change Git does not hold");
         assertNull(secretPayloads.get(NS + "/superset-kdps-values"));
 
         // Retried as it is: the same refusal again, never "no changes" for a commit only the workspace holds.
         assertThrows(GitPushRejectedException.class,
-                () -> backend().commit(request(repoUrl, RELEASE, "kdps/trino"), null, planned()));
+                () -> backend().commit(proposedOn(repoUrl, "kdps/trino"), null, planned()));
         assertTrue(releases.isEmpty());
+        assertTrue(pullRequests.opened.isEmpty(), "no pull request for a branch the server does not have");
         assertEquals(seed, GitTestServers.head(bareRepo, "kdps"));
         assertEquals(seed, GitTestServers.head(bareRepo, "main"));
     }
@@ -357,49 +370,50 @@ class FluxGitOpsBackendPushFailureTest {
         String repoUrl = bareRepo.toUri().toString();
 
         assertThrows(GitPushRejectedException.class,
-                () -> backend().commit(request(repoUrl, RELEASE, "flux-work"), null, planned()));
+                () -> backend().commit(proposedOn(repoUrl, "flux-work"), null, planned()));
         assertTrue(releases.isEmpty(), "no release metadata for a commit that was never pushed");
         assertThrows(GitPushRejectedException.class,
-                () -> backend().commit(request(repoUrl, RELEASE, "flux-work"), null, planned()));
+                () -> backend().commit(proposedOn(repoUrl, "flux-work"), null, planned()));
         assertTrue(releases.isEmpty());
         assertNull(GitTestServers.head(bareRepo, "flux-work"));
+        assertTrue(pullRequests.opened.isEmpty());
 
         Files.delete(lock);
-        FluxGitOpsBackend.CommitResult landed = backend().commit(request(repoUrl, RELEASE, "flux-work"), null,
-                planned());
+        FluxGitOpsBackend.CommitResult landed = backend().commit(proposedOn(repoUrl, "flux-work"), null, planned());
         assertTrue(landed.committed());
         assertEquals(landed.commitSha(), GitTestServers.head(bareRepo, "flux-work"));
         assertEquals(landed.commitSha(), releases.get(K8sReleaseEntity.idOf(NS, RELEASE)).getGitCommitSha());
+        assertEquals("flux-work", pullRequests.last().head(), "its pull request is opened once it is pushed");
     }
 
     @Test
     void aCommitTheServerNeverGotIsPushedRatherThanReportedAsNoChanges() throws Exception {
         String repoUrl = bareRepo.toUri().toString();
-        // A pull request proposed without credentials stays a commit in the workspace only.
-        HelmDeployRequest proposed = request(repoUrl, RELEASE, "kdps-change");
-        proposed.getGit().setCommitMode("PR_MODE");
-        FluxGitOpsBackend.CommitResult stub = backend().commit(proposed, null, planned());
-        assertTrue(stub.id().startsWith("PR-STUB:"), stub.id());
-        assertNull(GitTestServers.head(bareRepo, "kdps-change"));
+        FluxGitOpsBackend.CommitResult deployed = backend().commit(request(repoUrl), null, planned());
+        // The next change, committed in the release's workspace but never pushed (Ambari stopped in between).
+        HelmDeployRequest changed = request(repoUrl);
+        changed.setValues(new LinkedHashMap<>(Map.of("replicaCount", 3)));
+        Path workspace = tmp.resolve("flux").resolve("gitops-" + NS + "-" + RELEASE);
+        try (Git g = Git.open(workspace.toFile())) {
+            Path manifest = workspace.resolve(RELEASE_DIR).resolve("helmrelease.yaml");
+            Files.writeString(manifest, Files.readString(manifest).replace("replicaCount: 2", "replicaCount: 3"));
+            g.commit().setAll(true).setMessage("never pushed").setAuthor("admin", "admin@ambari").call();
+        }
 
-        // The same change committed directly finds nothing new to commit, but Git does not hold it yet.
-        FluxGitOpsBackend.CommitResult direct = backend().commit(request(repoUrl, RELEASE, "kdps-change"), null,
-                planned());
+        FluxGitOpsBackend.CommitResult redeployed = backend().commit(changed, null, planned());
 
-        assertNotEquals("NO_CHANGES", direct.id());
-        assertTrue(direct.committed());
-        assertEquals(stub.commitSha().replace("PR-STUB:", ""), GitTestServers.head(bareRepo, "kdps-change"),
-                "the commit made for the pull request is what was pushed");
-        assertEquals(direct.commitSha(), GitTestServers.head(bareRepo, "kdps-change"));
+        assertNotEquals("NO_CHANGES", redeployed.id());
+        assertTrue(redeployed.committed());
+        assertEquals(redeployed.commitSha(), GitTestServers.head(bareRepo, "main"), "the change is on the server");
+        assertEquals(deployed.commitSha(), commitOnServer(redeployed.commitSha()).getParent(0).getName());
+        assertTrue(published("main", RELEASE_DIR + "/helmrelease.yaml").contains("replicaCount: 3"));
     }
 
     // ---------------------------------------------------------------- branches merged and deleted on the server
 
-    /** A deploy proposed as a pull request on {@code kdps-pr}, with the token PR mode needs. */
+    /** A deploy proposed as a pull request, on the branch KDPS chooses, with the token PR mode needs. */
     private HelmDeployRequest pullRequest(int replicas) {
-        HelmDeployRequest request = request(bareRepo.toUri().toString(), RELEASE, "kdps-pr");
-        request.getGit().setCommitMode("PR_MODE");
-        request.getGit().setAuthToken("t0k");
+        HelmDeployRequest request = proposedOn(bareRepo.toUri().toString(), null);
         request.setValues(new LinkedHashMap<>(Map.of("replicaCount", replicas)));
         return request;
     }
@@ -409,11 +423,15 @@ class FluxGitOpsBackendPushFailureTest {
         FluxGitOpsBackend.CommitResult proposed = backend().commit(pullRequest(2), null, planned());
         assertTrue(proposed.committed());
         assertFalse(proposed.appliedOnCommit(), "a pull request waits to be merged");
-        assertEquals(proposed.commitSha(), GitTestServers.head(bareRepo, "kdps-pr"));
+        String branch = proposed.branch();
+        assertEquals(proposed.commitSha(), GitTestServers.head(bareRepo, branch));
+        assertEquals(new FakePullRequests.Opened("1", "main", branch, "Flux GitOps (PR) apply " + NS + "/" + RELEASE,
+                "t0k"), pullRequests.last());
 
         // Merged as one new commit, and the branch deleted after its merge (the default of several Git servers): the
         // commit proposed is on none of the server's branches, yet main holds its change.
-        String merged = GitTestServers.squashMergeAndDelete(bareRepo, "kdps-pr", "main");
+        String merged = GitTestServers.squashMergeAndDelete(bareRepo, branch, "main");
+        pullRequests.merge("1");
 
         // A redeploy with the same values: a resync, a security refresh.
         FluxGitOpsBackend.CommitResult redeployed = backend().commit(pullRequest(2), null, planned());
@@ -421,63 +439,72 @@ class FluxGitOpsBackendPushFailureTest {
         assertEquals("NO_CHANGES", redeployed.id());
         assertFalse(redeployed.committed());
         assertTrue(redeployed.appliedOnCommit(), "main, which Flux reads, holds the release as deployed");
-        assertNull(GitTestServers.head(bareRepo, "kdps-pr"), "the merged branch is not pushed again");
+        assertNull(GitTestServers.head(bareRepo, branch), "the merged branch is not pushed again");
         assertEquals(merged, GitTestServers.head(bareRepo, "main"));
+        assertEquals(1, pullRequests.opened.size(), "nothing to propose");
 
-        // A later change is proposed on top of main, without the commit merged already.
+        // A later change is proposed on a new branch from main, without the commit merged already.
         FluxGitOpsBackend.CommitResult changed = backend().commit(pullRequest(3), null, planned());
         assertTrue(changed.committed());
         assertFalse(changed.appliedOnCommit());
-        assertEquals(changed.commitSha(), GitTestServers.head(bareRepo, "kdps-pr"));
+        assertNotEquals(branch, changed.branch());
+        assertEquals(changed.commitSha(), GitTestServers.head(bareRepo, changed.branch()));
         assertEquals(merged, commitOnServer(changed.commitSha()).getParent(0).getName());
-        assertTrue(published("kdps-pr", RELEASE_DIR + "/helmrelease.yaml").contains("replicaCount: 3"));
+        assertTrue(published(changed.branch(), RELEASE_DIR + "/helmrelease.yaml").contains("replicaCount: 3"));
+        assertEquals(new FakePullRequests.Opened("2", "main", changed.branch(),
+                "Flux GitOps (PR) apply " + NS + "/" + RELEASE, "t0k"), pullRequests.last());
     }
 
     @Test
     void aWorkingBranchSquashMergedAndDeletedSinceIsNotPushedAgainByARedeployWithTheSameValues() throws Exception {
         String repoUrl = bareRepo.toUri().toString();
-        FluxGitOpsBackend.CommitResult committed = backend().commit(request(repoUrl, RELEASE, "flux-work"), null,
-                planned());
+        FluxGitOpsBackend.CommitResult committed = backend().commit(proposedOn(repoUrl, "flux-work"), null, planned());
         assertTrue(committed.committed());
         assertFalse(committed.appliedOnCommit(), "a working branch waits to be merged into main");
         GitTestServers.squashMergeAndDelete(bareRepo, "flux-work", "main");
+        pullRequests.merge("1");
 
-        FluxGitOpsBackend.CommitResult redeployed = backend().commit(request(repoUrl, RELEASE, "flux-work"), null,
+        FluxGitOpsBackend.CommitResult redeployed = backend().commit(proposedOn(repoUrl, "flux-work"), null,
                 planned());
 
         assertEquals("NO_CHANGES", redeployed.id());
         assertFalse(redeployed.committed());
         assertTrue(redeployed.appliedOnCommit(), "main holds the release as deployed");
+        assertEquals("main", redeployed.branch());
         assertNull(GitTestServers.head(bareRepo, "flux-work"), "the merged branch is not pushed again");
     }
 
     @Test
-    void aPullRequestDeletedWithoutItsMergeIsProposedAgainByARedeploy() throws Exception {
+    void aPullRequestClosedWithoutItsMergeIsProposedAgainFromMainByARedeploy() throws Exception {
         FluxGitOpsBackend.CommitResult proposed = backend().commit(pullRequest(2), null, planned());
-        GitTestServers.deleteBranch(bareRepo, "kdps-pr");
+        GitTestServers.deleteBranch(bareRepo, proposed.branch());
+        pullRequests.close("1");
 
         FluxGitOpsBackend.CommitResult redeployed = backend().commit(pullRequest(2), null, planned());
 
-        // Main does not hold the change: it is pushed again rather than reported as already in Git.
+        // Main does not hold the change: it is proposed again rather than reported as already in Git.
         assertTrue(redeployed.committed());
         assertFalse(redeployed.appliedOnCommit());
-        assertEquals(proposed.commitSha(), GitTestServers.head(bareRepo, "kdps-pr"));
+        assertNotEquals(proposed.branch(), redeployed.branch(), "a new branch, from main");
+        assertEquals(seed, commitOnServer(redeployed.commitSha()).getParent(0).getName());
+        assertEquals("2", pullRequests.last().number());
+        assertEquals(redeployed.branch(), pullRequests.last().head());
         assertNull(published("main", RELEASE_DIR + "/helmrelease.yaml"));
     }
 
     @Test
     void anUninstallOfAPullRequestReleaseMergedAndDeletedSinceDoesNotPushTheMergedCommitAgain() throws Exception {
-        backend().commit(pullRequest(2), null, planned());
-        String merged = GitTestServers.squashMergeAndDelete(bareRepo, "kdps-pr", "main");
+        String branch = backend().commit(pullRequest(2), null, planned()).branch();
+        String merged = GitTestServers.squashMergeAndDelete(bareRepo, branch, "main");
         // The removal, proposed on the branch and merged the same way, then the uninstall retried.
-        backend().destroy(bareRepo.toUri().toString(), "kdps-pr", "main", RELEASE_DIR, "t0k", null, NS, RELEASE);
-        String removed = GitTestServers.squashMergeAndDelete(bareRepo, "kdps-pr", "main");
+        backend().destroy(bareRepo.toUri().toString(), branch, "main", RELEASE_DIR, "t0k", null, NS, RELEASE);
+        String removed = GitTestServers.squashMergeAndDelete(bareRepo, branch, "main");
         assertNotEquals(merged, removed);
         assertNull(published("main", RELEASE_DIR + "/helmrelease.yaml"));
 
-        backend().destroy(bareRepo.toUri().toString(), "kdps-pr", "main", RELEASE_DIR, "t0k", null, NS, RELEASE);
+        backend().destroy(bareRepo.toUri().toString(), branch, "main", RELEASE_DIR, "t0k", null, NS, RELEASE);
 
-        assertNull(GitTestServers.head(bareRepo, "kdps-pr"), "the merged removal is not pushed again");
+        assertNull(GitTestServers.head(bareRepo, branch), "the merged removal is not pushed again");
         assertEquals(removed, GitTestServers.head(bareRepo, "main"));
     }
 

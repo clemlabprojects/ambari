@@ -1493,6 +1493,12 @@ export async function submitHelmDeploy(payload: {
 
 /** What an uninstall could not take back itself and leaves to an administrator. */
 export interface UninstallNotes {
+  /** The removal of a GitOps release waits for its pull request to be merged: the release keeps running until then. */
+  pendingDelete?: boolean;
+  /** The pull request removing the release. */
+  pullRequestUrl?: string;
+  /** What finishes the removal. */
+  message?: string;
   /** Polaris access the release keeps. */
   polarisCleanup?: string;
   /** OpenShift SCC grants that KDPS did not take back (made outside KDPS, or still used by another release), with the platform team's commands. */

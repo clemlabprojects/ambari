@@ -11,6 +11,22 @@
 
 import type { HelmRelease } from '../types';
 
+/**
+ * The Git options a redeploy of a GitOps release sends back: its repository, the base branch Flux reconciles and the
+ * commit mode it was deployed with, as recorded; not main when it is only assumed for a release recorded before base
+ * branches were, which the server would then record as the branch Flux reads. Never a working branch: a direct commit goes to the base branch, and
+ * the backend picks the branch of a pull request (the release's own while it is open, else a new one from the base
+ * branch). Undefined for a release deployed with Helm.
+ */
+export function gitOptionsForRelease(release: HelmRelease) {
+  if (release.deploymentMode !== 'FLUX_GITOPS') return undefined;
+  return {
+    repoUrl: release.gitRepoUrl,
+    baseBranch: release.gitBaseBranchAssumed ? undefined : release.gitBaseBranch,
+    commitMode: release.gitCommitMode,
+  };
+}
+
 export function releaseRedeployPayload(release: HelmRelease, values: any, git?: any) {
   return {
     chart: release.chartRef || release.chart,

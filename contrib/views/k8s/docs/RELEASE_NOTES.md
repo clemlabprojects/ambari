@@ -40,3 +40,29 @@ These services were offered by pre-release builds and are no longer in the servi
   your existing Git server under Git Repositories." The GitLab chart runs its pods under fixed user IDs that
   OpenShift's default security policy (the `restricted-v2` SCC) rejects, so the install could never finish there.
   GitOps deployments work with your existing Git server once it is registered under Git Repositories.
+
+### GitOps deployments
+
+- Every change of a GitOps release now lands on the base branch that Flux reconciles (main unless you choose another
+  one). A direct commit is pushed to that branch; the "Working branch" field is only offered for pull requests, and a
+  direct commit naming another branch is refused.
+- In pull request mode, each change is added to the release's pull request while it is open. Once that pull request is
+  merged or closed, the next change opens a new pull request into the base branch from a new branch. A change that no
+  longer goes through the release's open pull request (a switch to direct commit, another base branch or another
+  working branch) closes that pull request first, so merging it later cannot bring back what it proposed. Pull requests are
+  opened on GitHub (github.com and GitHub Enterprise), GitLab (including a custom port or path) and Gitea; any other
+  Git server is refused with a clear error, and pull request mode needs the access token of the Git server.
+- Uninstalling a release deployed in pull request mode opens a pull request that removes it. The release keeps running,
+  shown as "Removal pending", until that pull request is merged; uninstall it again then to finish removing it from the
+  cluster and KDPS.
+- Releases deployed in direct commit mode by an earlier version with an empty working branch were committed to a branch
+  of their own, which Flux never read. Their next deploy commits them to main.
+- A direct commit is refused when the Git server does not have the base branch (for example a repository whose branch
+  is master, deployed to with the default main), instead of creating a branch Flux does not read. A pull request whose
+  working branch is the base branch itself is refused too: the change would reach that branch without review.
+- Uninstalling a release whose pull request is still open closes that pull request, so merging it later cannot bring
+  the release back. If its removal pull request is closed without being merged, the release is no longer shown as
+  "Removal pending".
+- An uninstall is refused, and the release kept, when KDPS cannot tell where Flux reads it: its base branch was deleted
+  on the Git server, or it was deployed in pull request mode by an earlier version, which did not record its base
+  branch, and main does not hold it. Deploy the release once more, naming its base branch, then uninstall it.

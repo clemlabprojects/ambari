@@ -50,6 +50,10 @@ public class HelmReleaseDTO {
     public String deploymentMode; // DIRECT_HELM (default) or FLUX_GITOPS
     public String gitCommitSha;
     public String gitBranch;
+    public String gitBaseBranch; // the branch Flux reconciles, which every change of the release lands on
+    public Boolean gitBaseBranchAssumed; // true when no base branch is recorded and main is only assumed
+    public String gitCommitMode; // DIRECT_COMMIT or PR_MODE, as the release was last deployed
+    public Boolean gitPendingDelete; // true while the uninstall waits for its removal pull request to be merged
     public String gitPath;
     public String gitRepoUrl;
     public String gitPrUrl;

@@ -28,7 +28,7 @@ import { getPods, listDeployments, type DeploymentRow } from '../api/client';
 import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
-import { releaseRedeployPayload } from './releaseRedeploy';
+import { gitOptionsForRelease, releaseRedeployPayload } from './releaseRedeploy';
 import { offersCatalogs } from './releaseCatalogs';
 import { offeredOnPlatform } from './catalogPlatforms';
 import type { MenuProps } from 'antd';
@@ -121,20 +121,6 @@ const HelmReleasesPage: React.FC = () => {
   const offeredServiceKeys = useMemo(
     () => Object.keys(serviceDefinitions).filter((key) => offeredOnPlatform(serviceDefinitions[key], capabilities?.platform)),
     [serviceDefinitions, capabilities?.platform]);
-
-  /**
-   * Build GitOps options for a release when it is managed by Flux. This keeps
-   * submit payloads consistent across refresh/resync actions. Returns undefined
-   * for non-GitOps releases so callers can merge cleanly.
-   */
-  const gitOptionsForRelease = useCallback((release: HelmRelease) => {
-    if (release.deploymentMode !== 'FLUX_GITOPS') return undefined;
-    return {
-      repoUrl: release.gitRepoUrl,
-      branch: release.gitBranch,
-      commitMode: release.gitPrNumber ? 'PR_MODE' : 'DIRECT_COMMIT',
-    };
-  }, []);
 
   const releaseKey = useCallback((release: HelmRelease) => `${release.namespace}/${release.name}`, []);
 
@@ -815,6 +801,23 @@ const HelmReleasesPage: React.FC = () => {
                   if (record.repoId) params.set('repoId', record.repoId);
                   if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
                   const notes = await uninstallHelm(record.name, record.namespace, params);
+                  if (notes?.pendingDelete) {
+                    // A GitOps release removed through a pull request keeps running until it is merged.
+                    Modal.info({
+                      title: `Removal of ${record.name} proposed in a pull request`,
+                      width: 640,
+                      content: (
+                        <Space direction="vertical">
+                          <span>{notes.message}</span>
+                          {notes.pullRequestUrl ? (
+                            <a href={notes.pullRequestUrl} target="_blank" rel="noreferrer">{notes.pullRequestUrl}</a>
+                          ) : null}
+                        </Space>
+                      ),
+                    });
+                    await refresh();
+                    return;
+                  }
                   message.success(`Release ${record.name} uninstalled successfully.`);
                   // What KDPS did not take back itself (an SCC grant made by an administrator or still used by another
                   // release, a Ranger account it could not disable): what to do, and the commands that do it.
@@ -1017,6 +1020,8 @@ const HelmReleasesPage: React.FC = () => {
             const fluxTip = combined.deploymentMode === 'FLUX_GITOPS'
               ? [
                   combined.gitRepoUrl ? `Repo: ${combined.gitRepoUrl}` : null,
+                  combined.gitBaseBranch ? `Base branch (Flux): ${combined.gitBaseBranch}` : null,
+                  combined.gitCommitMode ? `Commit mode: ${combined.gitCommitMode === 'PR_MODE' ? 'pull request' : 'direct commit'}` : null,
                   combined.gitBranch ? `Branch: ${combined.gitBranch}` : null,
                   combined.gitPath ? `Path: ${combined.gitPath}` : null,
                   combined.gitCommitSha ? `Commit: ${combined.gitCommitSha}` : null,
@@ -1043,6 +1048,7 @@ const HelmReleasesPage: React.FC = () => {
             const gitTooltip = combined.deploymentMode === 'FLUX_GITOPS'
               ? [
                   combined.gitRepoUrl ? `Repo: ${combined.gitRepoUrl}` : null,
+                  combined.gitBaseBranch ? `Base branch (Flux): ${combined.gitBaseBranch}` : null,
                   combined.gitBranch ? `Branch: ${combined.gitBranch}` : null,
                   combined.gitPath ? `Path: ${combined.gitPath}` : null
                 ].filter(Boolean).join('\n')
@@ -1053,6 +1059,7 @@ const HelmReleasesPage: React.FC = () => {
             if (combined.restartRequired && combined.serviceKey) extraTags.push(<Tag key="restart" color="orange">Restart required</Tag>);
             if (combined.securityProfileStale) extraTags.push(<Tag key="security" color="orange">Security refresh</Tag>);
             if (combined.deploymentMode === 'FLUX_GITOPS') extraTags.push(<Tooltip key="gitops" title={fluxTip || 'Flux GitOps'}><Tag color="blue">GitOps</Tag></Tooltip>);
+            if (combined.gitPendingDelete) extraTags.push(<Tooltip key="pending-delete" title={combined.message || 'The removal waits for its pull request to be merged'}><Tag color="volcano">Removal pending</Tag></Tooltip>);
             if (combined.deploymentMode === 'FLUX_GITOPS' && combined.sourceStatus) {
               const isReady = combined.sourceStatus?.toLowerCase() === 'true' || combined.sourceStatus?.toLowerCase() === 'ready';
               extraTags.push(<Tooltip key="repo" title={combined.sourceMessage || 'HelmRepository status'}><Tag color={isReady ? 'green' : 'orange'}>Repo {combined.sourceStatus}</Tag></Tooltip>);
@@ -1320,7 +1327,7 @@ const HelmReleasesPage: React.FC = () => {
                     {/* GitOps/reconcile — only shown when the release is actually Flux-managed */}
                     {isGitOps ? (
                       <Descriptions column={1} size="small" bordered>
-                        <Descriptions.Item label="GitOps repo">{rel.gitRepoUrl || '—'}{rel.gitBranch ? ` (${rel.gitBranch})` : ''}{rel.gitPath ? ` · ${rel.gitPath}` : ''}</Descriptions.Item>
+                        <Descriptions.Item label="GitOps repo">{rel.gitRepoUrl || '—'}{rel.gitBaseBranch ? ` (${rel.gitBaseBranch})` : rel.gitBranch ? ` (${rel.gitBranch})` : ''}{rel.gitPath ? ` · ${rel.gitPath}` : ''}</Descriptions.Item>
                         <Descriptions.Item label="Reconcile">{rel.reconcileState || '—'}{rel.staleGeneration ? <Tag color="blue" style={{ marginLeft: 8 }}>reconciling</Tag> : null}{rel.lastHandledReconcileAt ? ` · ${rel.lastHandledReconcileAt}` : ''}</Descriptions.Item>
                         {rel.conditions?.length ? (
                           <Descriptions.Item label="Conditions">

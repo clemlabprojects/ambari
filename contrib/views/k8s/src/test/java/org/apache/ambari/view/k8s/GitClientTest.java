@@ -320,6 +320,52 @@ class GitClientTest {
         assertEquals(1, client.unpublishedCommits());
     }
 
+    @Test
+    void aPullRequestBranchStartsFromTheBaseBranchWhateverALocalBranchOfThatNameHeld(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        // A change once proposed on flux-work, never pushed: the local branch keeps its commit.
+        client.checkoutWorkBranch("flux-work", BRANCH);
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "replicas: 2\n");
+        String stale = client.commit("propose trino");
+
+        client.sync();
+        client.checkoutWorkBranch("flux-work", BRANCH);
+
+        assertEquals(remoteHead(tmp), client.headCommit(), "started again from main: " + stale + " is not kept");
+        assertTrue(Files.notExists(tmp.resolve("ws/apps/trino/helmrelease.yaml")));
+        assertEquals(0, client.unpublishedCommits());
+
+        // A branch the server has is taken as the server holds it: the open pull request's commits.
+        client.writeFile(Path.of("apps/trino/helmrelease.yaml"), "replicas: 3\n");
+        String proposed = client.commit("propose trino");
+        client.push();
+        client.sync();
+        client.checkoutWorkBranch("flux-work", BRANCH);
+        assertEquals(proposed, client.headCommit());
+    }
+
+    @Test
+    void aPullRequestBranchNeedsTheBaseBranchOnTheServer(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null);
+        client.sync();
+
+        java.io.IOException missing = org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                () -> client.checkoutWorkBranch("flux-work", "production"));
+
+        assertTrue(missing.getMessage().startsWith("Branch production is not on " + url + ": a pull request needs the"
+                + " branch it is merged into."), missing.getMessage());
+    }
+
+    @Test
+    void generatedBranchesAreUniqueAndNamedAfterTheirPrefix() {
+        String first = GitClient.generateBranch("flux");
+        assertTrue(first.matches("flux-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"), first);
+        org.junit.jupiter.api.Assertions.assertNotEquals(first, GitClient.generateBranch("flux"));
+    }
+
     private static String remoteHead(Path tmp) throws Exception {
         try (Git g = Git.open(tmp.resolve("remote.git").toFile())) {
             return g.getRepository().resolve("refs/heads/" + BRANCH).getName();

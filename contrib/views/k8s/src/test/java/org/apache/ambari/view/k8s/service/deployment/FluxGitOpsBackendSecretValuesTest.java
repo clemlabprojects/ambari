@@ -183,8 +183,13 @@ public class FluxGitOpsBackendSecretValuesTest {
         return request;
     }
 
+    /** The pull requests of the Git server, which a pull request deploy opens. */
+    private final FakePullRequests pullRequests = new FakePullRequests();
+
     private FluxGitOpsBackend backend() {
-        return new FluxGitOpsBackend(fluxRoot, k8s, ctx);
+        FluxGitOpsBackend backend = new FluxGitOpsBackend(fluxRoot, k8s, ctx);
+        backend.setPullRequests(pullRequests);
+        return backend;
     }
 
     private String remoteHead() throws Exception {
@@ -227,10 +232,15 @@ public class FluxGitOpsBackendSecretValuesTest {
         return name.group(1);
     }
 
-    /** A direct commit to a working branch other than the base branch, which Flux reconciles. */
+    /**
+     * A change proposed in a pull request from the working branch {@code flux-work}: Flux applies it only once it is
+     * merged into the base branch.
+     */
     private HelmDeployRequest workingBranchRequest(String bindPassword) {
         HelmDeployRequest request = trinoRequest(bindPassword);
         request.getGit().setBranch("flux-work");
+        request.getGit().setCommitMode("PR_MODE");
+        request.getGit().setAuthToken("t0k");
         return request;
     }
 
@@ -365,10 +375,13 @@ public class FluxGitOpsBackendSecretValuesTest {
         HelmDeployRequest proposed = trinoRequest("Rotated-Pass-77");
         proposed.getGit().setCommitMode("PR_MODE");
         proposed.getGit().setBranch("kdps-rotate");
+        proposed.getGit().setAuthToken("t0k");
 
         String sha = backend().apply(proposed, null);
 
-        assertTrue(sha, sha.startsWith("PR-STUB:"));
+        assertNotNull("proposed on its branch", published("kdps-rotate", RELEASE_DIR + "/helmrelease.yaml"));
+        assertEquals(sha, 40, sha.length());
+        assertEquals("kdps-rotate", pullRequests.last().head());
         assertEquals("the running release reads the same values", liveValues, secretPayloads.get("analytics/trino-kdps-values"));
         assertEquals(liveDependencyValues, secretPayloads.get("analytics/ldap-proxy-kdps-values"));
         verify(k8s, never()).requestFluxReconcile(anyString(), anyString());
@@ -619,7 +632,7 @@ public class FluxGitOpsBackendSecretValuesTest {
     }
 
     @Test
-    public void aDirectCommitToAWorkingBranchNeverChangesTheSecretTheRunningReleaseReads() throws Exception {
+    public void aChangeOnAPullRequestBranchNeverChangesTheSecretTheRunningReleaseReads() throws Exception {
         String deployed = backend().apply(trinoRequest(), null);
         String liveValues = secretPayloads.get("analytics/trino-kdps-values");
         String liveDependencyValues = secretPayloads.get("analytics/ldap-proxy-kdps-values");
@@ -700,15 +713,21 @@ public class FluxGitOpsBackendSecretValuesTest {
         K8sReleaseEntity meta = new K8sReleaseEntity();
         meta.setGitBranch("kdps-change");
         meta.setGitCommitMode("PR_MODE");
-        assertNull("the base of a pull request is not known", FluxGitOpsBackend.reconciledBranch(meta));
+        assertEquals("never the branch of a pull request: main for a release recorded before its base branch was",
+                "main", FluxGitOpsBackend.recordedBaseBranch(meta));
         meta.setGitBaseBranch("production");
-        assertEquals("production", FluxGitOpsBackend.reconciledBranch(meta));
+        assertEquals("production", FluxGitOpsBackend.recordedBaseBranch(meta));
 
         K8sReleaseEntity direct = new K8sReleaseEntity();
         direct.setGitBranch("main");
         direct.setGitCommitMode("DIRECT_COMMIT");
-        assertEquals("a direct commit goes where Flux reads", "main", FluxGitOpsBackend.reconciledBranch(direct));
-        assertNull(FluxGitOpsBackend.reconciledBranch(null));
+        assertEquals("a direct commit goes where Flux reads", "main", FluxGitOpsBackend.recordedBaseBranch(direct));
+        direct.setGitBranch("production");
+        assertEquals("the branch the operator committed to, which Flux read", "production",
+                FluxGitOpsBackend.recordedBaseBranch(direct));
+        direct.setGitBranch("flux-3f2a1c4e-0b5d-4c6e-9f7a-8b9c0d1e2f3a");
+        assertEquals("never a branch KDPS generated", "main", FluxGitOpsBackend.recordedBaseBranch(direct));
+        assertNull(FluxGitOpsBackend.recordedBaseBranch(null));
     }
 
     private static Secret secret(String name, boolean managed) {

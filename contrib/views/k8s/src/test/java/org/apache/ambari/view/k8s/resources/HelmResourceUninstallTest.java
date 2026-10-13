@@ -44,6 +44,7 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -113,7 +114,7 @@ class HelmResourceUninstallTest {
             assertTrue(error.contains("team-a/trino") || error.contains(String.valueOf(foreign)),
                     "names the release or the recorded directory: " + error);
             verify(flux, never()).checkRemovable(any());
-            verify(flux, never()).removeFromGit(any());
+            verify(flux, never()).destroy(anyString(), anyString());
             verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
             verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
             verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
@@ -126,7 +127,7 @@ class HelmResourceUninstallTest {
         K8sReleaseEntity meta = recorded("clusters/default/team-a/trino");
         doThrow(new FluxGitOpsBackend.NotOwnDirectoryException("The Git directory of release team-a/trino holds the"
                 + " HelmRelease team-b/trino"))
-                .when(flux).removeFromGit(meta);
+                .when(flux).destroy(NS, RELEASE);
 
         Response response = uninstall();
 
@@ -143,7 +144,7 @@ class HelmResourceUninstallTest {
         doThrow(new GitPushRejectedException("https://git.example.org/platform/gitops.git", "main",
                 RemoteRefUpdate.Status.REJECTED_OTHER_REASON, "pre-receive hook declined",
                 "Not allowed to push to protected branch main"))
-                .when(flux).removeFromGit(meta);
+                .when(flux).destroy(NS, RELEASE);
 
         Response response = uninstall();
 
@@ -160,7 +161,7 @@ class HelmResourceUninstallTest {
     @Test
     void anUninstallWhileAnotherGitOpsOperationHoldsTheReleaseIsRefusedWith409() throws Exception {
         K8sReleaseEntity meta = recorded("clusters/default/team-a/trino");
-        doThrow(new FluxGitOpsBackend.GitOpsBusyException(NS, RELEASE)).when(flux).removeFromGit(meta);
+        doThrow(new FluxGitOpsBackend.GitOpsBusyException(NS, RELEASE)).when(flux).destroy(NS, RELEASE);
 
         Response response = uninstall();
 
@@ -180,8 +181,10 @@ class HelmResourceUninstallTest {
 
         assertEquals(200, response.getStatus());
         verify(flux).checkRemovable(meta);
-        verify(flux).removeFromGit(meta);
+        verify(flux).destroy(NS, RELEASE);
         verify(commandService).revokePolarisForRelease(eq(NS), eq(RELEASE), any(), any());
+        verify(commandService).removeSccGrantsForRelease(eq(NS), eq(RELEASE), any());
+        verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(releaseMetadata).delete(NS, RELEASE);
     }
 
@@ -212,5 +215,87 @@ class HelmResourceUninstallTest {
         Response response = uninstall();
 
         assertEquals(200, response.getStatus());
+    }
+
+    @Test
+    void aRemovalProposedInAPullRequestKeepsTheReleaseUntilItIsMerged() throws Exception {
+        K8sReleaseEntity meta = recorded("clusters/default/team-a/trino");
+        meta.setGitCommitMode("PR_MODE");
+        meta.setGitBaseBranch("production");
+        // What the backend records once it has opened the pull request removing the release.
+        K8sReleaseEntity pending = recorded("clusters/default/team-a/trino");
+        pending.setGitCommitMode("PR_MODE");
+        pending.setGitBaseBranch("production");
+        pending.setGitBranch("flux-remove-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+        pending.setGitPrUrl("https://git.example.org/platform/gitops/pulls/7");
+        pending.setGitPrNumber("7");
+        pending.setGitPendingDelete(true);
+        when(releaseMetadata.find(NS, RELEASE)).thenReturn(meta, pending);
+
+        Response response = uninstall();
+
+        assertEquals(202, response.getStatus());
+        Map<?, ?> answer = (Map<?, ?>) response.getEntity();
+        assertEquals(Boolean.TRUE, answer.get("pendingDelete"));
+        assertEquals("https://git.example.org/platform/gitops/pulls/7", answer.get("pullRequestUrl"));
+        assertEquals("The removal of team-a/trino is proposed in pull request "
+                + "https://git.example.org/platform/gitops/pulls/7 into production. The release keeps running until it"
+                + " is merged; uninstall it again then to finish removing it from the cluster and KDPS.",
+                answer.get("message"));
+        verify(flux).destroy(NS, RELEASE);
+        // Flux keeps running the release: it keeps its catalog credential, its SCCs and its record.
+        verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
+        verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+        verify(releaseMetadata, never()).delete(anyString(), anyString());
+        verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
+    }
+
+    @Test
+    void anUninstallRunAgainWhileTheRemovalPullRequestIsOpenStillCleansNothing() throws Exception {
+        K8sReleaseEntity pending = recorded("clusters/default/team-a/trino");
+        pending.setGitCommitMode("PR_MODE");
+        pending.setGitBaseBranch("production");
+        pending.setGitBranch("flux-remove-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+        pending.setGitPrUrl("https://git.example.org/platform/gitops/pulls/7");
+        pending.setGitPrNumber("7");
+        pending.setGitPendingDelete(true);
+
+        Response first = uninstall();
+        Response second = uninstall();
+
+        assertEquals(202, first.getStatus());
+        assertEquals(202, second.getStatus());
+        verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
+        verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
+        verify(releaseMetadata, never()).delete(anyString(), anyString());
+    }
+
+    @Test
+    void finishingAPendingRemovalRunsEveryCleanupOnce() throws Exception {
+        // The removal pull request was merged: the base branch no longer holds the release, so the backend finishes
+        // the removal and deletes the record (and the Git credentials) itself.
+        K8sReleaseEntity pending = recorded("clusters/default/team-a/trino");
+        pending.setGitCommitMode("PR_MODE");
+        pending.setGitBaseBranch("production");
+        pending.setGitBranch("flux-remove-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+        pending.setGitPrUrl("https://git.example.org/platform/gitops/pulls/7");
+        pending.setGitPrNumber("7");
+        pending.setGitPendingDelete(true);
+        pending.setPlatformContextId("cdp-prod");
+        when(releaseMetadata.find(NS, RELEASE)).thenReturn(pending, (K8sReleaseEntity) null);
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        verify(flux, times(1)).checkRemovable(pending);
+        verify(flux, times(1)).destroy(NS, RELEASE);
+        verify(commandService, times(1)).revokePolarisForRelease(eq(NS), eq(RELEASE), any(), any());
+        verify(commandService, times(1)).removeSccGrantsForRelease(eq(NS), eq(RELEASE), any());
+        verify(commandService, times(1)).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), eq("cdp-prod"),
+                any());
+        verify(releaseMetadata, times(1)).delete(NS, RELEASE);
+        verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
     }
 }

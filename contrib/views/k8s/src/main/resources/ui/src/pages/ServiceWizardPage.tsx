@@ -30,6 +30,7 @@ import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
 import { deepMerge } from '../components/ServiceInstallationModal/bindings';
 import { seedFieldsFromRelease } from '../components/ServiceInstallationModal/seedFromRelease';
+import { gitOptionsToSubmit } from '../utils/gitOpsBranches';
 import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
 import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
@@ -833,7 +834,8 @@ const ServiceWizardPage: React.FC = () => {
               truststoreRefs: Array.isArray((installValues as any)?.truststoreRefs)
                 ? (installValues as any).truststoreRefs : [],
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
-              git: (installValues as any)?.git || undefined,
+              // A working branch left in the form names nothing for a direct commit, which the server refuses.
+              git: gitOptionsToSubmit((installValues as any)?.git) || undefined,
               // Snapshot of raw form state (envelope keys stripped) so backend can read
               // excludeFromValues form fields when rendering OIDC redirectUriTemplate etc.
               // Without this, JupyterHub's "{{jupyterHost}}" renders empty server-side and

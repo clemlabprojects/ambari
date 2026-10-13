@@ -305,6 +305,80 @@ public class GitClient {
     }
 
     /**
+     * Puts the workspace on the branch a pull request proposes a change from: as the server holds it when the server
+     * has the branch, otherwise started from {@code origin/<base>} as last fetched, whatever a local branch of that name
+     * held, as {@code git checkout -B <branch> origin/<base>} does. A branch left behind by an earlier change, merged
+     * or not, never leaks its commits into the new one. Uncommitted changes and new files are dropped.
+     *
+     * @param branch the branch the change is pushed to
+     * @param base   the branch the pull request is merged into
+     * @throws IOException when the server has neither branch: a pull request needs the branch it is merged into
+     */
+    public void checkoutWorkBranch(String branch, String base) throws IOException {
+        try (Git git = Git.open(workspace.toFile())) {
+            Repository repo = git.getRepository();
+            if (repo.exactRef(Constants.R_REMOTES + "origin/" + branch) != null) {
+                switchTo(git, branch);
+                return;
+            }
+            Ref start = repo.exactRef(Constants.R_REMOTES + "origin/" + base);
+            if (start == null || start.getObjectId() == null) {
+                throw new IOException(notOnServer(base, "a pull request needs the branch it is merged into"));
+            }
+            if (!branch.equals(repo.getBranch())) {
+                if (repo.exactRef(Constants.R_HEADS + branch) != null) {
+                    git.branchDelete().setBranchNames(branch).setForce(true).call();
+                }
+                git.checkout().setName(branch).setCreateBranch(true).setStartPoint(start.getName())
+                        .setUpstreamMode(SetupUpstreamMode.NOTRACK).setForced(true).call();
+            }
+            git.reset().setMode(ResetCommand.ResetType.HARD).setRef(start.getName()).call();
+            git.clean().setCleanDirectories(true).call();
+        } catch (GitAPIException e) {
+            throw new IOException("git checkout -B " + branch + " origin/" + base + " failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** Whether the server has the branch, as last fetched ({@code origin/<branch>}). */
+    public boolean isOnServer(String branch) throws IOException {
+        if (branch == null || branch.isBlank()) {
+            return false;
+        }
+        try (Git git = Git.open(workspace.toFile())) {
+            Ref published = git.getRepository().exactRef(Constants.R_REMOTES + "origin/" + branch);
+            return published != null && published.getObjectId() != null;
+        }
+    }
+
+    /**
+     * Refuses a branch the server does not have, as last fetched, unless the repository has no branch at all yet: its
+     * first commit creates the branch. Anywhere else, a push would create a new branch, from whatever the workspace
+     * started from, that nothing reads.
+     *
+     * @param needs why the branch must be there, as the message tells it
+     * @throws IOException naming the branch and the repository
+     */
+    public void requireOnServer(String branch, String needs) throws IOException {
+        if (isOnServer(branch)) {
+            return;
+        }
+        try (Git git = Git.open(workspace.toFile())) {
+            boolean empty = git.getRepository().getRefDatabase().getRefsByPrefix(Constants.R_REMOTES + "origin/")
+                    .stream().noneMatch(ref -> !ref.isSymbolic() && ref.getObjectId() != null);
+            if (empty) {
+                return;
+            }
+        }
+        throw new IOException(notOnServer(branch, needs));
+    }
+
+    /** That the server does not have a branch something needs, and what the operator can do. */
+    private String notOnServer(String branch, String needs) {
+        return "Branch " + branch + " is not on " + redact(repoUrl) + ": " + needs + ". Create it, or choose another"
+                + " base branch.";
+    }
+
+    /**
      * Puts the current branch back to what the server holds as last fetched ({@code origin/<branch>}), dropping the
      * commits made here, uncommitted changes and new files. On a branch the server does not have, only the
      * uncommitted changes and new files are dropped.
@@ -757,7 +831,10 @@ public class GitClient {
         }
     }
 
-    /** Generate a unique branch name for PR-style flows. */
+    /**
+     * A new, unique branch name for a pull request: {@code <prefix>-<uuid>}. Only a pull request gets one; a direct
+     * commit goes to the branch Flux reconciles.
+     */
     public static String generateBranch(String prefix) {
         return (prefix == null || prefix.isBlank() ? "gitops" : prefix) + "-" + UUID.randomUUID();
     }

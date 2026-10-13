@@ -26,10 +26,7 @@ import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 import java.io.IOException;
-import java.net.SocketTimeoutException;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -39,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -80,7 +78,12 @@ import org.slf4j.LoggerFactory;
  * its own Secret through {@code spec.valuesFrom} (see {@link GitOpsSecretValues}). Deploys submitted to the view go
  * through {@link GitOpsPlanBackend}: the command plan of a direct deploy, whose GITOPS_COMMIT step calls
  * {@link #commit}.
- * Status/destroy are still minimal and should be enhanced to read HelmRelease CRs and delete manifests.
+ *
+ * <p>Every change lands on the branch Flux reconciles (the base branch, recorded with the release): a direct commit is
+ * pushed to it, and a pull request is opened into it ({@link GitPullRequests}) from a branch of its own, started from
+ * the base branch for each change unless the pull request of the previous change is still open. An uninstall removes
+ * the release's manifests the same way: by a direct commit, or by a pull request whose merge the release's record
+ * waits for.</p>
  */
 public class FluxGitOpsBackend implements DeploymentBackend {
     private static final Logger LOG = LoggerFactory.getLogger(FluxGitOpsBackend.class);
@@ -88,7 +91,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     // Retry configuration constants
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final long RETRY_BASE_DELAY_MS = 500L;
-    private static final long HTTP_RETRY_BASE_DELAY_MS = 250L;
 
     /**
      * How many times a change is pushed when the branch keeps moving on the server meanwhile (other deploys pushing
@@ -172,8 +174,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     /**
      * What a GitOps commit did.
      *
-     * @param id                what {@link #apply} returns: the commit, {@code NO_CHANGES}, or {@code PR-STUB:<sha>}
-     *                          for a pull request commit that could not be pushed
+     * @param id                what {@link #apply} returns: the commit, or {@code NO_CHANGES}
      * @param commitSha         the commit Git holds for the release, when known
      * @param committed         whether this deploy created a commit; false when Git already held the release
      * @param repoUrl           the Git repository
@@ -212,8 +213,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private final ViewContext viewContext;
     private final GitCredentialService gitCredentialService;
     private final ReleaseMetadataService releaseMetadataService;
-    private final HttpClient httpClient;
-    private final Duration httpTimeout = Duration.ofSeconds(10);
+    private GitPullRequests pullRequests;
     private final CommandUtils commandUtils;
     private final HelmService helmService;
     private final ConfigResolutionService configResolutionService = new ConfigResolutionService();
@@ -235,9 +235,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         this.viewContext = viewContext;
         this.gitCredentialService = new GitCredentialService(viewContext);
         this.releaseMetadataService = new ReleaseMetadataService(viewContext);
-        this.httpClient = httpClient == null
+        this.pullRequests = new GitPullRequests(httpClient == null
                 ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
-                : httpClient;
+                : httpClient);
         this.commandUtils = new CommandUtils(viewContext, kubernetesService);
         this.helmService = new HelmService(viewContext);
         this.securityProfileService = new SecurityProfileService(viewContext);
@@ -246,6 +246,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     /** How long an operation waits for another one on the same release ({@link #WORKSPACE_LOCK_WAIT}); for tests. */
     void setWorkspaceLockWait(Duration wait) {
         this.workspaceLockWait = wait;
+    }
+
+    /** The client of the Git servers' pull request APIs; for tests. */
+    void setPullRequests(GitPullRequests pullRequests) {
+        this.pullRequests = pullRequests;
     }
 
     /**
@@ -510,9 +515,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
     /**
      * Refuses a GitOps deploy that could not be committed, before anything is prepared for it: no Git repository, no
-     * credentials to push to it, no chart repository or chart version, a release directory inside or above that of
-     * another release KDPS deployed to the repository. The checks {@link #commit} makes, without touching Git or
-     * changing the request.
+     * credentials to push to it, a working branch other than the base branch for a direct commit, a pull request on a
+     * Git server KDPS cannot open one on, no chart repository or chart version, a release directory inside or above
+     * that of another release KDPS deployed to the repository. The checks {@link #commit} makes, without touching Git
+     * or changing the request.
      *
      * @throws IllegalArgumentException naming what is missing
      * @throws IllegalStateException    when a chart repository is not configured in KDPS
@@ -538,10 +544,59 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         chartVersion(request, context, existingMeta,
                 firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null));
         chartRepositoryYamls(repoName, request.getDependencies());
+        String commitMode = firstNonBlank(given.getCommitMode(),
+                existingMeta != null ? existingMeta.getGitCommitMode() : null);
+        checkWorkingBranch(commitMode, given.getBranch(),
+                firstNonBlank(given.getBaseBranch() == null ? null : given.getBaseBranch().trim(),
+                        recordedBaseBranch(existingMeta), DEFAULT_BASE_BRANCH), existingMeta);
+        if (isPullRequestMode(commitMode)) {
+            GitPullRequests.candidates(repoUrl.trim());
+        }
         GitSecrets gitSecrets = gitSecrets(given, repoUrl.trim(), request.getNamespace(), request.getReleaseName(),
                 existingMeta);
-        checkGitAccess(repoUrl.trim(), firstNonBlank(given.getCommitMode(),
-                existingMeta != null ? existingMeta.getGitCommitMode() : null), gitSecrets.token(), gitSecrets.sshKey());
+        checkGitAccess(repoUrl.trim(), commitMode, gitSecrets.token(), gitSecrets.sshKey());
+    }
+
+    /** The base branch of a release that never named one: Git's usual default branch. */
+    static final String DEFAULT_BASE_BRANCH = "main";
+
+    /** Whether a commit mode opens a pull request rather than committing to the base branch. */
+    static boolean isPullRequestMode(String commitMode) {
+        return "PR_MODE".equalsIgnoreCase(commitMode);
+    }
+
+    /**
+     * Refuses a working branch that would send the change elsewhere than its commit mode says. A direct commit goes to
+     * the base branch, which Flux reconciles: a change pushed anywhere else would never be applied, and a working
+     * branch only names the branch of a pull request. A pull request is opened from its working branch into the base
+     * branch: a working branch that is the base branch would push the change straight to the branch Flux reconciles,
+     * without the review the operator chose, and leave nothing to merge. The branch recorded for the release is let
+     * through, and ignored, for a redeploy that sends the record back as it read it.
+     *
+     * @throws IllegalArgumentException naming both branches
+     */
+    static void checkWorkingBranch(String commitMode, String branch, String baseBranch, K8sReleaseEntity existingMeta) {
+        if (branch == null || branch.isBlank()) {
+            return;
+        }
+        String named = branch.trim();
+        boolean recorded = existingMeta != null && named.equals(existingMeta.getGitBranch());
+        if (isPullRequestMode(commitMode)) {
+            if (named.equals(baseBranch) && !recorded) {
+                throw new IllegalArgumentException("A pull request is opened from its working branch into the base"
+                        + " branch " + baseBranch + ", which Flux reconciles, so the working branch cannot be "
+                        + baseBranch + " as well: the change would reach " + baseBranch + " without review. Leave the"
+                        + " working branch empty, name another branch, or choose Direct commit.");
+            }
+            return;
+        }
+        if (named.equals(baseBranch) || recorded) {
+            return;
+        }
+        throw new IllegalArgumentException("Direct commit pushes the change to the base branch " + baseBranch
+                + ", which Flux reconciles, so the working branch '" + DeployRequestValidator.shown(branch.trim())
+                + "' cannot be used: a working branch is only the branch of a pull request. Leave it empty, or choose"
+                + " to open a pull request.");
     }
 
     /**
@@ -706,8 +761,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         boolean isSsh = repoUrl.startsWith("git@") || repoUrl.startsWith("ssh://");
         boolean hasToken = token != null && !token.isBlank();
         boolean hasSshKey = sshKey != null && !sshKey.isBlank();
-        if ("PR_MODE".equalsIgnoreCase(commitMode) && isHttps && !hasToken) {
-            throw new IllegalArgumentException("PR mode requires an HTTPS token");
+        if (isPullRequestMode(commitMode) && !hasToken) {
+            throw new IllegalArgumentException("Pull request mode needs an access token of the Git server: KDPS opens"
+                    + " the pull request with it. Give the token with the deploy (over SSH, next to the SSH key).");
         }
         if (isHttps && !hasToken && !hasSshKey) {
             throw new IllegalArgumentException("GitOps over HTTPS requires authToken or sshKey");
@@ -723,7 +779,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * their command plan prepares the release as a direct deploy does and its GITOPS_COMMIT step calls
      * {@link #commit}.
      *
-     * @return the commit, {@code NO_CHANGES} when Git already holds the release, or {@code PR-STUB:<sha>}
+     * @return the commit, or {@code NO_CHANGES} when Git already holds the release
      */
     @Override
     public String apply(HelmDeployRequest request, DeploymentContext context) throws Exception {
@@ -734,6 +790,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * Writes the release's HelmRelease, HelmRepository and dependency manifests to Git and commits them (or opens a
      * pull request), the passwords and secrets going to the values Secrets the HelmReleases read. Idempotent: when Git
      * already holds the release as given, nothing is committed.
+     *
+     * <p>A direct commit is pushed to the base branch, which Flux reconciles. A pull request goes on the branch of the
+     * release's previous pull request while that one is still open; otherwise on a new branch started from the base
+     * branch as the server holds it, from which a pull request into the base branch is opened. Either way the change
+     * reaches the base branch once merged, and never brings back a change merged or dropped before.</p>
      *
      * @param planned what the deploy's command plan prepared, whose overrides are written into the values; {@code null}
      *                when nothing was planned, and this backend prepares Kerberos, the truststore, the mounts and the
@@ -749,17 +810,23 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
         final String namespace = request.getNamespace();
         final String release = request.getReleaseName();
+        // Each release owns its own git workspace directory.
+        // Operations on the same release are serialised via a per-release lock;
+        // operations on different releases still run in parallel.
+        // Taken before the release's record is read: whether the previous pull request is joined or closed is decided
+        // from it, and a deploy or uninstall that ran meanwhile may have opened another one, which a record read
+        // earlier would not know of and leave open.
+        Path repoDir = workspaceForRelease(namespace, release);
+        ReentrantLock workspaceLock = lockWorkspace(namespace, release);
+        try {
         final var existingMeta = releaseMetadataService.find(namespace, release);
         // A redeploy that names no platform context stays on the release's: an external context must not inherit the
         // local cluster's Kerberos state.
         CommandService.defaultPlatformContext(request, existingMeta);
 
-        // The branch Flux reconciles, as configured: mergeGitOptions falls back to the working branch for a redeploy
-        // that names no base branch, which says nothing about where Flux reads. Null when it was never recorded.
-        String requestedBase = request.getGit() != null ? request.getGit().getBaseBranch() : null;
-        String configuredBase = firstNonBlank(requestedBase,
-                existingMeta != null ? existingMeta.getGitBaseBranch() : null,
-                existingMeta == null ? "main" : null);
+        // Whether this deploy names its base branch, before the release's record or main fills it in.
+        final boolean baseNamed = request.getGit() != null && request.getGit().getBaseBranch() != null
+                && !request.getGit().getBaseBranch().isBlank();
         HelmDeployRequest.GitOptions git = mergeGitOptions(request, existingMeta);
         if (git == null || git.getRepoUrl() == null || git.getRepoUrl().isBlank()) {
             throw new IllegalArgumentException("Flux GitOps requires git.repoUrl");
@@ -770,7 +837,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
         logFluxInfo(namespace, release, "apply", "Starting Flux GitOps deploy (mode=%s, repo=%s)", git.getCommitMode(), repoUrl);
 
-        String baseBranch = firstNonBlank(git.getBaseBranch(), "main");
+        // The branch Flux reconciles: as given, else as recorded for the release, else main.
+        final String baseBranch = git.getBaseBranch();
+        final boolean prMode = isPullRequestMode(git.getCommitMode());
+        // Recorded as the release's base branch when the deploy names it, the record tells it, the release is new, or
+        // a direct commit puts the release on it; never main merely assumed for a pull request release recorded before
+        // its base branch was (knownBaseBranch), which an uninstall would then take for where Flux reads it.
+        final String baseToRecord = existingMeta == null || baseNamed || !prMode
+                || knownBaseBranch(existingMeta) != null ? baseBranch : null;
+        checkWorkingBranch(git.getCommitMode(), git.getBranch(), baseBranch, existingMeta);
         // The chart repository and version as a direct deploy resolves them: what this deploy names, else what the
         // release was deployed with. Written into the HelmRelease, so nothing is guessed.
         String repoName = firstNonBlank(context != null ? context.getRepoId() : null, request.getRepoId(),
@@ -811,12 +886,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String resolvedSecurityProfile = planned == null ? resolveSecurityProfileName(request.getSecurityProfile()) : null;
         SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
 
-        // Each release owns its own git workspace directory.
-        // Operations on the same release are serialised via a per-release lock;
-        // operations on different releases still run in parallel.
-        Path repoDir = workspaceForRelease(namespace, release);
-        ReentrantLock workspaceLock = lockWorkspace(namespace, release);
-        try {
+        checkNoRemovalPending(existingMeta, repoUrl, token);
+        // Before anything is prepared or pushed: a pull request the Git server cannot take would leave the change on a
+        // branch nobody merges, and the reuse of the previous pull request's branch depends on whether it is open, as
+        // does the closing of one this deploy no longer goes through.
+        WorkBranch work = workBranch(prMode, git.getBranch(), baseBranch, existingMeta, repoUrl, token);
 
         GitClient gitClient = new GitClient(repoDir, repoUrl, baseBranch, token, sshKey)
                 .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari")
@@ -824,14 +898,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "sync " + repoUrl);
 
-        String branchCandidate = firstNonBlank(git.getBranch(), existingMeta != null ? existingMeta.getGitBranch() : null, GitClient.generateBranch("flux"));
-        final String branch = branchCandidate;
+        final String branch = work.name();
         git.setBranch(branch);
-        withGitRetry(() -> { gitClient.checkoutBranch(branch); return null; }, "checkout " + branch);
-        // A pull request or working branch merged into the branch Flux reads as new commits, and deleted on the server
-        // since: started again from there, so a redeploy neither pushes its merged commits again nor proposes them
-        // once more with its own change.
-        gitClient.restartIfMergedInto(configuredBase);
+        if (prMode) {
+            // The open pull request's branch as the server holds it, or a new one from the base branch: never a local
+            // branch left over from a change merged or dropped since.
+            gitClient.checkoutWorkBranch(branch, baseBranch);
+        } else {
+            // Never a base branch the server does not have: pushed, the commit would create a branch Flux does not
+            // read (a repository whose branch is master, deployed to with the default main), and wait for Flux in vain.
+            gitClient.requireOnServer(baseBranch, "a direct commit goes to the branch Flux reconciles, and KDPS"
+                    + " does not create it");
+            withGitRetry(() -> { gitClient.checkoutBranch(branch); return null; }, "checkout " + branch);
+        }
         // As the branch holds them, which also covers releases deployed to the repository from elsewhere.
         checkApartFromOtherReleases(repoDir, targetDir, namespace, release);
 
@@ -961,21 +1040,18 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     // The same dependencies as a direct deploy: none on OpenShift that the platform provides, none
                     // that the settings do not need, none already on the cluster. One this release already manages
                     // through Flux is kept even though it is now "on the cluster": Flux installed it.
-                    // "Manages" = published on the base branch, not merely present in the local workspace.
+                    // "Manages" = published on the base branch, which Flux reads, not merely present in the local
+                    // workspace or on a pull request branch, which is not reconciled until merged.
                     Path depFile = dependencyFile(depDir, depReleaseName, "-" + HELM_RELEASE_FILE);
-                    // (the base branch; in direct-commit mode also the working branch this release pushes to, which
-                    // Flux reads; never a PR branch, which is not reconciled until merged)
                     Boolean onBase = gitClient.publishedOn(depFile, baseBranch);
-                    Boolean onWorking = "PR_MODE".equalsIgnoreCase(git.getCommitMode()) ? Boolean.FALSE
-                            : gitClient.publishedOn(depFile, branch);
-                    boolean managedHere = Boolean.TRUE.equals(onBase) || Boolean.TRUE.equals(onWorking);
+                    boolean managedHere = Boolean.TRUE.equals(onBase);
                     String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context, planned);
                     if (skipped != null) {
                         // A published file is left in place: the operator it installs (KEDA, the keytab webhook) is
                         // shared, and other releases may rely on it. One never published (e.g. in a still-open PR
                         // branch) is removed, so merging it cannot install a second copy. When the lookup failed,
                         // nothing is deleted.
-                        if (!managedHere && onBase != null && onWorking != null) {
+                        if (!managedHere && onBase != null) {
                             gitClient.deletePath(depFile);
                         }
                         logFluxInfo(namespace, release, "automation", "Dependency %s not written: %s", depKey, skipped);
@@ -1202,11 +1278,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         request.setValues(mergedValues);
         addServicePasswords(secrets, serviceKey, request, mergedValues);
 
-        boolean prMode = "PR_MODE".equalsIgnoreCase(git.getCommitMode());
-        // Only a direct commit to the branch Flux reconciles is applied as soon as it is pushed. Any other change (a pull
-        // request, a working branch still to merge, a branch whose role is unknown) must not alter the running release,
-        // yet Flux applies a change of the Secret the release reads at once.
-        boolean appliedOnCommit = !prMode && branch.equals(configuredBase);
+        // Only a direct commit, to the branch Flux reconciles, is applied as soon as it is pushed. A pull request must not
+        // alter the running release before it is merged, yet Flux applies a change of the Secret the release reads at
+        // once.
+        boolean appliedOnCommit = !prMode;
         // Once secret, always secret: a redeploy that re-submits the release's current values (resync, security
         // refresh, autoscaling) carries no form, yet those values hold what Flux merged in from the values Secrets.
         // What the Secrets hold now is recorded before anything is split.
@@ -1269,6 +1344,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     + "A very short or common password can match ordinary settings; if so, choose a stronger one.");
         }
 
+        // Before anything reaches the cluster or Git: once this deploy is recorded, nothing in KDPS remembers it.
+        closeSupersededPullRequest(work.supersededPullRequest(), existingMeta, repoUrl, token);
+
         String headBeforeCommit = gitClient.headCommit();
         // Written before the commit, so Flux never applies a HelmRelease whose values Secret is missing.
         List<ValuesSecret> secretsWritten = writeValuesSecrets(valuesSecrets);
@@ -1277,23 +1355,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 ? "Flux GitOps (PR) apply " + namespace + "/" + release
                 : "Flux GitOps apply " + namespace + "/" + release;
 
-        boolean canPush = (token != null && !token.isBlank()) || (sshKey != null && !sshKey.isBlank());
-        String commitSha = null;
+        String commitSha;
         try {
-            if (prMode && !canPush) {
-                // PR intent without credentials: keep a local commit as a stub and surface to the operator.
-                String stubSha = gitClient.commit(commitMsg);
-                if (stubSha != null) {
-                    commitSha = "PR-STUB:" + stubSha;
-                    LOG.warn("Flux GitOps PR mode requested but no credentials provided; created local commit stub {}", commitSha);
-                }
-            } else {
-                // Once the branch moved on the server, the release is written again on top of it, where another
-                // release may have taken a directory around this one's since the check above.
-                commitSha = commitAndPush(gitClient, commitMsg,
-                        () -> checkApartFromOtherReleases(repoDir, targetDir, namespace, release),
-                        namespace + "/" + release);
-            }
+            // Once the branch moved on the server, the release is written again on top of it, where another release
+            // may have taken a directory around this one's since the check above.
+            commitSha = commitAndPush(gitClient, commitMsg,
+                    () -> checkApartFromOtherReleases(repoDir, targetDir, namespace, release),
+                    namespace + "/" + release);
         } catch (Exception commitEx) {
             // Nothing reached Git, so nothing of this deploy may stay ahead of it: neither the Secrets Flux would apply
             // to the running release, nor a local commit the next deploy would take as published.
@@ -1303,12 +1371,39 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         boolean committed = commitSha != null;
         String alias = keepGitCredential(git, gitSecrets, repoUrl, namespace, release);
         // A change that did not land where Flux reads is applied anyway once Git already holds it there: a pull request
-        // or working branch merged since, which a redeploy then finds with nothing new to commit.
+        // merged since, which a redeploy then finds with nothing new to commit.
         boolean appliedNow = appliedOnCommit || (!committed && hrYaml.equals(
-                gitClient.publishedContent(targetDir.resolve(HELM_RELEASE_FILE), configuredBase)));
+                gitClient.publishedContent(targetDir.resolve(HELM_RELEASE_FILE), baseBranch)));
+        String recordedBranch = existingMeta != null ? existingMeta.getGitBranch() : null;
+        String prUrl = null;
+        String prNumber = null;
+        String prState = null;
         if (!committed) {
+            // Git already holds the change. The release's pull request is still the one recorded, open or merged since;
+            // not after a direct commit, nor one that proposed the release's removal and was closed since
+            // (checkNoRemovalPending), which the release no longer waits for, nor one this deploy closed: the base branch
+            // then holds the release.
+            if (prMode && existingMeta != null && !existingMeta.isGitPendingDelete()
+                    && work.supersededPullRequest() == null) {
+                GitPullRequests.PullRequestInfo open = work.openPullRequest();
+                prUrl = open != null ? open.url() : existingMeta.getGitPrUrl();
+                prNumber = open != null ? open.id() : existingMeta.getGitPrNumber();
+                prState = open != null ? firstNonBlank(open.state(), "open") : existingMeta.getGitPrState();
+            } else {
+                recordedBranch = baseBranch;
+            }
             if (secretsWritten.isEmpty()) {
                 LOG.info("Flux GitOps found no changes for {}/{}; skipping commit", namespace, release);
+                if (existingMeta != null) {
+                    // Git is unchanged, but the release may now be deployed with another commit mode or base branch,
+                    // which its next deploys and its uninstall follow, or no longer wait for a removal closed unmerged.
+                    try {
+                        releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
+                                baseToRecord, git.getCommitMode(), prUrl, prNumber, prState);
+                    } catch (Exception ex) {
+                        LOG.warn("Failed to record the Git state of {}/{}: {}", namespace, release, ex.toString());
+                    }
+                }
                 // Git is unchanged, but a Git credential given with this deploy replaced the one recorded.
                 if (existingMeta != null && alias != null && !alias.equalsIgnoreCase(recordedAlias)) {
                     try {
@@ -1318,11 +1413,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         LOG.warn("Failed to record the Git credential of {}/{}: {}", namespace, release, ex.toString());
                     }
                 }
+                // The branch that holds the release: the base branch once it does, else the pull request's.
                 return new CommitResult("NO_CHANGES",
                         firstNonBlank(gitClient.headCommit(), existingMeta != null ? existingMeta.getGitCommitSha() : null),
-                        false, repoUrl, branch, configuredBase, appliedNow,
-                        existingMeta != null ? existingMeta.getGitPrUrl() : null,
-                        existingMeta != null ? existingMeta.getGitPrState() : null, specDigest);
+                        false, repoUrl, appliedNow ? baseBranch : firstNonBlank(recordedBranch, branch), baseBranch,
+                        appliedNow, prUrl, prState, specDigest);
             }
             // Only passwords or secrets changed: nothing to commit, but Flux must read the Secret again. A change not
             // applied yet never asks for it: its Secret is read only once the change is merged.
@@ -1331,31 +1426,28 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             }
             commitSha = firstNonBlank(gitClient.headCommit(), existingMeta != null ? existingMeta.getGitCommitSha() : null);
             logFluxInfo(namespace, release, "apply", "Updated the passwords and secrets only; Git is unchanged at %s", commitSha);
-        }
-        String prUrl = null;
-        String prNumber = null;
-        String prState = null;
-        if (prMode && committed) {
-            // Attempt to open a PR/MR on supported providers.
-            try {
-                String prToken = token;
-                PullRequestInfo info = (prToken != null && !prToken.isBlank()) ? createPullRequest(git.getRepoUrl(), baseBranch, branch, commitMsg, prToken) : null;
-                if (info != null) {
-                    prUrl = info.url;
-                    prNumber = info.id;
-                    prState = firstNonBlank(info.state, "open");
-                    LOG.info("Flux GitOps PR created for {}/{}: {}", namespace, release, prUrl);
-                } else if (!canPush) {
-                    LOG.warn("Flux GitOps PR mode without credentials: PR creation skipped; commit is local stub.");
-                    prState = "pending";
-                } else {
-                    LOG.warn("Flux GitOps PR creation skipped/unsupported for repo {}", git.getRepoUrl());
-                    prState = "pending";
+        } else if (prMode) {
+            recordedBranch = branch;
+            GitPullRequests.PullRequestInfo info = work.openPullRequest();
+            if (info == null) {
+                try {
+                    info = pullRequests.open(repoUrl, baseBranch, branch, commitMsg, token);
+                } catch (Exception ex) {
+                    throw new IllegalStateException("The change of " + namespace + "/" + release + " was pushed to"
+                            + " branch " + branch + " of " + repoUrl + ", but its pull request into " + baseBranch
+                            + " could not be opened, so Flux will not apply it: " + ex.getMessage() + " Open the pull"
+                            + " request by hand, or deploy again.", ex);
                 }
-            } catch (Exception ex) {
-                LOG.warn("Flux GitOps PR creation failed for repo {} branch {}: {}", git.getRepoUrl(), branch, ex.toString());
-                prState = "pending";
+                logFluxInfo(namespace, release, "apply", "Opened pull request %s into %s", info.url(), baseBranch);
+            } else {
+                logFluxInfo(namespace, release, "apply", "Added the change to pull request %s, still open",
+                        info.url());
             }
+            prUrl = info.url();
+            prNumber = info.id();
+            prState = firstNonBlank(info.state(), "open");
+        } else {
+            recordedBranch = branch;
         }
 
         LOG.info("Flux GitOps wrote manifests for {}/{} into {} branch {} commit {} (prMode={})",
@@ -1389,7 +1481,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     prState
             );
             releaseMetadataService.recordTruststoreRefs(namespace, release, request.getTruststoreRefs());
-            releaseMetadataService.recordGitBaseBranch(namespace, release, configuredBase);
+            // Exactly where the change went: a direct commit forgets an earlier pull request, and a deploy ends a
+            // removal that waited for its merge.
+            releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
+                    baseToRecord, git.getCommitMode(), prUrl, prNumber, prState);
             if (alias != null && recordedAlias != null && !alias.equalsIgnoreCase(recordedAlias)) {
                 forgetReplacedAlias(recordedAlias, namespace, release);
             }
@@ -1397,13 +1492,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.warn("Failed to persist Flux metadata for {}/{}: {}", namespace, release, ex.toString());
         }
 
-        if (!committed && prUrl == null && existingMeta != null) {
-            // Only the passwords changed: the change Git holds is still the one of the release's pull request.
-            prUrl = existingMeta.getGitPrUrl();
-            prState = existingMeta.getGitPrState();
-        }
-        return new CommitResult(commitSha, commitSha, committed, repoUrl, branch, configuredBase, appliedNow, prUrl,
-                prState, specDigest);
+        return new CommitResult(commitSha, commitSha, committed, repoUrl, firstNonBlank(recordedBranch, branch),
+                baseBranch, appliedNow, prUrl, prState, specDigest);
 
         } catch (Exception applyEx) {
             // Reset workspace so the next deploy attempt starts from what the server holds.
@@ -1415,6 +1505,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
     }
 
+    /**
+     * The Git options of a deploy, completed from the release's record: its repository, its credential, its commit mode
+     * and the base branch Flux reconciles ({@link #recordedBaseBranch}, else main). Never the working branch, which
+     * only a pull request has, and which each change chooses again ({@link #workBranch}); nor is the base
+     * branch ever taken from it.
+     */
     private HelmDeployRequest.GitOptions mergeGitOptions(HelmDeployRequest request, K8sReleaseEntity existingMeta) {
         HelmDeployRequest.GitOptions git = request.getGit();
         if (git == null) {
@@ -1424,11 +1520,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if ((git.getRepoUrl() == null || git.getRepoUrl().isBlank()) && existingMeta != null) {
             git.setRepoUrl(existingMeta.getGitRepoUrl());
         }
-        if ((git.getBaseBranch() == null || git.getBaseBranch().isBlank()) && existingMeta != null) {
-            git.setBaseBranch(existingMeta.getGitBranch());
-        }
-        if ((git.getBranch() == null || git.getBranch().isBlank()) && existingMeta != null) {
-            git.setBranch(existingMeta.getGitBranch());
+        git.setBaseBranch(firstNonBlank(git.getBaseBranch() == null ? null : git.getBaseBranch().trim(),
+                recordedBaseBranch(existingMeta), DEFAULT_BASE_BRANCH));
+        if (git.getBranch() != null) {
+            git.setBranch(git.getBranch().isBlank() ? null : git.getBranch().trim());
         }
         if ((git.getCredentialAlias() == null || git.getCredentialAlias().isBlank()) && existingMeta != null) {
             git.setCredentialAlias(existingMeta.getGitCredentialAlias());
@@ -1437,6 +1532,193 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             git.setCommitMode(existingMeta.getGitCommitMode());
         }
         return git;
+    }
+
+    /**
+     * The branch a deploy pushes its change to.
+     *
+     * @param name                  the branch
+     * @param openPullRequest       the pull request already open for it, which the change joins; {@code null} when a
+     *                              new one is opened once the change is pushed, or for a direct commit
+     * @param supersededPullRequest the release's pull request still open that this deploy no longer goes through,
+     *                              closed before the change is committed ({@link #closeSupersededPullRequest});
+     *                              {@code null} when there is none
+     */
+    private record WorkBranch(String name, GitPullRequests.PullRequestInfo openPullRequest,
+                              GitPullRequests.PullRequestInfo supersededPullRequest) {}
+
+    /**
+     * The branch of a deploy. A direct commit goes to the base branch. A pull request goes on the working branch the
+     * deploy names, when it is not the one recorded for the release; else on the branch of the release's previous pull
+     * request while that one is still open and was opened into this deploy's base branch, so the change joins it; else on
+     * a new branch, {@code flux-<uuid>}, which the commit starts from the base branch. A pull request merged or closed is
+     * never added to: its branch may be gone, or hold commits the base branch already has or never will. Nor is one
+     * opened into another base branch: merged, it would reach a branch Flux no longer reads. Never the base branch
+     * itself, which only a direct commit pushes to.
+     *
+     * <p>The release's previous pull request, still open, that the change does not join is returned for closing: a
+     * switch to a direct commit, to another base branch or to another working branch. Left open and forgotten by the
+     * release's record, it would be merged one day, and bring back what it proposes over this deploy, or, after an
+     * uninstall, the release itself, which KDPS would no longer know.</p>
+     *
+     * @throws GitPullRequests.UnsupportedGitServerException when KDPS cannot open pull requests on the Git server
+     * @throws IllegalStateException when the state of the previous pull request cannot be read
+     */
+    private WorkBranch workBranch(boolean prMode, String requested, String baseBranch, K8sReleaseEntity existingMeta,
+                                  String repoUrl, String token) throws Exception {
+        if (prMode) {
+            pullRequests.api(repoUrl, token);
+        }
+        boolean previousRecorded = existingMeta != null && isPullRequestMode(existingMeta.getGitCommitMode())
+                && !existingMeta.isGitPendingDelete() && sameRepository(repoUrl, existingMeta.getGitRepoUrl());
+        String recorded = previousRecorded && !baseBranch.equals(existingMeta.getGitBranch())
+                ? existingMeta.getGitBranch() : null;
+        boolean named = requested != null && !requested.equals(recorded) && !requested.equals(baseBranch);
+        boolean joins = prMode && recorded != null && !named && baseBranch.equals(recordedBaseBranch(existingMeta));
+        // A merged pull request stays merged: nothing to join or to close.
+        String number = previousRecorded && !GitPullRequests.isMerged(existingMeta.getGitPrState())
+                ? existingMeta.getGitPrNumber() : null;
+        GitPullRequests.PullRequestInfo previous = null;
+        if (number != null && !number.isBlank()) {
+            String namespace = existingMeta.getNamespace();
+            String release = existingMeta.getReleaseName();
+            String pullRequest = firstNonBlank(existingMeta.getGitPrUrl(), "#" + number);
+            String why = joins
+                    ? "a change joins that pull request only while it is open, and goes to a new one otherwise."
+                    : "this deploy no longer goes through that pull request, which KDPS closes while it is open:"
+                            + " merged later, it would bring back what it proposes.";
+            if (token == null || token.isBlank()) {
+                throw new IllegalStateException("KDPS reads the state of pull request " + pullRequest + " of "
+                        + namespace + "/" + release + " with the access token of the Git server, which this deploy"
+                        + " does not give, so nothing was committed: " + why + " Deploy again giving the token.");
+            }
+            try {
+                previous = pullRequests.get(repoUrl, number, token);
+            } catch (Exception ex) {
+                throw new IllegalStateException("KDPS could not read the state of pull request " + pullRequest + " of "
+                        + namespace + "/" + release + ", so nothing was committed: " + why + " " + ex.getMessage(),
+                        ex);
+            }
+            releaseMetadataService.updatePrInfo(namespace, release, previous.url(), previous.id(), previous.state());
+            if (!GitPullRequests.isOpen(previous.state())) {
+                previous = null;
+            }
+        }
+        if (joins && previous != null) {
+            return new WorkBranch(recorded, previous, null);
+        }
+        String branch = !prMode ? baseBranch : named ? requested : GitClient.generateBranch("flux");
+        return new WorkBranch(branch, null, previous);
+    }
+
+    /**
+     * Closes, through the Git server's API, the release's pull request still open that this deploy no longer goes
+     * through ({@link #workBranch}), before anything of the deploy reaches the cluster or Git: once the deploy is
+     * recorded, nothing in KDPS remembers that pull request, and no uninstall would close it.
+     *
+     * @param superseded the pull request, {@code null} for none
+     * @throws IllegalStateException naming the pull request, when it could not be closed; nothing was committed
+     */
+    private void closeSupersededPullRequest(GitPullRequests.PullRequestInfo superseded, K8sReleaseEntity meta,
+                                            String repoUrl, String token) {
+        if (superseded == null) {
+            return;
+        }
+        String namespace = meta.getNamespace();
+        String releaseName = meta.getReleaseName();
+        String number = firstNonBlank(superseded.id(), meta.getGitPrNumber());
+        String pullRequest = firstNonBlank(superseded.url(), meta.getGitPrUrl(), "#" + number);
+        GitPullRequests.PullRequestInfo closed;
+        try {
+            closed = pullRequests.close(repoUrl, number, token);
+        } catch (Exception ex) {
+            throw new IllegalStateException("KDPS could not close pull request " + pullRequest + " of " + namespace
+                    + "/" + releaseName + ", still open, which this deploy no longer goes through, so nothing was"
+                    + " committed: merged later, it would bring back what it proposes. " + ex.getMessage() + " Close it"
+                    + " without merging it, then deploy again.", ex);
+        }
+        releaseMetadataService.updatePrInfo(namespace, releaseName, firstNonBlank(closed.url(), superseded.url()),
+                firstNonBlank(closed.id(), number), firstNonBlank(closed.state(), "closed"));
+        logFluxInfo(namespace, releaseName, "apply", "Closed pull request %s, still open, which this deploy no longer"
+                + " goes through", pullRequest);
+    }
+
+    /**
+     * Refuses a deploy of a release whose removal is proposed in a pull request still open: merged after the deploy,
+     * it would take the release out of Git again. Once that pull request is merged or closed, the deploy goes ahead and
+     * the release no longer waits for its removal.
+     *
+     * @throws IllegalStateException naming the pull request
+     */
+    private void checkNoRemovalPending(K8sReleaseEntity meta, String repoUrl, String token) {
+        if (meta == null || !meta.isGitPendingDelete() || meta.getGitPrNumber() == null
+                || meta.getGitPrNumber().isBlank() || !sameRepository(repoUrl, meta.getGitRepoUrl())) {
+            return;
+        }
+        String release = meta.getNamespace() + "/" + meta.getReleaseName();
+        String pullRequest = firstNonBlank(meta.getGitPrUrl(), "#" + meta.getGitPrNumber());
+        String state;
+        try {
+            if (token == null || token.isBlank()) {
+                throw new IllegalStateException("the deploy gives no access token to read it with.");
+            }
+            state = pullRequests.get(repoUrl, meta.getGitPrNumber(), token).state();
+        } catch (Exception ex) {
+            throw new IllegalStateException("The removal of " + release + " is proposed in pull request " + pullRequest
+                    + ", whose state KDPS could not read, so nothing was deployed: " + ex.getMessage() + " Close the"
+                    + " pull request without merging it to keep the release, then deploy it again.", ex);
+        }
+        if (GitPullRequests.isOpen(state)) {
+            throw new IllegalStateException("The removal of " + release + " is proposed in pull request " + pullRequest
+                    + ", still open, so nothing was deployed: merged later, it would remove the release again. Close it"
+                    + " without merging it to keep the release, then deploy it again; or merge it, then uninstall the"
+                    + " release to finish its removal.");
+        }
+    }
+
+    /** The name {@link GitClient#generateBranch} gives a pull request branch. */
+    private static final java.util.regex.Pattern GENERATED_BRANCH = java.util.regex.Pattern.compile(
+            "flux(-remove)?-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+
+    /**
+     * The branch Flux reconciles for a GitOps release, as its record tells: the base branch recorded for it. For a
+     * release recorded before its base branch was: the branch a direct commit went to when the operator named it, which
+     * is the branch Flux reads; otherwise main. Never the branch of a pull request, nor one KDPS generated.
+     *
+     * <p>Earlier versions pushed a direct commit to the working branch and recorded no base branch, so a release they
+     * deployed by direct commit only ever ran when its operator named the branch Flux reconciles as the working branch.
+     * Taking main for it instead would move its next changes, and its uninstall, away from where Flux reads it.</p>
+     *
+     * @return the branch, or {@code null} without a record
+     */
+    public static String recordedBaseBranch(K8sReleaseEntity meta) {
+        if (meta == null) {
+            return null;
+        }
+        String known = knownBaseBranch(meta);
+        return known != null ? known : DEFAULT_BASE_BRANCH;
+    }
+
+    /**
+     * The base branch the release's record tells ({@link #recordedBaseBranch}), or {@code null} when it tells none and
+     * main is only assumed: a pull request release, or one committed to a branch KDPS generated, recorded before base
+     * branches were. A deploy never records an assumed main as the release's base branch, nor does the Releases page
+     * send it back as one: an uninstall takes a recorded base branch that no longer holds the release for proof that
+     * Flux no longer reads it.
+     */
+    public static String knownBaseBranch(K8sReleaseEntity meta) {
+        if (meta == null) {
+            return null;
+        }
+        if (meta.getGitBaseBranch() != null && !meta.getGitBaseBranch().isBlank()) {
+            return meta.getGitBaseBranch();
+        }
+        String branch = meta.getGitBranch();
+        if (!isPullRequestMode(meta.getGitCommitMode()) && branch != null && !branch.isBlank()
+                && !GENERATED_BRANCH.matcher(branch).matches()) {
+            return branch;
+        }
+        return null;
     }
 
     private Path resolveTargetPath(String pathOverride, String storedPath, String namespace, String release) {
@@ -1449,8 +1731,37 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return targetPath("clusters/default", namespace, release);
     }
 
+    /**
+     * The release as Flux reports it, with its pull request. A release whose removal waits for its merge is
+     * {@code PENDING_DELETE} whatever Flux reports, which is still the running release. Not once that pull request is
+     * closed without its merge: the release keeps running, and no longer waits for anything.
+     */
     @Override
     public HelmReleaseDTO status(String namespace, String releaseName) throws Exception {
+        HelmReleaseDTO dto = fluxStatus(namespace, releaseName);
+        var meta = releaseMetadataService.find(namespace, releaseName);
+        if (meta != null && meta.isGitPendingDelete()) {
+            String pullRequest = firstNonBlank(dto.gitPrUrl, meta.getGitPrUrl(), meta.getGitPrNumber());
+            String base = recordedBaseBranch(meta);
+            if (GitPullRequests.isClosed(firstNonBlank(dto.gitPrState, meta.getGitPrState()))) {
+                dto.gitPendingDelete = false;
+                dto.message = appendMessage("The pull request " + pullRequest + " removing the release was closed"
+                        + " without being merged into " + base + ": the release keeps running. Uninstall it again to"
+                        + " propose its removal once more.", dto.message);
+                return dto;
+            }
+            dto.gitPendingDelete = true;
+            dto.status = "PENDING_DELETE";
+            dto.message = appendMessage(GitPullRequests.isMerged(dto.gitPrState)
+                    ? "The pull request " + pullRequest + " removing the release is merged into " + base + ": uninstall"
+                            + " the release again to finish removing it from the cluster and KDPS."
+                    : "The removal of the release is proposed in pull request " + pullRequest + " into " + base
+                            + ": the release keeps running until it is merged.", dto.message);
+        }
+        return dto;
+    }
+
+    private HelmReleaseDTO fluxStatus(String namespace, String releaseName) {
         HelmReleaseDTO dto = new HelmReleaseDTO();
         dto.name = releaseName;
         dto.namespace = namespace;
@@ -1462,7 +1773,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             dto.gitPrNumber = meta.getGitPrNumber();
             dto.gitPrState = meta.getGitPrState();
         }
-        boolean hasPr = meta != null && meta.getGitPrNumber() != null && !meta.getGitPrNumber().isBlank();
 
         // If commit was PR-stubbed, surface that before hitting the cluster.
         try {
@@ -1491,12 +1801,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         try {
-            CustomResourceDefinitionContext ctx = new CustomResourceDefinitionContext.Builder()
-                    .withGroup("helm.toolkit.fluxcd.io")
-                    .withVersion("v2beta2")
-                    .withScope("Namespaced")
-                    .withPlural("helmreleases")
-                    .build();
+            CustomResourceDefinitionContext ctx = helmReleaseContext();
 
             GenericKubernetesResource hr = kubernetesService.getClient()
                     .genericKubernetesResources(ctx)
@@ -1574,12 +1879,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     repoToCheck = meta.getRepoId();
                 }
                 if (repoToCheck != null) {
-                    CustomResourceDefinitionContext repoCtx = new CustomResourceDefinitionContext.Builder()
-                            .withGroup("source.toolkit.fluxcd.io")
-                            .withVersion("v1beta2")
-                            .withScope("Namespaced")
-                            .withPlural("helmrepositories")
-                            .build();
+                    CustomResourceDefinitionContext repoCtx = helmRepositoryContext();
                     GenericKubernetesResource repo = kubernetesService.getClient()
                             .genericKubernetesResources(repoCtx)
                             .inNamespace(sourceNamespace)
@@ -1614,14 +1914,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     private boolean hrNotAvailable(String namespace, String releaseName) {
         try {
-            CustomResourceDefinitionContext ctx = new CustomResourceDefinitionContext.Builder()
-                    .withGroup("helm.toolkit.fluxcd.io")
-                    .withVersion("v2beta2")
-                    .withScope("Namespaced")
-                    .withPlural("helmreleases")
-                    .build();
             GenericKubernetesResource hr = kubernetesService.getClient()
-                    .genericKubernetesResources(ctx)
+                    .genericKubernetesResources(helmReleaseContext())
                     .inNamespace(namespace)
                     .withName(releaseName)
                     .get();
@@ -1633,202 +1927,25 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Simple holder for PR/MR info.
+     * The Flux custom resources KDPS writes, at the API versions it writes them ({@link #FLUX_HR_API_VERSION},
+     * {@link #FLUX_SRC_API_VERSION}).
      */
-    static class PullRequestInfo {
-        final String url;
-        final String id;
-        final String state;
-        final String message;
-        PullRequestInfo(String url, String id) { this(url, id, null, null); }
-        PullRequestInfo(String url, String id, String state, String message) {
-            this.url = url;
-            this.id = id;
-            this.state = state;
-            this.message = message;
-        }
+    private static CustomResourceDefinitionContext helmReleaseContext() {
+        return new CustomResourceDefinitionContext.Builder()
+                .withGroup("helm.toolkit.fluxcd.io")
+                .withVersion(FLUX_HR_API_VERSION.substring(FLUX_HR_API_VERSION.indexOf('/') + 1))
+                .withScope("Namespaced")
+                .withPlural("helmreleases")
+                .build();
     }
 
-    static final class PullRequestParser {
-        private static final Gson PARSER = new GsonBuilder().create();
-
-        static PullRequestInfo parseGithub(String body, String defaultId) {
-            if (body == null) {
-                return null;
-            }
-            @SuppressWarnings("unchecked")
-            Map<String, Object> parsed = PARSER.fromJson(body, Map.class);
-            if (parsed == null) {
-                return null;
-            }
-            Object url = parsed.get("html_url");
-            Object state = parsed.get("state");
-            Object merged = parsed.get("merged");
-            Object draft = parsed.get("draft");
-            String stateStr = state != null ? state.toString() : null;
-            if (Boolean.TRUE.equals(merged)) {
-                stateStr = "merged";
-            } else if (Boolean.TRUE.equals(draft) && stateStr != null && "open".equalsIgnoreCase(stateStr)) {
-                stateStr = "draft";
-            }
-            String message = Optional.ofNullable(parsed.get("mergeable_state")).map(Object::toString).orElse(null);
-            String id = formatId(parsed.get("number"), defaultId);
-            return new PullRequestInfo(url != null ? url.toString() : null, id, stateStr, message);
-        }
-
-        static PullRequestInfo parseGitlab(String body, String defaultId) {
-            if (body == null) {
-                return null;
-            }
-            @SuppressWarnings("unchecked")
-            Map<String, Object> parsed = PARSER.fromJson(body, Map.class);
-            if (parsed == null) {
-                return null;
-            }
-            Object url = parsed.get("web_url");
-            Object state = parsed.get("state");
-            String stateStr = state != null ? state.toString() : null;
-            if (parsed.containsKey("merged_at") && parsed.get("merged_at") != null) {
-                stateStr = "merged";
-            }
-            String message = Optional.ofNullable(parsed.get("detailed_merge_status")).map(Object::toString).orElse(null);
-            String id = formatId(parsed.get("iid"), defaultId);
-            return new PullRequestInfo(url != null ? url.toString() : null, id, stateStr, message);
-        }
-
-        private static String formatId(Object value, String fallback) {
-            if (value instanceof Number) {
-                return String.valueOf(((Number) value).longValue());
-            }
-            return value != null ? value.toString() : fallback;
-        }
-    }
-
-    /**
-     * Create a PR/MR on GitHub or GitLab if supported.
-     *
-     * @param repoUrl    remote URL ending with .git or HTTPS form.
-     * @param baseBranch target branch (base).
-     * @param headBranch source branch (head).
-     * @param title      PR/MR title.
-     * @param token      OAuth/token with repo write perms (required).
-     * @return PullRequestInfo or null if unsupported.
-     */
-    private PullRequestInfo createPullRequest(String repoUrl, String baseBranch, String headBranch, String title, String token) throws Exception {
-        if (token == null || token.isBlank() || repoUrl == null) {
-            LOG.warn("Skipping PR creation because token or repoUrl is missing");
-            return null;
-        }
-        java.net.URI uri = pullRequestRepoUri(repoUrl);
-        if (uri == null) {
-            return null;
-        }
-        String host = uri.getHost();
-        String path = uri.getPath();
-        if (path.startsWith("/")) path = path.substring(1);
-        if (host.contains("github")) {
-            String[] parts = path.split("/");
-            if (parts.length < 2) return null;
-            String owner = parts[0];
-            String repo = parts[1];
-            String apiUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/pulls";
-            Map<String, String> pullRequest = new LinkedHashMap<>();
-            pullRequest.put("title", title);
-            pullRequest.put("head", headBranch);
-            pullRequest.put("base", baseBranch);
-            String body = gson.toJson(pullRequest);
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(apiUrl))
-                    .timeout(httpTimeout)
-                    .header("Authorization", "Bearer " + token)
-                    .header("Accept", "application/vnd.github+json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
-            HttpResponse<String> resp = sendHttpWithRetry(req, "create-pr-github");
-            if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                PullRequestInfo info = PullRequestParser.parseGithub(resp.body(), headBranch);
-                return info != null ? info : new PullRequestInfo(extractJsonField(resp.body(), "html_url"), extractJsonField(resp.body(), "number"), "open", null);
-            }
-            logFluxWarn("createPR", repoUrl, "CREATE", "GitHub PR creation failed (status %d)", resp.statusCode());
-        } else {
-            String project = java.net.URLEncoder.encode(path, java.nio.charset.StandardCharsets.UTF_8);
-            String apiUrl = uri.getScheme() + "://" + host + "/api/v4/projects/" + project + "/merge_requests";
-            String body = "title=" + java.net.URLEncoder.encode(title, java.nio.charset.StandardCharsets.UTF_8)
-                    + "&source_branch=" + java.net.URLEncoder.encode(headBranch, java.nio.charset.StandardCharsets.UTF_8)
-                    + "&target_branch=" + java.net.URLEncoder.encode(baseBranch, java.nio.charset.StandardCharsets.UTF_8);
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(apiUrl))
-                    .timeout(httpTimeout)
-                    .header("PRIVATE-TOKEN", token)
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
-            HttpResponse<String> resp = sendHttpWithRetry(req, "create-pr-gitlab");
-            if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                PullRequestInfo info = PullRequestParser.parseGitlab(resp.body(), headBranch);
-                return info != null ? info : new PullRequestInfo(extractJsonField(resp.body(), "web_url"), extractJsonField(resp.body(), "iid"), "opened", null);
-            }
-            logFluxWarn("createPR", repoUrl, "CREATE", "GitLab MR creation failed (status %d)", resp.statusCode());
-        }
-        return null;
-    }
-
-    /**
-     * Fetch current PR/MR state from GitHub or GitLab.
-     *
-     * @param repoUrl   git URL
-     * @param prNumber  PR number/IID
-     * @param token     auth token (required)
-     * @return state string (open/closed/merged etc) or null if unsupported/failure
-     */
-    private PullRequestInfo fetchPullRequestState(String repoUrl, String prNumber, String token) throws Exception {
-        if (repoUrl == null || prNumber == null || token == null) {
-            return null;
-        }
-        java.net.URI uri = pullRequestRepoUri(repoUrl);
-        if (uri == null) {
-            return null;
-        }
-        String host = uri.getHost();
-        String path = uri.getPath();
-        if (path.startsWith("/")) path = path.substring(1);
-        if (path.isBlank()) {
-            return null;
-        }
-        if (host.contains("github")) {
-            String[] parts = path.split("/");
-            if (parts.length < 2) return null;
-            String owner = parts[0];
-            String repo = parts[1];
-            String apiUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/pulls/" + prNumber;
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(apiUrl))
-                    .timeout(httpTimeout)
-                    .header("Authorization", "Bearer " + token)
-                    .header("Accept", "application/vnd.github+json")
-                    .GET()
-                    .build();
-            HttpResponse<String> resp = sendHttpWithRetry(req, "fetch-pr-github");
-            if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                return PullRequestParser.parseGithub(resp.body(), prNumber);
-            }
-            LOG.debug("GitHub PR state lookup failed: status {} body {}", resp.statusCode(), resp.body());
-        } else {
-            String project = java.net.URLEncoder.encode(path, java.nio.charset.StandardCharsets.UTF_8);
-            String apiUrl = uri.getScheme() + "://" + host + "/api/v4/projects/" + project + "/merge_requests/" + prNumber;
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(apiUrl))
-                    .timeout(httpTimeout)
-                    .header("PRIVATE-TOKEN", token)
-                    .GET()
-                    .build();
-            HttpResponse<String> resp = sendHttpWithRetry(req, "fetch-pr-gitlab");
-            if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                return PullRequestParser.parseGitlab(resp.body(), prNumber);
-            }
-            LOG.debug("GitLab MR state lookup failed: status {} body {}", resp.statusCode(), resp.body());
-        }
-        return null;
+    private static CustomResourceDefinitionContext helmRepositoryContext() {
+        return new CustomResourceDefinitionContext.Builder()
+                .withGroup("source.toolkit.fluxcd.io")
+                .withVersion(FLUX_SRC_API_VERSION.substring(FLUX_SRC_API_VERSION.indexOf('/') + 1))
+                .withScope("Namespaced")
+                .withPlural("helmrepositories")
+                .build();
     }
 
     /** The access token stored for a release, for the repository it records; {@code null} when there is none. */
@@ -1851,10 +1968,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             return;
         }
         try {
-            PullRequestInfo info = fetchPullRequestState(meta.getGitRepoUrl(), meta.getGitPrNumber(), token);
-            if (info == null) {
-                return;
-            }
+            GitPullRequests.PullRequestInfo info = pullRequests.get(meta.getGitRepoUrl(), meta.getGitPrNumber(), token);
             dto.gitPrState = firstNonBlank(info.state, dto.gitPrState);
             dto.gitPrUrl = firstNonBlank(info.url, dto.gitPrUrl);
             releaseMetadataService.updatePrInfo(meta.getNamespace(), meta.getReleaseName(), dto.gitPrUrl, info.id, dto.gitPrState);
@@ -1880,82 +1994,335 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Very small JSON field extractor to avoid extra dependencies.
+     * Uninstalls a GitOps release with what its record holds: its manifests come out of the branch Flux reconciles the
+     * way the release was deployed, by a direct commit or through a pull request, in the release's own workspace under
+     * its lock. A direct commit removes the release at once: once the removal is pushed, its Git credentials are
+     * deleted, then its HelmRelease and the HelmRepository of its chart (unless another release reads it) from the
+     * cluster, then its record. A pull request leaves the release running and its record waiting for the merge
+     * ({@link K8sReleaseEntity#isGitPendingDelete}); the uninstall that finds the branch Flux reconciles without the
+     * release finishes the removal as a direct commit does. The release's own pull request, when still open, is
+     * withdrawn first, so that merging it later cannot install the release again.
+     *
+     * @throws NotOwnDirectoryException when the recorded directory is not the release's own, or holds another
+     *                                  HelmRelease; nothing is removed
+     * @throws GitOpsBusyException      when another GitOps operation on the release holds its workspace; nothing is
+     *                                  removed
+     * @throws RuntimeException         when Git refused or could not take the removal, or the pull request could not
+     *                                  be opened: the release keeps its record and its Git credential
      */
-    private String extractJsonField(String json, String field) {
-        if (json == null) return null;
-        String key = "\"" + field + "\"";
-        int idx = json.indexOf(key);
-        if (idx < 0) return null;
-        int colon = json.indexOf(":", idx);
-        if (colon < 0) return null;
-        int startQuote = json.indexOf("\"", colon);
-        int endQuote = json.indexOf("\"", startQuote + 1);
-        if (startQuote < 0 || endQuote < 0) return null;
-        return json.substring(startQuote + 1, endQuote);
-    }
-
     @Override
     public void destroy(String namespace, String releaseName) throws Exception {
+        // Held from before the record is read until the record is deleted (the removal from Git takes it again): the
+        // pull request withdrawn and the one recorded for the removal must be those of the record as the last deploy
+        // left it, not as it was before that deploy opened another pull request.
+        ReentrantLock workspaceLock = lockWorkspace(namespace, releaseName);
+        try {
         var meta = releaseMetadataService.find(namespace, releaseName);
         if (meta == null || !"FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
             LOG.info("Flux destroy skipped for {}/{} because deploymentMode is not FLUX_GITOPS or metadata missing", namespace, releaseName);
             return;
         }
-        logFluxInfo(namespace, releaseName, "destroy", "Destroy requested for repo=%s branch=%s path=%s", meta.getGitRepoUrl(), meta.getGitBranch(), meta.getGitPath());
-        List<String> errors = new ArrayList<>();
-        String repoUrl = meta.getGitRepoUrl();
-        String branch = meta.getGitBranch();
-        String path = meta.getGitPath();
-        if (repoUrl != null && !repoUrl.isBlank()) {
+        logFluxInfo(namespace, releaseName, "destroy", "Destroy requested for repo=%s base=%s path=%s (mode=%s)",
+                meta.getGitRepoUrl(), recordedBaseBranch(meta), meta.getGitPath(), meta.getGitCommitMode());
+        if (meta.getGitRepoUrl() != null && !meta.getGitRepoUrl().isBlank()) {
             // Refused before anything is removed, from Git or from the cluster (a HelmRelease deleted there while its
             // manifest stays in Git is recreated by Flux), and the record is kept so the uninstall can be retried
             // once it names the release's own directory.
-            releaseDirectory(path, namespace, releaseName);
-        }
-        String token = null;
-        String sshKey = null;
-        try {
-            GitSecrets secrets = recordedGitSecrets(meta);
-            token = secrets.token();
-            sshKey = secrets.sshKey();
-        } catch (Exception ex) {
-            errors.add("Credential resolution failed: " + ex.getMessage());
+            releaseDirectory(meta.getGitPath(), namespace, releaseName);
         }
         try {
-            destroy(repoUrl, branch, reconciledBranch(meta), path, token, sshKey, namespace, releaseName);
+            if (isPullRequestMode(meta.getGitCommitMode())) {
+                if (proposeRemoval(meta)) {
+                    // Flux keeps running the release until the removal is merged: nothing else is removed yet.
+                    return;
+                }
+                forgetGitCredentials(meta);
+            } else {
+                removeFromGit(meta);
+            }
         } catch (NotOwnDirectoryException | GitOpsBusyException refused) {
-            // Found once the branch is read, or the release's workspace is busy: nothing was removed from Git, so
-            // nothing is from the cluster either, and the release keeps its Git credential.
+            // Nothing was removed from Git, so nothing is from the cluster either, and the release keeps its record
+            // and its Git credential.
             throw refused;
         } catch (Exception ex) {
-            // The release's manifests may still be in Git, where Flux keeps applying them: its HelmRelease deleted
-            // from the cluster would only be recreated. Nothing else is removed, and the record and the Git credential
-            // are kept, so the uninstall can be retried.
-            errors.add("Git cleanup failed: " + ex.getMessage());
+            // The release's manifests may still be on the branch Flux reconciles: its HelmRelease deleted from the
+            // cluster would only be recreated. Nothing else is removed, and the record and the Git credential are
+            // kept, so the uninstall can be retried.
             LOG.warn("Flux destroy git cleanup failed for {}/{}: {}", namespace, releaseName, ex.toString());
-            throw new RuntimeException("Flux destroy encountered issues: " + String.join(" | ", errors), ex);
+            throw new RuntimeException("Flux destroy encountered issues: Git cleanup failed: " + ex.getMessage(), ex);
         }
-        // Only once the removal is pushed.
-        forgetGitCredentials(meta);
-        // Best-effort cluster cleanup of HR/HelmRepository
-        try {
-            deleteHelmRelease(meta.getNamespace(), meta.getReleaseName());
-            if (meta.getRepoId() != null) {
-                deleteHelmRepository(meta.getRepoId());
-            }
-        } catch (Exception ex) {
-            errors.add("Cluster cleanup failed: " + ex.getMessage());
-            LOG.warn("Flux destroy: cluster cleanup failed for {}/{}: {}", namespace, releaseName, ex.toString());
-        }
+        // The branch Flux reconciles no longer holds the release. Flux removes it when it prunes what Git no longer
+        // holds; deleted here too for a Flux that does not.
+        deleteHelmRelease(namespace, releaseName);
+        deleteHelmRepositoryIfUnused(meta);
         try {
             releaseMetadataService.delete(namespace, releaseName);
         } catch (Exception ex) {
-            errors.add("Failed to delete metadata: " + ex.getMessage());
+            throw new RuntimeException("Flux destroy encountered issues: Failed to delete metadata: " + ex.getMessage(),
+                    ex);
         }
-        if (!errors.isEmpty()) {
-            throw new RuntimeException("Flux destroy encountered issues: " + String.join(" | ", errors));
+        } finally {
+            workspaceLock.unlock();
         }
+    }
+
+    /**
+     * The removal of a pull request release, proposed in a pull request of its own into the branch Flux reconciles,
+     * from a new branch started from it: never on the release's own pull request branch, which may be merged, gone, or
+     * hold a change still under review. A pull request of the release still open is withdrawn first
+     * ({@link #withdrawPullRequest}): merged later, it would bring the release back. Done once: an uninstall that finds
+     * the removal's pull request still open waits for it, one that finds it closed without its merge proposes the
+     * removal again. Once the branch Flux reconciles no longer holds the release (the removal merged, the release removed
+     * from it by hand, or never merged there), and KDPS can tell that Flux reads nothing of it from elsewhere
+     * ({@link #checkGoneFromBase}), the values Secrets of the removed HelmReleases are deleted and the uninstall goes on.
+     *
+     * @return whether the uninstall waits for the removal's pull request to be merged; the release's record then says so
+     * @throws IllegalStateException when the removal cannot be proposed: no access token is saved for the release to
+     *                               open the pull request with, it could not be opened once the removal was pushed, or
+     *                               the release's own pull request could not be withdrawn; or when KDPS cannot tell
+     *                               that Flux no longer reads the release from Git. Nothing was removed.
+     */
+    private boolean proposeRemoval(K8sReleaseEntity meta) throws Exception {
+        String namespace = meta.getNamespace();
+        String releaseName = meta.getReleaseName();
+        String repoUrl = meta.getGitRepoUrl();
+        if (repoUrl == null || repoUrl.isBlank()) {
+            LOG.warn("Flux destroy of {}/{}: no Git repository is recorded, nothing to remove from Git", namespace,
+                    releaseName);
+            return false;
+        }
+        Path releaseDir = releaseDirectory(meta.getGitPath(), namespace, releaseName);
+        String base = recordedBaseBranch(meta);
+        GitSecrets secrets = recordedGitSecrets(meta);
+        String token = secrets.token();
+        Path repoDir = workspaceForRelease(namespace, releaseName);
+        ReentrantLock workspaceLock = lockWorkspace(namespace, releaseName);
+        try {
+        GitClient gitClient = new GitClient(repoDir, repoUrl, base, token, secrets.sshKey())
+                .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari")
+                .withTimeout(gitTimeoutSeconds(viewContext));
+        try {
+        withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
+        // A branch the server does not have holds nothing, which says nothing of where Flux reads the release.
+        boolean baseOnServer = gitClient.isOnServer(base);
+        Boolean onBase = baseOnServer ? gitClient.publishedOn(releaseDir.resolve(HELM_RELEASE_FILE), base) : Boolean.FALSE;
+        if (onBase == null) {
+            throw new IOException("Branch " + base + " of " + repoUrl + " could not be read");
+        }
+        String release = namespace + "/" + releaseName;
+        if (!onBase) {
+            checkGoneFromBase(meta, base, baseOnServer);
+            logFluxInfo(namespace, releaseName, "destroy", "Branch %s no longer holds %s: finishing the removal", base,
+                    releaseDir);
+            withdrawPullRequest(meta, gitClient, repoDir, releaseDir, base, token);
+            Set<NamespacedName> helmReleases = removedHelmReleases(meta);
+            deleteValuesSecrets(new java.util.LinkedHashSet<>(), helmReleases);
+            return false;
+        }
+        String pending = meta.isGitPendingDelete() ? meta.getGitPrNumber() : null;
+        if (pending != null && !pending.isBlank()) {
+            if (token == null || token.isBlank()) {
+                throw new IllegalStateException("The removal of " + release + " is proposed in pull request "
+                        + firstNonBlank(meta.getGitPrUrl(), "#" + pending) + ", whose state KDPS cannot read without"
+                        + " an access token of the Git server.");
+            }
+            GitPullRequests.PullRequestInfo proposed = pullRequests.get(repoUrl, pending, token);
+            releaseMetadataService.updatePrInfo(namespace, releaseName, proposed.url(), proposed.id(),
+                    proposed.state());
+            if (GitPullRequests.isOpen(proposed.state())) {
+                logFluxInfo(namespace, releaseName, "destroy", "The removal waits for pull request %s to be merged",
+                        proposed.url());
+                return true;
+            }
+            logFluxInfo(namespace, releaseName, "destroy", "Pull request %s was closed without its merge: proposing"
+                    + " the removal again", proposed.url());
+        }
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("KDPS removes " + release + " through a pull request into " + base + ", which"
+                    + " it opens with the access token of the Git server, and none is saved for the release (deployed"
+                    + " over SSH), so nothing was removed. Remove " + releaseDir + " from " + base + " by hand or"
+                    + " through a pull request of your own, then uninstall the release again to finish.");
+        }
+        // Before anything is pushed: a removal on a branch nobody proposes for a merge would never be applied.
+        pullRequests.api(repoUrl, token);
+        withdrawPullRequest(meta, gitClient, repoDir, releaseDir, base, token);
+        String branch = GitClient.generateBranch("flux-remove");
+        gitClient.checkoutWorkBranch(branch, base);
+        checkOwnHelmRelease(repoDir, releaseDir, namespace, releaseName);
+        List<Path> files = releaseManifests(repoDir.resolve(releaseDir));
+        Set<NamespacedName> helmReleases = helmReleasesIn(files);
+        helmReleases.add(new NamespacedName(namespace, releaseName));
+        for (Path manifest : files) {
+            gitClient.deletePath(repoDir.relativize(manifest));
+        }
+        String title = "Flux GitOps (PR) delete " + releaseDir;
+        String sha = commitAndPush(gitClient, title,
+                () -> checkOwnHelmRelease(repoDir, releaseDir, namespace, releaseName), release + " (uninstall)");
+        if (sha == null) {
+            return false;
+        }
+        GitPullRequests.PullRequestInfo opened;
+        try {
+            opened = pullRequests.open(repoUrl, base, branch, title, token);
+        } catch (Exception ex) {
+            throw new IllegalStateException("The removal of " + release + " was pushed to branch " + branch + " of "
+                    + repoUrl + ", but its pull request into " + base + " could not be opened: " + ex.getMessage()
+                    + " Open it by hand and merge it, then uninstall the release again to finish.", ex);
+        }
+        releaseMetadataService.recordPendingRemoval(namespace, releaseName, branch, opened.url(), opened.id(),
+                firstNonBlank(opened.state(), "open"), helmReleases.stream()
+                        .map(hr -> hr.namespace() + "/" + hr.name()).collect(Collectors.toList()));
+        logFluxInfo(namespace, releaseName, "destroy", "Removal proposed in pull request %s into %s; the release keeps"
+                + " running until it is merged", opened.url(), base);
+        return true;
+        } catch (Exception destroyEx) {
+            // Nothing of a failed removal may stay in the workspace for the next operation to take as published.
+            resetWorkspaceOnFailure(gitClient, repoDir);
+            throw destroyEx;
+        }
+        } finally {
+            workspaceLock.unlock();
+        }
+    }
+
+    /**
+     * Refuses to take a pull request release missing from the base branch for one gone from Git, unless that base
+     * branch tells where Flux reads it: on the server, and recorded for the release (every deploy since went there), or
+     * one the release's removal was proposed into. Main, assumed for a release recorded before its base branch was, or
+     * a base branch gone from the server (renamed, deleted) says nothing; nor does it when Flux reads another branch.
+     * Only a cluster without the release's HelmRelease then shows that Flux runs nothing of it.
+     *
+     * @throws IllegalStateException saying how to uninstall the release; nothing was removed
+     */
+    private void checkGoneFromBase(K8sReleaseEntity meta, String base, boolean baseOnServer) {
+        boolean recorded = meta.getGitBaseBranch() != null && !meta.getGitBaseBranch().isBlank();
+        if (baseOnServer && (recorded || meta.isGitPendingDelete())) {
+            return;
+        }
+        if (Boolean.FALSE.equals(helmReleaseOnCluster(meta.getNamespace(), meta.getReleaseName()))) {
+            return;
+        }
+        String release = meta.getNamespace() + "/" + meta.getReleaseName();
+        throw new IllegalStateException(stillReconciled(baseOnServer
+                ? "Branch " + base + ", which KDPS takes for the base branch of " + release + " because none is recorded"
+                        + " for it, does not hold the release"
+                : "Branch " + base + " is not on " + meta.getGitRepoUrl(), release));
+    }
+
+    /**
+     * Why an uninstall removed nothing when KDPS cannot tell where Flux reads a release that is still on the cluster,
+     * and how the operator uninstalls it.
+     *
+     * @param found what KDPS found on the branch it took for the release's base branch
+     */
+    private static String stillReconciled(String found, String release) {
+        return found + ", and the HelmRelease of " + release + " is still on the cluster (or KDPS could not check it),"
+                + " so nothing was removed: Flux may reconcile the release from another branch. Deploy the release"
+                + " again once, naming the branch Flux reconciles as its base branch, then uninstall it.";
+    }
+
+    /**
+     * Whether the release's HelmRelease is on the cluster: what Flux runs, whatever branch it reads it from.
+     *
+     * @return TRUE or FALSE; {@code null} when the cluster could not be asked
+     */
+    private Boolean helmReleaseOnCluster(String namespace, String releaseName) {
+        if (kubernetesService == null || kubernetesService.getClient() == null) {
+            return null;
+        }
+        try {
+            return kubernetesService.getClient()
+                    .genericKubernetesResources(helmReleaseContext())
+                    .inNamespace(namespace)
+                    .withName(releaseName)
+                    .get() != null;
+        } catch (Exception e) {
+            LOG.warn("Could not look for HelmRelease {}/{} on the cluster: {}", namespace, releaseName, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Withdraws the release's own pull request when it is still open as the release is uninstalled: merged later, it
+     * would install the release again from the branch Flux reconciles, unknown to KDPS and without its values Secret.
+     * Closed through the Git server's API with the release's access token. Without one (a release deployed over SSH),
+     * whether it is open cannot be read: the release's manifests are removed from its branch instead, while the server
+     * has it and it holds them, which leaves the pull request nothing to bring back. Nothing is done for a removal's
+     * pull request, nor for a release without a pull request.
+     *
+     * @throws IllegalStateException naming the pull request, when it could be neither closed nor emptied
+     */
+    private void withdrawPullRequest(K8sReleaseEntity meta, GitClient gitClient, Path repoDir, Path releaseDir,
+                                     String base, String token) throws Exception {
+        String number = meta.getGitPrNumber();
+        if (meta.isGitPendingDelete() || !isPullRequestMode(meta.getGitCommitMode()) || number == null
+                || number.isBlank()) {
+            return;
+        }
+        String namespace = meta.getNamespace();
+        String releaseName = meta.getReleaseName();
+        String release = namespace + "/" + releaseName;
+        String repoUrl = meta.getGitRepoUrl();
+        String pullRequest = firstNonBlank(meta.getGitPrUrl(), "#" + number);
+        if (token != null && !token.isBlank()) {
+            try {
+                GitPullRequests.PullRequestInfo current = pullRequests.get(repoUrl, number, token);
+                if (!GitPullRequests.isOpen(current.state())) {
+                    return;
+                }
+                GitPullRequests.PullRequestInfo closed = pullRequests.close(repoUrl, number, token);
+                releaseMetadataService.updatePrInfo(namespace, releaseName, firstNonBlank(closed.url(), current.url()),
+                        firstNonBlank(closed.id(), number), firstNonBlank(closed.state(), "closed"));
+                logFluxInfo(namespace, releaseName, "destroy", "Closed pull request %s, still open, of the release"
+                        + " uninstalled", pullRequest);
+                return;
+            } catch (Exception ex) {
+                throw new IllegalStateException("KDPS could not close pull request " + pullRequest + " of " + release
+                        + ", which merged later would install the release again, so nothing was removed: "
+                        + ex.getMessage() + " Close it without merging it, then uninstall the release again.", ex);
+            }
+        }
+        String branch = meta.getGitBranch();
+        if (branch == null || branch.isBlank() || branch.equals(base) || !gitClient.isOnServer(branch)
+                || !Boolean.TRUE.equals(gitClient.publishedOn(releaseDir.resolve(HELM_RELEASE_FILE), branch))) {
+            return;
+        }
+        try {
+            gitClient.checkoutWorkBranch(branch, base);
+            checkOwnHelmRelease(repoDir, releaseDir, namespace, releaseName);
+            for (Path manifest : releaseManifests(repoDir.resolve(releaseDir))) {
+                gitClient.deletePath(repoDir.relativize(manifest));
+            }
+            commitAndPush(gitClient, "Flux GitOps delete " + releaseDir,
+                    () -> checkOwnHelmRelease(repoDir, releaseDir, namespace, releaseName), release + " (uninstall)");
+            logFluxInfo(namespace, releaseName, "destroy", "Removed %s from branch %s of pull request %s", releaseDir,
+                    branch, pullRequest);
+        } catch (NotOwnDirectoryException refused) {
+            throw refused;
+        } catch (Exception ex) {
+            throw new IllegalStateException("KDPS could not remove " + release + " from branch " + branch + " of pull"
+                    + " request " + pullRequest + ", whose state it cannot read without an access token of the Git"
+                    + " server, so nothing was removed: merged later, that pull request would install the release"
+                    + " again. " + ex.getMessage() + " Close it without merging it and delete its branch, then"
+                    + " uninstall the release again.", ex);
+        }
+    }
+
+    /**
+     * The HelmReleases a removal proposed in a pull request took out of Git: those it recorded, and the release's own.
+     */
+    private static Set<NamespacedName> removedHelmReleases(K8sReleaseEntity meta) {
+        Set<NamespacedName> helmReleases = new java.util.LinkedHashSet<>();
+        helmReleases.add(new NamespacedName(meta.getNamespace(), meta.getReleaseName()));
+        if (meta.getGitRemovedHelmReleases() != null) {
+            for (String recorded : meta.getGitRemovedHelmReleases()) {
+                int slash = recorded.indexOf('/');
+                if (slash > 0 && slash < recorded.length() - 1) {
+                    helmReleases.add(new NamespacedName(recorded.substring(0, slash), recorded.substring(slash + 1)));
+                }
+            }
+        }
+        return helmReleases;
     }
 
     /**
@@ -1985,9 +2352,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Removes a GitOps release's manifests from Git with what its metadata records only: the repository, branch and
-     * path it was deployed to, and the Git credential KDPS saved for it. Nothing a request carries is used, so the
-     * stored credential only ever goes to the repository the release was deployed from. As any removal from Git
+     * Removes a GitOps release's manifests from Git by a direct commit to the branch Flux reconciles
+     * ({@link #recordedBaseBranch}), with what its metadata records only: the repository, the base branch and the path
+     * it was deployed to, and the Git credential KDPS saved for it. Nothing a request carries is used, so the stored
+     * credential only ever goes to the repository the release was deployed from. As any removal from Git
      * ({@link #destroy(String, String, String, String, String, String, String, String)}), it runs in the release's own
      * workspace under its lock and deletes only the manifests the release wrote into its own directory
      * ({@link #releaseDirectory}, {@link #releaseManifests}), committed once and pushed, made again on top of the
@@ -2011,8 +2379,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             releaseDirectory(meta.getGitPath(), meta.getNamespace(), meta.getReleaseName());
         }
         GitSecrets secrets = recordedGitSecrets(meta);
-        destroy(repoUrl, meta.getGitBranch(), reconciledBranch(meta), meta.getGitPath(), secrets.token(),
-                secrets.sshKey(), meta.getNamespace(), meta.getReleaseName());
+        String base = recordedBaseBranch(meta);
+        destroy(repoUrl, base, base, meta.getGitPath(), secrets.token(), secrets.sshKey(), meta.getNamespace(),
+                meta.getReleaseName());
         forgetGitCredentials(meta);
     }
 
@@ -2090,32 +2459,18 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * The branch Flux reconciles for a GitOps release, as far as its metadata tells: the recorded base branch; for a
-     * direct commit without one, the branch it pushes to; null for a pull request without one, whose base is unknown.
-     */
-    public static String reconciledBranch(K8sReleaseEntity meta) {
-        if (meta == null) {
-            return null;
-        }
-        if (meta.getGitBaseBranch() != null && !meta.getGitBaseBranch().isBlank()) {
-            return meta.getGitBaseBranch();
-        }
-        if ("PR_MODE".equalsIgnoreCase(meta.getGitCommitMode())) {
-            return null;
-        }
-        return (meta.getGitBranch() == null || meta.getGitBranch().isBlank()) ? "main" : meta.getGitBranch();
-    }
-
-    /**
      * Delete the manifests of a release from Git and push the change, in the release's own workspace so it is
      * serialised with the deploys of the same release. Only the files a deploy of the release writes into its own
      * directory ({@link #releaseDirectory}) are deleted ({@link #releaseManifests}): never a blank path or the bare
      * path prefix, nothing in another release's directory, even one below the release's, and no other file.
      *
      * @param repoUrl          Git repository URL.
-     * @param branch           branch to push the removal to (will be created if absent).
+     * @param branch           branch to push the removal to (will be created if absent, unless it is the one Flux
+     *                         reconciles).
      * @param reconciledBranch the branch Flux reconciles, or null when unknown: the values Secrets of the removed
-     *                         HelmReleases are deleted only once it no longer holds their manifests
+     *                         HelmReleases are deleted only once it no longer holds their manifests. When the server
+     *                         does not have it, nothing is removed from Git, and the uninstall is refused unless the
+     *                         cluster has no HelmRelease of the release
      * @param repoPath         the directory recorded for the release, relative to the repo root.
      * @param authToken        HTTPS token (optional).
      * @param sshKey           SSH private key (optional).
@@ -2127,6 +2482,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      *                                   {@link #WORKSPACE_LOCK_WAIT}; nothing is removed
      * @throws GitPushRejectedException  when the server refused the removal; the workspace is reset to the server's
      *                                   branch
+     * @throws IOException               when the server does not have the branch Flux reconciles and the release's
+     *                                   HelmRelease is still on the cluster, or KDPS could not check it; nothing is
+     *                                   removed
      */
     public void destroy(String repoUrl, String branch, String reconciledBranch, String repoPath,
                         String authToken, String sshKey,
@@ -2145,6 +2503,20 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 .withTimeout(gitTimeoutSeconds(viewContext));
         try {
         withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
+        if (reconciledBranch != null && !gitClient.isOnServer(reconciledBranch)) {
+            // A branch Flux reconciles that the server does not have holds nothing, which says nothing of where Flux
+            // reads the release; pushed there, the removal would create a branch from whatever the workspace started
+            // from. Nothing to remove only when Flux runs nothing of the release.
+            if (!Boolean.FALSE.equals(helmReleaseOnCluster(namespace, releaseName))) {
+                throw new IOException(stillReconciled("Branch " + reconciledBranch + " is not on " + repoUrl,
+                        namespace + "/" + releaseName));
+            }
+            LOG.warn("Branch {} is not on {} and the cluster has no HelmRelease {}/{}: nothing to remove from Git",
+                    reconciledBranch, repoUrl, namespace, releaseName);
+            deleteValuesSecrets(new java.util.LinkedHashSet<>(),
+                    new java.util.LinkedHashSet<>(List.of(new NamespacedName(namespace, releaseName))));
+            return;
+        }
         withGitRetry(() -> { gitClient.checkoutBranch(effectiveBranch); return null; }, "destroy-checkout");
         // As for a deploy: the removal is made on top of the branch the working branch was merged into. On top of its
         // merged commits instead, it would come to nothing once merged: together they change nothing since the commit
@@ -2964,52 +3336,66 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Delete a HelmRelease from the cluster (best effort).
+     * Deletes a HelmRelease from the cluster, which has Flux uninstall its Helm release. Best effort: Flux also removes
+     * a HelmRelease the branch it reconciles no longer holds when it prunes.
      */
     private void deleteHelmRelease(String namespace, String releaseName) {
         if (kubernetesService == null || kubernetesService.getClient() == null) {
             return;
         }
         try {
-            CustomResourceDefinitionContext ctx = new CustomResourceDefinitionContext.Builder()
-                    .withGroup("helm.toolkit.fluxcd.io")
-                    .withVersion("v2beta2")
-                    .withScope("Namespaced")
-                    .withPlural("helmreleases")
-                    .build();
             kubernetesService.getClient()
-                    .genericKubernetesResources(ctx)
+                    .genericKubernetesResources(helmReleaseContext())
                     .inNamespace(namespace)
                     .withName(releaseName)
                     .delete();
             LOG.info("Deleted HelmRelease {}/{} from cluster", namespace, releaseName);
         } catch (Exception ex) {
-            LOG.debug("Failed to delete HelmRelease {}/{}: {}", namespace, releaseName, ex.toString());
+            LOG.warn("Could not delete HelmRelease {}/{} from the cluster; Flux removes it if it prunes what Git no"
+                    + " longer holds: {}", namespace, releaseName, ex.toString());
         }
     }
 
     /**
-     * Delete a HelmRepository from the flux-system namespace (best effort).
+     * Deletes the HelmRepository of a removed release's chart repository from the cluster, unless another GitOps
+     * release KDPS deployed reads it: every release from a chart repository reads the one HelmRepository named after
+     * it. Kept when the releases cannot be read.
      */
+    private void deleteHelmRepositoryIfUnused(K8sReleaseEntity meta) {
+        String repoId = meta.getRepoId();
+        if (repoId == null || repoId.isBlank()) {
+            return;
+        }
+        String releaseId = K8sReleaseEntity.idOf(meta.getNamespace(), meta.getReleaseName());
+        try {
+            boolean shared = releaseMetadataService.findAll().stream()
+                    .anyMatch(other -> other != null && !releaseId.equals(other.getId())
+                            && "FLUX_GITOPS".equalsIgnoreCase(other.getDeploymentMode()) && repoId.equals(other.getRepoId()));
+            if (shared) {
+                LOG.info("Kept HelmRepository {}: another GitOps release reads it", repoId);
+                return;
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("Kept HelmRepository {}: the releases reading it could not be read: {}", repoId, e.toString());
+            return;
+        }
+        deleteHelmRepository(repoId);
+    }
+
+    /** Deletes a HelmRepository from the flux-system namespace (best effort). */
     private void deleteHelmRepository(String repoName) {
         if (kubernetesService == null || kubernetesService.getClient() == null) {
             return;
         }
         try {
-            CustomResourceDefinitionContext ctx = new CustomResourceDefinitionContext.Builder()
-                    .withGroup("source.toolkit.fluxcd.io")
-                    .withVersion("v1beta2")
-                    .withScope("Namespaced")
-                    .withPlural("helmrepositories")
-                    .build();
             kubernetesService.getClient()
-                    .genericKubernetesResources(ctx)
+                    .genericKubernetesResources(helmRepositoryContext())
                     .inNamespace("flux-system")
                     .withName(repoName)
                     .delete();
             LOG.info("Deleted HelmRepository {} from cluster", repoName);
         } catch (Exception ex) {
-            LOG.debug("Failed to delete HelmRepository {}: {}", repoName, ex.toString());
+            LOG.warn("Could not delete HelmRepository {} from the cluster: {}", repoName, ex.toString());
         }
     }
 
@@ -3045,40 +3431,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             throw lastIo;
         }
         return op.call();
-    }
-
-    private HttpResponse<String> sendHttpWithRetry(HttpRequest request, String label) throws InterruptedException, IOException {
-        IOException lastIo = null;
-        for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
-            try {
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() >= 500 && attempt < MAX_RETRY_ATTEMPTS) {
-                    lastIo = new IOException("HTTP " + response.statusCode());
-                    logFluxWarn(null, label, "http", "Request returned %d, retrying", response.statusCode());
-                    Thread.sleep(HTTP_RETRY_BASE_DELAY_MS * attempt);
-                    continue;
-                }
-                return response;
-            } catch (SocketTimeoutException toe) {
-                lastIo = toe;
-                logFluxWarn(null, label, "http-timeout", "Timeout on attempt %d: %s", attempt, toe.getMessage());
-                if (attempt >= MAX_RETRY_ATTEMPTS) {
-                    throw toe;
-                }
-                Thread.sleep(HTTP_RETRY_BASE_DELAY_MS * attempt);
-            } catch (IOException io) {
-                lastIo = io;
-                logFluxWarn(null, label, "http", "HTTP request failed on attempt %d: %s", attempt, io.getMessage());
-                if (attempt >= 3) {
-                    throw io;
-                }
-                Thread.sleep(250L * attempt);
-            }
-        }
-        if (lastIo != null) {
-            throw lastIo;
-        }
-        throw new IOException("Failed to execute HTTP request for " + label);
     }
 
     /* ------------------------ Security + overrides helpers ------------------------ */
@@ -3780,39 +4132,5 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String ns = (namespace == null || namespace.isBlank()) ? "-" : namespace;
         String rel = (release == null || release.isBlank()) ? "-" : release;
         return ns + "/" + rel;
-    }
-
-    /**
-     * The repository as the pull request calls read it (over HTTPS, without the {@code .git} suffix), whose host gets
-     * the access token; {@code null} when that is not the host the release's Git credential is bound to
-     * ({@link GitCredentialService#hostOf}).
-     */
-    static java.net.URI pullRequestRepoUri(String repoUrl) {
-        String host = GitCredentialService.hostOf(repoUrl);
-        if (host == null || host.isEmpty()) {
-            return null;
-        }
-        try {
-            java.net.URI uri = java.net.URI.create(normalizeRepoUrl(repoUrl));
-            return host.equalsIgnoreCase(uri.getHost()) && uri.getPath() != null ? uri : null;
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    private static String normalizeRepoUrl(String repoUrl) {
-        if (repoUrl == null) return null;
-        String trimmed = repoUrl.trim();
-        while (trimmed.endsWith("/")) {
-            trimmed = trimmed.substring(0, trimmed.length() - 1);
-        }
-        // Only the suffix: a host may hold ".git" too (code.gitlab.example), and must not change.
-        if (trimmed.endsWith(".git")) {
-            trimmed = trimmed.substring(0, trimmed.length() - ".git".length());
-        }
-        if (trimmed.startsWith("git@")) {
-            trimmed = "https://" + trimmed.substring(4).replace(":", "/");
-        }
-        return trimmed;
     }
 }

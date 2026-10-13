@@ -253,16 +253,54 @@ public class ReleaseMetadataService {
     }
 
     /**
-     * Records the base branch of a GitOps release: the branch Flux reconciles, as configured. A redeploy that names no
-     * base branch still needs it to know whether its commit is applied as soon as it is pushed.
+     * Records where the last GitOps change of a release went, exactly as given: a value left out is cleared, so a
+     * direct commit forgets the pull request of an earlier change and a deploy ends a removal that was waiting for its
+     * merge. The base branch is kept for the next deploys, which need not name it.
      *
-     * @param baseBranch the configured base branch; null or blank changes nothing
+     * @param branch     the branch the change was pushed to: the base branch for a direct commit
+     * @param baseBranch the branch Flux reconciles; null or blank keeps the recorded one
+     * @param commitMode DIRECT_COMMIT or PR_MODE
+     * @param prUrl      the pull request of the change, or null for none
+     * @param prNumber   its number, or null
+     * @param prState    its state, or null
      */
-    public void recordGitBaseBranch(String namespace, String releaseName, String baseBranch) {
-        if (baseBranch == null || baseBranch.isBlank()) return;
+    public void recordGitChange(String namespace, String releaseName, String branch, String baseBranch,
+                                String commitMode, String prUrl, String prNumber, String prState) {
         K8sReleaseEntity e = find(namespace, releaseName);
-        if (e == null || baseBranch.equals(e.getGitBaseBranch())) return;
-        e.setGitBaseBranch(baseBranch);
+        if (e == null) return;
+        e.setGitBranch(branch);
+        if (baseBranch != null && !baseBranch.isBlank()) {
+            e.setGitBaseBranch(baseBranch);
+        }
+        e.setGitCommitMode(commitMode);
+        e.setGitPrUrl(prUrl);
+        e.setGitPrNumber(prNumber);
+        e.setGitPrState(prState);
+        e.setGitPendingDelete(false);
+        e.setGitRemovedHelmReleases(null);
+        releaseRepository.update(e);
+    }
+
+    /**
+     * Records that the uninstall of a GitOps release waits for the merge of its removal: the release keeps running, and
+     * its record, until the removal reaches the branch Flux reconciles.
+     *
+     * @param branch       the branch the removal was pushed to
+     * @param prUrl        the pull request proposing it
+     * @param prNumber     its number
+     * @param prState      its state
+     * @param helmReleases the HelmReleases the removal takes out of Git, as {@code <namespace>/<name>}
+     */
+    public void recordPendingRemoval(String namespace, String releaseName, String branch, String prUrl,
+                                     String prNumber, String prState, List<String> helmReleases) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null) return;
+        e.setGitBranch(branch);
+        e.setGitPrUrl(prUrl);
+        e.setGitPrNumber(prNumber);
+        e.setGitPrState(prState);
+        e.setGitPendingDelete(true);
+        e.setGitRemovedHelmReleases(helmReleases);
         releaseRepository.update(e);
     }
 

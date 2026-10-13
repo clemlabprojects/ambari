@@ -23,6 +23,7 @@ import VolumeEditor from '../ServiceInstallationModal/VolumeEditor';
 import { resolveAuthCascade, applyAuthCascadeToFields } from '../ServiceInstallationModal';
 import { ExternalAuthTargetsContext, ContextLinkedFieldsContext, ResolvedContextValuesContext, type ResolvedContextInfo } from '../ServiceInstallationModal/ExternalAuthTargetsContext';
 import { FieldSyncContext, UpgradeModeContext } from '../ServiceInstallationModal/fieldSync';
+import { BASE_BRANCH_TOOLTIP, COMMIT_MODE_LABELS, DEFAULT_BASE_BRANCH, WORKING_BRANCH_TOOLTIP, opensPullRequest, workingBranchProblem } from '../../utils/gitOpsBranches';
 import { namespaceRules, releaseNameRules } from '../../utils/nameRules';
 
 interface InstallStepProps {
@@ -196,21 +197,35 @@ const InstallStep: React.FC<InstallStepProps> = ({
                 <Form.Item name={['git','repoUrl']} label="Git repository URL" rules={[{ required: true, message: 'Repository is required for GitOps' }]}>
                   <Input placeholder="https://git.example.com/org/cluster-config.git" />
                 </Form.Item>
-                <Form.Item name={['git','baseBranch']} label="Base branch">
-                  <Input placeholder="main" />
+                <Form.Item name={['git','baseBranch']} label="Base branch" tooltip={BASE_BRANCH_TOOLTIP}>
+                  <Input placeholder={DEFAULT_BASE_BRANCH} />
                 </Form.Item>
                 <Form.Item name={['git','pathPrefix']} label="Path prefix">
                   <Input placeholder="clusters/default" />
                 </Form.Item>
-                <Form.Item name={['git','branch']} label="Working branch">
-                  <Input placeholder="feature/ambari-flux" />
-                </Form.Item>
                 <Form.Item name={['git','commitMode']} label="Commit mode" initialValue="DIRECT_COMMIT">
                   <Select>
-                    <Select.Option value="DIRECT_COMMIT">Direct commit</Select.Option>
-                    <Select.Option value="PR_MODE">Open PR (stub)</Select.Option>
+                    <Select.Option value="DIRECT_COMMIT">{COMMIT_MODE_LABELS.DIRECT_COMMIT}</Select.Option>
+                    <Select.Option value="PR_MODE">{COMMIT_MODE_LABELS.PR_MODE}</Select.Option>
                   </Select>
                 </Form.Item>
+                {/* Only a pull request has a working branch: a direct commit goes to the base branch. */}
+                {opensPullRequest(form.getFieldValue('git')) && (
+                  <Form.Item
+                    name={['git','branch']}
+                    label="Working branch"
+                    tooltip={WORKING_BRANCH_TOOLTIP}
+                    dependencies={[['git','baseBranch']]}
+                    rules={[({ getFieldValue }) => ({
+                      validator: (_, value) => {
+                        const problem = workingBranchProblem({ ...(getFieldValue('git') || {}), branch: value });
+                        return problem ? Promise.reject(new Error(problem)) : Promise.resolve();
+                      },
+                    })]}
+                  >
+                    <Input placeholder="Left empty: a new branch for each change" />
+                  </Form.Item>
+                )}
                 <Form.Item name={['git','authToken']} label="Auth token">
                   <Input.Password placeholder="Personal access token (optional if using SSH)" />
                 </Form.Item>

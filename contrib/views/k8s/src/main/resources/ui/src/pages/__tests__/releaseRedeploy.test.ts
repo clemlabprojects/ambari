@@ -1,4 +1,4 @@
-import { releaseRedeployPayload } from '../releaseRedeploy';
+import { gitOptionsForRelease, releaseRedeployPayload } from '../releaseRedeploy';
 import type { HelmRelease } from '../../types';
 
 // Resync, Refresh security profile and worker autoscaling all redeploy a release from the Releases page. Each must
@@ -51,5 +51,40 @@ describe('releaseRedeployPayload', () => {
     expect(payload.chart).toBe('trino');
     expect(payload.formValues).toBeUndefined();
     expect(payload.git).toBeUndefined();
+  });
+});
+
+// Resync, Refresh security profile, worker autoscaling and Upgrade/Config send the release's Git options back. They
+// name the base branch Flux reconciles and the commit mode as recorded, never the working branch: a direct commit goes
+// to the base branch, and the server picks the branch of a pull request.
+describe('gitOptionsForRelease', () => {
+  const gitOps = {
+    ...release,
+    gitRepoUrl: 'https://git.example.com/platform.git',
+    gitBranch: 'flux-3f2a1c4e-0b5d-4c6e-9f7a-8b9c0d1e2f3a',
+    gitBaseBranch: 'production',
+    gitCommitMode: 'PR_MODE',
+  } as HelmRelease;
+
+  it('sends the recorded base branch and commit mode, and no working branch', () => {
+    expect(gitOptionsForRelease(gitOps)).toEqual({
+      repoUrl: 'https://git.example.com/platform.git',
+      baseBranch: 'production',
+      commitMode: 'PR_MODE',
+    });
+  });
+
+  it('does not send main back as the base branch when it is only assumed for an old release', () => {
+    const assumed = { ...gitOps, gitBaseBranch: 'main', gitBaseBranchAssumed: true } as HelmRelease;
+    expect(gitOptionsForRelease(assumed)?.baseBranch).toBeUndefined();
+    expect(gitOptionsForRelease(assumed)?.commitMode).toBe('PR_MODE');
+  });
+
+  it('keeps pull request mode for a release whose pull request was never opened', () => {
+    expect(gitOptionsForRelease({ ...gitOps, gitPrNumber: undefined })?.commitMode).toBe('PR_MODE');
+  });
+
+  it('sends nothing for a release deployed with Helm', () => {
+    expect(gitOptionsForRelease({ ...gitOps, deploymentMode: 'DIRECT_HELM' })).toBeUndefined();
   });
 });
