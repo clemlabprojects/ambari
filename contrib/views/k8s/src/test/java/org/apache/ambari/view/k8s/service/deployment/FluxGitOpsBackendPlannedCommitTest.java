@@ -540,6 +540,21 @@ class FluxGitOpsBackendPlannedCommitTest {
     }
 
     @Test
+    void aLaterResetAnOperatorAskedForCountsAsHandled() {
+        // The deploy wait asked for a reset at 09:00; before Flux handled it, Retry reconcile replaced it with 09:05.
+        Map<String, Object> installed = status(4L, condition("Ready", "True", "InstallSucceeded",
+                "Helm install succeeded for release analytics/superset", 4));
+        installed.put("lastHandledResetAt", "2026-10-12T09:05:00.123Z");
+        Map<String, String> asked = Map.of("reconcile.fluxcd.io/resetAt", "2026-10-12T09:05:00.123Z");
+
+        assertTrue(FluxGitOpsBackend.readiness(helmRelease("new", 4, installed, asked), "new", "2026-10-12T09:00:00Z")
+                .ready());
+        assertFalse(FluxGitOpsBackend.handledAtOrAfter("2026-10-12T08:59:59Z", "2026-10-12T09:00:00Z"));
+        assertFalse(FluxGitOpsBackend.handledAtOrAfter(null, "2026-10-12T09:00:00Z"));
+        assertFalse(FluxGitOpsBackend.handledAtOrAfter("later", "2026-10-12T09:00:00Z"));
+    }
+
+    @Test
     void aStalledReleaseIsReadAgainOnlyOnceFluxHandledTheResetAskedFor() {
         Map<String, Object> gaveUp = status(4L,
                 condition("Ready", "False", "InstallFailed", INSTALL_ERROR, 4),

@@ -291,10 +291,13 @@ public class FluxGitOpsBackendManifestSafetyTest {
                   name: trino
                   namespace: analytics
                   annotations:
-                    ambari.clemlab.com/spec-digest: "874019f15308ceab3e1a50d0ae056083bc5960ea7eeee4d2979bccda69cf291d"
+                    ambari.clemlab.com/spec-digest: "cb23fadb8a33d3a10c5694c1d79a3e1491e05ce79d0c30dd611f54df17ab2354"
                 spec:
                   interval: 5m
                   timeout: 15m
+                  install:
+                    remediation:
+                      retries: 3
                   dependsOn:
                   - name: ldap-proxy
                     namespace: analytics
@@ -366,6 +369,9 @@ public class FluxGitOpsBackendManifestSafetyTest {
                 spec:
                   interval: 5m
                   timeout: 15m
+                  install:
+                    remediation:
+                      retries: 3
                   chart:
                     spec:
                       chart: ldap-proxy
@@ -403,6 +409,9 @@ public class FluxGitOpsBackendManifestSafetyTest {
                 spec:
                   interval: 5m
                   timeout: 15m
+                  install:
+                    remediation:
+                      retries: 3
                   chart:
                     spec:
                       chart: kdps/metrics-exporter

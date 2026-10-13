@@ -142,6 +142,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     static final String HELM_TIMEOUT = "15m";
 
+    /** What Flux accepts as a duration: one or more numbers each followed by ms, s, m or h. */
+    private static final java.util.regex.Pattern FLUX_DURATION =
+            java.util.regex.Pattern.compile("([0-9]+(\\.[0-9]+)?(ms|s|m|h))+");
+
+    /** Time a deploy's wait for Flux allows besides the install attempts: Flux fetching the commit and the sources. */
+    private static final int READY_MARGIN_SECONDS = 600;
+
+    /** One number and its unit within a duration. */
+    private static final java.util.regex.Pattern DURATION_PART =
+            java.util.regex.Pattern.compile("([0-9]+(?:\\.[0-9]+)?)(ms|s|m|h)");
+
     /**
      * The files a deploy writes into its release's directory: its HelmRelease and the HelmRepository of its chart. An
      * uninstall removes these files and nothing else. A file of {@link #SHARED_DIR} is never named
@@ -703,6 +714,67 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     + " deploy pins it in the HelmRelease, and none was given or recorded for this release.");
         }
         return version;
+    }
+
+    /**
+     * How long Flux lets Helm install or upgrade the release of a service: the {@code gitops.timeout} of its
+     * definition, else {@link #HELM_TIMEOUT}. A value Flux would reject is ignored, since it would stop the
+     * HelmRelease from being applied at all.
+     */
+    private String helmTimeout(String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank()) return HELM_TIMEOUT;
+        try {
+            StackServiceDef def = stackDefinitionService.getServiceDefinition(serviceKey);
+            return helmTimeout(def);
+        } catch (Exception e) {
+            LOG.warn("Could not read the GitOps timeout of service definition {}: {}", serviceKey, e.toString());
+            return HELM_TIMEOUT;
+        }
+    }
+
+    /** The timeout a service definition asks for, else {@link #HELM_TIMEOUT}. */
+    static String helmTimeout(StackServiceDef def) {
+        Object configured = def == null || def.gitops == null ? null : def.gitops.get("timeout");
+        String timeout = configured == null ? null : String.valueOf(configured).trim();
+        if (timeout == null || timeout.isEmpty()) return HELM_TIMEOUT;
+        if (!FLUX_DURATION.matcher(timeout).matches()) {
+            LOG.warn("Ignored the GitOps timeout '{}' of service definition {}: not a duration such as 20m; using {}",
+                    timeout, def.name, HELM_TIMEOUT);
+            return HELM_TIMEOUT;
+        }
+        return timeout;
+    }
+
+    /**
+     * How long a deploy waits for Flux to report the release of a service Ready: Flux may run the first install
+     * {@link FluxManifests#INSTALL_RETRIES} more times after the first attempt timed out, each as long as the
+     * HelmRelease timeout of the service, and needs a margin besides to fetch the commit and the chart and to install
+     * the releases this one depends on. A wait shorter than that would fail a deploy Flux then completes. An upgrade
+     * is not retried: Flux marks it failed after one timeout and the wait ends then, not at this limit.
+     *
+     * @param def          the service definition, or {@code null} for the default timeout
+     * @param floorSeconds the shortest wait, whatever the timeout
+     */
+    public static int readyTimeoutSeconds(StackServiceDef def, int floorSeconds) {
+        long attempts = FluxManifests.INSTALL_RETRIES + 1L;
+        long seconds = durationSeconds(helmTimeout(def)) * attempts + READY_MARGIN_SECONDS;
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(floorSeconds, seconds));
+    }
+
+    /** The seconds of a duration that matched {@link #FLUX_DURATION}, rounded up: {@code 1h30m} is 5400. */
+    private static long durationSeconds(String duration) {
+        java.util.regex.Matcher part = DURATION_PART.matcher(duration);
+        double seconds = 0;
+        while (part.find()) {
+            double amount = Double.parseDouble(part.group(1));
+            seconds += switch (part.group(2)) {
+                case "ms" -> amount / 1000;
+                case "s" -> amount;
+                case "m" -> amount * 60;
+                default -> amount * 3600;
+            };
+        }
+        return (long) Math.ceil(seconds);
     }
 
     /** The chart version a service definition ships with, or {@code null}. */
@@ -1537,7 +1609,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         List<SourceSecret> sourceSecrets = new ArrayList<>(source.secrets());
 
         Map<String, Object> hrSpec = FluxManifests.helmReleaseSpec(chartInSource, version, source.name(),
-                source.referencedFrom(namespace), depRefs, valuesSecretName, split.publicValues());
+                source.referencedFrom(namespace), depRefs, valuesSecretName, split.publicValues(),
+                helmTimeout(serviceKey));
         String specDigest = specDigest(FluxManifests.specYaml(hrSpec));
         String hrYaml = FluxManifests.helmRelease(release, namespace, specDigest, hrSpec);
 
@@ -3691,6 +3764,20 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
+     * Whether the reset Flux last handled is the one asked for or a later one: an operator's Retry reconcile can
+     * replace the value before Flux handles it. Values that are not instants are compared as they are.
+     */
+    static boolean handledAtOrAfter(String handled, String requested) {
+        if (handled == null) return false;
+        if (handled.equals(requested)) return true;
+        try {
+            return !java.time.Instant.parse(handled).isBefore(java.time.Instant.parse(requested));
+        } catch (java.time.format.DateTimeParseException e) {
+            return false;
+        }
+    }
+
+    /**
      * {@link #readiness(GenericKubernetesResource, String)} after asking Flux to try again a release it gave up on.
      *
      * @param resetRequestedAt the reset asked for ({@link KubernetesService#requestFluxReset}): until Flux has handled
@@ -3727,7 +3814,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // A request Flux has not handled yet: the state it reports Ready or given up on predates it.
         String pending = null;
         if (resetRequestedAt != null
-                && !resetRequestedAt.equals(Objects.toString(status.get("lastHandledResetAt"), null))) {
+                && !handledAtOrAfter(Objects.toString(status.get("lastHandledResetAt"), null), resetRequestedAt)) {
             pending = "Flux has not started its new attempt at the release yet";
         } else {
             String requestedAt = annotations.get("reconcile.fluxcd.io/requestedAt");

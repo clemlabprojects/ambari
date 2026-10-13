@@ -415,6 +415,21 @@ class CommandServiceGitOpsDeployTest {
     // ------------------------------------------------------------------------------------------------ plan shape
 
     @Test
+    void theWaitForFluxCoversTheInstallAttemptsOfTheServicesHelmReleaseTimeout() {
+        // 15m default timeout: the first attempt and 3 retries, and the margin for the sources, beyond the 20m floor.
+        String defaultId = plan(request("FLUX_GITOPS", "main"), true);
+        assertEquals(4 * 900 + 600, ((Number) paramsOf(step(defaultId, CommandType.FLUX_WAIT_READY))
+                .get("timeoutSeconds")).intValue());
+
+        // A service that asks for 20m per attempt: the wait is no longer the 20m of one attempt.
+        HelmDeployRequest slow = request("FLUX_GITOPS", "main");
+        slow.setServiceKey("ZZTESTGITOPSSLOW");
+        String slowId = plan(slow, true);
+        assertEquals(4 * 1200 + 600, ((Number) paramsOf(step(slowId, CommandType.FLUX_WAIT_READY))
+                .get("timeoutSeconds")).intValue());
+    }
+
+    @Test
     void aGitOpsPlanPreparesTheReleaseLikeADirectDeployAndCommitsWhereTheHelmInstallWouldRun() {
         List<String> direct = stepTypes(plan(fullRequest("DIRECT_HELM"), false));
         String gitOpsId = plan(fullRequest("FLUX_GITOPS"), true);

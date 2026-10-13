@@ -42,10 +42,13 @@ public class FluxManifestsTest {
               name: trino
               namespace: analytics
               annotations:
-                ambari.clemlab.com/spec-digest: "988bc0033ffc78f64c20059e6216f936f81957240576ab1c700fb7861c839447"
+                ambari.clemlab.com/spec-digest: "3271cc28fd8c92fbbef6077c1599fa985a08ea00deea0333b8394e55e5794336"
             spec:
               interval: 5m
               timeout: 15m
+              install:
+                remediation:
+                  retries: 3
               dependsOn:
               - name: ldap-proxy
                 namespace: analytics
@@ -105,6 +108,9 @@ public class FluxManifestsTest {
             spec:
               interval: 5m
               timeout: 15m
+              install:
+                remediation:
+                  retries: 3
               chart:
                 spec:
                   chart: keda
@@ -353,5 +359,35 @@ public class FluxManifestsTest {
                     Map.of()))), "spec", "chart", "spec", "chart");
             assertEquals(typed, chart);
         }
+    }
+
+    @Test
+    public void aReleaseGetsTheDirectInstallTimeoutAndRetriesAFailedFirstInstallOnly() {
+        Map<String, Object> spec = releaseSpec("trino", "1.43.15", List.of(), Map.of());
+
+        assertEquals("15m", spec.get("timeout"));
+        assertEquals("a failed first install is tried again", Map.of("remediation", Map.of("retries", 3)),
+                spec.get("install"));
+        assertFalse("an upgrade is never retried or rolled back after a forward-only migration ran",
+                spec.containsKey("upgrade"));
+    }
+
+    @Test
+    public void aDependencyGetsTheSameTimeoutAndInstallRetries() {
+        Map<String, Object> document = onlyDocument(FluxManifests.helmRelease("keda", "keda", null,
+                FluxManifests.helmReleaseSpec("keda", "2.18.0", "kedacore", null, List.of(), null, Map.of()), true));
+
+        assertEquals("15m", at(document, "spec", "timeout"));
+        assertEquals(3, at(document, "spec", "install", "remediation", "retries"));
+        assertNull(at(document, "spec", "upgrade"));
+    }
+
+    @Test
+    public void aServiceCanAskForALongerTimeout() {
+        Map<String, Object> document = onlyDocument(release("gitlab", "dev", FluxManifests.helmReleaseSpec("gitlab",
+                "8.11.2", "charts", null, List.of(), null, Map.of(), "20m")));
+
+        assertEquals("20m", at(document, "spec", "timeout"));
+        assertEquals(3, at(document, "spec", "install", "remediation", "retries"));
     }
 }

@@ -55,6 +55,15 @@ final class FluxManifests {
     private static final String INTERVAL = "5m";
 
     /**
+     * How many times Flux tries a first install again after it failed (a timeout while large images are pulled and
+     * the chart's migrations run, a prerequisite that came up late). Flux uninstalls the failed release between the
+     * attempts, which costs nothing on a first install: there is no data yet. Upgrades are never retried: the
+     * charts that run forward-only schema migrations must not be rolled back under pods already started, so an
+     * upgrade that fails stays failed until the operator retries it.
+     */
+    static final int INSTALL_RETRIES = 3;
+
+    /**
      * Annotation that keeps an object on the cluster when its manifest leaves Git: Flux does not prune it. Set on the
      * objects several releases share (a dependency such as KEDA, a chart source of the platform), whose manifest a
      * removal by hand or a change of layout must never turn into an uninstall for every release.
@@ -127,6 +136,21 @@ final class FluxManifests {
     static Map<String, Object> helmReleaseSpec(String chart, String version, String source, String sourceNamespace,
                                                List<FluxGitOpsBackend.DepRef> dependsOn, String valuesSecret,
                                                Map<String, Object> values) {
+        return helmReleaseSpec(chart, version, source, sourceNamespace, dependsOn, valuesSecret, values,
+                FluxGitOpsBackend.HELM_TIMEOUT);
+    }
+
+    /**
+     * The spec of a HelmRelease that gives Helm {@code timeout} to install or upgrade the release, and has Flux try a
+     * failed first install again ({@link #INSTALL_RETRIES}).
+     *
+     * @param timeout how long Flux lets Helm install or upgrade the release and wait for it to be ready, as a Go
+     *                duration such as {@code 15m}
+     * @see #helmReleaseSpec(String, String, String, String, List, String, Map)
+     */
+    static Map<String, Object> helmReleaseSpec(String chart, String version, String source, String sourceNamespace,
+                                               List<FluxGitOpsBackend.DepRef> dependsOn, String valuesSecret,
+                                               Map<String, Object> values, String timeout) {
         Map<String, Object> sourceRef = new LinkedHashMap<>();
         sourceRef.put("kind", "HelmRepository");
         sourceRef.put("name", source);
@@ -142,7 +166,8 @@ final class FluxManifests {
 
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("interval", INTERVAL);
-        spec.put("timeout", FluxGitOpsBackend.HELM_TIMEOUT);
+        spec.put("timeout", timeout);
+        spec.put("install", Map.of("remediation", Map.of("retries", INSTALL_RETRIES)));
         if (dependsOn != null && !dependsOn.isEmpty()) {
             spec.put("dependsOn", dependsOn(dependsOn));
         }

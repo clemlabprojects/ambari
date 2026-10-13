@@ -90,6 +90,8 @@ class KubernetesServiceFluxReconcileTest {
         assertEquals(resetAt, annotations.get("reconcile.fluxcd.io/resetAt"));
         assertEquals(resetAt, annotations.get("reconcile.fluxcd.io/requestedAt"),
                 "Flux handles a reset only with a reconcile request of the same value");
+        assertEquals(resetAt, annotations.get("reconcile.fluxcd.io/forceAt"),
+                "the force makes Helm upgrade a release it left failed");
         assertEquals("data", annotations.get("team"));
     }
 

@@ -1135,6 +1135,16 @@ export const adoptRelease = async (namespace: string, releaseName: string) => {
 };
 
 /**
+ * Asks Flux to try a GitOps release again after it gave up on it (a first install that timed out, a prerequisite
+ * fixed outside Git), without a new commit. Resolves once the request is on the HelmRelease; Flux then reports the
+ * outcome in the release's status.
+ */
+export const retryReleaseReconcile = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/retry-reconcile`;
+  return fetchJson<{ requested: boolean; requestedAt: string }>(requestPath, { method: 'POST' });
+};
+
+/**
  * Re-register the OIDC client in Keycloak for a deployed release.
  * Idempotent: updates the existing client if it already exists.
  */

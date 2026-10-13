@@ -7450,9 +7450,9 @@ public class KubernetesService {
 
     /**
      * Asks Flux to try a HelmRelease again after it gave up on it (Stalled, retries exhausted): what
-     * {@code flux reconcile helmrelease --reset} does, the {@code reconcile.fluxcd.io/resetAt} and
-     * {@code reconcile.fluxcd.io/requestedAt} annotations set to the same value. Flux does not retry such a release
-     * on its own until its spec or values change.
+     * {@code flux reconcile helmrelease --reset --force} does, the {@code reconcile.fluxcd.io/resetAt},
+     * {@code reconcile.fluxcd.io/forceAt} and {@code reconcile.fluxcd.io/requestedAt} annotations set to the same
+     * value. Flux does not retry such a release on its own until its spec or values change.
      *
      * @param namespace the HelmRelease namespace
      * @param name      the HelmRelease name
@@ -7480,7 +7480,9 @@ public class KubernetesService {
                     ? new HashMap<>() : new HashMap<>(hr.getMetadata().getAnnotations());
             annotations.put("reconcile.fluxcd.io/requestedAt", requestedAt);
             if (reset) {
+                // The reset clears the retry count; the force makes Helm upgrade a release it left failed.
                 annotations.put("reconcile.fluxcd.io/resetAt", requestedAt);
+                annotations.put("reconcile.fluxcd.io/forceAt", requestedAt);
             }
             hr.getMetadata().setAnnotations(annotations);
             return hr;

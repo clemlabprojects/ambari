@@ -296,4 +296,12 @@ public class StackServiceDef {
      * them: properties this class does not declare are dropped when service.json is read.
      */
     public List<Map<String, Object>> replayableActions;
+
+    /**
+     * Settings of the service's Flux HelmRelease in GitOps mode: {@code {"timeout": "20m"}} is how long Flux lets Helm
+     * install or upgrade the release and wait for it to be ready, a Go duration such as {@code 600s}, {@code 20m} or
+     * {@code 1h30m}. Absent, a HelmRelease gets the 15 minutes a direct deploy gives Helm. Set it for a chart that
+     * needs longer, such as one that pulls many large images or runs long migrations during its first install.
+     */
+    public Map<String, Object> gitops;
 }

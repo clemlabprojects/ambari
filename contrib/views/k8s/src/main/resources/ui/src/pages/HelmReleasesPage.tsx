@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { uninstallFollowUps, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
 import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
@@ -315,6 +315,23 @@ const HelmReleasesPage: React.FC = () => {
       await fetchReleases();
     } catch (e: any) {
       message.error(e?.message || 'Failed to adopt release');
+    } finally {
+      hide();
+    }
+  };
+
+  /**
+   * Ask Flux to try a GitOps release again without a new commit: for a release it gave up on (a first install that
+   * timed out, a prerequisite fixed outside Git). Refreshes the status of the row so the new attempt shows.
+   */
+  const triggerRetryReconcile = async (release: HelmRelease) => {
+    const hide = message.loading(`Asking Flux to retry ${release.name}...`, 0);
+    try {
+      await retryReleaseReconcile(release.namespace, release.name);
+      message.success(`Flux was asked to retry ${release.name}`);
+      void refreshReleaseStatus(release, { notifyOnError: true });
+    } catch (e: any) {
+      message.error(e?.message || 'Failed to ask Flux to retry the release');
     } finally {
       hide();
     }
@@ -764,6 +781,22 @@ const HelmReleasesPage: React.FC = () => {
           icon: <ReloadOutlined />,
           label: 'Resync / restart',
           onClick: () => resyncRelease(record, 'Resyncing release...')
+        }] : []),
+        ...(record.deploymentMode === 'FLUX_GITOPS' ? [{
+          key: 'retry-reconcile',
+          icon: <ReloadOutlined />,
+          label: 'Retry reconcile',
+          onClick: () => {
+            Modal.confirm({
+              title: `Ask Flux to retry ${record.name}?`,
+              content: 'Flux runs the Helm install or upgrade of this release again, chart hooks such as database '
+                + 'migrations included. Use it for a release Flux gave up on; on a healthy release it creates a new '
+                + 'revision.',
+              okText: 'Retry',
+              cancelText: 'Cancel',
+              onOk: () => triggerRetryReconcile(record)
+            });
+          }
         }] : []),
         ...(!record.managedByUi ? [{
           key: 'adopt',

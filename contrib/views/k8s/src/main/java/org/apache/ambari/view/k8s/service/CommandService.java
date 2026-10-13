@@ -126,7 +126,10 @@ public class CommandService {
     /** Key of the operation result that marks a deploy refused after its steps were stored, before any of them ran. */
     private static final String REFUSED_BEFORE_START = "refusedBeforeStart";
     private static final int MAX_RETRYABLE_ATTEMPTS = Integer.getInteger("k8s.view.command.maxRetryableAttempts", 5);
-    /** How long a GitOps deploy waits for Flux to apply its commit and report the release Ready. */
+    /**
+     * The least time a GitOps deploy waits for Flux to apply its commit and report the release Ready. A service whose
+     * HelmRelease timeout and install retries need longer gets that instead ({@link #gitOpsReadyTimeoutSeconds}).
+     */
     private static final int FLUX_READY_TIMEOUT_SECONDS = Integer.getInteger("k8s.view.gitops.readyTimeoutSeconds", 1200);
     /** How often that wait reads the HelmRelease. */
     private static final int FLUX_READY_POLL_SECONDS = Integer.getInteger("k8s.view.gitops.readyPollSeconds", 10);
@@ -8823,8 +8826,8 @@ public class CommandService {
             // post-deploy steps below find running pods as after a Helm install. No Helm dry run: the dependencies
             // whose resources the chart may use (KEDA, for one) are installed by Flux only after the commit; Flux
             // renders the chart itself and its message is reported if that fails.
-            this.commandPlanFactory.createGitOpsReleaseCommands(rootCommand, FLUX_READY_TIMEOUT_SECONDS,
-                    FLUX_READY_POLL_SECONDS);
+            this.commandPlanFactory.createGitOpsReleaseCommands(rootCommand,
+                    gitOpsReadyTimeoutSeconds(request.getServiceKey()), FLUX_READY_POLL_SECONDS);
         } else {
             this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, true);
             this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, false);
@@ -12459,6 +12462,22 @@ public class CommandService {
             }
         }
         return Collections.emptyMap();
+    }
+
+    /**
+     * How long the wait for Flux lasts for a release of the service: the longest Flux may take on its first install
+     * (see {@link FluxGitOpsBackend#readyTimeoutSeconds}), never less than {@link #FLUX_READY_TIMEOUT_SECONDS}.
+     */
+    private int gitOpsReadyTimeoutSeconds(String serviceKey) {
+        StackServiceDef def = null;
+        if (serviceKey != null && !serviceKey.isBlank()) {
+            try {
+                def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+            } catch (Exception e) {
+                LOG.warn("Could not read the GitOps timeout of service definition {}: {}", serviceKey, e.toString());
+            }
+        }
+        return FluxGitOpsBackend.readyTimeoutSeconds(def, FLUX_READY_TIMEOUT_SECONDS);
     }
 
     /**

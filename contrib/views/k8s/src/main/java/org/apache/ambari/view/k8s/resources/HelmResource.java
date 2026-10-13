@@ -571,6 +571,47 @@ public class HelmResource {
     }
 
     /**
+     * "Retry reconcile" of a GitOps release: asks Flux to try the release again after it gave up on it (a first
+     * install that timed out, a prerequisite fixed outside Git), without a new commit. Sets the Flux reset, force and
+     * reconcile request annotations of its HelmRelease to one timestamp, through the namespace-scoped client.
+     *
+     * @param namespace   release namespace
+     * @param releaseName release name
+     * @return HTTP 200 with the request's timestamp; 400 for a release Flux does not manage; 404 when its HelmRelease
+     *         is not on the cluster
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/retry-reconcile")
+    public Response retryReleaseReconcile(@PathParam("namespace") String namespace,
+                                          @PathParam("release") String releaseName) {
+        try {
+            authHelper.checkWritePermission();
+            K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
+            if (meta == null || !"FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity(Map.of("error", "Retry reconcile applies to releases deployed with Flux GitOps; "
+                                + namespace + "/" + releaseName + " is not one."))
+                        .build();
+            }
+            String requestedAt = kubernetesService.requestFluxReset(namespace, releaseName);
+            if (requestedAt == null) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(Map.of("error", "The HelmRelease " + namespace + "/" + releaseName + " is not on the "
+                                + "cluster: Flux has not applied the release yet, so there is nothing to retry."))
+                        .build();
+            }
+            LOG.info("Asked Flux to retry the reconcile of {}/{}", namespace, releaseName);
+            return Response.ok(Map.of("requested", true, "namespace", namespace, "release", releaseName,
+                    "requestedAt", requestedAt)).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", fe.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("Could not ask Flux to retry {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", String.valueOf(ex.getMessage()))).build();
+        }
+    }
+
+    /**
      * Re-run Kerberos keytab creation steps for a deployed release without re-installing the chart.
      * This schedules an async command which can be tracked in the background operations list.
      *

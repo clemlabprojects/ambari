@@ -8,6 +8,9 @@
   "defaultRepo": "clemlabprojects",
   "secretName": "registry-credentials",
   "pattern": "gitlab-.*",
+  "gitops": {
+    "timeout": "20m"
+  },
   "dynamicValues": [
     "AMBARI_OIDC_ISSUER_URL:global.security.auth.oidc.issuerUrl",
     "AMBARI_OIDC_ISSUER_URL:gitlab.global.appConfig.omniauth.issuerUrl",
