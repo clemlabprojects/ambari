@@ -9258,16 +9258,16 @@ public class CommandService {
                         }
                     }
 
-                    // Superset (or any service building a Hive database connection) needs its
-                    // Kerberos principal granted SELECT on the Hive Ranger repo: Superset runs
-                    // schema/column reflection as the SERVICE principal (queries impersonate the
-                    // end-user, but reflection does not), so without this grant Ranger denies
-                    // DESCRIBE and tables list with no columns. Declared via platformOp
-                    // (op=ranger.hiveGrant), gated on hiveDb.enabled=true. Delegated to the Ambari
+                    // A service that reads Hive as its OWN identity (Trino's Hive catalog: the
+                    // metastore's Ranger plugin authorizes that identity, not the end user) needs its
+                    // Kerberos principal granted SELECT on the Hive Ranger repo. A service that
+                    // impersonates the end user (Superset's Hive connection) declares no such op, so
+                    // its service identity gets no data access. Declared via platformOp
+                    // (op=ranger.hiveGrant), gated on the op's own toggle. Delegated to the Ambari
                     // server so the view never handles the Ranger admin password.
                     if (hasPlatformOp(serviceDef, "ranger.hiveGrant")) {
-                        // The op's own `when` names the toggle (Superset: hiveDb.enabled, Trino:
-                        // hiveCatalog.enabled); the Superset field stays the default for older defs.
+                        // The op's own `when` names the toggle (Trino: hiveCatalog.enabled); the
+                        // hiveDb.enabled field stays the default for older definitions.
                         String hiveGrantWhen = platformOpWhen(serviceDef, "ranger.hiveGrant", "hiveDb.enabled");
                         Object hiveDbEnabledRaw = ConfigResolutionService.getByDottedPath(
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
@@ -15091,7 +15091,7 @@ public class CommandService {
         LOG.info("OM_HIVE_BASE_INGESTION_REGISTER: service='{}' scheme='{}' hostPort='{}' auth='{}' schedule='{}'",
                 serviceName, scheme, hostPort, authMode, schedule);
 
-        // Layer 1.5: grant the provisioned OM ingestion principal read access in the Hive Ranger
+        // Layer 1.5: grant the provisioned OM ingestion principal its access in the Hive Ranger
         // service so its metadata queries aren't denied. Only for kerberos auth (the provisioned
         // oma-ing principal); ldap/basic deployments use an operator-managed Hive user. Non-fatal —
         // a grant failure logs a warning but still deploys the pipeline (operator can grant manually).
@@ -15143,13 +15143,48 @@ public class CommandService {
     }
 
     /**
-     * Grant the provisioned OM ingestion principal ({@code oma-ing-<ns>}) read access in the Hive
-     * Ranger service so the SPNEGO base-ingestion's metadata queries aren't denied by the Hive
-     * plugin. MANAGED context → delegate to the Ambari server (it holds the Ranger admin creds, the
-     * view never sees them); EXTERNAL context → direct Ranger REST with the context creds; no Ranger
-     * in context → log that the operator must grant it. Non-fatal: any failure is logged and the
-     * ingestion pipeline is still deployed (operator can grant manually).
+     * Hive access the OpenMetadata ingestion principal ({@code oma-ing-<ns>}) is granted. Metadata
+     * ingestion needs {@code select}, not just {@code read}: Ranger's Hive plugin authorizes
+     * describing a table (its columns) and {@code SHOW CREATE TABLE} (view definitions, and the
+     * lineage built from them) as {@code select}, and the column-level tags OpenMetadata hands to
+     * Ranger build on those columns. It also lets the account query Hive data, so it is a
+     * privileged service account; narrowing it is an operator decision, documented in
+     * {@code docs/RANGER_POLICIES_AND_TAGS.md}.
      */
+    static final String OM_HIVE_INGESTION_ACCESS = "select";
+
+    /**
+     * Access of a service identity that reads Hive data as itself (Trino's Hive catalog connects as
+     * its own service identity and cannot impersonate the end user), so it needs {@code select}.
+     */
+    static final String HIVE_SERVICE_DATA_ACCESS = "select";
+
+    /** Every database, table and column of a Hive Ranger repository, as the {@code ranger_policy} resource set. */
+    static final String HIVE_ALL_RESOURCES = "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}";
+
+    /**
+     * Ask the Ambari server to grant {@code principal} {@link #OM_HIVE_INGESTION_ACCESS} on the whole
+     * Hive repository, and wait for it.
+     *
+     * @return whether the request completed in time
+     */
+    static boolean grantOmIngestionHiveAccessViaAmbari(AmbariActionClient ambari, String hiveService,
+            String principal, String policyName) throws Exception {
+        int req = ambari.submitRangerPolicyGrant(hiveService, principal, OM_HIVE_INGESTION_ACCESS,
+                HIVE_ALL_RESOURCES, policyName,
+                "KDPS: OpenMetadata Hive metadata ingestion (columns, view definitions and lineage)", 60,
+                "KDPS base ingestion: grant Hive " + OM_HIVE_INGESTION_ACCESS + " to " + principal);
+        boolean done = ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS);
+        if (done) {
+            LOG.info("OM_HIVE_BASE_INGESTION: granted Hive '{}' to '{}' on '{}' via Ambari (req {})",
+                    OM_HIVE_INGESTION_ACCESS, principal, hiveService, req);
+        } else {
+            LOG.warn("OM_HIVE_BASE_INGESTION: Ambari ranger_policy request {} for '{}' did not complete; "
+                    + "grant Hive access manually if ingestion is denied.", req, principal);
+        }
+        return done;
+    }
+
     /**
      * Resolve the Hive Ranger service (repository) name to grant on, context-kind-agnostically:
      * an explicit {@code _hiveRangerServiceName} step param wins, else the context's resolved
@@ -15211,6 +15246,14 @@ public class CommandService {
         }
     }
 
+    /**
+     * Grant the provisioned OM ingestion principal ({@code oma-ing-<ns>}) the Hive access
+     * {@link #OM_HIVE_INGESTION_ACCESS} so the SPNEGO base-ingestion's metadata queries
+     * aren't denied by the Hive plugin. MANAGED context → delegate to the Ambari server (it holds the
+     * Ranger admin creds, the view never sees them); EXTERNAL context → direct Ranger REST with the
+     * context creds; no Ranger in context → log that the operator must grant it. Non-fatal: any
+     * failure is logged and the ingestion pipeline is still deployed (operator can grant manually).
+     */
     private void grantHiveRangerReadForOmIngestion(Map<String, Object> childParams,
             org.apache.ambari.view.k8s.model.ResolvedContext rc, String namespace, String releaseName) {
         // Ranger maps the kerberos principal oma-ing-<ns>@<realm> to user oma-ing-<ns> (KDPS kerberos
@@ -15218,7 +15261,6 @@ public class CommandService {
         String principal = "oma-ing-" + namespace;
         String cluster = stringValue(childParams.get("_cluster"));
         String hiveService = resolveHiveRangerServiceName(childParams, rc, cluster);
-        String resources = "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}";
         String policyName = "kdps-openmetadata-" + releaseName + "-hive-read";
         try {
             String baseUriStr = stringValue(childParams.get("_baseUri"));
@@ -15228,27 +15270,20 @@ public class CommandService {
             if (rc != null && rc.hasDirectRangerCreds()) {
                 long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(tlsOf(rc, "Ranger"),
                         rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
-                        hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
-                LOG.info("OM_HIVE_BASE_INGESTION: context Ranger Hive read policy id={} for '{}' on '{}' (direct REST)",
-                        pid, principal, hiveService);
+                        hiveService, policyName, principal, OM_HIVE_INGESTION_ACCESS,
+                        java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+                LOG.info("OM_HIVE_BASE_INGESTION: context Ranger Hive '{}' policy id={} for '{}' on '{}' (direct REST)",
+                        OM_HIVE_INGESTION_ACCESS, pid, principal, hiveService);
             } else if (rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUriStr.isBlank()) {
                 Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
                 AmbariActionClient ambari = new AmbariActionClient(ctx,
                         java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
-                int req = ambari.submitRangerPolicyGrant(hiveService, principal, "select", resources,
-                        policyName, "KDPS: OpenMetadata Hive metadata-ingestion read access", 60,
-                        "KDPS base ingestion: grant Hive select to " + principal);
-                if (ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS)) {
-                    LOG.info("OM_HIVE_BASE_INGESTION: granted Hive 'select' to '{}' on '{}' via Ambari (req {})",
-                            principal, hiveService, req);
-                } else {
-                    LOG.warn("OM_HIVE_BASE_INGESTION: Ambari ranger_policy request {} for '{}' did not complete; "
-                            + "grant Hive access manually if ingestion is denied.", req, principal);
-                }
+                grantOmIngestionHiveAccessViaAmbari(ambari, hiveService, principal, policyName);
             } else {
-                LOG.warn("OM_HIVE_BASE_INGESTION: Ranger is not part of the platform context — grant Hive read "
-                        + "access to '{}' manually (Ranger service '{}', database/table/column=* with 'select'), "
-                        + "or the Hive plugin will deny the ingestion's metadata queries.", principal, hiveService);
+                LOG.warn("OM_HIVE_BASE_INGESTION: Ranger is not part of the platform context — grant Hive "
+                        + "access to '{}' manually (Ranger service '{}', database/table/column=* with '{}'), "
+                        + "or the Hive plugin will deny the ingestion's metadata queries.",
+                        principal, hiveService, OM_HIVE_INGESTION_ACCESS);
             }
         } catch (Exception e) {
             LOG.warn("OM_HIVE_BASE_INGESTION: Ranger Hive grant for '{}' failed ({}). Pipeline still deployed; "
@@ -15373,9 +15408,21 @@ public class CommandService {
                                            org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken) {
         String lifetimeWarning = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.lifetimeWarning(botToken, Instant.now());
         if (lifetimeWarning != null) {
-            resultMap.put("warnings", List.of(lifetimeWarning));
-            LOG.warn("{}", lifetimeWarning);
+            addStepWarning(resultMap, lifetimeWarning);
         }
+    }
+
+    /** Appends a sentence for the operator to the step result's {@code warnings} and logs it. */
+    @SuppressWarnings("unchecked")
+    static void addStepWarning(Map<String, Object> resultMap, String warning) {
+        List<String> warnings = new ArrayList<>();
+        Object existing = resultMap.get("warnings");
+        if (existing instanceof List) {
+            warnings.addAll((List<String>) existing);
+        }
+        warnings.add(warning);
+        resultMap.put("warnings", warnings);
+        LOG.warn("{}", warning);
     }
 
     /**
@@ -16869,7 +16916,8 @@ public class CommandService {
         if (rc != null && rc.hasDirectRangerCreds()) {
             long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(tlsOf(rc, "Ranger"),
                     rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
-                    hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
+                    hiveService, policyName, principal, HIVE_SERVICE_DATA_ACCESS,
+                    java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
             LOG.info("RANGER_POLICY_GRANT_HIVE_READ: granted select to '{}' on '{}' via context Ranger (direct REST, policy id={})",
                     principal, hiveService, pid);
             Map<String, Object> result = new LinkedHashMap<>();
@@ -16889,12 +16937,12 @@ public class CommandService {
         AmbariActionClient ambari = new AmbariActionClient(ctx,
                 baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
         int req = ambari.submitRangerPolicyGrant(
-                hiveService, principal, "select",
-                "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}",
+                hiveService, principal, HIVE_SERVICE_DATA_ACCESS,
+                HIVE_ALL_RESOURCES,
                 policyName,
-                "KDPS: Superset service user Hive read (table/column reflection)",
+                "KDPS: service identity Hive data read (it reads Hive as itself and cannot impersonate the user)",
                 timeoutSeconds,
-                "KDPS Superset->Hive: grant select to " + principal);
+                "KDPS service->Hive: grant select to " + principal);
         if (!ambari.waitUntilComplete(req, timeoutSeconds + 30, java.util.concurrent.TimeUnit.SECONDS)) {
             throw new IllegalStateException("Ambari ranger_policy request " + req
                     + " (hive read) did not complete successfully");

@@ -283,12 +283,13 @@ public enum CommandType {
     /**
      * Grants a service's Kerberos principal {@code select} on the Hive Ranger service repo by
      * <em>delegating to the Ambari server</em> (POST {@code /clusters/{c}/ranger_policy}), which
-     * holds the Ranger admin password. Queued post-deploy for services that build a Superset-style
-     * Hive database connection (declared via platformOp {@code ranger.hiveGrant}, gated on
-     * {@code hiveDb.enabled}). Without it, schema/column reflection — which Superset runs as the
-     * service principal, not the impersonated end-user — is denied by Ranger ("does not have
-     * [SELECT] privilege"), so tables list but show no columns. The server-side action is
-     * idempotent (append-to-existing-or-create + user pre-registration).
+     * holds the Ranger admin password. Queued post-deploy for a service that reads Hive data as its
+     * own identity and cannot act as the end user (declared via platformOp {@code ranger.hiveGrant},
+     * gated on the op's own toggle; Trino's Hive catalog is the one that uses it). A service that can
+     * impersonate the end user declares no such op, so Ranger authorizes the user instead and the
+     * service identity holds no data access. The OpenMetadata ingestion identity is granted by its
+     * own base-ingestion step, not by this one. The server-side action is idempotent
+     * (append-to-existing-or-create + user pre-registration).
      */
     RANGER_POLICY_GRANT_HIVE_READ,
 

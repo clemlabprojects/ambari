@@ -787,15 +787,19 @@ public final class OmAtlasProvisioning {
     }
 
     /**
-     * EXTERNAL-context path: grant {@code omUser} the Hive {@code select} access OpenMetadata
-     * metadata ingestion needs, in the given Hive Ranger service. Appends a policyItem to the
+     * EXTERNAL-context path: grant {@code omUser} the Hive {@code accessType} access over every
+     * database, table and column of the given Hive Ranger service. Appends a policyItem to the
      * plugin's default "all - database, table, column" policy (avoids Ranger's duplicate-resource
      * rejection 3010); falls back to creating a dedicated policy if the default is missing.
      * Idempotent. (MANAGED contexts grant via the Ambari server instead.)
+     *
+     * <p>The caller names the access type so each identity gets only what it needs: {@code read}
+     * lets a metadata reader list databases and tables without being able to query data, while
+     * {@code select} is for an identity that must read the data itself.
      */
     public static long createOrFindHiveReadPolicy(TlsPolicy tls, String rangerAdminUrl, String rangerUser,
                                                   String rangerPassword, String hiveServiceName,
-                                                  String policyName, String omUser,
+                                                  String policyName, String omUser, String accessType,
                                                   long timeoutMs) throws Exception {
         String basic = "Basic " + Base64.getEncoder().encodeToString(
                 (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
@@ -804,7 +808,7 @@ public final class OmAtlasProvisioning {
         final String DEFAULT_POLICY = "all - database, table, column";
         Long defaultId = lookupAtlasPolicyByName(tls, rangerAdminUrl, basic, hiveServiceName, DEFAULT_POLICY);
         if (defaultId != null) {
-            return appendHiveSelectToPolicy(tls, rangerAdminUrl, basic, DEFAULT_POLICY, defaultId, omUser, timeoutMs);
+            return appendAccessToPolicy(tls, rangerAdminUrl, basic, DEFAULT_POLICY, defaultId, omUser, accessType, timeoutMs);
         }
 
         // Default policy missing (operator deleted it) — create a dedicated one.
@@ -814,7 +818,7 @@ public final class OmAtlasProvisioning {
         JsonObject p = new JsonObject();
         p.addProperty("service", hiveServiceName);
         p.addProperty("name", policyName);
-        p.addProperty("description", "KDPS-managed: read access for the OpenMetadata Hive metadata ingestion.");
+        p.addProperty("description", "KDPS-managed: '" + accessType + "' access to Hive for " + omUser + ".");
         p.addProperty("isAuditEnabled", true);
         p.addProperty("isEnabled", true);
         p.addProperty("policyType", 0);
@@ -832,7 +836,7 @@ public final class OmAtlasProvisioning {
         item.add("users", arrayOf(omUser));
         item.add("groups", new JsonArray());
         item.add("roles", new JsonArray());
-        item.add("accesses", arrayOfObjects(new String[]{"select"}, "isAllowed", true));
+        item.add("accesses", arrayOfObjects(new String[]{accessType}, "isAllowed", true));
         item.addProperty("delegateAdmin", false);
         JsonArray items = new JsonArray();
         items.add(item);
@@ -1329,12 +1333,6 @@ public final class OmAtlasProvisioning {
         long id = JsonParser.parseString(readBody(conn, false)).getAsJsonObject().get("id").getAsLong();
         LOG.info("OmAtlasProvisioning: Ranger policy '{}' created on service '{}' (id={})", policyName, serviceName, id);
         return id;
-    }
-
-    /** Append a Hive {@code select} grant for {@code omUser} to an existing policy (idempotent). */
-    private static long appendHiveSelectToPolicy(TlsPolicy tls, String rangerAdminUrl, String basic, String policyName,
-                                                 long policyId, String omUser, long timeoutMs) throws Exception {
-        return appendAccessToPolicy(tls, rangerAdminUrl, basic, policyName, policyId, omUser, "select", timeoutMs);
     }
 
     private static long appendAccessToPolicy(TlsPolicy tls, String rangerAdminUrl, String basic, String policyName,

@@ -70,6 +70,25 @@ the deployed values.
 The Hive base-ingestion service name defaults to `hive-<cluster>` (the platform context's cluster),
 and the Atlas federation target list follows it when left blank.
 
+### Hive access of each identity
+
+On the context's Hive Ranger repository, each service identity gets the following access:
+
+| Identity | Access | Why |
+|---|---|---|
+| OpenMetadata ingestion (`oma-ing-<namespace>`) | `select` on every database, table and column | Ranger's Hive plugin authorizes describing a table and `SHOW CREATE TABLE` as `select`. Without it, tables arrive without columns, views without their definition and lineage, and the column-level tags that OpenMetadata passes to Ranger (and on to Trino) have no columns to land on. `select` also lets the account read Hive data, so treat `oma-ing-<namespace>` as a privileged service account. |
+| Superset's Hive connection | none | Every query, and the schema and column reflection, runs as the logged-in user (impersonation), so Ranger authorizes that user. |
+| Trino's Hive catalog | `select` on every database, table and column | The Hive metastore authorizes the identity Trino connects as, and Trino cannot act as the end user there; the end user is still checked by Trino's own Ranger policies. |
+
+#### Narrowing the OpenMetadata grant
+
+To stop `oma-ing-<namespace>` from reading Hive data, replace its `select` with `read` in Ranger and set
+`xasecure.hive.describetable.showcolumns.authorization.option=show-all` on the Hive Ranger plugin (in
+`ranger-hive-security`, then restart Hive) so tables keep their columns. View definitions, and the lineage
+OpenMetadata builds from them, are still authorized as `select` whatever that option says: grant
+`select` on the views only to keep them. KDPS adds its grant again on a redeploy or a re-registration of
+the Hive ingestion and never takes access away, so remove the `select` it re-adds after each one.
+
 ## 3. The Atlas tag sync account of a Trino release
 
 The tag projector of a Trino release ("Sync Atlas tags to Trino", chart `tagSync`) writes tags into
