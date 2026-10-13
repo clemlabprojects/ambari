@@ -1699,15 +1699,6 @@ var urls = {
     }
   },
 
-  'admin.oidc.rotate.secrets': {
-    'type': 'PUT',
-    'real': '/clusters/{clusterName}?configure_oidc_only=true',
-    'format': function (data) {
-      return {
-        data: JSON.stringify(data.data)
-      };
-    }
-  },
   'admin.kerberos.cluster.artifact.create': {
     'type': 'POST',
     'real': '/clusters/{clusterName}/artifacts/{artifactName}',

@@ -29,10 +29,6 @@
             class="btn btn-success" {{bindAttr disabled="controller.isKerberosButtonsDisabled"}}>
             {{t admin.oidc.button.runProvisioning}}
           </button>
-          <button href="#" {{action rotateOidcSecrets target="controller"}}
-            class="btn btn-warning" {{bindAttr disabled="controller.isKerberosButtonsDisabled"}}>
-            {{t admin.oidc.button.rotateSecrets}}
-          </button>
           <br/>
           <button href="#" {{action makeConfigsEditable target="controller"}}
             {{bindAttr class="controller.isEditMode:hidden :btn :btn-default :pull-right"}}>

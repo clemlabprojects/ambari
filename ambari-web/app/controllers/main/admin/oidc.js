@@ -64,45 +64,6 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
   },
 
   /**
-   * Show popup to confirm secret rotation, then fire the provisioning request with rotation flag.
-   */
-  rotateOidcSecrets: function() {
-    var self = this;
-    return App.ModalPopup.show({
-      header: Em.I18n.t('admin.oidc.rotate.popup.header'),
-      bodyClass: Em.View.extend({
-        templateName: require('templates/main/admin/oidc_rotate_popup')
-      }),
-      onPrimary: function() {
-        this._super();
-        self._runRotateRequest();
-      }
-    });
-  },
-
-  _runRotateRequest: function() {
-    var self = this;
-    return App.ajax.send({
-      name: 'admin.oidc.rotate.secrets',
-      sender: this,
-      data: {
-        clusterName: App.get('clusterName'),
-        data: {
-          Clusters: {
-            security_type: this.get('securityEnabled') ? 'KERBEROS' : 'NONE'
-          }
-        }
-      }
-    }).done(function() {
-      App.router.get('userSettingsController').dataLoading('show_bg').done(function(initValue) {
-        if (initValue) {
-          App.router.get('backgroundOperationsController').showPopup();
-        }
-      });
-    });
-  },
-
-  /**
    * Keep OIDC flow on the OIDC admin page.
    */
   startKerberosWizard: function () {

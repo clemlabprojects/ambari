@@ -80,3 +80,21 @@ These services were offered by pre-release builds and are no longer in the servi
   security profile whose OIDC client you register yourself (External source), Trino requires the profile's new JWT
   Audience, or its Client ID when that is blank: set it to the audience your identity provider issues (an application
   ID URI such as `api://...`, for instance) and make sure the applications calling Trino get tokens with it.
+
+### OIDC client secrets
+
+- The **Rotate Secrets** button is removed from Admin > OIDC. It only ran OIDC provisioning again, which reads each
+  client's current secret back from Keycloak, so no client secret was ever changed.
+- To rotate the secret of an OIDC client, regenerate it in Keycloak (Clients > *client* > Credentials > Regenerate
+  Secret), then:
+  - for a cluster service, click **Run OIDC Provisioning** in Admin > OIDC, which stores the new secret in Ambari and
+    in the service configuration, and restart the affected services. OIDC sign-in to the service fails from the
+    regeneration until its restart. The button is shown only on a Kerberized cluster; on a cluster without Kerberos,
+    send the same provisioning request through the REST API
+    (`PUT /api/v1/clusters/<cluster>?configure_oidc_only=true` with `{"Clusters":{"security_type":"NONE"}}`), then
+    restart the services marked Restart Required.
+  - for a KDPS release, redeploy it (Upgrade/Config, no change needed), which writes the new secret into the release's
+    Kubernetes Secret, and restart its pods if the redeploy did not. The release's **Re-register OIDC client** action
+    does not replace the redeploy here.
+- The full procedure is in the Ambari OIDC guide,
+  [Rotate the client secret of a service's OIDC client](../../../../ambari-server/docs/security/sso/oidc.md#rotate-a-service-oidc-client-secret).

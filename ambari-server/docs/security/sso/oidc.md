@@ -325,6 +325,52 @@ Either rotate `oidc.clientSecret` in Keycloak + Ambari (HKDF rederives) OR set
 `ambari.sso.session.signing.key` to a fresh random 64-char secret.  All outstanding
 sessions become invalid immediately; users must re-login.  No Ambari restart required.
 
+<a id="rotate-a-service-oidc-client-secret"></a>
+### Rotate the client secret of a service's OIDC client
+
+Ambari cannot regenerate the secret of an OIDC client it provisioned: provisioning
+only reads the client's current secret from the identity provider.  Regenerate it in
+the identity provider, then let Ambari and KDPS read it back.
+
+**Cluster services (Admin > OIDC).**
+
+1. In Keycloak, open the service's client (Clients > *client*), then
+   Credentials > Regenerate Secret.  From this moment the service can no longer
+   sign users in with OIDC until the last step is done.
+2. In Ambari, open Admin > OIDC and click **Run OIDC Provisioning**.  The provisioning
+   reads the new secret into the Ambari credential store and into every configuration
+   property that uses `${client_secret}`.  The Keycloak admin credential must still be
+   stored (Manage OIDC Credentials).
+
+   Admin > OIDC shows **Run OIDC Provisioning** only on a Kerberized cluster.  On a
+   cluster without Kerberos, run the same provisioning through the REST API instead:
+
+   ```bash
+   curl -k -u admin:admin -H 'X-Requested-By: ambari' -X PUT \
+     -d '{"Clusters":{"security_type":"NONE"}}' \
+     'https://AMBARI:8442/api/v1/clusters/CLUSTER?configure_oidc_only=true'
+   ```
+
+   Keep `"security_type":"KERBEROS"` if you use this call on a Kerberized cluster.
+   Follow the request in Background Operations until it completes.
+3. Restart the affected services: tick **Restart affected services after provisioning
+   completes** in step 2 (Kerberized clusters only), or restart the services Ambari
+   marks as Restart Required.  OIDC sign-in to a service works again once it has
+   restarted.
+
+**KDPS releases (Kubernetes view).**
+
+1. In Keycloak, regenerate the secret of the release's client as above.
+2. In the Kubernetes view, redeploy the release (Upgrade/Config, no change needed).  The
+   redeploy reads the new secret into the release's Kubernetes Secret.  Do not use the
+   release's **Re-register OIDC client** action for this: it does not yet use the release's
+   platform context and deployed values, so it can fail or read the wrong client.
+3. Restart the release's pods if the redeploy did not, so they read the new Secret.
+
+With a security profile whose OIDC client you register yourself (External source),
+KDPS does not read the secret from the identity provider: put the new secret in the
+security profile, then redeploy the release.
+
 ### Extend session lifespan (e.g. from 8 h to 24 h)
 
 ```bash
@@ -419,3 +465,4 @@ Almost certainly a property got wiped — the POST API replaces the whole proper
 | AMBARI-431 / AMBARI-430 | (Unrelated — Impala / KAFKA service definitions.) | |
 | AMBARI-432 | Views redirect-loop fix | `OidcCallbackFilter` now uses `getRequestURI()` for the `/views/` exclusion so view requests inside their own WebAppContext are correctly skipped. |
 | AMBARI-433 | Server-issued HS256 session JWT | Decouples the Ambari UI session from the upstream OIDC access-token TTL. Adds `session.token.lifespan.seconds`, `session.signing.key`. Refactors `mint()` to forward operator-relevant claims (`groups`, custom username claim). |
+| AMBARI-767 | "Rotate Secrets" button removed from Admin > OIDC | It re-ran provisioning, which leaves every client secret unchanged. See [Rotate the client secret of a service's OIDC client](#rotate-a-service-oidc-client-secret) for the supported procedure. |
