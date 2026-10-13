@@ -15,6 +15,8 @@
       "clientIdTemplate": "{{releaseName}}-{{namespace}}",
       "secretNameTemplate": "{{releaseName}}-oidc-client",
       "redirectUriTemplate": "https://{{ingressHost}}/oauth2/callback",
+      "_jwtAudiencePath": "Trino's JWT authenticator (on beside OAUTH2 for programmatic clients such as Superset) accepts only tokens whose audience is this client id (with an External-source security profile, the profile's JWT Audience when set): KDPS writes it here and adds it to the tokens of the clients it registers that call this Trino. Without it any token of the realm authenticates, one issued to another application for a signed-in user included.",
+      "jwtAudiencePath": "global.security.auth.oidc.jwt.requiredAudience",
       "publicClient": false,
       "standardFlowEnabled": true,
       "enabled": true
@@ -3125,6 +3127,7 @@
   ],
   "securityCoupling": {
     "requireIngress": true,
+    "unauthenticatedExposure": "Without sign-in Trino trusts the user name each client sends: anyone who reaches this address can run queries as any user, administrators included, and Ranger authorizes that name.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view"
   }

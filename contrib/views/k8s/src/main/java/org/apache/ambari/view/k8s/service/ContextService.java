@@ -693,7 +693,32 @@ public class ContextService {
                 if (secret != null && !secret.isBlank()) rc.setOidcAdminClientSecret(secret);
             }
         }
+        markOidcClientRegistration(rc, effectiveAmbari, effectiveCluster);
         return rc;
+    }
+
+    /**
+     * Sets {@code oidc.clientRegistration} to "true" when a deploy on this context without a security profile
+     * registers its OIDC client, so users sign in through single sign-on; absent otherwise, since the wizard reads
+     * any non-blank {@code oidc.*} field as the context providing OIDC. The same rule as the deploy
+     * (CommandService.hasConfiguredOidcProvider): the context carries the Keycloak administrator credentials, or it
+     * is the default one and the cluster's oidc-env names a Keycloak administration URL. An issuer alone (Ambari's
+     * own SSO, say) registers nothing, so the wizard must not take it for sign-in.
+     */
+    private void markOidcClientRegistration(ResolvedContext rc, AmbariActionClient ambari, String cluster) {
+        Map<String, String> rf = rc.getResolvedFields();
+        if (rf == null) return;
+        boolean registers = rc.hasContextOidcAdminCreds();
+        if (!registers && DEFAULT_CONTEXT_ID.equals(rc.getId()) && ambari != null
+                && cluster != null && !cluster.isBlank()) {
+            try {
+                String adminUrl = ambari.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
+                registers = adminUrl != null && !adminUrl.isBlank();
+            } catch (Exception e) {
+                LOG.debug("ContextService: oidc-env not readable on cluster {}: {}", cluster, e.toString());
+            }
+        }
+        if (registers) rf.put("oidc.clientRegistration", "true");
     }
 
     /**

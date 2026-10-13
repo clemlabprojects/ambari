@@ -231,6 +231,8 @@ export interface SecurityConfig {
     issuerUrl?: string;
     clientId?: string;
     clientSecret?: string;
+    /** External source only: the audience the provider puts in its access tokens (blank = the client id). */
+    audience?: string;
     scopes?: string;
     redirectUri?: string;
     userClaim?: string;

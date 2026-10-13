@@ -255,6 +255,7 @@ Per-service in service.json:
 | `securityCoupling.requireIngress` | `true` | Auto-enable ingress when auth profile is selected. |
 | `securityCoupling.tlsProvisioning` | `"k8s-view"` | Participation in unified pipeline. |
 | `securityCoupling.minTlsMode` | `"signedByAmbariCA"` | Default TLS mode when auto-bumping off `none`. |
+| `securityCoupling.unauthenticatedExposure` | (none) | What anyone reaching the Ingress can do when no security profile requires sign-in. When set, the wizard warns on Chart Settings and asks for confirmation before deploying with the Ingress on and no LDAP, AD or OIDC profile (unless the platform context signs users in through its identity provider anyway). Set for TRINO, SUPERSET and OPENMETADATA. |
 | `requiredChartVersion` | (varies) | Semver range. Rejected at deploy time if chart drifts. |
 | `valueAliases` | `{}` | Rewrite canonical form-field paths to chart-specific values.yaml paths. |
 

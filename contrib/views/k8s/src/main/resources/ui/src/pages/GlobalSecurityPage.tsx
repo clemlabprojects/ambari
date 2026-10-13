@@ -432,8 +432,9 @@ const GlobalSecurityPage: React.FC = () => {
               <Title level={4} style={{ marginBottom: 8 }}>{modeLabel || 'OIDC'}</Title>
               {modeFields('oidc', mode)
                 .filter((prop: any) => {
-                  // Hide clientId/clientSecret for internal source (Ambari auto-registers)
-                  const isExternalOnly = prop.name === 'oidc.clientId' || prop.name === 'oidc.clientSecret';
+                  // Hide clientId/clientSecret/audience for internal source (Ambari auto-registers, and sets the audience)
+                  const isExternalOnly = prop.name === 'oidc.clientId' || prop.name === 'oidc.clientSecret'
+                    || prop.name === 'oidc.audience';
                   if (isExternalOnly) return (oidcSource ?? 'internal') === 'external';
                   return true;
                 })

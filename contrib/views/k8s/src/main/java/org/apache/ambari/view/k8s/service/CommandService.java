@@ -7690,8 +7690,12 @@ public class CommandService {
                         // (which knows how to substitute gitlabDomain etc.).
                     }
 
+                    // The audience the service's tokens are minted for: for an external provider the profile's
+                    // JWT audience, else its client id; the client KDPS registers otherwise.
+                    String entryAudience;
                     if (oidcIsExternal) {
                         // External OIDC: no Keycloak registration — write the secret directly from profile credentials
+                        entryAudience = externalJwtAudience(securityCfg.oidc);
                         appendOidcExternalSecretStep(rootCommand, childCommands, params,
                                 externalClientId, resolvedSecurityProfile, externalIssuerUrl,
                                 secretName, entryKey, vaultPath, extraOidcParams);
@@ -7701,6 +7705,32 @@ public class CommandService {
                         String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
                         String clientId   = renderOidcTemplate(clientIdT, request.getReleaseName(), request.getNamespace(), oidcRealm);
                         validateOidcClientId(clientId);
+                        entryAudience = clientId;
+                        // The audiences the client's access tokens carry (see oidcTokenAudiences); null keeps the
+                        // ones the client already has.
+                        List<String> audiences = oidcTokenAudiences(entry, clientId, request.getFormValues(),
+                                request.getValues());
+                        if (audiences != null) {
+                            extraOidcParams.put("oidcAudiences", audiences);
+                        } else {
+                            appendCommandLog(id, "KDPS cannot tell which audience the Trino this release connects to"
+                                    + " with its OIDC service token requires (it is not a KDPS release, or the deploy"
+                                    + " does not name it): the OIDC client " + clientId + " keeps the token audiences"
+                                    + " it has. That Trino must accept them, or its JWT authenticator refuses the token.");
+                        }
+                        // The releases already calling this service with their own token (Superset's Trino
+                        // connection) were registered before it checked this audience: their clients get it before
+                        // the upgrade restarts the service, so they keep connecting without being redeployed first.
+                        if (jwtAudiencePath(entry) != null) {
+                            List<Map<String, String>> callers =
+                                    trinoJwtCallers(request.getNamespace(), request.getReleaseName(), oidcRealm);
+                            if (!callers.isEmpty()) {
+                                extraOidcParams.put("oidcAudienceCallers", callers);
+                                appendCommandLog(id, "Release(s) " + callerNames(callers) + " call this Trino with"
+                                        + " their OIDC service token: KDPS adds the audience '" + clientId + "' to"
+                                        + " their tokens before the upgrade, since Trino then accepts only that one.");
+                            }
+                        }
                         Map<String, String> oidcExtraVars = resolveServiceVariablesFromParams(
                                 oidcServiceDef != null ? oidcServiceDef.variables : null, params);
                         String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm, oidcExtraVars);
@@ -7723,6 +7753,33 @@ public class CommandService {
                                 clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
                     }
                     oidcStepsAdded = true;
+
+                    // A service that checks the audience of the JWTs it accepts takes only tokens minted for its own
+                    // client: without it, any token of the realm (one issued to another application for a signed-in
+                    // user, say) authenticates as that user.
+                    String audiencePath = jwtAudiencePath(entry);
+                    if (audiencePath != null && entryAudience != null && !entryAudience.isBlank()) {
+                        this.commandUtils.addOverride(params, audiencePath, entryAudience);
+                        LOG.info("OIDC entry {}: {} = {} (tokens for other clients are refused)",
+                                entryKey, audiencePath, entryAudience);
+                        if (oidcIsExternal) {
+                            // KDPS registers no client with an external provider, so it cannot add the audience.
+                            appendCommandLog(id, "Release '" + request.getReleaseName() + "' accepts only JWTs whose"
+                                    + " audience is '" + entryAudience + "' (security profile '" + resolvedSecurityProfile
+                                    + "'): the identity provider must put it in the tokens of the applications that"
+                                    + " call it with their own token, Superset's included. If your provider issues"
+                                    + " another audience (an application ID URI such as api://..., say), set it as"
+                                    + " the profile's JWT Audience and redeploy.");
+                            List<Map<String, String>> callers =
+                                    trinoJwtCallers(request.getNamespace(), request.getReleaseName(), oidcRealm);
+                            if (!callers.isEmpty()) {
+                                appendCommandLog(id, "WARNING: release(s) " + callerNames(callers) + " call this"
+                                        + " Trino with their OIDC service token. Make sure your identity provider puts"
+                                        + " the audience '" + entryAudience + "' in their tokens, or their"
+                                        + " connection to Trino fails once this deploy completes.");
+                            }
+                        }
+                    }
 
                     if (!oidcHelmOverridesApplied) {
                         if (gitlabOmniauth) {
@@ -10815,8 +10872,25 @@ public class CommandService {
                     appendCommandLog(child.getId(), "Registering OIDC client '" + desiredClientId
                             + "' in realm '" + oidcRealm + "'");
 
+                    // Planned by a deploy (an empty list included); a re-registration plans none and keeps the
+                    // client's current audiences.
+                    List<String> audiences = null;
+                    if (childParams.get("oidcAudiences") instanceof List<?> planned) {
+                        audiences = new ArrayList<>();
+                        for (Object a : planned) {
+                            if (a != null && !String.valueOf(a).isBlank()) audiences.add(String.valueOf(a).trim());
+                        }
+                        if (!audiences.isEmpty()) {
+                            appendCommandLog(child.getId(), "Access tokens of '" + desiredClientId
+                                    + "' carry the audience(s) " + String.join(", ", audiences));
+                        }
+                    }
+
                     var oidcResult = keycloakClient.registerClient(
-                            desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient);
+                            desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient, audiences);
+                    // The releases calling this Trino with their own token, planned by the deploy.
+                    addAudienceToCallers(keycloakClient, desiredClientId, childParams.get("oidcAudienceCallers"),
+                            child.getId());
 
                     String issuerUrl = oidcFromContext
                             ? oidcRc.getOidcIssuerUrl()
@@ -13406,6 +13480,222 @@ public class CommandService {
             LOG.warn("Could not list coordinator Services of {}/{}: {}", namespace, release, e.toString());
         }
         return null;
+    }
+
+    /** The clemlab-trino chart value naming the audience its JWT authenticator requires. */
+    static final String TRINO_JWT_AUDIENCE_PATH = "global.security.auth.oidc.jwt.requiredAudience";
+    /** The Superset chart value that runs the sidecar refreshing its OIDC service token for Trino. */
+    static final String TRINO_JWT_SIDECAR_PATH = "trinoJwt.enabled";
+    /** The Superset chart file (under {@code extraConfigs}) holding the Trino database connection. */
+    static final String TRINO_DATASOURCE_FILE = "import_datasources_trino.yaml";
+    private static final java.util.regex.Pattern TRINO_SQLALCHEMY_HOST =
+            java.util.regex.Pattern.compile("sqlalchemy_uri:\\s*['\"]?trino://(?:[^@/\\s'\"]*@)?([^/\\s'\"]+)");
+    private static final java.util.regex.Pattern AUTH_METHOD =
+            java.util.regex.Pattern.compile("\\\\?\"auth_method\\\\?\"\\s*:\\s*\\\\?\"([^\"\\\\]+)");
+
+    /**
+     * {host:port, auth method} of the Trino connection a Superset release's values hold (the
+     * {@link #TRINO_DATASOURCE_FILE} the wizard wrote), the auth method blank when the connection names none; null
+     * when the values hold no such connection.
+     */
+    static String[] trinoJwtConnection(Map<String, Object> values) {
+        Object extra = values == null ? null : values.get("extraConfigs");
+        Object file = extra instanceof Map<?, ?> m ? m.get(TRINO_DATASOURCE_FILE) : null;
+        if (file == null) return null;
+        String yaml = String.valueOf(file);
+        java.util.regex.Matcher host = TRINO_SQLALCHEMY_HOST.matcher(yaml);
+        if (!host.find()) return null;
+        java.util.regex.Matcher auth = AUTH_METHOD.matcher(yaml);
+        return new String[] {host.group(1), auth.find() ? auth.group(1) : ""};
+    }
+
+    /**
+     * The chart value an OIDC entry fills with its client id (an external profile's JWT audience when set), so that
+     * the service accepts only the JWTs minted for that client (service.json {@code oidc[].jwtAudiencePath}, Trino's {@link #TRINO_JWT_AUDIENCE_PATH}), or null
+     * when the entry declares none. Set like the rest of the OIDC wiring, over the deploy's own values: the client
+     * changes with the security profile, and an audience kept from an earlier deploy would refuse every token.
+     */
+    static String jwtAudiencePath(Map<String, Object> entry) {
+        String path = entry == null ? "" : stringValue(entry.get("jwtAudiencePath"));
+        return path.isEmpty() ? null : path;
+    }
+
+    /**
+     * The audience a service using an external provider requires of the JWTs it accepts: the security profile's
+     * {@code oidc.audience} when set, since many providers do not put the client id in the access tokens they issue
+     * (an application ID URI such as {@code api://...}, a custom authorization server's {@code api://default}),
+     * else its client id.
+     */
+    static String externalJwtAudience(org.apache.ambari.view.k8s.dto.security.OidcConfig oidc) {
+        if (oidc == null) return null;
+        String audience = oidc.audience == null ? "" : oidc.audience.trim();
+        return audience.isEmpty() ? oidc.clientId : audience;
+    }
+
+    /**
+     * The audiences the access tokens of a deploy's OIDC client carry, or null to keep the ones the client has.
+     * <ul>
+     *   <li>A service that checks the audience of the JWTs it accepts ({@code jwtAudiencePath}) names its own
+     *       client, so a token a user gets for it passes.</li>
+     *   <li>A release that calls a KDPS Trino with its own service token (Superset, Trino authentication "OIDC")
+     *       names the audience that Trino requires. The Trino comes from the form, or, when the form names none
+     *       (an Upgrade/Config wizard does not get that form-only field back), from the connection the release
+     *       values still hold while they run the token sidecar. Null when the Trino is not a KDPS release, or
+     *       the values run the sidecar but do not say for which Trino: KDPS cannot tell what it requires, and
+     *       dropping an audience the client has would break the connection.</li>
+     * </ul>
+     */
+    List<String> oidcTokenAudiences(Map<String, Object> entry, String clientId, Map<String, Object> formValues,
+                                    Map<String, Object> values) {
+        List<String> audiences = new ArrayList<>();
+        if (jwtAudiencePath(entry) != null && clientId != null && !clientId.isBlank()) {
+            audiences.add(clientId);
+        }
+        Map<String, Object> fv = formValues == null ? Collections.emptyMap() : formValues;
+        String trinoHost = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_host"));
+        if (!trinoHost.isBlank()) {
+            String trinoAuthMode = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_auth_mode"));
+            if (!"oidc".equalsIgnoreCase(trinoAuthMode.trim())) return audiences;
+        } else {
+            Map<String, Object> v = values == null ? Collections.emptyMap() : values;
+            if (!asBoolean(ConfigResolutionService.getByDottedPath(v, TRINO_JWT_SIDECAR_PATH), false)) return audiences;
+            String[] connection = trinoJwtConnection(v);
+            if (connection == null) return null;
+            if (!"kdps_file_jwt".equals(connection[1])) return audiences;
+            trinoHost = connection[0];
+        }
+        String trinoAudience = trinoJwtAudience(trinoHost);
+        if (trinoAudience == null) return null;
+        audiences.add(trinoAudience);
+        return audiences;
+    }
+
+    /**
+     * The audience the KDPS Trino answering at {@code trinoHost} requires of the JWTs it accepts: its
+     * {@link #TRINO_JWT_AUDIENCE_PATH} value, else the client id KDPS registers for it ({@code <release>-<namespace>}),
+     * so that a token minted now still passes once that Trino is redeployed and checks it. Null when the host is not
+     * a KDPS Trino release.
+     */
+    String trinoJwtAudience(String trinoHost) {
+        String[] ref = trinoReleaseFromServiceHost(trinoHost);
+        if (ref == null) return null;
+        try {
+            Map<String, Object> v = kubernetesService.getHelmReleaseValues(ref[0], ref[1]);
+            Object aud = v == null ? null : ConfigResolutionService.getByDottedPath(v, TRINO_JWT_AUDIENCE_PATH);
+            if (aud != null && !String.valueOf(aud).isBlank()) return String.valueOf(aud).trim();
+        } catch (Exception e) {
+            LOG.warn("Could not read helm values of Trino release {}/{}: {}", ref[0], ref[1], e.toString());
+        }
+        return ref[1] + "-" + ref[0];
+    }
+
+    /**
+     * The KDPS releases that call the Trino release {@code trinoNamespace/trinoRelease} with their own OIDC service
+     * token: their values run the token sidecar ({@link #TRINO_JWT_SIDECAR_PATH}) and their Trino connection, in that
+     * mode, answers at this release's coordinator. Each comes as {namespace, release, clientId}, the client id being
+     * the one KDPS registers for it (its service's first enabled {@code oidc[]} entry).
+     *
+     * <p>Such a release (Superset) was registered with the audiences the Trino required then, so a Trino that starts
+     * checking the audience, or checks another one, refuses its token until that release is redeployed. Releases
+     * whose values cannot be read are skipped with a warning: the Trino deploy must not wait on them.
+     */
+    List<Map<String, String>> trinoJwtCallers(String trinoNamespace, String trinoRelease, String realm) {
+        List<Map<String, String>> callers = new ArrayList<>();
+        List<K8sReleaseEntity> releases;
+        try {
+            releases = new ReleaseMetadataService(this.ctx).findAll();
+        } catch (Exception e) {
+            LOG.warn("Could not list the KDPS releases calling Trino {}/{}: {}", trinoNamespace, trinoRelease,
+                    e.toString());
+            return callers;
+        }
+        StackDefinitionService definitions = new StackDefinitionService(this.ctx);
+        Map<String, Map<String, Object>> oidcEntryByService = new HashMap<>();
+        for (K8sReleaseEntity r : releases) {
+            if (r == null || r.getNamespace() == null || r.getReleaseName() == null || r.getServiceKey() == null
+                    || (trinoNamespace.equals(r.getNamespace()) && trinoRelease.equals(r.getReleaseName()))) {
+                continue;
+            }
+            // Only a service KDPS registers an OIDC client for has a token to fix.
+            Map<String, Object> oidcEntry = oidcEntryByService.computeIfAbsent(r.getServiceKey(), key -> {
+                try {
+                    StackServiceDef def = definitions.getServiceDefinition(key);
+                    if (def == null || def.oidc == null) return null;
+                    for (Map<String, Object> e : def.oidc) {
+                        if (e != null && isEntryEnabled(e.get("enabled")) && jwtAudiencePath(e) == null) return e;
+                    }
+                } catch (Exception e) {
+                    LOG.debug("Service definition {} could not be read: {}", key, e.toString());
+                }
+                return null;
+            });
+            if (oidcEntry == null) continue;
+            Map<String, Object> values;
+            try {
+                values = kubernetesService.getHelmReleaseValues(r.getNamespace(), r.getReleaseName());
+            } catch (Exception e) {
+                LOG.warn("Could not read helm values of {}/{} to tell whether it calls Trino {}/{}: {}",
+                        r.getNamespace(), r.getReleaseName(), trinoNamespace, trinoRelease, e.toString());
+                continue;
+            }
+            if (values == null
+                    || !asBoolean(ConfigResolutionService.getByDottedPath(values, TRINO_JWT_SIDECAR_PATH), false)) {
+                continue;
+            }
+            String[] connection = trinoJwtConnection(values);
+            if (connection == null || !"kdps_file_jwt".equals(connection[1])) continue;
+            String[] ref = trinoReleaseFromServiceHost(connection[0]);
+            if (ref == null || !trinoNamespace.equals(ref[0]) || !trinoRelease.equals(ref[1])) continue;
+            String clientId = renderOidcTemplate(
+                    resolveStringValue(oidcEntry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}"),
+                    r.getReleaseName(), r.getNamespace(), realm);
+            Map<String, String> caller = new LinkedHashMap<>();
+            caller.put("namespace", r.getNamespace());
+            caller.put("release", r.getReleaseName());
+            caller.put("clientId", clientId);
+            callers.add(caller);
+        }
+        return callers;
+    }
+
+    /** "ns/release, ns/release" of {@link #trinoJwtCallers} entries, for the command log. */
+    private static String callerNames(List<?> callers) {
+        List<String> names = new ArrayList<>();
+        for (Object c : callers) {
+            if (c instanceof Map<?, ?> m) names.add(m.get("namespace") + "/" + m.get("release"));
+        }
+        return String.join(", ", names);
+    }
+
+    /**
+     * Adds {@code audience} to the tokens of the OIDC clients of the releases planned as calling this Trino
+     * ({@link #trinoJwtCallers}), before the upgrade restarts it requiring that audience. A failure is logged, never
+     * thrown: the Trino deploy goes on, and the log names the release to redeploy so that its connection works again.
+     */
+    void addAudienceToCallers(KeycloakAdminClient keycloak, String audience, Object plannedCallers, String logId) {
+        if (!(plannedCallers instanceof List<?> callers)) return;
+        for (Object c : callers) {
+            if (!(c instanceof Map<?, ?> caller)) continue;
+            String clientId = stringValue(caller.get("clientId"));
+            String release = caller.get("namespace") + "/" + caller.get("release");
+            if (clientId.isBlank()) continue;
+            String failure;
+            try {
+                if (keycloak.addAudience(clientId, audience)) {
+                    appendCommandLog(logId, "Access tokens of '" + clientId + "' (release " + release
+                            + ") carry the audience '" + audience + "' this Trino requires");
+                    continue;
+                }
+                failure = "the realm has no client '" + clientId + "'";
+            } catch (Exception e) {
+                LOG.warn("Could not add audience {} to OIDC client {} of {}: {}", audience, clientId, release,
+                        e.toString());
+                failure = e.getMessage() == null ? e.toString() : e.getMessage();
+            }
+            appendCommandLog(logId, "WARNING: could not add the audience '" + audience + "' to the OIDC client of"
+                    + " release " + release + " (" + failure + "). This Trino refuses that release's service token,"
+                    + " so its connection to Trino fails until you redeploy it (Upgrade/Config, no change needed).");
+        }
     }
 
     /**

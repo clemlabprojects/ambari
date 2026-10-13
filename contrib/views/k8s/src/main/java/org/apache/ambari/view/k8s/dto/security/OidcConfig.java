@@ -27,6 +27,12 @@ public class OidcConfig {
     public String issuerUrl;
     public String clientId;
     public String clientSecret;
+    /**
+     * External source only: the audience the provider puts in the access tokens it issues for this client, which a
+     * service checking the audience of the JWTs it accepts (Trino) then requires. Blank means the client id; set it
+     * for a provider that issues another audience, such as an application ID URI ({@code api://...}).
+     */
+    public String audience;
     public String scopes;
     public String redirectUri;
     public String userClaim;

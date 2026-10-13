@@ -61,6 +61,7 @@
     { "name": "oidc.issuerUrl", "displayName": "Issuer URL", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.issuerUrl" },
     { "name": "oidc.clientId", "displayName": "Client ID", "description": "Required for External source — the pre-registered client identifier.", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.clientId" },
     { "name": "oidc.clientSecret", "displayName": "Client Secret", "description": "Required for External source — the pre-registered client secret.", "type": "password", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.clientSecret" },
+    { "name": "oidc.audience", "displayName": "JWT Audience", "description": "External source only, optional. The audience your identity provider puts in the access tokens it issues for this client. Trino accepts only JWTs with this audience; leave blank to use the Client ID. Set it when your provider issues another audience, such as an application ID URI (api://...).", "type": "string", "modes": ["oidc"] },
     { "name": "oidc.scopes", "displayName": "Scopes", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.scopes" },
     { "name": "oidc.redirectUri", "displayName": "Redirect URI", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.redirectUri" },
     { "name": "oidc.userClaim", "displayName": "User Claim", "type": "string", "modes": ["oidc"], "helmPath": "global.security.auth.oidc.userClaim" },

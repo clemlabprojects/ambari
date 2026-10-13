@@ -993,7 +993,7 @@
         { "label": "Kerberos (SPNEGO)", "value": "kerberos" },
         { "label": "OIDC / JWT (service token, SSO)", "value": "oidc" }
       ],
-      "help": "How Superset authenticates to the Trino coordinator — match the security profile Trino was deployed with (usually the same as your cluster profile). Superset ALWAYS impersonates the logged-in user (their username becomes the Trino session user), so Ranger authorises each person individually no matter which mode is chosen. OIDC uses a Keycloak service token minted by a refresh sidecar (the Superset OIDC client must have service accounts enabled), and requires the Trino coordinator's JWT authenticator (Trino chart >= 1.43.7)."
+      "help": "How Superset authenticates to the Trino coordinator — match the security profile Trino was deployed with (usually the same as your cluster profile). Superset ALWAYS impersonates the logged-in user (their username becomes the Trino session user), so Ranger authorises each person individually no matter which mode is chosen. OIDC uses a Keycloak service token minted by a refresh sidecar (the Superset OIDC client must have service accounts enabled), and requires the Trino coordinator's JWT authenticator (Trino chart >= 1.43.7). A Trino deployed by KDPS accepts only tokens minted for it, so KDPS adds that Trino's audience to the Superset client's tokens; any other Trino must accept the audience your identity provider puts in them."
     },
     {
       "name": "ui_trino_catalog",
@@ -1610,6 +1610,7 @@
   ],
   "securityCoupling": {
     "requireIngress": true,
+    "unauthenticatedExposure": "Superset then signs users in with its local accounts only, starting with the administrator this deploy creates: your directory and single sign-on are not used, and that one password guards every database connection Superset holds.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view"
   }

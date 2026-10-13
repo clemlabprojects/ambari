@@ -36,6 +36,7 @@ import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../co
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
 import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPayload';
 import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecretReplacement, describeIngressTlsChange, ingressTlsChange, ingressTlsNotice, keptCertificateHostProblem, KEEP_CURRENT_TLS, offersKeepCurrentTls, securityProfileIngress, seedKeepCurrentTls, unconfirmedTlsReplacement, upgradeChartFormValues, type CurrentIngressTls } from '../components/ServiceInstallationModal/ingressTls';
+import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
 import { deployFormValues } from './deployFormValues';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -879,7 +880,34 @@ const ServiceWizardPage: React.FC = () => {
   // Non-federation deploys and upgrades are unaffected — they deploy immediately, default authorized.
   const [atlasRestartModalOpen, setAtlasRestartModalOpen] = React.useState(false);
   const atlasFederationOn = !!((installValues as any)?.atlasFederation?.enabled);
+
+  // A service whose Ingress publishes it without sign-in (no security profile with an authentication mode): shown on
+  // the Chart Settings step, and the deploy goes ahead only once the operator confirmed it.
+  const exposure = useMemo(
+    () => unauthenticatedExposure(def, installValues, securityProfiles.profiles, resolvedSel),
+    [def, installValues, securityProfiles, resolvedSel]);
   const handleDeploy = () => {
+      if (!exposure) { proceedDeploy(); return; }
+      const validationError = validateTlsPayload();
+      if (validationError) { message.error(validationError); return; }
+      Modal.confirm({
+        title: exposure.title,
+        icon: <WarningOutlined />,
+        width: 560,
+        content: (
+          <div>
+            {exposure.lines.map((line, i) => (
+              <p key={i} style={{ marginBottom: 8 }}>{line}</p>
+            ))}
+          </div>
+        ),
+        okText: 'Deploy without sign-in',
+        okButtonProps: { danger: true },
+        cancelText: 'Cancel',
+        onOk: () => { proceedDeploy(); },
+      });
+  };
+  const proceedDeploy = () => {
       if (atlasFederationOn && !isUpgrade) { setAtlasRestartModalOpen(true); return; }
       // An upgrade that replaces the release's ingress certificate says which Secret goes, and goes ahead only once
       // the operator confirmed it.
@@ -915,6 +943,11 @@ const ServiceWizardPage: React.FC = () => {
       message={ingressTlsInfo.title}
       description={ingressTlsInfo.lines.map((line, i) => <div key={i}>{line}</div>)} />
   ) : null;
+  const exposureAlert = exposure ? (
+    <Alert style={{ marginBottom: 12 }} type="warning" showIcon icon={<WarningOutlined />}
+      message={exposure.title}
+      description={exposure.lines.map((line, i) => <div key={i}>{line}</div>)} />
+  ) : null;
 
   const steps = React.useMemo(() => {
     if (!def) return [];
@@ -923,6 +956,7 @@ const ServiceWizardPage: React.FC = () => {
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Chart Settings', content: (
         <>
+          {exposureAlert}
           {ingressTlsAlert}
           <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} upgrade={!!isUpgrade} />
         </>
@@ -930,7 +964,7 @@ const ServiceWizardPage: React.FC = () => {
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
       { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} contextLabel={resolvedSel ? `${resolvedSel.name}${resolvedSel.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` : undefined} /> },
     ];
-  }, [def, installValues, repos, configs, configOverrides, isUpgrade, currentIngressTls]);
+  }, [def, installValues, repos, configs, configOverrides, isUpgrade, currentIngressTls, exposure]);
 
   // Disable Next if any password field reports invalid (empty, unconfirmed, or
   // mismatched). PropertyRenderer pushes the boolean validity here via its

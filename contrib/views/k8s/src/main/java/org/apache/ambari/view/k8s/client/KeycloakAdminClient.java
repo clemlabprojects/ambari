@@ -34,6 +34,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,6 +57,8 @@ public class KeycloakAdminClient {
     private static final Logger LOG = LoggerFactory.getLogger(KeycloakAdminClient.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
+    /** Keycloak's mapper that adds an audience to the access tokens issued to a client. */
+    static final String AUDIENCE_MAPPER = "oidc-audience-mapper";
 
     private final String adminUrl;        // e.g. https://keycloak.example.com
     private final String adminRealm;      // realm used to obtain admin token (usually "master")
@@ -126,13 +130,45 @@ public class KeycloakAdminClient {
                                            boolean standardFlowEnabled,
                                            boolean implicitFlowEnabled,
                                            boolean serviceAccountsEnabled) throws Exception {
+        return registerClient(desiredClientId, redirectUri, publicClient, standardFlowEnabled, implicitFlowEnabled,
+                serviceAccountsEnabled, null);
+    }
+
+    /**
+     * {@link #registerClient(String, String, boolean, boolean, boolean, boolean)} that also sets the audiences the
+     * client's access tokens carry. A service that checks the audience of the tokens it accepts (Trino's JWT
+     * authenticator) only takes those minted for it, so the client of a service calling it with its own token
+     * (Superset's service token) must name that service as an audience.
+     *
+     * <p>Keycloak replaces a client's protocol mappers with the ones an update sends, so the audiences are always
+     * sent: {@code null} keeps the audience mappers the client has (a re-registration that does not know them),
+     * a list, empty included, makes them exactly that.
+     *
+     * @param audiences the audiences, or null to keep the client's current ones
+     */
+    public OidcClientResult registerClient(String desiredClientId,
+                                           String redirectUri,
+                                           boolean publicClient,
+                                           boolean standardFlowEnabled,
+                                           boolean implicitFlowEnabled,
+                                           boolean serviceAccountsEnabled,
+                                           List<String> audiences) throws Exception {
         String token = obtainAdminToken();
 
         // Check if client already exists
         String existingUuid = findClientUuid(token, desiredClientId);
 
+        List<Map<String, Object>> audienceMappers;
+        if (audiences != null) {
+            audienceMappers = audienceMappers(audiences);
+        } else if (existingUuid != null) {
+            audienceMappers = currentAudienceMappers(token, existingUuid);
+        } else {
+            audienceMappers = List.of();
+        }
         Map<String, Object> clientRep = buildClientRepresentation(
-                desiredClientId, redirectUri, publicClient, standardFlowEnabled, implicitFlowEnabled, serviceAccountsEnabled);
+                desiredClientId, redirectUri, publicClient, standardFlowEnabled, implicitFlowEnabled, serviceAccountsEnabled,
+                audienceMappers);
 
         if (existingUuid != null) {
             LOG.info("KeycloakAdminClient: client '{}' already exists (uuid={}), updating", desiredClientId, existingUuid);
@@ -151,6 +187,46 @@ public class KeycloakAdminClient {
         LOG.info("KeycloakAdminClient: client '{}' registered in realm '{}', issuerUrl={}",
                 desiredClientId, realm, issuerUrl);
         return new OidcClientResult(desiredClientId, secret, issuerUrl);
+    }
+
+    /**
+     * Adds an audience to the access tokens of an existing client, leaving the rest of the client as it is: a service
+     * that starts checking the audience of the JWTs it accepts (a Trino redeploy) must not refuse the tokens of a
+     * client registered before it did (Superset's), which only its own redeploy would otherwise update. Adding a
+     * single protocol mapper, rather than updating the client, keeps whatever that client's own deploy set.
+     *
+     * @return true when the client's tokens carry the audience (added now, or already there); false when the realm
+     *         has no such client
+     */
+    public boolean addAudience(String targetClientId, String audience) throws Exception {
+        if (audience == null || audience.isBlank()) {
+            throw new IllegalArgumentException("audience is blank");
+        }
+        String token = obtainAdminToken();
+        String uuid = findClientUuid(token, targetClientId);
+        if (uuid == null) return false;
+        String wanted = audience.trim();
+        for (Map<String, Object> m : currentAudienceMappers(token, uuid)) {
+            if (m.get("config") instanceof Map<?, ?> config
+                    && wanted.equals(String.valueOf(config.get("included.custom.audience")))) {
+                LOG.info("KeycloakAdminClient: tokens of client '{}' already carry the audience '{}'",
+                        targetClientId, wanted);
+                return true;
+            }
+        }
+        String url = adminUrl + "/admin/realms/" + enc(realm) + "/clients/" + uuid + "/protocol-mappers/models";
+        HttpRequest req = bearer(token, url)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        JSON.writeValueAsString(audienceMappers(List.of(wanted)).get(0))))
+                .build();
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 201) {
+            throw new IllegalStateException("Keycloak POST protocol mapper returned HTTP " + resp.statusCode()
+                    + ": " + trim(resp.body()));
+        }
+        LOG.info("KeycloakAdminClient: tokens of client '{}' now carry the audience '{}'", targetClientId, wanted);
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -305,12 +381,63 @@ public class KeycloakAdminClient {
         return secret;
     }
 
-    private Map<String, Object> buildClientRepresentation(String id,
-                                                           String redirectUri,
-                                                           boolean publicClient,
-                                                           boolean standardFlowEnabled,
-                                                           boolean implicitFlowEnabled,
-                                                           boolean serviceAccountsEnabled) {
+    /**
+     * The audience mappers of an existing client, as Keycloak returns them minus their ids, so that an update
+     * sending them back keeps them.
+     */
+    private List<Map<String, Object>> currentAudienceMappers(String token, String uuid) throws Exception {
+        String url = adminUrl + "/admin/realms/" + enc(realm) + "/clients/" + uuid + "/protocol-mappers/models";
+        HttpResponse<String> resp = http.send(bearer(token, url).GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 200) {
+            throw new IllegalStateException("Keycloak GET protocol mappers returned HTTP " + resp.statusCode()
+                    + ": " + trim(resp.body()));
+        }
+        List<Map<String, Object>> mappers = JSON.readValue(resp.body(), new TypeReference<>() {});
+        List<Map<String, Object>> kept = new ArrayList<>();
+        for (Map<String, Object> m : mappers == null ? List.<Map<String, Object>>of() : mappers) {
+            if (m == null || !AUDIENCE_MAPPER.equals(m.get("protocolMapper"))) continue;
+            Map<String, Object> copy = new java.util.LinkedHashMap<>(m);
+            copy.remove("id");
+            kept.add(copy);
+        }
+        return kept;
+    }
+
+    /**
+     * One audience mapper per distinct, non-blank audience. The audience is a custom one, not a reference to a
+     * client of the realm: it is the identifier the calling service checks, and the client it names may be
+     * registered after this one.
+     */
+    static List<Map<String, Object>> audienceMappers(List<String> audiences) {
+        LinkedHashSet<String> distinct = new LinkedHashSet<>();
+        for (String a : audiences == null ? List.<String>of() : audiences) {
+            if (a != null && !a.isBlank()) distinct.add(a.trim());
+        }
+        List<Map<String, Object>> mappers = new ArrayList<>();
+        for (String audience : distinct) {
+            mappers.add(Map.of(
+                    "name", "audience " + audience,
+                    "protocol", "openid-connect",
+                    "protocolMapper", AUDIENCE_MAPPER,
+                    "config", Map.of(
+                            "included.custom.audience", audience,
+                            "access.token.claim", "true",
+                            "id.token.claim", "false",
+                            "introspection.token.claim", "true"
+                    )
+            ));
+        }
+        return mappers;
+    }
+
+    /** The client representation sent to Keycloak on a create and on an update. */
+    static Map<String, Object> buildClientRepresentation(String id,
+                                                          String redirectUri,
+                                                          boolean publicClient,
+                                                          boolean standardFlowEnabled,
+                                                          boolean implicitFlowEnabled,
+                                                          boolean serviceAccountsEnabled,
+                                                          List<Map<String, Object>> audienceMappers) {
         java.util.LinkedHashMap<String, Object> rep = new java.util.LinkedHashMap<>();
         rep.put("clientId", id);
         rep.put("enabled", true);
@@ -362,7 +489,8 @@ public class KeycloakAdminClient {
         // the user has them in FreeIPA/LDAP, so every signed-in user gets the
         // default registration role (Gamma in our charts) and never escalates
         // to Admin no matter what's configured under security.adminGroups.
-        rep.put("protocolMappers", List.of(
+        List<Map<String, Object>> mappers = new ArrayList<>();
+        mappers.add(
                 Map.of(
                         "name", "groups",
                         "protocol", "openid-connect",
@@ -377,8 +505,9 @@ public class KeycloakAdminClient {
                                 "access.token.claim", "true",
                                 "userinfo.token.claim", "true"
                         )
-                )
-        ));
+                ));
+        if (audienceMappers != null) mappers.addAll(audienceMappers);
+        rep.put("protocolMappers", mappers);
         return rep;
     }
 

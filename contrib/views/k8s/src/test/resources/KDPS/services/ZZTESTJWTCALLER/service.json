@@ -1,0 +1,17 @@
+{
+  "label": "ZZ Test JWT caller (calls a KDPS Trino with its own OIDC service token, NOT in catalog.json)",
+  "chart": "example/zz-test-jwt-caller",
+  "version": "0.0.1",
+  "form": [],
+  "oidc": [
+    {
+      "key": "caller",
+      "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+      "secretNameTemplate": "{{releaseName}}-oidc-client",
+      "redirectUriTemplate": "https://caller.example.org/oauth-authorized/generic",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "enabled": true
+    }
+  ]
+}

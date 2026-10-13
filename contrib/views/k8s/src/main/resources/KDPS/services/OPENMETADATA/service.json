@@ -2615,6 +2615,7 @@
   ],
   "securityCoupling": {
     "requireIngress": true,
+    "unauthenticatedExposure": "OpenMetadata then uses basic authentication with its local accounts only: its administrators sign in with the password KDPS keeps in a Secret, and your directory and single sign-on are not used.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view",
     "authModes": {

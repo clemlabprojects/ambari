@@ -66,3 +66,17 @@ These services were offered by pre-release builds and are no longer in the servi
 - An uninstall is refused, and the release kept, when KDPS cannot tell where Flux reads it: its base branch was deleted
   on the Git server, or it was deployed in pull request mode by an earlier version, which did not record its base
   branch, and main does not hold it. Deploy the release once more, naming its base branch, then uninstall it.
+
+### Authentication
+
+- The service wizard warns when Trino, Superset or OpenMetadata would be published through an Ingress (a Route on
+  OpenShift) without a security profile that requires sign-in, and deploys only once you confirm it. Without one,
+  Trino accepts any user name a client sends.
+- With OIDC, Trino accepts only the JWTs issued for its own OIDC client (their audience must be the client id), not
+  every token of the realm. KDPS adds that audience to the tokens of the clients it registers: Trino's own, and
+  Superset's when Superset connects to a Trino deployed by KDPS. A Trino deploy also adds its audience to the tokens of
+  the Superset releases already connecting to it in OIDC mode, before Trino restarts, so they keep working without a
+  redeploy; the deploy log names any it could not update, to redeploy (Upgrade/Config, no change needed). With a
+  security profile whose OIDC client you register yourself (External source), Trino requires the profile's new JWT
+  Audience, or its Client ID when that is blank: set it to the audience your identity provider issues (an application
+  ID URI such as `api://...`, for instance) and make sure the applications calling Trino get tokens with it.
