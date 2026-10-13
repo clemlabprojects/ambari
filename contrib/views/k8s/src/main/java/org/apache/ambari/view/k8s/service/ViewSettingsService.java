@@ -127,7 +127,9 @@ public class ViewSettingsService {
      * document without a {@code thanos} section drops the stored credentials.
      *
      * @param incoming the settings as the Configuration page sends them
-     * @throws IllegalArgumentException when the document is too large to be saved
+     * @throws IllegalArgumentException      when the document is too large to be saved
+     * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException when a credential is given and the
+     *                                       Ambari master key was not found; nothing is saved
      */
     public void save(Map<String, Object> incoming) {
         Map<String, Object> doc = copyOf(incoming);
@@ -141,6 +143,10 @@ public class ViewSettingsService {
             if (value instanceof String text && isSet(text) && !MASKED_SECRET.equals(text)) {
                 replaced.put(field, text);
             }
+        }
+        if (!replaced.isEmpty()) {
+            // Checked before anything is saved: the credentials can only be kept encrypted.
+            settings.requireMasterKey();
         }
         // The document first: when it is refused for its size, no credential has changed.
         settings.put(SETTINGS_KEY, toJson(doc));

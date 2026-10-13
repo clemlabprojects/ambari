@@ -21,6 +21,7 @@ package org.apache.ambari.view.k8s.service;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
 import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.OwnerOnlyFiles;
 import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
@@ -36,11 +37,9 @@ import java.security.PrivilegedExceptionAction;
 import java.security.AccessController;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.*;
 
 /**
@@ -53,7 +52,7 @@ import java.util.*;
 public class ViewConfigurationService {
     private static final Logger LOG = LoggerFactory.getLogger(ViewConfigurationService.class);
     
-    private static final String KUBECONFIG_PATH_KEY = "kubeconfig.path";
+    static final String KUBECONFIG_PATH_KEY = "kubeconfig.path";
     private static final String KUBECONFIG_UPLOADED = InstanceSettings.CONFIGURED_KEY;
     private static final String KUBECONFIG_CONTEXT_KEY = "kubeconfig.context";
 
@@ -107,12 +106,24 @@ public class ViewConfigurationService {
      * @param podServiceAccount the ServiceAccount the in-cluster mode connects with
      */
     public ViewConfigurationService(ViewContext viewContext, InClusterServiceAccount podServiceAccount) {
+        this(viewContext, podServiceAccount, EncryptionService.forServer(viewContext));
+    }
+
+    /**
+     * Constructs a {@code ViewConfigurationService} that encrypts the kubeconfig and the passwords with the given
+     * service rather than with the master key of this Ambari server.
+     *
+     * @param viewContext       the Ambari view context providing the instance settings and properties
+     * @param podServiceAccount the ServiceAccount the in-cluster mode connects with
+     * @param encryptionService encrypts the kubeconfig file and the stored passwords
+     */
+    public ViewConfigurationService(ViewContext viewContext, InClusterServiceAccount podServiceAccount,
+                                    EncryptionService encryptionService) {
         LOG.info("Initializing ViewConfigurationService for view context: {}", viewContext.getInstanceName());
         this.viewContext = viewContext;
         this.podServiceAccount = Objects.requireNonNull(podServiceAccount, "podServiceAccount");
-        this.encryptionService = new EncryptionService();
+        this.encryptionService = Objects.requireNonNull(encryptionService, "encryptionService");
         this.settings = new InstanceSettings(viewContext, encryptionService);
-        LOG.debug("EncryptionService initialized successfully");
 
         // Point the helm-java native-library extraction at the (exec-permitted) view working dir
         // BEFORE anything touches com.marcnuri.helm.Helm — on hardened hosts java.io.tmpdir is
@@ -140,6 +151,7 @@ public class ViewConfigurationService {
                     settings.put(KUBECONFIG_UPLOADED, "false");
                 } else {
                     LOG.info("Kubeconfig file exists at path: {}. No action needed.", kubeconfigPath);
+                    restrictToOwner(kubeconfigFile.toPath());
                 }
             } else {
                 LOG.warn("View is configured but no kubeconfig path is set");
@@ -147,79 +159,111 @@ public class ViewConfigurationService {
         } else {
             LOG.info("View is not configured. No kubeconfig path set.");
         }
+        // Earlier versions wrote the working directory, the kubeconfig and the CA file with the umask's permissions.
+        restrictToOwner(Paths.get(getConfigurationDirectoryPath()));
+        String caPath = settings.get(OS_CA_PATH_KEY);
+        if (caPath != null && !caPath.isBlank()) {
+            restrictToOwner(Paths.get(caPath));
+        }
         LOG.info("ViewConfigurationService initialization completed");
     }
 
+    /** Makes an existing file or directory owner-only ({@link OwnerOnlyFiles}); a failure is only logged. */
+    private static void restrictToOwner(Path path) {
+        try {
+            AccessController.doPrivileged((PrivilegedExceptionAction<Void>) () -> {
+                if (Files.exists(path)) {
+                    OwnerOnlyFiles.restrict(path);
+                }
+                return null;
+            });
+        } catch (Exception e) {
+            LOG.warn("Could not restrict {} to the account running Ambari: {}", path, e.toString());
+        }
+    }
+
     /**
-     * Encrypts and saves the uploaded kubeconfig file to the view's working directory.
-     * The resulting path is also persisted via {@link #saveKubeconfigPath}.
+     * Whether the Ambari master key was found. Without it nothing can be saved: the kubeconfig, the OpenShift and
+     * proxy passwords and every other credential KDPS keeps are encrypted with it.
+     *
+     * @return {@code false} when saving a credential would fail with {@link MasterKeyUnavailableException}
+     */
+    public boolean isMasterKeyAvailable() {
+        return encryptionService.isMasterKeyAvailable();
+    }
+
+    /**
+     * Checks that the Ambari master key was found, before anything is saved.
+     *
+     * @throws MasterKeyUnavailableException when it was not
+     */
+    public void requireMasterKey() {
+        encryptionService.requireMasterKey();
+    }
+
+    /**
+     * Encrypts and saves the uploaded kubeconfig file to the view's working directory, in a file only the account
+     * running Ambari can read, in a directory only it can list. The resulting path is also persisted via
+     * {@link #saveKubeconfigPath}.
      *
      * @param inputStream the raw kubeconfig content to encrypt and save
      * @param fileName    the original filename; used to derive the on-disk name
      * @return the saved (encrypted) {@link File}
+     * @throws MasterKeyUnavailableException when the Ambari master key was not found; nothing is saved
      * @throws IOException if the working directory cannot be created or the file cannot be written
      */
     public File saveKubeconfigFile(InputStream inputStream, String fileName) throws IOException {
         LOG.info("Starting saveKubeconfigFile operation for file: {}", fileName);
-        
+        requireMasterKey();
+
         final String workingDirectoryPath = getConfigurationDirectoryPath();
         LOG.debug("Working directory path: {}", workingDirectoryPath);
-        
+
+        File saved;
         try {
-            return AccessController.doPrivileged(new PrivilegedExceptionAction<File>() {
+            saved = AccessController.doPrivileged(new PrivilegedExceptionAction<File>() {
                 @Override
                 public File run() throws IOException {
                     LOG.debug("Executing saveKubeconfigFile in privileged context");
-                    
-                    File workingDirectory = new File(workingDirectoryPath);
-                    if (!workingDirectory.exists()) {
-                        LOG.info("Working directory does not exist. Creating it at: {}", workingDirectoryPath);
-                        if (!workingDirectory.mkdirs()) {
-                            LOG.error("Failed to create working directory: {}", workingDirectoryPath);
-                            throw new IOException("Could not create working directory: " + workingDirectoryPath);
-                        }
-                        LOG.info("Successfully created working directory: {}", workingDirectoryPath);
-                    } else {
-                        LOG.debug("Working directory already exists: {}", workingDirectoryPath);
-                    }
-                    
+
+                    byte[] fileContentBytes = inputStream.readAllBytes();
+                    LOG.debug("Read {} bytes from input stream", fileContentBytes.length);
+                    // Stored as the UTF-8 text the upload was checked as and is read back as: a file saved in another
+                    // charset (Windows-1252 with an accented name) would otherwise not read back as text, which is
+                    // how a decryption with the wrong key is told apart.
+                    byte[] text = new String(fileContentBytes, StandardCharsets.UTF_8).getBytes(StandardCharsets.UTF_8);
+
+                    byte[] encryptedContentBytes = encryptionService.encrypt(text);
+                    LOG.debug("Encrypted content to {} bytes", encryptedContentBytes.length);
+
+                    File workingDirectory = OwnerOnlyFiles.directory(Paths.get(workingDirectoryPath)).toFile();
                     String sanitizedFileName = new File(fileName).getName();
                     File configurationFile = new File(workingDirectory, sanitizedFileName + ".enc");
                     LOG.info("Preparing to save uploaded file to: {}", configurationFile.getAbsolutePath());
 
-                    byte[] fileContentBytes = inputStream.readAllBytes();
-                    LOG.debug("Read {} bytes from input stream", fileContentBytes.length);
-                    
-                    byte[] encryptedContentBytes = encryptionService.encrypt(fileContentBytes);
-                    LOG.debug("Encrypted content to {} bytes", encryptedContentBytes.length);
+                    // The ciphertext is Base64 text.
+                    OwnerOnlyFiles.write(configurationFile.toPath(),
+                            new String(encryptedContentBytes, StandardCharsets.UTF_8));
 
-                    try (OutputStream fileOutputStream = new FileOutputStream(configurationFile)) {
-                        fileOutputStream.write(encryptedContentBytes);
-                        fileOutputStream.flush();
-                        LOG.debug("Successfully wrote encrypted content to file");
-                    }
-                    
                     LOG.info("Successfully wrote {} encrypted bytes to {}", encryptedContentBytes.length, configurationFile.getAbsolutePath());
                     return configurationFile;
                 }
             });
+        } catch (MasterKeyUnavailableException e) {
+            throw e;
         } catch (Exception e) {
             LOG.error("Error saving kubeconfig file: {}", e.getMessage(), e);
-            if (e instanceof IOException) {
-                throw (IOException) e;
+            Throwable cause = e instanceof java.security.PrivilegedActionException ? e.getCause() : e;
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
             }
-            throw new IOException("Failed to save kubeconfig file", e);
-        } finally {
-            // Save the path after successful file creation
-            LOG.debug("Attempting to save kubeconfig path to the view settings");
-            try {
-                File savedFile = new File(workingDirectoryPath, new File(fileName).getName() + ".enc");
-                saveKubeconfigPath(savedFile.getAbsolutePath());
-                LOG.info("Kubeconfig file save operation completed successfully");
-            } catch (Exception e) {
-                LOG.error("Error saving kubeconfig path to the view settings: {}", e.getMessage(), e);
-            }
+            throw new IOException("Failed to save kubeconfig file", cause);
         }
+        // Only a file that was written is recorded: the view must not look configured after a failed upload.
+        LOG.debug("Attempting to save kubeconfig path to the view settings");
+        saveKubeconfigPath(saved.getAbsolutePath());
+        LOG.info("Kubeconfig file save operation completed successfully");
+        return saved;
     }
 
     /**
@@ -312,8 +356,11 @@ public class ViewConfigurationService {
     /**
      * Persist an OpenShift username/password login. The password is encrypted with the same service used
      * for the kubeconfig file. Switches the view to openshift-login mode and marks it configured.
+     *
+     * @throws MasterKeyUnavailableException when the Ambari master key was not found; nothing is saved
      */
     public void saveOpenShiftLogin(String apiUrl, String username, String password, String caData, boolean insecure) {
+        requireMasterKey();
         try {
             settings.put(OS_API_URL_KEY, apiUrl);
             settings.put(OS_USERNAME_KEY, username);
@@ -358,8 +405,16 @@ public class ViewConfigurationService {
         return openShiftLoginProvider;
     }
 
-    /** Persist the view-wide outbound proxy settings (password encrypted). */
+    /**
+     * Persist the view-wide outbound proxy settings (password encrypted).
+     *
+     * @throws MasterKeyUnavailableException when a password is given and the Ambari master key was not found; nothing
+     *                                       is saved
+     */
     public void saveProxySettings(boolean enabled, String url, String username, String password, String noProxy) {
+        if (password != null && !password.isEmpty()) {
+            requireMasterKey();
+        }
         try {
             settings.put(PROXY_ENABLED_KEY, Boolean.toString(enabled));
             settings.put(PROXY_URL_KEY, url == null ? "" : url);
@@ -427,15 +482,9 @@ public class ViewConfigurationService {
         final String dir = getConfigurationDirectoryPath();
         try {
             return AccessController.doPrivileged((PrivilegedExceptionAction<String>) () -> {
-                File d = new File(dir);
-                if (!d.exists() && !d.mkdirs()) {
-                    throw new IOException("Could not create working directory: " + dir);
-                }
+                File d = OwnerOnlyFiles.directory(Paths.get(dir)).toFile();
                 File f = new File(d, OPENSHIFT_CA_FILE);
-                try (OutputStream os = new FileOutputStream(f)) {
-                    os.write(caPem.getBytes(StandardCharsets.UTF_8));
-                    os.flush();
-                }
+                OwnerOnlyFiles.write(f.toPath(), caPem);
                 LOG.info("Wrote OpenShift CA ({} chars) to {}", caPem.length(), f.getAbsolutePath());
                 return f.getAbsolutePath();
             });
@@ -580,9 +629,21 @@ public class ViewConfigurationService {
                     byte[] encryptedBytes = Files.readAllBytes(encryptedKubeconfigFilePath);
                     LOG.debug("Read {} encrypted bytes from file", encryptedBytes.length);
                     
-                    byte[] plainTextBytes = encryptionService.decrypt(encryptedBytes);
+                    EncryptionService.Decrypted decrypted = encryptionService.decryptStored(encryptedBytes);
+                    byte[] plainTextBytes = decrypted.plain();
                     LOG.info("Loaded kubeconfig contents ({} bytes) from {}", plainTextBytes.length, encryptedKubeconfigFilePath);
-                    
+                    if (decrypted.reencrypt()) {
+                        // Written by an earlier version without the master key: from now on it is encrypted with it.
+                        try {
+                            OwnerOnlyFiles.write(encryptedKubeconfigFilePath, new String(
+                                    encryptionService.encrypt(plainTextBytes), StandardCharsets.UTF_8));
+                            LOG.info("Encrypted {} again with the Ambari master key", encryptedKubeconfigFilePath);
+                        } catch (IOException | RuntimeException e) {
+                            LOG.warn("Could not encrypt {} again with the Ambari master key: {}",
+                                    encryptedKubeconfigFilePath, e.toString());
+                        }
+                    }
+
                     return new String(plainTextBytes, StandardCharsets.UTF_8);
                 }
             });
@@ -834,8 +895,18 @@ public class ViewConfigurationService {
                 public String run() throws IOException {
                     LOG.debug("Executing readCacheFile in privileged context");
                     
-                    String s = EncryptedEnvelope.openIfSealed(Files.readString(Paths.get(absolutePath), StandardCharsets.UTF_8));
+                    Path file = Paths.get(absolutePath);
+                    EncryptedEnvelope.Opened opened = EncryptedEnvelope.openStored(Files.readString(file, StandardCharsets.UTF_8));
+                    String s = opened.text();
                     LOG.info("Read {} chars from cache file {}", s.length(), absolutePath);
+                    if (opened.reseal()) {
+                        // Sealed by an earlier version without the master key: from now on it is sealed with it.
+                        try {
+                            OwnerOnlyFiles.write(file, EncryptedEnvelope.sealToJson(s));
+                        } catch (IOException | RuntimeException e) {
+                            LOG.warn("Could not encrypt cache file {} again with the Ambari master key: {}", absolutePath, e.toString());
+                        }
+                    }
                     return s;
                 }
             });

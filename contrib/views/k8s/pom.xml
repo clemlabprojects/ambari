@@ -420,6 +420,11 @@ limitations under the License.
                         <classpathDependencyExclude>com.sun.jersey:jersey-core</classpathDependencyExclude>
                         <classpathDependencyExclude>javax.ws.rs:jsr311-api</classpathDependencyExclude>
                     </classpathDependencyExcludes>
+                    <!-- KDPS refuses to store a credential without the Ambari master key. The tests that do not inject
+                         their own key get this one, as an Ambari server set up without a persisted key would. -->
+                    <environmentVariables>
+                        <AMBARI_SECURITY_MASTER_KEY>kdps-unit-test-master-key</AMBARI_SECURITY_MASTER_KEY>
+                    </environmentVariables>
                 </configuration>
             </plugin>
 

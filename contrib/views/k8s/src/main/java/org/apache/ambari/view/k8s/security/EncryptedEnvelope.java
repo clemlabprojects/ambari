@@ -46,7 +46,6 @@ public final class EncryptedEnvelope {
 
     private static final Gson GSON = new Gson();
     private static final Object LOCK = new Object();
-    private static EncryptionService encryption;
 
     private EncryptedEnvelope() {
     }
@@ -56,6 +55,7 @@ public final class EncryptedEnvelope {
      *
      * @param plain the text
      * @return the envelope, to put in a JSON document as a map
+     * @throws MasterKeyUnavailableException when there is no master key
      */
     public static Map<String, Object> seal(String plain) {
         byte[] encrypted;
@@ -73,6 +73,7 @@ public final class EncryptedEnvelope {
      *
      * @param plain the text
      * @return the envelope as JSON text
+     * @throws MasterKeyUnavailableException when there is no master key
      */
     public static String sealToJson(String plain) {
         return GSON.toJson(seal(plain));
@@ -93,14 +94,15 @@ public final class EncryptedEnvelope {
      *
      * @param envelope an envelope ({@link #isEnvelope})
      * @return the decrypted text
-     * @throws IllegalStateException when it cannot be decrypted, e.g. with another master key than the one that
-     *                               encrypted it
+     * @throws IllegalStateException         when it cannot be decrypted, e.g. with another master key than the one
+     *                                       that encrypted it
+     * @throws MasterKeyUnavailableException when there is no master key to decrypt it with
      */
     public static String open(Map<?, ?> envelope) {
         if (!isEnvelope(envelope)) {
             throw new IllegalArgumentException("Not an " + FORMAT + " envelope");
         }
-        return decrypt((String) envelope.get(PAYLOAD_KEY));
+        return decrypt((String) envelope.get(PAYLOAD_KEY)).text();
     }
 
     /**
@@ -109,11 +111,26 @@ public final class EncryptedEnvelope {
      *
      * @param text the text as read, may be {@code null}
      * @return the plain text, or {@code null}
-     * @throws IllegalStateException when the envelope cannot be decrypted
+     * @throws IllegalStateException         when the envelope cannot be decrypted
+     * @throws MasterKeyUnavailableException when there is no master key to decrypt it with
      */
     public static String openIfSealed(String text) {
+        return openStored(text).text();
+    }
+
+    /**
+     * {@link #openIfSealed}, telling whether the text should be sealed again: an earlier version sealed it without
+     * the master key ({@link EncryptionService#decryptStored}).
+     *
+     * @param text the text as read, may be {@code null}
+     * @return the plain text, and whether to seal it again; a text that is not sealed is returned as it is, with
+     *         {@code reseal} false (whether to encrypt it is the caller's choice)
+     * @throws IllegalStateException         when the envelope cannot be decrypted
+     * @throws MasterKeyUnavailableException when there is no master key to decrypt it with
+     */
+    public static Opened openStored(String text) {
         if (!isSealed(text)) {
-            return text;
+            return new Opened(text, false);
         }
         JsonElement parsed;
         try {
@@ -129,24 +146,34 @@ public final class EncryptedEnvelope {
         return decrypt(payload.getAsString());
     }
 
-    private static String decrypt(String payload) {
+    /**
+     * What {@link #openStored} read.
+     *
+     * @param text   the plain text, or {@code null}
+     * @param reseal whether to seal it again ({@link #sealToJson}) and store it in place of what was read
+     */
+    public record Opened(String text, boolean reseal) {
+    }
+
+    private static Opened decrypt(String payload) {
         try {
             byte[] encrypted = Base64.getDecoder().decode(payload);
-            byte[] plain;
+            EncryptionService.Decrypted decrypted;
             synchronized (LOCK) {
-                plain = encryption().decrypt(encrypted);
+                decrypted = encryption().decryptStored(encrypted);
             }
-            return new String(plain, StandardCharsets.UTF_8);
+            return new Opened(new String(decrypted.plain(), StandardCharsets.UTF_8), decrypted.reencrypt());
+        } catch (MasterKeyUnavailableException noKey) {
+            throw noKey;
         } catch (RuntimeException e) {
             throw new IllegalStateException("Could not decrypt an " + FORMAT + " envelope", e);
         }
     }
 
-    /** Built on first use: it reads the master key, which a class that is only loaded must not need. */
+    /**
+     * The service of this Ambari server, looked up on each use: until the master key is found, it is looked for again.
+     */
     private static EncryptionService encryption() {
-        if (encryption == null) {
-            encryption = new EncryptionService();
-        }
-        return encryption;
+        return EncryptionService.forServer();
     }
 }

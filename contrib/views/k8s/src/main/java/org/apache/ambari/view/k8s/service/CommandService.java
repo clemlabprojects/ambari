@@ -270,6 +270,13 @@ public class CommandService {
         this.operationFiles = new OperationFilesRetention(ctx, dataStore);
         this.startupSweep = this.workers.submit(() -> {
             takeBackTagSyncAccountsAfterStart();
+            // Before the retention: the parameters it reads to tell which cached values are in use are then readable.
+            try {
+                new LegacyEncryptionMigration(ctx, dataStore, null).run(Instant.now());
+            } catch (RuntimeException e) {
+                LOG.warn("Could not encrypt again with the Ambari master key what an earlier version stored without "
+                        + "it: {}", e.toString());
+            }
             try {
                 operationFiles.sweep(Instant.now());
             } catch (RuntimeException e) {

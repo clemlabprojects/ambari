@@ -22,6 +22,8 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
 import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
 import org.apache.ambari.view.k8s.security.AuthHelper;
+import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.service.ConfigurationBootstrapService;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
@@ -279,6 +281,8 @@ public class ConfigurationResource {
         auth().checkConfigurationPermission();
         try {
             return Response.ok(new ViewSettingsService(viewContext).readMasked()).build();
+        } catch (MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (Exception e) {
             LOG.error("Failed to load settings", e);
             return Response.serverError().entity(Map.of("error", String.valueOf(e.getMessage()))).build();
@@ -299,6 +303,8 @@ public class ConfigurationResource {
             return Response.ok().build();
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
+        } catch (MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (Exception e) {
             LOG.error("Failed to save settings", e);
             return Response.serverError().entity(Map.of("error", e.getMessage())).build();
@@ -351,6 +357,10 @@ public class ConfigurationResource {
     @Path("/security")
     public Response saveSecurityConfig(SecurityProfilesDTO cfg) {
         auth().checkConfigurationPermission();
+        // The profiles' passwords and client secrets are kept encrypted with the master key: refuse before any change.
+        if (!EncryptionService.forServer(viewContext).isMasterKeyAvailable()) {
+            return MasterKeyUnavailableException.response();
+        }
         try {
             SecurityProfilesDTO toSave = cfg != null ? cfg : new SecurityProfilesDTO();
             if (toSave.profiles == null) toSave.profiles = new HashMap<>();
@@ -364,6 +374,8 @@ public class ConfigurationResource {
             return Response.status(Response.Status.CONFLICT)
                     .entity(Map.of("error", e.getMessage(), "releases", releases))
                     .build();
+        } catch (MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (Exception e) {
             LOG.error("Failed to save security config", e);
             return Response.serverError().entity(Map.of("error", String.valueOf(e.getMessage()))).build();

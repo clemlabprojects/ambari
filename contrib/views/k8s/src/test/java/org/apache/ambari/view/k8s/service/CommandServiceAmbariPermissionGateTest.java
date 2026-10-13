@@ -346,6 +346,14 @@ class CommandServiceAmbariPermissionGateTest {
   private CommandService newService() {
     CommandService service = new CommandService(ctx);
     services.add(service);
+    // What the service records when it starts (that no credential is left to encrypt again with the master key) is
+    // not the deploy's doing: only the deploy's writes are checked.
+    try {
+      service.startupSweep.get(30, java.util.concurrent.TimeUnit.SECONDS);
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+    clearInvocations(store);
     return service;
   }
 

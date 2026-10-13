@@ -20,6 +20,9 @@ package org.apache.ambari.view.k8s.service;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.DataStore;
+import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
+import org.apache.ambari.view.k8s.security.TestMasterKeys;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.KdpsSettingEntity;
@@ -39,6 +42,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class HelmRepositoryServiceTest {
+
+  private static final EncryptionService MASTER_KEY = TestMasterKeys.encryptionWith("a-master-key");
 
   ViewContext ctx;
   DataStore ds;
@@ -81,7 +86,7 @@ class HelmRepositoryServiceTest {
 
   @Test
   void save_minimal_http_repo() throws PersistenceException {
-    var svc = new HelmRepositoryService(ctx, helm);
+    var svc = new HelmRepositoryService(ctx, helm, MASTER_KEY);
 
     HelmRepoEntity e = new HelmRepoEntity();
     e.setId("promcom");
@@ -98,7 +103,7 @@ class HelmRepositoryServiceTest {
 
   @Test
   void save_with_secret_stores_encrypted_ref() throws PersistenceException{
-    var svc = new HelmRepositoryService(ctx, helm);
+    var svc = new HelmRepositoryService(ctx, helm, MASTER_KEY);
 
     HelmRepoEntity e = new HelmRepoEntity();
     e.setId("harbor");
@@ -154,7 +159,7 @@ class HelmRepositoryServiceTest {
 
   @Test
   void ensureHttpRepo_calls_client_and_clears_authInvalid() throws PersistenceException {
-    var svc = new HelmRepositoryService(ctx, helm);
+    var svc = new HelmRepositoryService(ctx, helm, MASTER_KEY);
 
     HelmRepoEntity e = new HelmRepoEntity();
     e.setId("prom");
@@ -174,7 +179,7 @@ class HelmRepositoryServiceTest {
 
   @Test
   void ociLogin_calls_client() throws PersistenceException{
-    var svc = new HelmRepositoryService(ctx, helm);
+    var svc = new HelmRepositoryService(ctx, helm, MASTER_KEY);
 
     HelmRepoEntity e = new HelmRepoEntity();
     e.setId("harbor");
@@ -187,5 +192,23 @@ class HelmRepositoryServiceTest {
 
     svc.ociLogin("harbor");
     verify(helm).ociLogin(eq("harbor.example.com/helm"), eq("ci"), isNull(), any(Path.class));
+  }
+
+  @Test
+  void withoutAMasterKeyARepositoryWithASecretIsNotSaved() {
+    var svc = new HelmRepositoryService(ctx, helm, TestMasterKeys.encryptionWithoutKey());
+
+    HelmRepoEntity e = new HelmRepoEntity();
+    e.setId("harbor");
+    e.setType("OCI");
+    e.setName("harbor");
+    e.setUrl("harbor.example.com/helm");
+    e.setAuthMode("basic");
+    e.setUsername("ci");
+
+    assertThrows(MasterKeyUnavailableException.class, () -> svc.save(e, "s3cr3t"));
+
+    assertTrue(table.isEmpty(), "no repository row");
+    assertTrue(settings.isEmpty(), "no secret");
   }
 }

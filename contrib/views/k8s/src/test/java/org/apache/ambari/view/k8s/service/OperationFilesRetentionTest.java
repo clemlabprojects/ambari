@@ -22,6 +22,7 @@ import com.google.gson.Gson;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.CommandType;
 import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
+import org.apache.ambari.view.k8s.security.TestMasterKeys;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.InMemoryDataStore;
@@ -38,6 +39,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -253,5 +255,40 @@ class OperationFilesRetentionTest {
         assertFalse(Files.exists(refused) || Files.exists(orphan));
         assertTrue(Files.exists(planning), "may belong to an operation being planned");
         assertTrue(Files.exists(paramsFile(kept)) && Files.exists(valuesFile(kept)));
+    }
+
+    @Test
+    void cachedValuesAreKeptWhileTheParametersOfAKeptOperationCannotBeRead() throws Exception {
+        String failed = operation("op-failed", "FAILED", now.minus(Duration.ofDays(1)), "FAILED");
+        // Encrypted with a master key this server does not have (or, before setup-security, with none at hand): which
+        // values file the operation uses cannot be told.
+        String params = gson.toJson(Map.of("releaseName", failed, "valuesPath", valuesFile(failed).toString()));
+        String sealedElsewhere = "{\"" + EncryptedEnvelope.FORMAT_KEY + "\":\"" + EncryptedEnvelope.FORMAT + "\",\""
+                + EncryptedEnvelope.PAYLOAD_KEY + "\":\"" + Base64.getEncoder().encodeToString(
+                        TestMasterKeys.ciphertext("the-key-of-another-server", params)) + "\"}";
+        for (String id : List.of(failed, failed + "-step-0")) {
+            Files.writeString(paramsFile(id), sealedElsewhere);
+        }
+        assertNull(CommandParamsStore.read(stored(failed)), "the parameters cannot be read");
+        Path orphan = Files.writeString(workDir.resolve("cache").resolve("values-gone-1.json"), SECRET);
+        FileTime twoHoursAgo = FileTime.from(now.minus(Duration.ofHours(2)));
+        for (Path old : List.of(orphan, valuesFile(failed), paramsFile(failed), paramsFile(failed + "-step-0"))) {
+            Files.setLastModifiedTime(old, twoHoursAgo);
+        }
+
+        retention.sweep(now);
+
+        assertTrue(Files.exists(valuesFile(failed)), "Resume, once the key is found, still deploys with its values");
+        assertTrue(Files.exists(orphan), "it may be the values of that operation");
+        assertTrue(Files.exists(paramsFile(failed)) && Files.exists(paramsFile(failed + "-step-0")));
+
+        // Once the parameters can be read, the values no operation uses are deleted.
+        for (String id : List.of(failed, failed + "-step-0")) {
+            Files.writeString(paramsFile(id), EncryptedEnvelope.sealToJson(params));
+        }
+        retention.sweep(now);
+
+        assertFalse(Files.exists(orphan));
+        assertTrue(Files.exists(valuesFile(failed)));
     }
 }

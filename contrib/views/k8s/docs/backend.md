@@ -62,8 +62,7 @@ limitations under the License.
 - The parameters of an operation and of each step are kept in `<working dir>/params/<command>-params.json`, and the
   chart values of a deploy or upgrade in `<working dir>/cache/values-*.json`. Both are encrypted with Ambari's master
   key (the `encrypted-v1` envelope also used for the Ambari session of an operation), files `0600` in directories
-  `0700` whatever the umask. Without a persisted master key Ambari's default passphrase is used, so the permissions
-  are then the only protection.
+  `0700` whatever the umask.
 - The wizard's form is kept without its secrets that no step reads: the `password`, `content` and `sensitive` fields
   of the service definition (`SensitiveFields`), and any PEM private key. A GitOps deploy keeps the password fields,
   which its commit looks for to keep their copies out of Git. Secrets a step needs that live in an encrypted store are
@@ -77,6 +76,30 @@ limitations under the License.
 - On a system that ran an earlier version, the logs and these files may hold the Superset `SECRET_KEY`, uploaded
   ingress TLS keys, static S3 keys and the security profile's passwords: rotate them, and purge old
   `ambari-server.log` files and the log indices they were forwarded to.
+
+## Ambari master key
+- `EncryptionService` derives its AES key from the Ambari master key (`MasterKeyServiceImpl`), found as Ambari finds it:
+  the `AMBARI_SECURITY_MASTER_KEY` environment variable, else the `master` file in the directory named by
+  `security.master.key.location`, else by `security.server.keys_dir` (`/var/lib/ambari-server/keys` when neither is set)
+  in `ambari.properties`. `EncryptionService.forServer(ctx)` shares one service per server once the key is found.
+- There is no fallback key. Without the master key, encrypting or decrypting throws `MasterKeyUnavailableException`
+  (a 412 `WebApplicationException` whose JSON body has `"code": "MASTER_KEY_UNAVAILABLE"` and the steps to fix it). The
+  endpoints that save credentials check first, so nothing is stored: `POST /cluster/config`,
+  `/cluster/openshift-login`, `/cluster/proxy` (with a password), `/configurations/security`, `/configurations/settings`
+  (with Thanos keys), `/contexts`, `/helm/repos`, `/helm/deploy`. `GET /cluster/master-key` answers
+  `{available, message, code}` for the Configuration page, and `/cluster/preflight` lists it as a `KDPS` check.
+- Carry-over for this release only: a value an earlier build encrypted with its built-in passphrase, or only
+  Base64-encoded, is still read (`EncryptionService.decryptStored`, `EncryptedEnvelope.openStored`) and written back
+  encrypted with the master key: instance settings on `getSecret`, the kubeconfig `.enc` file, parameter files and
+  cached values when read. One WARN is logged. So that a value nobody reads (the password of an idle platform context,
+  the OIDC client secret of a release nobody re-registers, the fingerprint key) does not stay readable with the public
+  passphrase, the startup sweep of `CommandService` runs `LegacyEncryptionMigration` once the key is found: every
+  encrypted instance setting, the kubeconfig file, the parameter and values files and the parameters kept inline are
+  encrypted again, and the setting `encryption.master-key.migrated` is written when nothing is left. What cannot be
+  decrypted (another master key) is logged by name and looked at again on the next start; settings the earliest builds
+  only Base64-encoded cannot be told from other settings and are only encrypted again when read. Without the master
+  key, the retention of operation files keeps every cached values file, since the parameters naming them cannot be
+  read. Remove both carry-over paths in the next release.
 
 ## Stored credentials and what the API returns
 - Kept encrypted with Ambari's master key in the instance settings, never in an entity row: the bind passwords and

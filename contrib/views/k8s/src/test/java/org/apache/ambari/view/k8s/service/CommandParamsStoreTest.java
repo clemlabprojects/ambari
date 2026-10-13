@@ -21,6 +21,8 @@ package org.apache.ambari.view.k8s.service;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
+import org.apache.ambari.view.k8s.security.TestMasterKeys;
 import org.apache.ambari.view.k8s.utils.CommandUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +32,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -192,5 +195,25 @@ class CommandParamsStoreTest {
         assertTrue(Files.exists(other));
         assertTrue(CommandParamsStore.deleteFile("cmd-5", stored));
         assertFalse(Files.exists(CommandParamsStore.fileOf(stored)));
+    }
+
+    @Test
+    void aFileSealedWithTheBuiltInPassphraseOfEarlierVersionsIsSealedAgainWhenRead() throws Exception {
+        // Sealing goes through the master key of this server: AMBARI_SECURITY_MASTER_KEY of the test run.
+        Path dir = Files.createDirectories(workDir.resolve("params"));
+        String params = "{\"releaseName\":\"superset\"}";
+        String legacy = "{\"" + EncryptedEnvelope.FORMAT_KEY + "\":\"" + EncryptedEnvelope.FORMAT + "\",\""
+                + EncryptedEnvelope.PAYLOAD_KEY + "\":\""
+                + Base64.getEncoder().encodeToString(TestMasterKeys.legacyCiphertext(params)) + "\"}";
+        Path file = Files.writeString(dir.resolve("cmd-0" + CommandParamsStore.FILE_SUFFIX), legacy);
+
+        assertEquals(params, CommandParamsStore.read(CommandParamsStore.FILE_REFERENCE + file));
+
+        String now = Files.readString(file);
+        assertNotEquals(legacy, now);
+        EncryptedEnvelope.Opened reread = EncryptedEnvelope.openStored(now);
+        assertEquals(params, reread.text());
+        assertFalse(reread.reseal());
+        assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
     }
 }

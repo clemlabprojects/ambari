@@ -138,11 +138,27 @@ public final class CommandParamsStore {
             }
         }
         try {
-            return EncryptedEnvelope.openIfSealed(text);
+            EncryptedEnvelope.Opened opened = EncryptedEnvelope.openStored(text);
+            if (opened.reseal() && isFileReference(stored)) {
+                reseal(fileOf(stored), opened.text());
+            }
+            return opened.text();
         } catch (RuntimeException ex) {
             LOG.warn("Could not decrypt the parameters {}: {}", isFileReference(stored) ? fileOf(stored) : "kept inline",
                     ex.toString());
             return null;
+        }
+    }
+
+    /**
+     * Encrypts again with the master key a parameter file an earlier version encrypted without it. Parameters kept
+     * inline are encrypted again the next time the command is stored.
+     */
+    private static void reseal(Path file, String paramsJson) {
+        try {
+            OwnerOnlyFiles.write(file, EncryptedEnvelope.sealToJson(paramsJson));
+        } catch (Exception e) {
+            LOG.warn("Could not encrypt the parameters {} again with the Ambari master key: {}", file, e.toString());
         }
     }
 

@@ -21,6 +21,8 @@ package org.apache.ambari.view.k8s.service;
 import io.fabric8.kubernetes.api.model.NodeList;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.k8s.model.ConnectionHealth;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
+import org.apache.ambari.view.k8s.security.TestMasterKeys;
 import org.apache.ambari.view.k8s.store.PerUserViewContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -318,6 +320,39 @@ class KubernetesServiceConnectsWhenConfiguredTest {
                     "the UI takes that text for a view to configure: " + refused.getMessage());
         }
         assertEquals(1, builds.get());
+    }
+
+    @Test
+    void aSavedKubeconfigThatNeedsTheMissingMasterKeyIsReportedAsSuchNotAsAnUnreachableCluster() throws Exception {
+        // Uploaded by an earlier version, which encrypted it with its built-in passphrase.
+        Files.write(kubeconfigFile, TestMasterKeys.legacyCiphertext("apiVersion: v1\nkind: Config\n"));
+        java.util.concurrent.atomic.AtomicBoolean keyProvided = new java.util.concurrent.atomic.AtomicBoolean();
+        KubernetesService svc = serviceConnectingWith("ops1", () -> {
+            if (keyProvided.get()) {
+                return built;
+            }
+            new ViewConfigurationService(view.context,
+                    new InClusterServiceAccount(workDir.resolve("no-sa"), name -> null),
+                    TestMasterKeys.encryptionWithoutKey()).getRawKubeconfigContents();
+            return fail("the kubeconfig cannot be read without the master key");
+        });
+        configuredByAlice();
+
+        for (String user : new String[] {"ops1", "alice", null}) {
+            view.as(user);
+            assertThrows(MasterKeyUnavailableException.class, svc::countNodes,
+                    "the administrator is told to provide the master key, not that the cluster cannot be reached");
+            ConnectionHealth health = svc.pingCluster();
+            assertEquals(ConnectionHealth.State.UNREACHABLE, health.getState(), "configured, not unconfigured");
+            assertTrue(health.getMessage().contains("ambari-server setup-security"), health.getMessage());
+        }
+        assertEquals(1, builds.get());
+
+        keyProvided.set(true);
+        svc.connectClock = () -> System.currentTimeMillis() + KubernetesService.CONNECT_RETRY_MS;
+        when(built.nodes().list()).thenReturn(new NodeList());
+        assertEquals(0, svc.countNodes(), "connected once the key can be read");
+        assertEquals(ConnectionHealth.State.CONNECTED, svc.pingCluster().getState());
     }
 
     @Test

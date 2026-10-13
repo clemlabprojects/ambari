@@ -87,7 +87,7 @@ import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
-import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.utils.CompositeTrustManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -380,6 +380,10 @@ public class KubernetesService {
         connectIfConfigured();
         if (!isConfigured) {
             if (hasSavedConfiguration()) {
+                if (masterKeyMissing) {
+                    // Not a connection problem: retrying cannot help until the administrator provides the key.
+                    throw new MasterKeyUnavailableException();
+                }
                 throw new NotConnectedException(savedLoginRefused
                         ? "KDPS is not connected to the cluster: the cluster refused the saved OpenShift username and "
                                 + "password. To avoid locking the account, KDPS does not log in with them again until "
@@ -419,6 +423,12 @@ public class KubernetesService {
      * saved again ({@link #forceReloadClient()}).
      */
     private volatile boolean savedLoginRefused;
+    /**
+     * The last attempt to connect failed because the saved kubeconfig or OpenShift password cannot be decrypted
+     * without the Ambari master key. Requests are then answered with what to do about the key, not with a cluster
+     * that cannot be reached.
+     */
+    private volatile boolean masterKeyMissing;
     /** Wait after the first failed attempt; it doubles after each further failure, up to {@link #CONNECT_RETRY_MAX_MS}. */
     static final long CONNECT_RETRY_MS = 30_000L;
     static final long CONNECT_RETRY_MAX_MS = 15 * 60_000L;
@@ -743,6 +753,10 @@ public class KubernetesService {
             if (!hasSavedConfiguration()) {
                 LOG.debug("pingCluster: view is not configured; reporting UNCONFIGURED.");
                 return ConnectionHealth.unconfigured();
+            }
+            if (masterKeyMissing) {
+                LOG.debug("pingCluster: the saved configuration needs the Ambari master key; reporting UNREACHABLE.");
+                return ConnectionHealth.notConnected(MasterKeyUnavailableException.MESSAGE);
             }
             if (savedLoginRefused) {
                 LOG.debug("pingCluster: the saved OpenShift login was refused; reporting UNAUTHENTICATED.");
@@ -4276,12 +4290,15 @@ public class KubernetesService {
     private boolean rebuildClient() {
         KubernetesClient previous = this.client;
         KubernetesClient fresh;
+        boolean noMasterKey = false;
         try {
             fresh = buildClientFromSavedConfiguration();
         } catch (Exception e) {
             LOG.warn("Failed to reinitialize Kubernetes client: {}", e.getMessage());
+            noMasterKey = causedByMissingMasterKey(e);
             fresh = null;
         }
+        this.masterKeyMissing = noMasterKey;
         if (fresh == null) {
             this.isConfigured = false;
             this.client = null;
@@ -4304,6 +4321,16 @@ public class KubernetesService {
         retire(previous);
         LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
         return true;
+    }
+
+    /** Whether {@code e}, or one of its causes, is the missing Ambari master key. */
+    private static boolean causedByMissingMasterKey(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof MasterKeyUnavailableException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Closes a replaced client once its grace period is over. */
@@ -4350,10 +4377,7 @@ public class KubernetesService {
                 LOG.warn("reloadClientIfConfigured: kubeconfig file missing at {}", kubeconfigPath);
                 return null;
             }
-            EncryptionService encryptionService = new EncryptionService();
-            byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
-            byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
-            kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
+            kubeconfigContent = configurationService.getRawKubeconfigContents();
         }
 
         // Mirror the constructor's CA-loading step.  Without this, the JVM default

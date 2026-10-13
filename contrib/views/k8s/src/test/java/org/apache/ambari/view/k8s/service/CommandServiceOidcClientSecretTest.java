@@ -25,6 +25,8 @@ import org.apache.ambari.view.k8s.client.KeycloakAdminClient;
 import org.apache.ambari.view.k8s.model.CommandState;
 import org.apache.ambari.view.k8s.model.CommandType;
 import org.apache.ambari.view.k8s.model.ContextRequest;
+import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.TestMasterKeys;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.KdpsSettingEntity;
@@ -387,5 +389,29 @@ class CommandServiceOidcClientSecretTest {
         assertEquals(List.of("trino-analytics"), audiencesSent(keycloakReceived.get(0).getValue()),
                 "re-registered with the audience mappers it has");
         assertFalse(st.getResultJson().contains(SECRET), st.getResultJson());
+    }
+
+    @Test
+    void aSecretAnEarlierVersionEncryptedWithoutTheMasterKeyIsEncryptedAgainOnStartWithoutBeingRead()
+            throws Exception {
+        PerUserViewContext upgraded = new PerUserViewContext("oidc-legacy", workDir.resolve("upgraded"));
+        String key = "oidc.client.secret.op-9-oidc-register";
+        String legacy = java.util.Base64.getEncoder().encodeToString(TestMasterKeys.legacyCiphertext(SECRET));
+        upgraded.dataStore.store(new KdpsSettingEntity(key, legacy));
+
+        CommandService started = new CommandService(upgraded.context, mock(HelmService.class),
+                mock(KubernetesService.class));
+        try {
+            started.startupSweep.get(30, TimeUnit.SECONDS);
+        } finally {
+            started.shutdown();
+        }
+
+        String stored = upgraded.dataStore.find(KdpsSettingEntity.class, key).getValue();
+        assertNotEquals(legacy, stored);
+        EncryptionService.Decrypted decrypted = EncryptionService.forServer(upgraded.context)
+                .decryptStored(java.util.Base64.getDecoder().decode(stored));
+        assertEquals(SECRET, new String(decrypted.plain(), StandardCharsets.UTF_8));
+        assertFalse(decrypted.reencrypt(), "encrypted with the Ambari master key");
     }
 }

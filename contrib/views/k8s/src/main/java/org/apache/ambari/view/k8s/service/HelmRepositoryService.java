@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.AmbariException;
+import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
@@ -71,9 +72,21 @@ public class HelmRepositoryService {
      * @param helm the Helm client to use for repository operations
      */
     public HelmRepositoryService(ViewContext ctx, HelmClient helm) {
+        this(ctx, helm, null);
+    }
+
+    /**
+     * Constructs a {@code HelmRepositoryService} whose repository credentials are encrypted with the given service
+     * rather than with the master key of this Ambari server.
+     *
+     * @param ctx        the Ambari view context providing configuration and the instance settings
+     * @param helm       the Helm client to use for repository operations
+     * @param encryption encrypts the repository credentials; {@code null} for the master key of this Ambari server
+     */
+    public HelmRepositoryService(ViewContext ctx, HelmClient helm, EncryptionService encryption) {
         this.viewContext = ctx;
         this.repositoryDao = new HelmRepoRepo(ctx.getDataStore());
-        this.settings = new InstanceSettings(ctx);
+        this.settings = new InstanceSettings(ctx, encryption);
         this.helmClient = helm;
         this.pathConfig = new PathConfig(ctx);
         this.pathConfig.ensureDirs();

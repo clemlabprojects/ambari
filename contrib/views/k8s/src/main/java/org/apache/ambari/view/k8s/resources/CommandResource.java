@@ -23,6 +23,8 @@ import org.apache.ambari.view.k8s.model.CommandStatus;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.security.AuthHelper;
+import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.service.IngressTlsSecretGuard;
@@ -117,6 +119,11 @@ public class CommandResource {
                                @QueryParam("kubeContext") String kubeContext,
                                @Context HttpHeaders headers, @Context UriInfo ui) {
     auth().checkWritePermission();
+    // An operation keeps its parameters and the caller's Ambari session encrypted with the master key.
+    if (!EncryptionService.forServer(viewContext).isMasterKeyAvailable()) {
+      LOG.warn("submitDeploy refused (412): the Ambari master key was not found");
+      return MasterKeyUnavailableException.response();
+    }
     try {
       // Pass the LOCAL Ambari API base URI (not the inbound request's baseUri) so background workers
       // resuming this command later loop back to ambari-server directly rather than through whatever
@@ -144,6 +151,9 @@ public class CommandResource {
       // payload (IllegalArgumentException) and an incomplete deploy such as a Kerberized platform
       // context with no keytab selected (IllegalStateException).
       Throwable cause = re.getCause();
+      if (cause instanceof MasterKeyUnavailableException noKey) {
+        return noKey.getResponse();
+      }
       if (cause instanceof HelmOperationRegistry.ReleaseBusyException
               || cause instanceof FluxGitOpsBackend.GitOpsBusyException) {
         LOG.warn("submitDeploy refused (409, unwrapped): {}", cause.getMessage());

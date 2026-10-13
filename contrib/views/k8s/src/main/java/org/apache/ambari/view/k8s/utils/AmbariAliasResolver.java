@@ -64,7 +64,7 @@ public final class AmbariAliasResolver {
         persistedCredentialStore = new FileBasedCredentialStore(this.getMasterKeyStoreLocation());
         MasterKeyService masterKeyService = null;
         LOG.info("Persisted Crendential Store file at path: {}", persistedCredentialStore.getKeyStorePath().getAbsolutePath());
-        masterKeyService = new MasterKeyServiceImpl();
+        masterKeyService = new MasterKeyServiceImpl(ctx);
         persistedCredentialStore.setMasterKeyService(masterKeyService);
         this.credentialProvider = new CredentialProvider(this.persistedCredentialStore);
 

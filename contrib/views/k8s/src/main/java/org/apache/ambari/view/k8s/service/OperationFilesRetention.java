@@ -25,6 +25,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.CommandState;
 import org.apache.ambari.view.k8s.model.CommandType;
 import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
+import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
@@ -192,15 +193,25 @@ final class OperationFilesRetention {
 
         int encrypted = 0;
         Path marker = Paths.get(ViewConfigurationService.workingDirectory(ctx), ENCRYPTED_MARKER);
-        boolean encryptEarlierFiles = !Files.exists(marker);
+        // Without the master key nothing can be encrypted: the files are encrypted on a start once it is found.
+        boolean encryptEarlierFiles = !Files.exists(marker) && EncryptionService.forServer(ctx).isMasterKeyAvailable();
         Set<Path> referenced = new HashSet<>();
+        List<String> unreadable = new ArrayList<>();
         for (List<CommandEntity> tree : kept) {
             for (CommandEntity cmd : tree) {
-                encrypted += keep(cmd, encryptEarlierFiles, referenced);
+                encrypted += keep(cmd, encryptEarlierFiles, referenced, unreadable);
             }
         }
         deleted += deleteUnreferenced(CommandParamsStore.directory(ctx), referenced, now);
-        deleted += deleteUnreferenced(ViewConfigurationService.cacheDirectory(ctx), referenced, now);
+        if (unreadable.isEmpty()) {
+            deleted += deleteUnreferenced(ViewConfigurationService.cacheDirectory(ctx), referenced, now);
+        } else {
+            // Which values a kept operation uses is written in its parameters: while some cannot be read (no master
+            // key yet, or another one), any cached values may be theirs, and Resume would deploy without them.
+            LOG.warn("Kept the cached chart values: the parameters of {} command(s) cannot be read ({}). They are "
+                    + "cleaned up on a start where the Ambari master key that encrypted them is found.",
+                    unreadable.size(), String.join(", ", unreadable));
+        }
         // A working directory that does not exist yet holds no file of an earlier version.
         if (encryptEarlierFiles && Files.isDirectory(marker.getParent())) {
             try {
@@ -219,9 +230,11 @@ final class OperationFilesRetention {
      * Keeps the files of a command that may still run: encrypts what an earlier version wrote in clear (when
      * {@code encrypt}), makes the files owner-only, and records them as referenced.
      *
+     * @param unreadable gets the command's id when its parameters exist but cannot be read: the values file they
+     *                   name is then unknown
      * @return how many files were encrypted
      */
-    private int keep(CommandEntity cmd, boolean encrypt, Set<Path> referenced) {
+    private int keep(CommandEntity cmd, boolean encrypt, Set<Path> referenced, List<String> unreadable) {
         String stored = cmd.getParamsJson();
         if (stored == null || CommandParamsStore.REMOVED.equals(stored)) {
             return 0;
@@ -229,6 +242,10 @@ final class OperationFilesRetention {
         int encrypted = 0;
         try {
             String params = CommandParamsStore.read(stored);
+            Path paramsFile = CommandParamsStore.fileOf(stored);
+            if (params == null && (paramsFile == null || Files.exists(paramsFile))) {
+                unreadable.add(cmd.getId());
+            }
             if (encrypt && params != null && !alreadySealed(stored)) {
                 String rewritten = CommandParamsStore.persist(ctx, cmd.getId(), params);
                 if (!rewritten.equals(stored)) {
@@ -259,6 +276,10 @@ final class OperationFilesRetention {
             }
         } catch (Exception e) {
             LOG.warn("Could not encrypt or restrict the files of command {}: {}", cmd.getId(), e.toString());
+            // Its values file may not have been recorded as referenced.
+            if (!unreadable.contains(cmd.getId())) {
+                unreadable.add(cmd.getId());
+            }
         }
         return encrypted;
     }

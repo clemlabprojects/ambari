@@ -19,11 +19,16 @@
 package org.apache.ambari.view.k8s.store;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
+import org.apache.ambari.view.k8s.security.TestMasterKeys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
@@ -191,5 +196,35 @@ class InstanceSettingsTest {
 
         view.as("upgrade");
         assertNull(settings().get("upgradedFrom"));
+    }
+
+    @Test
+    void aSecretEncryptedWithTheBuiltInPassphraseOfEarlierVersionsIsEncryptedAgainWithTheMasterKeyOnFirstRead() {
+        EncryptionService masterKey = TestMasterKeys.encryptionWith("a-master-key");
+        InMemoryDataStore store = new InMemoryDataStore();
+        InstanceSettings settings = new InstanceSettings(store, masterKey);
+        String legacy = Base64.getEncoder().encodeToString(TestMasterKeys.legacyCiphertext("ranger-admin-pw"));
+        settings.put("context.secret.ext.rangerAdminPassword", legacy);
+
+        assertEquals("ranger-admin-pw", settings.getSecret("context.secret.ext.rangerAdminPassword"));
+
+        String stored = settings.get("context.secret.ext.rangerAdminPassword");
+        assertNotEquals(legacy, stored);
+        EncryptionService.Decrypted now = masterKey.decryptStored(Base64.getDecoder().decode(stored));
+        assertEquals("ranger-admin-pw", new String(now.plain(), StandardCharsets.UTF_8));
+        assertFalse(now.reencrypt());
+        assertThrows(IllegalStateException.class, () -> TestMasterKeys.encryptionWith("another-master-key")
+                .decrypt(Base64.getDecoder().decode(stored)), "no longer readable with the built-in passphrase");
+    }
+
+    @Test
+    void withoutAMasterKeyNoSecretIsSaved() {
+        InMemoryDataStore store = new InMemoryDataStore();
+        InstanceSettings settings = new InstanceSettings(store, TestMasterKeys.encryptionWithoutKey());
+
+        assertThrows(MasterKeyUnavailableException.class, () -> settings.putSecret("helm.repo.secret.harbor", "token"));
+        assertThrows(MasterKeyUnavailableException.class, settings::requireMasterKey);
+
+        assertNull(settings.get("helm.repo.secret.harbor"));
     }
 }

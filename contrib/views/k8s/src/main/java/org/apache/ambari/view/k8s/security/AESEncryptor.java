@@ -43,6 +43,12 @@ public class AESEncryptor {
     private Cipher ecipher;
     private Cipher dcipher;
     private SecretKey secret;
+    /**
+     * The key values are encrypted with, derived from {@link #salt}. Kept apart from {@link #secret}, which reading a
+     * value replaces with the key of that value's salt.
+     */
+    private SecretKey encryptionKey;
+    private final SecureRandom random = new SecureRandom();
     private byte[] salt = null;
     private char[] passPhrase = null;
     /**
@@ -61,6 +67,7 @@ public class AESEncryptor {
 
             SecretKey tmp = getKeyFromPassword(passPhrase);
             secret = new SecretKeySpec(tmp.getEncoded(), "AES");
+            encryptionKey = secret;
 
             ecipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
             ecipher.init(Cipher.ENCRYPT_MODE, secret);
@@ -76,6 +83,7 @@ public class AESEncryptor {
     AESEncryptor(SecretKey secret) {
         try {
             this.secret = new SecretKeySpec (secret.getEncoded(), "AES");
+            this.encryptionKey = this.secret;
 
             ecipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
             ecipher.init(Cipher.ENCRYPT_MODE, secret);
@@ -131,8 +139,15 @@ public class AESEncryptor {
         return atom;
     }
 
+    /**
+     * Encrypts with a new random IV each time: one encryptor is shared by everything the view stores, and with a fixed
+     * IV equal values would give equal ciphertexts, which tells whoever reads them which credentials are the same.
+     */
     public synchronized EncryptionResult encrypt(byte[] plain) throws Exception {
-        EncryptionResult atom = new EncryptionResult(salt, ecipher.getParameters().getParameterSpec(IvParameterSpec.class).getIV(), ecipher.doFinal(plain));
+        byte[] iv = new byte[ecipher.getBlockSize()];
+        random.nextBytes(iv);
+        ecipher.init(Cipher.ENCRYPT_MODE, encryptionKey, new IvParameterSpec(iv));
+        EncryptionResult atom = new EncryptionResult(salt, iv, ecipher.doFinal(plain));
         return atom;
     }
 

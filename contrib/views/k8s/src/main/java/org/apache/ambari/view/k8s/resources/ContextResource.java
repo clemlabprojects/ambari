@@ -39,6 +39,7 @@ import org.apache.ambari.view.k8s.model.ContextDTO;
 import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.security.AuthHelper;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.ServiceAdvisorService;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
@@ -272,6 +273,8 @@ public class ContextResource {
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(java.util.Map.of("error", iae.getMessage())).build();
+        } catch (MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (Exception e) {
             LOG.warn("Failed to save context: {}", e.toString());
             return Response.serverError().entity(java.util.Map.of("error", e.getMessage())).build();

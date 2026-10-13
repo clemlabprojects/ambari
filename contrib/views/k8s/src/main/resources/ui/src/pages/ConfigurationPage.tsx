@@ -25,7 +25,7 @@ import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
-import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, getPreflight, type PreflightCheck, type KubeconfigContext } from '../api/client';
+import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, getPreflight, getMasterKeyStatus, type PreflightCheck, type KubeconfigContext, type MasterKeyStatus } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
 import InClusterServiceAccountSection from '../components/common/InClusterServiceAccountSection';
 import { MASKED_SECRET, SECRET_SET_PLACEHOLDER } from './globalSecurityFields';
@@ -131,6 +131,15 @@ const ConfigurationPage: React.FC = () => {
             setPreflightRunning(false);
         }
     };
+
+    // Whether the server can encrypt what is saved here: without the Ambari master key, every save is refused.
+    const [masterKey, setMasterKey] = React.useState<MasterKeyStatus | null>(null);
+    React.useEffect(() => {
+        getMasterKeyStatus()
+            .then(setMasterKey)
+            .catch(() => { /* an older server: the saves themselves say what is missing */ });
+    }, []);
+    const noMasterKey = masterKey !== null && !masterKey.available;
 
     // View-wide outbound proxy (for internet Helm/Git repos). Loaded once; password never returned.
     const [proxyForm] = Form.useForm();
@@ -713,6 +722,16 @@ const ConfigurationPage: React.FC = () => {
                         </Space>
                     </div>
 
+                    {noMasterKey && (
+                        <Alert
+                            type="error"
+                            showIcon
+                            style={{ marginBottom: 16 }}
+                            message="The Ambari master key is required"
+                            description={masterKey?.message}
+                        />
+                    )}
+
                     <Steps
                         style={{ marginBottom: 16 }}
                         current={currentStep}
@@ -736,8 +755,8 @@ const ConfigurationPage: React.FC = () => {
                                     <Paragraph type="secondary" style={{ marginBottom: 12 }}>
                                         Upload a <code>kubeconfig</code> file. Works for any Kubernetes or OpenShift cluster (as long as its token stays valid).
                                     </Paragraph>
-                                    <Upload {...uploadProps}>
-                                        <Button icon={<UploadOutlined />}>Select Kubeconfig File</Button>
+                                    <Upload {...uploadProps} disabled={noMasterKey}>
+                                        <Button icon={<UploadOutlined />} disabled={noMasterKey}>Select Kubeconfig File</Button>
                                     </Upload>
                                     <Collapse ghost items={[{
                                         key: '1',
@@ -792,7 +811,7 @@ const ConfigurationPage: React.FC = () => {
                                             <Button icon={<ApiOutlined />} loading={osTesting} onClick={handleTestOpenShift}>
                                                 Test connection
                                             </Button>
-                                            <Button type="primary" loading={osSaving} disabled={!osTestOk} onClick={handleOpenShiftLogin}>
+                                            <Button type="primary" loading={osSaving} disabled={!osTestOk || noMasterKey} onClick={handleOpenShiftLogin}>
                                                 Connect{osTestOk ? '' : ' (test first)'}
                                             </Button>
                                             {osTestOk && <Tag color="green" icon={<CheckCircleOutlined />}>Connection verified</Tag>}
@@ -873,6 +892,9 @@ const ConfigurationPage: React.FC = () => {
                                                         ? <CheckCircleTwoTone twoToneColor="#52c41a" />
                                                         : <ExclamationCircleOutlined style={{ color: '#faad14' }} />}
                                                     <Text type={c.allowed ? undefined : 'warning'}>{c.name}</Text>
+                                                    {!c.allowed && c.group === 'KDPS' && c.remediation && (
+                                                        <Text type="secondary" style={{ fontSize: 12 }}>{c.remediation}</Text>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>

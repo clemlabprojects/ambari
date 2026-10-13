@@ -43,9 +43,28 @@ version of the view. Treat those backups as sensitive, and rotate:
 
 After rotating, enter the new values in the view: Security Profile, Helm Repositories and Cluster Settings.
 
-**Master key:** these credentials are encrypted with the Ambari master key. If your Ambari server was set up without a
-persisted master key (`ambari-server setup-security`, option "Encrypt passwords stored in ambari.properties file", with
-the key persisted), set one up now: the next release requires it.
+### The Ambari master key is required
+
+KDPS encrypts the kubeconfig and every credential it keeps with the Ambari master key, and no longer falls back to a
+passphrase built into the view. **Classic (RPM) installs need a master key:** run `ambari-server setup-security`,
+option "Encrypt passwords stored in ambari.properties file", and persist the master key (or set
+`AMBARI_SECURITY_MASTER_KEY` in the Ambari server's environment), then restart Ambari.
+
+- Until then, the Configuration page says so, and saving a credential is refused with HTTP 412 and these steps: the
+  kubeconfig upload, the OpenShift login, a proxy password, platform contexts, chart repositories, security profiles,
+  the Thanos keys and deploys. Nothing is stored.
+- The view finds the key where Ambari does: the `master` file in the directory named by `security.master.key.location`,
+  or else by `security.server.keys_dir`, in `ambari.properties`. A key directory moved away from
+  `/var/lib/ambari-server/keys` is followed.
+- Credentials an earlier build stored with its built-in passphrase are encrypted again with the master key on the first
+  start where the key is found, whether they are used or not (the view's settings, the kubeconfig file, operation
+  files). Ambari logs one warning when it finds them, and names any credential that must be entered again. The built-in passphrase was public, so treat those earlier copies, and the database
+  backups and files that hold them, as unencrypted: rotate the credentials listed above, and the kubeconfig token or
+  OpenShift password.
+- The kubeconfig file, the OpenShift CA file and the view's working directory are now readable by the Ambari account
+  only (files `0600`, directory `0700`).
+
+Ambari deployed with the `ambari` chart is not affected: the chart and the image already require a master key.
 
 ### Services not in this release
 

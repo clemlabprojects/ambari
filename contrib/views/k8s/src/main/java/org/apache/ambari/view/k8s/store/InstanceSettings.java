@@ -26,7 +26,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -199,14 +201,24 @@ public class InstanceSettings {
      *
      * @param key the setting key
      * @return the plain secret, or {@code null} when none is saved
+     * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException when there is no master key
      */
     public String getSecret(String key) {
         String encrypted = get(key);
         if (encrypted == null || encrypted.isBlank()) {
             return null;
         }
-        byte[] plain = encryption().decrypt(Base64.getDecoder().decode(encrypted));
-        return new String(plain, StandardCharsets.UTF_8);
+        EncryptionService.Decrypted decrypted = encryption().decryptStored(Base64.getDecoder().decode(encrypted));
+        String plain = new String(decrypted.plain(), StandardCharsets.UTF_8);
+        if (decrypted.reencrypt()) {
+            // Stored by an earlier version without the master key: from now on it is encrypted with it.
+            try {
+                putSecret(key, plain);
+            } catch (RuntimeException e) {
+                LOG.warn("Could not encrypt the view setting '{}' again with the Ambari master key: {}", key, e.toString());
+            }
+        }
+        return plain;
     }
 
     /**
@@ -214,10 +226,101 @@ public class InstanceSettings {
      *
      * @param key         the setting key
      * @param plainSecret the secret
+     * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException when there is no master key; nothing
+     *                                                                           is saved
      */
     public void putSecret(String key, String plainSecret) {
         Objects.requireNonNull(plainSecret, "plainSecret");
         put(key, Base64.getEncoder().encodeToString(encryption().encrypt(plainSecret.getBytes(StandardCharsets.UTF_8))));
+    }
+
+    /**
+     * The secrets {@link #encryptLegacySecretsAgain} went through.
+     *
+     * @param encryptedAgain the keys of the secrets an earlier version had encrypted without the master key, now
+     *                       encrypted with it
+     * @param unreadable     the keys of the secrets that cannot be decrypted (encrypted with another key)
+     */
+    public record LegacySecrets(List<String> encryptedAgain, List<String> unreadable) {
+    }
+
+    /**
+     * Encrypts again with the master key every secret an earlier version encrypted with its built-in passphrase,
+     * whether it is ever read or not ({@link #getSecret} does it for those it reads). Secrets are told from other
+     * settings by their form ({@code salt:iv:ciphertext}); those the earliest versions only Base64-encoded look like
+     * any other setting, so they are only encrypted again when read.
+     *
+     * @return what was done
+     * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException when there is no master key
+     */
+    public LegacySecrets encryptLegacySecretsAgain() {
+        requireMasterKey();
+        Collection<KdpsSettingEntity> rows;
+        try {
+            rows = dataStore().findAll(KdpsSettingEntity.class, null);
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("Could not read the view settings", e);
+        }
+        List<String> encryptedAgain = new ArrayList<>();
+        List<String> unreadable = new ArrayList<>();
+        for (KdpsSettingEntity row : rows == null ? List.<KdpsSettingEntity>of() : rows) {
+            byte[] encrypted = encryptedForm(row.getValue());
+            if (encrypted == null) {
+                continue;
+            }
+            EncryptionService.Decrypted decrypted;
+            try {
+                decrypted = encryption().decryptStored(encrypted);
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                unreadable.add(row.getId());
+                continue;
+            }
+            if (!decrypted.reencrypt()) {
+                continue;
+            }
+            synchronized (WRITE_LOCK) {
+                // Saved again meanwhile: it is encrypted with the master key already.
+                KdpsSettingEntity current = find(row.getId());
+                if (current != null && Objects.equals(current.getValue(), row.getValue())) {
+                    putSecret(row.getId(), new String(decrypted.plain(), StandardCharsets.UTF_8));
+                    encryptedAgain.add(row.getId());
+                }
+            }
+        }
+        return new LegacySecrets(encryptedAgain, unreadable);
+    }
+
+    /**
+     * The bytes {@link EncryptionService#encrypt} returned that a setting holds, or {@code null} when it does not hold
+     * any: {@code salt:iv:ciphertext}, each part Base64, with the sizes AES gives them.
+     */
+    private static byte[] encryptedForm(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            byte[] bytes = Base64.getDecoder().decode(value);
+            String[] parts = new String(bytes, StandardCharsets.UTF_8).split(":", 3);
+            if (parts.length != 3) {
+                return null;
+            }
+            Base64.Decoder b64 = Base64.getDecoder();
+            int salt = b64.decode(parts[0]).length;
+            int iv = b64.decode(parts[1]).length;
+            int cipher = b64.decode(parts[2]).length;
+            return salt > 0 && iv == 16 && cipher > 0 && cipher % 16 == 0 ? bytes : null;
+        } catch (IllegalArgumentException notEncrypted) {
+            return null;
+        }
+    }
+
+    /**
+     * Checks that the Ambari master key was found, before saving anything a secret goes with.
+     *
+     * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException when it was not
+     */
+    public void requireMasterKey() {
+        encryption().requireMasterKey();
     }
 
     /**
@@ -332,8 +435,11 @@ public class InstanceSettings {
     private EncryptionService encryption() {
         EncryptionService service = encryptionService;
         if (service == null) {
-            service = new EncryptionService();
-            encryptionService = service;
+            service = viewContext != null ? EncryptionService.forServer(viewContext) : EncryptionService.forServer();
+            // Kept only once the key is found, so that a key set up meanwhile is used.
+            if (service.isMasterKeyAvailable()) {
+                encryptionService = service;
+            }
         }
         return service;
     }

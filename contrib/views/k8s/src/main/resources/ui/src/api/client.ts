@@ -391,6 +391,23 @@ export const restartPod = async (ns: string, pod: string): Promise<void> => {
   if (!res.ok) throw new Error(await res.text());
 };
 
+/** The `code` of the 412 the server answers when it has no Ambari master key to encrypt credentials with. */
+export const MASTER_KEY_UNAVAILABLE = 'MASTER_KEY_UNAVAILABLE';
+
+/**
+ * What to do when the server refused to store a credential because it has no Ambari master key, or `null` for any
+ * other answer. A 412 without that code means the view has no cluster connection yet.
+ */
+export function masterKeyRefusal(status: number, text: string): string | null {
+  if (status !== 412 || !text || !text.includes(MASTER_KEY_UNAVAILABLE)) return null;
+  try {
+    const body = JSON.parse(text);
+    return body?.code === MASTER_KEY_UNAVAILABLE ? String(body.error || '') || null : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchJson<T = unknown>(
   path: string,
   options: RequestInit = {}
@@ -403,6 +420,8 @@ async function fetchJson<T = unknown>(
   if (!response.ok) {
     const text = await response.text();
     if (handleAuthExpiry(response.status, text)) throw new Error('Session expired — redirecting to Ambari login');
+    const noMasterKey = masterKeyRefusal(response.status, text);
+    if (noMasterKey) throw new Error(noMasterKey);
     throw new Error(`HTTP ${response.status} – ${text || response.statusText}`);
   }
   if (response.status === 204) return undefined as unknown as T; // No-content
@@ -427,6 +446,10 @@ const handleApiResponse = async (response: Response) => {
   }
   const errorText = await response.text();
   if (handleAuthExpiry(response.status, errorText)) throw new Error('Session expired — redirecting to Ambari login');
+
+  // A missing Ambari master key is answered 412 too, but the view may well be configured.
+  const noMasterKey = masterKeyRefusal(response.status, errorText);
+  if (noMasterKey) throw new Error(noMasterKey);
 
   // Reliably detect the "unconfigured" state from the backend
   if (response.status === 412 || (errorText && errorText.includes("not configured with a kubeconfig"))) {
@@ -629,12 +652,18 @@ export interface ProxySettings {
   passwordSet?: boolean;
 }
 
-export interface PreflightCheck { name: string; group: string; allowed: boolean; }
+export interface PreflightCheck { name: string; group: string; allowed: boolean; remediation?: string; advisory?: boolean; note?: string; }
 export interface PreflightResult { platform: string; namespace: string; allOk: boolean; checks: PreflightCheck[]; }
 
 /** RBAC preflight (oc auth can-i) for the connected account against a target namespace. */
 export const getPreflight = (namespace: string): Promise<PreflightResult> =>
   fetchJson<PreflightResult>(`/cluster/preflight?namespace=${encodeURIComponent(namespace)}`);
+
+/** Whether the server found the Ambari master key KDPS encrypts the kubeconfig and every credential with. */
+export interface MasterKeyStatus { available: boolean; message?: string; code?: string; }
+
+/** Asked before anything is uploaded: without the master key, saving a credential is refused (412). */
+export const getMasterKeyStatus = (): Promise<MasterKeyStatus> => fetchJson<MasterKeyStatus>("/cluster/master-key");
 
 /** View-wide outbound proxy for reaching internet Helm/Git repos (Kubernetes API stays direct). */
 export const getProxySettings = (): Promise<ProxySettings> => fetchJson<ProxySettings>("/cluster/proxy");

@@ -27,6 +27,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.UserPermissions;
 import org.apache.ambari.view.k8s.resources.*;
 import org.apache.ambari.view.k8s.security.AuthHelper;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.TruststoreRegistryService;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
@@ -169,6 +170,11 @@ public class KubeService {
 
         try {
             ViewConfigurationService configurationService = this.getConfigService();
+            // The kubeconfig is only ever stored encrypted with the master key: without it, refuse before reading it.
+            if (!configurationService.isMasterKeyAvailable()) {
+                LOG.warn("/cluster/config: kubeconfig upload refused, the Ambari master key was not found");
+                return MasterKeyUnavailableException.response();
+            }
 
             LOG.info("/cluster/config: Received kubeconfig upload request.");
             // Check the file before it replaces the saved one: an unreadable upload must not break a working view.
@@ -245,6 +251,8 @@ public class KubeService {
             }
             return Response.ok(Collections.singletonMap("message", "Configuration saved.")).build();
 
+        } catch (MasterKeyUnavailableException e) {
+            return e.getResponse();
         } catch (IOException e) {
             LOG.error("Error while saving uploaded kubeconfig file", e);
             return Response.serverError().entity("Error while saving the file.").build();
@@ -388,6 +396,10 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", "apiUrl, username and password are required")).build();
         }
+        if (!this.getConfigService().isMasterKeyAvailable()) {
+            LOG.warn("/cluster/openshift-login: refused, the Ambari master key was not found to encrypt the password");
+            return MasterKeyUnavailableException.response();
+        }
         LOG.info("/cluster/openshift-login: configuring OpenShift login for user '{}' at {}", username, apiUrl);
         this.getConfigService().saveOpenShiftLogin(apiUrl, username, password, caData, insecure);
         try {
@@ -456,6 +468,13 @@ public class KubeService {
         KubernetesService k = getKubernetesService();
         boolean ocp = k.isOpenShiftCluster();
         List<Map<String, Object>> checks = new java.util.ArrayList<>();
+        // Every deploy keeps its parameters encrypted with the Ambari master key.
+        Map<String, Object> masterKey = preflightCheck("Encrypt the credentials KDPS keeps (Ambari master key)", "KDPS",
+                this.getConfigService().isMasterKeyAvailable());
+        if (!Boolean.TRUE.equals(masterKey.get("allowed"))) {
+            masterKey.put("remediation", MasterKeyUnavailableException.MESSAGE);
+        }
+        checks.add(masterKey);
         // Core deploy
         checks.add(preflightCheck("Create Deployments", "Core", k.canI("create", "apps", "deployments", null, null, namespace)));
         checks.add(preflightCheck("Create Services", "Core", k.canI("create", "", "services", null, null, namespace)));
@@ -566,6 +585,10 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", "Proxy URL is required when the proxy is enabled")).build();
         }
+        if (password != null && !password.isEmpty() && !this.getConfigService().isMasterKeyAvailable()) {
+            LOG.warn("/cluster/proxy: refused, the Ambari master key was not found to encrypt the proxy password");
+            return MasterKeyUnavailableException.response();
+        }
         // Saved only: the Git clients read the proxy when they connect, nothing JVM-wide is installed.
         this.getConfigService().saveProxySettings(enabled, url, username, password, noProxy);
         return Response.ok(Collections.singletonMap("message", enabled ? "Outbound proxy enabled" : "Outbound proxy disabled")).build();
@@ -662,6 +685,28 @@ public class KubeService {
             LOG.warn("/cluster/auth-mode: reload failed: {}", e.toString());
         }
         return Response.ok(Collections.singletonMap("message", "Auth mode set to " + this.getConfigService().getAuthMode())).build();
+    }
+
+    /**
+     * Whether KDPS found the Ambari master key it encrypts the kubeconfig and every credential with. The Configuration
+     * page asks first, so that an administrator learns what to do before uploading anything.
+     *
+     * @return 200 with {@code available}, and when it is {@code false} the {@code message} and {@code code} of the
+     *         412 that saving a credential would get
+     */
+    @GET
+    @Path("/cluster/master-key")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getMasterKeyStatus(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        boolean available = this.getConfigService().isMasterKeyAvailable();
+        out.put("available", available);
+        if (!available) {
+            out.put("message", MasterKeyUnavailableException.MESSAGE);
+            out.put("code", MasterKeyUnavailableException.CODE);
+        }
+        return Response.ok(out).build();
     }
 
     @GET
@@ -796,6 +841,9 @@ public class KubeService {
     }
 
     private Response handleError(Exception e) {
+        if (e instanceof MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
+        }
         // Configured but not connected (the last attempt to connect failed): not the 412 "unconfigured", which makes
         // the UI show the first-run configuration page and stop probing the connection.
         if (e instanceof org.apache.ambari.view.k8s.service.KubernetesService.NotConnectedException) {
