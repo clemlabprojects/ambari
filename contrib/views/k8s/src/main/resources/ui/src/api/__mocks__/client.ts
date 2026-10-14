@@ -1,6 +1,8 @@
 import type { HelmRepo } from '../../types/ServiceTypes';
 
 export const getHelmRepos = jest.fn<Promise<HelmRepo[]>, []>(() => Promise.resolve([]));
+export const getCurrentUserPermissions = jest.fn<Promise<any>, []>(() =>
+  Promise.resolve({ role: 'ADMIN', canConfigure: true, canWrite: true }));
 export const createHelmRepo = jest.fn<Promise<HelmRepo>, [any]>((repo) => Promise.resolve(repo));
 export const loginHelmRepo  = jest.fn<Promise<void>, [string]>((id) => Promise.resolve());
 export const deleteHelmRepo = jest.fn<Promise<void>, [string]>((id) => Promise.resolve());
@@ -29,3 +31,15 @@ export const saveHelmRepo = jest.fn<Promise<any>, any[]>((...a: any[]) => Promis
 export const installMonitoring = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
 export const getMonitoringDiscovery = jest.fn<Promise<any>, any[]>((...a: any[]) => Promise.resolve(a[0]));
 export const createReleaseRangerPolicy = jest.fn<Promise<any>, [string, string, any]>(() => Promise.resolve({ rangerServiceName: 'trino-ns', policyName: 'p', policyType: 0, accessTypes: 'select', via: 'ambari-server-action', requestId: 1 }));
+
+// Global Security page API
+export const getSecurityConfig = jest.fn<Promise<any>, []>(() => Promise.resolve({ profiles: {} }));
+export const getSecuritySchema = jest.fn<Promise<any>, []>(() => Promise.resolve(undefined));
+export const saveSecurityConfig = jest.fn<Promise<void>, [any]>(() => Promise.resolve());
+export const getSecurityProfileUsage = jest.fn<Promise<any>, [string]>(() => Promise.resolve({ releases: [] }));
+export const deleteSecurityProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+// Cluster connection with the Ambari pod's ServiceAccount (ConfigurationPage)
+export const getInClusterServiceAccount = jest.fn<Promise<any>, []>(() =>
+  Promise.resolve({ available: false, reason: 'Ambari is not running in a Kubernetes or OpenShift pod.', active: false, authMode: 'kubeconfig' }));
+export const connectWithInClusterServiceAccount = jest.fn<Promise<any>, []>(() =>
+  Promise.resolve({ message: 'KDPS now connects with the ServiceAccount system:serviceaccount:kdps:ambari.' }));

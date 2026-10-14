@@ -1,9 +1,8 @@
 {
   "label": "OpenMetadata",
   "chart": "openmetadata",
-  "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
-  "version": "1.13.33",
+  "version": "1.13.35",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",
@@ -68,8 +67,8 @@
       "autoGenerate": true,
       "validityDays": 365,
       "dnsTemplates": [
-        "{{releaseName}}-openmetadata.{{namespace}}.svc",
-        "{{releaseName}}-openmetadata.{{namespace}}.svc.cluster.local",
+        "{{releaseName}}.{{namespace}}.svc",
+        "{{releaseName}}.{{namespace}}.svc.cluster.local",
         "{{ingress.host}}"
       ],
       "defaults": {
@@ -91,6 +90,7 @@
       "chart": "kube-prometheus-stack",
       "chartVersion": "78.3.2",
       "skipIfReleaseExists": true,
+      "skipIfPrometheusPresent": true,
       "skipOnOpenShift": true,
       "crds": [
         "servicemonitors.monitoring.coreos.com"
@@ -129,7 +129,7 @@
         "host": {
           "source": "template",
           "type": "string",
-          "template": "{{releaseName}}-openmetadata.{{namespace}}.svc.cluster.local"
+          "template": "{{releaseName}}.{{namespace}}.svc.cluster.local"
         },
         "port": {
           "source": "helm",
@@ -314,13 +314,6 @@
       }
     },
     {
-      "name": "monitoringNamespace",
-      "from": {
-        "type": "form",
-        "field": "monitoring.namespace"
-      }
-    },
-    {
       "name": "monitoringRelease",
       "from": {
         "type": "form",
@@ -387,56 +380,74 @@
       "name": "rangerTagSyncEnabled",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.enabled"
+        "field": "rangerTagSyncEnabled"
       }
     },
     {
       "name": "rangerTagSyncToken",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.token"
+        "field": "rangerTagSyncToken"
       }
     },
     {
       "name": "rangerTagSyncEndpoint",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.endpoint"
+        "field": "rangerTagSyncEndpoint"
       }
     },
     {
       "name": "rangerTagSyncTrinoServiceFqn",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.trinoIngestionServiceFqn"
+        "field": "rangerTagSyncTrinoServiceFqn"
       }
     },
     {
       "name": "rangerTagSyncRangerTrinoService",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.rangerTrinoServiceName"
+        "field": "rangerTagSyncRangerTrinoService"
       }
     },
     {
       "name": "rangerTagSyncDownloadInterval",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.downloadIntervalMillis"
+        "field": "rangerTagSyncDownloadInterval"
       }
     },
     {
       "name": "rangerTagSyncBatchSize",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.entitiesBatchSize"
+        "field": "rangerTagSyncBatchSize"
       }
     },
     {
       "name": "rangerTagSyncComponentType",
       "from": {
         "type": "form",
-        "field": "ranger.tagSync.componentTableType"
+        "field": "rangerTagSyncComponentType"
+      }
+    },
+    {
+      "comment": "'true' while the 'Enable Ranger TagSync' switch is off. Declared after rangerTagSyncEnabled, which it reads.",
+      "name": "rangerTagSyncDisabled",
+      "from": {
+        "type": "equals",
+        "var": "rangerTagSyncEnabled",
+        "value": "true",
+        "negate": true
+      }
+    },
+    {
+      "comment": "The release's current chart value: on an upgrade the deployed values are part of the form state, on a first install it is unset.",
+      "name": "rangerTagSyncDeployedEnabled",
+      "from": {
+        "type": "form",
+        "field": "ranger.tagSync.enabled"
       }
     },
     {
@@ -522,6 +533,13 @@
     }
   ],
   "bindings": [
+    {
+      "name": "om-fullname-pin",
+      "_description": "Names the chart's Service, Deployment and ServiceAccount exactly like the release. Without it the chart names them '<release>-openmetadata' unless the release name already contains 'openmetadata', and KDPS's post-install steps (base ingestion, Atlas federation, Ranger TagSync) and the endpoint it shows address the Service by the release name. The server sets the same value (releaseNameValues) for the deploys that do not go through the wizard.",
+      "targets": [
+        { "path": "fullnameOverride", "from": { "type": "var", "name": "releaseName" } }
+      ]
+    },
     {
       "name": "openshift-run-as-user",
       "targets": [
@@ -920,8 +938,9 @@
       ]
     },
     {
+      "comment": "Plain Kubernetes: label the ServiceMonitor for the kube-prometheus-stack release that should scrape it, plus the labels its Prometheus selects by (found by discovery). The chart always creates the ServiceMonitor in the release namespace. Gated on isVanillaK8s as well, so an OpenShift ServiceMonitor never gets the kube-prometheus 'release' label, even though the hidden Monitoring group keeps its default release name.",
       "name": "service-monitor-enable",
-      "skipIfVarEmpty": "monitoringRelease",
+      "skipIfVarEmpty": ["monitoringRelease", "isVanillaK8s"],
       "targets": [
         {
           "path": "serviceMonitor.labels.release",
@@ -932,17 +951,18 @@
           }
         },
         {
-          "path": "serviceMonitor.namespace",
-          "op": "set",
+          "path": "serviceMonitor.labels",
+          "op": "merge",
           "from": {
-            "type": "var",
-            "name": "monitoringNamespace"
+            "type": "form",
+            "field": "monitoring.serviceMonitorLabels",
+            "format": "labels"
           }
         }
       ]
     },
     {
-      "comment": "OpenShift: the self-managed kube-prometheus-stack is skipped (dependency skipOnOpenShift), so the platform's built-in monitoring scrapes OpenMetadata instead. The normal 'service-monitor-enable' binding is gated on monitoringRelease (the discovered self-managed release) which is empty on OpenShift, so we force serviceMonitor.enabled here: the chart emits a ServiceMonitor (port admin, path /prometheus, in the release namespace, no kube-prometheus 'release' label) that OpenShift User-Workload-Monitoring picks up. Gated on isOpenShift so vanilla k8s is unaffected.",
+      "comment": "OpenShift: the self-managed kube-prometheus-stack is skipped (dependency skipOnOpenShift), so the platform's user-workload monitoring scrapes OpenMetadata instead. The Monitoring group, 'Expose ServiceMonitor' included, is hidden on OpenShift, so serviceMonitor.enabled is forced here. The chart then creates the ServiceMonitor (port admin, path /prometheus) in the release namespace, which is the project user-workload monitoring reads and the one the deploy preflight checks the account may write to. It carries no kube-prometheus 'release' label, because 'service-monitor-enable' is gated on isVanillaK8s. Gated on isOpenShift so vanilla k8s is unaffected.",
       "name": "service-monitor-openshift",
       "skipIfVarEmpty": "isOpenShift",
       "targets": [
@@ -966,8 +986,9 @@
       ]
     },
     {
+      "comment": "OpenMetadata API address handed to Ranger TagSync, derived from the ingress host. Only with the switch on: the post-install registration reads it, and a release with TagSync off must not carry one.",
       "name": "ranger-tagsync-endpoint-from-ingress",
-      "skipIfVarEmpty": "ingressHost",
+      "skipIfVarEmpty": ["rangerTagSyncEnabled", "ingressHost"],
       "targets": [
         {
           "path": "ranger.tagSync.endpoint",
@@ -979,6 +1000,21 @@
       ]
     },
     {
+      "comment": "Operator override of the address above. Declared after it so that it wins; skipped when blank so the derived address stays.",
+      "name": "ranger-tagsync-endpoint-override",
+      "skipIfVarEmpty": ["rangerTagSyncEnabled", "rangerTagSyncEndpoint"],
+      "targets": [
+        {
+          "path": "ranger.tagSync.endpoint",
+          "from": {
+            "type": "var",
+            "name": "rangerTagSyncEndpoint"
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Each optional target is skipped when its field is blank, so a blank field never overwrites a value (the chart default, the deployed value, or the Trino mapping KDPS writes for Trino base ingestion).",
       "name": "ranger-tagsync-config",
       "skipIfVarEmpty": "rangerTagSyncEnabled",
       "targets": [
@@ -991,6 +1027,7 @@
         },
         {
           "path": "ranger.tagSync.trinoIngestionServiceFqn",
+          "skipIfVarEmpty": "rangerTagSyncTrinoServiceFqn",
           "from": {
             "type": "var",
             "name": "rangerTagSyncTrinoServiceFqn"
@@ -998,6 +1035,7 @@
         },
         {
           "path": "ranger.tagSync.rangerTrinoServiceName",
+          "skipIfVarEmpty": "rangerTagSyncRangerTrinoService",
           "from": {
             "type": "var",
             "name": "rangerTagSyncRangerTrinoService"
@@ -1005,6 +1043,7 @@
         },
         {
           "path": "ranger.tagSync.downloadIntervalMillis",
+          "skipIfVarEmpty": "rangerTagSyncDownloadInterval",
           "from": {
             "type": "var",
             "name": "rangerTagSyncDownloadInterval"
@@ -1012,6 +1051,7 @@
         },
         {
           "path": "ranger.tagSync.entitiesBatchSize",
+          "skipIfVarEmpty": "rangerTagSyncBatchSize",
           "from": {
             "type": "var",
             "name": "rangerTagSyncBatchSize"
@@ -1019,6 +1059,7 @@
         },
         {
           "path": "ranger.tagSync.componentTableType",
+          "skipIfVarEmpty": "rangerTagSyncComponentType",
           "from": {
             "type": "var",
             "name": "rangerTagSyncComponentType"
@@ -1037,6 +1078,17 @@
             "type": "template",
             "template": "tagsync-token"
           }
+        }
+      ]
+    },
+    {
+      "comment": "Switch turned off on a release that has TagSync on (an upgrade: the deployed values are in the form state). Writes false explicitly, or the deployed true would be re-sent. A first install with the switch off gets no ranger.tagSync value at all.",
+      "name": "ranger-tagsync-off",
+      "skipIfVarEmpty": ["rangerTagSyncDisabled", "rangerTagSyncDeployedEnabled"],
+      "targets": [
+        {
+          "path": "ranger.tagSync.enabled",
+          "value": false
         }
       ]
     },
@@ -1292,7 +1344,9 @@
       "name": "releaseName",
       "label": "Release Name",
       "type": "string",
-      "required": true
+      "required": true,
+      "pattern": "^(?=.{1,53}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+      "validationHint": "Use at most 53 lower-case letters, digits, '-' and '.', starting and ending with a letter or digit (Helm's rule for release names)."
     },
     {
       "name": "namespace",
@@ -1320,7 +1374,7 @@
           "label": "Admin email domain",
           "type": "string",
           "defaultFromProfile": "oidc.principalDomain",
-          "help": "Email domain used when bootstrap-creating admin user records (sets AUTHORIZER_PRINCIPAL_DOMAIN). Must match the 'email' claim domain your IdP issues for those users (e.g. dev21.hadoop.clemlab.com). Pre-filled from the selected Security Profile (oidc.principalDomain) — itself bootstrapped from cluster oidc-env. Override here per-deploy if needed. If left blank with no upstream value, OpenMetadata falls back to 'open-metadata.org' — which will cause 'Account already exists' on first OIDC login when your IdP email domain differs."
+          "help": "Email domain used when bootstrap-creating admin user records (sets AUTHORIZER_PRINCIPAL_DOMAIN). Must match the 'email' claim domain your IdP issues for those users (e.g. example.com). Pre-filled from the selected Security Profile (oidc.principalDomain) — itself bootstrapped from cluster oidc-env. Override here per-deploy if needed. If left blank with no upstream value, OpenMetadata falls back to 'open-metadata.org' — which will cause 'Account already exists' on first OIDC login when your IdP email domain differs."
         }
       ]
     },
@@ -1492,7 +1546,7 @@
     },
     {
       "name": "hadoopIntegration",
-      "label": "Intégration Hadoop",
+      "label": "Hadoop Integration",
       "type": "group",
       "fields": [
         {
@@ -1606,7 +1660,7 @@
       "name": "atlasFederation",
       "label": "Atlas Federation",
       "type": "group",
-      "help": "Federate an Apache Atlas catalog through OpenMetadata. The post-install Job creates the Atlas metadataService, the matching databaseService, and an Airflow-scheduled ingestion pipeline. Requires the bundled ingestion runner (section above). Pre-req on the Atlas side: a local user (default 'openmetadata-ingestion') must exist. Use seed-atlas-user.sh until Atlas user management lands in the Ambari Atlas service.",
+      "help": "Federate an Apache Atlas catalog through OpenMetadata. The post-install Job creates the Atlas metadataService, the matching databaseService, and an Airflow-scheduled ingestion pipeline. Requires the bundled ingestion runner (section above). OpenMetadata signs in to Atlas with a user name and password: either through the file-based user store of Atlas (when it is already enabled, or when you allow it below) or, on an Atlas that signs users in against LDAP, with an LDAP service account you provide in a Secret.",
       "fields": [
         {
           "name": "atlasFederation.enabled",
@@ -1616,6 +1670,29 @@
           "autoEnableWhenContext": "atlas",
           "advisor": "recommend_atlas",
           "help": "When ON, KDPS federates the Atlas of the selected Platform Context into OpenMetadata: it provisions the federation user, grants read access (Ranger or simple authz), and registers the Atlas service + ingestion pipeline via OM REST. The Atlas URL, authentication and authorization all come from the Platform Context selected for this deployment — there is nothing else to configure here."
+        },
+        {
+          "name": "atlasFederation.existingSecret",
+          "label": "Existing Secret (service account)",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Optional. Name of a Secret in this release's namespace with the keys 'username' and 'password' for the account OpenMetadata signs in to Atlas with. Required when Atlas signs users in against LDAP: the account must be an existing LDAP service account, and nothing is created or changed in Atlas (this applies even if Atlas also has file authentication on). With Ranger, KDPS grants the account read access; with the Atlas simple authorizer it does not, so add the account (or a group it belongs to) to Atlas's atlas-simple-authz-policy.json yourself. On an Atlas that has file authentication and no LDAP, it replaces the password KDPS would generate for the federation user. The Secret is read when the federation steps run, after the chart is installed, so it may be created by the install (for example by external-secrets). Blank = KDPS creates and manages the account.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "atlasFederation.allowFileAuth",
+          "label": "Allow Atlas file authentication",
+          "type": "boolean",
+          "defaultValue": false,
+          "excludeFromValues": true,
+          "help": "Only needed when Atlas has no file-based user store enabled and no LDAP service account Secret is given above (for example a Kerberos-only Atlas). When ticked, KDPS turns Atlas file authentication on in Ambari and creates a dedicated non-administrator user for OpenMetadata. WARNING: with file authentication on, the Atlas scripts also add a local administrator account to Atlas, a password-based way in next to Kerberos or LDAP. Leave it off to keep Atlas as it is: the deployment then stops with a message instead of changing Atlas.",
+          "condition": {
+            "field": "atlasFederation.enabled",
+            "value": true
+          }
         },
         {
           "name": "atlasFederation.schedule",
@@ -1661,7 +1738,7 @@
           "label": "OM database service name",
           "type": "string",
           "defaultValue": "",
-          "help": "Name of the OpenMetadata Hive databaseService to create. Blank = hive-<cluster> (the platform context's cluster, e.g. hive-clemlabtest). Atlas Federation's 'Target OM database services' follows it when left blank.",
+          "help": "Name of the OpenMetadata Hive databaseService to create. Blank = hive-<cluster> (the platform context's cluster, e.g. hive-mycluster). Atlas Federation's 'Target OM database services' follows it when left blank.",
           "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
         },
         {
@@ -1804,7 +1881,7 @@
       "name": "rangerTagSync",
       "label": "Ranger TagSync",
       "type": "group",
-      "help": "Wires OpenMetadata as a Ranger TagSync source (RANGER-4978). Tags applied to tables/columns in OpenMetadata are propagated to Ranger and enforced on Trino queries.",
+      "help": "Wires OpenMetadata as a Ranger TagSync source (RANGER-4978). Tags applied to tables/columns in OpenMetadata are propagated to Ranger and enforced on Trino queries. Ranger TagSync keeps its other tag sources, Atlas included.",
       "fields": [
         {
           "name": "rangerTagSyncEnabled",
@@ -1813,7 +1890,8 @@
           "defaultValue": false,
           "excludeFromValues": true,
           "autoEnableWhenContext": ["ranger", "atlas"],
-          "help": "Creates the ranger-tagsync-site ConfigMap consumed by the Ranger TagSync daemon on master03 so it pulls OM tags. Auto-enabled only when the selected Platform Context exposes BOTH Ranger and Atlas (a tag source and a tag store); the JWT + Trino service wiring below then auto-fill. Toggle off if you don't want tag propagation."
+          "seedFromValue": "ranger.tagSync.enabled",
+          "help": "Registers OpenMetadata as a tag source of the platform's Ranger TagSync after the install, then restarts Ranger TagSync once so it pulls OpenMetadata tags. Needs 'Deploy bundled Airflow', an OpenMetadata API address Ranger TagSync can reach (the ingress host, or the override below), and an ingestion-bot token that expires (see 'OM bot JWT' below): until there is one, the deploy skips the registration with a warning. That token is also what every OpenMetadata ingestion pipeline runs with, so its expiry stops ingestion too. Auto-enabled only when the selected Platform Context exposes BOTH Ranger and Atlas (a tag source and a tag store). Off: KDPS does not change the platform's Ranger TagSync; it only reports what it finds there that needs attention (the Atlas tag source turned off, a bot token stored in clear)."
         },
         {
           "name": "rangerTagSyncToken",
@@ -1821,7 +1899,7 @@
           "type": "password",
           "required": false,
           "excludeFromValues": true,
-          "help": "Leave empty: the post-install Job fetches the ingestion-bot JWT from OM postgres (Fernet-decrypted) and writes it to the Secret referenced below. The bootstrap Job also sets the bot's JWTTokenExpiry to 'Unlimited' so the token doesn't expire and break TagSync after 7 days.",
+          "help": "Leave empty: KDPS reads the OpenMetadata ingestion-bot token itself and stores it in Ranger TagSync's configuration as a password property: Ambari masks it, and on the Ranger TagSync host keeps it in a credential store rather than in the configuration file. KDPS only hands over a token that expires, and OpenMetadata creates the bot with one that never does: after the first install, regenerate it in OpenMetadata (Settings > Bots > ingestion-bot) with an expiry (for example 90 days). The ingestion-bot is also the identity of every OpenMetadata ingestion pipeline (the Hive and Trino ingestion and the Atlas federation included): when its token expires, all ingestion stops, not only Ranger TagSync. After each regeneration, run the release's 'Re-register Ranger TagSync source', 'Re-register Hive ingestion', 'Re-register Trino ingestion' and 'Re-register Atlas federation' actions (those the Releases page shows) so Ranger TagSync gets the new token and OpenMetadata redeploys the pipelines with it, and redeploy any other pipeline from OpenMetadata. Renew it before it expires: KDPS's OpenMetadata steps warn once less than 30 days are left.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1845,6 +1923,8 @@
           "type": "string",
           "excludeFromValues": true,
           "help": "Defaults to 'https://<ingressHost>/api' when ingress is on. Override if TagSync reaches OM via a different host (DMZ, in-cluster Service URL, etc.).",
+          "seedFromValue": "ranger.tagSync.endpoint",
+          "seedUnlessEquals": "https://${ingress.host}/api",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1856,6 +1936,7 @@
           "type": "string",
           "excludeFromValues": true,
           "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. With 'Enable Trino base ingestion' on, KDPS sets it to the OM Trino service it registers (trino-<release> unless you named it) and your value is overridden. Without Trino base ingestion, type the OM service name explicitly.",
+          "seedFromValue": "ranger.tagSync.trinoIngestionServiceFqn",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1867,12 +1948,13 @@
           "label": "Ranger service that receives the tags",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the Ranger service of type 'trino' that receives the tags. Auto-discovered from Ranger; usually 'trino-trino-ns'. Default 'trino-trino-ns' matches the standard Trino k8s release. With 'Enable Trino base ingestion' on, KDPS sets this to the registered Trino release's Ranger repo (ranger.serviceName, default <release>-<namespace>; your value is overridden).",
+          "help": "Name of the Ranger service of type 'trino' that receives the tags: the Trino release's Ranger repository (ranger.serviceName, by default <release>-<namespace>). With 'Enable Trino base ingestion' on, KDPS fills it from the registered Trino release and your value is overridden. Without it, type the Ranger service name; left blank, no mapping is written and Ranger rejects the tags.",
+          "seedFromValue": "ranger.tagSync.rangerTrinoServiceName",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
           },
-          "defaultValue": "trino-trino-ns"
+          "defaultValue": ""
         },
         {
           "name": "rangerTagSyncComponentType",
@@ -1881,6 +1963,7 @@
           "defaultValue": "trino",
           "excludeFromValues": true,
           "help": "Leave 'trino' unless connecting a non-Trino tag source.",
+          "seedFromValue": "ranger.tagSync.componentTableType",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1893,6 +1976,7 @@
           "defaultValue": 230000,
           "excludeFromValues": true,
           "help": "Default 230s. Lower → tags propagate faster, more load on OM.",
+          "seedFromValue": "ranger.tagSync.downloadIntervalMillis",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1905,6 +1989,7 @@
           "defaultValue": 10000,
           "excludeFromValues": true,
           "help": "Default 10000. Raise for catalogs >100k entities.",
+          "seedFromValue": "ranger.tagSync.entitiesBatchSize",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1914,12 +1999,12 @@
     },
     {
       "name": "storageConfig",
-      "label": "Stockage",
+      "label": "Storage",
       "type": "group",
       "fields": [
         {
           "name": "postgresql.storage.size",
-          "label": "PostgreSQL — Taille PVC",
+          "label": "PostgreSQL — PVC Size",
           "type": "string",
           "defaultValue": "50Gi",
           "help": "Persistent volume size for the PostgreSQL database. Increase for large metadata graphs."
@@ -1933,7 +2018,7 @@
         },
         {
           "name": "opensearch.storage.size",
-          "label": "OpenSearch — Taille PVC",
+          "label": "OpenSearch — PVC Size",
           "type": "string",
           "defaultValue": "30Gi",
           "help": "Persistent volume size for the OpenSearch index."
@@ -1949,36 +2034,36 @@
     },
     {
       "name": "serverResources",
-      "label": "Ressources du serveur",
+      "label": "Server Resources",
       "type": "group",
       "fields": [
         {
           "name": "resources.requests.cpu",
-          "label": "CPU Demandé",
+          "label": "CPU Request",
           "type": "string",
           "defaultValue": "500m"
         },
         {
           "name": "resources.requests.memory",
-          "label": "Mémoire Demandée",
+          "label": "Memory Request",
           "type": "string",
           "defaultValue": "2Gi"
         },
         {
           "name": "resources.limits.cpu",
-          "label": "CPU Limite",
+          "label": "CPU Limit",
           "type": "string",
           "defaultValue": "2"
         },
         {
           "name": "resources.limits.memory",
-          "label": "Mémoire Limite",
+          "label": "Memory Limit",
           "type": "string",
           "defaultValue": "4Gi"
         },
         {
           "name": "replicaCount",
-          "label": "Réplicas",
+          "label": "Replicas",
           "type": "number",
           "defaultValue": 1,
           "help": "Scale to ≥ 2 with sticky sessions enabled on the Ingress for HA."
@@ -1996,19 +2081,32 @@
           "label": "Discover monitoring stack",
           "type": "monitoring-discovery",
           "excludeFromValues": true,
-          "help": "Auto-fill monitoring namespace and release from installed kube-prometheus-stack."
+          "autoSelectSingle": true,
+          "help": "Finds the Prometheus already running on the cluster (any namespace, any release name) and fills the fields below from it."
         },
         {
           "name": "monitoring.namespace",
           "label": "Monitoring namespace",
           "type": "string",
-          "defaultValue": "monitoring"
+          "excludeFromValues": true,
+          "defaultValue": "monitoring",
+          "help": "Where the Prometheus stack runs. The ServiceMonitor itself is always created in the release namespace."
         },
         {
           "name": "monitoring.release",
           "label": "Monitoring release (Helm)",
           "type": "string",
-          "defaultValue": "kube-prometheus-stack"
+          "excludeFromValues": true,
+          "defaultValue": "kube-prometheus-stack",
+          "help": "Helm release of the kube-prometheus-stack that should scrape OpenMetadata. Set as the 'release' label of the ServiceMonitor."
+        },
+        {
+          "name": "monitoring.serviceMonitorLabels",
+          "label": "ServiceMonitor labels",
+          "type": "string",
+          "excludeFromValues": true,
+          "defaultValue": "",
+          "help": "Labels the Prometheus selects ServiceMonitors by, as key=value pairs separated by commas. Filled by discovery."
         },
         {
           "name": "serviceMonitor.enabled",
@@ -2038,6 +2136,7 @@
           "required": true,
           "defaultValue": "nginx",
           "capability": "kubernetes",
+          "keepWhenHidden": true,
           "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller. Hidden on OpenShift, where the HAProxy Router (Route) owns routing rather than an nginx Ingress class.",
           "condition": {
             "field": "ingress.enabled",
@@ -2074,8 +2173,13 @@
           "type": "select",
           "defaultValue": "signedByAmbariCA",
           "excludeFromValues": true,
-          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1.",
+          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1. On Upgrade/Config this starts on **Keep current certificate**: the release keeps the certificate it serves and nothing is replaced (a release serving plain HTTP starts on **None**). Choose another mode only to replace that certificate; you are asked to confirm, and a Secret kept by cert-manager or an external Secret store is never overwritten.",
           "options": [
+            {
+              "label": "Keep current certificate",
+              "value": "keepCurrent",
+              "upgradeOnly": true
+            },
             {
               "label": "Sign via cert-manager (recommended)",
               "value": "signedByClusterIssuer",
@@ -2301,12 +2405,12 @@
     },
     {
       "name": "httpsInternal",
-      "label": "HTTPS interne (keystore auto)",
+      "label": "Internal HTTPS (auto keystore)",
       "type": "group",
       "fields": [
         {
           "name": "tls.https.enabled",
-          "label": "Activer HTTPS interne",
+          "label": "Enable internal HTTPS",
           "type": "boolean",
           "defaultValue": false,
           "excludeFromValues": true,
@@ -2314,7 +2418,7 @@
         },
         {
           "name": "tls.https.autoGenerate",
-          "label": "Auto-générer le keystore",
+          "label": "Auto-generate keystore",
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
@@ -2336,7 +2440,7 @@
         },
         {
           "name": "tls.https.secretName",
-          "label": "Secret keystore",
+          "label": "Keystore Secret",
           "type": "string",
           "excludeFromValues": true,
           "help": "Leave empty → <release>-https.",
@@ -2347,7 +2451,7 @@
         },
         {
           "name": "tls.https.keystoreKey",
-          "label": "Clé du keystore dans le Secret",
+          "label": "Keystore key in Secret",
           "type": "string",
           "defaultValue": "keystore.p12",
           "excludeFromValues": true,
@@ -2358,7 +2462,7 @@
         },
         {
           "name": "tls.https.keystoreType",
-          "label": "Format du keystore",
+          "label": "Keystore format",
           "type": "select",
           "defaultValue": "PKCS12",
           "options": [
@@ -2382,14 +2486,13 @@
   ],
   "ranger": {
     "ranger-tagsync-settings": {
-      "_description": "Chart-wide TagSync wiring — mirrors the role of ranger-plugin-settings for the plugin side. Drives planRangerTagSyncSources gating AND the OM_RANGER_TAGSYNC_REGISTER runtime handler (endpoint helm path, fernet Secret coordinates, OM REST shape, bot username). Per-source entries below carry identity-only fields.",
+      "_description": "Chart-wide TagSync wiring — mirrors the role of ranger-plugin-settings for the plugin side. Drives planRangerTagSyncSources gating (the registration runs only when the values at enabled_helm_prop are true; otherwise the step only reads ranger-tagsync-site and reports what it finds), the submit-time check that the Airflow at airflow_enabled_helm_prop is deployed and the endpoint at endpoint_helm_prop is set, AND the OM_RANGER_TAGSYNC_REGISTER runtime handler (endpoint helm path, fernet Secret coordinates, bot username). Per-source entries below carry identity-only fields.",
       "type": "ranger-tagsync-settings",
       "endpoint_helm_prop": "ranger.tagSync.endpoint",
       "enabled_helm_prop": "ranger.tagSync.enabled",
+      "airflow_enabled_helm_prop": "dependencies.enabled",
       "fernet_secret_name_template": "{{releaseName}}-fernet",
       "fernet_secret_key": "fernet-key",
-      "om_service_template": "{{releaseName}}",
-      "om_port": 8585,
       "bot_username": "ingestion-bot"
     },
     "ranger-openmetadata-tagsync": {
@@ -2401,10 +2504,98 @@
       "source_key": "openmetadatarest"
     }
   },
+  "retiredValues": {
+    "_comment": "Values an earlier version of this definition wrote, removed from the values of every deploy.",
+    "openmetadata-env/OPENMETADATA_ADMIN_USERNAME": "The wizard no longer asks for the administrator, which the chart never read.",
+    "openmetadata-env/OPENMETADATA_ADMIN_PASSWORD": "The wizard no longer asks for an administrator password, which the chart never read: KDPS generates it into the Secret <release>-openmetadata-admin.",
+    "openmetadata-env/OPENMETADATA_DB_PASSWORD": "The wizard no longer asks for a database password, which the chart never read: KDPS generates it into the Secret <release>-openmetadata-db."
+  },
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
+  "releaseNameValues": ["fullnameOverride"],
   "requiredChartVersion": ">=1.13.31",
+  "generatedSecrets": [
+    {
+      "key": "admin",
+      "comment": "Basic authentication (no security profile): OpenMetadata gives its bootstrap administrators the password 'admin'; the chart's Job sets them to this one. resetOnUpgrade is true on every deploy, not only until a deploy succeeds: the chart runs the Job in basic authentication only, and OpenMetadata clears the administrators' passwords while it runs with an OIDC or LDAP profile, then gives them 'admin' again at its first start in basic authentication. The Secret is therefore the one place the password is kept: a password changed in OpenMetadata is set back to it by the next deploy.",
+      "secretNameTemplate": "{{releaseName}}-openmetadata-admin",
+      "label": "the password of the OpenMetadata administrators",
+      "chartVersion": ">=1.13.35",
+      "keys": { "password": {} },
+      "values": {
+        "openmetadata.config.authorization.adminPassword.existingSecret": "{{secretName}}",
+        "openmetadata.config.authorization.adminPassword.passwordKey": "password",
+        "openmetadata.config.authorization.adminPassword.resetOnUpgrade": "true"
+      },
+      "notice": "Without a security profile (basic authentication), the OpenMetadata administrators sign in with the password in the Secret {{namespace}}/{{secretName}}. Read it with: {{readCommand}}. Each deploy sets it again: to change it, write the new password into the Secret, then deploy again."
+    },
+    {
+      "key": "database",
+      "comment": "The bundled PostgreSQL keeps the passwords it was initialized with: a release installed before keeps those its chart stored in <release>-postgresql, or, when an uninstall deleted that Secret, the user password the chart set for every release (openmetadata). OpenMetadata never signs in as postgres: that password is generated when it cannot be found. The Airflow scheduler gets the password as a file: KDPS reads the ingestion-bot token from the database through it (OmBotJwtClient).",
+      "secretNameTemplate": "{{releaseName}}-openmetadata-db",
+      "label": "the passwords of the OpenMetadata PostgreSQL database",
+      "chartVersion": ">=1.13.35",
+      "dataVolume": "data-{{releaseName}}-postgresql-0",
+      "keys": {
+        "password": {
+          "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "password" }],
+          "keptByVolume": true,
+          "formerDefault": "openmetadata"
+        },
+        "postgres-password": { "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "postgres-password" }] }
+      },
+      "values": {
+        "postgresql.auth.existingSecret": "{{secretName}}",
+        "dependencies.airflow.scheduler.extraVolumes[0].name": "openmetadata-database",
+        "dependencies.airflow.scheduler.extraVolumes[0].secret.secretName": "{{secretName}}",
+        "dependencies.airflow.scheduler.extraVolumes[0].secret.items[0].key": "password",
+        "dependencies.airflow.scheduler.extraVolumes[0].secret.items[0].path": "postgresql-password",
+        "dependencies.airflow.scheduler.extraVolumeMounts[0].name": "openmetadata-database",
+        "dependencies.airflow.scheduler.extraVolumeMounts[0].mountPath": "/opt/airflow/secrets",
+        "dependencies.airflow.scheduler.extraVolumeMounts[0].readOnly": "true"
+      }
+    },
+    {
+      "key": "airflowAdmin",
+      "comment": "The bundled Airflow's administrator, which the OpenMetadata server deploys pipelines with: the create-user job creates it with this password, or sets it on an existing one, and the server reads the same Secret.",
+      "secretNameTemplate": "{{releaseName}}-airflow-admin",
+      "label": "the password of the bundled Airflow administrator",
+      "chartVersion": ">=1.13.35",
+      "when": "dependencies.enabled",
+      "keys": { "password": {} },
+      "values": {
+        "openmetadata.config.pipelineServiceClientConfig.auth.existingSecret": "{{secretName}}",
+        "dependencies.airflow.webserver.defaultUser.password": "",
+        "dependencies.airflow.createUserJob.env[0].name": "AIRFLOW_ADMIN_PASSWORD",
+        "dependencies.airflow.createUserJob.env[0].valueFrom.secretKeyRef.name": "{{secretName}}",
+        "dependencies.airflow.createUserJob.env[0].valueFrom.secretKeyRef.key": "password"
+      },
+      "notice": "The bundled Airflow's administrator 'admin' has the password in the Secret {{namespace}}/{{secretName}}. Read it with: {{readCommand}}"
+    },
+    {
+      "key": "airflowDatabase",
+      "comment": "The bundled Airflow's PostgreSQL (fixed name openmetadata-airflow-postgresql) and the connection Airflow opens to it. Like the OpenMetadata database: a release installed before keeps its password, or the chart's former airflow_pass when an uninstall deleted the chart's Secret.",
+      "secretNameTemplate": "{{releaseName}}-airflow-db",
+      "label": "the passwords of the bundled Airflow PostgreSQL database",
+      "chartVersion": ">=1.13.35",
+      "when": "dependencies.enabled",
+      "dataVolume": "data-openmetadata-airflow-postgresql-0",
+      "keys": {
+        "password": {
+          "adoptFrom": [{ "secret": "openmetadata-airflow-postgresql", "key": "password" }],
+          "keptByVolume": true,
+          "formerDefault": "airflow_pass"
+        },
+        "postgres-password": { "adoptFrom": [{ "secret": "openmetadata-airflow-postgresql", "key": "postgres-password" }] },
+        "connection": { "template": "postgresql://airflow_user:${password}@openmetadata-airflow-postgresql:5432/airflow_db?sslmode=disable" }
+      },
+      "values": {
+        "dependencies.airflow.postgresql.auth.existingSecret": "{{secretName}}",
+        "dependencies.airflow.data.metadataSecretName": "{{secretName}}"
+      }
+    }
+  ],
   "externalServiceTargets": {
     "hive": {
       "label": "Federated ingestion (external Kerberos keytab)",
@@ -2454,6 +2645,7 @@
   ],
   "securityCoupling": {
     "requireIngress": true,
+    "unauthenticatedExposure": "OpenMetadata then uses basic authentication with its local accounts only: its administrators sign in with the password KDPS keeps in a Secret, and your directory and single sign-on are not used.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view",
     "authModes": {
@@ -2479,7 +2671,11 @@
       "key": "om-ranger-tagsync",
       "label": "Re-register Ranger TagSync source",
       "endpoint": "actions/om-ranger-tagsync",
-      "_description": "Reruns the OM→Ranger TagSync source registration. Visible on the release row when service.json declares a ranger-tagsync-source entry."
+      "warnUnlessValueTrue": {
+        "path": "ranger.tagSync.enabled",
+        "message": "Ranger TagSync is turned off for this release. Re-registering still adds OpenMetadata as a tag source of the platform's Ranger TagSync (restarting it when its configuration changes), and later deployments of the release will not update that registration. To keep it, turn 'Enable Ranger TagSync' on with Upgrade / Config instead."
+      },
+      "_description": "Reruns the OM→Ranger TagSync source registration. Visible on the release row when service.json declares a ranger-tagsync-source entry. Asks for confirmation when the release has Ranger TagSync turned off."
     },
     {
       "key": "om-atlas-federation",

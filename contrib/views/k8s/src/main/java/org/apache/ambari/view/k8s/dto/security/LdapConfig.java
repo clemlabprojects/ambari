@@ -18,6 +18,8 @@
 
 package org.apache.ambari.view.k8s.dto.security;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /**
  * LDAP / AD configuration.
  */
@@ -40,4 +42,15 @@ public class LdapConfig {
     public String adBindPassword;
     public String adUserSearchFilter;
     public String adDomain;
+    /**
+     * On a read of the profiles, whether a bind password is stored: the password itself is never sent back (see
+     * {@code SecurityProfileService#loadMaskedProfiles}). Never stored with the profile.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public Boolean bindPasswordSet;
+    /**
+     * On a read of the profiles, whether an Active Directory bind password is stored. Never stored with the profile.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public Boolean adBindPasswordSet;
 }

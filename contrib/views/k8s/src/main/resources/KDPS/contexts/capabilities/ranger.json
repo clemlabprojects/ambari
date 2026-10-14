@@ -36,6 +36,60 @@
       "appliesTo": "EXTERNAL,CDP,REMOTE",
       "help": "CA chain that signed this Ranger's TLS certificate. Deployed plugins trust it in addition to the hosting Ambari CA. Left blank, KDPS pins the chain the server presents at deploy time and says so in the log.",
       "group": "Ranger"
+    },
+    {
+      "name": "auditSolrEnabled",
+      "label": "Audit to Solr",
+      "type": "enum",
+      "options": ["true", "false"],
+      "managedResolver": "ranger.auditSolrEnabled",
+      "help": "Whether the plugins of this Ranger write their audit events to Solr. Services KDPS deploys with a Ranger plugin (Trino, for one) follow it, unless their wizard overrides it. For a MANAGED or REMOTE context KDPS reads it from ranger-env.",
+      "group": "Ranger audit"
+    },
+    {
+      "name": "auditSolrUrls",
+      "label": "Audit Solr URLs",
+      "type": "string",
+      "placeholder": "http://solr.example.com:8886/solr/ranger_audits",
+      "managedResolver": "ranger.auditSolrUrls",
+      "help": "Solr endpoint(s) the audit events are sent to, comma separated. Used when Solr runs without ZooKeeper; leave blank for a SolrCloud described by the ZooKeeper field below.",
+      "group": "Ranger audit"
+    },
+    {
+      "name": "auditSolrZookeepers",
+      "label": "Audit Solr ZooKeeper",
+      "type": "string",
+      "placeholder": "zk1.example.com:2181,zk2.example.com:2181/infra-solr",
+      "managedResolver": "ranger.auditSolrZookeepers",
+      "help": "ZooKeeper connection string (with chroot) of the SolrCloud that stores the audit events. Leave blank when Solr is reached through its URLs.",
+      "group": "Ranger audit"
+    },
+    {
+      "name": "auditSolrCollection",
+      "label": "Audit Solr collection",
+      "type": "string",
+      "default": "ranger_audits",
+      "managedResolver": "ranger.auditSolrCollection",
+      "help": "Name of the Solr collection that holds the audit events.",
+      "group": "Ranger audit"
+    },
+    {
+      "name": "auditHdfsEnabled",
+      "label": "Audit to HDFS",
+      "type": "enum",
+      "options": ["true", "false"],
+      "managedResolver": "ranger.auditHdfsEnabled",
+      "help": "Whether the plugins of this Ranger write their audit events to HDFS. Services KDPS deploys with a Ranger plugin follow it, unless their wizard overrides it. For a MANAGED or REMOTE context KDPS reads it from ranger-env.",
+      "group": "Ranger audit"
+    },
+    {
+      "name": "auditHdfsDir",
+      "label": "Audit HDFS directory",
+      "type": "string",
+      "placeholder": "hdfs://namenode.example.com:8020/ranger/audit",
+      "managedResolver": "ranger.auditHdfsDir",
+      "help": "Directory the audit files are written to, with the file system in front of it. The service needs the cluster's Hadoop configuration (core-site and hdfs-site) to resolve it.",
+      "group": "Ranger audit"
     }
 ]
 }

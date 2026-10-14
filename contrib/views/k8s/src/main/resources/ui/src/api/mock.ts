@@ -109,7 +109,6 @@ export const getStackConfigsMock = (name: string) => {
         name: 'superset-env',
         description: 'Environment vars',
         properties: [
-          { name: 'SUPERSET_ADMIN_PASSWORD', displayName: 'Admin Password', type: 'password', value: 'admin', required: true },
           { name: 'ROW_LIMIT', displayName: 'Row Limit', type: 'int', value: 5000 },
         ],
       },
@@ -308,7 +307,6 @@ export const getChartsJSON = (): any => {
   "clemlab-trino": {
     "label": "Trino",
     "chart": "trinodb/trino",
-    "pattern": "trino-.*",
     "secretName": "registry-credentials",
     "version": "1.41.0",
     "dynamicValues": [
@@ -337,7 +335,7 @@ export const getChartsJSON = (): any => {
           {
             "property": "jdbc.url",
             "type": "template",
-            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=NONE",
+            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=FULL",
             "properties": {
               "host": {
                 "source": "template",
@@ -960,7 +958,6 @@ export const getChartsJSON = (): any => {
   "superset": {
     "label": "Superset",
     "chart": "apache/superset",
-    "pattern": "superset-.*",
     "secretName": "registry-credentials",
     "version": "0.12.13",
     "dependencies": {},

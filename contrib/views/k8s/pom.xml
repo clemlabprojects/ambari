@@ -29,7 +29,7 @@ limitations under the License.
 
     <groupId>org.apache.ambari.views</groupId>
     <artifactId>k8s-view</artifactId>
-    <version>1.0.0.8</version>
+    <version>1.0.0.10</version>
     <name>K8S View</name>
     <description>An Ambari View to interact with a Kubernetes cluster.</description>
     <packaging>jar</packaging>
@@ -43,13 +43,22 @@ limitations under the License.
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <ui.directory>${basedir}/src/main/resources/ui</ui.directory>
-        <ambari.grafana.arch>arm64</ambari.grafana.arch>
+        <!-- Helm native library packaged in the view. The arch-* profiles below follow the build JVM's os.arch;
+             this fallback only applies to an architecture none of them names. -->
+        <ambari.grafana.arch>amd64</ambari.grafana.arch>
+        <!-- helm-java embeds Helm in the view (install, upgrade, uninstall, repositories, show). Its version decides
+             which Helm library parses chart archives and repository indexes in the server JVM: 0.0.21 bundles Helm
+             3.21.0, past the chart-loading and index-parsing fixes of 3.17.3 and 3.18.5. -->
+        <helm-java.version>0.0.21</helm-java.version>
         <fabric8.k8s-client.version>6.12.1</fabric8.k8s-client.version>
         <jersey.version>2.25.1</jersey.version>
         <junit.jupiter.version>5.8.2</junit.jupiter.version>
         <junit.version>4.13.2</junit.version>
         <mockito.version>4.5.1</mockito.version>
         <okhttp.version>4.12.0</okhttp.version>
+
+        <!-- Integration tests (*IT.java) run only with -Pintegration: they need Docker, or a cluster to test against. -->
+        <kdps.it.skip>true</kdps.it.skip>
 
         <!-- Frontend build -->
         <node.version>v22.12.0</node.version>
@@ -142,43 +151,29 @@ limitations under the License.
             <artifactId>postgresql</artifactId>
             <version>42.7.4</version>
         </dependency>
+        <!-- Libraries the view code uses directly. They are declared here rather than taken from whatever
+             happens to bring them, so trimming another dependency never removes one of them. -->
         <dependency>
-            <groupId>org.apache.ambari.contrib.views</groupId>
-            <artifactId>ambari-views-utils</artifactId>
-            <version>${ambari.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.google.protobuf</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>log4j</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>junit</groupId>
-                    <artifactId>junit</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.squareup.okhttp</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
+        <!-- Newer than the versions Ambari manages: commons-io before 2.14 has a known denial of service. -->
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.16.1</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.ambari.contrib.views</groupId>
-            <artifactId>ambari-views-commons</artifactId>
-            <version>${ambari.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>junit</groupId>
-                    <artifactId>junit</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.squareup.okhttp</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+            <version>1.17.1</version>
+        </dependency>
+        <!-- The only log4j 1.2 API in the view: the command-log capture extends its AppenderSkeleton. The view class
+             loader does not delegate org.apache.log4j to Ambari, so the view needs its own copy. -->
+        <dependency>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+            <version>${reload4j.version}</version>
         </dependency>
 
         <!-- Pure-Java git (JGit) so GitOps clone/commit/push needs no OS `git` binary and can attach a
@@ -192,11 +187,20 @@ limitations under the License.
             <groupId>org.eclipse.jgit</groupId>
             <artifactId>org.eclipse.jgit.ssh.jsch</artifactId>
             <version>6.10.0.202406032230-r</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.jcraft</groupId>
+                    <artifactId>jsch</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
+        <!-- The maintained fork of JSch, in the same com.jcraft.jsch package. The original 0.1.55 (2018) reads no
+             OpenSSH-format private key (the ssh-keygen default), has no Ed25519 and signs with SHA-1 only, which
+             current OpenSSH servers refuse. -->
         <dependency>
-            <groupId>com.jcraft</groupId>
+            <groupId>com.github.mwiede</groupId>
             <artifactId>jsch</artifactId>
-            <version>0.1.55</version>
+            <version>0.2.24</version>
         </dependency>
         <dependency>
             <groupId>io.fabric8</groupId>
@@ -224,6 +228,9 @@ limitations under the License.
             <artifactId>spring-core</artifactId>
             <version>5.3.31</version>
         </dependency>
+        <!-- Only for the credential provider API. Hadoop's Configuration needs commons-collections 3 (its
+             deprecation table), woodstox and stax2 (XML resources), commons-configuration2 and hadoop-shaded-guava,
+             so those stay; RangerCredentialWriterTest proves the trimmed set still writes a jceks. -->
         <dependency>
             <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-common</artifactId>
@@ -233,17 +240,133 @@ limitations under the License.
                     <groupId>tomcat</groupId>
                     <artifactId>jasper-runtime</artifactId>
                 </exclusion>
-                <!--removed for security bugs in version : 9.3.19.v20170502-->
+                <!-- Ambari already runs the view in its own Jetty; the view starts no HTTP server. -->
                 <exclusion>
                     <groupId>org.eclipse.jetty</groupId>
-                    <artifactId>jetty-util</artifactId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <!-- Git over SSH uses the maintained JSch fork declared above, in the same package. A second copy
+                     of com.jcraft.jsch in WEB-INF/lib would let the view load either one. -->
+                <exclusion>
+                    <groupId>com.jcraft</groupId>
+                    <artifactId>jsch</artifactId>
+                </exclusion>
+                <!-- reload4j, declared above, is the log4j 1.2 API of the view. -->
+                <exclusion>
+                    <groupId>log4j</groupId>
+                    <artifactId>log4j</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-log4j12</artifactId>
+                </exclusion>
+                <!-- The rest is for Hadoop servers, RPC and file systems the view never uses: it only writes a local
+                     jceks file through the credential provider API (RangerCredentialWriter). -->
+                <exclusion>
+                    <groupId>org.apache.zookeeper</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.curator</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.avro</groupId>
+                    <artifactId>avro</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.codehaus.jackson</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.codehaus.jettison</groupId>
+                    <artifactId>jettison</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.google.protobuf</groupId>
+                    <artifactId>protobuf-java</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>dnsjava</groupId>
+                    <artifactId>dnsjava</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.nimbusds</groupId>
+                    <artifactId>nimbus-jose-jwt</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.kerby</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.fusesource.leveldbjni</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.htrace</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.xerial.snappy</groupId>
+                    <artifactId>snappy-java</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.commons</groupId>
+                    <artifactId>commons-compress</artifactId>
+                </exclusion>
+                <!-- Ambari serves views with JAX-RS 2 (Jersey 2), and its view class loader takes com.sun.jersey
+                     from the server anyway. The JAX-RS 1 API of Jersey 1 would also shadow JAX-RS 2 in the tests. -->
+                <exclusion>
+                    <groupId>com.sun.jersey</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.github.pjfanning</groupId>
+                    <artifactId>jersey-json</artifactId>
+                </exclusion>
+                <!-- The servlet API comes from Ambari's Jetty (declared provided below). -->
+                <exclusion>
+                    <groupId>javax.servlet</groupId>
+                    <artifactId>javax.servlet-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.servlet</groupId>
+                    <artifactId>servlet-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.servlet.jsp</groupId>
+                    <artifactId>jsp-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>commons-beanutils</groupId>
+                    <artifactId>commons-beanutils</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>commons-beanutils</groupId>
+                    <artifactId>commons-beanutils-core</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.httpcomponents</groupId>
+                    <artifactId>httpclient</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>commons-httpclient</groupId>
+                    <artifactId>commons-httpclient</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.mortbay.jetty</groupId>
+                    <artifactId>*</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
         <dependency>
             <groupId>com.marcnuri.helm-java</groupId>
             <artifactId>helm-java</artifactId>
-            <version>0.0.15</version>
+            <version>${helm-java.version}</version>
             <!--
               The umbrella artifact transitively pulls every platform-specific native jar.
               Each registers its own META-INF/services/com.marcnuri.helm.jni.NativeLibrary provider
@@ -273,7 +396,7 @@ limitations under the License.
         <dependency>
             <groupId>com.marcnuri.helm-java</groupId>
             <artifactId>linux-${ambari.grafana.arch}</artifactId>
-            <version>0.0.15</version>
+            <version>${helm-java.version}</version>
         </dependency>
 
         <dependency>
@@ -303,6 +426,11 @@ limitations under the License.
             <groupId>javax.persistence</groupId>
             <artifactId>javax.persistence-api</artifactId>
             <version>2.2</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>javax.servlet</groupId>
+            <artifactId>javax.servlet-api</artifactId>
             <scope>provided</scope>
         </dependency>
 
@@ -409,6 +537,79 @@ limitations under the License.
                 </configuration>
             </plugin>
 
+            <!-- The original com.jcraft:jsch shares its package with the maintained fork the view ships. The Ambari
+                 view class loader lists WEB-INF/lib jars in no fixed order, so a dependency that brings it back would
+                 silently make Git over SSH run the old library again. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>ban-original-jsch</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <excludes>
+                                        <exclude>com.jcraft:jsch</exclude>
+                                    </excludes>
+                                    <message>com.jcraft:jsch duplicates com.github.mwiede:jsch on the view class path; exclude it from the dependency that brings it in.</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <!-- Every jar of WEB-INF/lib is loaded inside the Ambari server and shows up in an image scan as part
+                         of this view. These libraries are servers, clients and parsers the view never calls, several with
+                         known vulnerabilities; Jetty in particular is banned at any version, since the view runs in
+                         Ambari's own. -->
+                    <execution>
+                        <id>ban-unused-legacy-libraries</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <excludes>
+                                        <exclude>org.eclipse.jetty:*</exclude>
+                                        <exclude>log4j:log4j</exclude>
+                                        <exclude>org.slf4j:slf4j-log4j12</exclude>
+                                        <exclude>io.netty:netty</exclude>
+                                        <exclude>io.netty:netty-all</exclude>
+                                        <exclude>org.apache.zookeeper:*</exclude>
+                                        <exclude>org.apache.hadoop:hadoop-hdfs*</exclude>
+                                        <exclude>org.apache.hadoop:hadoop-yarn-*</exclude>
+                                        <exclude>org.apache.hadoop:hadoop-aws</exclude>
+                                        <exclude>org.apache.hadoop:hadoop-azure</exclude>
+                                        <exclude>org.codehaus.jackson:*</exclude>
+                                        <exclude>org.apache.avro:*</exclude>
+                                    </excludes>
+                                    <message>The view must not ship this library: exclude it from the dependency that brings it in (see the hadoop-common exclusions).</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Unit tests -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- KDPS refuses to store a credential without the Ambari master key. The tests that do not inject
+                         their own key get this one, as an Ambari server set up without a persisted key would. -->
+                    <environmentVariables>
+                        <AMBARI_SECURITY_MASTER_KEY>kdps-unit-test-master-key</AMBARI_SECURITY_MASTER_KEY>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
+
             <!-- Clean -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -483,6 +684,21 @@ limitations under the License.
                             <arguments>build</arguments>
                         </configuration>
                     </execution>
+                    <execution>
+                        <!-- The UI's jest suite, so that any "mvn test" covers the UI as well as the Java code and a
+                             failing UI test fails the build. In the test phase the plugin already honours
+                             -DskipTests, which packaging builds pass; skip also follows -Dmaven.test.skip, which the
+                             plugin does not look at by itself. -->
+                        <id>yarn-test</id>
+                        <goals>
+                            <goal>yarn</goal>
+                        </goals>
+                        <phase>test</phase>
+                        <configuration>
+                            <arguments>test:ci</arguments>
+                            <skip>${maven.test.skip}</skip>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 
@@ -491,6 +707,18 @@ limitations under the License.
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <!-- Only the integration profile runs them: they start a Kubernetes cluster in Docker. -->
+                    <skipITs>${kdps.it.skip}</skipITs>
+                    <!-- Same class path and master key as the unit tests (see the surefire configuration). -->
+                    <classpathDependencyExcludes>
+                        <classpathDependencyExclude>com.sun.jersey:jersey-core</classpathDependencyExclude>
+                        <classpathDependencyExclude>javax.ws.rs:jsr311-api</classpathDependencyExclude>
+                    </classpathDependencyExcludes>
+                    <environmentVariables>
+                        <AMBARI_SECURITY_MASTER_KEY>kdps-unit-test-master-key</AMBARI_SECURITY_MASTER_KEY>
+                    </environmentVariables>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
@@ -543,23 +771,31 @@ limitations under the License.
                              dependency graph, but target/lib and classes/WEB-INF/lib are staging dirs
                              that survive incremental rebuilds: switching -Dambari.grafana.arch without
                              `mvn clean` left BOTH linux-amd64 and linux-arm64 (25MB each) in the view
-                             jar. Delete every helm native jar that is not the target arch from both
+                             jar. Delete every helm native jar that is not the target arch at the current helm-java
+                             version (a version bump leaves the previous one behind the same way) from both
                              staging dirs so the packaged artifact always ships exactly one. -->
                         <id>enforce-single-helm-native-arch</id>
                         <phase>prepare-package</phase>
                         <goals><goal>run</goal></goals>
                         <configuration>
                             <target>
+                                <!-- Fail the build when the target arch's native jar is not there (a cross-build with a
+                                     wrong -Dambari.grafana.arch, or a stale staging dir), instead of packaging a view
+                                     whose Helm calls all fail on the host it is installed on. -->
+                                <available file="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-${helm-java.version}.jar"
+                                           property="helm.native.jar.present"/>
+                                <fail unless="helm.native.jar.present"
+                                      message="Helm native library linux-${ambari.grafana.arch}-${helm-java.version}.jar is missing from the view; ambari.grafana.arch must be amd64 or arm64 and match the target host."/>
                                 <delete>
                                     <fileset dir="${project.build.directory}/lib"
                                              includes="linux-amd64-*.jar,linux-arm64-*.jar,darwin-amd64-*.jar,darwin-arm64-*.jar"
-                                             excludes="linux-${ambari.grafana.arch}-*.jar"
+                                             excludes="linux-${ambari.grafana.arch}-${helm-java.version}.jar"
                                              erroronmissingdir="false"/>
                                 </delete>
                                 <delete>
                                     <fileset dir="${project.build.directory}/classes/WEB-INF/lib"
                                              includes="linux-amd64-*.jar,linux-arm64-*.jar,darwin-amd64-*.jar,darwin-arm64-*.jar"
-                                             excludes="linux-${ambari.grafana.arch}-*.jar"
+                                             excludes="linux-${ambari.grafana.arch}-${helm-java.version}.jar"
                                              erroronmissingdir="false"/>
                                 </delete>
                                 <!-- Strip the ServiceLoader registration from the remaining native jar so the
@@ -569,12 +805,22 @@ limitations under the License.
                                      the view classes, so without this strip the stock provider (java.io.tmpdir
                                      extraction — broken on noexec /tmp hosts) wins the ServiceLoader race. -->
                                 <zip destfile="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-stripped.jar">
-                                    <zipfileset src="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-0.0.15.jar"
+                                    <zipfileset src="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-${helm-java.version}.jar"
                                                 excludes="META-INF/services/com.marcnuri.helm.jni.NativeLibrary"/>
                                 </zip>
                                 <move file="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-stripped.jar"
-                                      tofile="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-0.0.15.jar"
+                                      tofile="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-${helm-java.version}.jar"
                                       overwrite="true"/>
+                                <!-- Exactly the target arch's native jar must be left, nothing for another arch. -->
+                                <fileset id="helm.native.jars" dir="${project.build.directory}/classes/WEB-INF/lib"
+                                         includes="linux-*-*.jar,darwin-*-*.jar"/>
+                                <fail message="The view must ship only linux-${ambari.grafana.arch}-${helm-java.version}.jar as Helm native library.">
+                                    <condition>
+                                        <not>
+                                            <resourcecount refid="helm.native.jars" when="equal" count="1"/>
+                                        </not>
+                                    </condition>
+                                </fail>
                             </target>
                         </configuration>
                     </execution>
@@ -938,7 +1184,6 @@ chmod +x "${OUT_DIR}/load.sh"
                     <include>kube-prometheus-stack-77.5.0-crds.yaml</include>
                     <include>kube-prometheus-stack-78.3.2-crds.yaml</include>
                     <include>view.xml</include>
-                    <include>view.log4j.properties</include>
                     <include>webhooks</include>
                     <include>*.json</include>
                     <include>KDPS/**</include>
@@ -1004,6 +1249,11 @@ chmod +x "${OUT_DIR}/load.sh"
         <profile>
             <id>integration</id>
             <activation><activeByDefault>false</activeByDefault></activation>
+            <!-- mvn -Pintegration verify: the live-cluster tests, against a k3s cluster started in Docker (or the
+                 cluster named by KDPS_IT_KUBECONFIG). Without Docker they are reported as skipped. -->
+            <properties>
+                <kdps.it.skip>false</kdps.it.skip>
+            </properties>
             <build>
                 <plugins>
                     <plugin>
@@ -1036,6 +1286,7 @@ chmod +x "${OUT_DIR}/load.sh"
                 </property>
             </activation>
             <properties>
+                <ambari.grafana.arch>amd64</ambari.grafana.arch>
                 <webhook.rpm.arch>x86_64</webhook.rpm.arch>
                 <webhook.deb.arch>amd64</webhook.deb.arch>
                 <webhook.package.arch.classifier>amd64</webhook.package.arch.classifier>
@@ -1051,6 +1302,7 @@ chmod +x "${OUT_DIR}/load.sh"
                 </property>
             </activation>
             <properties>
+                <ambari.grafana.arch>amd64</ambari.grafana.arch>
                 <webhook.rpm.arch>x86_64</webhook.rpm.arch>
                 <webhook.deb.arch>amd64</webhook.deb.arch>
                 <webhook.package.arch.classifier>amd64</webhook.package.arch.classifier>
@@ -1066,6 +1318,7 @@ chmod +x "${OUT_DIR}/load.sh"
                 </property>
             </activation>
             <properties>
+                <ambari.grafana.arch>arm64</ambari.grafana.arch>
                 <webhook.rpm.arch>aarch64</webhook.rpm.arch>
                 <webhook.deb.arch>arm64</webhook.deb.arch>
                 <webhook.package.arch.classifier>arm64</webhook.package.arch.classifier>
@@ -1081,6 +1334,7 @@ chmod +x "${OUT_DIR}/load.sh"
                 </property>
             </activation>
             <properties>
+                <ambari.grafana.arch>arm64</ambari.grafana.arch>
                 <webhook.rpm.arch>aarch64</webhook.rpm.arch>
                 <webhook.deb.arch>arm64</webhook.deb.arch>
                 <webhook.package.arch.classifier>arm64</webhook.package.arch.classifier>

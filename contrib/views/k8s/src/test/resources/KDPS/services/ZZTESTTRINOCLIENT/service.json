@@ -1,0 +1,9 @@
+{
+  "label": "ZZ Test Trino client (Trino impersonation grant planning, NOT in catalog.json)",
+  "chart": "example/zz-test-trino-client",
+  "version": "0.0.1",
+  "form": [],
+  "platformOps": [
+    { "op": "ranger.trinoImpersonateGrant", "when": "ui_trino_host" }
+  ]
+}

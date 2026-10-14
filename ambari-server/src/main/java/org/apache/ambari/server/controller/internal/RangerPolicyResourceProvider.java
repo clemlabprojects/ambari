@@ -23,6 +23,7 @@ import static org.apache.ambari.server.controller.KerberosHelperImpl.BASE_LOG_DI
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -50,11 +51,13 @@ import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
+import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.serveraction.ranger.EnsureRangerPolicyServerAction;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostServerActionEvent;
 import org.apache.commons.lang.StringUtils;
+import org.springframework.security.core.Authentication;
 
 import com.google.gson.Gson;
 import com.google.inject.Inject;
@@ -66,6 +69,13 @@ import com.google.inject.Inject;
  * a user access on a Ranger service repository using the (decrypted) Ranger admin
  * credentials held by the Ambari server. This lets external Ambari views (e.g. the KDPS
  * k8s view) provision Ranger policies without ever handling the Ranger admin password.
+ *
+ * <p>With {@code revoke} set to {@code true} the same request takes the access back instead of
+ * granting it (see {@link EnsureRangerPolicyServerAction}); {@code ownedPolicyOnly} limits that revoke to the
+ * policy named {@code policyNameHint}.
+ *
+ * <p>Because the grant is made with those administrator credentials, only cluster administrators
+ * of the cluster named in the request may ask for it.
  *
  * <p>Mirrors {@link RangerPluginResourceProvider} 1:1 in structure.
  */
@@ -107,6 +117,10 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
     private static final String PROPERTY_ROW_FILTER_NS         = "RangerPolicy/rowFilterExpr";
     private static final String PROPERTY_GROUPS                = "groups";
     private static final String PROPERTY_GROUPS_NS             = "RangerPolicy/groups";
+    private static final String PROPERTY_REVOKE                = "revoke";
+    private static final String PROPERTY_REVOKE_NS             = "RangerPolicy/revoke";
+    private static final String PROPERTY_OWNED_POLICY_ONLY     = "ownedPolicyOnly";
+    private static final String PROPERTY_OWNED_POLICY_ONLY_NS  = "RangerPolicy/ownedPolicyOnly";
 
     private static final String PROPERTY_CONTEXT               = "context";
     private static final String PROPERTY_CONTEXT_NS            = "RequestInfo/context";
@@ -131,7 +145,9 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 PROPERTY_MASK_CONDITION, PROPERTY_MASK_CONDITION_NS,
                 PROPERTY_MASK_VALUE, PROPERTY_MASK_VALUE_NS,
                 PROPERTY_ROW_FILTER, PROPERTY_ROW_FILTER_NS,
-                PROPERTY_GROUPS, PROPERTY_GROUPS_NS
+                PROPERTY_GROUPS, PROPERTY_GROUPS_NS,
+                PROPERTY_REVOKE, PROPERTY_REVOKE_NS,
+                PROPERTY_OWNED_POLICY_ONLY, PROPERTY_OWNED_POLICY_ONLY_NS
         );
         PROPERTY_IDS = Collections.unmodifiableSet(propertyIds);
 
@@ -139,6 +155,13 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
         keyPropertyIds.put(Resource.Type.Cluster, PROPERTY_CLUSTER_NAME_NS);
         KEY_PROPERTY_IDS = Collections.unmodifiableMap(keyPropertyIds);
     }
+
+    /**
+     * A policy grant is made with the Ranger administrator credentials Ambari holds for the cluster,
+     * so it is reserved to cluster administrators.
+     */
+    private static final Set<RoleAuthorization> REQUIRED_CREATE_AUTHORIZATIONS =
+            EnumSet.of(RoleAuthorization.CLUSTER_TOGGLE_KERBEROS);
 
     private static final Gson GSON = new Gson();
 
@@ -158,6 +181,7 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
         this.managementController = controller;
         this.clusters = controller.getClusters();
         this.actionManager = controller.getActionManager();
+        setRequiredCreateAuthorizations(REQUIRED_CREATE_AUTHORIZATIONS);
     }
 
     @Override
@@ -176,7 +200,13 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
     }
 
     @Override
-    public RequestStatus createResources(Request request)
+    protected boolean isAuthorizedToCreateResources(Authentication authentication, Request request) {
+        return isAuthorizedOnRequestedClusters(authentication, request,
+                RangerPolicyResourceProvider::clusterNameOf, getRequiredCreateAuthorizations());
+    }
+
+    @Override
+    protected RequestStatus createResourcesAuthorized(Request request)
             throws SystemException, UnsupportedPropertyException,
             ResourceAlreadyExistsException, NoSuchParentResourceException {
 
@@ -188,9 +218,7 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
         RequestStatusResponse statusResponse = null;
 
         for (Map<String, Object> properties : items) {
-            String clusterName       = firstNonBlank(
-                    stringValue(properties.get(PROPERTY_CLUSTER_NAME)),
-                    stringValue(properties.get(PROPERTY_CLUSTER_NAME_NS)));
+            String clusterName       = clusterNameOf(properties);
             String rangerServiceName = firstNonBlank(
                     stringValue(properties.get(PROPERTY_SERVICE_NAME)),
                     stringValue(properties.get(PROPERTY_SERVICE_NAME_NS)));
@@ -237,6 +265,12 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             String groups            = firstNonBlank(
                     stringValue(properties.get(PROPERTY_GROUPS)),
                     stringValue(properties.get(PROPERTY_GROUPS_NS)));
+            boolean revoke           = Boolean.parseBoolean(firstNonBlank(
+                    stringValue(properties.get(PROPERTY_REVOKE)),
+                    stringValue(properties.get(PROPERTY_REVOKE_NS))));
+            boolean ownedPolicyOnly  = Boolean.parseBoolean(firstNonBlank(
+                    stringValue(properties.get(PROPERTY_OWNED_POLICY_ONLY)),
+                    stringValue(properties.get(PROPERTY_OWNED_POLICY_ONLY_NS))));
             if (StringUtils.isBlank(accessTypes) && policyType != 0) {
                 accessTypes = "select";
             }
@@ -258,6 +292,12 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             }
             if (policyType == 2 && StringUtils.isBlank(rowFilterExpr)) {
                 throw new SystemException("rowFilterExpr is required for policyType=2");
+            }
+            if (revoke && policyType != 0) {
+                throw new SystemException("revoke applies to access policies only (policyType=0)");
+            }
+            if (ownedPolicyOnly && !revoke) {
+                throw new SystemException("ownedPolicyOnly applies to a revoke only");
             }
             if (StringUtils.isBlank(accessTypes)) {
                 throw new SystemException("accessTypes is required");
@@ -297,6 +337,12 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 if (StringUtils.isNotBlank(groups)) {
                     commandParameters.put("groups", groups);
                 }
+                if (revoke) {
+                    commandParameters.put("revoke", "true");
+                }
+                if (ownedPolicyOnly) {
+                    commandParameters.put("ownedPolicyOnly", "true");
+                }
                 commandParameters.put("resourcesJson", resourcesJson);
                 commandParameters.put("policyNameHint", policyNameHint);
                 if (StringUtils.isNotBlank(policyDescription)) {
@@ -326,7 +372,7 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                         cluster.getClusterName(),
                         new ServiceComponentHostServerActionEvent(null, System.currentTimeMillis()),
                         commandParameters,
-                        "Ensure Ranger policy",
+                        revoke ? "Revoke Ranger access" : "Ensure Ranger policy",
                         managementController.findConfigurationTagsWithOverrides(cluster, null, null),
                         timeoutSeconds,
                         false,
@@ -374,6 +420,16 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
     }
 
     // helpers
+
+    /**
+     * The cluster a request item acts on. Authorization and the operation both resolve it here so
+     * that the permission check is made on the cluster that is really touched.
+     */
+    private static String clusterNameOf(Map<String, Object> properties) {
+        return firstNonBlank(
+                stringValue(properties.get(PROPERTY_CLUSTER_NAME)),
+                stringValue(properties.get(PROPERTY_CLUSTER_NAME_NS)));
+    }
 
     private static String stringValue(Object value) {
         return value == null ? null : String.valueOf(value);

@@ -39,7 +39,6 @@ public class StackServiceDef {
     public List<FormField> form; // Reuses your existing dynamic form definitions
 
     // Additional fields used by bindings/variables/etc.
-    public String pattern;
     public String secretName;
     public Map<String, Object> dependencies;
     /**
@@ -55,11 +54,44 @@ public class StackServiceDef {
      * Listing only the SAs that genuinely need the elevated SCC leaves every other SA (server,
      * postgres) on {@code restricted-v2}. {@code {{releaseName}}} is expanded to the release name.
      *
-     * <p>On an OpenShift target the deploy preflight ({@code ensureSccGrants}) creates the per-SA
-     * RoleBindings when the view has the rights, else blocks with the exact {@code oc adm policy
-     * add-scc-to-user} commands. Ignored on vanilla Kubernetes.
+     * <p>On an OpenShift target the deploy preflight ({@code ensureSccGrants}) leaves service accounts
+     * that may already use their SCC alone, grants the others through one RoleBinding per release
+     * and SCC when the view's account may, else blocks with the {@code oc adm policy add-scc-to-user}
+     * commands and how to let the account grant SCCs. A GitOps deploy only checks
+     * ({@code checkSccGrants}); an uninstall removes the release's RoleBindings. Ignored on vanilla
+     * Kubernetes.
      */
     public List<Map<String, Object>> openshiftScc;
+
+    /**
+     * Chart values a deploy on OpenShift gets when it does not set them itself, keyed by dotted values path, e.g.
+     * {@code {"scheduling.userScheduler.enabled": false}} for JupyterHub, whose user scheduler needs a ClusterRole
+     * that an account limited to its own projects cannot create. The wizard sets the same values through bindings
+     * gated on {@code isOpenShift}; this covers the deploys that do not run them (a request sent straight to the API,
+     * a GitOps deploy driven from Git, a chart upgrade from the Releases page), in every deployment mode
+     * ({@code CommandService.applyOpenShiftValueDefaults}).
+     * A value the deploy already carries is kept. Keys starting with "_" are comments. Ignored on
+     * plain Kubernetes.
+     */
+    public Map<String, Object> openshiftValueDefaults;
+
+    /**
+     * Platforms the service can be deployed on, as the cluster capabilities name them: {@code "kubernetes"} (plain
+     * Kubernetes) and {@code "openshift"}. Absent or empty means every platform. The catalog hides a service once the
+     * cluster is known to be a platform the list leaves out, and the deploy refuses it there
+     * ({@code CommandService.checkSupportedPlatform}), so a deploy sent straight to the API or in GitOps mode is
+     * refused too. For a chart that cannot run on a platform at all, e.g. GitLab, whose upstream chart pins user IDs
+     * that OpenShift's default SCC rejects: without it the install waits for pods that are never created and fails
+     * with a timeout that does not say why.
+     */
+    public List<String> platforms;
+
+    /**
+     * What the deploy answers on a platform {@link #platforms} leaves out: why, and what to do instead. Optional; the
+     * default names the service and the platform.
+     */
+    public String unsupportedPlatformMessage;
+
     public List<Map<String, Object>> endpoints;
     public List<Map<String, Object>> mounts;
     public List<Map<String, Object>> variables;
@@ -114,6 +146,29 @@ public class StackServiceDef {
     public Map<String, String> valueAliases;
 
     /**
+     * Values an earlier version of this definition wrote and this one no longer does, keyed by dotted path: the
+     * reason they were retired (the value is removed), or, for a list of lines,
+     * {@code {"reason": ..., "linesStartingWith": [...]}} (only those lines are removed). An upgrade or a redeploy
+     * starts from the release's values, so without this they would be sent again, e.g. a secret a binding used to copy
+     * into a plain environment variable or a configuration line. The wizard leaves them out of the values it sends and
+     * the server removes them from every set of release values it sends to Helm (a deploy, a chart upgrade from the
+     * Releases page, a catalog saved on the Trino Catalogs page: {@code CommandService.applyDefinitionValueRewrites}),
+     * after the {@link #valueAliases}; keys starting with "_" are comments.
+     */
+    public Map<String, Object> retiredValues;
+
+    /**
+     * Chart values that always carry the release's name, as dotted paths, e.g. {@code ["fullnameOverride"]} for
+     * OpenMetadata. The chart names its Service after the release only when the release name contains
+     * "openmetadata", so KDPS pins the name: the post-install steps (ingestion, Atlas federation, Ranger TagSync)
+     * and the endpoint shown for the release all address the Service by the release name. The wizard sets the same
+     * values through a binding; the server sets them on every set of release values it sends to Helm, so a request
+     * sent straight to the API, a GitOps deploy and a chart upgrade end up with the same Service name
+     * ({@code CommandService.applyDefinitionValueRewrites}). An operator's own value for such a path is replaced.
+     */
+    public List<String> releaseNameValues;
+
+    /**
      * Declarative rule for how the wizard couples auth profile selection with ingress
      * + TLS settings. The wizard reads this at step 1 → step 3 transition to enforce
      * the rule visibly (banner + auto-defaults) instead of hardcoding it in TypeScript.
@@ -151,6 +206,25 @@ public class StackServiceDef {
     public Map<String, String> featureChartVersions;
 
     /**
+     * Optional chart version ranges from which the chart keeps a secret in a Kubernetes Secret, keyed by the dotted
+     * path that carries it: {@code {"range": ">=0.12.49", "label": "the security profile's LDAP bind password"}}.
+     * An older chart writes it into a ConfigMap or a plain environment variable, which anyone allowed to read
+     * ConfigMaps or Deployments can read. The path is looked up in the deploy's values, its form and the values its
+     * security profile adds. Raising {@link #requiredChartVersion} instead would refuse a resync or a security refresh
+     * of every release on an older chart, so a deploy that carries the wizard's form is refused (the operator picks a
+     * later chart there) and any other one is warned in its operation log
+     * ({@code CommandService.checkSecretChartVersions}). Keys starting with "_" are comments.
+     */
+    public Map<String, Object> secretChartVersions;
+
+    /**
+     * Secrets of credentials KDPS creates for the release before Helm installs it (an administrator password, the
+     * passwords of the bundled databases), with random values kept from one deploy to the next and across an
+     * uninstall; the chart only gets their names. See {@link GeneratedSecret} and {@code GeneratedSecretService}.
+     */
+    public List<GeneratedSecret> generatedSecrets;
+
+    /**
      * Declarative external-service auth wiring. See
      * {@code docs/EXTERNAL_SERVICE_TARGETS.md} for the full contract.
      *
@@ -165,7 +239,7 @@ public class StackServiceDef {
      * apply helm overrides.
      *
      * <p>No-op when null — services that don't need external integrations
-     * (e.g. SQL-ASSISTANT) simply omit the block.
+     * (e.g. GITLAB) simply omit the block.
      */
     public java.util.Map<String, ExternalServiceTarget> externalServiceTargets;
 
@@ -222,4 +296,22 @@ public class StackServiceDef {
      * "when":"atlasFederation.enabled"}}. Generalizes the previously-bespoke ranger/atlas gates.
      */
     public List<Map<String, Object>> platformOps;
+
+    /**
+     * Post-deploy steps the operator can run again from the release's row on the Releases page,
+     * e.g. {@code {"key":"om-ranger-tagsync","label":"Re-register Ranger TagSync source",
+     * "endpoint":"actions/om-ranger-tagsync"}}. An entry may ask the operator to confirm first with
+     * {@code "warnUnlessValueTrue": {"path": "<values path>", "message": "..."}} when that value of
+     * the deployed release is not {@code true}. Declared here so the definition the UI receives keeps
+     * them: properties this class does not declare are dropped when service.json is read.
+     */
+    public List<Map<String, Object>> replayableActions;
+
+    /**
+     * Settings of the service's Flux HelmRelease in GitOps mode: {@code {"timeout": "20m"}} is how long Flux lets Helm
+     * install or upgrade the release and wait for it to be ready, a Go duration such as {@code 600s}, {@code 20m} or
+     * {@code 1h30m}. Absent, a HelmRelease gets the 15 minutes a direct deploy gives Helm. Set it for a chart that
+     * needs longer, such as one that pulls many large images or runs long migrations during its first install.
+     */
+    public Map<String, Object> gitops;
 }

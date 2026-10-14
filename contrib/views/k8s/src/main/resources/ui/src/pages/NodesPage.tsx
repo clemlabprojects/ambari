@@ -33,12 +33,14 @@ const NodesPage: React.FC = () => {
     const [page, setPage] = React.useState(1);
     const [pageSize, setPageSize] = React.useState(50);
     const [loading, setLoading] = React.useState(false);
+    const [restricted, setRestricted] = React.useState(false);
 
     const fetchPage = React.useCallback(async (p = page, ps = pageSize) => {
         setLoading(true);
         try {
             const offset = (p - 1) * ps;
             const res = await getNodes(ps, offset);
+            setRestricted((res as any)?.restricted === true);
             const items = (res as any)?.items || res;
             setNodes(items || []);
             setTotal((res as any)?.total || items?.length || 0);
@@ -57,6 +59,11 @@ const NodesPage: React.FC = () => {
 
     if (status === 'error') {
         return <Result status="warning" title="Node data not available." subTitle="Unable to retrieve cluster information." />;
+    }
+
+    if (restricted) {
+        return <Result status="info" title="Nodes are not visible to this account"
+            subTitle="This account is limited to its own projects, so the cluster's nodes are not listed. The dashboard shows the usage of those projects." />;
     }
 
     if (loading && nodes.length === 0) {

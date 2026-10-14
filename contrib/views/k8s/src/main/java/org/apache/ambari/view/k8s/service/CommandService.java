@@ -44,14 +44,20 @@ import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.store.ProvisioningLedger;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
-import com.marcnuri.helm.Release;
+import org.apache.ambari.view.k8s.service.deployment.DeployRequestValidator;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentBackend;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentContext;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.deployment.GitClient;
+import org.apache.ambari.view.k8s.service.deployment.GitOpsPlanBackend;
 import org.apache.ambari.view.k8s.service.deployment.HelmDirectBackend;
+import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
+import org.apache.ambari.view.k8s.model.GitOpsDeployResult;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 
 import org.apache.ambari.view.k8s.utils.*;
 import org.apache.ambari.view.k8s.client.KeycloakAdminClient;
@@ -63,9 +69,6 @@ import javax.ws.rs.core.MultivaluedMap;
 import java.lang.reflect.Type;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.KeyStore;
@@ -84,16 +87,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.concurrent.*;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
-import org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
 import org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
@@ -117,12 +121,72 @@ public class CommandService {
     private final ConfigResolutionService configResolutionService;
     private final CommandUtils commandUtils;
     private final CommandPlanFactory commandPlanFactory;
+    /** Resolves the service definition's dynamic values, as {@link CommandPlanFactory} does for the Helm steps. */
+    private final DynamicValuesResolver dynamicValuesResolver;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String VIEW_SETTINGS_KEY = "view.settings.json";
+    /**
+     * ConfigMap a WEBHOOK-mode deploy writes in its namespace: {@code <release>.commandId} names the deploy operation
+     * whose Ambari credentials issue the keytabs the webhook asks for the release's pods. Only the view reads it.
+     */
+    static final String CORRELATION_CONFIGMAP = "k8s-view-metadata";
     private static final String KERBEROS_INJECTION_MODE_WEBHOOK = "WEBHOOK";
     private static final String KERBEROS_INJECTION_MODE_PRE_PROVISIONED = "PRE_PROVISIONED";
+    /** Key of the operation result that marks a deploy refused after its steps were stored, before any of them ran. */
+    private static final String REFUSED_BEFORE_START = "refusedBeforeStart";
     private static final int MAX_RETRYABLE_ATTEMPTS = Integer.getInteger("k8s.view.command.maxRetryableAttempts", 5);
+    /**
+     * The least time a GitOps deploy waits for Flux to apply its commit and report the release Ready. A service whose
+     * HelmRelease timeout and install retries need longer gets that instead ({@link #gitOpsReadyTimeoutSeconds}).
+     */
+    private static final int FLUX_READY_TIMEOUT_SECONDS = Integer.getInteger("k8s.view.gitops.readyTimeoutSeconds", 1200);
+    /** How often that wait reads the HelmRelease. */
+    private static final int FLUX_READY_POLL_SECONDS = Integer.getInteger("k8s.view.gitops.readyPollSeconds", 10);
+    /**
+     * Command parameter of a GitOps deploy holding what its commit writes besides the values: the dependencies (as
+     * HelmReleases), the truststores and the Kerberos block of the form.
+     */
+    static final String GITOPS_RELEASE_PARAM = "_gitOpsRelease";
+    /**
+     * Entry of {@link #GITOPS_RELEASE_PARAM}: the parameters of the Helm steps of each dependency, by name, as a direct
+     * deploy would plan them; the commit computes from them what each dependency's HelmRelease receives.
+     */
+    static final String GITOPS_DEPENDENCY_STEPS = "dependencySteps";
+    /**
+     * Held, per release ({@code namespace/release}), by a request from its check that no GitOps deploy of the release
+     * is running until its own deploy is stored: shared by every view instance, so two requests cannot both pass the
+     * check and both commit values built on what Helm reports, the second taking the first's change out of Git.
+     */
+    private static final ConcurrentMap<String, java.util.concurrent.locks.ReentrantLock> GITOPS_SUBMISSIONS =
+            new ConcurrentHashMap<>();
+    /**
+     * Step parameter of "Regenerate keytabs": the keytab is issued again by the KDC even when the release's Secret
+     * already holds one for the principal.
+     */
+    static final String FORCE_REISSUE_PARAM = "forceReissue";
+    /**
+     * Step parameter of a keytab webhook request: the release of the pod, named when the operation fails because no
+     * Ambari credentials are kept to issue the keytab, so the operator knows which release to redeploy.
+     */
+    static final String WEBHOOK_RELEASE_PARAM = "webhookRelease";
+    /**
+     * Result entry of a keytab issuing step that wrote no keytab yet: the SHA-256 of the keytab the release's Secret
+     * held before the operation, or {@link #NO_PRIOR_KEYTAB}. The step writing the Secret compares the new keytab with
+     * it, not with the Secret it reads again on each attempt: a retried step finds its own keytab there already.
+     */
+    static final String PRIOR_KEYTAB_SHA256 = "priorKeytabSha256";
+    /** Value of {@link #PRIOR_KEYTAB_SHA256} when the Secret held no keytab before the operation. */
+    static final String NO_PRIOR_KEYTAB = "none";
+    /**
+     * Label of the keytab Secrets KDPS writes, naming their principal by a hash (a label value cannot hold '@' or
+     * '/'). Releases of one service in a namespace share the principal, so their Secrets must hold the same key.
+     */
+    static final String KEYTAB_PRINCIPAL_LABEL = "kdps.clemlab.com/principal";
+    /** Label of the keytab Secrets KDPS writes, naming the release that uses the Secret. */
+    static final String KEYTAB_RELEASE_LABEL = "kdps.clemlab.com/release";
+    /** Annotation KDPS sets on every Secret it writes; only those are read or rewritten as keytab siblings. */
+    private static final String VIEW_MANAGED_BY = "ambari-k8s-view";
 
     // External dependencies (adapters) — injected
     private final HelmService helmService;
@@ -130,6 +194,40 @@ public class CommandService {
     private final WebHookConfigurationService webHookConfigurationService;
     private final CommandLogService commandLogService;
     private final FluxGitOpsBackend fluxGitOpsBackend;
+    /** Deletes the parameter and values files of operations that no longer need them. */
+    private final OperationFilesRetention operationFiles;
+    /** The startup sweep of operation files, running in the background; tests wait for it before stubbing. */
+    final java.util.concurrent.Future<?> startupSweep;
+    /**
+     * Prepares the keytab webhook's namespace, certificates and Ambari user before the webhook is installed;
+     * package-private so tests, which have no Ambari, can replace it.
+     */
+    java.util.function.Consumer<MultivaluedMap<String, String>> keytabWebhookPreparation;
+    /** Keeps the Git credentials of GitOps deploys; package-private so tests can use a store of their own. */
+    GitCredentialService gitCredentialService;
+    /**
+     * The Ranger accounts KDPS gave the Atlas tag projectors of releases, kept in the view's settings; package-private
+     * so tests can use records of their own.
+     */
+    TagSyncRangerAccount.Records tagSyncAccounts;
+    /**
+     * Finds the Ranger a release's tag sync account is on, given the Ambari access of a deploy or an uninstall (see
+     * {@link #tagSyncRangersOf}); package-private so tests, which have no Ranger, can replace it.
+     */
+    java.util.function.Function<Map<String, Object>, TagSyncRangerAccount.RangerLocator> tagSyncRangers;
+    /**
+     * What tells this KDPS instance apart in the names of tag sync accounts (see {@link TagSyncRangerAccount#userName})
+     * and in the mark of the Keycloak clients it registers (see {@link #oidcClientMarker}); package-private so tests
+     * can name accounts the same on every run.
+     */
+    java.util.function.Supplier<String> tagSyncInstance;
+    /**
+     * Tells whether a keytab still logs its principal in to the KDC, before a stored keytab is reused or copied;
+     * package-private so tests, which have no KDC, can replace it.
+     */
+    KeytabLogin keytabLogin = CommandService::loginWithKeytab;
+    /** Taking back the tag sync account of a deploy that did not install its release, and resuming it, one at a time. */
+    private final Object tagSyncTakeBackLock = new Object();
     private final Map<String, DeploymentBackend> deploymentBackends = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeatScheduler = Executors.newScheduledThreadPool(1);
     private final ExecutorService helmExecutor = Executors.newCachedThreadPool();
@@ -147,7 +245,7 @@ public class CommandService {
 
     /**
      * Expose the view context for helper adapters that still need direct access to
-     * Ambari view services (filesystem, instance data, etc.).
+     * Ambari view services (filesystem, instance settings, etc.).
      *
      * @return current view context bound to this service
      */
@@ -155,17 +253,60 @@ public class CommandService {
         return ctx;
     }
     public CommandService(ViewContext ctx) {
+        this(ctx, new HelmService(ctx), KubernetesService.get(ctx));
+    }
+
+    /**
+     * Builds the service on the given Helm and Kubernetes services; package-private so tests can run steps
+     * against mocks.
+     */
+    CommandService(ViewContext ctx, HelmService helmService, KubernetesService kubernetesService) {
+        this(ctx, ctx.getDataStore(), helmService, kubernetesService, null, null,
+                Executors.newScheduledThreadPool(1), Executors.newCachedThreadPool(), true);
+    }
+
+    /**
+     * Builds the service on the given collaborators without starting anything in the background: no recovery of the
+     * operations a restart interrupted, no clean-up of stored credentials, no sweep of operation files and no daily
+     * renewal of the keytab webhook's certificate. Package-private so tests can plan and run operations on fakes,
+     * with nothing else touching them meanwhile.
+     *
+     * @param dataStore    where operations and release records are stored
+     * @param commandUtils cluster name, Kerberos and value helpers of the deploy steps
+     * @param planFactory  creates the Helm and preparation steps of a plan
+     * @param timer        schedules the steps that wait (retries, backoff)
+     * @param workers      runs the steps
+     */
+    CommandService(ViewContext ctx, DataStore dataStore, HelmService helmService, KubernetesService kubernetesService,
+                   CommandUtils commandUtils, CommandPlanFactory planFactory, ScheduledExecutorService timer,
+                   ExecutorService workers) {
+        this(ctx, dataStore, helmService, kubernetesService, Objects.requireNonNull(commandUtils, "commandUtils"),
+                Objects.requireNonNull(planFactory, "planFactory"), timer, workers, false);
+    }
+
+    /**
+     * @param commandUtils        null to build the view's own
+     * @param planFactory         null to build the view's own
+     * @param startBackgroundWork whether to recover interrupted operations, clear stale credentials, sweep the
+     *                            operation files and schedule the webhook certificate renewal, as a view instance does
+     */
+    private CommandService(ViewContext ctx, DataStore dataStore, HelmService helmService,
+                           KubernetesService kubernetesService, CommandUtils commandUtils,
+                           CommandPlanFactory planFactory, ScheduledExecutorService timer, ExecutorService workers,
+                           boolean startBackgroundWork) {
         this.ctx = ctx;
-        this.dataStore = ctx.getDataStore();
-        this.helmService = new HelmService(ctx);
-        this.workers = Executors.newCachedThreadPool();
-        this.kubernetesService = KubernetesService.get(ctx);
-        this.repositoryDao =  new HelmRepoRepo(ctx.getDataStore());
-        this.timer = Executors.newScheduledThreadPool(1);
+        this.dataStore = dataStore;
+        this.helmService = helmService;
+        this.workers = workers;
+        this.kubernetesService = kubernetesService;
+        this.repositoryDao =  new HelmRepoRepo(dataStore);
+        this.timer = timer;
         this.webHookConfigurationService = new WebHookConfigurationService(this.ctx, this.kubernetesService);
         this.configResolutionService = new ConfigResolutionService();
-        this.commandUtils = new CommandUtils(this.ctx,this.kubernetesService);
-        this.commandPlanFactory = new CommandPlanFactory(this.ctx, this.gson, this.webHookConfigurationService, this.commandUtils);
+        this.commandUtils = commandUtils != null ? commandUtils : new CommandUtils(this.ctx, this.kubernetesService);
+        this.commandPlanFactory = planFactory != null ? planFactory
+                : new CommandPlanFactory(this.ctx, this.gson, this.webHookConfigurationService, this.commandUtils);
+        this.dynamicValuesResolver = new DynamicValuesResolver(this.ctx, this.commandUtils);
         this.commandLogService = CommandLogService.get(this.ctx);
         // Stream the view's own server logging into the per-command log (see CommandLogAppender):
         // any INFO+ this view logs on a command-tagged thread shows up in the operation's aggregate
@@ -174,11 +315,99 @@ public class CommandService {
         PathConfig pathConfig = new PathConfig(ctx);
         pathConfig.ensureDirs();
         this.fluxGitOpsBackend = new FluxGitOpsBackend(pathConfig.workDir(), kubernetesService, ctx);
+        this.gitCredentialService = new GitCredentialService(ctx);
+        this.tagSyncAccounts = TagSyncRangerAccount.recordsIn(new InstanceSettings(ctx));
+        this.tagSyncRangers = this::tagSyncRangersOf;
+        this.tagSyncInstance = () -> TagSyncRangerAccount.instanceId(new InstanceSettings(ctx));
+        this.keytabWebhookPreparation = callerHeaders -> WebHookBootstrap
+                .prepareWebhookPrereqs(ctx, kubernetesService, WebHookBootstrap.KEYTAB_WEBHOOK, callerHeaders);
         // Dispatcher registry (can be extended later)
-        this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), fluxGitOpsBackend);
+        this.deploymentBackends.put(DeploymentMode.FLUX_GITOPS.name(), new GitOpsPlanBackend(this, fluxGitOpsBackend));
         this.deploymentBackends.put(DeploymentMode.DIRECT_HELM.name(), new HelmDirectBackend(this));
+        this.operationFiles = new OperationFilesRetention(ctx, dataStore);
+        if (!startBackgroundWork) {
+            this.startupSweep = java.util.concurrent.CompletableFuture.completedFuture(null);
+            LOG.info("CommandService initialized for {} without background work", ctx.getInstanceName());
+            return;
+        }
         recoverOrphanedCommands();
+        clearStaleCredentials();
+        // In the background: the first sweep after an upgrade encrypts every file kept by the earlier version. The
+        // deploys that ended without installing their release are looked at first, while their settings are kept.
+        this.startupSweep = this.workers.submit(() -> {
+            takeBackTagSyncAccountsAfterStart();
+            // Earlier versions kept the password of the keytab webhook's Ambari administrator account in a Secret.
+            WebHookBootstrap.removeLegacyCredentialsAtStart(ctx, kubernetesService);
+            // The keytab webhook's client certificate must not expire between two deploys: renewed here, then daily.
+            WebHookBootstrap.renewClientCertificateIfDue(ctx, kubernetesService);
+            // Before the retention: the parameters it reads to tell which cached values are in use are then readable.
+            try {
+                new LegacyEncryptionMigration(ctx, dataStore, null).run(Instant.now());
+            } catch (RuntimeException e) {
+                LOG.warn("Could not encrypt again with the Ambari master key what an earlier version stored without "
+                        + "it: {}", e.toString());
+            }
+            try {
+                operationFiles.sweep(Instant.now());
+            } catch (RuntimeException e) {
+                LOG.warn("Could not apply the retention of operation files: {}", e.toString());
+            }
+        });
+        this.timer.scheduleWithFixedDelay(() -> workers.submit(
+                () -> WebHookBootstrap.renewClientCertificateIfDue(ctx, kubernetesService)), 1, 1, TimeUnit.DAYS);
         LOG.info("CommandService initialized for {}. Consider adding DB indexes on command.id, command_status_id, created_at and pruning terminal commands periodically to keep polling fast.", ctx.getInstanceName());
+    }
+
+    /**
+     * On startup, clears credentials earlier versions left where they could be misused: chart repositories naming
+     * another view setting than their own secret (that of the OpenShift password, for one) or keeping the typed-in
+     * secret in their row, the OIDC client secrets kept in clear in the results of Keycloak registration steps, and
+     * the copies of Git credentials each GitOps deploy stored and no release uses. Never fails the view.
+     */
+    private void clearStaleCredentials() {
+        try {
+            new HelmRepositoryService(ctx).clearForeignSecretRefs();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not check the stored credentials of the chart repositories: {}", e.toString());
+        }
+        try {
+            clearOidcClientSecretsFromResults();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not clear the OIDC client secrets earlier versions kept in step results: {}", e.toString());
+        }
+        try {
+            fluxGitOpsBackend.removeOrphanedGitCredentials();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not delete the copies of Git credentials earlier versions stored: {}", e.toString());
+        }
+    }
+
+    /**
+     * Removes the client secret earlier versions kept in clear in the result of every Keycloak registration step. A
+     * step that still has to write it into the release's Secret reads it from Keycloak again when it runs.
+     *
+     * @return the number of results cleared
+     */
+    int clearOidcClientSecretsFromResults() {
+        Collection<CommandStatusEntity> all;
+        try {
+            all = dataStore.findAll(CommandStatusEntity.class, null);
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("The operations could not be read: " + e.getMessage(), e);
+        }
+        int cleared = 0;
+        for (CommandStatusEntity st : all) {
+            String result = OidcClientSecrets.withoutClientSecret(st.getResultJson());
+            if (result != null) {
+                st.setResultJson(result);
+                store(st);
+                cleared++;
+            }
+        }
+        if (cleared > 0) {
+            LOG.info("Cleared the OIDC client secret earlier versions kept in clear in {} step result(s)", cleared);
+        }
+        return cleared;
     }
 
     /**
@@ -214,6 +443,23 @@ public class CommandService {
     // While a child step is executing, its command id is set here so that everything logged to the root
     // operation is ALSO tee'd into that step's own log — giving each sub-step its own logs in the UI.
     private final ThreadLocal<String> activeStepLogId = new ThreadLocal<>();
+
+    /**
+     * Records a step's JSON result on its status and copies the result's {@code warnings} (a list of
+     * sentences) into the command log, where the operator reads: a step that warns still succeeds.
+     */
+    private void recordStepResult(String commandId, CommandStatusEntity childSt, String result) {
+        if (result == null) return;
+        childSt.setResultJson(result);
+        try {
+            Object warnings = gson.fromJson(result, Map.class).get("warnings");
+            if (warnings instanceof List<?> list) {
+                list.forEach(w -> appendCommandLog(commandId, "WARNING: " + w));
+            }
+        } catch (RuntimeException e) {
+            LOG.debug("Step result of {} is not a JSON object with warnings: {}", commandId, e.toString());
+        }
+    }
 
     private void appendCommandLog(String commandId, String message) {
         try {
@@ -252,7 +498,22 @@ public class CommandService {
      * Polls every second to check cancellation.
      */
     private <T> T runWithCancellation(String commandId, String childStatusId, Callable<T> task) throws Exception {
-        Future<T> future = helmExecutor.submit(task);
+        return awaitWithCancellation(commandId, childStatusId, helmExecutor.submit(task), null, null);
+    }
+
+    /**
+     * Same as {@link #runWithCancellation}, for a step that installs or upgrades a release: the release is held
+     * in the {@link HelmOperationRegistry} until the Helm call returns, so the step is refused while another
+     * operation on the release is running, and a canceled step keeps the release held until Helm is done.
+     */
+    private <T> T runReleaseOperation(String commandId, String childStatusId, String namespace, String releaseName,
+                                      Callable<T> task) throws Exception {
+        Future<T> future = HelmOperationRegistry.submit(namespace, releaseName, helmExecutor, task);
+        return awaitWithCancellation(commandId, childStatusId, future, namespace, releaseName);
+    }
+
+    private <T> T awaitWithCancellation(String commandId, String childStatusId, Future<T> future,
+                                        String namespace, String releaseName) throws Exception {
         for (;;) {
             try {
                 return future.get(1, TimeUnit.SECONDS);
@@ -261,11 +522,35 @@ public class CommandService {
                 if (st != null && CommandState.CANCELED.name().equals(st.getState())) {
                     appendCommandLog(commandId, "Cancelling running task on user abort");
                     future.cancel(true);
+                    // The native Helm call cannot be interrupted: say so, rather than let the operator believe
+                    // the release is idle and retry into it.
+                    if (releaseName != null && HelmOperationRegistry.isRunning(namespace, releaseName)) {
+                        String stillRunning = "Canceled by user. The Helm call on release " + namespace + "/"
+                                + releaseName + " is still running and cannot be interrupted; deploys, upgrades, "
+                                + "rollbacks and uninstalls of this release are refused until it finishes.";
+                        appendCommandLog(commandId, stillRunning);
+                        st.setMessage(stillRunning);
+                        st.setUpdatedAt(Instant.now().toString());
+                        store(st);
+                    }
                     throw new IllegalStateException("Canceled by user");
                 }
                 // continue waiting
             }
         }
+    }
+
+    /**
+     * Writes a line to both the operation's log and the step's own log. Unlike {@link #appendCommandLog}, it does
+     * not rely on the step's thread, so the Helm task running on the Helm pool can use it.
+     */
+    private java.util.function.Consumer<String> stepLog(String commandId, String stepId) {
+        return message -> {
+            try { commandLogService.append(commandId, message); } catch (Exception ignored) {}
+            if (stepId != null && !stepId.equals(commandId)) {
+                try { commandLogService.append(stepId, message); } catch (Exception ignored) {}
+            }
+        };
     }
 
     /**
@@ -288,7 +573,7 @@ public class CommandService {
         // the operator uploads the keytab. Operators can still opt into WEBHOOK via view settings.
         String defaultMode = KERBEROS_INJECTION_MODE_PRE_PROVISIONED;
         try {
-            String rawSettingsJson = ctx.getInstanceData(VIEW_SETTINGS_KEY);
+            String rawSettingsJson = new InstanceSettings(ctx).get(VIEW_SETTINGS_KEY);
             if (rawSettingsJson == null || rawSettingsJson.isBlank()) {
                 return defaultMode;
             }
@@ -462,6 +747,27 @@ public class CommandService {
     }
 
     /**
+     * Prepares the keytab webhook of a deploy that installs it (WEBHOOK Kerberos injection mode): its own namespace
+     * with an mTLS client Secret, a serving certificate, the Ambari CA bundle, and its Ambari account, which may only
+     * open this view instance (set up with the deploying administrator's credentials). Prepared when the webhook is
+     * about to be installed rather than at kubeconfig upload: in the default PRE_PROVISIONED mode nothing uses that
+     * namespace, and on OpenShift sites where namespaces cannot be created on the fly it must not be required at all.
+     *
+     * @throws IllegalArgumentException when they cannot be prepared, saying what the operator can do
+     */
+    private void prepareKeytabWebhook(MultivaluedMap<String, String> callerHeaders) {
+        try {
+            keytabWebhookPreparation.accept(callerHeaders);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Kerberos injection mode is WEBHOOK, which needs the keytab "
+                    + "webhook namespace (default 'ambari-mutating-webhooks') and its certificates, but they "
+                    + "could not be prepared: " + e.getMessage() + ". Pre-create that namespace and grant the "
+                    + "view access to it, or switch Settings > Kerberos injection mode to PRE_PROVISIONED "
+                    + "(the default, which needs no webhook).", e);
+        }
+    }
+
+    /**
      * Render a Kerberos principal template using the provided variables.
      * Supported tokens: {{service}}, {{namespace}}, {{releaseName}}, {{realm}}.
      *
@@ -550,6 +856,20 @@ public class CommandService {
         String rendered = renderKerberosPrincipalTemplate(principalTemplate, serviceName, request.getNamespace(),
                 request.getReleaseName(), kerberosRealm == null ? "" : kerberosRealm, tokens);
         return principalShortName(normalizeKerberosPrincipalLength(rendered));
+    }
+
+    /**
+     * Whether the principal KDPS issues for the service is named after the release's namespace (its template holds
+     * {@code {{namespace}}}), so that releases of other namespaces never get the same one.
+     */
+    static boolean issuedPrincipalNamesNamespace(StackServiceDef serviceDef) {
+        String principalTemplate = "{{service}}-{{namespace}}@{{realm}}";
+        if (serviceDef != null && serviceDef.kerberos != null && !serviceDef.kerberos.isEmpty()) {
+            Object template = serviceDef.kerberos.get(0).get("principalTemplate");
+            if (template != null && !String.valueOf(template).isBlank()) principalTemplate = String.valueOf(template);
+        }
+        int at = principalTemplate.indexOf('@');
+        return (at >= 0 ? principalTemplate.substring(0, at) : principalTemplate).contains("{{namespace}}");
     }
 
     /** {@code trino-ns@REALM} -> {@code trino-ns}; {@code trino/host@REALM} -> {@code trino}. */
@@ -783,6 +1103,214 @@ public class CommandService {
     }
 
     /**
+     * A keytab a PRE_PROVISIONED deploy issues through Ambari and stores in a Secret of the release namespace.
+     *
+     * @param entryKey           Kerberos entry of the service definition, for logs and traceability
+     * @param principalFqdn      principal to issue, realm included
+     * @param secretName         Secret holding the keytab
+     * @param keyNameInSecret    key of the keytab in that Secret
+     * @param mountPath          where the chart mounts the keytab
+     * @param principalValuePath chart value that pins the principal, blank when the chart derives none
+     */
+    record PlannedKeytab(String entryKey, String principalFqdn, String secretName, String keyNameInSecret,
+                         String mountPath, String principalValuePath) {}
+
+    /**
+     * The keytabs a deploy issues through Ambari: one per enabled Kerberos entry of the request, with its principal
+     * rendered and validated. Empty, with the reason logged, when the deploy issues none.
+     *
+     * @param request                    the deploy request
+     * @param preProvisionedKerberosMode whether the view issues keytabs before the install (PRE_PROVISIONED)
+     * @param externalKeytabProvided     whether the operator attached a keytab of their own
+     * @param kerberosEnabled            whether Kerberos is on for this deploy
+     * @param ambariAvailable            whether the Ambari client and the cluster are known
+     * @param kerberosEntries            the request's Kerberos entries
+     * @param kerberosRealm              the cluster's Kerberos realm
+     * @return the keytabs to issue, in entry order
+     */
+    private List<PlannedKeytab> planPreProvisionedKeytabs(HelmDeployRequest request,
+                                                          boolean preProvisionedKerberosMode,
+                                                          boolean externalKeytabProvided,
+                                                          boolean kerberosEnabled,
+                                                          boolean ambariAvailable,
+                                                          List<Map<String, Object>> kerberosEntries,
+                                                          String kerberosRealm) {
+        List<PlannedKeytab> planned = new ArrayList<>();
+        if (!preProvisionedKerberosMode) {
+            return planned;
+        }
+        // An operator-supplied keytab (a service's externalServiceTargets kerberos mode) is what the pods use, and
+        // principals of a backend realm (e.g. CDP) cannot be issued by the hosting KDC anyway.
+        if (externalKeytabProvided) {
+            LOG.info("External Kerberos keytab supplied for this deploy; skipping Ambari keytab issuance (pods use the operator-provided keytab).");
+            return planned;
+        }
+        if (!kerberosEnabled) {
+            LOG.info("Kerberos is disabled on the Ambari cluster; skipping pre-provisioned keytab creation.");
+            return planned;
+        }
+        if (!ambariAvailable) {
+            LOG.warn("Ambari client or cluster is unavailable; skipping pre-provisioned keytab creation.");
+            return planned;
+        }
+        if (kerberosEntries == null || kerberosEntries.isEmpty()) {
+            LOG.info("No Kerberos entries found in the request; skipping keytab provisioning.");
+            return planned;
+        }
+        if (kerberosRealm == null || kerberosRealm.isBlank()) {
+            LOG.warn("Kerberos realm is empty; skipping pre-provisioned keytab creation.");
+            return planned;
+        }
+        // Flatten formValues to <name,String> so principalTemplate can address wizard form fields by name
+        // (e.g. {{kerberosHostFqdn}}). Required because FreeIPA 4.12 rejects non-FQDN service host components and
+        // we don't want to hardcode any cluster's DNS suffix in service.json.
+        Map<String, String> kerberosExtraTokens = new LinkedHashMap<>();
+        if (request.getFormValues() != null) {
+            for (Map.Entry<String, Object> e : request.getFormValues().entrySet()) {
+                Object v = e.getValue();
+                if (v != null) kerberosExtraTokens.put(e.getKey(), String.valueOf(v));
+            }
+        }
+        int kerberosEntryIndex = 0;
+        for (Map<String, Object> kerberosEntry : kerberosEntries) {
+            kerberosEntryIndex++;
+            if (!isKerberosEntryEnabled(kerberosEntry.get("enabled"))) {
+                LOG.info("Skipping disabled Kerberos entry {}", kerberosEntry.getOrDefault("key", kerberosEntryIndex));
+                continue;
+            }
+            String entryKey = resolveStringValue(kerberosEntry.get("key"), "entry-" + kerberosEntryIndex);
+            String serviceName = resolveStringValue(kerberosEntry.get("serviceName"), request.getReleaseName());
+            String principalTemplate = resolveStringValue(
+                    kerberosEntry.get("principalTemplate"), "{{service}}-{{namespace}}@{{realm}}");
+            String principalFqdn = renderKerberosPrincipalTemplate(
+                    principalTemplate,
+                    serviceName,
+                    request.getNamespace(),
+                    request.getReleaseName(),
+                    kerberosRealm,
+                    kerberosExtraTokens
+            );
+            principalFqdn = normalizeKerberosPrincipalLength(principalFqdn);
+            if (principalFqdn == null || principalFqdn.isBlank()) {
+                LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
+                continue;
+            }
+            validateKerberosPrincipal(principalFqdn);
+
+            String secretName = resolveKerberosEntrySecretName(
+                    kerberosEntry,
+                    serviceName,
+                    request.getNamespace(),
+                    request.getReleaseName(),
+                    kerberosRealm
+            );
+            planned.add(new PlannedKeytab(
+                    entryKey,
+                    principalFqdn,
+                    secretName,
+                    resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab"),
+                    resolveStringValue(kerberosEntry.get("mountPath"), "/etc/security/keytabs"),
+                    resolveStringValue(kerberosEntry.get("principalValuePath"), "")));
+        }
+        return planned;
+    }
+
+    /**
+     * The steps calling Ambari with the operator's session that a deploy is known to run before its plan is built:
+     * issuing the keytabs its Secrets do not hold yet, creating the Ambari view instance its service definition
+     * declares, and creating the object store of its Iceberg catalog.
+     *
+     * @param keytabs             the keytabs the deploy issues
+     * @param alreadyStored       whether a keytab's Secret already holds it, so its step reuses it without Ambari
+     * @param createsViewInstance whether the service definition declares an Ambari view instance
+     * @param createsObjectStore  whether the Polaris step asks the cluster for the catalog's bucket, see
+     *                            {@link #polarisProvisionUsesAmbari}
+     * @return the {@link CommandType} names of those steps
+     */
+    static List<String> ambariStepsKnownUpFront(List<PlannedKeytab> keytabs, Predicate<PlannedKeytab> alreadyStored,
+                                                boolean createsViewInstance, boolean createsObjectStore) {
+        List<String> steps = new ArrayList<>();
+        if (keytabs.stream().anyMatch(keytab -> !alreadyStored.test(keytab))) {
+            steps.add(CommandType.KEYTAB_ISSUE_PRINCIPAL.name());
+        }
+        if (createsViewInstance) {
+            steps.add(CommandType.AMBARI_VIEW_PROVISION.name());
+        }
+        if (createsObjectStore) {
+            steps.add(CommandType.POLARIS_PROVISION_CATALOG.name());
+        }
+        return steps;
+    }
+
+    /**
+     * Whether the deploy plans {@link CommandType#POLARIS_PROVISION_CATALOG}: the wizard turned the Iceberg catalog on
+     * and left its provisioning on.
+     *
+     * @param formValues the wizard's form values, or {@code null}
+     */
+    static boolean plansPolarisProvision(Map<String, Object> formValues) {
+        if (formValues == null) {
+            return false;
+        }
+        // isEntryEnabled treats an absent value as enabled, which is right for chart entries but
+        // wrong for a wizard toggle: an untouched form must not provision anything.
+        Object icebergRaw = ConfigResolutionService.getByDottedPath(formValues, "icebergCatalog.enabled");
+        if (icebergRaw == null || !isEntryEnabled(icebergRaw)) {
+            return false;
+        }
+        Object provisionRaw = ConfigResolutionService.getByDottedPath(formValues, "icebergCatalog.provision");
+        return provisionRaw == null || isEntryEnabled(provisionRaw);
+    }
+
+    /**
+     * Whether the planned Polaris step may run the Polaris service command that creates the catalog's Ozone bucket and
+     * S3 identity, with the operator's Ambari session. It does not when the form gives an S3 key, which is used as it
+     * is. On another platform context than the Ambari-managed one the step never runs the command; the permission
+     * check leaves that case out on its own.
+     *
+     * @param formValues the wizard's form values, or {@code null}
+     */
+    static boolean polarisProvisionUsesAmbari(Map<String, Object> formValues) {
+        return plansPolarisProvision(formValues)
+                && stringValue(ConfigResolutionService.getByDottedPath(formValues, "icebergCatalog.s3AccessKey")).isBlank();
+    }
+
+    /** Whether the keytab's Secret already holds it for its principal, as the keytab step decides it. */
+    private boolean keytabAlreadyStored(String namespace, PlannedKeytab keytab) {
+        try {
+            return isReusableKeytab(kubernetesService.readOpaqueSecretKeyAsBytes(
+                    namespace, keytab.secretName(), keytab.keyNameInSecret()), keytab.principalFqdn());
+        } catch (Exception e) {
+            LOG.info("Could not read Secret '{}/{}' to see whether its keytab is reused: {}", namespace,
+                    keytab.secretName(), e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Whether a keytab read from its Secret can be reused for the principal. Reusing it, instead of issuing it again,
+     * keeps the principal's key unchanged, so the keytab already stored stays valid.
+     */
+    private boolean isReusableKeytab(Optional<byte[]> stored, String principalFqdn) {
+        return stored.isPresent() && stored.get().length > 0 && keytabContainsPrincipal(stored.get(), principalFqdn);
+    }
+
+    /** Whether the service definition asks for an Ambari view instance next to the release. */
+    private boolean declaresAmbariViewInstance(String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank()) {
+            return false;
+        }
+        try {
+            StackServiceDef serviceDef = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+            return serviceDef != null && (serviceDef.postDeploy != null || serviceDef.platformOps != null)
+                    && postDeployOf(serviceDef).get("ambariViewInstance") != null;
+        } catch (Exception e) {
+            LOG.warn("Could not read the service definition of {}: {}", serviceKey, e.toString());
+            return false;
+        }
+    }
+
+    /**
      * Append Kerberos keytab provisioning steps (issue principal + create Secret) to the current command plan.
      * These steps are inserted ahead of Helm install when the view is configured for pre-provisioned keytabs.
      *
@@ -887,12 +1415,33 @@ public class CommandService {
                                               AmbariActionClient ambariActionClient,
                                               String cluster,
                                               String serviceKey) {
+        if (securityCfg != null && securityCfg.oidc != null) {
+            return true;
+        }
+        return hasConfiguredOidcProvider(securityCfg, resolvePlatformContextForStep(params),
+                stringValue(params == null ? null : params.get("_platformContextId")), ambariActionClient, cluster,
+                serviceKey);
+    }
+
+    /**
+     * {@link #hasConfiguredOidcProvider(SecurityConfigDTO, Map, AmbariActionClient, String, String)} with the platform
+     * context already resolved.
+     *
+     * @param oidcCtx           the resolved platform context; null for the managed default or when it could not be
+     *                          resolved
+     * @param selectedContextId the id of the selected platform context; null or blank for the managed default
+     */
+    private boolean hasConfiguredOidcProvider(SecurityConfigDTO securityCfg,
+                                              org.apache.ambari.view.k8s.model.ResolvedContext oidcCtx,
+                                              String selectedContextId,
+                                              AmbariActionClient ambariActionClient,
+                                              String cluster,
+                                              String serviceKey) {
         // (a) security profile OIDC
         if (securityCfg != null && securityCfg.oidc != null) {
             return true;
         }
         // (b) platform context OIDC admin creds (external/remote Keycloak)
-        org.apache.ambari.view.k8s.model.ResolvedContext oidcCtx = resolvePlatformContextForStep(params);
         if (oidcCtx != null && oidcCtx.hasContextOidcAdminCreds()) {
             return true;
         }
@@ -903,7 +1452,6 @@ public class CommandService {
         // (non-idempotent). For an external context OIDC is opt-in: it comes ONLY from a selected security
         // profile (a) or the context's own OIDC admin creds (b). To use the internal Keycloak for an
         // external backend, an operator selects the MANAGED context instead.
-        String selectedContextId = stringValue(params == null ? null : params.get("_platformContextId"));
         boolean externalContextSelected = selectedContextId != null && !selectedContextId.isBlank()
                 && !ContextService.DEFAULT_CONTEXT_ID.equals(selectedContextId);
         if (!externalContextSelected && ambariActionClient != null && cluster != null && !cluster.isBlank()) {
@@ -1006,12 +1554,16 @@ public class CommandService {
     /**
      * Append only the OIDC_CREATE_SECRET step for an external OIDC profile where the admin
      * pre-supplied clientId/clientSecret in the security profile (no Keycloak registration needed).
+     * The client secret stays in the profile: the step reads it there when it runs
+     * ({@link #externalOidcClientSecret}), so it is never kept with the step's parameters.
+     *
+     * @param securityProfile the security profile holding the client secret
      */
     private void appendOidcExternalSecretStep(CommandEntity rootCommand,
                                               List<String> childCommandIds,
                                               Map<String, Object> rootParams,
                                               String externalClientId,
-                                              String externalClientSecret,
+                                              String securityProfile,
                                               String externalIssuerUrl,
                                               String secretName,
                                               String oidcEntryKey,
@@ -1024,7 +1576,7 @@ public class CommandService {
         createParams.put("oidcSecretName", secretName);
         createParams.put("oidcEntryKey", oidcEntryKey);
         createParams.put("oidcExternalClientId", externalClientId != null ? externalClientId : "");
-        createParams.put("oidcExternalClientSecret", externalClientSecret != null ? externalClientSecret : "");
+        createParams.put(OIDC_EXTERNAL_PROFILE_PARAM, securityProfile != null ? securityProfile : "");
         if (externalIssuerUrl != null && !externalIssuerUrl.isBlank()) {
             createParams.put("oidcExternalIssuerUrl", externalIssuerUrl);
         }
@@ -1059,23 +1611,283 @@ public class CommandService {
     }
 
     /**
-     * Resolve the OIDC issuer URL from Ambari cluster config.
-     * Returns the oidc_issuer_url property if non-blank; otherwise computes it as
-     * {oidc_admin_url}/realms/{oidc_realm}.
+     * Registers (or updates) the OIDC client of a deploy in Keycloak and reads its secret. Registering a client that
+     * exists updates it and reads its current secret, so this can run again. The audiences the deploy planned
+     * ({@code oidcAudiences}) are set on the client's tokens, none planned keeps the client's current ones, and the
+     * releases planned as calling this Trino ({@code oidcAudienceCallers}) get its audience added to theirs.
+     *
+     * @param stepId     the step, for its log
+     * @param stepParams the parameters of the registration step (those of the step writing the secret include them)
+     * @return the client id, its secret ({@code ""} for a public client) and the issuer URL its tokens carry
+     */
+    KeycloakAdminClient.OidcClientResult registerOidcClient(String stepId, Map<String, Object> stepParams)
+            throws Exception {
+        KeycloakAdmin admin = resolveKeycloakAdmin(stepParams);
+
+        String desiredClientId = (String) stepParams.get("oidcClientId");
+        String redirectUri     = (String) stepParams.get("oidcRedirectUri");
+        Object publicClientObj = stepParams.get("publicClient");
+        boolean publicClient   = Boolean.parseBoolean(String.valueOf(publicClientObj));
+        Object stdFlowObj      = stepParams.get("standardFlowEnabled");
+        boolean stdFlow        = stdFlowObj == null || Boolean.parseBoolean(String.valueOf(stdFlowObj));
+        Object implFlowObj     = stepParams.get("implicitFlowEnabled");
+        boolean implFlow       = Boolean.parseBoolean(String.valueOf(implFlowObj));
+
+        validateOidcClientId(desiredClientId);
+
+        var keycloakClient = admin.client(null);
+
+        appendCommandLog(stepId, "Registering OIDC client '" + desiredClientId
+                + "' in realm '" + admin.realm() + "'");
+
+        // Planned by a deploy (an empty list included); a re-registration plans none and keeps the
+        // client's current audiences.
+        List<String> audiences = null;
+        if (stepParams.get("oidcAudiences") instanceof List<?> planned) {
+            audiences = new ArrayList<>();
+            for (Object a : planned) {
+                if (a != null && !String.valueOf(a).isBlank()) audiences.add(String.valueOf(a).trim());
+            }
+            if (!audiences.isEmpty()) {
+                appendCommandLog(stepId, "Access tokens of '" + desiredClientId
+                        + "' carry the audience(s) " + String.join(", ", audiences));
+            }
+        }
+
+        // Marked with its release and this KDPS instance, so that the uninstall of the release deletes it, and a
+        // client of the same id another cluster or view registered in the realm is not taken over.
+        KeycloakAdminClient.ClientMarker marker = oidcClientMarker(stringValue(stepParams.get("namespace")),
+                stringValue(stepParams.get("releaseName")));
+        var oidcResult = keycloakClient.registerClient(
+                desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient, audiences, marker);
+        // The releases calling this Trino with their own token, planned by the deploy.
+        addAudienceToCallers(keycloakClient, desiredClientId, stepParams.get("oidcAudienceCallers"), stepId);
+
+        String issuerUrl = admin.fromContext()
+                ? admin.context().getOidcIssuerUrl()
+                : resolveOidcIssuerUrl(admin.ambari(), admin.cluster());
+        if (issuerUrl == null || issuerUrl.isBlank()) {
+            issuerUrl = oidcResult.issuerUrl();
+        }
+        return new KeycloakAdminClient.OidcClientResult(oidcResult.clientId(), oidcResult.clientSecret(), issuerUrl,
+                admin.realm());
+    }
+
+    /**
+     * The Keycloak administrator OIDC clients are registered and deleted with, and where.
+     *
+     * @param context the platform context supplying the administrator; null when it comes from the managed cluster's
+     *                {@code oidc-env}
+     * @param ambari  the Ambari server of the managed cluster; null when the context supplies the administrator
+     * @param cluster the managed cluster; null when the context supplies the administrator
+     */
+    record KeycloakAdmin(String adminUrl, String adminRealm, String realm, String adminClientId,
+                         String adminClientSecret, String adminUsername, String adminPassword, boolean verifyTls,
+                         org.apache.ambari.view.k8s.model.ResolvedContext context, AmbariActionClient ambari,
+                         String cluster) {
+
+        boolean fromContext() {
+            return context != null;
+        }
+
+        /**
+         * A client for this administrator.
+         *
+         * @param inRealm the realm to work in; null or blank for {@link #realm()}
+         */
+        KeycloakAdminClient client(String inRealm) {
+            return new KeycloakAdminClient(adminUrl, adminRealm,
+                    inRealm == null || inRealm.isBlank() ? realm : inRealm,
+                    adminClientId, adminClientSecret, adminUsername, adminPassword, verifyTls);
+        }
+    }
+
+    /**
+     * Resolves the Keycloak administrator (client-registration) settings for an OIDC step or an uninstall. Generic
+     * rule mirroring the Ranger routing: when the selected platform context ({@code _platformContextId}) carries its
+     * own OIDC admin creds (EXTERNAL / REMOTE Keycloak), use them and do not touch the local Ambari: this is what lets
+     * a standalone Ambari (no local oidc-env, no cluster) register clients. Otherwise read the local Ambari oidc-env
+     * (the default managed context), through the Ambari server {@code _baseUri} and {@code _callerHeaders} reach.
+     *
+     * @throws IllegalStateException when neither supplies an administrator
+     */
+    KeycloakAdmin resolveKeycloakAdmin(Map<String, Object> stepParams) throws Exception {
+        org.apache.ambari.view.k8s.model.ResolvedContext oidcRc = resolvePlatformContextForStep(stepParams);
+        if (oidcRc != null && oidcRc.hasContextOidcAdminCreds()) {
+            String oidcAdminUrl   = oidcRc.getOidcAdminUrl();
+            String oidcAdminRealm = (oidcRc.getOidcAdminRealm() == null || oidcRc.getOidcAdminRealm().isBlank())
+                    ? "master" : oidcRc.getOidcAdminRealm();
+            String oidcRealm      = (oidcRc.getOidcRealm() == null || oidcRc.getOidcRealm().isBlank())
+                    ? "odp" : oidcRc.getOidcRealm();
+            String adminClientId  = oidcRc.getOidcAdminClientId();
+            LOG.info("OIDC: using the platform context's Keycloak (adminUrl={}, realm={}, registrationClient={})",
+                    oidcAdminUrl, oidcRealm, adminClientId);
+            return new KeycloakAdmin(oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId,
+                    oidcRc.getOidcAdminClientSecret(), "", "", !"false".equalsIgnoreCase(oidcRc.getOidcVerifyTls()),
+                    oidcRc, null, null);
+        }
+
+        String baseUriStr = (String) stepParams.get("_baseUri");
+        if (baseUriStr == null || baseUriStr.isBlank()) {
+            throw new IllegalStateException("KDPS has no access to the Ambari server, whose oidc-env names the"
+                    + " Keycloak administrator of the managed cluster (no _baseUri)");
+        }
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(stepParams.get("_callerHeaders"));
+        String clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
+        String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
+        AmbariActionClient ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
+
+        // Load Keycloak admin settings from Ambari oidc-env config
+        String oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
+        String oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
+        String oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
+        String adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
+        String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
+        String verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
+
+        if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
+            throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config "
+                    + "(and the selected platform context supplies no OIDC admin credentials).");
+        }
+        if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
+        if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
+        if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
+
+        // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
+        AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
+        char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
+        String adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
+
+        // Admin username/password come from the Ambari credential store (same alias used
+        // by ConfigureOidcServerAction), never from plain-text config properties.
+        // The view can only read the persisted store. The Enable OIDC and Enable Kerberos
+        // wizards store the credential there whenever the server has a persistent credential
+        // store, as does Manage OIDC Credentials (or the credentials REST API).
+        org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
+                oidcAliasResolver.getOidcAdminCredential(clstr);
+        String adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
+        String adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
+                ? new String(oidcAdminCred.getKey()) : "";
+        return new KeycloakAdmin(oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec,
+                adminUsername, adminPassword, !"false".equalsIgnoreCase(verifyTlsStr), null, ambariCli, clstr);
+    }
+
+    /**
+     * The mark KDPS writes on the Keycloak client of a release: the release, and this KDPS instance (see
+     * {@link KeycloakAdminClient.ClientMarker}). Null when the step does not name its release, or the instance id
+     * cannot be kept: the client is then neither checked nor marked, and an uninstall reports it instead of deleting
+     * it.
+     */
+    KeycloakAdminClient.ClientMarker oidcClientMarker(String namespace, String releaseName) {
+        if (namespace == null || namespace.isBlank() || releaseName == null || releaseName.isBlank()) return null;
+        try {
+            return KeycloakAdminClient.ClientMarker.of(namespace, releaseName, tagSyncInstance.get());
+        } catch (RuntimeException e) {
+            LOG.warn("The OIDC client of {}/{} is not marked as this KDPS instance's: {}", namespace, releaseName,
+                    e.toString());
+            return null;
+        }
+    }
+
+    /** The client secrets registration steps got, until the next step writes them; see {@link OidcClientSecrets}. */
+    OidcClientSecrets oidcClientSecrets() {
+        return new OidcClientSecrets(new InstanceSettings(ctx));
+    }
+
+    /**
+     * Records what an OIDC_REGISTER_CLIENT step got. Its result names the client and its issuer; the client secret
+     * waits, encrypted, for the step that writes it into the release's Secret ({@link OidcClientSecrets}): the result
+     * is a plain database column kept with the operation history, so it never holds it.
+     *
+     * @param stepId     the registration step
+     * @param status     its status, whose result is set
+     * @param registered what Keycloak returned
+     */
+    void recordOidcRegistration(String stepId, CommandStatusEntity status,
+                                KeycloakAdminClient.OidcClientResult registered) {
+        oidcClientSecrets().keep(stepId, registered.clientSecret());
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("clientId", registered.clientId());
+        res.put("issuerUrl", registered.issuerUrl());
+        if (registered.realm() != null) res.put("realm", registered.realm());
+        status.setResultJson(gson.toJson(res));
+    }
+
+    /**
+     * The client secret an OIDC_CREATE_SECRET step writes for a client its OIDC_REGISTER_CLIENT step registered. When
+     * the view no longer keeps it (an earlier run of the step wrote and deleted it, or an earlier version registered
+     * the client and its results were cleared of it), it is read from Keycloak again, which still has it.
+     *
+     * @param stepId         the OIDC_CREATE_SECRET step
+     * @param stepParams     its parameters, which include those of the registration step
+     * @param registerStepId the registration step
+     * @param registerResult the registration step's result
+     * @return the client secret; empty for a public client
+     * @throws Exception when Keycloak cannot be asked
+     */
+    String clientSecretForCreateStep(String stepId, Map<String, Object> stepParams, String registerStepId,
+                                     Map<String, Object> registerResult) throws Exception {
+        if (Boolean.parseBoolean(String.valueOf(stepParams.get("publicClient")))) {
+            return "";
+        }
+        String kept = registeredOidcClientSecret(registerStepId, registerResult);
+        if (kept != null) {
+            return kept;
+        }
+        appendCommandLog(stepId, "Reading the client secret of '" + stepParams.get("oidcClientId")
+                + "' from Keycloak again");
+        return registerOidcClient(stepId, stepParams).clientSecret();
+    }
+
+    /**
+     * The client secret an OIDC_REGISTER_CLIENT step got, for the OIDC_CREATE_SECRET step that writes it: kept
+     * encrypted apart from the step, or, for a step an earlier version ran, still in its result.
+     *
+     * @param registerStepId the registration step
+     * @param registerResult its result
+     * @return the secret, or {@code null} when neither keeps it
+     */
+    String registeredOidcClientSecret(String registerStepId, Map<String, Object> registerResult) {
+        String kept = oidcClientSecrets().read(registerStepId);
+        if (kept != null) {
+            return kept;
+        }
+        Object legacy = registerResult == null ? null : registerResult.get(OidcClientSecrets.RESULT_KEY);
+        return legacy instanceof String text ? text : null;
+    }
+
+    /** Step parameter naming the security profile whose external OIDC client secret the step writes. */
+    static final String OIDC_EXTERNAL_PROFILE_PARAM = "oidcExternalProfile";
+
+    /**
+     * The client secret an OIDC_CREATE_SECRET step writes for an external OIDC provider, read from the security
+     * profile when the step runs: it is not kept with the step's parameters. A step planned by an earlier version
+     * still carries it there and uses that.
+     *
+     * @param childParams the step's parameters
+     * @return the client secret, empty when the profile has none
+     * @throws IllegalStateException when the profile no longer exists or no longer has an OIDC configuration
+     */
+    String externalOidcClientSecret(Map<String, Object> childParams) {
+        if (childParams.containsKey("oidcExternalClientSecret")) {
+            return (String) childParams.get("oidcExternalClientSecret");
+        }
+        String profile = stringValue(childParams.get(OIDC_EXTERNAL_PROFILE_PARAM));
+        SecurityConfigDTO cfg = profile.isBlank() ? null : loadSecurityConfig(profile);
+        if (cfg == null || cfg.oidc == null) {
+            throw new IllegalStateException("The OIDC client secret of this deploy is read from the security profile '"
+                    + profile + "', which no longer exists or no longer configures OIDC. Restore the profile and"
+                    + " resume the operation, or deploy again with another profile.");
+        }
+        return cfg.oidc.clientSecret != null ? cfg.oidc.clientSecret : "";
+    }
+
+    /**
+     * The OIDC issuer URL of the managed cluster (see {@link DynamicValuesResolver#oidcIssuerUrl}): null when its
+     * {@code oidc-env} sets neither the issuer nor both the Keycloak address and realm.
      */
     private String resolveOidcIssuerUrl(AmbariActionClient client, String cluster) {
-        try {
-            String explicit = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_issuer_url");
-            if (explicit != null && !explicit.isBlank()) return explicit;
-            String adminUrl = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
-            String realm    = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_realm");
-            if (adminUrl != null && realm != null) {
-                return adminUrl.replaceAll("/$", "") + "/realms/" + realm;
-            }
-        } catch (Exception ex) {
-            LOG.warn("Could not resolve OIDC issuer URL from cluster {}: {}", cluster, ex.toString());
-        }
-        return null;
+        return DynamicValuesResolver.oidcIssuerUrl(client, cluster);
     }
 
     /**
@@ -1147,7 +1959,8 @@ public class CommandService {
         String valuesPath = resolveStringValue(params.get("valuesPath"), null);
         if (valuesPath != null) {
             try {
-                String json = java.nio.file.Files.readString(java.nio.file.Paths.get(valuesPath));
+                // Through the cache, which decrypts the file.
+                String json = this.kubernetesService.getConfigurationService().readCacheFile(valuesPath);
                 chartValues = gson.fromJson(json, new com.google.gson.reflect.TypeToken<Map<String, Object>>(){}.getType());
             } catch (Exception ex) {
                 LOG.warn("resolveServiceVariablesFromParams: could not load chart values from {}: {}", valuesPath, ex.toString());
@@ -1279,6 +2092,240 @@ public class CommandService {
     }
 
     /**
+     * The values of the service definition's variables that OIDC templates (redirect URIs) use, read from the
+     * parameters, the form and the chart values of {@code params} (see {@link #resolveServiceVariablesFromParams}).
+     * A variable still without a value is read back from the chart values through the binding that writes it
+     * unchanged to a chart path: JupyterHub's {@code jupyterHost} is a form field kept out of the chart values, but
+     * its binding puts it in {@code ingress.hosts[0]}, which the deployed values of a release keep.
+     *
+     * @param serviceDefinition the service definition; may be null
+     * @param params            the operation's parameters, with the chart values under {@code valuesPath}
+     * @return variable name to value, for the variables a value was found for
+     */
+    @SuppressWarnings("unchecked")
+    Map<String, String> resolveOidcTemplateVariables(StackServiceDef serviceDefinition, Map<String, Object> params) {
+        if (serviceDefinition == null) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, String> resolved = resolveServiceVariablesFromParams(serviceDefinition.variables, params);
+        if (serviceDefinition.variables == null || serviceDefinition.bindings == null) {
+            return resolved;
+        }
+        Map<String, Object> chartValues = null;
+        for (Map<String, Object> variable : serviceDefinition.variables) {
+            String name = resolveStringValue(variable.get("name"), null);
+            if (name == null || name.isBlank() || resolved.containsKey(name)) continue;
+            String writtenAsIs = "${" + name + "}";
+            for (Map<String, Object> binding : serviceDefinition.bindings) {
+                Object targets = binding == null ? null : binding.get("targets");
+                if (!(targets instanceof List<?> targetList)) continue;
+                for (Object target : targetList) {
+                    if (!(target instanceof Map<?, ?> t) || !(t.get("from") instanceof Map<?, ?> from)) continue;
+                    String path = resolveStringValue(t.get("path"), null);
+                    // Escaped dots name keys that hold a dot, which this lookup does not follow.
+                    if (path == null || path.contains("\\") || !"template".equals(from.get("type"))
+                            || !writtenAsIs.equals(from.get("template"))) {
+                        continue;
+                    }
+                    if (chartValues == null) {
+                        chartValues = this.commandUtils.loadValuesFromParams(params);
+                    }
+                    Object value = getByPath(chartValues, path);
+                    if (value != null && !(value instanceof Map) && !(value instanceof List)
+                            && !String.valueOf(value).isBlank()) {
+                        resolved.put(name, String.valueOf(value));
+                        break;
+                    }
+                }
+                if (resolved.containsKey(name)) break;
+            }
+        }
+        return resolved;
+    }
+
+    /**
+     * What planning the OIDC steps of one {@code oidc[]} entry decided, which the deploy needs to wire the chart.
+     *
+     * @param entryKey           the entry's key ({@code entry-<n>} for an entry without one)
+     * @param secretName         the Secret holding the client credentials
+     * @param gitlabOmniauth     whether the entry configures GitLab's OmniAuth provider instead of
+     *                           {@code global.security.auth.*}
+     * @param providerSecretName the Secret holding GitLab's OmniAuth provider; null for other services
+     * @param audience           the audience the service's tokens are minted for: an external profile's JWT audience
+     *                           (else its client id), or the client KDPS registers
+     */
+    record PlannedOidcEntry(String entryKey, String secretName, boolean gitlabOmniauth, String providerSecretName,
+                            String audience) {}
+
+    /**
+     * Plans the OIDC steps of one {@code oidc[]} entry of a service definition, the same way for a deploy and for
+     * "Re-register OIDC client" on a deployed release: with an external OIDC profile, only the step writing the
+     * profile's client credentials to the release's Secret; otherwise the registration of the client in Keycloak
+     * (with the entry's flow flags, and GitLab's OmniAuth provider Secret and callback) and the Secret.
+     *
+     * <p>A deploy also plans the audiences the client's access tokens carry ({@link #oidcTokenAudiences}) and the
+     * releases calling this Trino with their own token ({@link #trinoJwtCallers}). A re-registration plans neither:
+     * the registration then keeps the audience mappers the client has, which its last deploy set.
+     *
+     * @param params          the operation's parameters, copied into the steps
+     * @param entry           the {@code oidc[]} entry
+     * @param index           the entry's position (1-based), naming an entry without a key
+     * @param oidcRealm       the realm templates render {@code {{realm}}} with
+     * @param templateVars    the service variables templates render, see {@link #resolveOidcTemplateVariables}
+     * @param securityCfg     the release's security profile; may be null
+     * @param securityProfile the name of that profile; may be null
+     * @param logId           the operation whose log says what was planned
+     * @param deploy          the deploy request the audiences are planned from; null for a re-registration
+     * @return what the chart wiring needs, or null when the entry is disabled
+     * @throws IllegalArgumentException when the redirect URI keeps a variable no value was found for: registered
+     *                                  as it is, it would replace the working redirect URI of the client in Keycloak
+     */
+    private PlannedOidcEntry planOidcEntrySteps(CommandEntity rootCommand,
+                                                List<String> childCommandIds,
+                                                Map<String, Object> params,
+                                                Map<String, Object> entry,
+                                                int index,
+                                                String releaseName,
+                                                String namespace,
+                                                String oidcRealm,
+                                                Map<String, String> templateVars,
+                                                SecurityConfigDTO securityCfg,
+                                                String securityProfile,
+                                                String logId,
+                                                HelmDeployRequest deploy) {
+        if (!isEntryEnabled(entry.get("enabled"))) {
+            LOG.info("Skipping disabled OIDC entry {}", entry.getOrDefault("key", index));
+            return null;
+        }
+        String entryKey  = resolveStringValue(entry.get("key"), "entry-" + index);
+        String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
+        String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
+        String secretName = renderOidcTemplate(secretT, releaseName, namespace, oidcRealm);
+
+        boolean gitlabOmniauth = Boolean.TRUE.equals(entry.get("gitlabOmniauth"))
+                || "true".equalsIgnoreCase(String.valueOf(entry.get("gitlabOmniauth")));
+
+        Map<String, Object> extraOidcParams = new LinkedHashMap<>();
+        // Forward client flow flags declared in service.json oidc[] entry.
+        // Defaults match the historical KeycloakAdminClient behavior
+        // (publicClient=false, standardFlowEnabled=true, implicitFlowEnabled=false).
+        extraOidcParams.put("publicClient",
+                Boolean.TRUE.equals(entry.get("publicClient"))
+                        || "true".equalsIgnoreCase(String.valueOf(entry.get("publicClient"))));
+        Object stdFlowEntry = entry.get("standardFlowEnabled");
+        extraOidcParams.put("standardFlowEnabled",
+                stdFlowEntry == null || Boolean.parseBoolean(String.valueOf(stdFlowEntry)));
+        extraOidcParams.put("implicitFlowEnabled",
+                Boolean.TRUE.equals(entry.get("implicitFlowEnabled"))
+                        || "true".equalsIgnoreCase(String.valueOf(entry.get("implicitFlowEnabled"))));
+        String providerSecretName = null;
+        if (gitlabOmniauth) {
+            providerSecretName = releaseName + "-omniauth-provider";
+            extraOidcParams.put("oidcGitlabOmniauth", "true");
+            extraOidcParams.put("oidcProviderSecretName", providerSecretName);
+            // The actual callback URL is filled in below once we've resolved
+            // the redirect URI via the service-definition variable pipeline
+            // (which knows how to substitute gitlabDomain etc.).
+        }
+
+        boolean oidcIsExternal = securityCfg != null
+                && securityCfg.oidc != null
+                && "external".equalsIgnoreCase(securityCfg.oidc.source);
+        // The audience the service's tokens are minted for: for an external provider the profile's
+        // JWT audience, else its client id; the client KDPS registers otherwise.
+        String entryAudience;
+        if (oidcIsExternal) {
+            // External OIDC: no Keycloak registration — write the secret directly from profile credentials
+            entryAudience = externalJwtAudience(securityCfg.oidc);
+            appendOidcExternalSecretStep(rootCommand, childCommandIds, params,
+                    securityCfg.oidc.clientId, securityProfile, securityCfg.oidc.issuerUrl,
+                    secretName, entryKey, vaultPath, extraOidcParams);
+        } else {
+            // Internal OIDC: register client in Keycloak, then create secret
+            String clientIdT  = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
+            String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
+            String clientId   = renderOidcTemplate(clientIdT, releaseName, namespace, oidcRealm);
+            validateOidcClientId(clientId);
+            String redirectUri = renderOidcTemplate(redirectT, releaseName, namespace, oidcRealm, templateVars);
+            if (redirectUri.contains("{{")) {
+                throw new IllegalArgumentException("The OIDC redirect URI of release " + namespace + "/" + releaseName
+                        + " is incomplete: '" + redirectUri + "' keeps a value that was not found in the release's"
+                        + " settings. The OIDC client is left as it is in Keycloak. Set the missing host with"
+                        + " Upgrade / Config, which registers the client again.");
+            }
+            entryAudience = clientId;
+            if (deploy != null) {
+                // The audiences the client's access tokens carry (see oidcTokenAudiences); null keeps the
+                // ones the client already has.
+                List<String> audiences = oidcTokenAudiences(entry, clientId, deploy.getFormValues(),
+                        deploy.getValues());
+                if (audiences != null) {
+                    extraOidcParams.put("oidcAudiences", audiences);
+                } else {
+                    appendCommandLog(logId, "KDPS cannot tell which audience the Trino this release connects to"
+                            + " with its OIDC service token requires (it is not a KDPS release, or the deploy"
+                            + " does not name it): the OIDC client " + clientId + " keeps the token audiences"
+                            + " it has. That Trino must accept them, or its JWT authenticator refuses the token.");
+                }
+                // The releases already calling this service with their own token (Superset's Trino
+                // connection) were registered before it checked this audience: their clients get it before
+                // the upgrade restarts the service, so they keep connecting without being redeployed first.
+                if (jwtAudiencePath(entry) != null) {
+                    List<Map<String, String>> callers = trinoJwtCallers(namespace, releaseName, oidcRealm);
+                    if (!callers.isEmpty()) {
+                        extraOidcParams.put("oidcAudienceCallers", callers);
+                        appendCommandLog(logId, "Release(s) " + callerNames(callers) + " call this Trino with"
+                                + " their OIDC service token: KDPS adds the audience '" + clientId + "' to"
+                                + " their tokens before the upgrade, since Trino then accepts only that one.");
+                    }
+                }
+            }
+            // A re-registration plans no audiences: the client keeps the audience mappers its last deploy set.
+            if (gitlabOmniauth) {
+                // The provider YAML written by OIDC_CREATE_SECRET needs the
+                // same callback URL that we register with Keycloak. Earlier
+                // code path tried to read gitlab.global.hosts.domain straight
+                // out of `params`, which doesn't hold the nested chart values
+                // tree at this point — it returned an empty string and the
+                // resulting YAML pointed at `http://gitlab./users/...`,
+                // breaking the OAuth flow. Reusing the resolved redirectUri
+                // is the single source of truth and keeps Keycloak's
+                // registered URI and GitLab's emitted URI byte-identical.
+                extraOidcParams.put("oidcGitlabCallbackUrl", redirectUri);
+            }
+            appendOidcRegistrationSteps(rootCommand, childCommandIds, params,
+                    clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
+        }
+        return new PlannedOidcEntry(entryKey, secretName, gitlabOmniauth, providerSecretName, entryAudience);
+    }
+
+    /**
+     * Whether the deployed values of a release show that it was deployed with OIDC login: the deploy wires every
+     * service either through {@code global.security.auth.mode=oidc} or, for GitLab, through its OmniAuth provider.
+     *
+     * @param oidcEntries    the {@code oidc[]} entries of the service definition
+     * @param deployedValues the release's deployed values
+     */
+    static boolean deployedWithOidc(List<Map<String, Object>> oidcEntries, Map<String, Object> deployedValues) {
+        if (oidcEntries == null || deployedValues == null) {
+            return false;
+        }
+        for (Map<String, Object> entry : oidcEntries) {
+            if (!isEntryEnabled(entry.get("enabled"))) continue;
+            boolean gitlabOmniauth = Boolean.TRUE.equals(entry.get("gitlabOmniauth"))
+                    || "true".equalsIgnoreCase(String.valueOf(entry.get("gitlabOmniauth")));
+            Object wired = gitlabOmniauth
+                    ? ConfigResolutionService.getByDottedPath(deployedValues, "gitlab.global.appConfig.omniauth.enabled")
+                    : ConfigResolutionService.getByDottedPath(deployedValues, "global.security.auth.mode");
+            if (gitlabOmniauth ? "true".equalsIgnoreCase(String.valueOf(wired))
+                    : "oidc".equalsIgnoreCase(String.valueOf(wired))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Validate that a client ID contains only safe characters.
      * Prevents injection via templates.
      */
@@ -1301,6 +2348,103 @@ public class CommandService {
     }
 
     /**
+     * The platform context a deployed release runs against, as "Regenerate keytabs", "Re-register OIDC client" and
+     * "Reapply Ranger repository" see it: the context the release was deployed on, never the one Ambari defaults
+     * to. Without it, those actions would write to the Ranger, Keycloak or KDC of the cluster this Ambari manages,
+     * whatever the release uses.
+     *
+     * @param contextId   the context's id; null for the cluster this Ambari manages
+     * @param kind        MANAGED, EXTERNAL, REMOTE, CDP or NONE (deployed without a platform context)
+     * @param contextName the context's name, for messages
+     * @param resolved    the resolved context; null for the cluster this Ambari manages, which the steps read from
+     *                    Ambari themselves, or when it could not be resolved
+     * @param cluster     the cluster this Ambari manages; null when there is none and the context does not need it
+     * @param ambari      a client of this Ambari for that cluster; null without a cluster
+     */
+    record ReleaseActionTarget(String contextId, String kind, String contextName,
+                               org.apache.ambari.view.k8s.model.ResolvedContext resolved, String cluster,
+                               AmbariActionClient ambari) {
+        boolean managed() {
+            return ContextService.KIND_MANAGED.equals(kind);
+        }
+
+        /** Puts the context and Ambari access into an operation's parameters, which every step resolves them from. */
+        void putInto(Map<String, Object> params, URI baseUri, MultivaluedMap<String, String> callerHeaders) {
+            if (contextId != null) params.put("_platformContextId", contextId);
+            if (cluster != null) params.put("_cluster", cluster);
+            params.put("_baseUri", baseUri.toString());
+            params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        }
+    }
+
+    /**
+     * Resolves, once, the platform context of a deployed release for one of its actions. The cluster this Ambari
+     * manages is only required when the release runs on it: an Ambari that manages no cluster still serves releases
+     * deployed on another context.
+     *
+     * @param releaseMetadata the release's record
+     * @param action          the action, for messages (e.g. "OIDC client registration")
+     * @throws IllegalArgumentException when the release's context no longer exists, or when the release runs on the
+     *                                  managed cluster and this Ambari manages none
+     * @throws IllegalStateException    when the managed cluster cannot be looked up
+     */
+    ReleaseActionTarget releaseActionTarget(K8sReleaseEntity releaseMetadata, String action,
+                                            MultivaluedMap<String, String> callerHeaders, URI baseUri) {
+        String release = releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName();
+        String contextId = stringValue(releaseMetadata.getPlatformContextId()).trim();
+        if (contextId.isBlank() || ContextService.DEFAULT_CONTEXT_ID.equals(contextId)) {
+            contextId = null;
+        }
+        String kind;
+        String contextName;
+        if (contextId == null) {
+            kind = ContextService.KIND_MANAGED;
+            contextName = "the cluster this Ambari manages";
+        } else if (ContextService.NO_CONTEXT_ID.equals(contextId)) {
+            kind = ContextService.KIND_NONE;
+            contextName = "no platform context";
+        } else {
+            org.apache.ambari.view.k8s.store.KdpsContextEntity entity = new ContextService(ctx).get(contextId);
+            if (entity == null) {
+                throw new IllegalArgumentException("The platform context '" + contextId + "' that release " + release
+                        + " was deployed on no longer exists, so its " + action + " cannot run. Restore the context,"
+                        + " or move the release to another one with Upgrade / Config.");
+            }
+            kind = entity.getKind() == null ? ContextService.KIND_EXTERNAL : entity.getKind();
+            contextName = entity.getName() == null || entity.getName().isBlank() ? contextId : entity.getName();
+        }
+        boolean managed = ContextService.KIND_MANAGED.equals(kind);
+
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String cluster = null;
+        try {
+            cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        } catch (Exception ex) {
+            if (managed && ex instanceof CommandUtils.NoAmbariClusterException) {
+                throw new IllegalArgumentException("Release " + release + " runs on the cluster this Ambari manages,"
+                        + " but this Ambari manages no cluster, so its " + action + " cannot run.", ex);
+            }
+            if (managed) {
+                throw new IllegalStateException("Unable to resolve Ambari cluster name for " + action + ".", ex);
+            }
+            // The release does not run on the managed cluster: nothing of it is needed.
+            LOG.info("{} of {}: no Ambari cluster ({}); the release runs on platform context '{}'", action, release,
+                    ex.toString(), contextId);
+        }
+        AmbariActionClient ambari = cluster == null ? null
+                : new AmbariActionClient(ctx, baseUri.toString(), cluster, authHeaders);
+
+        org.apache.ambari.view.k8s.model.ResolvedContext resolved = null;
+        if (!managed && !ContextService.KIND_NONE.equals(kind)) {
+            Map<String, Object> contextParams = new LinkedHashMap<>();
+            new ReleaseActionTarget(contextId, kind, contextName, null, cluster, null)
+                    .putInto(contextParams, baseUri, callerHeaders);
+            resolved = resolvePlatformContextForStep(contextParams);
+        }
+        return new ReleaseActionTarget(contextId, kind, contextName, resolved, cluster, ambari);
+    }
+
+    /**
      * Submit a standalone OIDC client re-registration for an already-deployed release.
      * Parallel to submitReleaseKeytabRegeneration().
      */
@@ -1308,6 +2452,26 @@ public class CommandService {
                                                 String releaseName,
                                                 MultivaluedMap<String, String> callerHeaders,
                                                 URI baseUri) {
+        String commandId = planReleaseOidcRegistration(namespace, releaseName, callerHeaders, baseUri);
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Plans and stores "Re-register OIDC client" for a deployed release, without running it: the steps a deploy
+     * plans for the release's {@code oidc[]} entries, against the Keycloak of the release's platform context and with
+     * the release's deployed values (its host names and ingress TLS), or the Secret step alone for an external OIDC
+     * profile.
+     *
+     * @return the operation's id
+     * @throws IllegalArgumentException when the release was deployed without OIDC login, or nothing can register its
+     *                                  client: its platform context has no Keycloak administrator credentials, or
+     *                                  OIDC is off on the managed cluster
+     */
+    String planReleaseOidcRegistration(String namespace,
+                                       String releaseName,
+                                       MultivaluedMap<String, String> callerHeaders,
+                                       URI baseUri) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
@@ -1326,21 +2490,27 @@ public class CommandService {
                     "Service definition for " + releaseMetadata.getServiceKey() + " has no OIDC entries.");
         }
 
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
-        String clusterName;
-        try {
-            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
-        } catch (Exception ex) {
-            throw new IllegalStateException("Unable to resolve Ambari cluster name.", ex);
-        }
-        AmbariActionClient ambariClient =
-                new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
+        // The deployed values say whether the deploy wired OIDC login, and hold what the redirect URIs and the
+        // TLS pre-flight of the registration need (host names, ingress TLS).
+        Map<String, Object> released = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        Map<String, Object> deployedValues = released == null ? new LinkedHashMap<>() : new LinkedHashMap<>(released);
+        refuseIfDeployedWithoutOidc(releaseMetadata, serviceDefinition, deployedValues);
+        ReleaseActionTarget target = releaseActionTarget(releaseMetadata, "OIDC client registration",
+                callerHeaders, baseUri);
+        SecurityConfigDTO securityCfg = releaseSecurityProfile(releaseMetadata);
+        refuse(oidcRegistrationRefusal(releaseMetadata, target, securityCfg));
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = target.resolved();
+        boolean contextKeycloak = rc != null && rc.hasContextOidcAdminCreds();
 
         String oidcRealm = "";
-        try {
-            oidcRealm = ambariClient.getDesiredConfigProperty(clusterName, "oidc-env", "oidc_realm");
-        } catch (Exception ex) {
-            LOG.warn("Could not read oidc_realm from cluster {}: {}", clusterName, ex.toString());
+        if (contextKeycloak) {
+            oidcRealm = rc.getOidcRealm() == null || rc.getOidcRealm().isBlank() ? "odp" : rc.getOidcRealm();
+        } else if (target.ambari() != null) {
+            try {
+                oidcRealm = target.ambari().getDesiredConfigProperty(target.cluster(), "oidc-env", "oidc_realm");
+            } catch (Exception ex) {
+                LOG.warn("Could not read oidc_realm from cluster {}: {}", target.cluster(), ex.toString());
+            }
         }
 
         final String commandId = UUID.randomUUID().toString();
@@ -1366,45 +2536,218 @@ public class CommandService {
         rootParams.put("releaseName", releaseName);
         rootParams.put("namespace", namespace);
         rootParams.put("serviceKey", releaseMetadata.getServiceKey());
-        rootParams.put("_cluster", clusterName);
-        rootParams.put("_baseUri", baseUri.toString());
-        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
-        rootParams.put("oidcRealm", oidcRealm);
+        target.putInto(rootParams, baseUri, callerHeaders);
+        rootParams.put("oidcRealm", oidcRealm == null ? "" : oidcRealm);
+        // The registration's TLS pre-flight reads the chart values of the operation, as for a deploy.
+        rootParams.put("valuesPath", kubernetesService.getConfigurationService()
+                .writeCacheFile("values-" + commandId, gson.toJson(deployedValues)));
+
+        Map<String, String> templateVars = resolveOidcTemplateVariables(serviceDefinition, rootParams);
+        if (serviceDefinition.variables != null) {
+            // A host the deployed values do not hold is read from the release's Ingress.
+            List<Map<String, Object>> unresolved = serviceDefinition.variables.stream()
+                    .filter(v -> !templateVars.containsKey(resolveStringValue(v.get("name"), "")))
+                    .toList();
+            resolveServiceVariablesFromCluster(unresolved, namespace, releaseName).forEach(templateVars::putIfAbsent);
+        }
 
         List<String> childCommandIds = new ArrayList<>();
         boolean stepsAdded = false;
-
         int idx = 0;
         for (Map<String, Object> entry : serviceDefinition.oidc) {
             idx++;
-            if (!isEntryEnabled(entry.get("enabled"))) continue;
-            String entryKey  = resolveStringValue(entry.get("key"), "entry-" + idx);
-            String clientIdT = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
-            String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
-            String redirectT = resolveStringValue(entry.get("redirectUriTemplate"), "");
-            String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
-
-            String clientId   = renderOidcTemplate(clientIdT,  releaseName, namespace, oidcRealm);
-            String secretName = renderOidcTemplate(secretT,     releaseName, namespace, oidcRealm);
-            Map<String, String> reRegExtraVars = resolveServiceVariablesFromCluster(
-                    serviceDefinition.variables, namespace, releaseName);
-            String redirectUri= renderOidcTemplate(redirectT,   releaseName, namespace, oidcRealm, reRegExtraVars);
-
-            appendOidcRegistrationSteps(rootCommand, childCommandIds, rootParams,
-                    clientId, redirectUri, secretName, entryKey, vaultPath, Collections.emptyMap());
-            stepsAdded = true;
+            if (planOidcEntrySteps(rootCommand, childCommandIds, rootParams, entry, idx, releaseName, namespace,
+                    oidcRealm, templateVars, securityCfg, releaseMetadata.getSecurityProfile(), commandId,
+                    null) != null) {
+                stepsAdded = true;
+            }
         }
 
         if (!stepsAdded) {
-            throw new IllegalStateException("No OIDC entries were scheduled for release " + releaseName);
+            throw new IllegalArgumentException("No OIDC entries were scheduled for release " + releaseName);
         }
 
         rootCommand.setParamsJson(gson.toJson(rootParams));
         rootCommand.setChildListJson(gson.toJson(childCommandIds));
         store(rootStatus);
         store(rootCommand);
-        scheduleNow(commandId);
         return commandId;
+    }
+
+    /**
+     * Refuses "Re-register OIDC client" for a release whose deployed values show it was deployed without OIDC login.
+     *
+     * @throws IllegalArgumentException when it was
+     */
+    private static void refuseIfDeployedWithoutOidc(K8sReleaseEntity releaseMetadata, StackServiceDef serviceDefinition,
+                                                    Map<String, Object> deployedValues) {
+        if (!deployedWithOidc(serviceDefinition.oidc, deployedValues)) {
+            throw new IllegalArgumentException("Release " + releaseMetadata.getNamespace() + "/"
+                    + releaseMetadata.getReleaseName() + " was deployed without OIDC login, so it has no OIDC client"
+                    + " to register. To turn OIDC login on, use Upgrade / Config with an OIDC security profile.");
+        }
+    }
+
+    /**
+     * Why "Re-register OIDC client" cannot run for a release deployed with OIDC login, or null when it can.
+     *
+     * @param target      the release's platform context
+     * @param securityCfg the release's security profile; may be null
+     */
+    private String oidcRegistrationRefusal(K8sReleaseEntity releaseMetadata, ReleaseActionTarget target,
+                                           SecurityConfigDTO securityCfg) {
+        String release = releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName();
+        boolean oidcIsExternal = securityCfg != null && securityCfg.oidc != null
+                && "external".equalsIgnoreCase(securityCfg.oidc.source);
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = target.resolved();
+        // Only the managed cluster registers clients in the Keycloak of Ambari's oidc-env: another context does it
+        // in its own Keycloak, with its administrator credentials, or not at all.
+        if (!oidcIsExternal && !target.managed() && (rc == null || !rc.hasContextOidcAdminCreds())) {
+            return "The platform context '" + target.contextName() + "' of release " + release + " has no Keycloak"
+                    + " administrator credentials, so KDPS cannot register its OIDC client. Add them to the context,"
+                    + " or register the client in that Keycloak yourself.";
+        }
+        if (!hasConfiguredOidcProvider(securityCfg, rc, target.contextId(), target.ambari(), target.cluster(),
+                releaseMetadata.getServiceKey())) {
+            return "OIDC is not enabled on the cluster this Ambari manages (its oidc-env has no Keycloak administration"
+                    + " URL), so there is no Keycloak to register the OIDC client of " + release + " with.";
+        }
+        return null;
+    }
+
+    /** Why "Regenerate keytabs" cannot run for a release, or null when it can. */
+    private String keytabRegenerationRefusal(K8sReleaseEntity releaseMetadata, String kerberosInjectionMode,
+                                             ReleaseActionTarget target) {
+        String release = releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName();
+        if (!KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(kerberosInjectionMode)) {
+            return "Kerberos regeneration is only supported in PRE_PROVISIONED mode (current: " + kerberosInjectionMode
+                    + ").";
+        }
+        // A release on another platform context gets its Kerberos only from the keytab Secret the operator gives,
+        // never from the KDC of the cluster this Ambari manages: nothing to issue here.
+        if (!target.managed()) {
+            return "Kerberos for release " + release + " does not come from the cluster this Ambari manages but from "
+                    + (ContextService.KIND_NONE.equals(target.kind()) ? "no platform context"
+                            : "its platform context '" + target.contextName() + "'")
+                    + ": KDPS does not issue its keytabs. Rotate the keytab in the Secret the release was deployed with,"
+                    + " then restart the release.";
+        }
+        boolean kerberosClusterEnabled = false;
+        try {
+            kerberosClusterEnabled = "true".equalsIgnoreCase(target.ambari().getDesiredConfigProperty(
+                    target.cluster(), "cluster-env", "security_enabled"));
+        } catch (Exception ex) {
+            LOG.warn("Failed to determine Kerberos state for cluster {}: {}", target.cluster(), ex.toString());
+        }
+        if (!kerberosClusterEnabled) {
+            return "Kerberos is disabled on cluster " + target.cluster() + "; keytab regeneration skipped.";
+        }
+        return null;
+    }
+
+    /** Why "Reapply Ranger repository" cannot run for a release, or null when it can. */
+    private static String rangerReapplyRefusal(K8sReleaseEntity releaseMetadata, ReleaseActionTarget target) {
+        String release = releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName();
+        if (ContextService.KIND_NONE.equals(target.kind())) {
+            return "Release " + release + " was deployed without a platform context, so it has no Ranger to configure.";
+        }
+        if (!target.managed() && (target.resolved() == null || !target.resolved().hasDirectRangerCreds())) {
+            return "The platform context '" + target.contextName() + "' of release " + release + " has no Ranger"
+                    + " administrator credentials, so KDPS cannot reach its Ranger. Add them to the context, or create"
+                    + " the release's repository in that Ranger yourself.";
+        }
+        return null;
+    }
+
+    private static void refuse(String refusal) {
+        if (refusal != null) {
+            throw new IllegalArgumentException(refusal);
+        }
+    }
+
+    /**
+     * Why each of "Regenerate keytabs" ({@code keytabs}), "Re-register OIDC client" ({@code oidc}) and "Reapply
+     * Ranger repository" ({@code ranger}) cannot run for a deployed release, for the Releases page to disable them
+     * with the reason. Only the actions the release's service declares are looked at; one missing from the answer can
+     * run, or could not be checked and says why when it runs.
+     *
+     * @return action to the reason it cannot run
+     */
+    public Map<String, String> releaseActionRefusals(String namespace, String releaseName,
+                                                     MultivaluedMap<String, String> callerHeaders, URI baseUri) {
+        Map<String, String> refusals = new LinkedHashMap<>();
+        K8sReleaseEntity releaseMetadata = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+        if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
+            return refusals;
+        }
+        StackServiceDef serviceDefinition =
+                new StackDefinitionService(ctx).getServiceDefinition(releaseMetadata.getServiceKey());
+        if (serviceDefinition == null) {
+            return refusals;
+        }
+        List<String> declared = new ArrayList<>();
+        if (serviceDefinition.kerberos != null && !serviceDefinition.kerberos.isEmpty()) declared.add("keytabs");
+        if (serviceDefinition.oidc != null && !serviceDefinition.oidc.isEmpty()) declared.add("oidc");
+        if (serviceDefinition.ranger != null && !serviceDefinition.ranger.isEmpty()) declared.add("ranger");
+        if (declared.isEmpty()) {
+            return refusals;
+        }
+        ReleaseActionTarget target;
+        try {
+            target = releaseActionTarget(releaseMetadata, "repair actions", callerHeaders, baseUri);
+        } catch (IllegalArgumentException refused) {
+            declared.forEach(action -> refusals.put(action, refused.getMessage()));
+            return refusals;
+        } catch (RuntimeException unknown) {
+            LOG.info("Could not tell which actions release {}/{} can run: {}", namespace, releaseName, unknown.toString());
+            return refusals;
+        }
+        if (declared.contains("keytabs")) {
+            putIfPresent(refusals, "keytabs",
+                    keytabRegenerationRefusal(releaseMetadata, resolveKerberosInjectionModeFromSettings(), target));
+        }
+        if (declared.contains("oidc")) {
+            try {
+                Map<String, Object> deployedValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+                refuseIfDeployedWithoutOidc(releaseMetadata, serviceDefinition, deployedValues);
+                putIfPresent(refusals, "oidc",
+                        oidcRegistrationRefusal(releaseMetadata, target, releaseSecurityProfile(releaseMetadata)));
+            } catch (IllegalArgumentException refused) {
+                refusals.put("oidc", refused.getMessage());
+            } catch (RuntimeException unknown) {
+                LOG.info("Could not tell whether release {}/{} can re-register its OIDC client: {}", namespace,
+                        releaseName, unknown.toString());
+            }
+        }
+        if (declared.contains("ranger")) {
+            putIfPresent(refusals, "ranger", rangerReapplyRefusal(releaseMetadata, target));
+        }
+        return refusals;
+    }
+
+    private static void putIfPresent(Map<String, String> map, String key, String value) {
+        if (value != null) {
+            map.put(key, value);
+        }
+    }
+
+    /**
+     * The security profile a release was deployed with, or null when it was deployed with none.
+     *
+     * @throws IllegalArgumentException when that profile no longer exists
+     */
+    private SecurityConfigDTO releaseSecurityProfile(K8sReleaseEntity releaseMetadata) {
+        String profile = releaseMetadata.getSecurityProfile();
+        if (profile == null || profile.isBlank()) {
+            return null;
+        }
+        try {
+            return new SecurityProfileService(ctx).requireProfile(profile);
+        } catch (IllegalArgumentException missing) {
+            throw new IllegalArgumentException("The security profile '" + profile + "' that release "
+                    + releaseMetadata.getNamespace() + "/" + releaseMetadata.getReleaseName() + " was deployed with no"
+                    + " longer exists. Redeploy the release with Upgrade / Config and an existing profile.", missing);
+        }
     }
 
     /** Null-safe enabled check used for both kerberos and oidc entries. */
@@ -1620,8 +2963,131 @@ public class CommandService {
     }
 
     /**
+     * The name of a Ranger plugin object of a release, from its service.json name: {@code {{releaseName}}} and
+     * {@code {{namespace}}} filled in, so that two releases in one namespace never write over each other's plugin
+     * configuration. With no release (or namespace) the placeholder and the dash next to it drop out, which gives
+     * the plain name, such as {@code ranger-trino-security}: the file name inside the object.
+     *
+     * @param template the name in service.json, possibly with placeholders; null gives null
+     * @param releaseName the release, or null for the plain name
+     * @param namespace the release's namespace, or null for the plain name
+     * @return the object name
+     */
+    static String rangerObjectName(String template, String releaseName, String namespace) {
+        if (template == null) {
+            return null;
+        }
+        String release = releaseName == null ? "" : releaseName.trim();
+        String ns = namespace == null ? "" : namespace.trim();
+        String name = template.trim()
+                .replace("{{releaseName}}", release)
+                .replace("{{namespace}}", ns)
+                .replaceAll("-{2,}", "-");
+        return name.replaceAll("^[-.]+|[-.]+$", "");
+    }
+
+    /**
+     * Labels of the Ranger plugin objects of a release, naming the release so they can be told apart from another
+     * release's in the same namespace, and removed with it.
+     */
+    static Map<String, String> rangerObjectLabels(String releaseName) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("managed-by", "ambari-k8s-view");
+        if (releaseName != null && !releaseName.isBlank()) {
+            labels.put("app.kubernetes.io/instance", releaseName.trim());
+        }
+        return labels;
+    }
+
+    /**
+     * The labels of the Ranger plugin object named by {@code template} in service.json. One whose name is the release's
+     * own ({@code {{releaseName}}}) also gets the release labels, so the uninstall of the release removes it; one
+     * shared by the releases of the namespace does not, so it stays for the others.
+     */
+    static Map<String, String> rangerObjectLabels(String releaseName, String template) {
+        Map<String, String> labels = rangerObjectLabels(releaseName);
+        return template != null && template.contains("{{releaseName}}") && releaseName != null
+                ? KdpsReleaseObjects.withLabels(labels, releaseName.trim())
+                : labels;
+    }
+
+    /**
+     * The annotations of a Ranger plugin object with the labels {@code labels}: {@code extra}, and the release's
+     * namespace when the object is the release's own (see {@link KdpsReleaseObjects}).
+     */
+    private static Map<String, String> rangerObjectAnnotations(Map<String, String> labels, String namespace,
+                                                               Map<String, String> extra) {
+        Map<String, String> annotations = new LinkedHashMap<>(extra == null ? Map.of() : extra);
+        if (labels.containsKey(KdpsReleaseObjects.LABEL_RELEASE)) {
+            annotations.putAll(KdpsReleaseObjects.annotations(namespace));
+        }
+        return annotations;
+    }
+
+    /**
+     * The Ranger plugin objects the deployed values of a release still mount although they are not its own: those an
+     * earlier version shared by every release of the namespace. They stay mounted until the release is upgraded,
+     * which points it at its own.
+     *
+     * @param rangerSpec the release's service.json Ranger block
+     * @param releaseValues the values the release was deployed with
+     * @return the shared object names the release still mounts, in spec order
+     */
+    static List<String> sharedRangerObjectsStillMounted(Map<String, Map<String, Object>> rangerSpec,
+                                                        Map<String, Object> releaseValues,
+                                                        String releaseName, String namespace) {
+        List<String> shared = new ArrayList<>();
+        if (rangerSpec == null || releaseValues == null || releaseValues.isEmpty()) {
+            return shared;
+        }
+        for (Map<String, Object> spec : rangerSpec.values()) {
+            if (spec == null) {
+                continue;
+            }
+            addIfStillShared(shared, spec.get("cm_name"), spec.get("helm_values_property"),
+                    releaseValues, releaseName, namespace);
+            addIfStillShared(shared, spec.get("ranger_plugin_credential_provider_secretName"),
+                    spec.get("ranger_plugin_credential_provider_secretName_helm_prop"),
+                    releaseValues, releaseName, namespace);
+        }
+        return shared;
+    }
+
+    private static void addIfStillShared(List<String> shared, Object nameTemplate, Object helmProperty,
+                                         Map<String, Object> releaseValues, String releaseName, String namespace) {
+        if (nameTemplate == null || helmProperty == null || String.valueOf(helmProperty).isBlank()) {
+            return;
+        }
+        Object deployed = ConfigResolutionService.getByDottedPath(releaseValues, String.valueOf(helmProperty).trim());
+        String own = rangerObjectName(String.valueOf(nameTemplate), releaseName, namespace);
+        if (deployed == null || String.valueOf(deployed).isBlank() || own == null || own.isBlank()) {
+            return;
+        }
+        String mounted = String.valueOf(deployed).trim();
+        if (!mounted.equals(own) && !shared.contains(mounted)) {
+            shared.add(mounted);
+        }
+    }
+
+    /** Whether the service gets the cluster's hdfs-site, which a Ranger plugin's HDFS audit writer needs. */
+    static boolean hasHdfsSiteConfigMap(List<Map<String, Object>> requiredConfigMaps) {
+        if (requiredConfigMaps == null) {
+            return false;
+        }
+        for (Map<String, Object> spec : requiredConfigMaps) {
+            Object files = spec == null ? null : spec.get("config_properties");
+            if (files instanceof Collection && ((Collection<?>) files).contains("hdfs-site")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Create or update Ranger-related ConfigMaps/Secrets required by charts.
      * The behavior is driven entirely by the service.json Ranger spec entries.
+     * Each release gets objects of its own (see {@link #rangerObjectName}); the shared ones an earlier version wrote
+     * are left in place for the releases that still mount them.
      *
      * @param request deploy request containing the Ranger spec
      * @param params mutable params map used to store Helm overrides and Ranger metadata
@@ -1629,8 +3095,9 @@ public class CommandService {
      * @param ambariActionClient Ambari client for config resolution (may be null)
      * @param cluster Ambari cluster name (may be null when Ambari is unavailable)
      * @param ambariAliasResolver resolver for Ambari credential aliases
+     * @return warnings for the operation log: what the operator must still do
      */
-    private void materializeRangerResources(HelmDeployRequest request,
+    private List<String> materializeRangerResources(HelmDeployRequest request,
                                             Map<String, Object> params,
                                             Map<String, Object> effectiveValues,
                                             AmbariActionClient ambariActionClient,
@@ -1638,7 +3105,7 @@ public class CommandService {
                                             AmbariAliasResolver ambariAliasResolver) {
         Map<String, Map<String, Object>> rangerSpec = request.getRanger();
         if (rangerSpec == null || rangerSpec.isEmpty()) {
-            return;
+            return List.of();
         }
 
         Map<String, Object> rangerPluginSettingsSpec = rangerSpec.get("ranger-plugin-settings");
@@ -1658,6 +3125,12 @@ public class CommandService {
         AmbariAliasResolver aliasResolver = ambariAliasResolver != null
                 ? ambariAliasResolver
                 : new AmbariAliasResolver(ctx);
+        List<String> rangerAuditWarnings = new ArrayList<>();
+        // What the audit writers take over from the security entry, which comes before the audit entry: the plugin's
+        // Kerberos login and the writable directory its policy cache lives in.
+        String rangerAuditKerberosPrincipal = null;
+        String rangerAuditKerberosKeytab = null;
+        String rangerAuditSpoolBase = null;
 
         for (Map.Entry<String, Map<String, Object>> rangerEntry : rangerSpec.entrySet()) {
             Map<String, Object> spec = rangerEntry.getValue();
@@ -1673,15 +3146,20 @@ public class CommandService {
                 continue;
             }
 
-            String name = resolveStringValue(spec.get("cm_name"), null);
+            String nameTemplate = resolveStringValue(spec.get("cm_name"), null);
             String kind = resolveStringValue(spec.get("cm_type"), null);
-            if (name == null || name.isBlank() || kind == null || kind.isBlank()) {
+            if (nameTemplate == null || nameTemplate.isBlank() || kind == null || kind.isBlank()) {
                 LOG.warn("Skipping Ranger entry {} because cm_name/cm_type is missing", rangerEntry.getKey());
                 continue;
             }
+            // The object belongs to the release (its name carries the release name), but the key inside it keeps
+            // the plain file name, which is what the chart mounts by subPath whatever the object is called.
+            String name = rangerObjectName(nameTemplate, request.getReleaseName(), request.getNamespace());
+            String dataKeyBase = rangerObjectName(nameTemplate, null, null);
+            Map<String, String> objectLabels = rangerObjectLabels(request.getReleaseName(), nameTemplate);
             boolean asSecret = "secret".equalsIgnoreCase(kind);
             boolean doCreation = true;
-            String xmlKey = name + ".xml";
+            String xmlKey = dataKeyBase + ".xml";
             String xml = null;
 
             switch (type) {
@@ -1711,6 +3189,7 @@ public class CommandService {
                     if (rangerPolicyCacheDir != null && rangerPolicyCacheDirHelmProperty != null
                             && !rangerPolicyCacheDir.isBlank() && !rangerPolicyCacheDirHelmProperty.isBlank()) {
                         this.commandUtils.addOverride(params, rangerPolicyCacheDirHelmProperty, rangerPolicyCacheDir);
+                        rangerAuditSpoolBase = rangerPolicyCacheDir.replaceAll("/+$", "") + "/audit";
                         rangerSecurityConfig.put(
                                 "ranger.plugin." + rangerServiceType + ".policy.cache.dir",
                                 rangerPolicyCacheDir
@@ -1780,6 +3259,8 @@ public class CommandService {
                                         "ranger.plugin." + rangerServiceType + ".ugi.initialize",
                                         "true"
                                 );
+                                rangerAuditKerberosPrincipal = rangerPrincipalFull;
+                                rangerAuditKerberosKeytab = rangerKeytabPath;
                                 rangerExtraServiceConfigs.put("policy.download.auth.users", rangerPrincipalPrimary);
                                 rangerExtraServiceConfigs.put("tag.download.auth.users", rangerPrincipalPrimary);
                             }
@@ -1789,6 +3270,9 @@ public class CommandService {
                     } else if (!kerberosClusterEnabled) {
                         String rangerPluginUserName = resolveStringValue(spec.get("plugin_username"), null);
                         if (rangerPluginUserName != null && !rangerPluginUserName.isBlank()) {
+                            // Unlike the other Ranger objects this Secret stays shared by the namespace: every
+                            // release logs in as the same Ranger user, which keeps the password it was created
+                            // with, so a password of each release's own would not match it.
                             String pluginPasswordSecretName = resolveStringValue(
                                     spec.get("plugin_password_secret_name"),
                                     "ranger-plugin-rest-client-password"
@@ -1869,7 +3353,7 @@ public class CommandService {
                         this.commandUtils.addOverride(params, helmValuesProperty, name);
                     }
                     xml = HadoopSiteXml.render(rangerSecurityConfig);
-                    xmlKey = name + ".xml";
+                    xmlKey = dataKeyBase + ".xml";
                     break;
                 }
                 case "ranger-audit": {
@@ -1881,8 +3365,26 @@ public class CommandService {
                     if (rangerDefaultsProvider != null) {
                         auditConfig.putAll(rangerDefaultsProvider.audit());
                     }
+                    // The plugin audits where the platform context's Ranger does (Solr, HDFS), unless the wizard
+                    // chose otherwise; the pod log stays on beside them.
+                    rangerAuditWarnings.addAll(RangerAuditDestinations.apply(
+                            auditConfig,
+                            rangerCtx != null ? rangerCtx.getResolvedFields() : null,
+                            effectiveValues,
+                            rangerCtx != null ? rangerCtx.getUnreadFields() : null,
+                            rangerAuditKerberosPrincipal,
+                            rangerAuditKerberosKeytab,
+                            hasHdfsSiteConfigMap(request.getRequiredConfigMaps())));
+                    if (rangerAuditSpoolBase != null) {
+                        auditConfig.put("xasecure.audit.destination.solr.batch.filespool.dir", rangerAuditSpoolBase + "/solr");
+                        auditConfig.put("xasecure.audit.destination.hdfs.batch.filespool.dir", rangerAuditSpoolBase + "/hdfs");
+                    }
+                    LOG.info("Ranger audit destinations for '{}': solr={} hdfs={} log4j={}", rangerRepositoryName,
+                            auditConfig.get("xasecure.audit.destination.solr"),
+                            auditConfig.get("xasecure.audit.destination.hdfs"),
+                            auditConfig.get("xasecure.audit.destination.log4j"));
                     xml = HadoopSiteXml.render(auditConfig);
-                    xmlKey = name + ".xml";
+                    xmlKey = dataKeyBase + ".xml";
                     break;
                 }
                 case "ranger-policymgr-ssl": {
@@ -1901,9 +3403,10 @@ public class CommandService {
                     if (credProviderFile != null && credProviderFileHelm != null) {
                         this.commandUtils.addOverride(params, credProviderFileHelm, credProviderFile);
                     }
-                    String credProviderSecretName = resolveStringValue(
-                            spec.get("ranger_plugin_credential_provider_secretName"),
-                            null
+                    String credProviderSecretName = rangerObjectName(
+                            resolveStringValue(spec.get("ranger_plugin_credential_provider_secretName"), null),
+                            request.getReleaseName(),
+                            request.getNamespace()
                     );
                     String credProviderSecretNameHelm = resolveStringValue(
                             spec.get("ranger_plugin_credential_provider_secretName_helm_prop"),
@@ -1922,14 +3425,20 @@ public class CommandService {
                             char[] truststorePass = aliasResolver.resolve(ctx, truststorePassProp);
                             RangerCredentialWriter writer = new RangerCredentialWriter(kubernetesService);
                             String jceksPath = credProviderPath + "/" + credProviderFile;
+                            String credTemplate = resolveStringValue(
+                                    spec.get("ranger_plugin_credential_provider_secretName"), null);
+                            Map<String, String> credLabels = new LinkedHashMap<>(
+                                    rangerObjectLabels(request.getReleaseName(), credTemplate));
+                            credLabels.put("app", rangerServiceType);
                             Map<String, String> props = writer.ensureJceksSecretForTruststorePassword(
                                     request.getNamespace(),
                                     credProviderSecretName,
                                     jceksPath,
                                     RangerCredentialWriter.DEFAULT_ALIAS,
                                     truststorePass,
-                                    Map.of("app", rangerServiceType),
-                                    Map.of("purpose", "ranger-ssl-password")
+                                    credLabels,
+                                    rangerObjectAnnotations(credLabels, request.getNamespace(),
+                                            Map.of("purpose", "ranger-ssl-password"))
                             );
                             policymgrSsl.put("xasecure.policymgr.clientssl.truststore.password", "crypted");
                             policymgrSsl.putAll(props);
@@ -1943,7 +3452,7 @@ public class CommandService {
                         this.commandUtils.addOverride(params, helmValuesProperty, name);
                     }
                     xml = HadoopSiteXml.render(policymgrSsl);
-                    xmlKey = name + "-" + rangerServiceType + ".xml";
+                    xmlKey = dataKeyBase + "-" + rangerServiceType + ".xml";
                     break;
                 }
                 case "ranger-admin-truststore": {
@@ -1952,7 +3461,13 @@ public class CommandService {
                         this.commandUtils.addOverride(params, helmValuesSecretNameKey, name);
                     }
                     String helmValuesPasswordSecretKey = resolveStringValue(spec.get("truststore_password_helm_values_property"), null);
-                    String helmValuesPasswordSecretValue = resolveStringValue(spec.get("truststore_password_secret_name"), null);
+                    String helmValuesPasswordSecretValue = rangerObjectName(
+                            resolveStringValue(spec.get("truststore_password_secret_name"), null),
+                            request.getReleaseName(),
+                            request.getNamespace()
+                    );
+                    Map<String, String> passwordLabels = rangerObjectLabels(request.getReleaseName(),
+                            resolveStringValue(spec.get("truststore_password_secret_name"), null));
                     if (helmValuesPasswordSecretKey != null && helmValuesPasswordSecretValue != null) {
                         this.commandUtils.addOverride(params, helmValuesPasswordSecretKey, helmValuesPasswordSecretValue);
                     }
@@ -1984,7 +3499,7 @@ public class CommandService {
                                         truststorePass,
                                         helmValuesFileValue,
                                         365,
-                                        null
+                                        objectLabels
                                 );
                             }
                             if (helmValuesPasswordSecretValue != null && !helmValuesPasswordSecretValue.isBlank()
@@ -1993,7 +3508,10 @@ public class CommandService {
                                         request.getNamespace(),
                                         helmValuesPasswordSecretValue,
                                         helmValuesPasswordValue,
-                                        new String(truststorePass).getBytes(StandardCharsets.UTF_8)
+                                        new String(truststorePass).getBytes(StandardCharsets.UTF_8),
+                                        passwordLabels,
+                                        rangerObjectAnnotations(passwordLabels, request.getNamespace(), null),
+                                        Boolean.TRUE
                                 );
                             }
                         } catch (Exception ex) {
@@ -2024,7 +3542,8 @@ public class CommandService {
                                 Map<String, byte[]> data = new LinkedHashMap<>();
                                 data.put(helmValuesFileValue, merged);
                                 data.put("ca.crt", org.apache.ambari.view.k8s.utils.TlsChainCapture.toPem(extra).getBytes(StandardCharsets.UTF_8));
-                                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data);
+                                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data,
+                                        objectLabels, rangerObjectAnnotations(objectLabels, request.getNamespace(), null));
                             }
                         } catch (Exception ex) {
                             LOG.warn("Ranger truststore for '{}': could not add the external Ranger CA: {}", rangerRepositoryName, ex.toString());
@@ -2050,7 +3569,8 @@ public class CommandService {
                 if (asSecret) {
                     Map<String, byte[]> data = new LinkedHashMap<>();
                     data.put(xmlKey, xml.getBytes(StandardCharsets.UTF_8));
-                    kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data);
+                    kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data, objectLabels,
+                            rangerObjectAnnotations(objectLabels, request.getNamespace(), null));
                 } else {
                     Map<String, String> data = new LinkedHashMap<>();
                     data.put(xmlKey, xml);
@@ -2058,8 +3578,8 @@ public class CommandService {
                             request.getNamespace(),
                             name,
                             data,
-                            Map.of("managed-by", "ambari-k8s-view"),
-                            Map.of()
+                            objectLabels,
+                            rangerObjectAnnotations(objectLabels, request.getNamespace(), null)
                     );
                 }
             }
@@ -2078,76 +3598,277 @@ public class CommandService {
         }
 
         // --- Atlas tag projection (platformOp op=ranger.tagProjectorSecret) ----------------------
-        // When the Trino wizard's "Sync Atlas tags to Trino" toggle is on, mint a Secret holding the
-        // context's Ranger admin credential in the release namespace and inject the projector's
-        // connection values, so the tag-projector CronJob (clemlab-trino tagSync) authenticates to
-        // the context's Ranger without the operator ever handling a credential. Gated exactly like the
-        // toggle: a ranger-authorized deploy against a context that exposes a direct Ranger credential.
+        // When the Trino wizard's "Sync Atlas tags to Trino" toggle is on, the tag-projector CronJob (clemlab-trino
+        // tagSync) needs a Ranger account allowed to write tags. KDPS gives the release one of its own on the
+        // context's Ranger (TagSyncRangerAccount), puts only that account in the release's project and injects the
+        // projector's connection values. The context's Ranger administrator credentials never leave the view. With
+        // the toggle off, the account an earlier deploy gave the release is taken back.
+        List<String> warnings = new ArrayList<>(rangerAuditWarnings);
         try {
-            Object tagSyncOn = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.enabled");
-            boolean tagSyncEnabled = tagSyncOn != null && "true".equalsIgnoreCase(String.valueOf(tagSyncOn));
-            if (tagSyncEnabled && externalRangerUrl != null && rangerCtx != null
-                    && rangerCtx.getRangerAdminUsername() != null && !rangerCtx.getRangerAdminUsername().isBlank()
-                    && rangerCtx.getRangerAdminPassword() != null && !rangerCtx.getRangerAdminPassword().isBlank()) {
-                String tsSecretName = request.getReleaseName() + "-tagsync-ranger";
-                Map<String, byte[]> tsData = new LinkedHashMap<>();
-                tsData.put("user", rangerCtx.getRangerAdminUsername().getBytes(StandardCharsets.UTF_8));
-                tsData.put("password", rangerCtx.getRangerAdminPassword().getBytes(StandardCharsets.UTF_8));
-                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), tsSecretName, tsData);
-                this.commandUtils.addOverride(params, "tagSync.ranger.url", externalRangerUrl);
-                this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", tsSecretName);
-                LOG.info("Atlas tag sync: minted Secret {} and wired tagSync.ranger.* for release {} (Ranger {})",
-                        tsSecretName, request.getReleaseName(), externalRangerUrl);
-                        } else if (tagSyncEnabled && rangerCtx != null && rangerCtx.isRangerManaged()
-                    && ambariActionClient != null && cluster != null && !cluster.isBlank()) {
-                // Ambari-MANAGED context: the view never holds the Ranger admin password, so it asks the
-                // Ambari server to provision a DEDICATED internal Ranger user for the projector
-                // (kdps-tagsync-<release>, ROLE_SYS_ADMIN — Ranger's importServiceTags is sys-admin
-                // only) with a password the view generates and rotates on every deploy. Only that
-                // scoped credential ever lands in the release namespace (<release>-tagsync-ranger).
-                String tsUser = ("kdps-tagsync-" + request.getReleaseName()).toLowerCase(Locale.ROOT);
-                String tsPassword = generateRangerPassword();
-                int req = ambariActionClient.submitRangerUserUpsert(tsUser, tsPassword, "ROLE_SYS_ADMIN", true, 90,
-                        "KDPS tag sync: provision Ranger tag-writer user " + tsUser + " for " + request.getReleaseName());
-                                if (!ambariActionClient.waitUntilComplete(req, 120, java.util.concurrent.TimeUnit.SECONDS)) {
-                    String detail = ambariActionClient.failureDetail(req);
-                    throw new IllegalStateException("Ambari request " + req + " (Ranger tag-writer user '" + tsUser
-                            + "') did not complete — Atlas tag sync cannot be wired"
-                            + (detail.isBlank() ? "; see the Ambari request log." : ": " + detail));
-                }
-                String managedRangerUrl = rangerCtx.getRangerUrl() != null && !rangerCtx.getRangerUrl().isBlank()
-                        ? rangerCtx.getRangerUrl().trim()
-                        : ambariActionClient.getDesiredConfigProperty(cluster, "admin-properties", "policymgr_external_url");
-                if (managedRangerUrl == null || managedRangerUrl.isBlank()) {
-                    throw new IllegalStateException("Atlas tag sync: the managed context exposes no Ranger URL"
-                            + " (admin-properties/policymgr_external_url is empty).");
-                }
-                String tsSecretName = request.getReleaseName() + "-tagsync-ranger";
-                Map<String, byte[]> tsData = new LinkedHashMap<>();
-                tsData.put("user", tsUser.getBytes(StandardCharsets.UTF_8));
-                tsData.put("password", tsPassword.getBytes(StandardCharsets.UTF_8));
-                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), tsSecretName, tsData);
-                this.commandUtils.addOverride(params, "tagSync.ranger.url", managedRangerUrl.trim());
-                this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", tsSecretName);
-                LOG.info("Atlas tag sync (managed context): provisioned Ranger tag-writer '{}' via Ambari request {},"
-                        + " minted Secret {} and wired tagSync.ranger.* for release {} (Ranger {})",
-                        tsUser, req, tsSecretName, request.getReleaseName(), managedRangerUrl);
-            } else if (tagSyncEnabled) {
-                // Refuse NOW rather than ten steps later: the chart `require`s tagSync.ranger.url and
-                // tagSync.ranger.existingSecret, so without them the helm dry-run fails after the Ranger
-                // repo, keytabs and OIDC client were already created. A context without Ranger (or a
-                // managed one reached without Ambari access) cannot feed the projector.
-                throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a platform context with"
-                        + " Ranger: an Ambari-managed one (KDPS provisions a scoped tag-writer user through Ambari)"
-                        + " or an external/manual one exposing Ranger admin credentials. The selected context"
-                        + (rangerCtx != null && rangerCtx.getName() != null ? " '" + rangerCtx.getName() + "'" : "")
-                        + " offers neither — turn 'Sync Atlas tags to Trino' off, or pick a context with Ranger.");
-            }
-                } catch (IllegalArgumentException | IllegalStateException refused) {
+            warnings.addAll(applyTagSyncRangerAccount(request, params, effectiveValues, rangerCtx, externalRangerUrl,
+                    ambariActionClient, cluster));
+        } catch (IllegalArgumentException | IllegalStateException refused) {
             throw refused;
         } catch (Exception e) {
             LOG.warn("Atlas tag sync wiring failed for release {}: {}", request.getReleaseName(), e.toString());
         }
+        return warnings;
+    }
+
+    /**
+     * The Ranger account of a release's Atlas tag projector, as its values ask: given when the projector runs (see
+     * {@link #tagSyncProjectorRuns} and {@link #wireTagSyncRangerAccount}), taken back otherwise (see
+     * {@link #takeBackTagSyncRangerAccount}).
+     *
+     * @return what the operator must hear
+     */
+    List<String> applyTagSyncRangerAccount(HelmDeployRequest request, Map<String, Object> params,
+                                           Map<String, Object> effectiveValues,
+                                           org.apache.ambari.view.k8s.model.ResolvedContext rangerCtx,
+                                           String externalRangerUrl, AmbariActionClient ambariActionClient,
+                                           String cluster) throws Exception {
+        if (tagSyncProjectorRuns(effectiveValues)) {
+            return wireTagSyncRangerAccount(request, params, effectiveValues, rangerCtx, externalRangerUrl,
+                    ambariActionClient, cluster);
+        }
+        return takeBackTagSyncRangerAccount(request.getNamespace(), request.getReleaseName(), params);
+    }
+
+    /**
+     * Whether the release runs the Atlas tag projector, by the same test as the chart, which creates its CronJob only
+     * when {@code tagSync.enabled} is on and the coordinator enforces Ranger ({@code accessControl.type} is
+     * {@code ranger}). The wizard turns tag sync on for a context with Atlas tags and only hides the toggle when Ranger
+     * is not chosen, so values may hold {@code tagSync.enabled} on for a release that never syncs a tag.
+     */
+    static boolean tagSyncProjectorRuns(Map<String, Object> effectiveValues) {
+        Object enabled = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.enabled");
+        Object accessControl = ConfigResolutionService.getByDottedPath(effectiveValues, "accessControl.type");
+        return enabled != null && "true".equalsIgnoreCase(String.valueOf(enabled).trim())
+                && accessControl != null && "ranger".equals(String.valueOf(accessControl).trim());
+    }
+
+    /**
+     * Gives the Atlas tag projector of a release the Ranger account it writes tags with, and points the chart at it
+     * ({@code tagSync.ranger.url}, {@code tagSync.ranger.existingSecret}).
+     *
+     * <ul>
+     *   <li>Values naming a Secret other than KDPS's own in {@code tagSync.ranger.existingSecret}, or a Secret named
+     *       like KDPS's own that KDPS did not write (see {@link TagSyncRangerAccount#writtenByKdps}): the operator
+     *       brought the account, KDPS creates none and only fills in the Ranger URL when it is missing. The account an
+     *       earlier deploy gave the release is taken back, and the operator's Secret left as it is.</li>
+     *   <li>A context whose Ranger the view reaches with stored administrator credentials: the account is created
+     *       there directly, unless the operator turned auto-configuration off for the context, which is refused once
+     *       the account an earlier deploy gave the release is taken back.</li>
+     *   <li>The Ambari-managed context: the Ambari server, which holds the Ranger administrator, creates it.</li>
+     * </ul>
+     *
+     * @return what the operator must hear about the credentials the release's Secret held before
+     * @throws IllegalArgumentException when the context cannot give the release an account
+     * @throws IllegalStateException when Ranger did not take the account
+     */
+    List<String> wireTagSyncRangerAccount(HelmDeployRequest request, Map<String, Object> params,
+                                          Map<String, Object> effectiveValues,
+                                          org.apache.ambari.view.k8s.model.ResolvedContext rangerCtx,
+                                          String externalRangerUrl, AmbariActionClient ambariActionClient,
+                                          String cluster) throws Exception {
+        String release = request.getReleaseName();
+        String namespace = request.getNamespace();
+        String ownSecret = TagSyncRangerAccount.secretName(release);
+        String contextName = rangerCtx != null && rangerCtx.getName() != null ? " '" + rangerCtx.getName() + "'" : "";
+        boolean managed = rangerCtx != null && rangerCtx.isRangerManaged()
+                && ambariActionClient != null && cluster != null && !cluster.isBlank();
+
+        Object named = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.ranger.existingSecret");
+        String operatorSecret = named == null ? "" : String.valueOf(named).trim();
+        boolean namesOwnSecret = operatorSecret.isEmpty() || operatorSecret.equals(ownSecret);
+        if (namesOwnSecret && TagSyncRangerAccount.secretBroughtByOperator(kubernetesService, namespace, release)) {
+            // The operator created the Secret under the name KDPS uses: it is theirs, never replaced nor deleted.
+            if (operatorSecret.isEmpty()) {
+                this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", ownSecret);
+            }
+            operatorSecret = ownSecret;
+            namesOwnSecret = false;
+        }
+        if (!namesOwnSecret) {
+            Object url = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.ranger.url");
+            if (url == null || String.valueOf(url).isBlank()) {
+                String contextUrl = externalRangerUrl != null ? externalRangerUrl
+                        : managed ? managedRangerUrl(rangerCtx, ambariActionClient, cluster) : null;
+                if (contextUrl != null) this.commandUtils.addOverride(params, "tagSync.ranger.url", contextUrl);
+            }
+            LOG.info("Atlas tag sync: release {} uses the Ranger account of Secret {} named in its values; KDPS"
+                    + " creates none", release, operatorSecret);
+            return takeBackTagSyncRangerAccount(namespace, release, params);
+        }
+
+        String rangerUrl;
+        TagSyncRangerAccount.RangerUsers ranger;
+        if (externalRangerUrl != null) {
+            boolean managedKind = rangerCtx.getKind() == null || "MANAGED".equalsIgnoreCase(rangerCtx.getKind());
+            if (!managedKind && !rangerCtx.isAutoConfigureRemote()) {
+                // What an earlier deploy put in the project must not stay there because this one is refused: it may
+                // be the context's own Ranger administrator, which earlier KDPS versions copied there.
+                List<String> takenBack = takeBackTagSyncRangerAccount(namespace, release, params);
+                throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a Ranger account for this"
+                        + " release, and auto-configuration is off for platform context" + contextName + ", so KDPS"
+                        + " creates none in its Ranger. Create a Ranger user allowed to import tags, store its name and"
+                        + " password under the keys 'user' and 'password' of a Secret in project '" + namespace
+                        + "' whose name is not '" + ownSecret + "' (KDPS keeps that name for the accounts it creates),"
+                        + " and name that Secret in 'tagSync.ranger.existingSecret'; or turn auto-configuration on"
+                        + " for the context, or turn 'Sync Atlas tags to Trino' off."
+                        + (takenBack.isEmpty() ? "" : " " + String.join(" ", takenBack)));
+            }
+            rangerUrl = externalRangerUrl;
+            ranger = TagSyncRangerAccount.direct(tlsOf(rangerCtx, "Ranger"), externalRangerUrl, rangerCtx.getRangerAdminUsername(),
+                    rangerCtx.getRangerAdminPassword());
+        } else if (managed) {
+            rangerUrl = managedRangerUrl(rangerCtx, ambariActionClient, cluster);
+            if (rangerUrl == null) {
+                throw new IllegalStateException("Atlas tag sync: the managed context exposes no Ranger URL"
+                        + " (admin-properties/policymgr_external_url is empty).");
+            }
+            ranger = TagSyncRangerAccount.viaAmbari(ambariActionClient, TagSyncRangerAccount.AMBARI_TIMEOUT_SECONDS);
+        } else {
+            // Refuse NOW rather than ten steps later: the chart `require`s tagSync.ranger.url and
+            // tagSync.ranger.existingSecret, so without them the helm dry-run fails after the Ranger
+            // repo, keytabs and OIDC client were already created. A context without Ranger (or a
+            // managed one reached without Ambari access) cannot give the projector an account.
+            throw new IllegalArgumentException("Atlas tag sync ('tagSync.enabled') needs a platform context with"
+                    + " Ranger that KDPS can create the release's tag sync account in: the Ambari-managed one (through"
+                    + " Ambari) or an external/manual one with Ranger administrator credentials. The selected context"
+                    + contextName + " offers neither — turn 'Sync Atlas tags to Trino' off, or pick a context with Ranger.");
+        }
+
+        // The context whose Ranger the account is created on, which is not always the one the deploy names: a context
+        // KDPS no longer has resolves to the managed cluster, and the account must be recorded where it really is.
+        String contextId = rangerCtx != null && rangerCtx.getId() != null && !rangerCtx.getId().isBlank()
+                ? rangerCtx.getId() : stringValue(params.get("_platformContextId"));
+        String contextKey = TagSyncRangerAccount.contextKey(contextId);
+        String grant = UUID.randomUUID().toString();
+        boolean newAccount;
+        TagSyncRangerAccount.Provisioned account;
+        // Under the lock that taking back the account of a deploy that did not install the release holds: that
+        // take-back either ends before this deploy looks at the record, or finds it given to this deploy.
+        synchronized (tagSyncTakeBackLock) {
+            newAccount = !tagSyncAccountRecorded(namespace, release) || Boolean.FALSE.equals(
+                    releaseInstalled(namespace, release, params.get(GITOPS_RELEASE_PARAM) != null));
+            account = TagSyncRangerAccount.provision(kubernetesService, tagSyncAccounts, ranger,
+                    tagSyncRangers.apply(params), namespace, release, contextKey,
+                    recordedPlatformContext(namespace, release), tagSyncInstanceId(), kubernetesClusterUrl(), grant);
+        }
+        if (newAccount) {
+            // Should this deploy end without installing the release, nothing would ever take the account back. That
+            // holds too when the release has an account but is not installed: the deploy that gave it failed or was
+            // canceled, and now leaves taking it back to this one.
+            params.put(TAG_SYNC_NEW_ACCOUNT_PARAM, contextKey == null ? ContextService.DEFAULT_CONTEXT_ID : contextKey);
+            params.put(TAG_SYNC_GRANT_PARAM, grant);
+        }
+        this.commandUtils.addOverride(params, "tagSync.ranger.url", rangerUrl);
+        this.commandUtils.addOverride(params, "tagSync.ranger.existingSecret", ownSecret);
+        LOG.info("Atlas tag sync: release {} writes tags as Ranger account '{}' (Secret {}, Ranger {})",
+                release, account.userName(), ownSecret, rangerUrl);
+        account.warnings().forEach(w -> LOG.warn("Atlas tag sync, release {}: {}", release, w));
+        return account.warnings();
+    }
+
+    /**
+     * The Ranger account of a release's Atlas tag projector on a deploy that carries no Ranger wiring: Resync / restart,
+     * Refresh security profile and Worker autoscaling on the Releases page, an upgrade from the YAML editor, or a deploy
+     * without a platform context. Such a deploy cannot give the projector an account. When its values still sync tags
+     * with KDPS's Secret, the release keeps the account it has, password unchanged: taking it back would leave the
+     * projector reading a Secret that no longer exists, and newly tagged columns would stop reaching Trino's Ranger
+     * repository. Accounts the release no longer uses that an earlier deploy could not disable are tried again (see
+     * {@link TagSyncRangerAccount#kept}). Otherwise (tag sync off, Ranger not enforced, or the values naming another
+     * Secret) the account is taken back, see {@link #takeBackTagSyncRangerAccount}.
+     *
+     * @return what the operator must hear
+     */
+    List<String> keepOrTakeBackTagSyncRangerAccount(HelmDeployRequest request, Map<String, Object> params,
+                                                    Map<String, Object> effectiveValues) {
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        Object named = ConfigResolutionService.getByDottedPath(effectiveValues, "tagSync.ranger.existingSecret");
+        String secret = named == null ? "" : String.valueOf(named).trim();
+        // Values naming no Secret at all are refused by the chart, and the release then keeps running with KDPS's.
+        boolean usesOwnSecret = secret.isEmpty() || secret.equals(TagSyncRangerAccount.secretName(release));
+        if (!tagSyncProjectorRuns(effectiveValues) || !usesOwnSecret) {
+            return takeBackTagSyncRangerAccount(namespace, release, params);
+        }
+        LOG.info("Atlas tag sync: the deploy of {}/{} carries no Ranger wiring; the release keeps its Ranger account,"
+                + " whose password is not changed", namespace, release);
+        List<String> out = TagSyncRangerAccount.kept(kubernetesService, tagSyncAccounts,
+                tagSyncRangers.apply(params), namespace, release);
+        out.forEach(w -> LOG.warn("Atlas tag sync, release {}/{}: {}", namespace, release, w));
+        return out;
+    }
+
+    /**
+     * Takes back the Ranger account an earlier deploy gave the Atlas tag projector of a release, on a deploy that gives
+     * it none (tag sync off, the operator's own account, a context with auto-configuration off): the account is
+     * disabled and the Secret {@code <release>-tagsync-ranger} deleted, so that neither stays live in the project
+     * unused. What earlier KDPS versions left in that Secret is reported, as on uninstall. Never throws.
+     *
+     * @param params the deploy's parameters, through which the Ranger of the managed cluster is reached
+     * @return what the operator must hear; empty when the release had nothing to take back
+     */
+    List<String> takeBackTagSyncRangerAccount(String namespace, String release, Map<String, Object> params) {
+        String recordedContext = null;
+        try {
+            K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(namespace, release);
+            recordedContext = recorded != null ? recorded.getPlatformContextId()
+                    : stringValue(params.get("_platformContextId"));
+        } catch (RuntimeException e) {
+            LOG.warn("Atlas tag sync: the release record of {}/{} could not be read: {}", namespace, release,
+                    e.toString());
+        }
+        TagSyncRangerAccount.Revoked revoked = TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts,
+                namespace, release, recordedContext, tagSyncRangers.apply(params));
+        List<String> out = new ArrayList<>();
+        if (!revoked.done().isEmpty()) {
+            out.add("This deploy gives the Atlas tag projector no Ranger account from KDPS, so KDPS "
+                    + String.join(" and ", revoked.done()) + ".");
+        }
+        if (revoked.note() != null) out.add(revoked.note());
+        out.forEach(w -> LOG.warn("Atlas tag sync, release {}/{}: {}", namespace, release, w));
+        return out;
+    }
+
+    /**
+     * The platform context the view recorded for a release, which a deploy only changes once it is applied; null when
+     * the release is not recorded, has no context, or its record cannot be read.
+     */
+    private String recordedPlatformContext(String namespace, String release) {
+        try {
+            K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(namespace, release);
+            return recorded == null ? null : recorded.getPlatformContextId();
+        } catch (RuntimeException e) {
+            LOG.warn("Atlas tag sync: the release record of {}/{} could not be read: {}", namespace, release,
+                    e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * This KDPS instance's part of the names of tag sync accounts (see {@link TagSyncRangerAccount#instanceId}).
+     *
+     * @throws IllegalStateException when it cannot be kept in the view settings
+     */
+    private String tagSyncInstanceId() {
+        try {
+            return tagSyncInstance.get();
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Atlas tag sync: KDPS could not keep in the view settings the id that names"
+                    + " the Ranger accounts it creates: " + (e.getMessage() == null ? e.toString() : e.getMessage()), e);
+        }
+    }
+
+    /** The Ranger URL of the managed context: the context's own, else Ambari's {@code policymgr_external_url}. */
+    private static String managedRangerUrl(org.apache.ambari.view.k8s.model.ResolvedContext rangerCtx,
+                                           AmbariActionClient ambariActionClient, String cluster) throws Exception {
+        String url = rangerCtx.getRangerUrl() != null && !rangerCtx.getRangerUrl().isBlank()
+                ? rangerCtx.getRangerUrl()
+                : ambariActionClient.getDesiredConfigProperty(cluster, "admin-properties", "policymgr_external_url");
+        return url == null || url.isBlank() ? null : url.trim();
     }
 
     /**
@@ -2201,19 +3922,23 @@ public class CommandService {
         if (existingServiceConfigs != null && !existingServiceConfigs.isEmpty()) {
             rangerServiceConfigs.putAll(existingServiceConfigs);
         }
-        if (ambariActionClient != null && cluster != null && !cluster.isBlank()) {
-            Map<String, String> computedConfigs = configResolutionService.computeExtraRangerConfigs(
-                    rangerPluginSettingsSpec,
-                    params,
-                    effectiveValues,
-                    ambariActionClient,
-                    cluster
-            );
-            if (computedConfigs != null && !computedConfigs.isEmpty()) {
-                rangerServiceConfigs.putAll(computedConfigs);
-            }
-        } else {
-            LOG.warn("Ambari client unavailable; skipping Ranger extra config resolution for release {}", request.getReleaseName());
+        boolean withAmbari = ambariActionClient != null && cluster != null && !cluster.isBlank();
+        if (!withAmbari) {
+            // Configs read from Ambari are left out (for a release on another platform context they would be the
+            // managed cluster's); those built from the chart values are still set.
+            LOG.info("No Ambari cluster for the Ranger repository of release {}; its configs read from Ambari are left out",
+                    request.getReleaseName());
+        }
+        params.putIfAbsent(RANGER_SSL_VERIFICATION_PARAM, rangerSslVerificationSuffix(request, effectiveValues));
+        Map<String, String> computedConfigs = configResolutionService.computeExtraRangerConfigs(
+                rangerPluginSettingsSpec,
+                params,
+                effectiveValues,
+                withAmbari ? ambariActionClient : null,
+                withAmbari ? cluster : null
+        );
+        if (computedConfigs != null && !computedConfigs.isEmpty()) {
+            rangerServiceConfigs.putAll(computedConfigs);
         }
 
         // Persist ranger metadata into params for the child command step.
@@ -2265,6 +3990,18 @@ public class CommandService {
      * (OPENMETADATA — OM is a tag SOURCE, not a Ranger plugin consumer) work
      * cleanly: no spurious "Ranger plugin settings missing" warning, no need to
      * fake a plugin-settings block.
+     *
+     * <p>The service supporting TagSync is not the operator asking for it: the step registers only
+     * when the release's values turn the switch on ({@code enabled_helm_prop}). The wizard sends the
+     * Ranger block for every release attached to a platform context, so without this check every
+     * such deploy reconfigured and restarted the cluster's Ranger TagSync. Read from the values,
+     * not the form, so API and GitOps deploys are held to the same switch.
+     *
+     * <p>With the switch off, on a platform KDPS configures, the step is still queued as a check
+     * ({@code _tagSyncCheckOnly}) that only reads {@code ranger-tagsync-site}. Earlier KDPS versions
+     * registered OpenMetadata on every such deploy whatever the switch said, turning the Atlas tag
+     * source off and storing the bot token in clear; their releases carry no switch value, so they
+     * all deploy with it off now, and this check is where their operators hear about it.
      */
     void planRangerTagSyncSources(CommandEntity rootCommand,
                                   List<String> childCommandsIgnored,
@@ -2284,12 +4021,101 @@ public class CommandService {
                     request.getReleaseName());
             return;
         }
+        Map<String, Object> stepParams = params;
+        if (!isTagSyncSwitchOn(request.getValues(), tagSyncSettingsSpec)) {
+            String contextId = stringValue(params.get("_platformContextId"));
+            if (!platformContextWritable(contextId)) {
+                LOG.info("Ranger TagSync is off for release {} ('{}' is not true) and KDPS does not configure platform"
+                                + " context '{}'; nothing to register or check.",
+                        request.getReleaseName(), tagSyncEnabledPath(tagSyncSettingsSpec), contextId);
+                return;
+            }
+            LOG.info("Ranger TagSync is off for release {} ('{}' is not true); the cluster's Ranger TagSync is only"
+                    + " checked, not changed.", request.getReleaseName(), tagSyncEnabledPath(tagSyncSettingsSpec));
+            stepParams = new LinkedHashMap<>(params);
+            stepParams.put("_tagSyncCheckOnly", true);
+        }
         // Persist settings into params so the runtime handler (registerRangerTagSyncSource)
         // can read endpoint helm path, fernet Secret name template, OM bot wiring, etc.
-        params.put("_tagSyncSettings", tagSyncSettingsSpec);
+        stepParams.put("_tagSyncSettings", tagSyncSettingsSpec);
 
         // Defer to the plan factory to walk ranger-tagsync-source entries.
-        this.commandPlanFactory.createRangerTagSyncRegister(rootCommand, rangerSpec, params);
+        this.commandPlanFactory.createRangerTagSyncRegister(rootCommand, rangerSpec, stepParams);
+    }
+
+    /** Values path of the release's "Enable Ranger TagSync" switch, from {@code ranger-tagsync-settings}. */
+    static String tagSyncEnabledPath(Map<String, Object> settings) {
+        Object path = settings == null ? null : settings.get("enabled_helm_prop");
+        return path == null || String.valueOf(path).isBlank() ? "ranger.tagSync.enabled" : String.valueOf(path).trim();
+    }
+
+    /** Whether the release's values turn Ranger TagSync on; anything but {@code true} means off. */
+    static boolean isTagSyncSwitchOn(Map<String, Object> values, Map<String, Object> settings) {
+        if (values == null || values.isEmpty()) return false;
+        Object raw = ConfigResolutionService.getByDottedPath(values, tagSyncEnabledPath(settings));
+        return raw != null && "true".equalsIgnoreCase(String.valueOf(raw).trim());
+    }
+
+    /**
+     * Says why a release that turns Ranger TagSync on cannot have it, before anything is installed,
+     * or null when there is nothing to say (TagSync off, not supported by the service, or ready).
+     *
+     * <p>The registration runs after the install: it reads the OpenMetadata bot token through the
+     * bundled Airflow and hands Ranger TagSync the OpenMetadata API address. Without either, the
+     * release used to install and the deploy then ended FAILED at "Ranger: register TagSync source",
+     * skipping the steps after it.
+     */
+    static String describeTagSyncPrerequisiteProblem(HelmDeployRequest request) {
+        if (request == null || request.getRanger() == null || request.getValues() == null) return null;
+        Map<String, Object> settings = request.getRanger().get("ranger-tagsync-settings");
+        if (settings == null || settings.isEmpty()) return null;
+        if (!isTagSyncSwitchOn(request.getValues(), settings)) return null;
+
+        List<String> missing = new ArrayList<>();
+        Object airflowPath = settings.getOrDefault("airflow_enabled_helm_prop", "dependencies.enabled");
+        Object airflowOn = ConfigResolutionService.getByDottedPath(request.getValues(), String.valueOf(airflowPath));
+        if (airflowOn == null || !"true".equalsIgnoreCase(String.valueOf(airflowOn).trim())) {
+            missing.add("the bundled Airflow is not deployed ('Deploy bundled Airflow'), and KDPS reads the"
+                    + " OpenMetadata bot token through it");
+        }
+        Object endpointPath = settings.getOrDefault("endpoint_helm_prop", "ranger.tagSync.endpoint");
+        Object endpoint = ConfigResolutionService.getByDottedPath(request.getValues(), String.valueOf(endpointPath));
+        if (endpoint == null || String.valueOf(endpoint).isBlank()) {
+            missing.add("Ranger TagSync has no OpenMetadata API address to call: turn the ingress on with a host"
+                    + " name, or fill 'OM API endpoint as seen from Ranger TagSync'");
+        }
+        if (missing.isEmpty()) return null;
+        return "Ranger TagSync is turned on for this release, but " + String.join("; and ", missing)
+                + ". Fix this, or turn 'Enable Ranger TagSync' off.";
+    }
+
+    /**
+     * {@link #describeTagSyncPrerequisiteProblem} for a deploy that will run the registration, else
+     * null. Only a direct Helm deploy plans it (a GitOps deploy never does), and it is skipped at run
+     * time for a platform context KDPS may not configure (auto-configuration turned off, see
+     * {@code remoteConfigGate}). Refusing those deploys asked for an Airflow nothing would use.
+     */
+    String tagSyncSubmitProblem(HelmDeployRequest request) {
+        String problem = describeTagSyncPrerequisiteProblem(request);
+        if (problem == null) return null;
+        if (DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(String.valueOf(request.getDeploymentMode()).trim())) {
+            LOG.info("Release {}: Ranger TagSync is on, but a GitOps deploy does not register it; not refused: {}",
+                    request.getReleaseName(), problem);
+            return null;
+        }
+        String contextId = stringValue(ConfigResolutionService.getByDottedPath(
+                request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap(), "platformContextId"));
+        if (!platformContextWritable(contextId)) {
+            LOG.info("Release {}: Ranger TagSync is on, but auto-configuration is off for platform context '{}', so the"
+                    + " registration is skipped; not refused: {}", request.getReleaseName(), contextId, problem);
+            return null;
+        }
+        return problem;
+    }
+
+    /** Whether KDPS writes to the platform of this context (see {@link ContextService#writesToPlatform(String)}). */
+    boolean platformContextWritable(String contextId) {
+        return new ContextService(ctx).writesToPlatform(contextId);
     }
 
     /**
@@ -2911,10 +4737,143 @@ public class CommandService {
 
     // -------------------- Public API --------------------
 
+    /**
+     * Submits a keytab request an operator made on the keytab endpoint. The keytab is issued with the operator's own
+     * Ambari credentials, and only for a release KDPS deployed ({@link KeytabRequestPolicy}).
+     *
+     * @param req           the principal, the namespace and Secret that receive the keytab, optionally the release
+     * @param callerHeaders the operator's request headers, whose Ambari credentials issue the keytab
+     * @param baseUri       the local Ambari API base
+     * @return the id of the queued operation
+     * @throws KeytabRequestPolicy.RefusedException when the request is not for a release KDPS deployed
+     */
     public String submitKeytabRequest(KeytabRequest req,
                                       MultivaluedMap<String,String> callerHeaders,
                                       URI baseUri) {
         Objects.requireNonNull(req, "KeytabRequest");
+        KeytabRequestPolicy.check(req, releasesIn(req.getNamespace()), false);
+        return enqueueKeytabRequest(req, AmbariActionClient.headersToPersistableMap(callerHeaders), null, null,
+                baseUri);
+    }
+
+    /**
+     * Submits a keytab request of the view's keytab webhook, which the caller authenticated by its client certificate.
+     * The request must be for a release KDPS deployed and may only write the pod's own keytab Secret
+     * ({@link KeytabRequestPolicy}). The webhook holds no Ambari permission: the keytab is issued with the Ambari
+     * credentials the release's deploy was made with, kept encrypted with that operation while it runs, which is when
+     * the deploy creates the release's pods. The request records that deploy ({@code deployCommandId}) but runs as an
+     * operation of its own: added to the deploy's steps, the deploy would run it a second time. The operation the
+     * webhook names is ignored.
+     *
+     * <p>When those credentials are no longer kept (a pod created after the deploy ended), the request is still
+     * queued: a keytab another Secret of the namespace holds for the principal is copied without asking Ambari, and
+     * only issuing a new one fails, asking for a redeploy.
+     *
+     * @param req     the request as the webhook sent it
+     * @param baseUri the local Ambari API base
+     * @return the id of the queued operation
+     * @throws KeytabRequestPolicy.RefusedException when the request is not for a release KDPS deployed
+     */
+    public String submitWebhookKeytabRequest(KeytabRequest req, URI baseUri) {
+        Objects.requireNonNull(req, "KeytabRequest");
+        K8sReleaseEntity release = KeytabRequestPolicy.check(req, releasesIn(req.getNamespace()), true);
+        DeployIdentity deploy = deployIdentity(release);
+        req.setParentCommandId(null);
+        if (deploy == null) {
+            LOG.warn("No Ambari credentials are kept for the deploy of release {}/{}: the keytab of {} can only be "
+                    + "copied from another Secret of the namespace, not issued. Redeploy the release to issue it.",
+                    release.getNamespace(), release.getReleaseName(), req.getPrincipal());
+        }
+        return enqueueKeytabRequest(req, deploy == null ? Map.of() : deploy.callerHeaders(),
+                deploy == null ? null : deploy.commandId(), release.getReleaseName(), baseUri);
+    }
+
+    /** The releases KDPS recorded in a namespace. */
+    private List<K8sReleaseEntity> releasesIn(String namespace) {
+        List<K8sReleaseEntity> releases = new ArrayList<>();
+        if (namespace == null) {
+            return releases;
+        }
+        for (K8sReleaseEntity release : new ReleaseMetadataService(ctx).findAll()) {
+            if (namespace.equals(release.getNamespace())) {
+                releases.add(release);
+            }
+        }
+        return releases;
+    }
+
+    /**
+     * A deploy operation of a release and the Ambari credentials it was made with (encrypted, as persisted).
+     *
+     * @param commandId     the deploy's root operation
+     * @param callerHeaders its {@code _callerHeaders} parameter
+     */
+    record DeployIdentity(String commandId, Object callerHeaders) {}
+
+    /**
+     * The latest deploy of a release that still keeps the Ambari credentials it was made with: the one the deploy
+     * published in the namespace's correlation ConfigMap (read with the view's own Kubernetes account), else the one
+     * recorded with the release. A deploy counts only when its parameters name that same release.
+     *
+     * @param release a release KDPS deployed
+     * @return the deploy and its credentials; null when none keeps them
+     */
+    DeployIdentity deployIdentity(K8sReleaseEntity release) {
+        List<String> candidates = new ArrayList<>();
+        String correlated = correlatedDeployId(release.getNamespace(), release.getReleaseName());
+        if (correlated != null) candidates.add(correlated);
+        if (release.getDeploymentId() != null && !candidates.contains(release.getDeploymentId())) {
+            candidates.add(release.getDeploymentId());
+        }
+        Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+        for (String id : candidates) {
+            try {
+                CommandEntity deploy = find(id);
+                String raw = deploy == null ? null : resolveParamsJson(deploy);
+                if (raw == null || raw.isBlank() || CommandParamsStore.wasRemoved(raw)) {
+                    continue;
+                }
+                Map<String, Object> params = gson.fromJson(raw, mapType);
+                if (params == null || !release.getNamespace().equals(params.get("namespace"))
+                        || !release.getReleaseName().equals(params.get("releaseName"))) {
+                    continue;
+                }
+                Object callerHeaders = params.get("_callerHeaders");
+                if (callerHeaders instanceof Map<?, ?> persisted && !persisted.isEmpty()) {
+                    return new DeployIdentity(id, callerHeaders);
+                }
+            } catch (Exception e) {
+                LOG.warn("Could not read the deploy {} of release {}/{}: {}", id, release.getNamespace(),
+                        release.getReleaseName(), e.toString());
+            }
+        }
+        return null;
+    }
+
+    /** The deploy operation the view published for a release in its namespace's correlation ConfigMap, or null. */
+    private String correlatedDeployId(String namespace, String releaseName) {
+        try {
+            io.fabric8.kubernetes.client.KubernetesClient client = kubernetesService.getClient();
+            io.fabric8.kubernetes.api.model.ConfigMap correlation = client == null ? null
+                    : client.configMaps().inNamespace(namespace).withName(CORRELATION_CONFIGMAP).get();
+            String id = correlation == null || correlation.getData() == null ? null
+                    : correlation.getData().get(releaseName + ".commandId");
+            return id == null || id.isBlank() ? null : id.trim();
+        } catch (Exception e) {
+            LOG.info("Could not read ConfigMap {}/{}: {}", namespace, CORRELATION_CONFIGMAP, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Queues the two steps of a keytab request: issue the keytab with Ambari, then write it to the Secret.
+     *
+     * @param persistedCallerHeaders the Ambari credentials that issue the keytab, already persistable
+     * @param deployCommandId        the deploy whose credentials they are, recorded for traceability; null for none
+     * @param webhookRelease         the release of the pod, for a request of the keytab webhook; null for an operator's
+     */
+    private String enqueueKeytabRequest(KeytabRequest req, Object persistedCallerHeaders, String deployCommandId,
+                                        String webhookRelease, URI baseUri) {
         Objects.requireNonNull(req.getPrincipal(), "principal");
         Objects.requireNonNull(req.getNamespace(), "namespace");
         Objects.requireNonNull(req.getSecretName(), "secretName");
@@ -2940,9 +4899,15 @@ public class CommandService {
         if (req.getParentCommandId() != null && !req.getParentCommandId().isBlank()) {
             params.put("parentCommandId", req.getParentCommandId());
         }
+        if (deployCommandId != null) {
+            params.put("deployCommandId", deployCommandId);
+        }
+        if (webhookRelease != null) {
+            params.put(WEBHOOK_RELEASE_PARAM, webhookRelease);
+        }
 
-        // persist caller session/headers + baseUri to reuse in worker
-        params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        // the Ambari credentials that issue the keytab (already persistable) + baseUri, reused in the worker
+        params.put("_callerHeaders", persistedCallerHeaders);
         params.put("_baseUri", baseUri != null ? baseUri.toString() : null);
 
         // status for root
@@ -3049,6 +5014,24 @@ public class CommandService {
                                                   String releaseName,
                                                   MultivaluedMap<String, String> callerHeaders,
                                                   URI baseUri) {
+        String commandId = planReleaseKeytabRegeneration(namespace, releaseName, callerHeaders, baseUri);
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Plans and stores "Regenerate keytabs" for a deployed release, without running it: the keytab steps of a deploy,
+     * made to issue a new keytab even where the release's Secret holds one.
+     *
+     * @return the operation's id
+     * @throws IllegalArgumentException when the release's keytabs do not come from the cluster this Ambari manages
+     *                                  (another platform context, whose keytab Secret the operator provides), or when
+     *                                  that cluster cannot issue them
+     */
+    String planReleaseKeytabRegeneration(String namespace,
+                                         String releaseName,
+                                         MultivaluedMap<String, String> callerHeaders,
+                                         URI baseUri) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
@@ -3060,32 +5043,12 @@ public class CommandService {
 
         String kerberosInjectionMode = resolveKerberosInjectionModeFromSettings();
         if (!KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(kerberosInjectionMode)) {
-            throw new IllegalStateException("Kerberos regeneration is only supported in PRE_PROVISIONED mode (current: " + kerberosInjectionMode + ").");
+            throw new IllegalArgumentException("Kerberos regeneration is only supported in PRE_PROVISIONED mode (current: " + kerberosInjectionMode + ").");
         }
-
-        // Resolve Ambari cluster and initialize client for Kerberos checks.
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
-        String clusterName;
-        try {
-            // Resolve Ambari cluster name from the view base URI and caller headers.
-            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
-        } catch (Exception ex) {
-            LOG.warn("Failed to resolve Ambari cluster name for keytab regeneration on {}/{}: {}",
-                    namespace, releaseName, ex.toString());
-            throw new IllegalStateException("Unable to resolve Ambari cluster name for keytab regeneration.", ex);
-        }
-        AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
-
-        boolean kerberosClusterEnabled = false;
-        try {
-            String securityEnabledValue = ambariActionClient.getDesiredConfigProperty(clusterName, "cluster-env", "security_enabled");
-            kerberosClusterEnabled = "true".equalsIgnoreCase(securityEnabledValue);
-        } catch (Exception ex) {
-            LOG.warn("Failed to determine Kerberos state for cluster {}: {}", clusterName, ex.toString());
-        }
-        if (!kerberosClusterEnabled) {
-            throw new IllegalStateException("Kerberos is disabled on cluster " + clusterName + "; keytab regeneration skipped.");
-        }
+        ReleaseActionTarget target = releaseActionTarget(releaseMetadata, "keytab regeneration", callerHeaders, baseUri);
+        refuse(keytabRegenerationRefusal(releaseMetadata, kerberosInjectionMode, target));
+        String clusterName = target.cluster();
+        AmbariActionClient ambariActionClient = target.ambari();
 
         StackDefinitionService stackDefinitionService = new StackDefinitionService(ctx);
         StackServiceDef serviceDefinition = stackDefinitionService.getServiceDefinition(releaseMetadata.getServiceKey());
@@ -3123,8 +5086,9 @@ public class CommandService {
         rootParams.put("namespace", namespace);
         rootParams.put("serviceKey", releaseMetadata.getServiceKey());
         rootParams.put("kerberosInjectionMode", kerberosInjectionMode);
-        rootParams.put("_cluster", clusterName);
-        rootParams.put("_baseUri", baseUri.toString());
+        // Without it, the keytab step reuses the keytab the Secret holds and nothing is regenerated.
+        rootParams.put(FORCE_REISSUE_PARAM, true);
+        target.putInto(rootParams, baseUri, callerHeaders);
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
 
         List<String> childCommandIds = new ArrayList<>();
@@ -3137,6 +5101,8 @@ public class CommandService {
 
         int kerberosEntryIndex = 0;
         boolean keytabStepsAdded = false;
+        java.util.Set<String> plannedKeytabSecrets = new java.util.HashSet<>();
+        java.util.Set<String> issuedPrincipals = new java.util.HashSet<>();
         // Create keytab generation steps for each Kerberos entry.
         for (Map<String, Object> kerberosEntry : kerberosEntries) {
             kerberosEntryIndex++;
@@ -3171,13 +5137,26 @@ public class CommandService {
             );
             String keyNameInSecret = resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab");
 
+            // Entries sharing a principal and a Secret (Trino's coordinator and workers) need one keytab, and
+            // issuing it twice could change the key twice.
+            if (!plannedKeytabSecrets.add(principalFqdn + "|" + secretName)) {
+                LOG.info("Keytab of {} in Secret {} already planned; entry {} shares it", principalFqdn, secretName, entryKey);
+                continue;
+            }
+            // A principal is issued once; another Secret holding it gets that keytab copied.
+            Map<String, Object> stepParams = rootParams;
+            if (!issuedPrincipals.add(principalFqdn)) {
+                stepParams = new LinkedHashMap<>(rootParams);
+                stepParams.put(FORCE_REISSUE_PARAM, false);
+            }
+
             LOG.info("Regenerating keytab for entry {}: principal={}, secret={}, keyName={}",
                     entryKey, principalFqdn, secretName, keyNameInSecret);
 
             appendPreProvisionedKeytabSteps(
                     rootCommand,
                     childCommandIds,
-                    rootParams,
+                    stepParams,
                     principalFqdn,
                     namespace,
                     secretName,
@@ -3196,8 +5175,6 @@ public class CommandService {
 
         store(rootStatus);
         store(rootCommand);
-
-        scheduleNow(commandId);
         return commandId;
     }
 
@@ -3215,6 +5192,23 @@ public class CommandService {
                                                        String releaseName,
                                                        MultivaluedMap<String, String> callerHeaders,
                                                        URI baseUri) {
+        String commandId = planReleaseRangerRepositoryReapply(namespace, releaseName, callerHeaders, baseUri);
+        scheduleNow(commandId);
+        return commandId;
+    }
+
+    /**
+     * Plans and stores "Reapply Ranger repository" for a deployed release, without running it: the Ranger repository
+     * step of a deploy, against the Ranger of the release's platform context.
+     *
+     * @return the operation's id
+     * @throws IllegalArgumentException when no Ranger can be reached for the release: deployed without a platform
+     *                                  context, or on a context without Ranger administrator credentials
+     */
+    String planReleaseRangerRepositoryReapply(String namespace,
+                                              String releaseName,
+                                              MultivaluedMap<String, String> callerHeaders,
+                                              URI baseUri) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
@@ -3231,17 +5225,12 @@ public class CommandService {
             throw new IllegalArgumentException("Service definition for " + releaseMetadata.getServiceKey() + " has no Ranger spec.");
         }
 
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
-        String clusterName;
-        try {
-            // Resolve Ambari cluster name from the view base URI and caller headers.
-            clusterName = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
-        } catch (Exception ex) {
-            LOG.warn("Failed to resolve Ambari cluster name for Ranger reapply on {}/{}: {}",
-                    namespace, releaseName, ex.toString());
-            throw new IllegalStateException("Unable to resolve Ambari cluster name for Ranger reapply.", ex);
-        }
-        AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), clusterName, authHeaders);
+        // The Ranger the release was deployed against: the managed cluster's goes through the Ambari server, another
+        // context's is reached over REST with its administrator credentials. Never the managed cluster's in its place.
+        ReleaseActionTarget target = releaseActionTarget(releaseMetadata, "Ranger reapply", callerHeaders, baseUri);
+        refuse(rangerReapplyRefusal(releaseMetadata, target));
+        String clusterName = target.cluster();
+        AmbariActionClient ambariActionClient = target.ambari();
 
         Map<String, Object> releaseValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
         Map<String, Object> effectiveValues = releaseValues != null ? releaseValues : Collections.emptyMap();
@@ -3266,6 +5255,18 @@ public class CommandService {
         rangerRequest.setServiceKey(releaseMetadata.getServiceKey());
         rangerRequest.setChart(releaseMetadata.getChartRef());
         rangerRequest.setRanger(serviceDefinition.ranger);
+        // The Hadoop configuration the release was deployed with: the audit settings are written differently for a
+        // service whose pods have no hdfs-site, so a reapply must see what the deploy saw.
+        rangerRequest.setRequiredConfigMaps(serviceDefinition.requiredConfigMaps);
+        if (target.contextId() != null) {
+            // The steps planned from the request read the context there too.
+            rangerRequest.setFormValues(Map.of("platformContextId", target.contextId()));
+        }
+        if (operatorSuppliedHttpsKeystore(namespace, effectiveValues)) {
+            // The form is gone on a reapply; without this the repository would get the full host-name check that an
+            // operator certificate may not satisfy.
+            rangerRequest.setTls(Map.of("https", Map.of("autoGenerate", false)));
+        }
 
         final String commandId = UUID.randomUUID().toString();
         final String now = Instant.now().toString();
@@ -3293,12 +5294,13 @@ public class CommandService {
         rootParams.put("serviceKey", releaseMetadata.getServiceKey());
         rootParams.put("repoId", releaseMetadata.getRepoId());
         rootParams.put("version", releaseMetadata.getVersion());
-        rootParams.put("_cluster", clusterName);
-        rootParams.put("_baseUri", baseUri.toString());
-        rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        // The Ranger the release was deployed against: without it the default context is resolved, and a release on
+        // an external platform would get its repository, and its Atlas tag sync account, on the managed cluster's.
+        // Set before the Ranger resources are planned, which read the context's Ranger from it.
+        target.putInto(rootParams, baseUri, callerHeaders);
 
         AmbariAliasResolver ambariAliasResolver = new AmbariAliasResolver(ctx);
-        materializeRangerResources(
+        List<String> rangerWarnings = materializeRangerResources(
                 rangerRequest,
                 rootParams,
                 effectiveValues,
@@ -3306,17 +5308,29 @@ public class CommandService {
                 clusterName,
                 ambariAliasResolver
         );
+        rangerWarnings.forEach(w -> appendCommandLog(commandId, "WARNING: " + w));
+        // Reapplying runs no Helm upgrade, so a release deployed by an earlier version keeps mounting the
+        // configuration shared by the namespace; that one is left alone, since other releases may use it.
+        List<String> stillShared = sharedRangerObjectsStillMounted(serviceDefinition.ranger, releaseValues,
+                releaseName, namespace);
+        if (!stillShared.isEmpty()) {
+            appendCommandLog(commandId, "WARNING: Release " + releaseName + " still uses the Ranger plugin"
+                    + " configuration shared by the releases of namespace " + namespace + " ("
+                    + String.join(", ", stillShared) + "). Its own copy was written now; upgrade the release to"
+                    + " switch to it. The shared copy was not changed.");
+        }
 
         List<String> childCommandIds = new ArrayList<>();
-        // Plan the Ranger repository creation step with current values.
+        // Plan the Ranger repository creation step with current values. The managed cluster's configuration only
+        // completes the repository of a release on that cluster: another context's Ranger gets its own settings.
         planRangerRepositoryCreation(
                 rootCommand,
                 childCommandIds,
                 rangerRequest,
                 rootParams,
                 effectiveValues,
-                ambariActionClient,
-                clusterName
+                target.managed() ? ambariActionClient : null,
+                target.managed() ? clusterName : null
         );
 
         if (childCommandIds.isEmpty()) {
@@ -3328,8 +5342,6 @@ public class CommandService {
 
         store(rootStatus);
         store(rootCommand);
-
-        scheduleNow(commandId);
         return commandId;
     }
 
@@ -3490,7 +5502,7 @@ public class CommandService {
             resources.put("tag", List.of(tag));
             String tagService = stringValue(body.get("tagServiceName"));
             if (tagService.isBlank() && direct) {
-                tagService = stringValue(org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.getTagServiceOf(
+                tagService = stringValue(org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.getTagServiceOf(tlsOf(rc, "Ranger"),
                         rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(), repo));
             }
             if (tagService.isBlank() && cluster != null) tagService = cluster + "_tag"; // Ambari's tag service naming
@@ -3534,7 +5546,7 @@ public class CommandService {
         result.put("policyType", policyType);
         result.put("accessTypes", accessTypes);
         if (direct) {
-            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(tlsOf(rc, "Ranger"),
                     rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                     serviceName, policyName, description, resources, Arrays.asList(accessTypes.split(",")),
                     users.isBlank() ? null : users, groups.isBlank() ? null : Arrays.asList(groups.split(",")),
@@ -3644,6 +5656,15 @@ public class CommandService {
                             + " has no ranger-tagsync-settings block — nothing to replay.");
         }
         rootParams.put("_tagSyncSettings", tagSyncSettingsSpec);
+        // The operator asked for this registration explicitly: the step runs even when the release
+        // has Ranger TagSync turned off, and says so, where a deploy would skip it.
+        rootParams.put("_tagSyncReplay", true);
+        // The release's own platform context decides whose Ranger TagSync is configured: without it
+        // the step falls back to the default context and would write this cluster's
+        // ranger-tagsync-site for a release attached to an external platform.
+        if (releaseMetadata.getPlatformContextId() != null && !releaseMetadata.getPlatformContextId().isBlank()) {
+            rootParams.put("_platformContextId", releaseMetadata.getPlatformContextId());
+        }
 
         // Initialize root with an empty child list before the plan-factory appends.
         rootCommand.setParamsJson(gson.toJson(rootParams));
@@ -3679,7 +5700,7 @@ public class CommandService {
     /**
      * Replay the OpenMetadata Atlas-federation registration for a deployed release.
      * Queues a single {@link CommandType#OM_ATLAS_FEDERATION_REGISTER} child whose
-     * body reads the current release values, mints a fresh Unlimited JWT, and
+     * body reads the current release values and the bot's current JWT, and
      * upserts the four OM REST entities. The pre-flight check rejects the request
      * early if the release isn't OPENMETADATA or has {@code atlasFederation.enabled=false}.
      *
@@ -3758,23 +5779,116 @@ public class CommandService {
         // what would happen on a fresh install: ATLAS_USER_PROVISION_OM /
         // ATLAS_SIMPLE_AUTHZ_GRANT_OM / RANGER_POLICY_CREATE_ATLAS_OM_READ (whichever
         // apply for the discovered (auth, acl) modes) BEFORE OM_ATLAS_FEDERATION_REGISTER.
-        try {
-            HelmDeployRequest reqForDispatch = new HelmDeployRequest();
-            reqForDispatch.setNamespace(namespace);
-            reqForDispatch.setReleaseName(releaseName);
-            queueAtlasFederationProvisioningSteps(rootCommand, reqForDispatch, rootParams,
-                    clusterName, ambariActionClient);
-        } catch (Exception ex) {
-            LOG.warn("Atlas federation reapply: provisioning dispatch failed ({}). "
-                    + "Continuing with bare OM_ATLAS_FEDERATION_REGISTER step.", ex.toString());
-        }
-
-        // createOmAtlasFederationRegister self-manages rootCommand.childListJson +
-        // re-stores the root, so we don't need to do it again after this call.
-        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, rootParams);
+        queueAtlasFederationReapplySteps(rootCommand, rootParams, namespace, releaseName,
+                clusterName, ambariActionClient);
 
         scheduleNow(commandId);
         return commandId;
+    }
+
+    /**
+     * The labels of the ingress certificate Secret an upload writes: the release's when KDPS creates the Secret, or
+     * wrote it for the release before, so the uninstall of the release removes it. That includes the Secret an earlier
+     * version uploaded under the release's default name before it labelled what it creates. Any other Secret that was
+     * there already is the operator's, or one releases share under a name typed for it: it gets none, and stays.
+     */
+    static Map<String, String> ingressTlsUploadLabels(io.fabric8.kubernetes.api.model.Secret existing, String namespace,
+                                                      String releaseName) {
+        io.fabric8.kubernetes.api.model.ObjectMeta meta = existing == null ? null : existing.getMetadata();
+        boolean uploadedForTheRelease = meta != null && releaseName != null
+                && (releaseName + "-ingress-tls").equals(meta.getName()) && meta.getAnnotations() != null
+                && VIEW_MANAGED_BY_VALUE.equals(meta.getAnnotations().get(VIEW_MANAGED_BY_ANNOTATION));
+        return KdpsReleaseObjects.labelsFor(meta, uploadedForTheRelease, namespace, releaseName);
+    }
+
+    /**
+     * The release labels a self-signed ingress certificate Secret KDPS keeps as it is still lacks: an earlier version
+     * minted it with the release label only. None when KDPS did not mint it, or another release claims it.
+     */
+    static Map<String, String> keptSelfSignedTlsLabels(io.fabric8.kubernetes.api.model.Secret existing,
+                                                       String namespace, String releaseName) {
+        return KdpsReleaseObjects.missingLabels(existing == null ? null : existing.getMetadata(),
+                IngressTlsSecretGuard.mintedByView(existing), namespace, releaseName, null);
+    }
+
+    /**
+     * Gives an ingress certificate Secret a redeploy keeps as it is the release labels it lacks, without writing its
+     * keys again, so the uninstall of the release removes it. Best effort: the deploy goes on without them.
+     *
+     * @param labels the release labels the Secret should carry; nothing is done when they are empty or already there
+     */
+    private void labelKeptIngressTlsSecret(String namespace, String secretName, Map<String, String> labels,
+                                           io.fabric8.kubernetes.api.model.Secret existing) {
+        if (labels == null || labels.isEmpty() || existing == null
+                || KdpsReleaseObjects.ofRelease(existing.getMetadata(), namespace,
+                        labels.get(KdpsReleaseObjects.LABEL_RELEASE))) {
+            return;
+        }
+        try {
+            kubernetesService.addSecretLabels(namespace, secretName, labels, KdpsReleaseObjects.annotations(namespace));
+        } catch (Exception e) {
+            LOG.warn("Could not label ingress TLS Secret {}/{} as its release's: {}", namespace, secretName,
+                    e.toString());
+        }
+    }
+
+    /** {@link #labelKeptIngressTlsSecret} for the self-signed certificate Secret a redeploy kept. */
+    private void labelKeptSelfSignedTlsSecret(String namespace, String secretName, String releaseName) {
+        io.fabric8.kubernetes.api.model.Secret kept;
+        try {
+            kept = kubernetesService.getSecret(namespace, secretName);
+        } catch (Exception e) {
+            LOG.warn("Could not read ingress TLS Secret {}/{} to label it as its release's: {}", namespace,
+                    secretName, e.toString());
+            return;
+        }
+        labelKeptIngressTlsSecret(namespace, secretName, keptSelfSignedTlsLabels(kept, namespace, releaseName), kept);
+    }
+
+    /** The ingress TLS Secret an {@code ingressTlsUpload} or {@code ingressTlsSelfSign} payload writes. */
+    private static String ingressTlsSecretName(Map<String, Object> payload, HelmDeployRequest request) {
+        Object name = payload.get("secretName");
+        return name == null || String.valueOf(name).isBlank()
+                ? request.getReleaseName() + "-ingress-tls" : String.valueOf(name).trim();
+    }
+
+    /**
+     * Refuses a deploy whose uploaded or self-signed ingress certificate would overwrite a Secret KDPS may not
+     * replace (see {@link IngressTlsSecretGuard}): one it did not mint, unless the request sets
+     * {@code replaceExistingTls}, and one kept by cert-manager or the External Secrets Operator, always. An upload of
+     * the certificate and key the Secret already holds replaces nothing and passes.
+     *
+     * @throws IllegalStateException naming the Secret and what the operator can do
+     */
+    void checkIngressTlsSecretsReplaceable(HelmDeployRequest request) {
+        String namespace = request.getNamespace();
+        Map<String, Object> upload = request.getIngressTlsUpload();
+        if (upload != null && !upload.isEmpty()) {
+            String certPem = String.valueOf(upload.getOrDefault("certPem", ""));
+            String keyPem = String.valueOf(upload.getOrDefault("keyPem", ""));
+            if (!certPem.isBlank() && !keyPem.isBlank()) {
+                String secretName = ingressTlsSecretName(upload, request);
+                var existing = kubernetesService.getSecret(namespace, secretName);
+                if (!holdsTlsPair(existing, certPem, keyPem)) {
+                    IngressTlsSecretGuard.checkReplaceable(existing, namespace, secretName,
+                            request.isReplaceExistingTls());
+                }
+            }
+        }
+        Map<String, Object> selfSign = request.getIngressTlsSelfSign();
+        if (selfSign != null && !selfSign.isEmpty()) {
+            String secretName = ingressTlsSecretName(selfSign, request);
+            IngressTlsSecretGuard.checkReplaceable(kubernetesService.getSecret(namespace, secretName), namespace,
+                    secretName, request.isReplaceExistingTls());
+        }
+    }
+
+    /** Whether the Secret already holds exactly this certificate and key (as KubernetesService writes them). */
+    private static boolean holdsTlsPair(io.fabric8.kubernetes.api.model.Secret secret, String certPem, String keyPem) {
+        Map<String, String> data = secret == null ? null : secret.getData();
+        if (data == null) return false;
+        return java.util.Base64.getEncoder().encodeToString(certPem.getBytes()).equals(data.get("tls.crt"))
+                && java.util.Base64.getEncoder().encodeToString(keyPem.getBytes()).equals(data.get("tls.key"));
     }
 
     /**
@@ -3891,7 +6005,7 @@ public class CommandService {
      * install pipeline (operation=create) — the Certificate CR is applied pre-deploy so
      * cert-manager already has the Secret ready by the time the chart references it.
      */
-    private String appendIngressTlsCertManagerStep(CommandEntity root, String namespace,
+    private String appendIngressTlsCertManagerStep(CommandEntity root, String namespace, String releaseName,
                                                    String certName, String secretName,
                                                    String issuerName, String issuerKind,
                                                    List<String> dnsNames, Integer durationHours,
@@ -3905,6 +6019,7 @@ public class CommandService {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("operation", "create");
         params.put("namespace", namespace);
+        if (releaseName != null) params.put("releaseName", releaseName);
         params.put("certName", certName);
         params.put("secretName", secretName);
         params.put("issuerName", issuerName);
@@ -3933,7 +6048,7 @@ public class CommandService {
      * install pipeline — the ExternalSecret CR is applied pre-deploy so ESO has already
      * synced the Secret from the upstream store by the time the chart references it.
      */
-    private String appendIngressTlsExternalSecretStep(CommandEntity root, String namespace,
+    private String appendIngressTlsExternalSecretStep(CommandEntity root, String namespace, String releaseName,
                                                        String esName, String secretName,
                                                        String storeName, String storeKind,
                                                        String remoteKey, String refreshInterval) {
@@ -3946,6 +6061,7 @@ public class CommandService {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("operation", "create");
         params.put("namespace", namespace);
+        if (releaseName != null) params.put("releaseName", releaseName);
         params.put("externalSecretName", esName);
         params.put("secretName", secretName);
         params.put("secretStoreName", storeName);
@@ -4053,6 +6169,8 @@ public class CommandService {
      * @param callerHeaders  request headers used for downstream Ambari calls (cluster resolution, logs)
      * @param baseUri        Ambari base URI used to resolve the cluster context
      * @return the root command id, suitable for polling via the commands API
+     * @throws ReleaseHeldInGitException for a release deployed with Flux GitOps: Flux installs the chart version Git
+     *                                   holds, so its chart is changed in Git (Upgrade/Config commits it there)
      */
     public String submitReleaseUpgrade(String namespace,
                                        String releaseName,
@@ -4071,6 +6189,9 @@ public class CommandService {
         if (releaseMetadata == null) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
         }
+        // The upgrade below runs Helm on the release: on a GitOps release, Flux would put the chart Git holds back.
+        ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadata, namespace, releaseName,
+                "a chart upgrade made with Helm");
         if (releaseMetadata.getChartRef() == null || releaseMetadata.getChartRef().isBlank()) {
             throw new IllegalStateException("Release metadata missing chartRef for " + namespace + "/" + releaseName);
         }
@@ -4080,12 +6201,31 @@ public class CommandService {
         if (targetVersion.equals(releaseMetadata.getVersion())) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is already at version " + targetVersion);
         }
+        // The metadata version only moves once an upgrade succeeds, so it cannot tell that one is still running
+        // (a canceled upgrade keeps running in Helm); refuse here rather than in the middle of the operation.
+        HelmOperationRegistry.requireIdle(namespace, releaseName);
 
         // Preserve operator-supplied values: read the merged values from the deployed release.
-        Map<String, Object> deployedValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
-        if (deployedValues == null) {
-            deployedValues = Collections.emptyMap();
-        }
+        Map<String, Object> released = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        Map<String, Object> deployedValues = released == null ? new LinkedHashMap<>() : new LinkedHashMap<>(released);
+        // This upgrade goes through neither the wizard nor submitDeploy, so the values get the current definition's
+        // aliases and retired values here: an earlier definition may have put a secret where anyone allowed to read
+        // Deployments can see it (the Superset SECRET_KEY in a plain environment variable of every pod).
+        applyDefinitionValueRewrites(ctx, releaseMetadata.getServiceKey(), releaseName, deployedValues);
+        // Nor are its secrets checked anywhere else: warn in the operation log about those the release still leaves
+        // readable outside a Kubernetes Secret (its values, its security profile, the target chart).
+        HelmDeployRequest sent = new HelmDeployRequest();
+        sent.setNamespace(namespace);
+        sent.setReleaseName(releaseName);
+        sent.setServiceKey(releaseMetadata.getServiceKey());
+        sent.setSecurityProfile(releaseMetadata.getSecurityProfile());
+        sent.setValues(deployedValues);
+        // Nor does it run the wizard's OpenShift bindings: a release installed before they existed would otherwise
+        // keep the chart's default, such as JupyterHub's user scheduler and its cluster-wide ClusterRole.
+        applyOpenShiftValueDefaults(sent);
+        List<String> warnings = new ArrayList<>();
+        addIfPresent(warnings, checkLiteralCatalogCredentials(sent, releaseMetadata));
+        addIfPresent(warnings, checkSecretChartVersions(sent, targetVersion, false));
 
         final String commandId = UUID.randomUUID().toString();
         final String now = Instant.now().toString();
@@ -4123,6 +6263,10 @@ public class CommandService {
         if (callerHeaders != null) {
             rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
         }
+        // The credentials Secrets of the current definition, as for a deploy: a release installed before keeps the
+        // passwords its databases run with, and the target chart gets the Secrets' names when it can read them.
+        applyGeneratedSecrets(commandId, rootParams, releaseMetadata.getServiceKey(), namespace, releaseName,
+                targetVersion, deployedValues, null);
 
         // Create the single HELM_UPGRADE child step.
         String subId = UUID.randomUUID().toString();
@@ -4158,6 +6302,7 @@ public class CommandService {
         store(rootStatus);
         store(rootCommand);
 
+        logDeployWarnings(commandId, warnings);
         scheduleNow(commandId);
         return commandId;
     }
@@ -4165,35 +6310,114 @@ public class CommandService {
     /**
      * Entry point for deploy requests. Creates the orchestration plan, persists it, and schedules execution.
      * Thread-safe: no shared mutable state beyond the DataStore and thread pools.
+     *
+     * @throws HelmOperationRegistry.ReleaseBusyException when a Helm operation on the release is still running
+     * @throws IllegalArgumentException when a release, namespace, chart repository, chart or chart version name is
+     *                                  invalid for the deploy's mode ({@link DeployRequestValidator}), its own or a
+     *                                  dependency's
+     * @throws ReleaseHeldInGitException when the request asks for a direct Helm upgrade of a release deployed with Flux
+     *                                   GitOps ({@link #applyRecordedDeploymentMode})
      */
     public String submitDeploy(HelmDeployRequest request, String repoId, String version, String kubeContext, String commandsURL, MultivaluedMap<String,String> callerHeaders,
                                URI baseUri, AmbariAliasResolver ambariAliasResolver) {
-        // Required fields
-        Objects.requireNonNull(request.getChart(), "chart is required");
-        Objects.requireNonNull(request.getReleaseName(), "releaseName is required");
-        Objects.requireNonNull(request.getNamespace(), "namespace is required");
+        // A release deployed with Flux GitOps stays there: settled first, so its names are checked for that mode.
+        K8sReleaseEntity recorded = request == null ? null : recordedRelease(request);
+        applyRecordedDeploymentMode(request, recorded);
+        // The release, namespace, chart repository, chart and version names, the dependencies' too, before anything
+        // is looked up or prepared for them, in every mode. Strictest for a GitOps deploy, which writes them into the
+        // manifests and their paths in Git, where nothing else would refuse a malformed one; a direct deploy keeps the
+        // chart URLs and OCI references Helm resolves.
+        DeployRequestValidator.validate(request, repoId, version);
+        // Refuse a service on a platform its definition does not support (GitLab on OpenShift), in every mode and
+        // before anything is prepared for it: its pods would never be admitted, and the install would only time out.
+        // The catalog already hides it there; this also covers a deploy sent straight to the API.
+        checkSupportedPlatform(request);
+        checkServiceInRelease(request);
+        // A Helm call KDPS started on the release, canceled or not, may still be running. Refuse before anything
+        // is done: planning the deploy already rewrites the release's TLS and truststore Secrets and its Hadoop
+        // configuration, which would change under the running call for a deploy its Helm step then refuses.
+        HelmOperationRegistry.requireIdle(request.getNamespace(), request.getReleaseName());
+        // Values read back from the release (resync, security refresh, autoscaling change, upgrade wizard) carry its
+        // secrets hidden: the deployed ones are put back before anything reads the values. A value the definition now
+        // places elsewhere (valueAliases) is found at its new place too, where the wizard sends the placeholder.
+        HiddenReleaseValues.restore(request.getValues(), () -> HiddenReleaseValues.withAliasTargets(
+                kubernetesService.getHelmReleaseValues(request.getNamespace(), request.getReleaseName()),
+                valueAliasesOf(request)));
+        // Read before the steps below add the release's platform context, keytab and catalog references to the form.
+        final boolean fromForm = carriesServiceForm(request);
+
         String deploymentMode = request.getDeploymentMode() == null ? "DIRECT_HELM" : request.getDeploymentMode();
         LOG.info("Submit deploy for release {} in namespace {} using deploymentMode={}",
                 request.getReleaseName(), request.getNamespace(), deploymentMode);
 
+        // A redeploy that leaves out the chart repository, the chart version or the platform context (resync,
+        // security refresh, autoscaling change, the wizard's query parameters) keeps the release's. Done first, so
+        // the version check, every backend and the recorded parameters all see the same values.
+        ChartSource chartSource = applyReleaseDefaults(request, repoId, version, recorded);
+
+        // A deploy that names a security profile is refused before anything is prepared when the profile is gone
+        // (deleted or renamed) or cannot be read: deployed without it, the release would lose its LDAP or OIDC login.
+        resolveSecurityProfileName(request.getSecurityProfile());
+
+        // Warnings found while the deploy is submitted, written into its operation log (see logDeployWarnings).
+        List<String> warnings = new ArrayList<>();
+
         // Apply value-path aliases and version compatibility checks before the backend
         // dispatch so every code path (direct helm, flux GitOps, dry-run preview) sees
         // the same rewritten values map.
-        applyValueAliasesAndVersionCheck(request, version);
+        applyValueAliasesAndVersionCheck(request, chartSource.version(), warnings);
+
+        // OpenShift defaults the wizard sets through its bindings (JupyterHub's user scheduler off), for the deploys
+        // that do not run them. After the aliases, so a default never lands beside a value moved to its new path.
+        applyOpenShiftValueDefaults(request);
+        restoreTriggerCertSkipOnOlderChart(request.getValues(), chartSource.version());
 
         // Operator-supplied extra catalogs. Parsed here, next to the alias rewriting and for the same
         // reason: it is the one place every backend goes through, so a deploy driven straight at the
         // API behaves exactly like one driven from the wizard.
-        applyCustomCatalogs(request);
+        Map<String, String> customCatalogs = applyCustomCatalogs(request);
+        checkCatalogCredentials(request, customCatalogs);
+
+        // Secrets this deploy would still leave readable outside a Kubernetes Secret: refused when the operator can
+        // fix them in the wizard, otherwise written into the operation log.
+        addIfPresent(warnings, checkLiteralCatalogCredentials(request, recorded));
+        addIfPresent(warnings, checkSecretChartVersions(request, chartSource.version(), fromForm));
+        addIfPresent(warnings, rangerLookupTrustWarning(request));
 
         // OpenMetadata Trino base ingestion: validate the target release and write the TagSync
         // mapping into the values BEFORE anything is persisted, so a bad selection fails the
         // submit with a readable message instead of leaving a half-planned command.
         applyTrinoBaseIngestion(request);
 
+        // Ranger TagSync switched on: refuse now what the post-install registration would fail on.
+        // After applyTrinoBaseIngestion, which may write the TagSync mapping into the same values.
+        String tagSyncProblem = tagSyncSubmitProblem(request);
+        if (tagSyncProblem != null) {
+            throw new IllegalArgumentException(tagSyncProblem);
+        }
+
+        // Truststores: a redeploy that names none (resync, security refresh, autoscaling change) keeps the release's.
+        if (request.getTruststoreRefs() == null) {
+            try {
+                request.setTruststoreRefs(new ReleaseMetadataService(ctx).truststoreRefs(
+                        request.getNamespace(), request.getReleaseName()));
+            } catch (Exception e) {
+                LOG.warn("Could not read the recorded truststores of {}/{}: {}", request.getNamespace(),
+                        request.getReleaseName(), e.toString());
+            }
+        }
+
+        // External Kerberos keytab: a redeploy carries no form, so it keeps the keytab the release runs with, or
+        // stops here rather than turning Kerberos off.
+        restoreExternalKeytab(request, recorded);
+
         // OpenShift KEDA autoscaling: point the triggers at the release's project when the account may not grant
         // cluster-wide monitoring access. Here, so every deployment mode saves the same values.
         OpenShiftMonitoringSetup.scopeAutoscalingToProject(kubernetesService, request);
+        String autoscalingProblem = KedaThanosScope.autoscalingWithoutMetrics(request.getValues());
+        if (autoscalingProblem != null) {
+            throw new IllegalArgumentException(autoscalingProblem);
+        }
 
         // Fail-fast on a Terminating namespace. The backends create the namespace
         // anyway as part of the helm install, but they do so several steps into
@@ -4205,8 +6429,8 @@ public class CommandService {
         kubernetesService.createNamespace(request.getNamespace());
 
         DeploymentContext context = new DeploymentContext(
-                repoId,
-                version,
+                chartSource.repoId(),
+                chartSource.version(),
                 kubeContext,
                 commandsURL,
                 callerHeaders,
@@ -4222,12 +6446,641 @@ public class CommandService {
         if (backend == null) {
             throw new IllegalStateException("No deployment backend available");
         }
+        String id;
         try {
-            return backend.apply(request, context);
+            id = backend.apply(request, context);
         } catch (Exception ex) {
             LOG.error("Deployment failed for {}/{} using mode {}: {}", request.getNamespace(), request.getReleaseName(), deploymentMode, ex.toString(), ex);
             throw new RuntimeException(ex);
         }
+        // Only a Helm deploy has an operation to log into; a GitOps deploy returns the commit it pushed.
+        if (backend == deploymentBackends.get(DeploymentMode.DIRECT_HELM.name())) {
+            logDeployWarnings(id, warnings);
+        }
+        return id;
+    }
+
+    private static void addIfPresent(List<String> list, String item) {
+        if (item != null) list.add(item);
+    }
+
+    /**
+     * Writes warnings found while the deploy was submitted into its operation log, which the operator watching it
+     * sees (the server log only reaches an administrator). They are in the server log already.
+     */
+    private void logDeployWarnings(String commandId, List<String> warnings) {
+        for (String warning : warnings) {
+            try {
+                commandLogService.append(commandId, "[WARN] " + warning);
+            } catch (Exception ex) {
+                LOG.debug("Failed to append a deploy warning to the log of {}: {}", commandId, ex.toString());
+            }
+        }
+    }
+
+    /** Root parameter with what the operator is told once the operation succeeds (where to read a generated password). */
+    static final String NOTICES_PARAM = "_notices";
+    /**
+     * Root parameter with the generated Secrets whose value this operation asks the chart to set on an account
+     * ({@code namespace}, {@code secretName}): once it succeeds, the next deploys no longer ask.
+     */
+    static final String PENDING_CREDENTIALS_PARAM = "_pendingCredentials";
+
+    /**
+     * Creates the Secrets of credentials the release's service definition declares ({@code generatedSecrets}, see
+     * {@link GeneratedSecretService}) and points the chart at them: only their names go into the deploy's overrides,
+     * so no password reaches the release values, a GitOps repository or a log. A chart too old to read one keeps its
+     * own credentials, with a warning in the operation log. What the operator must know (where to read the
+     * administrator password) goes into the operation log and the operation's result ({@link #NOTICES_PARAM}). The
+     * Secrets whose value the chart is asked to set on an account are kept in {@link #PENDING_CREDENTIALS_PARAM}, for
+     * {@link #markGeneratedCredentialsApplied} once the operation succeeds.
+     *
+     * @param chartVersion the chart version deployed, or null when unknown
+     * @return whether the parameters changed
+     * @throws IllegalStateException when a database volume exists, or its claim cannot be read, but its password cannot
+     *                               be found
+     */
+    private boolean applyGeneratedSecrets(String commandId, Map<String, Object> params, String serviceKey,
+                                          String namespace, String releaseName, String chartVersion,
+                                          Map<String, Object> values, Map<String, Object> formValues) {
+        if (serviceKey == null || serviceKey.isBlank()) return false;
+        StackServiceDef def;
+        try {
+            def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (no generated credentials): {}", serviceKey, ex.toString());
+            return false;
+        }
+        if (def == null || def.generatedSecrets == null || def.generatedSecrets.isEmpty()) return false;
+        List<GeneratedSecretService.Outcome> outcomes = new GeneratedSecretService(this.kubernetesService)
+                .ensure(def.generatedSecrets, namespace, releaseName, chartVersion, values, formValues);
+        List<String> notices = new ArrayList<>();
+        List<Map<String, String>> pending = new ArrayList<>();
+        boolean changed = false;
+        for (GeneratedSecretService.Outcome outcome : outcomes) {
+            for (String warning : outcome.warnings()) {
+                LOG.warn("{}/{}: {}", namespace, releaseName, warning);
+                appendCommandLog(commandId, "[WARN] " + warning);
+            }
+            if (!outcome.applied()) continue;
+            if (outcome.pending()) pending.add(Map.of("namespace", namespace, "secretName", outcome.secretName()));
+            for (Map.Entry<String, String> value : outcome.values().entrySet()) {
+                this.commandUtils.addOverride(params, value.getKey(), value.getValue());
+                changed = true;
+            }
+            // Key names only, never their values.
+            List<String> done = new ArrayList<>();
+            if (!outcome.generated().isEmpty()) done.add("generated " + String.join(", ", outcome.generated()));
+            if (!outcome.adopted().isEmpty()) {
+                done.add("kept the " + String.join(", ", outcome.adopted()) + " the release already runs with");
+            }
+            appendCommandLog(commandId, "Credentials Secret " + namespace + "/" + outcome.secretName() + ": "
+                    + (done.isEmpty() ? "reused" : String.join("; ", done)));
+            if (outcome.notice() != null) {
+                notices.add(outcome.notice());
+                appendCommandLog(commandId, "[NOTICE] " + outcome.notice());
+            }
+        }
+        if (!notices.isEmpty()) {
+            params.put(NOTICES_PARAM, notices);
+            changed = true;
+        }
+        if (!pending.isEmpty()) {
+            params.put(PENDING_CREDENTIALS_PARAM, pending);
+            changed = true;
+        }
+        return changed;
+    }
+
+    /**
+     * Once a deploy succeeds, the generated values it asked the chart to set on an account ({@link
+     * #PENDING_CREDENTIALS_PARAM}) are set: later deploys leave the account alone. Until then every deploy asks again,
+     * so a deploy that failed or was refused after its Secret was generated does not leave the chart's default
+     * password in place. A Secret that cannot be updated is only logged: the next deploy sets the same value again.
+     */
+    private void markGeneratedCredentialsApplied(String commandId, Map<String, Object> rootParams) {
+        Object pending = rootParams == null ? null : rootParams.get(PENDING_CREDENTIALS_PARAM);
+        if (!(pending instanceof Collection<?> list) || list.isEmpty()) return;
+        GeneratedSecretService generatedSecrets = new GeneratedSecretService(this.kubernetesService);
+        for (Object entry : list) {
+            if (!(entry instanceof Map<?, ?> secret)) continue;
+            String namespace = secret.get("namespace") == null ? null : String.valueOf(secret.get("namespace"));
+            String secretName = secret.get("secretName") == null ? null : String.valueOf(secret.get("secretName"));
+            if (namespace == null || secretName == null) continue;
+            try {
+                generatedSecrets.markApplied(namespace, secretName);
+            } catch (Exception ex) {
+                LOG.warn("[{}] Could not record that the value of Secret {}/{} is set: {}", commandId, namespace,
+                        secretName, ex.toString());
+            }
+        }
+    }
+
+    /** The operation's result with its notices added ({@link #NOTICES_PARAM}), or the result unchanged. */
+    static Map<String, Object> withNotices(Map<String, Object> result, Map<String, Object> rootParams) {
+        Object notices = rootParams == null ? null : rootParams.get(NOTICES_PARAM);
+        if (!(notices instanceof Collection<?> list) || list.isEmpty()) return result;
+        Map<String, Object> withNotices = result == null ? new LinkedHashMap<>() : new LinkedHashMap<>(result);
+        withNotices.put("notices", new ArrayList<>(list));
+        return withNotices;
+    }
+
+    /**
+     * Whether a deploy carries a service form, as the wizard sends it (an install, Upgrade/Config), rather than only
+     * the release's values and platform context, as a resync, a security refresh or an autoscaling change sends it.
+     * Only the operator filling the form can act on a refusal there and then, e.g. by picking another chart version.
+     * Read before the deploy adds anything to the form (keys starting with "_" are the server's own).
+     */
+    static boolean carriesServiceForm(HelmDeployRequest request) {
+        Map<String, Object> form = request.getFormValues();
+        if (form == null) return false;
+        for (String key : form.keySet()) {
+            if (key != null && !key.startsWith("_") && !"platformContextId".equals(key)) return true;
+        }
+        return false;
+    }
+
+    /** The chart repository and chart version a deploy uses; either may be {@code null}. */
+    record ChartSource(String repoId, String version) {}
+
+    /** The chart value naming the Secret the release reads its Kerberos keytab from. */
+    private static final String KERBEROS_KEYTAB_SECRET_PATH = "global.security.kerberos.keytab.secretName";
+
+    /** The chart value that turns the release's Kerberos part (keytab and krb5.conf mounts) on or off. */
+    private static final String KERBEROS_ENABLED_PATH = "global.security.kerberos.enabled";
+
+    /**
+     * A chart version that pins the chart, or {@code null}. Blank pins nothing, and neither does "latest": Helm and
+     * Flux both read the version as a SemVer constraint and reject that word, and older release records may hold it.
+     *
+     * @param version a requested or recorded chart version
+     * @return the trimmed version, or {@code null}
+     */
+    public static String pinnedChartVersion(String version) {
+        if (version == null) return null;
+        String trimmed = version.trim();
+        return trimmed.isEmpty() || "latest".equalsIgnoreCase(trimmed) ? null : trimmed;
+    }
+
+    /**
+     * Whether the chart version recorded for a release is the one it is meant to run, ahead of the one Helm reports.
+     * True for a release last deployed through GitOps: its record is the version last committed to Git, which Flux
+     * enforces (it reverts a Helm rollback), while Helm still reports the previous version until Flux reconciles or
+     * while the change waits in a pull request. Taking Helm's version there would commit the previous chart back over
+     * the upgrade. A release last deployed with Helm records its version at deploy time, and Helm's is the more
+     * recent one.
+     *
+     * @param recordedDeploymentMode the deployment mode recorded for the release, may be {@code null}
+     * @return whether the recorded chart version comes first
+     */
+    public static boolean chartVersionHeldInGit(String recordedDeploymentMode) {
+        return DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(recordedDeploymentMode);
+    }
+
+    /**
+     * Puts the release's recorded platform context into a deploy request that names none, so a redeploy is routed
+     * to the same context: a release on an external context must not fall back to the local cluster's Kerberos,
+     * Ranger or Hadoop configuration.
+     *
+     * @param request  the deploy request, completed in place
+     * @param recorded the release as recorded by an earlier deploy, may be {@code null}
+     */
+    public static void defaultPlatformContext(HelmDeployRequest request, K8sReleaseEntity recorded) {
+        if (request.getPlatformContextId() != null || recorded == null) return;
+        String contextId = recorded.getPlatformContextId();
+        if (contextId == null || contextId.isBlank()) return;
+        Map<String, Object> form = request.getFormValues() == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(request.getFormValues());
+        form.put("platformContextId", contextId);
+        request.setFormValues(form);
+    }
+
+    /** The release as an earlier deploy recorded it, or {@code null} for a first install or when it cannot be read. */
+    /**
+     * The {@code valueAliases} of the service a deploy is for, named by the request or else by the recorded release;
+     * none when neither names one or its definition cannot be read.
+     */
+    private Map<String, String> valueAliasesOf(HelmDeployRequest request) {
+        String serviceKey = request.getServiceKey();
+        if (serviceKey == null || serviceKey.isBlank()) {
+            K8sReleaseEntity recorded = recordedRelease(request);
+            serviceKey = recorded == null ? null : recorded.getServiceKey();
+        }
+        if (serviceKey == null || serviceKey.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, String> aliases = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey).valueAliases;
+            return aliases == null ? Map.of() : aliases;
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (hidden values are only put back where the release has"
+                    + " them): {}", serviceKey, ex.toString());
+            return Map.of();
+        }
+    }
+
+    private K8sReleaseEntity recordedRelease(HelmDeployRequest request) {
+        try {
+            return new ReleaseMetadataService(ctx).find(request.getNamespace(), request.getReleaseName());
+        } catch (Exception e) {
+            LOG.warn("Could not read the recorded release {}/{}: {}", request.getNamespace(), request.getReleaseName(),
+                    e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Completes a deploy request with what it leaves out. The chart repository and version given as query parameters
+     * (the wizard sends them that way) go into the request, so the GitOps backend, which reads the request, uses them
+     * too. A redeploy of a recorded release then keeps its chart repository, its platform context and its chart
+     * version: without a version, Helm and Flux would move the release to the newest chart, which nobody reviewed.
+     * The version kept is the one the release is meant to run: for a GitOps release, the one last committed to Git
+     * ({@link #chartVersionHeldInGit}); otherwise the one Helm reports, else the recorded one.
+     *
+     * @param request  the deploy request, completed in place
+     * @param repoId   the chart repository query parameter, may be blank
+     * @param version  the chart version query parameter, may be blank
+     * @param recorded the release as recorded by an earlier deploy, {@code null} for a first install
+     * @return the chart repository and version the backends use; a query parameter wins over the request body
+     */
+    ChartSource applyReleaseDefaults(HelmDeployRequest request, String repoId, String version, K8sReleaseEntity recorded) {
+        String queryRepoId = firstNonBlank(repoId);
+        String queryVersion = pinnedChartVersion(version);
+        if (firstNonBlank(request.getRepoId()) == null) {
+            request.setRepoId(queryRepoId);
+        }
+        if (pinnedChartVersion(request.getVersion()) == null) {
+            request.setVersion(queryVersion);
+        }
+        if (recorded != null) {
+            if (firstNonBlank(request.getRepoId()) == null) {
+                request.setRepoId(firstNonBlank(recorded.getRepoId()));
+            }
+            if (request.getVersion() == null) {
+                String recordedVersion = pinnedChartVersion(recorded.getVersion());
+                if (recordedVersion != null && chartVersionHeldInGit(recorded.getDeploymentMode())) {
+                    request.setVersion(recordedVersion);
+                } else {
+                    // What runs on the cluster first: the recorded version is stale after an upgrade made outside KDPS.
+                    String deployed = pinnedChartVersion(kubernetesService.deployedChartVersion(
+                            request.getNamespace(), request.getReleaseName()));
+                    request.setVersion(deployed != null ? deployed : recordedVersion);
+                }
+                if (request.getVersion() != null) {
+                    LOG.info("Redeploy of {}/{} names no chart version: keeping chart version {}",
+                            request.getNamespace(), request.getReleaseName(), request.getVersion());
+                }
+            }
+            defaultPlatformContext(request, recorded);
+        }
+        return new ChartSource(firstNonBlank(queryRepoId, request.getRepoId()),
+                firstNonBlank(queryVersion, pinnedChartVersion(request.getVersion())));
+    }
+
+    /**
+     * Keeps the external Kerberos keytab of a release deployed against an external platform context when a redeploy
+     * does not name it. The keytab Secret is a wizard field kept out of the chart values and not recorded on the
+     * release, so a resync, a security refresh or an autoscaling change resubmits the release without it, and the
+     * deploy would then turn Kerberos off: the pods would restart without their keytab and krb5.conf. The Secret is
+     * read back from the values the release runs with (PRE_PROVISIONED injection and its keytab Secret). The principal
+     * comes from that Secret's principal key, else from the values the release runs with, so the release keeps the
+     * identity it authenticates as.
+     *
+     * <p>Only a redeploy on the external context the release was recorded on is completed: a keytab Ambari minted for
+     * the managed context looks the same in the values, and a release moved to another context needs a keytab from
+     * that context's realm, which the deploy's own checks ask for. A service that declares no operator keytab is left
+     * to the deploy as well, since there is no keytab field to fill in.
+     *
+     * @param request  the deploy request, its form values completed in place
+     * @param recorded the release as recorded by an earlier deploy, {@code null} for a first install
+     * @throws IllegalStateException when the release ran with Kerberos and its keytab cannot be found, or when the
+     *                               values it runs with cannot be read to find out
+     */
+    void restoreExternalKeytab(HelmDeployRequest request, K8sReleaseEntity recorded) {
+        if (recorded == null || deployUsesExternalKeytab(request.getFormValues())) return;
+        String contextId = request.getPlatformContextId();
+        if (contextId == null || ContextService.DEFAULT_CONTEXT_ID.equals(contextId)
+                || !contextId.equals(stringValue(recorded.getPlatformContextId()))) {
+            return;
+        }
+        StackServiceDef def = serviceDefinition(firstNonBlank(request.getServiceKey(), recorded.getServiceKey()));
+        org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget.AuthMode keytabMode = externalKeytabMode(def);
+        if (keytabMode == null) return;
+        if (request.getFormValues() != null
+                && ConfigResolutionService.getByDottedPath(request.getFormValues(), keytabMode.secretField) != null) {
+            // The form names the keytab field and left it blank: the operator's choice, checked by the deploy itself.
+            return;
+        }
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        Map<String, Object> deployed;
+        try {
+            deployed = kubernetesService.getHelmReleaseValues(namespace, release);
+        } catch (Exception e) {
+            // Going on without knowing would deploy this external context with no keytab, which turns Kerberos off.
+            // A release with no values at all is an empty map, not an error, and goes on.
+            LOG.warn("Could not read the values of {}/{} to keep its external keytab: {}", namespace, release, e.toString());
+            throw new IllegalStateException("Could not read the values of " + release + " to keep its Kerberos keytab: "
+                    + firstNonBlank(e.getMessage(), e.toString()) + ". Try again.", e);
+        }
+        if (deployed == null || !asBoolean(ConfigResolutionService.getByDottedPath(deployed, KERBEROS_ENABLED_PATH), false)) {
+            return;
+        }
+        if (turnsKerberosOffInItsValues(request)) {
+            LOG.info("Redeploy of {}/{} turns Kerberos off in its values; no keytab to keep", namespace, release);
+            return;
+        }
+
+        String injectionMode = stringValue(ConfigResolutionService.getByDottedPath(
+                deployed, "global.security.kerberos.injectionMode"));
+        String secretName = stringValue(ConfigResolutionService.getByDottedPath(deployed, KERBEROS_KEYTAB_SECRET_PATH));
+        if (!KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(injectionMode) || secretName.isEmpty()) {
+            throw new IllegalStateException("Cannot redeploy " + release + ": it runs with Kerberos against platform"
+                    + " context '" + contextId + "', but this deploy names no external keytab and none could be found"
+                    + " in the release's values. Deploying without one would turn Kerberos off, and the pods would lose"
+                    + " their keytab and krb5.conf. Open Upgrade/Config, select the service keytab Secret in step 3,"
+                    + " and deploy again.");
+        }
+
+        io.fabric8.kubernetes.api.model.Secret secret = null;
+        boolean secretRead = false;
+        try {
+            secret = kubernetesService.getSecret(namespace, secretName);
+            secretRead = true;
+        } catch (Exception e) {
+            // The deploy reads the Secret again when it applies the keytab, and stops there if it is missing.
+            LOG.warn("Could not read keytab Secret {}/{}; looking for its principal in the release's values: {}",
+                    namespace, secretName, e.toString());
+        }
+        if (secretRead && secret == null) {
+            throw new IllegalStateException("Cannot redeploy " + release + ": it runs with Kerberos against platform"
+                    + " context '" + contextId + "' using the keytab in Secret '" + namespace + "/" + secretName
+                    + "', which no longer exists. Deploying without it would turn Kerberos off, and the pods would"
+                    + " lose their keytab and krb5.conf. Recreate the Secret (keys " + keytabMode.secretKeys
+                    + "), or select another keytab Secret in Upgrade/Config (step 3), then deploy again.");
+        }
+
+        Map<String, Object> form = request.getFormValues() == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(request.getFormValues());
+        putDotted(form, keytabMode.secretField, secretName);
+        if (keytabMode.principalField != null && !keytabMode.principalField.isBlank()) {
+            String principal = resolveExternalKeytabPrincipal(keytabMode, form, secret == null ? null : secret.getData());
+            if (principal == null && keytabMode.principalApplyTo != null) {
+                for (String path : keytabMode.principalApplyTo) {
+                    principal = firstNonBlank(stringValue(ConfigResolutionService.getByDottedPath(deployed, path)));
+                    if (principal != null) break;
+                }
+            }
+            if (principal == null) {
+                principal = catalogPrincipal(def, keytabMode.principalField, deployed);
+            }
+            if (principal != null) {
+                putDotted(form, keytabMode.principalField, principal);
+            } else {
+                // Nothing the release runs with names a principal, so nothing changes identity: the deploy resolves
+                // it as the first one did.
+                LOG.info("Neither keytab Secret {}/{} nor the values of {}/{} name a principal; redeploying without"
+                        + " an explicit one", namespace, secretName, namespace, release);
+            }
+        }
+        request.setFormValues(form);
+        LOG.info("Redeploy of {}/{} names no external keytab: keeping the one it runs with (Secret {})",
+                namespace, release, secretName);
+    }
+
+    /** Whether the deploy's own values set global.security.kerberos.enabled to false: Kerberos off on purpose. */
+    private static boolean turnsKerberosOffInItsValues(HelmDeployRequest request) {
+        Object requested = request.getValues() == null ? null
+                : ConfigResolutionService.getByDottedPath(request.getValues(), KERBEROS_ENABLED_PATH);
+        return requested != null && !asBoolean(requested, true);
+    }
+
+    /**
+     * Why a deploy must not turn the release's Kerberos off, or {@code null} when it may. Asked by the direct and the
+     * GitOps deploy before they write global.security.kerberos.enabled=false because the Ambari cluster provides no
+     * Kerberos (or Ambari manages no cluster).
+     *
+     * <p>A release with no recorded platform context (deployed before KDPS recorded it, or adopted), redeployed without
+     * naming one, follows the local Ambari cluster. If it runs with Kerberos, it was deployed against a Kerberized
+     * context nobody recorded, typically an external one with the operator's keytab: turning Kerberos off would
+     * restart its pods without their keytab and krb5.conf. A recorded or named context keeps its own rules: the
+     * managed context follows its cluster, and an external one keeps its keytab ({@link #restoreExternalKeytab}).
+     * Values that set global.security.kerberos.enabled=false turn Kerberos off on purpose and are not refused. When
+     * the values the release runs with cannot be read, the deploy is refused too: it cannot tell whether it would
+     * take Kerberos away. A release with no values (a first install) is not an error and may go on.
+     *
+     * @param kubernetesService reads the values the release runs with
+     * @param request           the deploy request, completed with the release's recorded platform context
+     * @return the reason to refuse the deploy, or {@code null}
+     */
+    public static String kerberosSwitchOffProblem(KubernetesService kubernetesService, HelmDeployRequest request) {
+        if (request.getPlatformContextId() != null || turnsKerberosOffInItsValues(request)) return null;
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        Map<String, Object> deployed;
+        try {
+            deployed = kubernetesService.getHelmReleaseValues(namespace, release);
+        } catch (Exception e) {
+            LOG.warn("Could not read the values of {}/{} to check its Kerberos state: {}", namespace, release, e.toString());
+            return "Could not read the values of " + release + " to check whether it runs with Kerberos, which this"
+                    + " deploy would turn off: " + firstNonBlank(e.getMessage(), e.toString()) + ". Try again.";
+        }
+        if (deployed == null || !asBoolean(ConfigResolutionService.getByDottedPath(deployed, KERBEROS_ENABLED_PATH), false)) {
+            return null;
+        }
+        return "Cannot redeploy " + release + ": it runs with Kerberos, but no platform context is recorded for it and"
+                + " this deploy names none, so it would follow this Ambari, which provides no Kerberos, and turn"
+                + " Kerberos off. The pods would lose their keytab and krb5.conf. Open Upgrade/Config, select the"
+                + " release's platform context (and, for an external context, its service keytab Secret in step 3),"
+                + " and deploy again. To turn Kerberos off on purpose, set global.security.kerberos.enabled=false in"
+                + " the release's values.";
+    }
+
+    /**
+     * Turns Kerberos off in a direct deploy's chart values, as neither the Ambari cluster nor the platform context
+     * provides it, unless that would silently take Kerberos away from a release that runs with it.
+     *
+     * @param request the deploy request
+     * @param params  the deploy's command parameters, the override added in place
+     * @param cluster the Ambari cluster, for the log
+     * @throws IllegalStateException when the release runs with Kerberos ({@link #kerberosSwitchOffProblem})
+     */
+    void overrideKerberosOff(HelmDeployRequest request, Map<String, Object> params, String cluster) {
+        String problem = kerberosSwitchOffProblem(kubernetesService, request);
+        if (problem != null) {
+            throw new IllegalStateException(problem);
+        }
+        CommandUtils.addOverride(params, KERBEROS_ENABLED_PATH, "false");
+        LOG.info("Kerberos is disabled on cluster {} and no context krb5.conf supplied; overriding chart values with global.security.kerberos.enabled=false", cluster);
+    }
+
+    /**
+     * Refuses a deploy, upgrade or resync of a service this release no longer ships a definition for (JupyterHub): a
+     * release deployed by an earlier build stays listed and can be uninstalled, nothing else. Uninstall does not go
+     * through a deploy, so it is not affected.
+     *
+     * @param request the deploy request
+     * @throws IllegalStateException when the request names a service without a definition
+     */
+    void checkServiceInRelease(HelmDeployRequest request) {
+        String key = request.getServiceKey();
+        if (key == null || key.isBlank()) return;
+        if (!new StackDefinitionService(this.ctx).hasServiceDefinition(key)) {
+            LOG.warn("Deploy of {} as {}/{} refused: the service is not part of this release", key,
+                    request.getNamespace(), request.getReleaseName());
+            throw new IllegalStateException(key + " is not part of this release; a release of it deployed by an"
+                    + " earlier build can only be uninstalled.");
+        }
+    }
+
+    /**
+     * Refuses the deploy of a service on a platform its definition leaves out of {@link StackServiceDef#platforms}.
+     * The cluster is only probed for a service that lists its platforms.
+     *
+     * @param request the deploy request
+     * @throws IllegalStateException when the cluster is a platform the service does not support
+     */
+    void checkSupportedPlatform(HelmDeployRequest request) {
+        StackServiceDef def = serviceDefinition(request.getServiceKey());
+        if (def == null || def.platforms == null || def.platforms.isEmpty()) return;
+        String problem = unsupportedPlatformProblem(def, request.getServiceKey(), kubernetesService.isOpenShiftCluster());
+        if (problem != null) {
+            LOG.warn("Deploy of {} as {}/{} refused: {}", request.getServiceKey(), request.getNamespace(),
+                    request.getReleaseName(), problem);
+            throw new IllegalStateException(problem);
+        }
+    }
+
+    /**
+     * Why a service cannot be deployed on the cluster, or {@code null} when it can: its definition lists the platforms
+     * it supports and the cluster is none of them. The answer is the definition's
+     * {@link StackServiceDef#unsupportedPlatformMessage}, else one naming the service and the platform.
+     *
+     * @param def        the service definition, {@code null} when unknown
+     * @param serviceKey the service key, named when the definition has no label
+     * @param openShift  whether the cluster is OpenShift; otherwise it is plain Kubernetes
+     * @return the reason to refuse the deploy, or {@code null}
+     */
+    static String unsupportedPlatformProblem(StackServiceDef def, String serviceKey, boolean openShift) {
+        if (def == null || def.platforms == null || def.platforms.isEmpty()) return null;
+        String platform = openShift ? "openshift" : "kubernetes";
+        for (String supported : def.platforms) {
+            if (supported != null && platform.equalsIgnoreCase(supported.trim())) return null;
+        }
+        if (def.unsupportedPlatformMessage != null && !def.unsupportedPlatformMessage.isBlank()) {
+            return def.unsupportedPlatformMessage;
+        }
+        return firstNonBlank(def.label, serviceKey, "This service") + " is not supported on "
+                + (openShift ? "OpenShift" : "plain Kubernetes") + " in this release.";
+    }
+
+    /**
+     * Gives a deploy on OpenShift the chart values its service definition declares in
+     * {@link StackServiceDef#openshiftValueDefaults} and the deploy does not set, in every deployment mode. The wizard
+     * sets the same values through bindings gated on the platform; a request sent straight to the API, a GitOps
+     * deploy driven from Git and a chart upgrade from the Releases page do not run them, and would otherwise deploy
+     * the chart's own default, such as
+     * JupyterHub's user scheduler with its ClusterRole, which an account limited to its own projects cannot create.
+     * The cluster is only probed for a service that declares such defaults.
+     *
+     * @param request the deploy request; its values are completed in place
+     */
+    void applyOpenShiftValueDefaults(HelmDeployRequest request) {
+        StackServiceDef def = serviceDefinition(request.getServiceKey());
+        if (def == null || def.openshiftValueDefaults == null || def.openshiftValueDefaults.isEmpty()) return;
+        if (!kubernetesService.isOpenShiftCluster()) return;
+        if (request.getValues() == null) request.setValues(new LinkedHashMap<>());
+        List<String> applied = applyOpenShiftValueDefaults(def, request.getValues());
+        if (!applied.isEmpty()) {
+            LOG.info("{}/{}: OpenShift defaults of {} applied: {}", request.getNamespace(), request.getReleaseName(),
+                    request.getServiceKey(), applied);
+        }
+    }
+
+    /**
+     * Writes each of the definition's {@code openshiftValueDefaults} into {@code values} where they carry no value
+     * for its path; a value already there, the operator's choice or a binding's, is kept.
+     *
+     * @param def    the service definition
+     * @param values the chart values, changed in place
+     * @return the paths that were given their default, in declaration order
+     */
+    static List<String> applyOpenShiftValueDefaults(StackServiceDef def, Map<String, Object> values) {
+        List<String> applied = new ArrayList<>();
+        if (def == null || def.openshiftValueDefaults == null || values == null) return applied;
+        for (Map.Entry<String, Object> e : def.openshiftValueDefaults.entrySet()) {
+            String path = e.getKey();
+            if (path == null || path.isBlank() || path.startsWith("_")) continue;   // "_comment": documentation
+            if (ConfigResolutionService.getByDottedPath(values, path) != null) continue;
+            putDotted(values, path, e.getValue());
+            applied.add(path);
+        }
+        return applied;
+    }
+
+    /** The service definition, or {@code null} when there is no service key or it cannot be read. */
+    private StackServiceDef serviceDefinition(String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank()) return null;
+        try {
+            return new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+        } catch (Exception e) {
+            LOG.warn("Could not load the service definition {}: {}", serviceKey, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * The Kerberos auth mode, among the service's external targets, that mounts an operator keytab Secret as the
+     * release's keytab, or {@code null} when the service has none.
+     */
+    private static org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget.AuthMode externalKeytabMode(
+            StackServiceDef def) {
+        if (def == null || def.externalServiceTargets == null) return null;
+        for (org.apache.ambari.view.k8s.model.stack.ExternalServiceTarget target : def.externalServiceTargets.values()) {
+            var kerberos = target == null || target.authModes == null ? null : target.authModes.get("kerberos");
+            if (kerberos != null && kerberos.secretField != null && !kerberos.secretField.isBlank()
+                    && kerberos.applyTo != null && kerberos.applyTo.containsKey(KERBEROS_KEYTAB_SECRET_PATH)) {
+                return kerberos;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The principal a release's catalogs were rendered with, read from the values it runs with: the catalog
+     * properties the service definition fills from the keytab's principal field (Trino's Hive metastore and HDFS
+     * principals), at the path the deploy writes them to, then at their base paths. An unrendered template is not a
+     * principal and is skipped.
+     *
+     * @param def            the service definition
+     * @param principalField the form field the operator types the principal in
+     * @param deployed       the values the release runs with
+     * @return the principal, or {@code null} when no catalog names one
+     */
+    private String catalogPrincipal(StackServiceDef def, String principalField, Map<String, Object> deployed) {
+        if (def == null || def.catalogEnrichments == null) return null;
+        for (Map<String, Object> enrichment : def.catalogEnrichments) {
+            if (enrichment == null || !(enrichment.get("properties") instanceof List<?> properties)) continue;
+            List<String> catalogPaths = new ArrayList<>();
+            String targetPath = resolveCatalogEnrichmentTargetPath(enrichment);
+            if (targetPath != null && !targetPath.isBlank()) catalogPaths.add(targetPath);
+            catalogPaths.addAll(resolveCatalogEnrichmentBasePaths(enrichment));
+            for (Object property : properties) {
+                if (!(property instanceof Map<?, ?> spec) || !principalField.equals(spec.get("valueFromForm"))) continue;
+                String key = resolveStringValue(spec.get("key"), null);
+                if (key == null || key.isBlank()) continue;
+                for (String path : catalogPaths) {
+                    Object catalog = ConfigResolutionService.getByDottedPath(deployed, path);
+                    if (catalog == null) continue;
+                    for (String line : parseCatalogContentToLines(String.valueOf(catalog))) {
+                        if (!key.equals(extractCatalogPropertyKey(line))) continue;
+                        String principal = extractCatalogPropertyValue(line);
+                        if (!principal.isEmpty() && !principal.contains("{{")) return principal;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -4245,6 +7098,10 @@ public class CommandService {
      * <code>"requiredChartVersion": "&gt;=0.12.24"</code>, compare against the resolved
      * chart version. Refuse the install with a clear error if they don't match — prevents
      * silent breakage when chart and service.json drift apart.
+     *
+     * <p><b>retiredValues.</b> Values an earlier version of the service.json wrote and this one no
+     * longer does are removed after the aliases (see {@link #removeRetiredValues}), so that a redeploy
+     * from the release's values does not send them again.
      */
     /** Catalog names KDPS builds itself from the platform context; an operator must not shadow them. */
     static final java.util.Set<String> KDPS_MANAGED_CATALOGS = java.util.Set.of("hive", "iceberg");
@@ -4308,20 +7165,13 @@ public class CommandService {
                     + " of a KDPS Trino release in this cluster (expected <service>.<namespace>.svc.cluster.local[:port]"
                     + " of a release deployed with the KDPS service user, chart >= 1.43.13). Pick a coordinator from the list.");
         }
-                // Fail at submit when the Trino release cannot serve OM: the registration needs the KDPS
-        // service user (basic auth) and HTTPS (Trino refuses password auth on plain HTTP).
+        // Fail at submit when the Trino release cannot serve OM: the registration signs in as the KDPS
+        // service user, a password login, which Trino only accepts over HTTPS.
         try {
-            Map<String, Object> tv = kubernetesService.getHelmReleaseValues(ref[0], ref[1]);
-            Object su = tv == null ? null : ConfigResolutionService.getByDottedPath(tv, "kdps.serviceUser.enabled");
-            Object https = tv == null ? null : ConfigResolutionService.getByDottedPath(tv, "server.config.https.enabled");
-            if (su == null || !"true".equalsIgnoreCase(String.valueOf(su))) {
-                throw new IllegalArgumentException("Trino base ingestion: release " + ref[0] + "/" + ref[1]
-                        + " was deployed without the KDPS service user ('Let KDPS manage catalogs', chart >= 1.43.13)."
-                        + " Upgrade that Trino release with the option on first.");
-            }
-            if (https != null && !"true".equalsIgnoreCase(String.valueOf(https))) {
-                throw new IllegalArgumentException("Trino base ingestion: release " + ref[0] + "/" + ref[1]
-                        + " has HTTPS disabled; OpenMetadata authenticates with a password, which Trino only accepts over HTTPS.");
+            String unavailable = org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.serviceUserUnavailable(
+                    kubernetesService.getHelmReleaseValues(ref[0], ref[1]), "Trino base ingestion", ref[0] + "/" + ref[1]);
+            if (unavailable != null) {
+                throw new IllegalArgumentException(unavailable);
             }
         } catch (IllegalArgumentException iae) {
             throw iae;
@@ -4346,8 +7196,28 @@ public class CommandService {
                 trinoHost, ref[0], ref[1], omTrinoService, trinoRangerRepo);
     }
 
-    private void applyCustomCatalogs(HelmDeployRequest request) {
-        if (request.getFormValues() == null) return;
+    /** The names of the reusable catalogs the release records from its previous deploy, empty for a new release. */
+    private Set<String> previousCatalogRefs(HelmDeployRequest request) {
+        if (request.getNamespace() == null || request.getReleaseName() == null) return Collections.emptySet();
+        K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(request.getNamespace(), request.getReleaseName());
+        return recorded == null ? Collections.emptySet()
+                : TrinoCatalogService.parseRefs(recorded.getCatalogRefsJson()).keySet();
+    }
+
+    /**
+     * Adds the reusable catalogs selected in the wizard and its inline catalogs to the chart values, and takes out
+     * those the release had and the wizard no longer selects.
+     *
+     * @return the catalogs added (name to properties), empty when the deploy carries none
+     */
+    Map<String, String> applyCustomCatalogs(HelmDeployRequest request) {
+        // A form without the custom-catalogs section (resync, security refresh, autoscaling change, a deploy driven
+        // at the API) changes nothing: the release keeps the reusable catalogs it records. The wizard always sends
+        // the section, so deselecting every catalog there still clears them.
+        if (request.getFormValues() == null
+                || ConfigResolutionService.getByDottedPath(request.getFormValues(), "customCatalogs") == null) {
+            return Collections.emptyMap();
+        }
         // (1) reusable catalogs selected in the wizard (ids) -> snapshot their properties + remember refs
         Map<String, String> fromRefs = new LinkedHashMap<>();
         Map<String, Map<String, String>> refs = new LinkedHashMap<>();
@@ -4383,16 +7253,258 @@ public class CommandService {
 
         Map<String, String> merged = new LinkedHashMap<>(fromRefs);
         merged.putAll(parsed);
-        if (merged.isEmpty()) return;
 
         Map<String, Object> values = request.getValues();
-        if (values == null) return;
+        if (values == null) return merged;
         Object existing = values.get("catalogs");
         Map<String, Object> catalogs = (existing instanceof Map)
-                ? (Map<String, Object>) existing : new LinkedHashMap<>();
+                ? new LinkedHashMap<>((Map<String, Object>) existing) : new LinkedHashMap<>();
+        // The wizard carries the deployed values over, catalogs included: a reusable catalog the release had and the
+        // operator deselected must be taken out here, or Trino keeps serving it.
+        Set<String> deselected = new LinkedHashSet<>(previousCatalogRefs(request));
+        deselected.removeAll(merged.keySet());
+        deselected.retainAll(catalogs.keySet());
+        if (!deselected.isEmpty()) {
+            catalogs.keySet().removeAll(deselected);
+            values.put("catalogs", catalogs);
+            LOG.info("Reusable catalogs detached from the release: {}", deselected);
+        }
+        if (merged.isEmpty()) return merged;
+
         catalogs.putAll(merged);
         values.put("catalogs", catalogs);
         LOG.info("Trino catalogs wired into the release: reusable={} inline={}", fromRefs.keySet(), parsed.keySet());
+        return merged;
+    }
+
+    /** Values key of the Trino "Secrets with catalog credentials" (chart 1.43.16 and later). */
+    static final String CATALOG_CREDENTIAL_SECRETS = "catalogCredentialSecrets";
+
+    /** A catalog property value read from the environment: {@code ${ENV:NAME}}. */
+    private static final Pattern ENV_REFERENCE = Pattern.compile("\\$\\{ENV:([A-Za-z_][A-Za-z0-9_]*)}");
+
+    /**
+     * Environment variables the Trino chart sets itself (security profile, Polaris and S3 credentials, truststore,
+     * Hadoop configuration), which a catalog may reference without a credential Secret.
+     */
+    private static final Pattern TRINO_CHART_ENV = Pattern.compile("(TRINO|POLARIS|ICEBERG_S3|OIDC|TRUSTSTORE|HADOOP)_.*");
+
+    /**
+     * Checks the Trino "Secrets with catalog credentials" before anything is deployed. The chart exposes every key of
+     * each of these Secrets as an environment variable of the coordinator and the workers, and catalogs read their
+     * credentials from them as {@code ${ENV:KEY}}. A Secret missing from the namespace would keep the pods from
+     * starting, and a variable nothing provides stops the coordinator, so both are refused here with what to do:
+     * <ul>
+     *   <li>each Secret must exist in the release namespace;</li>
+     *   <li>each {@code ${ENV:KEY}} of the catalogs this deploy adds must be a key of one of them, a variable the
+     *   chart sets, or one of the values' {@code env}. Not checked when the values also take variables from
+     *   {@code envFrom}, or a Secret cannot be read: KDPS cannot see those keys then.</li>
+     * </ul>
+     *
+     * @param customCatalogs the catalogs this deploy adds (reusable and inline), name to properties
+     */
+    void checkCatalogCredentials(HelmDeployRequest request, Map<String, String> customCatalogs) {
+        Map<String, Object> values = request.getValues();
+        List<String> secretNames = asStringList(values == null ? null : values.get(CATALOG_CREDENTIAL_SECRETS));
+        Set<String> provided = new LinkedHashSet<>();
+        boolean allKeysKnown = true;
+        for (String secretName : secretNames) {
+            io.fabric8.kubernetes.api.model.Secret secret;
+            try {
+                secret = kubernetesService.getSecret(request.getNamespace(), secretName);
+            } catch (Exception e) {
+                LOG.warn("Could not read catalog credential Secret {}/{}; its keys are not checked: {}",
+                        request.getNamespace(), secretName, e.toString());
+                allKeysKnown = false;
+                continue;
+            }
+            if (secret == null) {
+                throw new IllegalArgumentException("Secret '" + secretName + "', selected under 'Secrets with catalog"
+                        + " credentials', does not exist in namespace '" + request.getNamespace() + "'. Create it"
+                        + " there first, e.g. kubectl -n " + request.getNamespace() + " create secret generic "
+                        + secretName + " --from-literal=PG_PASSWORD=..., or remove it from the selection.");
+            }
+            if (secret.getData() != null) provided.addAll(secret.getData().keySet());
+            if (secret.getStringData() != null) provided.addAll(secret.getStringData().keySet());
+        }
+        if (customCatalogs == null || customCatalogs.isEmpty() || !allKeysKnown) return;
+        Object envFrom = values == null ? null : values.get("envFrom");
+        if (envFrom instanceof Collection<?> sources && !sources.isEmpty()) return;
+        if (values != null && values.get("env") instanceof Collection<?> env) {
+            for (Object entry : env) {
+                if (entry instanceof Map<?, ?> m && m.get("name") != null) provided.add(String.valueOf(m.get("name")));
+            }
+        }
+        Map<String, Set<String>> missing = new LinkedHashMap<>();
+        for (Map.Entry<String, String> catalog : customCatalogs.entrySet()) {
+            Matcher m = ENV_REFERENCE.matcher(catalog.getValue() == null ? "" : catalog.getValue());
+            while (m.find()) {
+                String variable = m.group(1);
+                if (!provided.contains(variable) && !TRINO_CHART_ENV.matcher(variable).matches()) {
+                    missing.computeIfAbsent(catalog.getKey(), k -> new LinkedHashSet<>()).add(variable);
+                }
+            }
+        }
+        if (missing.isEmpty()) return;
+        List<String> parts = new ArrayList<>();
+        missing.forEach((catalog, variables) -> parts.add("'" + catalog + "' reads " + String.join(", ", variables)));
+        throw new IllegalArgumentException("Catalog credentials: " + String.join("; ", parts) + " from the"
+                + " environment, but " + (secretNames.isEmpty() ? "no Secret is selected under 'Secrets with catalog"
+                + " credentials'" : "no Secret selected under 'Secrets with catalog credentials' ("
+                + String.join(", ", secretNames) + ") has such a key") + ". Trino would not start. Add the key to"
+                + " a Secret in namespace '" + request.getNamespace() + "' and select that Secret.");
+    }
+
+    /**
+     * Looks for catalogs of the chart values that write a credential out
+     * ({@link TrinoCatalogService#literalCredentialProperties}), every catalog but the ones KDPS builds: those this
+     * deploy adds, and those the release keeps from before credentials had to come from a Secret (an inline catalog of
+     * an earlier deploy, a reusable catalog saved then, one saved from the release's Catalogs action). The chart would
+     * write them into the catalog ConfigMap, which anyone allowed to read ConfigMaps in the namespace can read.
+     * <ul>
+     *   <li>The deploy carries the wizard's custom-catalogs section: refused, naming each catalog, its properties and
+     *   where to fix it, since the operator can do so there and then.</li>
+     *   <li>Otherwise (a resync, a security refresh, an autoscaling change, a chart upgrade from the Releases page):
+     *   returned as a warning for the operation log. Refusing would leave the release without those operations.</li>
+     * </ul>
+     * The values themselves are never repeated.
+     *
+     * @param recorded the release as an earlier deploy recorded it (its reusable catalogs), may be {@code null}
+     * @return the warning, or {@code null} when every catalog reads its credentials from the environment
+     * @throws IllegalArgumentException for a credential written out in a deploy from the wizard
+     */
+    String checkLiteralCatalogCredentials(HelmDeployRequest request, K8sReleaseEntity recorded) {
+        Map<String, Object> values = request.getValues();
+        if (values == null || !(values.get("catalogs") instanceof Map<?, ?> catalogs)) return null;
+        Map<String, List<String>> literal = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> catalog : catalogs.entrySet()) {
+            String name = String.valueOf(catalog.getKey());
+            if (KDPS_MANAGED_CATALOGS.contains(name) || !(catalog.getValue() instanceof String text)) continue;
+            List<String> properties = TrinoCatalogService.literalCredentialProperties(text);
+            if (!properties.isEmpty()) literal.put(name, properties);
+        }
+        if (literal.isEmpty()) return null;
+
+        // The reusable catalogs: those the wizard selected (recorded by applyCustomCatalogs), else the release's.
+        Map<String, Object> form = request.getFormValues();
+        boolean fromWizard = form != null && ConfigResolutionService.getByDottedPath(form, "customCatalogs") != null;
+        Object refs = form != null && form.containsKey("_catalogRefsJson") ? form.get("_catalogRefsJson")
+                : recorded == null ? null : recorded.getCatalogRefsJson();
+        Set<String> reusable = TrinoCatalogService.parseRefs(refs == null ? null : String.valueOf(refs)).keySet();
+
+        List<String> parts = new ArrayList<>();
+        literal.forEach((name, properties) -> parts.add("'" + name + "' writes " + String.join(", ", properties)
+                + " out (" + (reusable.contains(name)
+                        ? "a reusable catalog: edit it on the Trino Catalogs page"
+                        : "kept from an earlier deploy of the release: define it again under 'Additional Trino"
+                                + " catalogs', which replaces it") + ")"));
+        String found = "Catalog credentials written out: " + String.join("; ", parts) + ".";
+        String namespace = request.getNamespace();
+        if (fromWizard) {
+            Map.Entry<String, List<String>> first = literal.entrySet().iterator().next();
+            String property = first.getValue().get(0);
+            String variable = (first.getKey() + "_" + property).toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9_]", "_");
+            throw new IllegalArgumentException(found + " They would be stored in the catalog ConfigMap, which anyone"
+                    + " allowed to read ConfigMaps in namespace '" + namespace + "' can read. Put each credential in a"
+                    + " Kubernetes Secret in that namespace, select the Secret under 'Secrets with catalog credentials'"
+                    + " and reference its key instead, e.g. " + property + "=${ENV:" + variable + "}.");
+        }
+        String warning = found + " They are still written into the catalog ConfigMap, which anyone allowed to read"
+                + " ConfigMaps in namespace '" + namespace + "' can read. Run Upgrade/Config on the release to read"
+                + " them from a Kubernetes Secret with ${ENV:KEY} instead.";
+        LOG.warn("{}/{}: {}", namespace, request.getReleaseName(), warning);
+        return warning;
+    }
+
+    /**
+     * Looks for secrets the chart this deploy uses would write into a ConfigMap or a plain environment variable,
+     * although a later chart keeps them in a Kubernetes Secret ({@code secretChartVersions} of the service
+     * definition). Each entry's path is looked up in the deploy's values, its form, then the values its security
+     * profile adds (an LDAP or AD bind password, an OIDC client secret).
+     * <ul>
+     *   <li>The deploy carries the wizard's form: refused, since the operator can pick a later chart under
+     *   'Version (override)' there and then.</li>
+     *   <li>Otherwise (a resync, a security refresh, an autoscaling change of a release on an older chart, a chart
+     *   upgrade from the Releases page): returned as a warning for the operation log. Refusing would leave the
+     *   release without those operations.</li>
+     * </ul>
+     *
+     * @param resolvedVersion the chart version the deploy uses; nothing is checked without one
+     * @param fromForm        whether the deploy carries the wizard's form ({@link #carriesServiceForm})
+     * @return the warning, or {@code null}
+     * @throws IllegalArgumentException for such a secret in a deploy from the wizard
+     */
+    String checkSecretChartVersions(HelmDeployRequest request, String resolvedVersion, boolean fromForm) {
+        if (resolvedVersion == null || resolvedVersion.isBlank()
+                || request.getServiceKey() == null || request.getServiceKey().isBlank()) return null;
+        StackServiceDef def;
+        try {
+            def = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (secret chart versions not checked): {}",
+                    request.getServiceKey(), ex.toString());
+            return null;
+        }
+        if (def == null || def.secretChartVersions == null || def.secretChartVersions.isEmpty()) return null;
+
+        Map<String, String> profileValues = null;   // read once, and only when needed
+        Map<String, List<String>> labelsByRange = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : def.secretChartVersions.entrySet()) {
+            String path = entry.getKey();
+            if (path == null || path.isBlank() || path.startsWith("_")
+                    || !(entry.getValue() instanceof Map<?, ?> spec)) continue;
+            String range = stringValue(spec.get("range"));
+            if (range.isBlank() || isChartVersionCompatible(resolvedVersion, range)) continue;
+            boolean carried = carriesSecret(ConfigResolutionService.getByDottedPath(request.getValues(), path))
+                    || carriesSecret(ConfigResolutionService.getByDottedPath(request.getFormValues(), path));
+            if (!carried) {
+                if (profileValues == null) profileValues = securityProfileValues(request.getSecurityProfile());
+                carried = carriesSecret(profileValues.get(path));
+            }
+            if (!carried) continue;
+            String label = stringValue(spec.get("label"));
+            labelsByRange.computeIfAbsent(range, k -> new ArrayList<>()).add(label.isBlank() ? "'" + path + "'" : label);
+        }
+        if (labelsByRange.isEmpty()) return null;
+
+        List<String> sentences = new ArrayList<>();
+        labelsByRange.forEach((range, labels) -> {
+            String them = labels.size() == 1 ? "it" : "them";
+            sentences.add("With chart " + resolvedVersion + ", " + String.join(" and ", labels) + " would not be kept"
+                    + " in a Kubernetes Secret: the chart writes " + them + " into a ConfigMap or a plain environment"
+                    + " variable, which anyone allowed to read ConfigMaps or Deployments in namespace '"
+                    + request.getNamespace() + "' can read. Chart " + range + " keeps " + them + " in a Secret.");
+        });
+        String found = String.join(" ", sentences);
+        if (fromForm) {
+            throw new IllegalArgumentException(found + " Pick such a chart version under 'Version (override)'.");
+        }
+        String warning = found + " Upgrade the release to such a chart version (Upgrade/Config, or the chart upgrade"
+                + " on the Releases page).";
+        LOG.warn("{}/{}: {}", request.getNamespace(), request.getReleaseName(), warning);
+        return warning;
+    }
+
+    /** Whether a value carries a secret: a non-blank text, or a non-empty list or map. */
+    private static boolean carriesSecret(Object value) {
+        if (value instanceof Collection<?> c) return !c.isEmpty();
+        if (value instanceof Map<?, ?> m) return !m.isEmpty();
+        return value != null && !String.valueOf(value).isBlank();
+    }
+
+    /**
+     * The chart values a security profile adds to a deploy (Helm path to value), as {@link #applySecurityOverrides}
+     * writes them; empty without a profile or when it cannot be read.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> securityProfileValues(String requestedProfile) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        try {
+            applySecurityOverrides(loadSecurityConfig(resolveSecurityProfileName(requestedProfile)), params);
+        } catch (Exception ex) {
+            LOG.warn("Could not read the values of security profile {}: {}", requestedProfile, ex.toString());
+        }
+        return params.get("_ov") instanceof Map<?, ?> ov ? (Map<String, String>) ov : Collections.emptyMap();
     }
 
     /** A form value that may arrive as a List, a JSON-ish array string or a comma-separated string. */
@@ -4459,17 +7571,14 @@ public class CommandService {
                 throw new IllegalArgumentException("Additional catalogs: '" + e.getKey()
                         + "' has no connector.name, so Trino would refuse to start. Add the connector it should use.");
             }
-            // Inline credentials end up readable in the catalog ConfigMap and in SHOW CREATE CATALOG.
-            if (e.getValue().matches("(?s).*(password|secret-key|secret_key)\\s*=\\s*(?!\\$\\{)\\S.*")) {
-                LOG.warn("Additional catalog '{}' appears to carry an inline credential. Prefer a Secret and"
-                        + " ${{ENV:VAR}} so it does not sit in the catalog ConfigMap.", e.getKey());
-            }
+            // Inline credentials would be readable in the catalog ConfigMap and in SHOW CREATE CATALOG.
+            TrinoCatalogService.rejectLiteralCredentials(e.getKey(), e.getValue());
         }
 
         return parsed;
     }
 
-    private void applyValueAliasesAndVersionCheck(HelmDeployRequest request, String resolvedVersion) {
+    private void applyValueAliasesAndVersionCheck(HelmDeployRequest request, String resolvedVersion, List<String> warnings) {
         if (request.getServiceKey() == null || request.getServiceKey().isBlank()) return;
         StackServiceDef def;
         try {
@@ -4492,6 +7601,10 @@ public class CommandService {
             LOG.info("Chart version {} satisfies range '{}' for {}", resolvedVersion, def.requiredChartVersion, request.getServiceKey());
         }
 
+        // ----- Trino options that need internal HTTPS
+        // Before the per-feature check: an option turned off here needs no particular chart version.
+        addIfPresent(warnings, checkServiceUserNeedsHttps(request, def));
+
         // ----- per-feature chart version check
         // A toggle whose chart-side template only exists in a later chart must not deploy silently as
         // a no-op. Enforced only when the toggle is actually on, so the service keeps a permissive
@@ -4503,11 +7616,14 @@ public class CommandService {
                 String range = fe.getValue();
                 if (togglePath == null || togglePath.isBlank() || range == null || range.isBlank()) continue;
                 if (togglePath.startsWith("_")) continue;   // "_comment" and friends: documentation, not a toggle
+                // The chart reads the values, so the form only counts for a toggle the values do not carry. A binding
+                // may turn a toggle off in the values while the form keeps its default: the wizard does so for 'Let
+                // KDPS manage catalogs' once internal HTTPS is off, and hides the checkbox.
                 Object enabled = ConfigResolutionService.getByDottedPath(request.getValues(), togglePath);
-                if (!asBoolean(enabled, false) && request.getFormValues() != null) {
+                if (enabled == null && request.getFormValues() != null) {
                     enabled = ConfigResolutionService.getByDottedPath(request.getFormValues(), togglePath);
                 }
-                if (!asBoolean(enabled, false)) continue;
+                if (!featureOn(enabled)) continue;
                 if (!isChartVersionCompatible(resolvedVersion, range)) {
                     throw new IllegalArgumentException(
                             "'" + togglePath + "' is enabled, which needs chart version " + range
@@ -4521,16 +7637,311 @@ public class CommandService {
             }
         }
 
-        // ----- value path rewrites
-        if (def.valueAliases == null || def.valueAliases.isEmpty()) return;
-        Map<String, Object> values = request.getValues();
-        for (Map.Entry<String, String> e : def.valueAliases.entrySet()) {
-            String from = e.getKey();
-            String to = e.getValue();
-            if (from == null || from.isBlank() || to == null || to.isBlank() || from.equals(to)) continue;
-            rewriteDottedPath(values, from, to);
-            LOG.info("Applied valueAlias for {}: {} -> {}", request.getServiceKey(), from, to);
+        // ----- value path rewrites and retired values
+        if (def.releaseNameValues != null && !def.releaseNameValues.isEmpty()) {
+            // A request without values (sent straight to the API) must still get the release-name pins.
+            if (request.getValues() == null) request.setValues(new LinkedHashMap<>());
+            addIfPresent(warnings, renamedByReleaseNamePin(def, request));
         }
+        applyDefinitionValueRewrites(def, request.getServiceKey(), request.getReleaseName(), request.getValues());
+    }
+
+    /**
+     * What the operator must know when pinning the chart's fullname to the release name renames a release an earlier
+     * version deployed under {@code <release>-<chart>}: its Service, Deployment and Route get new names, and anything
+     * that kept the old address (ingestion pipelines already pushed to Airflow, hand-made clients) must be updated.
+     *
+     * @return the warning, or null when nothing is renamed (a first install, or a name that already matches)
+     */
+    String renamedByReleaseNamePin(StackServiceDef def, HelmDeployRequest request) {
+        String release = request.getReleaseName();
+        if (release == null || release.isBlank() || !def.releaseNameValues.contains("fullnameOverride")) return null;
+        Map<String, Object> deployed;
+        try {
+            deployed = this.kubernetesService.getHelmReleaseValues(request.getNamespace(), release);
+        } catch (Exception e) {
+            LOG.debug("Could not read the deployed values of {}/{}: {}", request.getNamespace(), release, e.toString());
+            return null;
+        }
+        if (deployed == null || deployed.isEmpty()) return null;
+        String chart = def.chart == null ? null : def.chart.substring(def.chart.lastIndexOf('/') + 1);
+        String previous = ConfigResolutionService.chartFullname(chart, release, deployed);
+        if (previous == null || previous.equals(release)) return null;
+        String warning = "The resources of release " + release + " are renamed from '" + previous + "' to '" + release
+                + "' (Service, Deployment, Route): its address becomes " + release + "." + request.getNamespace()
+                + ".svc. Update anything that still calls " + previous + "." + request.getNamespace()
+                + ".svc, and redeploy the ingestion pipelines created before this change.";
+        LOG.warn(warning);
+        return warning;
+    }
+
+    /** The Trino chart value behind 'Let KDPS manage catalogs'. */
+    public static final String KDPS_SERVICE_USER_ENABLED = "kdps.serviceUser.enabled";
+
+    /** The Trino chart value behind 'Enable internal HTTPS'. */
+    public static final String TRINO_HTTPS_ENABLED = "server.config.https.enabled";
+
+    /**
+     * 'Let KDPS manage catalogs' gives KDPS a password login on Trino, and Trino only accepts password logins over
+     * HTTPS: the chart refuses the option without 'Enable internal HTTPS', and the deploy would only fail at the Helm
+     * dry run, with a message that names Helm values. The wizard turns the option off, and hides it, while internal
+     * HTTPS is off; this covers the deploys that skip the wizard's bindings (a request sent straight to the API, a
+     * browser still running an earlier version of the view).
+     * <ul>
+     *   <li>The option is on because it is the wizard's default: the deploy carries the wizard's form with the option
+     *   at its default value, and leaves HTTPS at the chart's default (off). The option is turned off, in the values
+     *   and the form, and the returned warning goes into the operation log.</li>
+     *   <li>Otherwise the request asked for both, and is refused with the wizard labels.</li>
+     * </ul>
+     * Only checked for a service that declares the option (Trino).
+     *
+     * @param def the service definition of the deploy
+     * @return the warning when the option was turned off, or {@code null}
+     * @throws IllegalArgumentException when the request turns the option on without internal HTTPS
+     */
+    static String checkServiceUserNeedsHttps(HelmDeployRequest request, StackServiceDef def) {
+        FormField option = def == null ? null : findFormField(def.form, KDPS_SERVICE_USER_ENABLED);
+        Map<String, Object> values = request.getValues();
+        if (option == null || values == null
+                || !asBoolean(ConfigResolutionService.getByDottedPath(values, KDPS_SERVICE_USER_ENABLED), false)) {
+            return null;
+        }
+        Object https = ConfigResolutionService.getByDottedPath(values, TRINO_HTTPS_ENABLED);
+        if (asBoolean(https, false)) return null;
+
+        Map<String, Object> form = request.getFormValues();
+        Object inForm = form == null ? null : ConfigResolutionService.getByDottedPath(form, KDPS_SERVICE_USER_ENABLED);
+        boolean fromDefault = https == null && asBoolean(inForm, false) && asBoolean(option.defaultValue, false);
+        if (!fromDefault) {
+            throw new IllegalArgumentException("'Let KDPS manage catalogs' (" + KDPS_SERVICE_USER_ENABLED
+                    + ") needs 'Enable internal HTTPS' (" + TRINO_HTTPS_ENABLED + "): Trino only accepts password"
+                    + " logins over HTTPS. Turn internal HTTPS on, or turn 'Let KDPS manage catalogs' off.");
+        }
+        putDotted(values, KDPS_SERVICE_USER_ENABLED, false);
+        // Keep the form in step, so nothing after this reads the option as still on.
+        putDotted(form, KDPS_SERVICE_USER_ENABLED, false);
+        String warning = "'Let KDPS manage catalogs' was turned off: it needs 'Enable internal HTTPS', which is off for"
+                + " this release (Trino only accepts password logins over HTTPS). Without it, the Catalogs action and the"
+                + " OpenMetadata Trino ingestion do not work on this release. To use them, turn internal HTTPS on in"
+                + " Upgrade/Config, then 'Let KDPS manage catalogs'.";
+        LOG.warn("{}/{}: {}", request.getNamespace(), request.getReleaseName(), warning);
+        return warning;
+    }
+
+    /**
+     * Brings chart values in line with the service definition KDPS runs now, in place: moves each of its
+     * {@code valueAliases}, removes its {@code retiredValues} (see {@link #removeRetiredValues}), then sets its
+     * {@code releaseNameValues} to the release's name. Every path that
+     * sends a release's values back to Helm goes through it (a deploy, "Upgrade chart" on the Releases page, a catalog
+     * saved on the Trino Catalogs page): those values may hold what an earlier definition wrote and this one no longer
+     * does, such as a secret a binding used to copy somewhere anyone allowed to read ConfigMaps or Deployments can see.
+     * When the definition cannot be loaded, the values are left as they are.
+     *
+     * @param serviceKey  the release's service, e.g. SUPERSET; nothing is done without one
+     * @param releaseName the release's name, which the definition's {@code releaseNameValues} are set to
+     */
+    public static void applyDefinitionValueRewrites(ViewContext ctx, String serviceKey, String releaseName,
+                                                    Map<String, Object> values) {
+        if (serviceKey == null || serviceKey.isBlank() || values == null) return;
+        StackServiceDef def;
+        try {
+            def = new StackDefinitionService(ctx).getServiceDefinition(serviceKey);
+        } catch (Exception ex) {
+            LOG.warn("Could not load service definition for {} (values sent without its aliases and retired values): {}",
+                    serviceKey, ex.toString());
+            return;
+        }
+        applyDefinitionValueRewrites(def, serviceKey, releaseName, values);
+    }
+
+    static void applyDefinitionValueRewrites(StackServiceDef def, String serviceKey, String releaseName,
+                                             Map<String, Object> values) {
+        if (def == null || values == null) return;
+        if (def.valueAliases != null) {
+            for (Map.Entry<String, String> e : def.valueAliases.entrySet()) {
+                String from = e.getKey();
+                String to = e.getValue();
+                if (from == null || from.isBlank() || to == null || to.isBlank() || from.equals(to)) continue;
+                rewriteDottedPath(values, from, to);
+                LOG.info("Applied valueAlias for {}: {} -> {}", serviceKey, from, to);
+            }
+        }
+        // After the aliases, which move a value that only changed place (the Superset SECRET_KEY).
+        removeRetiredValues(values, def.retiredValues);
+        applyReleaseNameValues(values, def.releaseNameValues, releaseName);
+    }
+
+    /**
+     * Sets each path of a definition's {@code releaseNameValues} to the release's name, replacing what the values
+     * carry there: a different name would put the Service where the post-install steps do not look for it.
+     * Nothing is set without a release name.
+     *
+     * @return the paths that were set, in declaration order
+     */
+    static List<String> applyReleaseNameValues(Map<String, Object> values, List<String> paths, String releaseName) {
+        List<String> applied = new ArrayList<>();
+        if (values == null || paths == null || releaseName == null || releaseName.isBlank()) return applied;
+        for (String path : paths) {
+            if (path == null || path.isBlank()) continue;
+            if (!releaseName.equals(ConfigResolutionService.getByDottedPath(values, path))) {
+                LOG.info("Set {} to the release name '{}'", path, releaseName);
+            }
+            putDotted(values, path, releaseName);
+            applied.add(path);
+        }
+        return applied;
+    }
+
+    /**
+     * Removes (in place) the {@code retiredValues} of a service definition from chart values: the value at each dotted
+     * path, or, for an entry {@code {"linesStartingWith": [...]}}, the lines of that list starting with one of the
+     * prefixes. Keys starting with "_" are comments. Mirrors removeRetiredValues of the wizard (chartValues.ts).
+     */
+    @SuppressWarnings("unchecked")
+    static void removeRetiredValues(Map<String, Object> values, Map<String, Object> retiredValues) {
+        if (values == null || retiredValues == null) return;
+        for (Map.Entry<String, Object> retired : retiredValues.entrySet()) {
+            String path = retired.getKey();
+            if (path == null || path.isBlank() || path.startsWith("_")) continue;
+            String[] keys = path.split("\\.");
+            Map<String, Object> parent = values;
+            for (int i = 0; i < keys.length - 1 && parent != null; i++) {
+                parent = parent.get(keys[i]) instanceof Map ? (Map<String, Object>) parent.get(keys[i]) : null;
+            }
+            if (parent == null || !parent.containsKey(keys[keys.length - 1])) continue;
+            Object prefixes = retired.getValue() instanceof Map<?, ?> spec ? spec.get("linesStartingWith") : null;
+            if (!(prefixes instanceof Collection<?> starts)) {
+                parent.remove(keys[keys.length - 1]);
+                LOG.info("Removed retired value {}", path);
+                continue;
+            }
+            if (!(parent.get(keys[keys.length - 1]) instanceof Collection<?> lines)) continue;
+            List<Object> kept = new ArrayList<>();
+            for (Object line : lines) {
+                boolean drop = line instanceof String text
+                        && starts.stream().anyMatch(start -> start != null && text.trim().startsWith(String.valueOf(start)));
+                if (!drop) kept.add(line);
+            }
+            if (kept.size() != lines.size()) {
+                parent.put(keys[keys.length - 1], kept);
+                LOG.info("Removed {} retired line(s) from {}", lines.size() - kept.size(), path);
+            }
+        }
+    }
+
+    /** Chart value naming the Secret that holds the internal HTTPS keystore. */
+    private static final String HTTPS_KEYSTORE_SECRET_VALUE = "server.config.https.keystore.secretName";
+
+    /**
+     * Whether the release's internal HTTPS keystore is one the operator supplied: its Secret exists and this view did
+     * not write it. Unknown (no Secret named, not found, lookup failed) counts as not supplied.
+     */
+    boolean operatorSuppliedHttpsKeystore(String namespace, Map<String, Object> releaseValues) {
+        Object name = ConfigResolutionService.getByDottedPath(releaseValues, HTTPS_KEYSTORE_SECRET_VALUE);
+        if (name == null || String.valueOf(name).isBlank()) return false;
+        try {
+            io.fabric8.kubernetes.api.model.Secret secret = kubernetesService.getSecret(namespace, String.valueOf(name));
+            if (secret == null) return false;
+            return secret.getMetadata() == null || secret.getMetadata().getAnnotations() == null
+                    || !"ambari-k8s-view".equals(secret.getMetadata().getAnnotations().get("managed-by"));
+        } catch (Exception e) {
+            LOG.warn("Could not read the HTTPS keystore Secret {}/{}: {}", namespace, name, e.toString());
+            return false;
+        }
+    }
+
+    /** Command parameter holding the SSLVerification part of the Ranger repository's JDBC URL (empty without TLS). */
+    static final String RANGER_SSL_VERIFICATION_PARAM = "rangerSslVerificationSuffix";
+
+    /** The form field that tells whether KDPS issues the internal HTTPS keystore or the operator supplies it. */
+    private static final String HTTPS_AUTO_GENERATE_FIELD = "tls.https.autoGenerate";
+
+    /**
+     * How Ranger Admin checks the Trino certificate on its lookup connection. A keystore issued by KDPS lists the
+     * coordinator Service names, so the full check (chain and host name) works; an operator-supplied certificate may
+     * carry other names, so only its chain is checked.
+     */
+    static String rangerSslVerification(HelmDeployRequest request) {
+        Object autoGenerate = request.getFormValues() == null ? null
+                : ConfigResolutionService.getByDottedPath(request.getFormValues(), HTTPS_AUTO_GENERATE_FIELD);
+        if (autoGenerate == null && request.getTls() != null && request.getTls().get("https") instanceof Map<?, ?> https) {
+            // A request built without the form (a reapply) carries the choice in its TLS spec.
+            autoGenerate = https.get("autoGenerate");
+        }
+        return autoGenerate != null && !asBoolean(autoGenerate, true) ? "CA" : "FULL";
+    }
+
+    /**
+     * The JDBC URL part that sets the certificate check. The Trino JDBC driver refuses SSLVerification on a connection
+     * without TLS, so with internal HTTPS off nothing is added.
+     */
+    static String rangerSslVerificationSuffix(HelmDeployRequest request, Map<String, Object> helmValues) {
+        boolean https = helmValues != null
+                && asBoolean(ConfigResolutionService.getByDottedPath(helmValues, TRINO_HTTPS_ENABLED), false);
+        return https ? "&SSLVerification=" + rangerSslVerification(request) : "";
+    }
+
+    /**
+     * What the operator must do for Ranger Admin's lookups and 'Test connection' to work: Ranger Admin's JVM has to
+     * trust the CA that signed the Trino certificate. It runs outside the cluster, so KDPS cannot import it; policy
+     * download is not affected, so nothing else would point at it.
+     *
+     * @return the warning, or null when the deploy has no Ranger repository or no internal HTTPS
+     */
+    static String rangerLookupTrustWarning(HelmDeployRequest request) {
+        if (request.getRanger() == null || request.getRanger().isEmpty() || request.getValues() == null) return null;
+        if (!"TRINO".equalsIgnoreCase(request.getServiceKey())) return null;
+        if (!asBoolean(ConfigResolutionService.getByDottedPath(request.getValues(), TRINO_HTTPS_ENABLED), false)) return null;
+        boolean issued = "FULL".equals(rangerSslVerification(request));
+        return "Ranger Admin verifies the Trino certificate when it looks up resources and tests the connection. Add "
+                + (issued ? "the Ambari internal CA" : "the CA that signed the Trino keystore you supplied")
+                + " to the truststore Ranger Admin uses (ranger.truststore.file, or its JVM default), otherwise 'Test"
+                + " connection' and resource lookups for this repository fail with a certificate error. Policy download is"
+                + " not affected.";
+    }
+
+    /** Chart value naming the Secret key whose CA the KEDA triggers verify; charts before 1.43.18 ignore it. */
+    static final String KEDA_TRIGGER_CA_KEY = "server.keda.triggerAuthentication.caKey";
+
+    /**
+     * An OpenShift deploy asks the triggers to verify the monitoring endpoint against the CA in the token Secret, and
+     * leaves out the certificate-check skip. A chart that predates that CA key (a redeploy keeps the chart the release
+     * already runs) would render triggers that neither skip nor verify with the right CA, and autoscaling would stop
+     * without any error. For such a chart the CA key is dropped and the skip put back, which is what the release
+     * had before.
+     *
+     * @return true when the values were rewritten
+     */
+    @SuppressWarnings("unchecked")
+    static boolean restoreTriggerCertSkipOnOlderChart(Map<String, Object> values, String chartVersion) {
+        if (values == null || chartVersion == null || chartVersion.isBlank()) return false;
+        Object caKey = ConfigResolutionService.getByDottedPath(values, KEDA_TRIGGER_CA_KEY);
+        if (!(caKey instanceof String s) || s.isBlank()) return false;
+        if (isChartVersionCompatible(chartVersion, ">=1.43.18")) return false;
+        Object server = values.get("server");
+        Object keda = server instanceof Map<?, ?> sm ? sm.get("keda") : null;
+        if (!(keda instanceof Map<?, ?> km)) return false;
+        Object auth = km.get("triggerAuthentication");
+        if (auth instanceof Map<?, ?> am) ((Map<String, Object>) am).remove("caKey");
+        Object triggers = km.get("triggers");
+        if (triggers instanceof List<?> list) {
+            for (Object t : list) {
+                if (!(t instanceof Map<?, ?> tm) || !(tm.get("metadata") instanceof Map<?, ?> md)) continue;
+                if ("bearer".equals(String.valueOf(md.get("authModes")))) ((Map<String, Object>) md).put("unsafeSsl", "true");
+            }
+        }
+        LOG.warn("Chart {} cannot verify the monitoring certificate with a CA: the autoscaling triggers keep skipping"
+                + " the certificate check. Use chart 1.43.18 or later to verify it.", chartVersion);
+        return true;
+    }
+
+    /**
+     * Whether the setting behind a {@code featureChartVersions} entry is on: a toggle set to true, or a list with at
+     * least one entry (e.g. the Trino catalog credential Secrets).
+     */
+    static boolean featureOn(Object setting) {
+        if (setting instanceof Collection<?> list) return !list.isEmpty();
+        return asBoolean(setting, false);
     }
 
     /**
@@ -4540,7 +7951,7 @@ public class CommandService {
      * is absent.
      */
     @SuppressWarnings("unchecked")
-    private void rewriteDottedPath(Map<String, Object> root, String fromPath, String toPath) {
+    private static void rewriteDottedPath(Map<String, Object> root, String fromPath, String toPath) {
         if (root == null) return;
         String[] from = fromPath.split("\\.");
         Map<String, Object> srcParent = root;
@@ -4574,7 +7985,7 @@ public class CommandService {
      *   "&lt;=X.Y.Z" / "&lt;X.Y.Z"  upper bounds
      * Multiple constraints separated by commas (AND).
      */
-    private boolean isChartVersionCompatible(String actual, String range) {
+    static boolean isChartVersionCompatible(String actual, String range) {
         if (range == null || range.isBlank()) return true;
         String act = actual.trim();
         // strip leading 'v'
@@ -4603,7 +8014,7 @@ public class CommandService {
         return true;
     }
 
-    private int compareSemver(String a, String b) {
+    private static int compareSemver(String a, String b) {
         String[] pa = a.split("[.-]", -1);
         String[] pb = b.split("[.-]", -1);
         int n = Math.max(pa.length, pb.length);
@@ -4627,6 +8038,124 @@ public class CommandService {
      */
     public String directHelmDeploy(HelmDeployRequest request, String repoId, String version, String kubeContext, String commandsURL, MultivaluedMap<String,String> callerHeaders,
                                URI baseUri, AmbariAliasResolver ambariAliasResolver) {
+        String id = planReleaseDeploy(request, repoId, version, commandsURL, callerHeaders, baseUri, ambariAliasResolver,
+                false);
+        scheduleNow(id);
+        return id;
+    }
+
+    /**
+     * Flux GitOps deployment: the same command plan as {@link #directHelmDeploy}, so the release gets the same
+     * keytab, SSO client, Ranger repository, Hadoop configuration, certificates and integrations, except that the
+     * Helm install is replaced by a commit of the HelmRelease to Git ({@link CommandType#GITOPS_COMMIT}) and a wait
+     * for Flux to apply it ({@link CommandType#FLUX_WAIT_READY}) before the post-deploy steps.
+     *
+     * @return the command id, polled like that of a direct deploy
+     * @throws FluxGitOpsBackend.GitOpsBusyException when another GitOps deploy of the release has not finished, or is
+     *                                               being submitted; nothing is planned
+     */
+    public String gitOpsDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
+                               MultivaluedMap<String, String> callerHeaders, URI baseUri,
+                               AmbariAliasResolver ambariAliasResolver) {
+        // Only the view sets it, for a token it stored itself (gitOptionsToPersist): any alias a request names here
+        // would be resolved from Ambari's credential store and sent to the Git server the request names.
+        if (request.getGit() != null) {
+            request.getGit().setAuthTokenAlias(null);
+        }
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        return submittingGitOpsChange(namespace, release, () -> {
+            // Its values were built on what Helm reports, which does not hold yet what the running deploy commits:
+            // committed after it, they would take that change out of Git.
+            String running = runningGitOpsDeploy(namespace, release);
+            if (running != null) {
+                throw new FluxGitOpsBackend.GitOpsBusyException("A GitOps deploy of " + namespace + "/" + release
+                        + " has not finished (operation " + running + "): a change made before Flux has applied it"
+                        + " would take it out of Git. Try again once it has finished, or cancel it.");
+            }
+            // Refused at once, rather than after the plan has issued a keytab, registered an SSO client and the rest
+            // for a release it then cannot commit.
+            this.fluxGitOpsBackend.checkCommittable(request, new DeploymentContext(repoId, version, null, commandsURL,
+                    callerHeaders, baseUri, ambariAliasResolver));
+            String id = planReleaseDeploy(request, repoId, version, commandsURL, callerHeaders, baseUri,
+                    ambariAliasResolver, true);
+            scheduleNow(id);
+            return id;
+        });
+    }
+
+    /**
+     * Runs {@code submission}, a change of a release deployed with Flux GitOps that ends with its deploy submitted,
+     * alone among such changes of the release in this server: from the check that no deploy of the release is running
+     * to the moment its own deploy is stored, which every later check sees. Nested calls on the same thread run.
+     *
+     * @return what the submission returned
+     * @throws FluxGitOpsBackend.GitOpsBusyException when another change of the release is being submitted; it is not
+     *                                               waited for, which would only end with this one refused as well
+     */
+    public static <T> T submittingGitOpsChange(String namespace, String releaseName,
+                                               java.util.function.Supplier<T> submission) {
+        java.util.concurrent.locks.ReentrantLock lock = GITOPS_SUBMISSIONS.computeIfAbsent(
+                namespace + "/" + releaseName, k -> new java.util.concurrent.locks.ReentrantLock());
+        if (!lock.tryLock()) {
+            throw new FluxGitOpsBackend.GitOpsBusyException("Another change of " + namespace + "/" + releaseName
+                    + " is being submitted to Git. Try again once it has been submitted.");
+        }
+        try {
+            return submission.get();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Plans and persists the command tree of a release deploy, without starting it.
+     *
+     * @param gitOps whether the release is committed to Git for Flux to apply, instead of installed with Helm: then the
+     *               plan ends with {@link CommandType#GITOPS_COMMIT} and {@link CommandType#FLUX_WAIT_READY}, and Flux
+     *               installs the dependencies, which the commit writes next to the release
+     * @return the command id
+     * @throws RuntimeException when the deploy is refused; a first install refused once its Atlas tag projector was
+     *                          given a Ranger account has that account taken back
+     */
+    String planReleaseDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
+                             MultivaluedMap<String, String> callerHeaders, URI baseUri,
+                             AmbariAliasResolver ambariAliasResolver, boolean gitOps) {
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        boolean hadTagSyncAccount = tagSyncAccountRecorded(namespace, release);
+        try {
+            return planReleaseDeploySteps(request, repoId, version, commandsURL, callerHeaders, baseUri,
+                    ambariAliasResolver, gitOps);
+        } catch (RuntimeException refused) {
+            // A first install refused once its Atlas tag projector was given a Ranger account leaves no release to
+            // uninstall: the account, which holds the Ranger administrator role, is taken back now.
+            if (!hadTagSyncAccount && tagSyncAccountRecorded(namespace, release)
+                    && new ReleaseMetadataService(ctx).find(namespace, release) == null) {
+                String note = TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts, namespace, release, null,
+                        tagSyncRangersFor(callerHeaders)).note();
+                if (note != null) {
+                    LOG.warn("Atlas tag sync, refused install of {}/{}: {}", namespace, release, note);
+                }
+            }
+            throw refused;
+        }
+    }
+
+    private boolean tagSyncAccountRecorded(String namespace, String release) {
+        try {
+            return tagSyncAccounts.find(namespace, release) != null;
+        } catch (RuntimeException e) {
+            LOG.warn("Atlas tag sync: the record of release {}/{} could not be read: {}", namespace, release,
+                    e.toString());
+            return false;
+        }
+    }
+
+    /** Plans and persists the command tree of a release deploy (see {@link #planReleaseDeploy}). */
+    private String planReleaseDeploySteps(HelmDeployRequest request, String repoId, String version,
+                                          String commandsURL, MultivaluedMap<String, String> callerHeaders,
+                                          URI baseUri, AmbariAliasResolver ambariAliasResolver, boolean gitOps) {
         final String id = UUID.randomUUID().toString();
         final String now = Instant.now().toString();
 
@@ -4659,7 +8188,15 @@ public class CommandService {
         if (request.getDeploymentMode() != null && !request.getDeploymentMode().isBlank()) {
             params.put("deploymentMode", request.getDeploymentMode());
         }
-        if (request.getGit() != null) {
+        if (gitOps) {
+            params.put("git", gitOptionsToPersist(request));
+            // What the commit writes besides the values, which the plan itself does not keep.
+            Map<String, Object> gitOpsRelease = new LinkedHashMap<>();
+            if (request.getDependencies() != null) gitOpsRelease.put("dependencies", request.getDependencies());
+            if (request.getTruststoreRefs() != null) gitOpsRelease.put("truststoreRefs", request.getTruststoreRefs());
+            if (request.getKerberos() != null) gitOpsRelease.put("kerberos", request.getKerberos());
+            params.put(GITOPS_RELEASE_PARAM, gitOpsRelease);
+        } else if (request.getGit() != null) {
             params.put("git", request.getGit());
         }
         if (request.getTls() != null && !request.getTls().isEmpty()) {
@@ -4744,12 +8281,14 @@ public class CommandService {
         if (request.getImageGlobalRegistryProperty() != null){
             params.put("imageGlobalRegistryProperty", request.getImageGlobalRegistryProperty());
         }
-        // Apply global security overrides if configured
+        // Apply global security overrides if configured. A profile named by the deploy that is gone stops it here,
+        // rather than installing the release without its login settings.
         String resolvedSecurityProfile = resolveSecurityProfileName(request.getSecurityProfile());
         if (resolvedSecurityProfile != null && !resolvedSecurityProfile.isBlank()) {
             params.put("securityProfile", resolvedSecurityProfile);
         }
-        SecurityConfigDTO securityCfg = loadSecurityConfig(resolvedSecurityProfile);
+        SecurityConfigDTO securityCfg = resolvedSecurityProfile == null ? null
+                : new SecurityProfileService(ctx).requireProfile(resolvedSecurityProfile);
         String securityProfileHash = null;
         try {
             securityProfileHash = new SecurityProfileService(ctx).fingerprint(securityCfg);
@@ -4777,206 +8316,6 @@ public class CommandService {
         } else {
             LOG.info("Kerberos injection mode is WEBHOOK; mutating webhook dependency remains enabled.");
         }
-        if (request.getTls() != null && !request.getTls().isEmpty()) {
-            // The wizard resolves tls[].dnsTemplates at submit time; an API-driven deploy may not.
-            // Fill them in here too, because the fallback SAN (<release>.<namespace>.svc) matches
-            // neither the chart's Service DNS nor the ingress host, and a certificate with the wrong
-            // SAN fails every client that verifies it — silently, at handshake time.
-            resolveTlsDnsNames(request);
-            TlsManager tlsManager = new TlsManager(this.kubernetesService, this.ctx);
-            tlsManager.applyTls(request.getTls(), request, params);
-        }
-        // Create ingress TLS Secret upfront if provided by the request (company CA or user-provided cert).
-        if (request.getIngressTlsUpload() != null && !request.getIngressTlsUpload().isEmpty()) {
-            Map<String, Object> ingressTlsUpload = request.getIngressTlsUpload();
-            String secretName = String.valueOf(ingressTlsUpload.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
-            String certPem = String.valueOf(ingressTlsUpload.getOrDefault("certPem", ""));
-            String keyPem = String.valueOf(ingressTlsUpload.getOrDefault("keyPem", ""));
-            if (!certPem.isBlank() && !keyPem.isBlank()) {
-                LOG.info("Creating/updating ingress TLS secret '{}' in namespace '{}' for release '{}' (ingress TLS upload present)", secretName, request.getNamespace(), request.getReleaseName());
-                LOG.info("Ingress TLS secret creation input: cert length={} chars, key length={} chars", certPem.length(), keyPem.length());
-                LOG.info("Ingress TLS secret creation labels/annotations not provided; using defaults");
-                kubernetesService.createOrUpdateTlsSecret(
-                        request.getNamespace(),
-                        secretName,
-                        certPem.getBytes(),
-                        keyPem.getBytes(),
-                        null,
-                        null
-                );
-                // Inject the standard ingress.tls[0] list shape every KDPS chart understands.
-                // We don't rely on the UI's `ingress-setup` binding here because that binding
-                // is gated on a form field (`ingress.tlsSecret`) that is only populated in the
-                // bringYourOwn flow — uploadLeaf and selfSign flows would otherwise leave the
-                // rendered Ingress object without a `tls:` block, and the discovered endpoint
-                // URL falls back to http://.
-                Object ingressHostVal = resolveIngressHostForTls(request.getValues(), request.getFormValues());
-                if (ingressHostVal != null && !String.valueOf(ingressHostVal).isBlank()) {
-                    this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
-                    this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", String.valueOf(ingressHostVal));
-                } else {
-                    LOG.warn("Ingress TLS upload created Secret '{}' but ingress.host is missing — cannot write ingress.tls[] override; chart will render Ingress without TLS.", secretName);
-                }
-            } else {
-                LOG.warn("Ingress TLS upload present but cert/key are empty; skipping ingress TLS secret creation for release {}", request.getReleaseName());
-            }
-        }
-
-        // ----- INGRESS_TLS_SELFSIGN: mint a leaf signed by Ambari Internal CA or a Company CA.
-        // Triggered by request.ingressTlsSelfSign={ mode: "ambariInternal"|"companyUploaded",
-        // caName: <registry-name>, secretName: <override>, ingressHost: <override>, validityDays: <int> }.
-        // This step creates the Secret before HELM_DEPLOY_DRY_RUN and then writes the
-        // canonical ingress.tls[0] list shape into the Helm override map so the chart's
-        // ingress.yaml renders a TLS spec — every KDPS chart's template iterates
-        // .Values.ingress.tls (list of {secretName, hosts}), so a scalar ingress.tlsSecret
-        // would be ignored and the K8s Ingress would have no TLS section.
-        Map<String, Object> ingressTlsSelfSign = request.getIngressTlsSelfSign();
-        if (ingressTlsSelfSign != null && !ingressTlsSelfSign.isEmpty()) {
-            String mode = String.valueOf(ingressTlsSelfSign.getOrDefault("mode", "ambariInternal"));
-            String caName = (String) ingressTlsSelfSign.get("caName");
-            String secretName = String.valueOf(ingressTlsSelfSign.getOrDefault(
-                    "secretName", request.getReleaseName() + "-ingress-tls"));
-            // Default the host to whatever ingress.host the form provided (resolved earlier via values).
-            String ingressHost = (String) ingressTlsSelfSign.get("ingressHost");
-            if (ingressHost == null || ingressHost.isBlank()) {
-                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
-            }
-            Integer validityDays = null;
-            Object vd = ingressTlsSelfSign.get("validityDays");
-            if (vd instanceof Number) validityDays = ((Number) vd).intValue();
-            else if (vd instanceof String s && !s.isBlank()) {
-                try { validityDays = Integer.parseInt(s.trim()); } catch (NumberFormatException ignore) {}
-            }
-            List<String> extraSans = new ArrayList<>();
-            Object sansRaw = ingressTlsSelfSign.get("extraSans");
-            if (sansRaw instanceof List<?> l) {
-                for (Object o : l) if (o != null) extraSans.add(String.valueOf(o));
-            } else {
-                extraSans.add(request.getReleaseName() + "." + request.getNamespace() + ".svc");
-                extraSans.add(request.getReleaseName() + "." + request.getNamespace() + ".svc.cluster.local");
-            }
-
-            if (ingressHost == null || ingressHost.isBlank()) {
-                LOG.warn("INGRESS_TLS_SELFSIGN requested but no ingress.host found; skipping");
-            } else {
-                String stepId = this.commandPlanFactory.appendIngressTlsSelfSignStep(
-                        rootCommand,
-                        request.getReleaseName(),
-                        request.getNamespace(),
-                        secretName,
-                        ingressHost,
-                        extraSans,
-                        mode,
-                        caName,
-                        validityDays
-                );
-                childCommands.add(stepId);
-                // Write the canonical list shape (ingress.tls[0]) so the chart's
-                // {{- if .Values.ingress.tls }}{{- range ... }} block renders.
-                // Helm's --set list-index syntax is the same as HelmService.applyOverrides
-                // expects, which materialises ingress.tls as List<Map> in finalValues.
-                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
-                this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", ingressHost);
-                LOG.info("Planned INGRESS_TLS_SELFSIGN: stepId={}, secret={}/{}, host={}, mode={}, ca={}",
-                        stepId, request.getNamespace(), secretName, ingressHost, mode, caName);
-            }
-        }
-
-        // ----- INGRESS_TLS_CERTMANAGER: write a cert-manager.io Certificate so cert-manager
-        // produces (and auto-renews) the leaf Secret. The chart references the Secret name in
-        // ingress.tls[0].secretName as it would for any other TLS mode — the difference is
-        // who fills the Secret.
-        Map<String, Object> ingressTlsCM = request.getIngressTlsCertManager();
-        if (ingressTlsCM != null && !ingressTlsCM.isEmpty()) {
-            String issuerName = (String) ingressTlsCM.get("issuerName");
-            String issuerKind = String.valueOf(ingressTlsCM.getOrDefault("issuerKind", "ClusterIssuer"));
-            String secretName = String.valueOf(ingressTlsCM.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
-            String certName = String.valueOf(ingressTlsCM.getOrDefault("certName", secretName));
-            String ingressHost = (String) ingressTlsCM.get("ingressHost");
-            if (ingressHost == null || ingressHost.isBlank()) {
-                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
-            }
-            Integer durationHours = null;
-            Object dh = ingressTlsCM.get("durationHours");
-            if (dh instanceof Number n) durationHours = n.intValue();
-            else if (dh instanceof String s && !s.isBlank()) {
-                try { durationHours = Integer.parseInt(s.trim()); } catch (NumberFormatException ignore) {}
-            }
-            List<String> dnsNames = new ArrayList<>();
-            if (ingressHost != null && !ingressHost.isBlank()) dnsNames.add(ingressHost);
-            Object sansRaw = ingressTlsCM.get("extraSans");
-            if (sansRaw instanceof List<?> l) for (Object o : l) if (o != null) dnsNames.add(String.valueOf(o));
-
-            if (issuerName == null || issuerName.isBlank() || dnsNames.isEmpty()) {
-                // Fail loud instead of skip-and-warn: a silent skip plus a downstream OIDC
-                // preflight failure is the worst combination for diagnosis. Throw now so
-                // the operator sees the problem at submit time.
-                throw new IllegalArgumentException(
-                        "INGRESS_TLS_CERTMANAGER: issuerName and at least one DNS name (ingress.host) are required."
-                                + " Pick a ClusterIssuer from the dropdown in the wizard's TLS mode section.");
-            } else {
-                // Optional subject DN for CAs that enforce an end-entity profile (CN/OU/O, or a raw
-                // literalSubject for custom OIDs like "Team"). Accepts a single value or a list for each.
-                Map<String, Object> certSubject = new LinkedHashMap<>();
-                Object cn = ingressTlsCM.get("commonName");
-                if (cn != null && !String.valueOf(cn).isBlank()) certSubject.put("commonName", String.valueOf(cn));
-                Object lit = ingressTlsCM.get("literalSubject");
-                if (lit != null && !String.valueOf(lit).isBlank()) certSubject.put("literalSubject", String.valueOf(lit));
-                for (String[] keys : new String[][]{
-                        {"organization", "organizations"}, {"organizationalUnit", "organizationalUnits"},
-                        {"country", "countries"}, {"locality", "localities"}, {"province", "provinces"}}) {
-                    Object raw = ingressTlsCM.containsKey(keys[1]) ? ingressTlsCM.get(keys[1]) : ingressTlsCM.get(keys[0]);
-                    List<String> vals = new ArrayList<>();
-                    if (raw instanceof List<?> l) { for (Object o : l) if (o != null && !String.valueOf(o).isBlank()) vals.add(String.valueOf(o)); }
-                    else if (raw != null && !String.valueOf(raw).isBlank()) vals.add(String.valueOf(raw));
-                    if (!vals.isEmpty()) certSubject.put(keys[1], vals);
-                }
-                String stepId = appendIngressTlsCertManagerStep(rootCommand, request.getNamespace(),
-                        certName, secretName, issuerName, issuerKind, dnsNames, durationHours, certSubject);
-                childCommands.add(stepId);
-                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
-                this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", dnsNames.get(0));
-                LOG.info("Planned INGRESS_TLS_CERTMANAGER: stepId={}, secret={}/{}, issuer={}/{}",
-                        stepId, request.getNamespace(), secretName, issuerKind, issuerName);
-            }
-        }
-
-        // ----- INGRESS_TLS_EXTERNAL_SECRET: write an ExternalSecret so external-secrets
-        // syncs an upstream secret (typically Vault PKI) into the K8s Secret the chart wants.
-        Map<String, Object> ingressTlsES = request.getIngressTlsExternalSecret();
-        if (ingressTlsES != null && !ingressTlsES.isEmpty()) {
-            String storeName = (String) ingressTlsES.get("secretStoreName");
-            String storeKind = String.valueOf(ingressTlsES.getOrDefault("secretStoreKind", "ClusterSecretStore"));
-            String remoteKey = (String) ingressTlsES.get("remoteKey");
-            String secretName = String.valueOf(ingressTlsES.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
-            String esName = String.valueOf(ingressTlsES.getOrDefault("externalSecretName", secretName));
-            String refreshInterval = String.valueOf(ingressTlsES.getOrDefault("refreshInterval", "1h"));
-            String ingressHost = (String) ingressTlsES.get("ingressHost");
-            if (ingressHost == null || ingressHost.isBlank()) {
-                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
-            }
-            if (storeName == null || storeName.isBlank() || remoteKey == null || remoteKey.isBlank()) {
-                throw new IllegalArgumentException(
-                        "INGRESS_TLS_EXTERNAL_SECRET: secretStoreName and remoteKey are required."
-                                + " Pick a SecretStore from the dropdown and provide the upstream key/path.");
-            } else {
-                String stepId = appendIngressTlsExternalSecretStep(rootCommand, request.getNamespace(),
-                        esName, secretName, storeName, storeKind, remoteKey, refreshInterval);
-                childCommands.add(stepId);
-                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
-                if (ingressHost != null && !ingressHost.isBlank()) {
-                    this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", ingressHost);
-                }
-                LOG.info("Planned INGRESS_TLS_EXTERNAL_SECRET: stepId={}, secret={}/{}, store={}/{}, key={}",
-                        stepId, request.getNamespace(), secretName, storeKind, storeName, remoteKey);
-            }
-        }
-        if (baseUri != null) {
-            params.put("_baseUri", baseUri.toString());
-        }
-        if (callerHeaders != null) {
-            params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
-        }
         // Thread the selected platform context id globally so EVERY post-deploy step (OIDC client
         // registration, Ranger repo/grant, Hive/Atlas ingestion) can resolve the context and route
         // to its endpoints/credentials. Blank/default → steps use the local Ambari as before.
@@ -4986,26 +8325,9 @@ public class CommandService {
                     "platformContextId"), "");
             if (deployPcId != null && !deployPcId.isBlank()) params.put("_platformContextId", deployPcId);
         }
-        // Reusable Trino catalog references (set by applyCustomCatalogs; absent for non-Trino deploys).
-        if (request.getFormValues() != null && request.getFormValues().containsKey("_catalogRefsJson")) {
-            params.put("_catalogRefsJson", stringValue(request.getFormValues().get("_catalogRefsJson")));
-            params.put("_catalogRefsSet", "true");
-        }
-        // command status
-        CommandStatusEntity commandStatusEntity = new CommandStatusEntity();
-        commandStatusEntity.setId(id + "-status");
-        commandStatusEntity.setViewInstance(ctx.getInstanceName());
-        commandStatusEntity.setCreatedBy(ctx.getUsername());
-        commandStatusEntity.setState(CommandState.PENDING.name());
-        commandStatusEntity.setCreatedAt(now);
-        commandStatusEntity.setUpdatedAt(now);
-        commandStatusEntity.setAttempt(0);
 
-        rootCommand.setCommandStatusId(commandStatusEntity.getId());
-        rootCommand.setTitle("Install release " + request.getReleaseName());
-
-        // creates required hadoop related secrets/config map from charts.json for before running the helm chart
-        // preparing config map secrets before running commands
+        // Ambari access and the cluster's Kerberos state come first: the Ambari permissions the deploy needs are checked
+        // from them before anything is written (Secrets, ConfigMaps, the release record, OpenShift grants).
         AmbariActionClient ambariActionClient = null;
         List<Map<String, Object>> hadoopRequiredConfigMaps = request.getRequiredConfigMaps();
         String wiringProblem = describeMissingWiring(request);
@@ -5139,32 +8461,290 @@ public class CommandService {
                     + "Without it the pod cannot kinit and the krb5.conf/keytab volume mounts fail.");
         }
 
+        // Kerberos identities the release gets, resolved now so that the Ambari permissions the deploy needs are known.
+        List<Map<String, Object>> kerberosEntryList = normalizeKerberosEntries(request.getKerberos());
+        String kerberosRealm = null;
+        if (kerberosEnabled) {
+            kerberosRealm = resolveKerberosRealmFromAmbari(ambariActionClient, cluster);
+        }
+        boolean ambariAvailable = ambariActionClient != null && cluster != null && !cluster.isBlank();
+        List<PlannedKeytab> plannedKeytabs = planPreProvisionedKeytabs(request, preProvisionedKerberosMode,
+                externalKeytabProvided, kerberosEnabled, ambariAvailable, kerberosEntryList, kerberosRealm);
+
+        // Reading the cluster, keytab issuance, view provisioning and the Iceberg catalog's bucket use the operator's
+        // Ambari session: refuse the deploy now, before anything is written, when the operator lacks an Ambari
+        // permission they need, instead of letting Ambari refuse a step halfway through. A keytab already stored in
+        // its Secret is reused without asking Ambari. An operator who may not read the cluster is refused here too:
+        // the cluster's Kerberos state could not be read above, so no keytab is planned, and the release would come
+        // up without its Kerberos identity.
+        boolean readsManagedCluster = readsManagedCluster(params, cluster, ambariManagesNoCluster,
+                this.commandUtils.isAutoDiscoveryEnabled());
+        // When Ambari refused to list its clusters there is no client yet; the permissions are still read with the
+        // operator's session.
+        AmbariActionClient permissionsClient = ambariActionClient != null || !readsManagedCluster
+                ? ambariActionClient
+                : new AmbariActionClient(ctx, baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
+        AmbariPermissionPreflight ambariPermissions =
+                new AmbariPermissionPreflight(permissionsClient, ambariUserName(), cluster);
+        List<AmbariPermissionPreflight.Requirement> requiredUpFront = new ArrayList<>();
+        if (readsManagedCluster) {
+            requiredUpFront.add(AmbariPermissionPreflight.READ_CLUSTER);
+        }
+        requiredUpFront.addAll(AmbariPermissionPreflight.requiredFor(
+                ambariStepsKnownUpFront(plannedKeytabs, keytab -> keytabAlreadyStored(request.getNamespace(), keytab),
+                        declaresAmbariViewInstance(request.getServiceKey()),
+                        polarisProvisionUsesAmbari(request.getFormValues())),
+                usesManagedContext(params)));
+        String missingAmbariPermission = ambariPermissions.check(requiredUpFront);
+        if (missingAmbariPermission != null) {
+            throw new IllegalStateException(missingAmbariPermission);
+        }
+
+        // Refused before anything is written: the ingress certificate this deploy would overwrite may be the
+        // production one. The INGRESS_TLS_SELFSIGN step checks again when it runs.
+        checkIngressTlsSecretsReplaceable(request);
+        if (request.getTls() != null && !request.getTls().isEmpty()) {
+            // The wizard resolves tls[].dnsTemplates at submit time; an API-driven deploy may not.
+            // Fill them in here too, because the fallback SAN (<release>.<namespace>.svc) matches
+            // neither the chart's Service DNS nor the ingress host, and a certificate with the wrong
+            // SAN fails every client that verifies it — silently, at handshake time.
+            resolveTlsDnsNames(request);
+            TlsManager tlsManager = new TlsManager(this.kubernetesService, this.ctx);
+            tlsManager.applyTls(request.getTls(), request, params);
+        }
+        // Create ingress TLS Secret upfront if provided by the request (company CA or user-provided cert).
+        if (request.getIngressTlsUpload() != null && !request.getIngressTlsUpload().isEmpty()) {
+            Map<String, Object> ingressTlsUpload = request.getIngressTlsUpload();
+            String secretName = ingressTlsSecretName(ingressTlsUpload, request);
+            String certPem = String.valueOf(ingressTlsUpload.getOrDefault("certPem", ""));
+            String keyPem = String.valueOf(ingressTlsUpload.getOrDefault("keyPem", ""));
+            if (!certPem.isBlank() && !keyPem.isBlank()) {
+                io.fabric8.kubernetes.api.model.Secret existingTls =
+                        kubernetesService.getSecret(request.getNamespace(), secretName);
+                if (holdsTlsPair(existingTls, certPem, keyPem)) {
+                    LOG.info("Ingress TLS secret '{}/{}' already holds the uploaded certificate and key; left as it is",
+                            request.getNamespace(), secretName);
+                    labelKeptIngressTlsSecret(request.getNamespace(), secretName, ingressTlsUploadLabels(existingTls,
+                            request.getNamespace(), request.getReleaseName()), existingTls);
+                } else {
+                    LOG.info("Creating/updating ingress TLS secret '{}' in namespace '{}' for release '{}' (ingress TLS upload present)", secretName, request.getNamespace(), request.getReleaseName());
+                    LOG.info("Ingress TLS secret creation input: cert length={} chars, key length={} chars", certPem.length(), keyPem.length());
+                    Map<String, String> tlsLabels = ingressTlsUploadLabels(existingTls, request.getNamespace(),
+                            request.getReleaseName());
+                    kubernetesService.createOrUpdateTlsSecret(
+                            request.getNamespace(),
+                            secretName,
+                            certPem.getBytes(),
+                            keyPem.getBytes(),
+                            tlsLabels,
+                            tlsLabels.isEmpty() ? null : KdpsReleaseObjects.annotations(request.getNamespace())
+                    );
+                }
+                // Inject the standard ingress.tls[0] list shape every KDPS chart understands.
+                // We don't rely on the UI's `ingress-setup` binding here because that binding
+                // is gated on a form field (`ingress.tlsSecret`) that is only populated in the
+                // bringYourOwn flow — uploadLeaf and selfSign flows would otherwise leave the
+                // rendered Ingress object without a `tls:` block, and the discovered endpoint
+                // URL falls back to http://.
+                Object ingressHostVal = resolveIngressHostForTls(request.getValues(), request.getFormValues());
+                if (ingressHostVal != null && !String.valueOf(ingressHostVal).isBlank()) {
+                    this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
+                    this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", String.valueOf(ingressHostVal));
+                } else {
+                    LOG.warn("Ingress TLS upload created Secret '{}' but ingress.host is missing — cannot write ingress.tls[] override; chart will render Ingress without TLS.", secretName);
+                }
+            } else {
+                LOG.warn("Ingress TLS upload present but cert/key are empty; skipping ingress TLS secret creation for release {}", request.getReleaseName());
+            }
+        }
+
+        // ----- INGRESS_TLS_SELFSIGN: mint a leaf signed by Ambari Internal CA or a Company CA.
+        // Triggered by request.ingressTlsSelfSign={ mode: "ambariInternal"|"companyUploaded",
+        // caName: <registry-name>, secretName: <override>, ingressHost: <override>, validityDays: <int> }.
+        // This step creates the Secret before HELM_DEPLOY_DRY_RUN and then writes the
+        // canonical ingress.tls[0] list shape into the Helm override map so the chart's
+        // ingress.yaml renders a TLS spec — every KDPS chart's template iterates
+        // .Values.ingress.tls (list of {secretName, hosts}), so a scalar ingress.tlsSecret
+        // would be ignored and the K8s Ingress would have no TLS section.
+        Map<String, Object> ingressTlsSelfSign = request.getIngressTlsSelfSign();
+        if (ingressTlsSelfSign != null && !ingressTlsSelfSign.isEmpty()) {
+            String mode = String.valueOf(ingressTlsSelfSign.getOrDefault("mode", "ambariInternal"));
+            String caName = (String) ingressTlsSelfSign.get("caName");
+            String secretName = ingressTlsSecretName(ingressTlsSelfSign, request);
+            // Default the host to whatever ingress.host the form provided (resolved earlier via values).
+            String ingressHost = (String) ingressTlsSelfSign.get("ingressHost");
+            if (ingressHost == null || ingressHost.isBlank()) {
+                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
+            }
+            Integer validityDays = null;
+            Object vd = ingressTlsSelfSign.get("validityDays");
+            if (vd instanceof Number) validityDays = ((Number) vd).intValue();
+            else if (vd instanceof String s && !s.isBlank()) {
+                try { validityDays = Integer.parseInt(s.trim()); } catch (NumberFormatException ignore) {}
+            }
+            List<String> extraSans = new ArrayList<>();
+            Object sansRaw = ingressTlsSelfSign.get("extraSans");
+            if (sansRaw instanceof List<?> l) {
+                for (Object o : l) if (o != null) extraSans.add(String.valueOf(o));
+            } else {
+                extraSans.add(request.getReleaseName() + "." + request.getNamespace() + ".svc");
+                extraSans.add(request.getReleaseName() + "." + request.getNamespace() + ".svc.cluster.local");
+            }
+
+            if (ingressHost == null || ingressHost.isBlank()) {
+                LOG.warn("INGRESS_TLS_SELFSIGN requested but no ingress.host found; skipping");
+            } else {
+                // A redeploy that asks for the certificate already there keeps it as it is (same CA, same names,
+                // still valid): the Secret, and what clients see, only change when something actually has to.
+                String stepId = this.commandPlanFactory.appendIngressTlsSelfSignStep(
+                        rootCommand,
+                        request.getReleaseName(),
+                        request.getNamespace(),
+                        secretName,
+                        ingressHost,
+                        extraSans,
+                        mode,
+                        caName,
+                        validityDays,
+                        request.isReplaceExistingTls(),
+                        true
+                );
+                childCommands.add(stepId);
+                // Write the canonical list shape (ingress.tls[0]) so the chart's
+                // {{- if .Values.ingress.tls }}{{- range ... }} block renders.
+                // Helm's --set list-index syntax is the same as HelmService.applyOverrides
+                // expects, which materialises ingress.tls as List<Map> in finalValues.
+                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
+                this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", ingressHost);
+                LOG.info("Planned INGRESS_TLS_SELFSIGN: stepId={}, secret={}/{}, host={}, mode={}, ca={}",
+                        stepId, request.getNamespace(), secretName, ingressHost, mode, caName);
+            }
+        }
+
+        // ----- INGRESS_TLS_CERTMANAGER: write a cert-manager.io Certificate so cert-manager
+        // produces (and auto-renews) the leaf Secret. The chart references the Secret name in
+        // ingress.tls[0].secretName as it would for any other TLS mode — the difference is
+        // who fills the Secret.
+        Map<String, Object> ingressTlsCM = request.getIngressTlsCertManager();
+        if (ingressTlsCM != null && !ingressTlsCM.isEmpty()) {
+            String issuerName = (String) ingressTlsCM.get("issuerName");
+            String issuerKind = String.valueOf(ingressTlsCM.getOrDefault("issuerKind", "ClusterIssuer"));
+            String secretName = String.valueOf(ingressTlsCM.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
+            String certName = String.valueOf(ingressTlsCM.getOrDefault("certName", secretName));
+            String ingressHost = (String) ingressTlsCM.get("ingressHost");
+            if (ingressHost == null || ingressHost.isBlank()) {
+                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
+            }
+            Integer durationHours = null;
+            Object dh = ingressTlsCM.get("durationHours");
+            if (dh instanceof Number n) durationHours = n.intValue();
+            else if (dh instanceof String s && !s.isBlank()) {
+                try { durationHours = Integer.parseInt(s.trim()); } catch (NumberFormatException ignore) {}
+            }
+            List<String> dnsNames = new ArrayList<>();
+            if (ingressHost != null && !ingressHost.isBlank()) dnsNames.add(ingressHost);
+            Object sansRaw = ingressTlsCM.get("extraSans");
+            if (sansRaw instanceof List<?> l) for (Object o : l) if (o != null) dnsNames.add(String.valueOf(o));
+
+            if (issuerName == null || issuerName.isBlank() || dnsNames.isEmpty()) {
+                // Fail loud instead of skip-and-warn: a silent skip plus a downstream OIDC
+                // preflight failure is the worst combination for diagnosis. Throw now so
+                // the operator sees the problem at submit time.
+                throw new IllegalArgumentException(
+                        "INGRESS_TLS_CERTMANAGER: issuerName and at least one DNS name (ingress.host) are required."
+                                + " Pick a ClusterIssuer from the dropdown in the wizard's TLS mode section.");
+            } else {
+                // Optional subject DN for CAs that enforce an end-entity profile (CN/OU/O, or a raw
+                // literalSubject for custom OIDs like "Team"). Accepts a single value or a list for each.
+                Map<String, Object> certSubject = new LinkedHashMap<>();
+                Object cn = ingressTlsCM.get("commonName");
+                if (cn != null && !String.valueOf(cn).isBlank()) certSubject.put("commonName", String.valueOf(cn));
+                Object lit = ingressTlsCM.get("literalSubject");
+                if (lit != null && !String.valueOf(lit).isBlank()) certSubject.put("literalSubject", String.valueOf(lit));
+                for (String[] keys : new String[][]{
+                        {"organization", "organizations"}, {"organizationalUnit", "organizationalUnits"},
+                        {"country", "countries"}, {"locality", "localities"}, {"province", "provinces"}}) {
+                    Object raw = ingressTlsCM.containsKey(keys[1]) ? ingressTlsCM.get(keys[1]) : ingressTlsCM.get(keys[0]);
+                    List<String> vals = new ArrayList<>();
+                    if (raw instanceof List<?> l) { for (Object o : l) if (o != null && !String.valueOf(o).isBlank()) vals.add(String.valueOf(o)); }
+                    else if (raw != null && !String.valueOf(raw).isBlank()) vals.add(String.valueOf(raw));
+                    if (!vals.isEmpty()) certSubject.put(keys[1], vals);
+                }
+                String stepId = appendIngressTlsCertManagerStep(rootCommand, request.getNamespace(),
+                        request.getReleaseName(), certName, secretName, issuerName, issuerKind, dnsNames,
+                        durationHours, certSubject);
+                childCommands.add(stepId);
+                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
+                this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", dnsNames.get(0));
+                LOG.info("Planned INGRESS_TLS_CERTMANAGER: stepId={}, secret={}/{}, issuer={}/{}",
+                        stepId, request.getNamespace(), secretName, issuerKind, issuerName);
+            }
+        }
+
+        // ----- INGRESS_TLS_EXTERNAL_SECRET: write an ExternalSecret so external-secrets
+        // syncs an upstream secret (typically Vault PKI) into the K8s Secret the chart wants.
+        Map<String, Object> ingressTlsES = request.getIngressTlsExternalSecret();
+        if (ingressTlsES != null && !ingressTlsES.isEmpty()) {
+            String storeName = (String) ingressTlsES.get("secretStoreName");
+            String storeKind = String.valueOf(ingressTlsES.getOrDefault("secretStoreKind", "ClusterSecretStore"));
+            String remoteKey = (String) ingressTlsES.get("remoteKey");
+            String secretName = String.valueOf(ingressTlsES.getOrDefault("secretName", request.getReleaseName() + "-ingress-tls"));
+            String esName = String.valueOf(ingressTlsES.getOrDefault("externalSecretName", secretName));
+            String refreshInterval = String.valueOf(ingressTlsES.getOrDefault("refreshInterval", "1h"));
+            String ingressHost = (String) ingressTlsES.get("ingressHost");
+            if (ingressHost == null || ingressHost.isBlank()) {
+                ingressHost = resolveIngressHostForTls(request.getValues(), request.getFormValues());
+            }
+            if (storeName == null || storeName.isBlank() || remoteKey == null || remoteKey.isBlank()) {
+                throw new IllegalArgumentException(
+                        "INGRESS_TLS_EXTERNAL_SECRET: secretStoreName and remoteKey are required."
+                                + " Pick a SecretStore from the dropdown and provide the upstream key/path.");
+            } else {
+                String stepId = appendIngressTlsExternalSecretStep(rootCommand, request.getNamespace(),
+                        request.getReleaseName(), esName, secretName, storeName, storeKind, remoteKey, refreshInterval);
+                childCommands.add(stepId);
+                this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
+                if (ingressHost != null && !ingressHost.isBlank()) {
+                    this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", ingressHost);
+                }
+                LOG.info("Planned INGRESS_TLS_EXTERNAL_SECRET: stepId={}, secret={}/{}, store={}/{}, key={}",
+                        stepId, request.getNamespace(), secretName, storeKind, storeName, remoteKey);
+            }
+        }
+        if (baseUri != null) {
+            params.put("_baseUri", baseUri.toString());
+        }
+        if (callerHeaders != null) {
+            params.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+        }
+        // Reusable Trino catalog references (set by applyCustomCatalogs; absent for non-Trino deploys).
+        if (request.getFormValues() != null && request.getFormValues().containsKey("_catalogRefsJson")) {
+            params.put("_catalogRefsJson", stringValue(request.getFormValues().get("_catalogRefsJson")));
+            params.put("_catalogRefsSet", "true");
+        }
+        // command status
+        CommandStatusEntity commandStatusEntity = new CommandStatusEntity();
+        commandStatusEntity.setId(id + "-status");
+        commandStatusEntity.setViewInstance(ctx.getInstanceName());
+        commandStatusEntity.setCreatedBy(ctx.getUsername());
+        commandStatusEntity.setState(CommandState.PENDING.name());
+        commandStatusEntity.setCreatedAt(now);
+        commandStatusEntity.setUpdatedAt(now);
+        commandStatusEntity.setAttempt(0);
+
+        rootCommand.setCommandStatusId(commandStatusEntity.getId());
+        rootCommand.setTitle("Install release " + request.getReleaseName() + (gitOps ? " with GitOps" : ""));
+
         if (kerberosEnabled || externalKeytabProvided) {
             LOG.info("Kerberos enabled for this deploy (effective={}, externalKeytab={}, contextKrb5Present={}); preparing krb5.conf ConfigMap for Helm Chart",
                     kerberosEnabled, externalKeytabProvided, contextKerberos);
 
-            // Derive a unique ConfigMap name per release to avoid collisions across multiple installs
-            String releaseName = request.getReleaseName() != null ? request.getReleaseName().trim() : "";
-            String krb5ConfigMapName = (releaseName.isEmpty() ? "krb5-conf" : (releaseName + "-krb5-conf"));
-
-            // 1) Create/update the ConfigMap — from the selected context's krb5.conf when supplied,
-            //    otherwise from the hosting cluster's /etc/krb5.conf. Returns false when NEITHER source
-            //    exists (a standalone Ambari + external/CDP context whose krb5.conf field is empty).
-            boolean krb5Created = this.commandUtils.ensureKrb5ConfConfigMap(
-                    request.getNamespace(), krb5ConfigMapName, contextKrb5);
-
-            if (!krb5Created) {
-                // Kerberos is on for this deploy but no krb5.conf could be sourced. Fail NOW with an
-                // actionable message rather than letting the pod fail later with the opaque
-                // "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found".
-                throw new IllegalStateException(
-                        "Kerberos is enabled for this deploy but no krb5.conf could be found: the selected "
-                        + "platform context has no krb5.conf and this Ambari host has no /etc/krb5.conf. "
-                        + "For a backend in a different Kerberos realm (e.g. CDP), paste that realm's krb5.conf "
-                        + "into the platform context — Contexts → <your context> → Kerberos → krb5.conf — "
-                        + "then redeploy. (Expected ConfigMap: " + krb5ConfigMapName + " in namespace "
-                        + request.getNamespace() + ".)");
-            }
+            // 1) Create/update the ConfigMap (one per release) — from the selected context's krb5.conf when
+            //    supplied, otherwise from the hosting cluster's /etc/krb5.conf. Stops with what to do when
+            //    NEITHER source exists (a standalone Ambari + external/CDP context whose krb5.conf field is
+            //    empty) or the ConfigMap cannot be written. Shared with GitOps deploys.
+            String krb5ConfigMapName = this.commandUtils.prepareKrb5ConfConfigMap(
+                    request.getNamespace(), request.getReleaseName(), contextKrb5);
 
             // 2) Inject Helm overrides so the chart mounts it:
             //    global.security.kerberos.enabled = true
@@ -5174,16 +8754,10 @@ public class CommandService {
         } else if (kerberosDetectionAvailable) {
             // Explicitly disable Kerberos in chart values when neither the Ambari cluster nor the
             // selected context provides Kerberos.
-            this.commandUtils.addOverride(params, "global.security.kerberos.enabled", "false");
-            LOG.info("Kerberos is disabled on cluster {} and no context krb5.conf supplied; overriding chart values with global.security.kerberos.enabled=false", cluster);
+            overrideKerberosOff(request, params, cluster);
         }
 
         // Build Kerberos template variables for later templating (catalog enrichments, etc.).
-        List<Map<String, Object>> kerberosEntryList = normalizeKerberosEntries(request.getKerberos());
-        String kerberosRealm = null;
-        if (kerberosEnabled) {
-            kerberosRealm = resolveKerberosRealmFromAmbari(ambariActionClient, cluster);
-        }
         Map<String, Object> kerberosTemplateVariableMap = buildKerberosTemplateVariablesForEntries(
                 kerberosEntryList,
                 request.getNamespace(),
@@ -5196,22 +8770,21 @@ public class CommandService {
         // Merges (deduped) the Ambari server SSL CA + Ambari Internal CA + operator truststores
         // (defaults + those selected for this release) into a single <release>-truststore Secret and
         // wires global.security.tls.*. Assembly lives in TrustBundleService so the direct and GitOps
-        // paths stay identical; it provisions even when Ambari itself is not on SSL.
-        try {
-            TrustBundleService trustBundleService = new TrustBundleService(ctx, this.kubernetesService);
-            TrustBundleService.ProvisionResult truststoreResult = trustBundleService.provisionReleaseTruststore(
-                    request.getNamespace(), request.getReleaseName(), request.getTruststoreRefs());
-            if (truststoreResult.provisioned()) {
-                for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
-                    this.commandUtils.addOverride(params, override.getKey(), override.getValue());
-                }
-                LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
-                        truststoreResult.secretName(), truststoreResult.caCount(), request.getNamespace());
-            } else {
-                LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
+        // paths stay identical; it provisions even when Ambari itself is not on SSL. A release that needs
+        // the Secret (truststores selected, or a service mounting it) stops here when it cannot be
+        // written, before anything is installed; the CAs left out are written to the operation log.
+        TrustBundleService.ProvisionResult truststoreResult = new TrustBundleService(ctx, this.kubernetesService)
+                .provisionForDeploy(request.getNamespace(), request.getReleaseName(), request.getServiceKey(),
+                        request.getTruststoreRefs());
+        truststoreResult.warnings().forEach(w -> appendCommandLog(id, "WARNING: " + w));
+        if (truststoreResult.provisioned()) {
+            for (Map.Entry<String, String> override : truststoreResult.helmOverrides().entrySet()) {
+                this.commandUtils.addOverride(params, override.getKey(), override.getValue());
             }
-        } catch (Exception ex) {
-            LOG.warn("Failed to provision truststore Secret: {}", ex.toString());
+            LOG.info("Provisioned truststore Secret '{}' ({} CA(s)) in namespace '{}'",
+                    truststoreResult.secretName(), truststoreResult.caCount(), request.getNamespace());
+        } else {
+            LOG.info("Truststore provisioning produced no CAs; skipping truststore wiring");
         }
         // The required Hadoop config maps are MATERIALIZED FROM THE LOCAL (managed) cluster's
         // desired configs. On a standalone Ambari (no cluster) — or when the cluster could not be
@@ -5355,7 +8928,7 @@ public class CommandService {
         }
 
         if (ranger != null && !ranger.isEmpty()) {
-            materializeRangerResources(
+            List<String> rangerWarnings = materializeRangerResources(
                     request,
                     params,
                     effectiveValues,
@@ -5363,11 +8936,15 @@ public class CommandService {
                     cluster,
                     ambariAliasResolver
             );
+            rangerWarnings.forEach(w -> appendCommandLog(id, "WARNING: " + w));
             overrides = this.commandUtils.loadValuesFromParams(params);
             if (overrides == null) {
                 overrides = Collections.emptyMap();
             }
             effectiveValues = this.configResolutionService.deepMerge(defaultValues, overrides);
+        } else {
+            keepOrTakeBackTagSyncRangerAccount(request, params, effectiveValues)
+                    .forEach(w -> appendCommandLog(id, "WARNING: " + w));
         }
 
         // Apply catalog enrichments (e.g., Kerberos properties) when defined in service.json.
@@ -5435,49 +9012,40 @@ public class CommandService {
         }
         LOG.info("Computed list of endpoints: {}", resolvedEndpoints.toArray().toString());
 
+        // What the release record will say once Helm has applied this deploy. It travels in the step parameters,
+        // which are stored below; it is only written for a first install, after the permission check.
+        Map<String, Object> releaseMetadata = new LinkedHashMap<>();
         try {
-            ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
-            GlobalConfigService globalConfigService = new GlobalConfigService();
-            String globalFingerprint = globalConfigService.fingerprint();
-            metadataService.recordInstallOrUpgrade(
-                    request.getNamespace(),
-                    request.getReleaseName(),
-                    request.getServiceKey(),
-                    stringValue(params.get("_platformContextId")),
-                    request.getChart(),
-                    effectiveRepoId,
-                    version,
-                    effectiveValues,
-                    id,                  // deploymentId -> command id for traceability
-                    resolvedEndpoints,   // ✅ the computed list
-                    globalFingerprint,
-                    resolvedSecurityProfile,
-                    securityProfileHash,
-                    request.getDeploymentMode(),
-                    null, // gitCommitSha (set by GitOps backend in future)
-                    null, // gitBranch
-                    null, // gitPath
-                    null, // gitRepoUrl
-                    null, // gitCredentialAlias
-                    null, // gitCommitMode
-                    null, // gitPrUrl
-                    null, // gitPrNumber
-                    null  // gitPrState
-            );
+            releaseMetadata.put("serviceKey", request.getServiceKey());
+            releaseMetadata.put("platformContextId", stringValue(params.get("_platformContextId")));
+            releaseMetadata.put("chartRef", request.getChart());
+            releaseMetadata.put("repoId", effectiveRepoId);
+            releaseMetadata.put("version", version);
+            releaseMetadata.put("deploymentId", id); // command id for traceability
+            releaseMetadata.put("endpoints", resolvedEndpoints);
+            releaseMetadata.put("globalConfigVersion", new GlobalConfigService().fingerprint());
+            releaseMetadata.put("securityProfile", resolvedSecurityProfile);
+            releaseMetadata.put("securityProfileHash", securityProfileHash);
+            releaseMetadata.put("deploymentMode", request.getDeploymentMode());
             if ("true".equals(stringValue(params.get("_catalogRefsSet")))) {
-                metadataService.recordCatalogRefs(request.getNamespace(), request.getReleaseName(),
-                        stringValue(params.get("_catalogRefsJson")));
+                releaseMetadata.put("catalogRefsSet", true);
+                releaseMetadata.put("catalogRefsJson", stringValue(params.get("_catalogRefsJson")));
             }
+            if (request.getTruststoreRefs() != null) {
+                releaseMetadata.put("truststoreRefs", new ArrayList<>(request.getTruststoreRefs()));
+            }
+            params.put(RELEASE_METADATA_PARAM, releaseMetadata);
         } catch (Exception ex) {
-            LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
+            LOG.warn("Failed to plan the release metadata for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
         }
+
         if (ranger != null) {
             // ranger-plugin-settings drives plugin repository creation (Trino, etc.).
             // Plugin-repo creation talks directly to Ranger Admin REST and doesn't
             // depend on the chart's pods, so it stays pre-helm.
             //
             // TagSync source registration is intentionally NOT called here — the
-            // step body needs a Running airflow scheduler pod to mint the OM
+            // step body needs a Running airflow scheduler pod to read the OM
             // ingestion-bot JWT, which only exists after the helm install
             // completes. planRangerTagSyncSources is called from the post-deploy
             // block below (after createRealChartInstallationCommands), where
@@ -5539,14 +9107,51 @@ public class CommandService {
 
         rootCommand.setParamsJson(gson.toJson(params));
         rootCommand.setChildListJson(gson.toJson(childCommands));
-        LOG.info("Root Command params are: {} ", HelmSetValues.redactJson(rootCommand.getParamsJson()));
+        // Only a summary at INFO: the parameters carry the wizard's form and the security profile's secrets.
+        LOG.info("Planned operation {}: release {}/{}, chart {} {}, mode {}, parameters {}", rootCommand.getId(),
+                request.getNamespace(), request.getReleaseName(), request.getChart(), version,
+                gitOps ? DeploymentMode.FLUX_GITOPS.name() : DeploymentMode.DIRECT_HELM.name(),
+                new TreeSet<>(params.keySet()));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Root Command params are: {} ", HelmSetValues.redactJson(rootCommand.getParamsJson()));
+        }
         store(rootCommand);
         /**
          *  2. checking dependencies
          * */
         LOG.info("Processing dependencies if any for the release: {} ",request.getReleaseName());
         Map<String, Object> dependenciesToProcess = request.getDependencies();
-        if (dependenciesToProcess != null && !dependenciesToProcess.isEmpty()) {
+        if (gitOps && dependenciesToProcess != null && !dependenciesToProcess.isEmpty()) {
+            // Flux installs them: the commit writes a HelmRelease for each next to the release, which waits for them
+            // (dependsOn). Installed here with Helm as well, they would belong to two owners. The parameters of their
+            // Helm steps are planned as for a direct deploy and kept for the commit, which writes into each
+            // HelmRelease what the Helm install would receive (image registry and pull Secret, the keytab webhook's
+            // CA bundle and backend URL, the resolved realm).
+            LOG.info("GitOps deploy of {}: dependencies {} are committed with the release for Flux to install",
+                    request.getReleaseName(), dependenciesToProcess.keySet());
+            // The commit leaves the keytab webhook out by the same rule (FluxGitOpsBackend).
+            Object kerberosParam = params.get("kerberosClusterEnabled");
+            boolean kerberosOff = kerberosParam != null && !isKerberosClusterEnabled(kerberosParam);
+            Map<String, Object> dependencySteps = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> dependencyEntry : dependenciesToProcess.entrySet()) {
+                if (!(dependencyEntry.getValue() instanceof Map<?, ?> dependencySpec)) continue;
+                if ("kerberos-keytab-mutating-webhook".equals(dependencyEntry.getKey())) {
+                    if (!KERBEROS_INJECTION_MODE_WEBHOOK.equals(kerberosInjectionMode) || kerberosOff) continue;
+                    prepareKeytabWebhook(callerHeaders);
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> dependencySpecMap = (Map<String, Object>) dependencySpec;
+                dependencySteps.put(dependencyEntry.getKey(), this.commandPlanFactory.dependencyReleaseParams(
+                        rootCommand, dependencySpecMap, dependencyEntry.getKey(), commandsURL, callerHeaders, baseUri));
+            }
+            if (params.get(GITOPS_RELEASE_PARAM) instanceof Map<?, ?> gitOpsRelease) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> release = (Map<String, Object>) gitOpsRelease;
+                release.put(GITOPS_DEPENDENCY_STEPS, dependencySteps);
+                rootCommand.setParamsJson(gson.toJson(params));
+                store(rootCommand);
+            }
+        } else if (dependenciesToProcess != null && !dependenciesToProcess.isEmpty()) {
             if (kerberosDetectionAvailable && !kerberosEnabled && dependenciesToProcess.containsKey("kerberos-keytab-mutating-webhook")) {
                 dependenciesToProcess = new LinkedHashMap<>(dependenciesToProcess);
                 dependenciesToProcess.remove("kerberos-keytab-mutating-webhook");
@@ -5558,107 +9163,28 @@ public class CommandService {
                 LOG.info("Removed kerberos-keytab-mutating-webhook dependency due to PRE_PROVISIONED mode");
             }
             if (dependenciesToProcess.containsKey("kerberos-keytab-mutating-webhook")) {
-                // WEBHOOK mode only: the keytab webhook lives in its own namespace with an mTLS client
-                // Secret, a serving cert and the Ambari CA bundle. Prepared here, when the webhook is about
-                // to be installed, rather than at kubeconfig upload: in the default PRE_PROVISIONED mode
-                // nothing uses that namespace, and on OpenShift sites where namespaces cannot be created
-                // on the fly it must not be required at all.
-                try {
-                    org.apache.ambari.view.k8s.utils.WebHookBootstrap.prepareWebhookPrereqs(
-                            this.ctx, this.kubernetesService, "keytab-webhook", callerHeaders);
-                } catch (Exception e) {
-                    throw new IllegalArgumentException("Kerberos injection mode is WEBHOOK, which needs the keytab "
-                            + "webhook namespace (default 'ambari-mutating-webhooks') and its certificates, but they "
-                            + "could not be prepared: " + e.getMessage() + ". Pre-create that namespace and grant the "
-                            + "view access to it, or switch Settings > Kerberos injection mode to PRE_PROVISIONED "
-                            + "(the default, which needs no webhook).", e);
-                }
+                prepareKeytabWebhook(callerHeaders);
             }
             for (Map.Entry<String, Object> dependencyEntry : dependenciesToProcess.entrySet()) {
                 Object dependencySpec = dependencyEntry.getValue();
-                boolean skipIfReleaseExists = false;
-                String dependencyNamespace = null;
-                // Propagate injection mode to dependency steps so they can skip webhook label work.
+                String dependencyReleaseName = dependencyEntry.getKey();
                 if (dependencySpec instanceof Map) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> dependencySpecMap = (Map<String, Object>) dependencySpec;
+                    // Propagate injection mode to dependency steps so they can skip webhook label work.
                     dependencySpecMap.put("kerberosInjectionMode", kerberosInjectionMode);
                     if (kerberosDetectionAvailable) {
                         dependencySpecMap.put("kerberosClusterEnabled", kerberosEnabled);
                     }
-                    skipIfReleaseExists = asBoolean(dependencySpecMap.get("skipIfReleaseExists"), false);
-                    // Let the operator choose where a fresh dependency install lands (and where the
-                    // skipIfReleaseExists check looks) via a form field, instead of a hardcoded namespace.
-                    // e.g. KEDA declares namespaceFromForm=keda.namespace so a cluster whose operators put
-                    // KEDA somewhere other than "keda" is honoured. Falls back to the static namespace.
-                    String depNsFromForm = resolveStringValue(dependencySpecMap.get("namespaceFromForm"), null);
-                    if (depNsFromForm != null && !depNsFromForm.isBlank() && request.getFormValues() != null) {
-                        String chosen = stringValue(ConfigResolutionService.getByDottedPath(request.getFormValues(), depNsFromForm));
-                        if (chosen != null && !chosen.isBlank()) {
-                            dependencySpecMap.put("namespace", chosen);
-                        }
-                    }
-                    dependencyNamespace = resolveStringValue(dependencySpecMap.get("namespace"), null);
-                }
-
-                String dependencyReleaseName = dependencyEntry.getKey();
-
-                // OpenShift: skip dependencies flagged skipOnOpenShift (e.g. kube-prometheus-stack, which
-                // conflicts with the platform's built-in Prometheus operator — same monitoring.coreos.com
-                // CRDs). Trino still autoscales via KEDA against the built-in (user-workload) monitoring.
-                if (dependencySpec instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> depSkipMap = (Map<String, Object>) dependencySpec;
-                    if (asBoolean(depSkipMap.get("skipOnOpenShift"), false) && this.kubernetesService.isOpenShiftCluster()) {
-                        LOG.info("Skipping dependency '{}' on OpenShift (skipOnOpenShift=true)", dependencyReleaseName);
+                    // Where a fresh install lands (and where skipIfReleaseExists looks), e.g. keda.namespace.
+                    DependencyRules.applyNamespaceFromForm(dependencySpecMap, request.getFormValues());
+                    String skipped = DependencyRules.skipReason(dependencyReleaseName, dependencySpecMap, request,
+                            this.kubernetesService, this::dependencyReleaseExists);
+                    if (skipped != null) {
                         this.commandPlanFactory.createDependencySatisfiedCommand(
-                                rootCommand, dependencyReleaseName, depSkipMap,
-                                "Skipped on OpenShift — the platform's built-in monitoring stack is used instead.");
+                                rootCommand, dependencyReleaseName, dependencySpecMap, skipped);
                         continue;
                     }
-                    // Reuse an operator already on the cluster, detected by CRD presence rather than a
-                    // release-name-in-a-fixed-namespace guess. e.g. KEDA declares
-                    // skipIfCrdExists=scaledobjects.keda.sh, so an existing KEDA is honoured whatever
-                    // namespace/release the initial operators used (incl. the OpenShift Custom Metrics
-                    // Autoscaler) and KDPS never installs a conflicting one.
-                    String skipIfCrdExists = resolveStringValue(depSkipMap.get("skipIfCrdExists"), null);
-                    if (skipIfCrdExists != null && !skipIfCrdExists.isBlank()) {
-                        boolean crdPresent = false;
-                        try {
-                            crdPresent = this.kubernetesService.crdExists(skipIfCrdExists);
-                        } catch (Exception crdEx) {
-                            LOG.warn("skipIfCrdExists check for dependency '{}' ({}) failed; proceeding with install: {}",
-                                    dependencyReleaseName, skipIfCrdExists, crdEx.toString());
-                        }
-                        if (crdPresent) {
-                            LOG.info("Skipping dependency '{}' — CRD '{}' is already served (operator present on the cluster).",
-                                    dependencyReleaseName, skipIfCrdExists);
-                            this.commandPlanFactory.createDependencySatisfiedCommand(
-                                    rootCommand, dependencyReleaseName, depSkipMap,
-                                    "Skipped — an existing operator serving '" + skipIfCrdExists + "' was found; reusing it.");
-                            continue;
-                        }
-                    }
-                }
-
-                if (skipIfReleaseExists && dependencyReleaseName != null && dependencyNamespace != null) {
-                    if (dependencyReleaseExists(dependencyNamespace, dependencyReleaseName)) {
-                        String reason = "Dependency already installed as Helm release '" + dependencyReleaseName
-                                + "' in namespace '" + dependencyNamespace + "'";
-                        LOG.info("Skipping dependency install because release exists: {} in {}", dependencyReleaseName, dependencyNamespace);
-                        if (dependencySpec instanceof Map) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> dependencySpecMap = (Map<String, Object>) dependencySpec;
-                            this.commandPlanFactory.createDependencySatisfiedCommand(
-                                    rootCommand,
-                                    dependencyReleaseName,
-                                    dependencySpecMap,
-                                    reason
-                            );
-                        }
-                        continue;
-                    }
-                    LOG.info("Dependency {} not found in {}; proceeding with install", dependencyReleaseName, dependencyNamespace);
                 }
                 LOG.info("Processing dependency: {} ", dependencyEntry.getKey());
                 this.commandPlanFactory.createDependencyCommands(
@@ -5692,20 +9218,25 @@ public class CommandService {
         // a service-account-token Secret) exists — create it when the view has the rights, otherwise
         // BLOCK the deploy with an actionable message so a cluster admin can provision it first, rather
         // than shipping a Trino that never scales. (detect, else request — see ensureKedaThanosTokenSecret)
-        // 2a-pre. OpenShift SCC preflight (detect-else-request). When the service declares openshiftScc
-        // (e.g. OpenMetadata's bundled OpenSearch/Airflow pin UIDs and can't run under restricted-v2),
-        // grant those SCCs to the namespace's service accounts if the view has the rights; otherwise
-        // BLOCK the deploy with the exact `oc adm policy` commands so a cluster admin can run them
-        // first — rather than shipping a release whose pods are silently rejected (FailedCreate).
+        // 2a-pre. OpenShift SCC preflight (detect, grant if allowed, else block). When the service declares
+        // openshiftScc (e.g. OpenMetadata's bundled OpenSearch/Airflow pin UIDs and can't run under
+        // restricted-v2), service accounts that may already use their SCC need nothing; the others get the
+        // release's own RoleBinding when the view's account may grant it. Otherwise BLOCK the deploy with
+        // what the platform team can do — rather than shipping a release whose pods are silently rejected
+        // (FailedCreate).
         if (this.kubernetesService.isOpenShiftCluster() && request.getServiceKey() != null && !request.getServiceKey().isBlank()) {
             try {
                 StackServiceDef sccDef = new StackDefinitionService(this.ctx).getServiceDefinition(request.getServiceKey());
                 if (sccDef != null && sccDef.openshiftScc != null && !sccDef.openshiftScc.isEmpty()) {
-                    String sccProblem = this.kubernetesService.ensureSccGrants(request.getNamespace(), request.getReleaseName(), sccDef.openshiftScc);
+                    List<String> sccWarnings = new ArrayList<>();
+                    String sccProblem = this.kubernetesService.ensureSccGrants(request.getNamespace(),
+                            request.getReleaseName(), sccDef.openshiftScc, sccWarnings);
                     if (sccProblem != null) {
                         throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
                                 + " on OpenShift — required Security Context Constraints are not granted.\n" + sccProblem);
                     }
+                    // Admitted, but through a grant made for another release: the operator reads it in the deploy log.
+                    sccWarnings.forEach(w -> appendCommandLog(id, "WARNING: " + w));
                     LOG.info("OpenShift SCC(s) {} ensured for release {} in namespace {}",
                             sccDef.openshiftScc, request.getReleaseName(), request.getNamespace());
                 }
@@ -5719,125 +9250,52 @@ public class CommandService {
         // OpenShift: ServiceMonitor right and the KEDA monitoring token (shared with the GitOps mode).
         OpenShiftMonitoringSetup.prepare(this.kubernetesService, request);
 
-        // 2a. Pre-provision Kerberos keytabs if the view is configured for it.
-        // Skip Ambari keytab issuance when the operator supplied an external keytab (via a service's
-        // externalServiceTargets kerberos mode): the pods use that operator-provided keytab
-        // (PRE_PROVISIONED), and principals in a backend (e.g. CDP) realm are not issuable by the
-        // hosting KDC anyway.
-        // externalKeytabProvided was computed earlier (at the krb5.conf ConfigMap gate) and reused here.
-        if (preProvisionedKerberosMode && externalKeytabProvided) {
-            LOG.info("External Kerberos keytab supplied for this deploy; skipping Ambari keytab issuance (pods use the operator-provided keytab).");
-        } else if (preProvisionedKerberosMode) {
-            boolean keytabStepsAdded = false;
-            if (!kerberosEnabled) {
-                LOG.info("Kerberos is disabled on the Ambari cluster; skipping pre-provisioned keytab creation.");
-            } else if (ambariActionClient == null || cluster == null || cluster.isBlank()) {
-                LOG.warn("Ambari client or cluster is unavailable; skipping pre-provisioned keytab creation.");
-            } else {
-                List<Map<String, Object>> kerberosEntries = kerberosEntryList;
-                if (kerberosEntries.isEmpty()) {
-                    LOG.info("No Kerberos entries found in the request; skipping keytab provisioning.");
-                } else {
-                    if (kerberosRealm == null || kerberosRealm.isBlank()) {
-                        LOG.warn("Kerberos realm is empty; skipping pre-provisioned keytab creation.");
-                    } else {
-                        boolean helmOverridesApplied = false;
-                        int kerberosEntryIndex = 0;
-                        for (Map<String, Object> kerberosEntry : kerberosEntries) {
-                            kerberosEntryIndex++;
-                            if (!isKerberosEntryEnabled(kerberosEntry.get("enabled"))) {
-                                LOG.info("Skipping disabled Kerberos entry {}", kerberosEntry.getOrDefault("key", kerberosEntryIndex));
-                                continue;
-                            }
-                            String entryKey = resolveStringValue(
-                                    kerberosEntry.get("key"), "entry-" + kerberosEntryIndex);
-                            String serviceName = resolveStringValue(
-                                    kerberosEntry.get("serviceName"), request.getReleaseName());
-                            String principalTemplate = resolveStringValue(
-                                    kerberosEntry.get("principalTemplate"), "{{service}}-{{namespace}}@{{realm}}");
-                            // Flatten formValues to <name,String> so principalTemplate can address
-                            // wizard form fields by name (e.g. {{kerberosHostFqdn}}). Required
-                            // because FreeIPA 4.12 rejects non-FQDN service host components and we
-                            // don't want to hardcode any cluster's DNS suffix in service.json.
-                            Map<String, String> kerberosExtraTokens = new LinkedHashMap<>();
-                            if (request.getFormValues() != null) {
-                                for (Map.Entry<String, Object> e : request.getFormValues().entrySet()) {
-                                    Object v = e.getValue();
-                                    if (v != null) kerberosExtraTokens.put(e.getKey(), String.valueOf(v));
-                                }
-                            }
-                            String principalFqdn = renderKerberosPrincipalTemplate(
-                                    principalTemplate,
-                                    serviceName,
-                                    request.getNamespace(),
-                                    request.getReleaseName(),
-                                    kerberosRealm,
-                                    kerberosExtraTokens
-                            );
-                            principalFqdn = normalizeKerberosPrincipalLength(principalFqdn);
-                            if (principalFqdn == null || principalFqdn.isBlank()) {
-                                LOG.warn("Kerberos principal resolved to empty for entry {}; skipping.", entryKey);
-                                continue;
-                            }
-                            validateKerberosPrincipal(principalFqdn);
+        // 2a. Pre-provision Kerberos keytabs if the view is configured for it (planned with the Ambari permission check).
+        if (!plannedKeytabs.isEmpty()) {
+            boolean helmOverridesApplied = false;
+            for (PlannedKeytab keytab : plannedKeytabs) {
+                LOG.info("Pre-provisioning keytab for entry {}: principal={}, secret={}, key={}, mountPath={}",
+                        keytab.entryKey(), keytab.principalFqdn(), keytab.secretName(), keytab.keyNameInSecret(),
+                        keytab.mountPath());
 
-                            String secretName = resolveKerberosEntrySecretName(
-                                    kerberosEntry,
-                                    serviceName,
-                                    request.getNamespace(),
-                                    request.getReleaseName(),
-                                    kerberosRealm
-                            );
-                            String keyNameInSecret = resolveStringValue(
-                                    kerberosEntry.get("keyNameInSecret"), "service.keytab");
-                            String mountPath = resolveStringValue(
-                                    kerberosEntry.get("mountPath"), "/etc/security/keytabs");
+                appendPreProvisionedKeytabSteps(
+                        rootCommand,
+                        childCommands,
+                        params,
+                        keytab.principalFqdn(),
+                        request.getNamespace(),
+                        keytab.secretName(),
+                        keytab.keyNameInSecret(),
+                        keytab.entryKey()
+                );
+                warnOfSharedPrincipal(id, request.getNamespace(), request.getReleaseName(), keytab);
 
-                            LOG.info("Pre-provisioning keytab for entry {}: principal={}, secret={}, key={}, mountPath={}",
-                                    entryKey, principalFqdn, secretName, keyNameInSecret, mountPath);
-
-                            appendPreProvisionedKeytabSteps(
-                                    rootCommand,
-                                    childCommands,
-                                    params,
-                                    principalFqdn,
-                                    request.getNamespace(),
-                                    secretName,
-                                    keyNameInSecret,
-                                    entryKey
-                            );
-                            keytabStepsAdded = true;
-
-                            // Only one secret can be wired to global.security.kerberos.keytab.* today.
-                            if (!helmOverridesApplied) {
-                                this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretName", secretName);
-                                this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretDataKey", keyNameInSecret);
-                                if (mountPath != null && !mountPath.isBlank()) {
-                                    this.commandUtils.addOverride(params, "global.security.kerberos.keytab.mountPath", mountPath);
-                                }
-                                // Charts that kinit with a principal they derive themselves (Superset:
-                                // <serviceLabel>-<namespace>@<realm>) must be told the principal the keytab was
-                                // really issued for: KDPS shortens primaries above the FreeIPA limit, and a
-                                // derived name then no longer matches the keytab ("Keytab contains no suitable
-                                // keys"). The entry names the chart value that pins the principal.
-                                String principalValuePath = resolveStringValue(kerberosEntry.get("principalValuePath"), "");
-                                if (principalValuePath != null && !principalValuePath.isBlank()) {
-                                    this.commandUtils.addOverride(params, principalValuePath.trim(), principalFqdn);
-                                    LOG.info("Pinned the chart principal {} = {} (entry {})", principalValuePath.trim(), principalFqdn, entryKey);
-                                }
-                                helmOverridesApplied = true;
-                            } else {
-                                LOG.warn("Multiple Kerberos entries detected; Helm overrides already set from the first entry.");
-                            }
-                        }
+                // Only one secret can be wired to global.security.kerberos.keytab.* today.
+                if (!helmOverridesApplied) {
+                    this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretName", keytab.secretName());
+                    this.commandUtils.addOverride(params, "global.security.kerberos.keytab.secretDataKey", keytab.keyNameInSecret());
+                    if (keytab.mountPath() != null && !keytab.mountPath().isBlank()) {
+                        this.commandUtils.addOverride(params, "global.security.kerberos.keytab.mountPath", keytab.mountPath());
                     }
+                    // Charts that kinit with a principal they derive themselves (Superset:
+                    // <serviceLabel>-<namespace>@<realm>) must be told the principal the keytab was
+                    // really issued for: KDPS shortens primaries above the FreeIPA limit, and a
+                    // derived name then no longer matches the keytab ("Keytab contains no suitable
+                    // keys"). The entry names the chart value that pins the principal.
+                    String principalValuePath = keytab.principalValuePath();
+                    if (principalValuePath != null && !principalValuePath.isBlank()) {
+                        this.commandUtils.addOverride(params, principalValuePath.trim(), keytab.principalFqdn());
+                        LOG.info("Pinned the chart principal {} = {} (entry {})", principalValuePath.trim(),
+                                keytab.principalFqdn(), keytab.entryKey());
+                    }
+                    helmOverridesApplied = true;
+                } else {
+                    LOG.warn("Multiple Kerberos entries detected; Helm overrides already set from the first entry.");
                 }
             }
-            if (keytabStepsAdded) {
-                rootCommand.setChildListJson(gson.toJson(childCommands));
-                rootCommand.setParamsJson(gson.toJson(params));
-                store(rootCommand);
-            }
+            rootCommand.setChildListJson(gson.toJson(childCommands));
+            rootCommand.setParamsJson(gson.toJson(params));
+            store(rootCommand);
         }
 
         // 2b. Pre-provision OIDC client credentials if the service definition has oidc[] entries.
@@ -5863,83 +9321,53 @@ public class CommandService {
                 boolean oidcIsExternal = securityCfg != null
                         && securityCfg.oidc != null
                         && "external".equalsIgnoreCase(securityCfg.oidc.source);
-                String externalClientId     = oidcIsExternal && securityCfg.oidc.clientId     != null ? securityCfg.oidc.clientId     : null;
-                String externalClientSecret = oidcIsExternal && securityCfg.oidc.clientSecret != null ? securityCfg.oidc.clientSecret : null;
                 String externalIssuerUrl    = oidcIsExternal && securityCfg.oidc.issuerUrl    != null ? securityCfg.oidc.issuerUrl    : null;
+                Map<String, String> oidcTemplateVars = resolveOidcTemplateVariables(oidcServiceDef, params);
 
                 boolean oidcStepsAdded = false;
                 boolean oidcHelmOverridesApplied = false;
                 int oidcIdx = 0;
                 for (Map<String, Object> entry : oidcEntries) {
                     oidcIdx++;
-                    if (!isEntryEnabled(entry.get("enabled"))) {
-                        LOG.info("Skipping disabled OIDC entry {}", entry.getOrDefault("key", oidcIdx));
+                    PlannedOidcEntry planned = planOidcEntrySteps(rootCommand, childCommands, params, entry, oidcIdx,
+                            request.getReleaseName(), request.getNamespace(), oidcRealm, oidcTemplateVars,
+                            securityCfg, resolvedSecurityProfile, id, request);
+                    if (planned == null) {
                         continue;
                     }
-                    String entryKey  = resolveStringValue(entry.get("key"), "entry-" + oidcIdx);
-                    String secretT   = resolveStringValue(entry.get("secretNameTemplate"), "{{releaseName}}-oidc-client");
-                    String vaultPath = resolveStringValue(entry.get("vaultPath"), null);
-                    String secretName = renderOidcTemplate(secretT, request.getReleaseName(), request.getNamespace(), oidcRealm);
-
-                    boolean gitlabOmniauth = Boolean.TRUE.equals(entry.get("gitlabOmniauth"))
-                            || "true".equalsIgnoreCase(String.valueOf(entry.get("gitlabOmniauth")));
-
-                    Map<String, Object> extraOidcParams = new LinkedHashMap<>();
-                    // Forward client flow flags declared in service.json oidc[] entry.
-                    // Defaults match the historical KeycloakAdminClient behavior
-                    // (publicClient=false, standardFlowEnabled=true, implicitFlowEnabled=false).
-                    extraOidcParams.put("publicClient",
-                            Boolean.TRUE.equals(entry.get("publicClient"))
-                                    || "true".equalsIgnoreCase(String.valueOf(entry.get("publicClient"))));
-                    Object stdFlowEntry = entry.get("standardFlowEnabled");
-                    extraOidcParams.put("standardFlowEnabled",
-                            stdFlowEntry == null || Boolean.parseBoolean(String.valueOf(stdFlowEntry)));
-                    extraOidcParams.put("implicitFlowEnabled",
-                            Boolean.TRUE.equals(entry.get("implicitFlowEnabled"))
-                                    || "true".equalsIgnoreCase(String.valueOf(entry.get("implicitFlowEnabled"))));
-                    String providerSecretName = null;
-                    if (gitlabOmniauth) {
-                        providerSecretName = request.getReleaseName() + "-omniauth-provider";
-                        extraOidcParams.put("oidcGitlabOmniauth", "true");
-                        extraOidcParams.put("oidcProviderSecretName", providerSecretName);
-                        // The actual callback URL is filled in below once we've resolved
-                        // the redirect URI via the service-definition variable pipeline
-                        // (which knows how to substitute gitlabDomain etc.).
-                    }
-
-                    if (oidcIsExternal) {
-                        // External OIDC: no Keycloak registration — write the secret directly from profile credentials
-                        appendOidcExternalSecretStep(rootCommand, childCommands, params,
-                                externalClientId, externalClientSecret, externalIssuerUrl,
-                                secretName, entryKey, vaultPath, extraOidcParams);
-                    } else {
-                        // Internal OIDC: register client in Keycloak, then create secret
-                        String clientIdT  = resolveStringValue(entry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}");
-                        String redirectT  = resolveStringValue(entry.get("redirectUriTemplate"), "");
-                        String clientId   = renderOidcTemplate(clientIdT, request.getReleaseName(), request.getNamespace(), oidcRealm);
-                        validateOidcClientId(clientId);
-                        Map<String, String> oidcExtraVars = resolveServiceVariablesFromParams(
-                                oidcServiceDef != null ? oidcServiceDef.variables : null, params);
-                        String redirectUri = renderOidcTemplate(redirectT, request.getReleaseName(), request.getNamespace(), oidcRealm, oidcExtraVars);
-                        if (redirectUri.contains("{{")) {
-                            LOG.warn("OIDC redirectUri still contains unresolved tokens after variable substitution: {}", redirectUri);
-                        }
-                        if (gitlabOmniauth) {
-                            // The provider YAML written by OIDC_CREATE_SECRET needs the
-                            // same callback URL that we register with Keycloak. Earlier
-                            // code path tried to read gitlab.global.hosts.domain straight
-                            // out of `params`, which doesn't hold the nested chart values
-                            // tree at this point — it returned an empty string and the
-                            // resulting YAML pointed at `http://gitlab./users/...`,
-                            // breaking the OAuth flow. Reusing the resolved redirectUri
-                            // is the single source of truth and keeps Keycloak's
-                            // registered URI and GitLab's emitted URI byte-identical.
-                            extraOidcParams.put("oidcGitlabCallbackUrl", redirectUri);
-                        }
-                        appendOidcRegistrationSteps(rootCommand, childCommands, params,
-                                clientId, redirectUri, secretName, entryKey, vaultPath, extraOidcParams);
-                    }
+                    boolean gitlabOmniauth = planned.gitlabOmniauth();
+                    String providerSecretName = planned.providerSecretName();
+                    String secretName = planned.secretName();
+                    String entryKey = planned.entryKey();
+                    String entryAudience = planned.audience();
                     oidcStepsAdded = true;
+
+                    // A service that checks the audience of the JWTs it accepts takes only tokens minted for its own
+                    // client: without it, any token of the realm (one issued to another application for a signed-in
+                    // user, say) authenticates as that user.
+                    String audiencePath = jwtAudiencePath(entry);
+                    if (audiencePath != null && entryAudience != null && !entryAudience.isBlank()) {
+                        this.commandUtils.addOverride(params, audiencePath, entryAudience);
+                        LOG.info("OIDC entry {}: {} = {} (tokens for other clients are refused)",
+                                entryKey, audiencePath, entryAudience);
+                        if (oidcIsExternal) {
+                            // KDPS registers no client with an external provider, so it cannot add the audience.
+                            appendCommandLog(id, "Release '" + request.getReleaseName() + "' accepts only JWTs whose"
+                                    + " audience is '" + entryAudience + "' (security profile '" + resolvedSecurityProfile
+                                    + "'): the identity provider must put it in the tokens of the applications that"
+                                    + " call it with their own token, Superset's included. If your provider issues"
+                                    + " another audience (an application ID URI such as api://..., say), set it as"
+                                    + " the profile's JWT Audience and redeploy.");
+                            List<Map<String, String>> callers =
+                                    trinoJwtCallers(request.getNamespace(), request.getReleaseName(), oidcRealm);
+                            if (!callers.isEmpty()) {
+                                appendCommandLog(id, "WARNING: release(s) " + callerNames(callers) + " call this"
+                                        + " Trino with their OIDC service token. Make sure your identity provider puts"
+                                        + " the audience '" + entryAudience + "' in their tokens, or their"
+                                        + " connection to Trino fails once this deploy completes.");
+                            }
+                        }
+                    }
 
                     if (!oidcHelmOverridesApplied) {
                         if (gitlabOmniauth) {
@@ -5997,7 +9425,9 @@ public class CommandService {
                         {"dagPath", "airflow.dagPath"},
                         {"dagSchedule", "airflow.schedule"},
                         {"kubeConnectionId", "airflow.kubeConnectionId"},
-                        {"runTimeoutMinutes", "airflow.runTimeoutMinutes"}}) {
+                        {"runTimeoutMinutes", "airflow.runTimeoutMinutes"},
+                        // Over SSH, the host keys the DAG repository's server must present.
+                        {"gitSshKnownHosts", "airflow.dagRepoHostKey"}}) {
                     String v = stringValue(ConfigResolutionService.getByDottedPath(fvDag, pair[1]));
                     if (!v.isBlank()) dp.put(pair[0], v);
                 }
@@ -6024,43 +9454,55 @@ public class CommandService {
         {
             Map<String, Object> fvPolaris = (params.get("formValues") instanceof Map)
                     ? (Map<String, Object>) params.get("formValues") : null;
-            // isEntryEnabled treats an absent value as enabled, which is right for chart entries but
-            // wrong for a wizard toggle: an untouched form must not provision anything.
-            Object icebergRaw = (fvPolaris == null) ? null
-                    : ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.enabled");
-            boolean icebergOn = icebergRaw != null && isEntryEnabled(icebergRaw);
-            if (icebergOn) {
-                Object provisionRaw = ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.provision");
-                boolean provision = provisionRaw == null || isEntryEnabled(provisionRaw);
-                if (provision) {
-                    Map<String, Object> pp = new LinkedHashMap<>();
-                    pp.put("releaseName", request.getReleaseName());
-                    pp.put("namespace", request.getNamespace());
-                    pp.put("serviceKey", request.getServiceKey());
-                    // The same toggle governs creation: provisioning without creation attaches the
-                    // release to a catalog the operator already owns.
-                    pp.put("_createCatalog", "true");
-                    pp.put("catalogName", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.warehouse")));
-                    pp.put("s3Endpoint", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Endpoint")));
-                    pp.put("s3Region", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Region")));
-                    pp.put("s3AccessKeyId", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3AccessKey")));
-                    pp.put("s3SecretAccessKey", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3SecretKey")));
-                    pp.put("s3CredentialSecret", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3CredentialSecret")));
-                    pp.put("polarisRestUri", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.restUri")));
-                    String polarisPcId = stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "platformContextId"));
-                    if (!polarisPcId.isBlank()) pp.put("_platformContextId", polarisPcId);
-                    if (params.get("_cluster") != null) pp.put("_cluster", params.get("_cluster"));
-                    if (params.get("_baseUri") != null) pp.put("_baseUri", params.get("_baseUri"));
-                    if (params.get("_callerHeaders") != null) pp.put("_callerHeaders", params.get("_callerHeaders"));
-                    String polarisCmdId = this.commandPlanFactory.createPolarisProvision(rootCommand, pp);
-                    childCommands.add(polarisCmdId);
-                    rootCommand.setChildListJson(gson.toJson(childCommands));
-                    store(rootCommand);
-                    LOG.info("Queued POLARIS_PROVISION_CATALOG for release '{}' in namespace '{}' (catalog creation {}).",
-                            request.getReleaseName(), request.getNamespace(),
-                            "true".equals(pp.get("_createCatalog")) ? "enabled" : "disabled");
-                }
+            if (plansPolarisProvision(fvPolaris)) {
+                Map<String, Object> pp = new LinkedHashMap<>();
+                pp.put("releaseName", request.getReleaseName());
+                pp.put("namespace", request.getNamespace());
+                pp.put("serviceKey", request.getServiceKey());
+                // The same toggle governs creation: provisioning without creation attaches the
+                // release to a catalog the operator already owns.
+                pp.put("_createCatalog", "true");
+                pp.put("catalogName", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.warehouse")));
+                pp.put("s3Endpoint", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Endpoint")));
+                pp.put("s3Region", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3Region")));
+                pp.put("s3AccessKeyId", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3AccessKey")));
+                pp.put("s3SecretAccessKey", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3SecretKey")));
+                pp.put("s3CredentialSecret", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.s3CredentialSecret")));
+                pp.put("polarisRestUri", stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "icebergCatalog.restUri")));
+                String polarisPcId = stringValue(ConfigResolutionService.getByDottedPath(fvPolaris, "platformContextId"));
+                if (!polarisPcId.isBlank()) pp.put("_platformContextId", polarisPcId);
+                if (params.get("_cluster") != null) pp.put("_cluster", params.get("_cluster"));
+                if (params.get("_baseUri") != null) pp.put("_baseUri", params.get("_baseUri"));
+                if (params.get("_callerHeaders") != null) pp.put("_callerHeaders", params.get("_callerHeaders"));
+                String polarisCmdId = this.commandPlanFactory.createPolarisProvision(rootCommand, pp);
+                childCommands.add(polarisCmdId);
+                rootCommand.setChildListJson(gson.toJson(childCommands));
+                store(rootCommand);
+                LOG.info("Queued POLARIS_PROVISION_CATALOG for release '{}' in namespace '{}' (catalog creation {}).",
+                        request.getReleaseName(), request.getNamespace(),
+                        "true".equals(pp.get("_createCatalog")) ? "enabled" : "disabled");
             }
+        }
+
+        // The release's generated credentials (an administrator password, the passwords of the bundled databases):
+        // created now, before the Helm or GitOps steps are planned, so those steps get the Secrets' names.
+        boolean credentialsApplied;
+        try {
+            credentialsApplied = applyGeneratedSecrets(id, params, request.getServiceKey(), request.getNamespace(),
+                    request.getReleaseName(), version, request.getValues(), request.getFormValues());
+        } catch (RuntimeException refused) {
+            // A database password that cannot be found, or a Secret that cannot be written. The plan is stored by
+            // now, so the refusal also closes it: left pending, it would show as running for good, and nothing would
+            // ever run or end its steps.
+            refuseStoredPlan(rootCommand, commandStatusEntity,
+                    refused.getMessage() == null || refused.getMessage().isBlank()
+                            ? "Could not prepare the credentials of " + request.getReleaseName() + ": " + refused
+                            : refused.getMessage());
+            throw refused;
+        }
+        if (credentialsApplied) {
+            rootCommand.setParamsJson(gson.toJson(params));
+            store(rootCommand);
         }
 
         // 2bis. Materialize stack configurations into Secrets before Helm install
@@ -6080,8 +9522,17 @@ public class CommandService {
          * 3. Doing the dry run of the real chart installation
          *
          */
-        this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, true);
-        this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, false);
+        if (gitOps) {
+            // Committed to Git instead of installed, then awaited until Flux reports the release Ready, so the
+            // post-deploy steps below find running pods as after a Helm install. No Helm dry run: the dependencies
+            // whose resources the chart may use (KEDA, for one) are installed by Flux only after the commit; Flux
+            // renders the chart itself and its message is reported if that fails.
+            this.commandPlanFactory.createGitOpsReleaseCommands(rootCommand,
+                    gitOpsReadyTimeoutSeconds(request.getServiceKey()), FLUX_READY_POLL_SECONDS);
+        } else {
+            this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, true);
+            this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, false);
+        }
 
         // 4. Post-deploy: auto-provision an Ambari view instance if the service spec defines it.
         //    This creates a linked SQL-ASSISTANT-VIEW instance for each sql-assistant-* Helm release,
@@ -6109,9 +9560,10 @@ public class CommandService {
 
                     // Ranger TagSync source registration runs post-deploy because the
                     // OM_RANGER_TAGSYNC_REGISTER step body exec-s into an airflow
-                    // scheduler pod to mint the OM bot JWT — the pod doesn't exist
-                    // until the helm install completes. Gating + plumbing of
-                    // _tagSyncSettings into params happens inside planRangerTagSyncSources.
+                    // scheduler pod to read the OM bot JWT — the pod doesn't exist
+                    // until the helm install completes. Gating (register, check only, or
+                    // nothing) + plumbing of _tagSyncSettings into params happens inside
+                    // planRangerTagSyncSources.
                     if (request.getRanger() != null) {
                         // Thread the selected platform context into params so the TagSync step
                         // resolves Ranger ownership (managed vs external) from the context — the
@@ -6209,16 +9661,16 @@ public class CommandService {
                         }
                     }
 
-                    // Superset (or any service building a Hive database connection) needs its
-                    // Kerberos principal granted SELECT on the Hive Ranger repo: Superset runs
-                    // schema/column reflection as the SERVICE principal (queries impersonate the
-                    // end-user, but reflection does not), so without this grant Ranger denies
-                    // DESCRIBE and tables list with no columns. Declared via platformOp
-                    // (op=ranger.hiveGrant), gated on hiveDb.enabled=true. Delegated to the Ambari
+                    // A service that reads Hive as its OWN identity (Trino's Hive catalog: the
+                    // metastore's Ranger plugin authorizes that identity, not the end user) needs its
+                    // Kerberos principal granted SELECT on the Hive Ranger repo. A service that
+                    // impersonates the end user (Superset's Hive connection) declares no such op, so
+                    // its service identity gets no data access. Declared via platformOp
+                    // (op=ranger.hiveGrant), gated on the op's own toggle. Delegated to the Ambari
                     // server so the view never handles the Ranger admin password.
                     if (hasPlatformOp(serviceDef, "ranger.hiveGrant")) {
-                        // The op's own `when` names the toggle (Superset: hiveDb.enabled, Trino:
-                        // hiveCatalog.enabled); the Superset field stays the default for older defs.
+                        // The op's own `when` names the toggle (Trino: hiveCatalog.enabled); the
+                        // hiveDb.enabled field stays the default for older definitions.
                         String hiveGrantWhen = platformOpWhen(serviceDef, "ranger.hiveGrant", "hiveDb.enabled");
                         Object hiveDbEnabledRaw = ConfigResolutionService.getByDottedPath(
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
@@ -6237,13 +9689,17 @@ public class CommandService {
                             // name for long namespaces): HIVE_METASTORE_ERROR "Permission denied" on every
                             // table read from a fresh install.
                             String principal = issuedPrincipalShortName(serviceDef, request, kerberosRealm);
+                            boolean principalMinted = true;
                             // With an operator-supplied keytab the identity Hive sees is that keytab's
                             // principal (short name), not the one KDPS would have minted.
                             Map<String, Object> fvGrant = request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap();
                             if (deployUsesExternalKeytab(fvGrant)) {
                                 String ext = stringValue(ConfigResolutionService.getByDottedPath(fvGrant, "hive.externalKeytabPrincipal"));
                                 if (ext.isBlank()) ext = stringValue(ConfigResolutionService.getByDottedPath(fvGrant, "hiveDb.externalKeytabPrincipal"));
-                                if (!ext.isBlank()) principal = ext.replaceAll("[/@].*$", "");
+                                if (!ext.isBlank()) {
+                                    principal = ext.replaceAll("[/@].*$", "");
+                                    principalMinted = false;
+                                }
                             }
 
                             Map<String, Object> grantParams = new LinkedHashMap<>();
@@ -6251,6 +9707,10 @@ public class CommandService {
                             grantParams.put("namespace", request.getNamespace());
                             grantParams.put("serviceKey", request.getServiceKey());
                             grantParams.put("_principal", principal);
+                            if (principalMinted) grantParams.put(PRINCIPAL_MINTED_BY_KDPS, "true");
+                            if (principalMinted && issuedPrincipalNamesNamespace(serviceDef)) {
+                                grantParams.put(PRINCIPAL_PER_NAMESPACE, "true");
+                            }
                             // Hive Ranger service name is resolved at execute time from the platform
                             // context (managed → <cluster>_hive, external → its hive.rangerServiceName),
                             // so the context id is threaded rather than a hardcoded local name.
@@ -6272,9 +9732,10 @@ public class CommandService {
                     // to Trino as a SERVICE principal and impersonates the end-user (Trino session
                     // user). For Ranger to authorise that, the service principal needs 'impersonate'
                     // on the Trino Ranger repo. Declared via platformOp (op=ranger.trinoImpersonateGrant).
-                    // Only the ldap/kerberos modes authenticate as a distinct principal that must be
-                    // granted; none/tls set the session user directly and need no grant (oidc/jwt is
-                    // wired with P2). Dual routing (context REST vs Ambari server) is chosen at execute.
+                    // The ldap, kerberos and oidc modes authenticate as a distinct principal that must be
+                    // granted (for oidc, only the operator can name it); none/tls set the session user
+                    // directly and need no grant. Dual routing (context REST vs Ambari server) is chosen
+                    // at execute.
                     if (hasPlatformOp(serviceDef, "ranger.trinoImpersonateGrant")) {
                         Map<String, Object> fv = request.getFormValues() != null
                                 ? request.getFormValues() : Collections.emptyMap();
@@ -6282,6 +9743,7 @@ public class CommandService {
                         String trinoAuthMode = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_auth_mode"))
                                 .toLowerCase(Locale.ROOT);
                         String trinoPrincipal = null;
+                        boolean trinoPrincipalMinted = false;
                         if (!trinoHost.isBlank()) {
                             if ("ldap".equals(trinoAuthMode)) {
                                 trinoPrincipal = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_svc_user"));
@@ -6294,6 +9756,7 @@ public class CommandService {
                                             serviceDef.kerberos.get(0).get("serviceName"), kerbServiceName);
                                 }
                                 trinoPrincipal = kerbServiceName + "-" + request.getNamespace();
+                                trinoPrincipalMinted = true;
                             } else if ("oidc".equals(trinoAuthMode)) {
                                 // The principal Trino derives from Superset's service JWT depends on
                                 // the Keycloak claim mapping, so it is operator-supplied (optional).
@@ -6306,6 +9769,12 @@ public class CommandService {
                             grantParams.put("namespace", request.getNamespace());
                             grantParams.put("serviceKey", request.getServiceKey());
                             grantParams.put("_principal", trinoPrincipal);
+                            // The ldap and oidc accounts are the operator's, and may hold access of their own.
+                            if (trinoPrincipalMinted) {
+                                grantParams.put(PRINCIPAL_MINTED_BY_KDPS, "true");
+                                // <kerberos serviceName>-<namespace>: an account of this namespace only.
+                                grantParams.put(PRINCIPAL_PER_NAMESPACE, "true");
+                            }
                             // Which Ranger repo to grant in: the operator's override, else the repo the
                             // target Trino release actually registered (<release>-<namespace>). Without
                             // this the grant falls back to <cluster>_trino, which does not exist for a
@@ -6323,6 +9792,12 @@ public class CommandService {
                                     + "(principal='{}', mode='{}', context='{}')",
                                     request.getReleaseName(), trinoPrincipal, trinoAuthMode,
                                     trinoGrantPcId.isBlank() ? "default" : trinoGrantPcId);
+                        } else if (!trinoHost.isBlank() && "oidc".equals(trinoAuthMode)) {
+                            // Nothing else lets the token's account act for the logged-in user, so every
+                            // query would be refused: the operator reads why in the deploy log.
+                            String warning = trinoOidcPrincipalMissing(request.getReleaseName());
+                            LOG.warn("ranger.trinoImpersonateGrant: {}", warning);
+                            appendCommandLog(id, "WARNING: " + warning);
                         } else if (!trinoHost.isBlank()) {
                             LOG.info("ranger.trinoImpersonateGrant: Trino host set but auth mode '{}' needs no "
                                     + "impersonation grant (or the LDAP service user is blank) — skipping for release '{}'",
@@ -6392,32 +9867,7 @@ public class CommandService {
                                 request.getValues() != null ? request.getValues() : Collections.emptyMap(),
                                 "atlasFederation.enabled");
                         if (enabledRaw != null && "true".equalsIgnoreCase(String.valueOf(enabledRaw))) {
-                            try {
-                                queueAtlasFederationProvisioningSteps(
-                                        rootCommand, request, params, cluster, ambariActionClient);
-                            } catch (Exception ex) {
-                                LOG.warn("Atlas federation provisioning dispatch failed for '{}': {} "
-                                        + "(continuing with bare OM_ATLAS_FEDERATION_REGISTER step)",
-                                        request.getReleaseName(), ex.toString());
-                            }
-                            // Always queue the OM-side REST registration last. Thread the platform
-                            // context + Ambari params so the register step resolves Atlas URL/creds
-                            // from the context instead of per-service form fields.
-                            Map<String, Object> atlasParams = new LinkedHashMap<>();
-                            atlasParams.put("releaseName", request.getReleaseName());
-                            atlasParams.put("namespace", request.getNamespace());
-                            atlasParams.put("serviceKey", request.getServiceKey());
-                            String pcId = stringValue(ConfigResolutionService.getByDottedPath(
-                                    request.getFormValues() != null ? request.getFormValues()
-                                            : Collections.emptyMap(), "platformContextId"));
-                            if (!pcId.isBlank()) atlasParams.put("_platformContextId", pcId);
-                            if (params.get("_cluster") != null) atlasParams.put("_cluster", params.get("_cluster"));
-                            if (params.get("_baseUri") != null) atlasParams.put("_baseUri", params.get("_baseUri"));
-                            if (params.get("_callerHeaders") != null) atlasParams.put("_callerHeaders", params.get("_callerHeaders"));
-                            this.commandPlanFactory.createOmAtlasFederationRegister(
-                                    rootCommand, atlasParams);
-                            LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER post-deploy step for release '{}'",
-                                    request.getReleaseName());
+                            queueAtlasFederationSteps(rootCommand, request, params, cluster, ambariActionClient);
                         }
                     }
                 }
@@ -6427,10 +9877,37 @@ public class CommandService {
             }
         }
 
-        // Publish correlation ConfigMap so the mutating webhook can attach keytab requests to this command tree.
+        // Steps planned since the first check, such as OpenMetadata's Ranger and Atlas wiring, may need more Ambari
+        // permissions. Keytab steps were judged there, where a keytab already stored in its Secret is known, and so was
+        // the Polaris step, which needs no Ambari permission when the form gives an S3 key. The plan is stored by now,
+        // so a refusal also closes it: resuming it would run the refused steps without the release record below.
+        List<String> plannedSteps = plannedStepTypes(rootCommand);
+        plannedSteps.removeIf(CommandType.KEYTAB_ISSUE_PRINCIPAL.name()::equals);
+        plannedSteps.removeIf(CommandType.POLARIS_PROVISION_CATALOG.name()::equals);
+        String missingPlannedPermission = ambariPermissions.check(
+                AmbariPermissionPreflight.requiredFor(plannedSteps, usesManagedContext(params)));
+        if (missingPlannedPermission != null) {
+            refuseStoredPlan(rootCommand, commandStatusEntity, missingPlannedPermission);
+            throw new IllegalStateException(missingPlannedPermission);
+        }
+
+        // Recorded once the deploy is sure to run: a refused deploy leaves the release's record as it was. A GitOps
+        // release is recorded by its commit step instead, also when it is new: a release whose preparation fails has
+        // nothing in Git and nothing running to know about.
+        try {
+            if (!gitOps) {
+                planReleaseMetadata(params, request.getNamespace(), request.getReleaseName(), releaseMetadata,
+                        effectiveValues);
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to record metadata/endpoints for {}/{}: {}", request.getNamespace(), request.getReleaseName(), ex.toString());
+        }
+
+        // Publish the correlation ConfigMap: the keytabs the webhook asks for this release's pods are issued with this
+        // deploy's Ambari credentials. Only the view reads it.
         if (isWebhookInjectionMode(kerberosInjectionMode)) {
             try {
-                String cmName = "k8s-view-metadata";
+                String cmName = CORRELATION_CONFIGMAP;
                 Map<String, String> data = new HashMap<>();
                 data.put(request.getReleaseName() + ".commandId", id);
                 this.kubernetesService.createOrUpdateConfigMap(
@@ -6449,7 +9926,6 @@ public class CommandService {
         }
 
         LOG.info("Queued DEPLOY_COMPOSITE id={} steps={} at {}", id, childCommands.size(), now);
-        scheduleNow(id);
         return id;
     }
 
@@ -6473,12 +9949,127 @@ public class CommandService {
     }
 
     /**
+     * Whether Helm still holds the release, in any state (deployed, failed, pending or uninstalling).
+     *
+     * <p>Unlike {@link #directHelmStatus}, a release that cannot be listed is not taken for an absent one: the
+     * failure is thrown, so an uninstall that failed is never mistaken for one that finished.</p>
+     *
+     * @throws Exception when Helm cannot list the releases of the namespace
+     */
+    public boolean directHelmReleaseExists(String namespace, String releaseName) throws Exception {
+        final String kubeconfigContent = new ViewConfigurationService(ctx).getKubeconfigContents();
+        return helmService.list(namespace, kubeconfigContent).stream()
+                .anyMatch(r -> releaseName.equals(r.getName()));
+    }
+
+    /**
+     * Step parameter holding the release metadata a deploy records once its Helm step has applied it: chart,
+     * version, security profile and its hash, global configuration fingerprint, endpoints, catalogs and truststores.
+     */
+    static final String RELEASE_METADATA_PARAM = "_releaseMetadata";
+
+    /**
+     * Hands a deploy's release metadata to its Helm step, which records it once Helm has applied the deploy.
+     *
+     * <p>A release KDPS already knows keeps its recorded metadata until then. Recorded at submit, a deploy that
+     * then failed (a template that does not render, an interrupted upgrade) would leave KDPS believing the new
+     * configuration is live, and its drift and out-of-sync signals would stay quiet while the release still runs
+     * the previous revision. A new release has nothing to keep: it is recorded at once, so KDPS knows it while it
+     * installs, and after a failed first install.
+     *
+     * @param params      the operation's parameters, passed on to its Helm step
+     * @param namespace   release namespace
+     * @param releaseName release name
+     * @param metadata    what to record (see {@link #RELEASE_METADATA_PARAM})
+     * @param values      the values the deploy applies
+     */
+    void planReleaseMetadata(Map<String, Object> params, String namespace, String releaseName,
+                             Map<String, Object> metadata, Map<String, Object> values) {
+        params.put(RELEASE_METADATA_PARAM, metadata);
+        if (new ReleaseMetadataService(this.ctx).find(namespace, releaseName) == null) {
+            recordReleaseMetadata(namespace, releaseName, metadata, values);
+        }
+    }
+
+    /**
+     * Records the release metadata a deploy planned (see {@link #planReleaseMetadata}).
+     */
+    private void recordReleaseMetadata(String namespace, String releaseName, Map<?, ?> metadata,
+                                       Map<String, Object> values) {
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+        List<Map<String, Object>> endpoints = new ArrayList<>();
+        if (metadata.get("endpoints") instanceof List<?> listed) {
+            for (Object endpoint : listed) {
+                if (endpoint instanceof Map<?, ?> m) {
+                    Map<String, Object> copy = new LinkedHashMap<>();
+                    m.forEach((k, v) -> copy.put(String.valueOf(k), v));
+                    endpoints.add(copy);
+                }
+            }
+        }
+        metadataService.recordInstallOrUpgrade(
+                namespace,
+                releaseName,
+                stringValue(metadata.get("serviceKey")),
+                stringValue(metadata.get("platformContextId")),
+                stringValue(metadata.get("chartRef")),
+                stringValue(metadata.get("repoId")),
+                stringValue(metadata.get("version")),
+                values,
+                stringValue(metadata.get("deploymentId")),
+                endpoints,
+                stringValue(metadata.get("globalConfigVersion")),
+                stringValue(metadata.get("securityProfile")),
+                stringValue(metadata.get("securityProfileHash")),
+                stringValue(metadata.get("deploymentMode")),
+                null, // gitCommitSha (set by GitOps backend in future)
+                null, // gitBranch
+                null, // gitPath
+                null, // gitRepoUrl
+                null, // gitCredentialAlias
+                null, // gitCommitMode
+                null, // gitPrUrl
+                null, // gitPrNumber
+                null  // gitPrState
+        );
+        if (Boolean.TRUE.equals(metadata.get("catalogRefsSet"))) {
+            metadataService.recordCatalogRefs(namespace, releaseName, stringValue(metadata.get("catalogRefsJson")));
+        }
+        if (metadata.get("truststoreRefs") instanceof List<?> refs) {
+            List<String> truststores = new ArrayList<>();
+            for (Object ref : refs) {
+                if (ref != null) truststores.add(String.valueOf(ref));
+            }
+            metadataService.recordTruststoreRefs(namespace, releaseName, truststores);
+        }
+        recordKdpsObjects(metadataService, namespace, releaseName);
+    }
+
+    /**
+     * Records with the release the objects KDPS created for it outside its chart, as they are on the cluster now (see
+     * {@link KdpsReleaseObjects}): its uninstall removes a cluster-scoped one only when recorded. Never fails the
+     * deploy.
+     */
+    private void recordKdpsObjects(ReleaseMetadataService metadataService, String namespace, String releaseName) {
+        try {
+            metadataService.recordKdpsObjects(namespace, releaseName,
+                    kubernetesService.listKdpsObjectsForRelease(namespace, releaseName));
+        } catch (Exception e) {
+            LOG.warn("Could not record the objects KDPS created for {}/{}: {}", namespace, releaseName, e.toString());
+        }
+    }
+
+    /**
      * Uninstall a release via direct Helm (no GitOps path).
+     *
+     * @throws HelmOperationRegistry.ReleaseBusyException when another Helm operation on the release is running
      */
     public void directHelmDestroy(String namespace, String releaseName) {
         try {
             final String kubeconfigContent = new ViewConfigurationService(ctx).getKubeconfigContents();
             new HelmService(ctx).uninstall(namespace, releaseName, kubeconfigContent);
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            throw busy;
         } catch (Exception ex) {
             LOG.warn("directHelmDestroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
             throw new RuntimeException(ex);
@@ -6487,6 +10078,8 @@ public class CommandService {
 
     /**
      * Destroy a release using the correct backend based on deploymentMode.
+     *
+     * @throws HelmOperationRegistry.ReleaseBusyException when another Helm operation on the release is running
      */
     public void destroyViaBackend(String namespace, String releaseName, String deploymentMode) {
         String mode = deploymentMode == null ? DeploymentMode.DIRECT_HELM.name() : deploymentMode.toUpperCase(Locale.ROOT);
@@ -6498,6 +10091,8 @@ public class CommandService {
         }
         try {
             backend.destroy(namespace, releaseName);
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            throw busy;
         } catch (Exception ex) {
             LOG.warn("Backend destroy failed for mode {} {}/{}: {}", mode, namespace, releaseName, ex.toString());
             throw new RuntimeException(ex);
@@ -6522,10 +10117,16 @@ public class CommandService {
         }
     }
 
+    /**
+     * The status of a command.
+     *
+     * @return the status, or {@code null} for an unknown id (or a command whose status was never stored)
+     */
     public CommandStatus getStatus(String id) {
         CommandEntity e = find(id);
-        CommandStatusEntity eStatus = findCommandStatusById(e.getCommandStatusId());
         if (e == null) return null;
+        CommandStatusEntity eStatus = findCommandStatusById(e.getCommandStatusId());
+        if (eStatus == null) return null;
         CommandStatus s = new CommandStatus();
         s.id = e.getId();
         s.hasChildren = (e.getChildListJson() != null && !e.getChildListJson().isBlank());
@@ -6540,8 +10141,11 @@ public class CommandService {
         s.createdAt = eStatus.getCreatedAt();
         s.updatedAt = eStatus.getUpdatedAt();
         s.percent = cachedPercentage(e);
+        s.result = operationResult(e, eStatus);
         LOG.info("Getting status information for command with id: {} ", s.id);
-        LOG.debug("Params are: {} ", HelmSetValues.redactJson(e.getParamsJson()));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Params are: {} ", HelmSetValues.redactJson(e.getParamsJson()));
+        }
 
         int stepIndex = java.util.Optional.ofNullable(resolveParamsJson(e))
                 .map(JsonParser::parseString)
@@ -6553,6 +10157,28 @@ public class CommandService {
         if (stepIndex == -1) stepIndex = 0; // convert to 0-based
         s.step = stepIndex;
         return s;
+    }
+
+    /**
+     * What an operation ended with besides its state, for the operator: a GitOps deploy whose change waits for a merge
+     * says so there ({@code waitingForMerge}, {@code message}, the pull request or branch, the steps not run). Only
+     * operations have one: the results of their steps stay internal, as some hold what the step registered (an SSO
+     * client, for one).
+     *
+     * @return the result, or {@code null} when there is none
+     */
+    private Map<String, Object> operationResult(CommandEntity command, CommandStatusEntity status) {
+        if (command.getChildListJson() == null || command.getChildListJson().isBlank()
+                || status.getResultJson() == null || status.getResultJson().isBlank()) {
+            return null;
+        }
+        try {
+            Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+            return gson.fromJson(status.getResultJson(), mapType);
+        } catch (RuntimeException ex) {
+            LOG.warn("Unreadable result of operation {}: {}", command.getId(), ex.toString());
+            return null;
+        }
     }
 
     /**
@@ -6599,6 +10225,7 @@ public class CommandService {
             cs.createdAt = st.getCreatedAt();
             cs.updatedAt = st.getUpdatedAt();
             cs.percent = computePercentage(e);
+            cs.result = operationResult(e, st);
             cs.step = 0;
             out.add(cs);
         }
@@ -6774,6 +10401,33 @@ public class CommandService {
 
     public void cancel(String id) {
         cancelRecursive(id);
+        // A deploy canceled before it installed its release leaves its tag projector's account to take back. A step
+        // that was just starting its Helm call is given a moment to register it, which may yet install the release.
+        scheduleTagSyncTakeBack(id, 0, 5);
+        forgetOidcClientSecrets(id);
+    }
+
+    /**
+     * Deletes the client secrets the Keycloak registration steps under a canceled command got: a canceled operation is
+     * never resumed, so no step of it will write them. A later deploy of the release registers the client again and
+     * reads its secret from Keycloak.
+     *
+     * @param id the canceled command
+     */
+    private void forgetOidcClientSecrets(String id) {
+        CommandEntity canceled = find(id);
+        if (canceled == null) return;
+        List<CommandEntity> tree = new ArrayList<>(plannedStepsOf(canceled));
+        tree.add(canceled);
+        for (CommandEntity step : tree) {
+            if (!CommandType.OIDC_REGISTER_CLIENT.name().equals(step.getType())) continue;
+            try {
+                oidcClientSecrets().forget(step.getId());
+            } catch (RuntimeException e) {
+                LOG.warn("Could not delete the OIDC client secret kept for canceled step {}: {}", step.getId(),
+                        e.toString());
+            }
+        }
     }
 
     /**
@@ -6797,16 +10451,30 @@ public class CommandService {
      * @param rootId        id of the root (top) command to resume
      * @param callerHeaders the resume request's HTTP headers (fresh, authenticated); may be null
      * @throws IllegalArgumentException if the command is unknown
-     * @throws IllegalStateException    if the command is not in a FAILED state, or has no steps
+     * @throws IllegalStateException    if the command is not in a FAILED state, has no steps, is a deploy that was
+     *                                  refused before it started, or a deploy whose Atlas tag projector cannot be given
+     *                                  back the Ranger account taken back when it failed
      */
     public void resume(String rootId, javax.ws.rs.core.MultivaluedMap<String, String> callerHeaders) {
         CommandEntity root = find(rootId);
         if (root == null) throw new IllegalArgumentException("Unknown operation: " + rootId);
         CommandStatusEntity rootSt = findCommandStatusById(root.getCommandStatusId());
         if (rootSt == null) throw new IllegalStateException("No status for operation: " + rootId);
+        if (wasRefusedBeforeStart(rootSt)) {
+            // Its checks refused it; resuming would run its steps anyway, and without the release record.
+            String reason = rootSt.getMessage();
+            throw new IllegalStateException("This deploy was refused before it started, so it cannot be resumed. "
+                    + (reason == null || reason.isBlank() ? "Deploy it again from the wizard." : reason));
+        }
         if (!CommandState.FAILED.name().equals(rootSt.getState())) {
             throw new IllegalStateException("Only a failed operation can be resumed (current state: "
                     + rootSt.getState() + ").");
+        }
+        String savedParams = CommandUtils.resolveParamsPayload(root.getParamsJson());
+        if (savedParams == null || CommandParamsStore.wasRemoved(savedParams)) {
+            throw new IllegalStateException("The saved settings of this operation are no longer available: they are"
+                    + " deleted some time after a failed operation ends (or could not be decrypted), so it cannot be"
+                    + " resumed. Run the operation again.");
         }
 
         List<String> childIds;
@@ -6835,47 +10503,53 @@ public class CommandService {
             }
         }
 
-        // Reset the FIRST failed/canceled step to PENDING, then reset any later non-SUCCEEDED steps
-        // to PENDING too (so the tail re-runs in order). SUCCEEDED steps are left untouched.
-        boolean foundFailed = false;
+        // Under the lock that taking back a tag sync account holds: the account is given back, the steps re-armed and
+        // the root flipped to RUNNING before a take-back of the failed deploy can look at it again.
         String resumeTitle = null;
-        for (String cid : childIds) {
-            if (cid == null || cid.isBlank()) continue;
-            CommandEntity child = find(cid);
-            if (child == null) continue;
-            CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
-            if (st == null) continue;
-            String state = st.getState();
+        synchronized (tagSyncTakeBackLock) {
+            giveBackTagSyncAccountOnResume(rootId);
 
-            if (!foundFailed) {
-                if (CommandState.FAILED.name().equals(state) || CommandState.CANCELED.name().equals(state)) {
-                    foundFailed = true;
-                    resumeTitle = child.getTitle();
+            // Reset the FIRST failed/canceled step to PENDING, then reset any later non-SUCCEEDED steps
+            // to PENDING too (so the tail re-runs in order). SUCCEEDED steps are left untouched.
+            boolean foundFailed = false;
+            for (String cid : childIds) {
+                if (cid == null || cid.isBlank()) continue;
+                CommandEntity child = find(cid);
+                if (child == null) continue;
+                CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
+                if (st == null) continue;
+                String state = st.getState();
+
+                if (!foundFailed) {
+                    if (CommandState.FAILED.name().equals(state) || CommandState.CANCELED.name().equals(state)) {
+                        foundFailed = true;
+                        resumeTitle = child.getTitle();
+                        st.setState(CommandState.PENDING.name());
+                        st.setError(null);
+                        st.setMessage("Retrying after failure…");
+                        st.setAttempt(st.getAttempt() == null ? 1 : st.getAttempt() + 1);
+                        st.setUpdatedAt(Instant.now().toString());
+                        store(st);
+                    }
+                } else if (!CommandState.SUCCEEDED.name().equals(state)
+                        && !CommandState.PENDING.name().equals(state)) {
+                    // A later step left RUNNING/FAILED/CANCELED by the abort — re-arm it.
                     st.setState(CommandState.PENDING.name());
                     st.setError(null);
-                    st.setMessage("Retrying after failure…");
-                    st.setAttempt(st.getAttempt() == null ? 1 : st.getAttempt() + 1);
                     st.setUpdatedAt(Instant.now().toString());
                     store(st);
                 }
-            } else if (!CommandState.SUCCEEDED.name().equals(state)
-                    && !CommandState.PENDING.name().equals(state)) {
-                // A later step left RUNNING/FAILED/CANCELED by the abort — re-arm it.
-                st.setState(CommandState.PENDING.name());
-                st.setError(null);
-                st.setUpdatedAt(Instant.now().toString());
-                store(st);
             }
-        }
 
-        // Flip the root back to RUNNING and re-schedule the step driver. If no explicit FAILED child
-        // was found (root failed in its own orchestration), runNextStep will simply pick up the first
-        // PENDING step, which is the correct resume point.
-        rootSt.setState(CommandState.RUNNING.name());
-        rootSt.setError(null);
-        rootSt.setMessage(resumeTitle != null ? ("Resumed at: " + resumeTitle) : "Resumed");
-        rootSt.setUpdatedAt(Instant.now().toString());
-        store(rootSt);
+            // Flip the root back to RUNNING and re-schedule the step driver. If no explicit FAILED child
+            // was found (root failed in its own orchestration), runNextStep will simply pick up the first
+            // PENDING step, which is the correct resume point.
+            rootSt.setState(CommandState.RUNNING.name());
+            rootSt.setError(null);
+            rootSt.setMessage(resumeTitle != null ? ("Resumed at: " + resumeTitle) : "Resumed");
+            rootSt.setUpdatedAt(Instant.now().toString());
+            store(rootSt);
+        }
         try {
             commandLogService.append(rootId, "▶ Resume requested — re-running from step: "
                     + (resumeTitle != null ? resumeTitle : "start"));
@@ -6886,7 +10560,7 @@ public class CommandService {
 
     /**
      * Replace a command's persisted {@code _callerHeaders} with fresh (already-persistable) values,
-     * preserving the storage form (inline JSON vs {@code @@file:} externalized). Only touches
+     * kept like any other parameters (see {@link CommandParamsStore}). Only touches
      * commands that already carry {@code _callerHeaders} (i.e. Ambari-callback steps); others are
      * left untouched. Best-effort — logs and continues on any failure.
      */
@@ -6899,16 +10573,9 @@ public class CommandService {
             Map<String, Object> p = gson.fromJson(raw, mapType);
             if (p == null || !p.containsKey("_callerHeaders")) return; // only steps that authenticate to Ambari
             p.put("_callerHeaders", freshHeaders);
-            String updated = gson.toJson(p);
-            String pj = cmd.getParamsJson();
-            if (pj != null && pj.startsWith("@@file:")) {
-                java.nio.file.Path fp = java.nio.file.Path.of(pj.substring("@@file:".length()));
-                java.nio.file.Files.writeString(fp, updated, java.nio.charset.StandardCharsets.UTF_8);
-                // keep the @@file: reference unchanged
-            } else {
-                cmd.setParamsJson(updated);
-                store(cmd);
-            }
+            // Written back through store(): the same file, encrypted and owner-only like on the first write.
+            cmd.setParamsJson(gson.toJson(p));
+            store(cmd);
             LOG.info("Refreshed caller auth for command {} on resume", cmd.getId());
         } catch (Exception e) {
             LOG.warn("Could not refresh caller headers for command {}: {}", cmd.getId(), e.toString());
@@ -6951,6 +10618,16 @@ public class CommandService {
 
     // -------------------- Scheduling & execution --------------------
 
+    /** With the growing pause, about six minutes of retries: long enough to ride out a restart of the database. */
+    static final int MAX_DB_READ_ATTEMPTS = 10;
+    /** Tries to mark an operation FAILED while the database stays unreadable, with the same growing pause. */
+    private static final int MAX_FAIL_ROOT_ATTEMPTS = 12;
+    private static final int TERMINAL_WRITE_ATTEMPTS = 4;
+    /** Consecutive database read failures per operation, so the retries are bounded. */
+    private final Map<String, Integer> dbReadFailures = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Pause before the first retry of a final-state write, multiplied by the attempt number; tests shorten it. */
+    volatile long terminalWriteBackoffMillis = 500;
+
     private void scheduleNow(String id) {
         timer.schedule(() -> workers.submit(() -> runNextStep(id)), 0, TimeUnit.SECONDS);
     }
@@ -6961,17 +10638,104 @@ public class CommandService {
     }
 
     // recursive method
+    // package-private so tests can run one step synchronously
 
-    private void runNextStep(String id) {
+    void runNextStep(String id) {
+        try {
+            runNextStepUnguarded(id);
+            dbReadFailures.remove(id);
+        } catch (StoreReadException ex) {
+            // The database could not be read: that is not "the command is gone". Try again a few times, then fail the
+            // operation so that it can be resumed rather than leave it showing RUNNING.
+            int attempt = dbReadFailures.merge(id, 1, Integer::sum);
+            if (attempt < MAX_DB_READ_ATTEMPTS) {
+                LOG.warn("[{}] Database read failed ({}/{}), trying again: {}", id, attempt, MAX_DB_READ_ATTEMPTS, ex.getMessage());
+                rescheduleWithBackoff(id, attempt);
+            } else {
+                dbReadFailures.remove(id);
+                LOG.error("[{}] Database read kept failing, failing the operation", id, ex);
+                failRootPersistently(id, ex, 1);
+            }
+        } catch (Throwable t) {
+            // Whatever escapes here would be lost with the worker's discarded Future and leave the operation RUNNING.
+            dbReadFailures.remove(id);
+            LOG.error("[{}] Orchestrator crashed", id, t);
+            failRootPersistently(id, t, 1);
+            if (t instanceof VirtualMachineError) throw (VirtualMachineError) t;
+        } finally {
+            activeStepLogId.remove();
+            org.slf4j.MDC.remove(CommandLogAppender.COMMAND_MDC_KEY);
+        }
+    }
+
+    /** A database read failed, as opposed to finding nothing. */
+    private static class StoreReadException extends RuntimeException {
+        StoreReadException(String message, Throwable cause) { super(message, cause); }
+    }
+
+    /**
+     * A final state could not be written. It is handled like a failed read: the operation is scanned again later,
+     * which derives the same final state from the steps and writes it once the database is back.
+     */
+    private static final class StoreWriteException extends StoreReadException {
+        StoreWriteException(String message) { super(message, null); }
+    }
+
+    /**
+     * Marks an operation whose orchestration stopped unexpectedly, and its running step, as FAILED so that the
+     * operator can resume it. When the database cannot be read, the attempt is repeated later with a growing pause,
+     * because giving up would leave the operation showing RUNNING with nothing left to move it on.
+     */
+    void failRootPersistently(String id, Throwable cause, int attempt) {
+        try {
+            failRoot(id, cause);
+        } catch (StoreReadException ex) {
+            if (attempt < MAX_FAIL_ROOT_ATTEMPTS) {
+                LOG.warn("[{}] Could not read the operation to mark it as failed ({}/{}), trying again: {}",
+                        id, attempt, MAX_FAIL_ROOT_ATTEMPTS, ex.getMessage());
+                long delay = (long) Math.min(300, Math.pow(2, Math.min(attempt, 6)));
+                timer.schedule(() -> workers.submit(() -> failRootPersistently(id, cause, attempt + 1)),
+                        delay, TimeUnit.SECONDS);
+            } else {
+                LOG.error("[{}] Could not mark the operation as failed, the database stayed unreadable", id, ex);
+            }
+        } catch (Throwable t) {
+            LOG.error("[{}] Could not mark the operation as failed", id, t);
+        }
+    }
+
+    private void failRoot(String id, Throwable cause) {
+        CommandEntity root = findOrThrow(id);
+        if (root == null) return;
+        CommandStatusEntity rootSt = findStatusOrThrow(root.getCommandStatusId());
+        if (rootSt == null || isTerminal(rootSt.getState())
+                || CommandState.CANCELED.name().equals(rootSt.getState())) {
+            return;
+        }
+        String reason = "Stopped by an internal error (" + trim(String.valueOf(cause.getMessage() != null
+                ? cause.getMessage() : cause.getClass().getSimpleName())) + "). Resume the operation to continue.";
+        for (String childId : childIdsOf(root)) {
+            // A step that cannot be read is skipped: the operation itself must still end FAILED.
+            CommandEntity child = find(childId);
+            CommandStatusEntity st = child == null ? null : findCommandStatusById(child.getCommandStatusId());
+            if (st != null && CommandState.RUNNING.name().equals(st.getState())) {
+                fail(st, reason);
+            }
+        }
+        fail(rootSt, reason);
+        appendCommandLog(id, reason);
+    }
+
+    private void runNextStepUnguarded(String id) {
         // 0) Load root & status (the orchestrator is the root command id)
-        CommandEntity root = find(id);
+        CommandEntity root = findOrThrow(id);
         if (root == null) return;
 
         LOG.info("Running next step for command with id: {} ", root.getId());
         Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
         String resolvedRootParams = resolveParamsJson(root);
         Map<String, Object> rootParams = gson.fromJson(resolvedRootParams, mapType);
-        CommandStatusEntity rootSt = findCommandStatusById(root.getCommandStatusId());
+        CommandStatusEntity rootSt = findStatusOrThrow(root.getCommandStatusId());
         if (rootSt == null) return;
         if (isTerminal(rootSt.getState())) return; // terminal guard
         if (CommandState.CANCELED.name().equals(rootSt.getState())) {
@@ -7000,6 +10764,7 @@ public class CommandService {
             LOG.info("[{}] No child steps defined, marking as SUCCEEDED", id);
             succeed(rootSt, "No steps to execute.");
             refreshCurrentStepSnapshot(root);
+            operationFiles.purgeIfSucceeded(id);
             return;
         }
 
@@ -7012,16 +10777,16 @@ public class CommandService {
             String childId = childIds.get(i);
             if (childId == null || childId.isBlank()) continue;
             LOG.info("Processing child command with id: {} for root command with id: {} ", childId, id);
-            CommandEntity child = find(childId);
-            LOG.info("Child Title is: {} ", child.getTitle());
+            CommandEntity child = findOrThrow(childId);
             if (child == null) {
                 // If a child is missing, fail root (plan integrity error)
                 fail(rootSt, "Missing child command: " + childId);
                 refreshCurrentStepSnapshot(root);
                 return;
             }
+            LOG.info("Child Title is: {} ", child.getTitle());
 
-            CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
+            CommandStatusEntity st = findStatusOrThrow(child.getCommandStatusId());
             if (st == null || st.getState() == null) {
                 fail(rootSt, "Missing status for child: " + childId);
                 refreshCurrentStepSnapshot(root);
@@ -7035,6 +10800,7 @@ public class CommandService {
 
             String state = st.getState();
             if (CommandState.FAILED.name().equals(state)) {
+                takeBackTagSyncAccountNow(id, rootParams);
                 fail(rootSt, "Step failed: " + child.getTitle());
                 refreshCurrentStepSnapshot(root);
                 return;
@@ -7065,8 +10831,19 @@ public class CommandService {
             // GitLab) the chart's Ingress is what actually decides the scheme. Live
             // discovery reads spec.tls[] and produces the truthful URL.
             refreshEndpointSnapshotFromLive(root, rootParams);
+            // What the operator must know before signing in (where a generated password is kept).
+            if (rootParams != null && rootParams.get(NOTICES_PARAM) != null) {
+                Map<String, Object> rootResult = rootSt.getResultJson() == null || rootSt.getResultJson().isBlank()
+                        ? null : gson.fromJson(rootSt.getResultJson(), mapType);
+                rootSt.setResultJson(gson.toJson(withNotices(rootResult, rootParams)));
+            }
+            // The Helm install or the Flux reconcile ran the chart's hooks: a generated password is set on its
+            // account now. A GitOps change still waiting for its merge ends elsewhere and keeps asking.
+            markGeneratedCredentialsApplied(id, rootParams);
             succeed(rootSt, "All steps completed.");
             refreshCurrentStepSnapshot(root);
+            // Nothing can resume it any more: its parameters and cached values, which hold its secrets, go.
+            operationFiles.purgeIfSucceeded(id);
             return;
         }
 
@@ -7126,7 +10903,12 @@ public class CommandService {
 
             String repoId = (String) rootParams.get("repoId");
             LOG.info("Using repoId: {} for step execution", repoId);
-            LOG.debug("Child Command params are: {} ", HelmSetValues.redactJson(child.getParamsJson()));
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Child Command params are: {} ", HelmSetValues.redactJson(rawChildParams));
+            }
+            // Set by a step whose outcome says more than "Done", and by one after which the operation ends.
+            String stepDoneMessage = null;
+            String operationEndMessage = null;
             switch (CommandType.valueOf(child.getType())) {
                 case HELM_REPO_LOGIN -> {
                     LOG.info("Performing helm repo login for repoId: {} ", repoId);
@@ -7296,6 +11078,8 @@ public class CommandService {
                         LOG.info("Injecting backend.url property with value: {} for webhook dependency", backend_url);
                         overrideProperties.put("backend.url", backend_url);
                         overrideProperties.put("webhook.caBundle", this.webHookConfigurationService.currentCaBundleBase64());
+                        overrideProperties.put(WebHookBootstrap.ACCOUNT_USERNAME_VALUE, WebHookBootstrap.webhookUserName(
+                                ctx, WebHookBootstrap.KEYTAB_WEBHOOK));
                     }
                     if (!images.isEmpty() && secretName == null) {
                         throw new IllegalStateException("Image pull secret (secretName) must be defined when images are specified for dependency: " + chartName);
@@ -7326,7 +11110,7 @@ public class CommandService {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
                         this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
+                        ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, childParams.get("serviceKey"), overrideProperties);
                     }
                     if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
                         // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
@@ -7362,144 +11146,20 @@ public class CommandService {
                     String chartVersion = (String) childParams.get("chartVersion");
                     String namespace = (String) childParams.get("namespace");
                     String releaseName = (String) childParams.get("releaseName");
-                    Object imageTagObj = childParams.get("imageTag");
-                    String imageTag = null;
-                    if (imageTagObj instanceof String) {
-                        imageTag = (String) imageTagObj;
-                    }
-                    String imageRepository = (String) childParams.get("imageRepository");
-                    String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
-                    Object secretName = childParams.get("secretName");
-                    Object serviceAccountsObj = childParams.get("serviceAccounts");
-                    List<String> serviceAccounts = new ArrayList<>();
-                    if (serviceAccountsObj instanceof List) {
-                        @SuppressWarnings("unchecked")
-                        List<Object> serviceAccountsList = (List<Object>) serviceAccountsObj;
-                        for (Object sa : serviceAccountsList) {
-                            if (sa instanceof String) {
-                                serviceAccounts.add((String) sa);
-                            }
-                        }
-                    }
                     LOG.info("Installing dependency release: {} in namespace: {} with chart: {} and version: {} ", releaseName, namespace, chartName, chartVersion);
                     appendCommandLog(id, "Install dependency: release=" + releaseName + " chart=" + chartName + " version=" + chartVersion + " repoId=" + repoId);
-                    Map<String, String> overrideProperties = new HashMap<>();
-                    HelmRepoEntity repository = repositoryDao.findById(repoId);
-                    List<String> images = new ArrayList<>();
-                    Object imagesObj = childParams.get("images");
-                    if (imagesObj instanceof List) {
-                        @SuppressWarnings("unchecked")
-                        List<Object> imagesList = (List<Object>) imagesObj;
-                        for (Object img : imagesList) {
-                            if (img instanceof String) {
-                                images.add((String) img);
-                            }
-                        }
-                    }
-                    /**
-                     the logic is to part images[] direct which can look like:
-                     "images": [
-                     "kerberos-keytab-mutating-webhook"
-                     ], for hand custom images
-                     or
-                     "images": [
-                     "kerberos-keytab-mutating-webhook:custom-image:tag"
-                     ], for chart images override with tag override
-                     or
-                     "images": [
-                     "kerberos-keytab-mutating-webhook:custom-image"
-                     ], for chart images override with default tag
-
-                     */
-                    for (String img : images) {
-                        if (!img.contains(":")) {
-
-                            overrideProperties.put("image.repository", imageRepository + "/" + img);
-                            overrideProperties.put("image.registry", repository.getUrl());
-                            LOG.info("Injecting in values.yaml image.repository value: {}", imageRepository + "/" + img);
-                            LOG.info("Injecting in values.yaml image.registry   value: {}", repository.getUrl());
-                            if (imageTag != null){
-                                overrideProperties.put("image.tag", imageTag);
-                                LOG.info("Injecting in values.yaml image.tag        value: {}", imageTag);
-                            }else{
-                                LOG.warn("No tag specified for image: {} and no default imageTag provided", img);
-                                LOG.warn("Skipping injection of image." + imageRepository + ".tag value. The default chart value will be used.");
-                            }
-                        } else {
-                            String[] imgParts = img.split(":");
-                            overrideProperties.put("image." + imgParts[0] + ".repository", imageRepository + "/" + imgParts[1]);
-                            overrideProperties.put("image." + imgParts[0] + ".registry", repository.getUrl());
-                            LOG.info("Injecting in values.yaml image." + imgParts[0] + ".repository value: {}", imageRepository + "/" + imgParts[1]);
-                            LOG.info("Injecting in values.yaml image." + imgParts[0] + ".registry   value: {}", repository.getUrl());
-                            if (imgParts.length > 2) {
-                                LOG.info("Injecting in values.yaml image." + imgParts[0] + ".tag        value: {}", imgParts[2]);
-                                overrideProperties.put("image." + imgParts[0] + ".tag", imgParts[2]);
-                            }else{
-                                if (imageTag != null){
-                                    LOG.info("Injecting in values.yaml image." + imgParts[0] + ".tag        value: {}", imageTag);
-                                    overrideProperties.put("image." + imgParts[0] + ".tag", imageTag);
-                                }else{
-                                    LOG.warn("No tag specified for image: {} and no default imageTag provided", img);
-                                    LOG.warn("Skipping injection of image." + imgParts[0] + ".tag value. The default chart value will be used.");
-                                }
-                            }
-
-                        }
-                    }
-                    Object fullnameOverrideObj = childParams.get("fullnameOverride");
-                    String fullnameOverride = null;
-                    if (fullnameOverrideObj instanceof String) {
-                        fullnameOverride = (String) fullnameOverrideObj;
-                        overrideProperties.put("fullnameOverride", fullnameOverride);
-                        LOG.info("Injecting fullnameOverride property with value: {} for dependency: {}", fullnameOverride, chartName);
-                    }
-                    boolean isWebhook = false;
-                    Object isWebhookObj = childParams.get("isWebhook");
-                    if (isWebhookObj instanceof Boolean) {
-                        isWebhook = (Boolean) isWebhookObj;
-                    } else if (isWebhookObj instanceof String) {
-                        isWebhook = Boolean.parseBoolean((String) isWebhookObj);
-                    }
-                    if (isWebhook) {
-                        String backend_url = (String) childParams.get("backend.url");
-                        overrideProperties.put("backend.url", backend_url);
-                        overrideProperties.put("webhook.caBundle", this.webHookConfigurationService.currentCaBundleBase64());
-                        LOG.info("Injecting backend.url property with value: {} for webhook dependency", backend_url);
-                        LOG.info("Injecting webhook.caBundle with CurrentCA");
-                    }
-
-                    // Always merge dynamic overrides (e.g., AMBARI_KERBEROS_REALM) for dependency installs
-                    this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
-
-                    if (secretName != null) {
-                        LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
-                        this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
-                        overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
-                    }
-                    if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-                        // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
-                        // registry as the main chart — i.e. the operator-selected Helm repo — not the
-                        // hardcoded service.json default. Mirror the main-release behaviour
-                        // (getEffectiveImageRegistry(repoId)); fall back to the service.json
-                        // imageRepository only when the selected repo resolves no image registry.
-                        String depRegistry = this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId);
-                        if (depRegistry == null || depRegistry.isBlank()) {
-                            depRegistry = imageRepository;
-                        }
-                        overrideProperties.put(imageGlobalRegistryProperty, depRegistry);
-                        LOG.info("Injecting in values.yaml global image registry property: {} with value: {} (from repo {})", imageGlobalRegistryProperty, depRegistry, repoId);
-                    }
+                    Map<String, String> overrideProperties = dependencyReleaseOverrides(childParams, namespace, repoId);
                     ScheduledFuture<?> heartbeat = startHeartbeat(id, () -> {
                         CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
                         return st != null && CommandState.RUNNING.name().equals(st.getState());
                     });
                     try {
-                        runWithCancellation(id, child.getCommandStatusId(), () ->
+                        runReleaseOperation(id, child.getCommandStatusId(), namespace, releaseName, () ->
                                 this.helmService.deployOrUpgrade(
                                         chartName,
                                         releaseName,
-                                        namespace, childParams, overrideProperties, this.kubernetesService.getConfigurationService().getKubeconfigContents(), repoId, chartVersion, false));
+                                        namespace, childParams, overrideProperties, this.kubernetesService.getConfigurationService().getKubeconfigContents(), repoId, chartVersion, false,
+                                        stepLog(id, child.getId())));
                     } finally {
                         if (heartbeat != null) heartbeat.cancel(false);
                     }
@@ -7644,30 +11304,21 @@ public class CommandService {
                         directConfigs.putIfAbsent("username",
                                 (pluginUserName != null && !pluginUserName.isBlank()) ? pluginUserName : repoRc.getRangerAdminUsername());
                         if (pluginUserPassword != null && !pluginUserPassword.isBlank()) directConfigs.putIfAbsent("password", pluginUserPassword);
-                        long svcId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindService(
-                                repoRc.getRangerUrl(), repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
-                                rangerRepositoryName, serviceType, directConfigs);
+                        long svcId = ensureRangerRepositoryInContext(childParams, repoRc, rangerRepositoryName,
+                                serviceType, directConfigs);
                         LOG.info("Ranger plugin repository '{}' (type={}) ensured via context Ranger (direct REST, service id={})",
                                 rangerRepositoryName, serviceType, svcId);
+                        TrinoImpersonationRules impersonation = null;
                         if ("trino".equalsIgnoreCase(serviceType)) {
-                            // A fresh Trino repository only lets the service user impersonate. Without
-                            // this, every authenticated person is refused with "Principal X cannot become
-                            // user X" before any table policy is consulted. Table access stays governed by
-                            // the operator's policies; this only lets a user be themselves.
-                            try {
-                                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(
-                                        repoRc.getRangerUrl(), repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
-                                        rangerRepositoryName, "kdps - users impersonate themselves", "{USER}",
-                                        java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
-                            } catch (Exception e) {
-                                LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
-                            }
+                            impersonation = restrictTrinoImpersonationViaRanger(tlsOf(repoRc, "Ranger"), repoRc.getRangerUrl(),
+                                    repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
+                                    rangerRepositoryName, timeoutSeconds);
                         }
                         Map<String,Object> res = new LinkedHashMap<>();
                         res.put("rangerRepositoryName", rangerRepositoryName);
                         res.put("serviceId", svcId);
                         res.put("via", "context-ranger-rest");
-                        childSt.setResultJson(gson.toJson(res));
+                        recordRangerRepositoryResult(id, childSt, rangerRepositoryName, impersonation, res);
                         break;
                     }
 
@@ -7696,52 +11347,37 @@ public class CommandService {
                         throw new IllegalStateException(
                                 "Ambari Ranger plugin repository request " + reqId + " did not complete successfully");
                     }
+                    TrinoImpersonationRules impersonation = null;
                     if ("trino".equalsIgnoreCase(serviceType)) {
-                        // Same default as the direct path, through the Ambari server this time.
-                        try {
-                            int polReq = ambariActionClient.submitRangerPolicyGrant(
-                                    rangerRepositoryName, "{USER}", "impersonate", "{\"trinouser\":[\"*\"]}",
-                                    "kdps - users impersonate themselves",
-                                    "KDPS-managed: let every authenticated user run Trino queries as themselves.",
-                                    timeoutSeconds, "KDPS: Trino self-impersonation policy on " + rangerRepositoryName);
-                            if (!ambariActionClient.waitUntilComplete(polReq, timeoutSeconds.longValue(), java.util.concurrent.TimeUnit.SECONDS)) {
-                                LOG.warn("Ranger repository '{}': self-impersonation policy request {} did not complete", rangerRepositoryName, polReq);
-                            }
-                        } catch (Exception e) {
-                            LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
-                        }
+                        // Same rules as the direct path, through the Ambari server this time.
+                        impersonation = restrictTrinoImpersonationViaAmbari(ambariActionClient, rangerRepositoryName, timeoutSeconds);
                     }
 
                     LOG.info("Ranger plugin repository '{}' configured successfully via Ambari request {}",
                             rangerRepositoryName, reqId);
+                    recordReleaseRangerRepository(childParams, rangerRepositoryName);
 
                     // optional: store a tiny result payload
                     Map<String,Object> res = new LinkedHashMap<>();
                     res.put("rangerRepositoryName", rangerRepositoryName);
                     res.put("requestId", reqId);
-                    childSt.setResultJson(gson.toJson(res));
+                    recordRangerRepositoryResult(id, childSt, rangerRepositoryName, impersonation, res);
                   } // end remoteConfigGate guard
                 }
                 case OM_RANGER_TAGSYNC_REGISTER -> {
                     if (!remoteConfigGate(childParams, "Ranger TagSync source registration", childSt, id)) {
-                        String result = registerRangerTagSyncSource(childParams);
-                        if (result != null) childSt.setResultJson(result);
+                        recordStepResult(id, childSt, registerRangerTagSyncSource(childParams));
                     }
                 }
                 case OM_ATLAS_FEDERATION_REGISTER -> {
                     if (!remoteConfigGate(childParams, "Atlas federation provisioning", childSt, id)) {
-                        String result = registerOmAtlasFederation(childParams);
-                        if (result != null) childSt.setResultJson(result);
+                        recordStepResult(id, childSt, registerOmAtlasFederation(childParams));
                     }
                 }
-                case OM_HIVE_BASE_INGESTION_REGISTER -> {
-                    String result = registerOmHiveBaseIngestion(childParams);
-                    if (result != null) childSt.setResultJson(result);
-                }
-                case OM_TRINO_BASE_INGESTION_REGISTER -> {
-                    String result = registerOmTrinoBaseIngestion(childParams);
-                    if (result != null) childSt.setResultJson(result);
-                }
+                case OM_HIVE_BASE_INGESTION_REGISTER ->
+                    recordStepResult(id, childSt, registerOmHiveBaseIngestion(childParams));
+                case OM_TRINO_BASE_INGESTION_REGISTER ->
+                    recordStepResult(id, childSt, registerOmTrinoBaseIngestion(childParams));
                 case ATLAS_USER_PROVISION_OM -> {
                     if (!remoteConfigGate(childParams, "Atlas federation user provisioning", childSt, id)) {
                         String result = provisionAtlasUserForOm(childParams);
@@ -7827,13 +11463,13 @@ public class CommandService {
 
                         if (!secretData.isEmpty()) {
                             LOG.info("Materializing Secret {} in {}", secretName, namespace);
-                            Map<String, String> labels = Map.of(
-                                    "managed-by", "ambari-k8s-view",
-                                    "ambari.clemlab.com/service", serviceName,
-                                    "ambari.clemlab.com/release", releaseName
-                            );
-                            // Create/Update the secret in K8s
-                            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData);
+                            // The release's own Secret (its name carries the release): its uninstall removes it.
+                            Map<String, String> labels = new LinkedHashMap<>();
+                            labels.put("managed-by", "ambari-k8s-view");
+                            labels.put("ambari.clemlab.com/service", serviceName);
+                            labels.putAll(KdpsReleaseObjects.labels(releaseName));
+                            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData, labels,
+                                    KdpsReleaseObjects.annotations(namespace));
                         }
                     }
                 }
@@ -7842,11 +11478,11 @@ public class CommandService {
                     String namespace = (String) childParams.get("namespace");
                     String releaseName = (String) childParams.get("releaseName");
                     String version = (String) childParams.get("version");
-                    String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
                     Object valuesObj = childParams.get("values");
 
                     Map<String, Object> valuesMap = this.commandUtils.loadValuesFromParams(childParams);
-                    Map<String, String> overrideProperties = new HashMap<>();
+                    // The same overrides the install step applies, so the dry run validates what gets installed.
+                    Map<String, String> overrideProperties = plannedReleaseOverrides(childParams);
                     // Collect explicit override pairs encoded as:
                     //   _o_<name>_k   -> helm.path.to.override
                     //   _o_<name>_v -> value-to-set
@@ -7897,9 +11533,6 @@ public class CommandService {
 //                        }
 //                    }
 
-                    // Apply dynamic value bindings (e.g., AMBARI_KERBEROS_REALM) on top of explicit overrides
-                    this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
-
                     this.kubernetesService.createNamespace(namespace);
                     // Dependency namespaces only need webhook labels in webhook mode when Kerberos is enabled.
                     String kerberosInjectionMode = String.valueOf(
@@ -7912,33 +11545,7 @@ public class CommandService {
                         LOG.info("Skipping webhook label on dependency namespace {} (Kerberos mode={}, clusterEnabled={})",
                                 namespace, kerberosInjectionMode, kerberosClusterEnabled);
                     }
-                    Object secretName = childParams.get("secretName");
-                    if (secretName != null) {
-                        LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
-                        this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
-                        overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        // Bitnami sub-charts (e.g. Redis inside GitLab) expect global.imagePullSecrets as a list of
-                        // plain secret names (strings), not {name: ...} maps. Using the [0] index without .name
-                        // produces the correct string-list format that renderPullSecrets handles.
-                        overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
-                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
-                    }
-
-                    HelmRepoEntity repository = repositoryDao.findById(repoId);
-                    if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-                        LOG.info("Resolving Repository Name for: {}", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        overrideProperties.put(imageGlobalRegistryProperty, this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getImageRegistry(repoId), imageGlobalRegistryProperty);
-                    }else {
-                        overrideProperties.put("global.imageRegistry", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        LOG.info("Execution Action {}: Injecting 'global.imageRegistry' in values.yaml with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                    }
-
-                    // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
-                    // service definition; rewrite them onto the repository's image registry (AMBARI-690).
-                    applyImageRegistryPaths(childParams.get("serviceKey"),
-                            this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
-                            valuesMap, overrideProperties);
+                    addReleaseImageOverrides(childParams, repoId, valuesMap, overrideProperties, child.getType());
 
                     appendCommandLog(id, "Dry-run main release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
                     ScheduledFuture<?> heartbeat = startHeartbeat(id, () -> {
@@ -7961,28 +11568,10 @@ public class CommandService {
                     String namespace = (String) childParams.get("namespace");
                     String releaseName = (String) childParams.get("releaseName");
                     String version = (String) childParams.get("version");
-                    String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
                     String cluster     = (String) childParams.get("_cluster");
 
                     Map<String, Object> valuesMap = this.commandUtils.loadValuesFromParams(childParams);
-                    Map<String, String> overrideProperties = new HashMap<>();
-
-                    Object ovRaw = childParams.get("_ov");
-                    if (ovRaw instanceof Map<?, ?> ovMap) {
-                        for (Map.Entry<?, ?> e : ovMap.entrySet()) {
-                            if (e.getKey() == null || e.getValue() == null) continue;
-                            String helmPath = String.valueOf(e.getKey()).trim();
-                            String val = String.valueOf(e.getValue());
-                            if (!helmPath.isEmpty()) {
-                                overrideProperties.put(helmPath, val);
-                                LOG.info("Applying explicit override {} -> {}", helmPath, HelmSetValues.forLog(val));
-                            }
-                        }
-                    }
-
-
-                    // Apply dynamic value bindings (e.g., AMBARI_KERBEROS_REALM) on top of explicit overrides
-                    this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
+                    Map<String, String> overrideProperties = plannedReleaseOverrides(childParams);
 
                     this.kubernetesService.createNamespace(namespace);
                     // Main release namespaces only need webhook labels in webhook mode when Kerberos is enabled.
@@ -7996,32 +11585,7 @@ public class CommandService {
                         LOG.info("Skipping webhook label on namespace {} (Kerberos mode={}, clusterEnabled={})",
                                 namespace, kerberosInjectionMode, kerberosClusterEnabled);
                     }
-                    Object secretName = childParams.get("secretName");
-                    if (secretName != null) {
-                        LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
-                        this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
-                        overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
-                    }
-
-                    if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
-                        LOG.info("Resolving Repository Name for: {}", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        overrideProperties.put(imageGlobalRegistryProperty, this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getImageRegistry(repoId), imageGlobalRegistryProperty);
-                    }else {
-                        overrideProperties.put("global.imageRegistry", this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                        LOG.info("Execution Action {}: Injecting 'global.imageRegistry' in values.yaml with value: {}", CommandType.valueOf(child.getType()), this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId));
-                    }
-                    /**
-                     * service and images should ne able to be configured one by one for the repositories
-                     * so right now the repositories are read from the charts Values.yaml
-                     * in the clemlab powered charts, there is a global.registry configuration
-                     */
-                    // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
-                    // service definition; rewrite them onto the repository's image registry (AMBARI-690).
-                    applyImageRegistryPaths(childParams.get("serviceKey"),
-                            this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
-                            valuesMap, overrideProperties);
+                    addReleaseImageOverrides(childParams, repoId, valuesMap, overrideProperties, child.getType());
 
                     appendCommandLog(id, "Installing release: " + releaseName + " chart=" + chartName + " version=" + version + " repoId=" + repoId);
                     ScheduledFuture<?> heartbeatDeploy = startHeartbeat(id, () -> {
@@ -8050,17 +11614,31 @@ public class CommandService {
                     releaseTagger.setDaemon(true);
                     releaseTagger.start();
                     try {
-                        runWithCancellation(id, child.getCommandStatusId(), () ->
+                        runReleaseOperation(id, child.getCommandStatusId(), namespace, releaseName, () ->
                                 this.helmService.deployOrUpgrade(
                                         chartName,
                                         releaseName,
-                                        namespace, valuesMap, overrideProperties, this.kubernetesService.getConfigurationService().getKubeconfigContents(), repoId, version, false));
+                                        namespace, valuesMap, overrideProperties, this.kubernetesService.getConfigurationService().getKubeconfigContents(), repoId, version, false,
+                                        stepLog(id, child.getId())));
                         this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
                     } finally {
                         if (heartbeatDeploy != null) heartbeatDeploy.cancel(false);
                         // Final belt-and-suspenders tag for the success path (and stop the poller).
                         this.kubernetesService.tagHelmReleaseSecrets(namespace, releaseName);
                         releaseTagger.interrupt();
+                    }
+                    // Read before the metadata below replaces the flag with the current fingerprint.
+                    boolean restartPods = restartFlagged(namespace, releaseName);
+                    // Helm has applied the deploy: only now does the release metadata describe what runs.
+                    if (childParams.get(RELEASE_METADATA_PARAM) instanceof Map<?, ?> plannedMetadata) {
+                        try {
+                            recordReleaseMetadata(namespace, releaseName, plannedMetadata, valuesMap);
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to record release metadata after deploy for {}/{}: {}", namespace, releaseName, ex.toString());
+                        }
+                    }
+                    if (restartPods) {
+                        restartFlaggedRelease(id, namespace, releaseName, plannedGlobalConfigVersion(childParams));
                     }
 
                     /** storing metadata for the deployed helm release **/
@@ -8109,6 +11687,90 @@ public class CommandService {
 
 
                 }
+                case GITOPS_COMMIT -> {
+                    String namespace = (String) childParams.get("namespace");
+                    String releaseName = (String) childParams.get("releaseName");
+                    String version = (String) childParams.get("version");
+
+                    // Exactly what the Helm install of a direct deploy would receive: the same values, their dotted
+                    // keys expanded as Helm gets them, and the same overrides on top.
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> valuesMap = HelmService.expandDotPaths((Map<String, Object>)
+                            wholeNumbersAsIntegers(this.commandUtils.loadValuesFromParams(childParams)));
+                    Map<String, String> overrideProperties = plannedReleaseOverrides(childParams);
+                    this.kubernetesService.createNamespace(namespace);
+                    addReleaseImageOverrides(childParams, repoId, valuesMap, overrideProperties, child.getType());
+
+                    Object baseUriParam = childParams.get("_baseUri");
+                    DeploymentContext gitOpsContext = new DeploymentContext(repoId, version, null, null, null,
+                            baseUriParam == null ? null : URI.create(String.valueOf(baseUriParam)), null);
+                    Object kerberosParam = childParams.get("kerberosClusterEnabled");
+                    // Each dependency the commit writes gets what its Helm install would: computed only for those it
+                    // writes, so no pull Secret is created in the namespace of one it leaves out.
+                    Map<String, Map<String, Object>> dependencySteps = gitOpsDependencySteps(childParams);
+                    FluxGitOpsBackend.PlannedRelease planned = new FluxGitOpsBackend.PlannedRelease(overrideProperties,
+                            kerberosParam == null ? null : isKerberosClusterEnabled(kerberosParam),
+                            (dependency, dependencyNamespace, dependencyRepoId) -> dependencySteps.containsKey(dependency)
+                                    ? dependencyReleaseOverrides(dependencySteps.get(dependency), dependencyNamespace,
+                                            dependencyRepoId)
+                                    : Map.of());
+                    appendCommandLog(id, "Committing HelmRelease " + namespace + "/" + releaseName + " to Git");
+                    FluxGitOpsBackend.CommitResult commit = this.fluxGitOpsBackend.commit(
+                            gitOpsRequestFromParams(childParams, valuesMap), gitOpsContext, planned);
+
+                    // Git holds the deploy now: the release metadata describes what Flux runs, or will once merged.
+                    boolean restartPods = restartFlagged(namespace, releaseName);
+                    if (childParams.get(RELEASE_METADATA_PARAM) instanceof Map<?, ?> plannedMetadata) {
+                        try {
+                            recordReleaseMetadata(namespace, releaseName, plannedMetadata, valuesMap);
+                        } catch (Exception ex) {
+                            LOG.warn("Failed to record release metadata after the GitOps commit for {}/{}: {}",
+                                    namespace, releaseName, ex.toString());
+                        }
+                    }
+                    if (restartPods) {
+                        // The pods are restarted once Flux has applied the commit: until then the release stays flagged.
+                        markRestartRequired(namespace, releaseName);
+                    }
+                    stepDoneMessage = describeGitOpsCommit(commit);
+                    appendCommandLog(id, stepDoneMessage);
+                    childSt.setResultJson(gson.toJson(gitOpsCommitResult(commit)));
+                    // The operation says what the deploy did in Git at once, while the wait for Flux still runs.
+                    recordGitOpsResult(root.getCommandStatusId(), rootSt, gitOpsDeployResult(commit));
+                    if (!commit.appliedOnCommit()) {
+                        operationEndMessage = gitOpsMergeWait(commit);
+                    }
+                }
+                case FLUX_WAIT_READY -> {
+                    String namespace = (String) childParams.get("namespace");
+                    String releaseName = (String) childParams.get("releaseName");
+                    Map<String, Object> commitResult = gitOpsCommitResultOf(root);
+                    String expectedDigest = commitResult.get("specDigest") instanceof String s && !s.isBlank() ? s : null;
+                    // Flux tries a release it gave up on again only once its spec or values change. A deploy that
+                    // committed no new version, or a wait resumed after the cause was fixed on the cluster, asks it to.
+                    boolean retryGivenUp = !Boolean.TRUE.equals(commitResult.get("committed"))
+                            || (childSt.getAttempt() != null && childSt.getAttempt() > 0);
+                    FluxGitOpsBackend.Readiness readiness = awaitFluxReady(id, child, namespace, releaseName,
+                            expectedDigest, retryGivenUp,
+                            intParam(childParams.get("timeoutSeconds"), FLUX_READY_TIMEOUT_SECONDS),
+                            intParam(childParams.get("pollSeconds"), FLUX_READY_POLL_SECONDS));
+                    stepDoneMessage = "HelmRelease " + namespace + "/" + releaseName + " is ready"
+                            + (readiness.message().isBlank() ? "" : ": " + readiness.message());
+                    appendCommandLog(id, stepDoneMessage);
+                    // What the Helm install step does once Helm returns: the Releases page recognises the release
+                    // from its Helm Secret, and endpoint discovery finds its Ingresses by their release label.
+                    try {
+                        this.kubernetesService.tagHelmReleaseSecrets(namespace, releaseName);
+                        this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
+                    } catch (Exception ex) {
+                        LOG.warn("Could not label the Helm Secret or Ingresses of {}/{}: {}", namespace, releaseName,
+                                ex.toString());
+                    }
+                    if (restartFlagged(namespace, releaseName)) {
+                        // The wait step carries only the release name: the planned metadata is the operation's.
+                        restartFlaggedRelease(id, namespace, releaseName, plannedGlobalConfigVersion(rootParams));
+                    }
+                }
                 case HELM_UPGRADE -> {
                     String chartName = (String) childParams.get("chart");
                     String namespace = (String) childParams.get("namespace");
@@ -8150,11 +11812,11 @@ public class CommandService {
                     if (secretName != null) {
                         overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
                         overrideProperties.put("global.imagePullSecrets[0]", (String) secretName);
-                        applyImagePullSecretTargets(secretName, childParams.get("serviceKey"), overrideProperties);
+                        ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, childParams.get("serviceKey"), overrideProperties);
                     }
 
                     if (repoId != null && !repoId.isBlank()) {
-                        applyImageRegistryPaths(childParams.get("serviceKey"),
+                        ImageRegistryOverrides.applyImageRegistryPaths(this.ctx, childParams.get("serviceKey"),
                                 this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId),
                                 valuesMap, overrideProperties);
                     }
@@ -8165,13 +11827,13 @@ public class CommandService {
                         return st != null && CommandState.RUNNING.name().equals(st.getState());
                     });
                     try {
-                        runWithCancellation(id, child.getCommandStatusId(), () ->
+                        runReleaseOperation(id, child.getCommandStatusId(), namespace, releaseName, () ->
                                 this.helmService.deployOrUpgrade(
                                         chartName,
                                         releaseName,
                                         namespace, valuesMap, overrideProperties,
                                         this.kubernetesService.getConfigurationService().getKubeconfigContents(),
-                                        repoId, version, false));
+                                        repoId, version, false, stepLog(id, child.getId())));
                         this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
                     } finally {
                         if (heartbeatUpgrade != null) heartbeatUpgrade.cancel(false);
@@ -8245,7 +11907,16 @@ public class CommandService {
                             throw new IllegalStateException("INGRESS_TLS_SELFSIGN: caName is required when ca=companyUploaded");
                         }
                         CaRegistryService caRegistry = new CaRegistryService(ctx, this.kubernetesService);
-                        CaRegistryService.CaEntry entry = caRegistry.get(caName);
+                        CaRegistryService.CaEntry entry;
+                        try {
+                            entry = caRegistry.get(caName);
+                        } catch (RuntimeException e) {
+                            if (NamespaceScope.isForbidden(e)) {
+                                throw new IllegalStateException("INGRESS_TLS_SELFSIGN: "
+                                        + PkiNamespaces.forbiddenMessage(caRegistry.registryNamespace()), e);
+                            }
+                            throw e;
+                        }
                         ca = webHookCfg.loadUploadedCertificateAuthority(entry.namespace(), entry.secretName());
                         appendCommandLog(id, "INGRESS_TLS_SELFSIGN: using company CA '" + caName + "' (subject=" + entry.subject() + ")");
                     } else {
@@ -8254,16 +11925,31 @@ public class CommandService {
                     }
 
                     this.kubernetesService.createNamespace(namespace);
+                    // The release labels: the uninstall of the release removes the Secret KDPS minted for it.
                     Map<String, String> labels = new LinkedHashMap<>();
                     labels.put("ambari.clemlab.com/release", (String) childParams.getOrDefault("releaseName", ""));
+                    labels.putAll(KdpsReleaseObjects.labels(stringValue(childParams.get("releaseName"))));
                     labels.put("ambari.clemlab.com/ca-mode", caMode);
                     if (caName != null) labels.put("ambari.clemlab.com/ca-name",
                             caName.toLowerCase().replaceAll("[^a-z0-9._-]", "-"));
 
-                    var result = webHookCfg.issueIngressTlsSecret(namespace, secretName, ingressHost,
-                            extraSans, validityDays, ca, labels);
-                    appendCommandLog(id, "INGRESS_TLS_SELFSIGN: wrote " + namespace + "/" + secretName +
-                            " (cert chars=" + result.certificatePem().length() + ", key chars=" + result.privateKeyPem().length() + ")");
+                    // Refuses a Secret KDPS did not mint unless the operator confirmed its replacement, and one kept
+                    // by cert-manager or the External Secrets Operator always (IngressTlsSecretGuard).
+                    var outcome = webHookCfg.issueIngressTlsSecret(namespace, secretName, ingressHost,
+                            extraSans, validityDays, ca, labels,
+                            asBoolean(childParams.get("replaceExisting"), false),
+                            asBoolean(childParams.get("keepValidLeaf"), false));
+                    if (outcome.kept()) {
+                        labelKeptSelfSignedTlsSecret(namespace, secretName,
+                                stringValue(childParams.get("releaseName")));
+                        appendCommandLog(id, "INGRESS_TLS_SELFSIGN: kept " + namespace + "/" + secretName
+                                + ": its certificate is already from this CA for " + ingressHost + " and valid until "
+                                + outcome.notAfter() + ". Use Renew TLS to issue a new one.");
+                    } else {
+                        var result = outcome.material();
+                        appendCommandLog(id, "INGRESS_TLS_SELFSIGN: wrote " + namespace + "/" + secretName +
+                                " (cert chars=" + result.certificatePem().length() + ", key chars=" + result.privateKeyPem().length() + ")");
+                    }
                 }
                 case INGRESS_TLS_CERTMANAGER -> {
                     // Two operations supported via the `operation` param:
@@ -8321,7 +12007,8 @@ public class CommandService {
                         Map<String, Object> certSubject = childParams.get("subject") instanceof Map<?, ?> m
                                 ? (Map<String, Object>) m : null;
                         this.kubernetesService.applyCertManagerCertificate(namespace, certName, secretName,
-                                issuerName, issuerKind, dnsNames, durationHours, certSubject);
+                                issuerName, issuerKind, dnsNames, durationHours, certSubject,
+                                (String) childParams.get("releaseName"));
                         appendCommandLog(id, "INGRESS_TLS_CERTMANAGER: applied Certificate "
                                 + namespace + "/" + certName + " issuer=" + issuerKind + "/" + issuerName);
                     }
@@ -8354,7 +12041,8 @@ public class CommandService {
                             throw new IllegalStateException("INGRESS_TLS_EXTERNAL_SECRET: secretStoreName + remoteKey are required");
                         }
                         this.kubernetesService.applyExternalSecret(namespace, esName, secretName,
-                                storeName, storeKind, remoteKey, refreshInterval);
+                                storeName, storeKind, remoteKey, refreshInterval,
+                                (String) childParams.get("releaseName"));
                         appendCommandLog(id, "INGRESS_TLS_EXTERNAL_SECRET: applied ExternalSecret "
                                 + namespace + "/" + esName + " store=" + storeKind + "/" + storeName);
                     }
@@ -8385,6 +12073,18 @@ public class CommandService {
                             + " → " + serviceUrl);
 
                     var ambariClient = new AmbariActionClient(ctx, ambariApiBase, authHeaders);
+                    // The instance is named after the release alone, so a release of the same name in another
+                    // namespace, or an operator, may already have it: only one this deploy creates is the
+                    // release's to delete at uninstall. When Ambari cannot say, it is taken as not the release's.
+                    boolean existed;
+                    try {
+                        existed = ambariClient.viewInstanceExists(viewName, viewVersion, instanceName);
+                    } catch (Exception e) {
+                        LOG.warn("AMBARI_VIEW_PROVISION: could not tell whether instance '{}' exists: {}",
+                                instanceName, e.toString());
+                        existed = true;
+                    }
+                    boolean createdByDeploy = !existed;
                     ambariClient.createOrUpdateViewInstance(
                             viewName,
                             viewVersion,
@@ -8395,6 +12095,8 @@ public class CommandService {
                                     ? Map.of("sql.assistant.semantic.service.url", serviceUrl)
                                     : Map.of()
                     );
+                    recordProvisioning(childParams, ledger -> ledger.addViewInstance(
+                            new ProvisioningLedger.ViewInstance(viewName, viewVersion, instanceName, createdByDeploy)));
                     appendCommandLog(id, "View instance '" + instanceName + "' provisioned successfully.");
                     LOG.info("AMBARI_VIEW_PROVISION completed for instance '{}'", instanceName);
                 }
@@ -8424,16 +12126,32 @@ public class CommandService {
                     // if it already holds this keytab, REUSE it and DO NOT call the KDC. Re-issuing
                     // would rotate the principal's key and invalidate the stored keytab — the
                     // "Preauthentication failed" desync. We only issue (create + key) when the Secret
-                    // is absent. No retrieve ACL / salt / KVNO bookkeeping; works for MIT/IPA/AD.
+                    // is absent. Works for MIT/IPA/AD.
+                    // "Regenerate keytabs" asks for a new keytab on purpose: no reuse then.
+                    // A stored keytab is reused only while the KDC still accepts its key (one login check), and a
+                    // keytab another release of the namespace holds for the same principal is copied, not issued
+                    // again, so the two releases keep the same key.
+                    boolean forceReissue = "true".equalsIgnoreCase(String.valueOf(childParams.get(FORCE_REISSUE_PARAM)));
                     {
                         String reuseNs  = (String) childParams.get("namespace");
                         String reuseSec = (String) childParams.get("secretName");
                         String reuseKey = (String) childParams.get("keyNameInSecret");
                         if (reuseKey == null || reuseKey.isBlank()) reuseKey = "service.keytab";
-                        if (reuseNs != null && !reuseNs.isBlank() && reuseSec != null && !reuseSec.isBlank()) {
+                        if (forceReissue) {
+                            appendCommandLog(id, "Issuing a new keytab for " + principalFqdn + " (regeneration requested)");
+                        } else if (reuseNs != null && !reuseNs.isBlank() && reuseSec != null && !reuseSec.isBlank()) {
                             try {
                                 Optional<byte[]> existing =
                                         this.kubernetesService.readOpaqueSecretKeyAsBytes(reuseNs, reuseSec, reuseKey);
+                                Integer rejectedVersion = null;
+                                if (isReusableKeytab(existing, principalFqdn)
+                                        && Boolean.FALSE.equals(keytabLogin.authenticates(existing.get(), principalFqdn))) {
+                                    appendCommandLog(id, "The keytab in Secret " + reuseNs + "/" + reuseSec
+                                            + " no longer logs " + principalFqdn + " in (its key changed in the KDC,"
+                                            + " or the KDC no longer knows the principal)");
+                                    rejectedVersion = keytabKeyVersion(existing.get(), principalFqdn);
+                                    existing = Optional.empty();
+                                }
                                 // Reuse ONLY when the stored keytab is actually for the principal we're about
                                 // to issue. If the principal scheme changed (e.g. AMBARI-564 renamed
                                 // trino-coordinator-<ns> → trino-<ns>), the old Secret holds a keytab for a
@@ -8442,8 +12160,7 @@ public class CommandService {
                                 // the new principal does not exist in the KDC yet, so it is created and a fresh
                                 // keytab overwrites the Secret — the view self-heals. Same-principal redeploys
                                 // still reuse (generate-once, no KDC re-key → no "Preauthentication failed").
-                                if (existing.isPresent() && existing.get().length > 0
-                                        && keytabContainsPrincipal(existing.get(), principalFqdn)) {
+                                if (isReusableKeytab(existing, principalFqdn)) {
                                     LOG.info("KEYTAB_ISSUE_PRINCIPAL: Secret '{}/{}' already holds keytab '{}' ({} bytes) for principal '{}' — reusing, NOT re-keying the KDC",
                                             reuseNs, reuseSec, reuseKey, existing.get().length, principalFqdn);
                                     appendCommandLog(id, "Reusing existing keytab in Secret " + reuseNs + "/" + reuseSec
@@ -8461,11 +12178,36 @@ public class CommandService {
                                             + "does not exist in the KDC, so this creates it and overwrites the Secret)",
                                             reuseNs, reuseSec, principalFqdn);
                                 }
+                                Map<String, Object> copied = siblingKeytabToCopy(id, reuseNs, reuseSec, principalFqdn,
+                                        rejectedVersion);
+                                if (copied != null) {
+                                    String prior = priorKeytabSha256(reuseNs, reuseSec, reuseKey);
+                                    if (prior != null) copied.put(PRIOR_KEYTAB_SHA256, prior);
+                                    childSt.setResultJson(gson.toJson(copied));
+                                    break; // the key the other releases hold: no KDC issuance
+                                }
                             } catch (Exception reuseCheck) {
                                 LOG.warn("KEYTAB_ISSUE_PRINCIPAL: could not check Secret '{}/{}' for reuse ({}); proceeding to issue",
                                         reuseNs, reuseSec, reuseCheck.toString());
                             }
                         }
+                    }
+
+                    // Auth headers from the original caller session
+                    Map<String,String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                    String webhookRelease = stringValue(childParams.get(WEBHOOK_RELEASE_PARAM));
+                    if (authHeaders.isEmpty() && !webhookRelease.isEmpty()) {
+                        // The webhook holds no Ambari permission: a pod created after its release's deploy ended
+                        // only gets a keytab another Secret holds. Said here, in the operation and the server log,
+                        // since Kubernetes only shows a pod waiting for its keytab Secret.
+                        String noCredentials = "Cannot issue the keytab of " + principalFqdn + " for a pod of release "
+                                + childParams.get("namespace") + "/" + webhookRelease + ": no other Secret of the "
+                                + "namespace holds a keytab of that principal the KDC accepts, and the keytab webhook "
+                                + "may not ask Ambari for one (only a deploy of the release can). Redeploy the release "
+                                + "(Upgrade/Config, no change needed) so its pods get their keytab.";
+                        LOG.error(noCredentials);
+                        appendCommandLog(id, noCredentials);
+                        throw new IllegalStateException(noCredentials);
                     }
 
                     String baseUriStr = (String) childParams.get("_baseUri");
@@ -8476,9 +12218,6 @@ public class CommandService {
 
                     // Build Ambari API base from the same host the View is running on
                     String ambariApiBase = baseUri.resolve("/api/v1").toString();
-
-                    // Auth headers from the original caller session
-                    Map<String,String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
 
                     // Resolve target cluster (bound view or auto-discover)
                     String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
@@ -8508,11 +12247,18 @@ public class CommandService {
 
                     String context = "Generate ad-hoc keytab for " + principalFqdn;
 
+                    // Read before the KDC is asked: from here on, the Secret may already hold the keytab issued now.
+                    String priorKeytab = priorKeytabSha256((String) childParams.get("namespace"),
+                            (String) childParams.get("secretName"), (String) childParams.get("keyNameInSecret"));
+
                     // Client that talks to Ambari’s REST API with the caller session
                     var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
                     LOG.info("submitting principal request creation {} to ambari server", principalFqdn);
+                    // The namespace receiving the Secret goes along: Ambari only issues a keytab for a
+                    // principal named after it, whichever path (deploy, regeneration, webhook) asked.
                     int reqId = ambariActionClient.submitGenerateAdhocKeytab(
                             principalFqdn,
+                            (String) childParams.get("namespace"),
                             kdcType,
                             defaultRealm,
                             timeoutSeconds,
@@ -8546,6 +12292,7 @@ public class CommandService {
                     res.put("requestId", reqId);
                     res.put("payloadRef", payloadMetadata.payloadRef());
                     res.put("payloadSha256", payloadMetadata.payloadSha256());
+                    if (priorKeytab != null) res.put(PRIOR_KEYTAB_SHA256, priorKeytab);
                     childSt.setResultJson(gson.toJson(res));
                 }
 
@@ -8613,6 +12360,8 @@ public class CommandService {
 
                     Map<String,Object> issuerRes =
                             gson.fromJson(issuerSt.getResultJson(), java.util.Map.class);
+                    String keytabPrincipal = stringValue(childParams.get("principalFqdn"));
+                    String keytabRelease = stringValue(childParams.get("releaseName"));
 
                     // Generate-once/reuse: the issuer found the keytab already present in the Secret
                     // and skipped the KDC (no re-key, no payload). Just confirm it's still there.
@@ -8623,12 +12372,53 @@ public class CommandService {
                             LOG.info("KEYTAB_CREATE_SECRET: reusing keytab already in Secret '{}/{}' (no re-key, nothing to write)",
                                     namespace, secretName);
                             appendCommandLog(id, "Keytab Secret " + namespace + "/" + secretName + " already present; reused");
+                            labelKeytabSecret(namespace, secretName, keyNameInSecret, present.get(), keytabRelease,
+                                    keytabPrincipal);
                             break; // step complete
                         }
                         // Raced: Secret vanished after the issue-time check and there is no payload to
                         // write. Fail so a re-run re-issues from scratch (Secret absent -> real issue).
                         throw new IllegalStateException("Keytab reuse expected Secret '" + namespace + "/" + secretName
                                 + "' but it is now missing; re-run the operation to re-issue the keytab.");
+                    }
+
+                    // The issuer found the keytab in the Secret of another release using the same principal: copy it.
+                    if (issuerRes != null && issuerRes.get("copiedFrom") != null) {
+                        String copiedFrom = String.valueOf(issuerRes.get("copiedFrom"));
+                        String copiedKey = stringValue(issuerRes.get("copiedKey"));
+                        if (copiedKey.isBlank()) copiedKey = keyNameInSecret;
+                        Optional<byte[]> source =
+                                this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, copiedFrom, copiedKey);
+                        if (source.isEmpty() || !stringValue(issuerRes.get("payloadSha256")).equals(sha256Hex(source.get()))) {
+                            throw new IllegalStateException("The keytab of Secret " + namespace + "/" + copiedFrom
+                                    + " changed or disappeared while it was copied; run the operation again.");
+                        }
+                        String before = keytabBeforeOperation(issuerRes,
+                                this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret));
+                        try {
+                            this.kubernetesService.createNamespace(namespace);
+                        } catch (Exception ignore) {
+                            // ignore: namespace may already exist or user may not want auto-create
+                        }
+                        this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, keyNameInSecret,
+                                source.get(), keytabSecretLabels(keytabRelease, keytabPrincipal),
+                                KdpsReleaseObjects.annotations(namespace), Boolean.TRUE);
+                        Optional<byte[]> written =
+                                this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
+                        String copiedSha256 = sha256Hex(source.get());
+                        if (written.isEmpty() || !copiedSha256.equals(sha256Hex(written.get()))) {
+                            throw new CommandUtils.RetryableException("Secret verification failed: the copied keytab is not in "
+                                    + namespace + "/" + secretName);
+                        }
+                        flagKeytabRestart(root, id, namespace, keytabRelease, before, copiedSha256);
+                        java.util.Map<String,Object> copyRes = new java.util.LinkedHashMap<>();
+                        copyRes.put("secretName", secretName);
+                        copyRes.put("namespace", namespace);
+                        copyRes.put("dataKey", keyNameInSecret);
+                        copyRes.put("copiedFrom", copiedFrom);
+                        copyRes.put("verifiedSha256", copiedSha256);
+                        childSt.setResultJson(gson.toJson(copyRes));
+                        break; // step complete
                     }
 
                     String payloadRef = issuerRes == null ? null : (String) issuerRes.get("payloadRef");
@@ -8652,8 +12442,14 @@ public class CommandService {
                     String verifiedSha256 = null;
                     Optional<byte[]> existingSecretBytes =
                             this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
+                    // On a retry, the Secret may already hold this step's keytab: what it held before comes from the
+                    // issuer. The sibling Secrets and the restart flag are handled as soon as the keytab is stored,
+                    // before the payload is acknowledged, so a failed acknowledgement cannot skip them.
+                    String keytabBefore = keytabBeforeOperation(issuerRes, existingSecretBytes);
                     if (existingSecretBytes.isPresent() && payloadSha256.equals(sha256Hex(existingSecretBytes.get()))) {
                         LOG.info("KEYTAB_CREATE_SECRET: Secret '{}/{}' already contains the expected keytab payload", namespace, secretName);
+                        afterKeytabStored(root, id, namespace, secretName, keytabPrincipal, keytabRelease, keytabBefore,
+                                existingSecretBytes.get(), payloadSha256);
                         try {
                             ambariActionClient.ackAdhocKeytabPayload(payloadRef);
                         } catch (Exception ackEx) {
@@ -8674,6 +12470,8 @@ public class CommandService {
                                 LOG.info("KEYTAB_CREATE_SECRET: payload '{}' already acknowledged; accepting matching Secret '{}/{}'",
                                         payloadRef, namespace, secretName);
                                 verifiedSha256 = payloadSha256;
+                                afterKeytabStored(root, id, namespace, secretName, keytabPrincipal, keytabRelease,
+                                        keytabBefore, secretBytesAfterReadFailure.get(), verifiedSha256);
                             } else if (isPayloadUnavailableError(payloadEx)) {
                                 throw new IllegalStateException(
                                         String.format("Keytab payload '%s' is no longer available and Secret '%s/%s' could not be verified",
@@ -8697,7 +12495,9 @@ public class CommandService {
 
                             try {
                                 this.kubernetesService.createOrUpdateOpaqueSecret(
-                                        namespace, secretName, keyNameInSecret, keytabBytes
+                                        namespace, secretName, keyNameInSecret, keytabBytes,
+                                        keytabSecretLabels(keytabRelease, keytabPrincipal),
+                                        KdpsReleaseObjects.annotations(namespace), Boolean.TRUE
                                 );
 
                                 Optional<byte[]> verifiedSecretBytes =
@@ -8709,6 +12509,8 @@ public class CommandService {
                                 if (!payloadSha256.equals(verifiedSha256)) {
                                     throw new CommandUtils.RetryableException("Secret verification failed: stored keytab hash does not match issued payload");
                                 }
+                                afterKeytabStored(root, id, namespace, secretName, keytabPrincipal, keytabRelease,
+                                        keytabBefore, keytabBytes, verifiedSha256);
 
                                 try {
                                     ambariActionClient.ackAdhocKeytabPayload(payloadRef);
@@ -8829,111 +12631,19 @@ public class CommandService {
                         }
                     }
 
-                    String baseUriStr = (String) childParams.get("_baseUri");
-                    if (baseUriStr == null || baseUriStr.isBlank()) {
-                        throw new IllegalStateException("Missing _baseUri in OIDC_REGISTER_CLIENT params");
+                    var registered = registerOidcClient(child.getId(), childParams);
+                    recordOidcRegistration(child.getId(), childSt, registered);
+                    String oidcContext = stringValue(childParams.get("_platformContextId"));
+                    recordProvisioning(childParams, ledger -> ledger.addOidcClient(new ProvisioningLedger.OidcClient(
+                            registered.clientId(), registered.realm(), oidcContext.isBlank() ? null : oidcContext)));
+                    CommandStatusEntity rootNow = findCommandStatusById(root.getCommandStatusId());
+                    if (rootNow != null && CommandState.CANCELED.name().equals(rootNow.getState())) {
+                        // Canceled while Keycloak answered: no step of the operation will write the secret.
+                        oidcClientSecrets().forget(child.getId());
                     }
-                    Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-
-                    // Resolve the Keycloak admin (client-registration) settings. Generic rule mirroring
-                    // the Ranger routing: when the selected platform context carries its own OIDC admin
-                    // creds (EXTERNAL / REMOTE Keycloak), use them and DO NOT touch the local Ambari —
-                    // this is what lets a standalone Ambari (no local oidc-env, no cluster) register
-                    // clients. Otherwise read the local Ambari oidc-env exactly as before (the default
-                    // managed context, unchanged).
-                    org.apache.ambari.view.k8s.model.ResolvedContext oidcRc = resolvePlatformContextForStep(childParams);
-                    boolean oidcFromContext = oidcRc != null && oidcRc.hasContextOidcAdminCreds();
-                    String clstr = null;
-                    AmbariActionClient ambariCli = null;
-                    String oidcAdminUrl, oidcAdminRealm, oidcRealm, adminClientId, adminClientSec, verifyTlsStr;
-                    String adminUsername = "", adminPassword = "";
-
-                    if (oidcFromContext) {
-                        oidcAdminUrl   = oidcRc.getOidcAdminUrl();
-                        oidcAdminRealm = (oidcRc.getOidcAdminRealm() == null || oidcRc.getOidcAdminRealm().isBlank())
-                                ? "master" : oidcRc.getOidcAdminRealm();
-                        oidcRealm      = (oidcRc.getOidcRealm() == null || oidcRc.getOidcRealm().isBlank())
-                                ? "odp" : oidcRc.getOidcRealm();
-                        adminClientId  = oidcRc.getOidcAdminClientId();
-                        adminClientSec = oidcRc.getOidcAdminClientSecret();
-                        verifyTlsStr   = oidcRc.getOidcVerifyTls();
-                        LOG.info("OIDC_REGISTER_CLIENT: registering against the platform context's Keycloak "
-                                + "(adminUrl={}, realm={}, registrationClient={})", oidcAdminUrl, oidcRealm, adminClientId);
-                    } else {
-                        clstr = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
-                        String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
-                        ambariCli = new AmbariActionClient(ctx, ambariApiBase, clstr, authHeaders);
-
-                        // Load Keycloak admin settings from Ambari oidc-env config
-                        oidcAdminUrl    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_url");
-                        oidcAdminRealm  = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_realm");
-                        oidcRealm       = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_realm");
-                        adminClientId   = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_id");
-                        String adminClientSecRaw = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_admin_client_secret");
-                        verifyTlsStr    = ambariCli.getDesiredConfigProperty(clstr, "oidc-env", "oidc_verify_tls");
-
-                        if (oidcAdminUrl == null || oidcAdminUrl.isBlank()) {
-                            throw new IllegalStateException("oidc_admin_url is not set in cluster oidc-env config "
-                                    + "(and the selected platform context supplies no OIDC admin credentials).");
-                        }
-                        if (oidcAdminRealm == null || oidcAdminRealm.isBlank()) oidcAdminRealm = "master";
-                        if (oidcRealm     == null || oidcRealm.isBlank())      oidcRealm = "odp";
-                        if (adminClientId == null || adminClientId.isBlank())  adminClientId = "admin-cli";
-
-                        // Resolve client secret: supports ${alias=...} expressions stored in oidc-env
-                        AmbariAliasResolver oidcAliasResolver = new AmbariAliasResolver(ctx);
-                        char[] resolvedSecretChars = oidcAliasResolver.resolve(ctx, adminClientSecRaw != null ? adminClientSecRaw : "");
-                        adminClientSec = (resolvedSecretChars != null) ? new String(resolvedSecretChars) : "";
-
-                        // Admin username/password come from the Ambari credential store (same alias used
-                        // by ConfigureOidcServerAction), never from plain-text config properties.
-                        // Stored by Ansible enable_oidc.yml as a PrincipalKeyCredential at oidc.admin.credential.
-                        org.apache.ambari.view.k8s.security.PrincipalKeyCredential oidcAdminCred =
-                                oidcAliasResolver.getOidcAdminCredential(clstr);
-                        adminUsername = (oidcAdminCred != null) ? oidcAdminCred.getPrincipal() : "";
-                        adminPassword = (oidcAdminCred != null && oidcAdminCred.getKey() != null)
-                                ? new String(oidcAdminCred.getKey()) : "";
-                    }
-                    boolean verifyTls = !"false".equalsIgnoreCase(verifyTlsStr);
-
-                    String desiredClientId = (String) childParams.get("oidcClientId");
-                    String redirectUri     = (String) childParams.get("oidcRedirectUri");
-                    Object publicClientObj = childParams.get("publicClient");
-                    boolean publicClient   = Boolean.parseBoolean(String.valueOf(publicClientObj));
-                    Object stdFlowObj      = childParams.get("standardFlowEnabled");
-                    boolean stdFlow        = stdFlowObj == null || Boolean.parseBoolean(String.valueOf(stdFlowObj));
-                    Object implFlowObj     = childParams.get("implicitFlowEnabled");
-                    boolean implFlow       = Boolean.parseBoolean(String.valueOf(implFlowObj));
-
-                    validateOidcClientId(desiredClientId);
-
-                    var keycloakClient = new org.apache.ambari.view.k8s.client.KeycloakAdminClient(
-                            oidcAdminUrl, oidcAdminRealm, oidcRealm,
-                            adminClientId, adminClientSec,
-                            adminUsername, adminPassword,
-                            verifyTls);
-
-                    appendCommandLog(child.getId(), "Registering OIDC client '" + desiredClientId
-                            + "' in realm '" + oidcRealm + "'");
-
-                    var oidcResult = keycloakClient.registerClient(
-                            desiredClientId, redirectUri, publicClient, stdFlow, implFlow, !publicClient);
-
-                    String issuerUrl = oidcFromContext
-                            ? oidcRc.getOidcIssuerUrl()
-                            : resolveOidcIssuerUrl(ambariCli, clstr);
-                    if (issuerUrl == null || issuerUrl.isBlank()) {
-                        issuerUrl = oidcResult.issuerUrl();
-                    }
-
-                    Map<String, Object> res = new LinkedHashMap<>();
-                    res.put("clientId",   oidcResult.clientId());
-                    res.put("issuerUrl",  issuerUrl);
-                    // clientSecret intentionally NOT logged; stored encrypted via childSt.resultJson
-                    res.put("clientSecret", oidcResult.clientSecret());
-                    childSt.setResultJson(gson.toJson(res));
-                    appendCommandLog(child.getId(), "OIDC client registered successfully: clientId=" + oidcResult.clientId());
-                    LOG.info("OIDC_REGISTER_CLIENT completed: clientId={}, issuerUrl={}", oidcResult.clientId(), issuerUrl);
+                    appendCommandLog(child.getId(), "OIDC client registered successfully: clientId=" + registered.clientId());
+                    LOG.info("OIDC_REGISTER_CLIENT completed: clientId={}, issuerUrl={}", registered.clientId(),
+                            registered.issuerUrl());
                 }
 
                 case OIDC_CREATE_SECRET -> {
@@ -8949,9 +12659,12 @@ public class CommandService {
                     String clientId;
                     String clientSecret;
                     String issuerUrl;
-                    if (childParams.containsKey("oidcExternalClientId")) {
+                    String realm = null;
+                    String oidcRegisterId = null;
+                    boolean externalOidc = childParams.containsKey("oidcExternalClientId");
+                    if (externalOidc) {
                         clientId     = (String) childParams.get("oidcExternalClientId");
-                        clientSecret = (String) childParams.get("oidcExternalClientSecret");
+                        clientSecret = externalOidcClientSecret(childParams);
                         issuerUrl    = (String) childParams.get("oidcExternalIssuerUrl");
                         if (clientId == null || clientId.isBlank()) {
                             throw new IllegalStateException("External OIDC: oidcExternalClientId is empty");
@@ -8983,11 +12696,13 @@ public class CommandService {
 
                         Map<String, Object> regRes = gson.fromJson(registerSt.getResultJson(), Map.class);
                         clientId     = (String) regRes.get("clientId");
-                        clientSecret = (String) regRes.get("clientSecret");
                         issuerUrl    = (String) regRes.get("issuerUrl");
+                        realm        = regRes.get("realm") instanceof String r ? r : null;
                         if (clientId == null || clientId.isBlank()) {
                             throw new IllegalStateException("OIDC_REGISTER_CLIENT resultJson missing clientId");
                         }
+                        clientSecret = clientSecretForCreateStep(child.getId(), childParams, registerId, regRes);
+                        oidcRegisterId = registerId;
                     }
 
                     // Build multi-key secret payload
@@ -8999,31 +12714,48 @@ public class CommandService {
                         secretData.put("issuer_url", issuerUrl.getBytes(StandardCharsets.UTF_8));
                     }
 
-                    Map<String, String> secretLabels = Map.of(
-                            "managed-by",                  "ambari-k8s-view",
-                            "ambari.clemlab.com/type",     "oidc-client",
-                            "ambari.clemlab.com/clientId", clientId
-                    );
+                    // Labelled as the release's, and annotated with what its uninstall removes with it (see
+                    // revokeOidcForRelease): the release's record is gone by then.
+                    String providerSecretName = "true".equals(childParams.get("oidcGitlabOmniauth"))
+                            ? (String) childParams.get("oidcProviderSecretName") : null;
+                    Map<String, String> secretLabels = oidcSecretLabels(stringValue(childParams.get("releaseName")));
+                    Map<String, String> secretAnnotations = oidcSecretAnnotations(clientId,
+                            realm != null ? realm : realmOfIssuer(issuerUrl),
+                            stringValue(childParams.get("_platformContextId")), externalOidc, providerSecretName,
+                            vaultPath);
 
                     try {
                         this.kubernetesService.createNamespace(namespace);
                     } catch (Exception ignore) {}
 
-                    this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData);
+                    // A re-registration usually keeps the client secret (Keycloak updates the client in place); it
+                    // only changes when the client was created anew, and then the release's pods still hold the old one.
+                    boolean reRegistration = CommandType.REGISTER_OIDC_CLIENT.name().equals(root.getType());
+                    String previousClientSecret = reRegistration
+                            ? secretValue(namespace, secretName, "client_secret") : null;
+
+                    this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData, secretLabels,
+                            secretAnnotations);
                     appendCommandLog(child.getId(), "K8s Secret '" + namespace + "/" + secretName + "' created/updated");
+                    if (reRegistration && !Objects.equals(previousClientSecret, clientSecret != null ? clientSecret : "")) {
+                        String releaseName = stringValue(childParams.get("releaseName"));
+                        markRestartRequired(namespace, releaseName);
+                        appendCommandLog(id, "The OIDC client secret of " + namespace + "/" + releaseName
+                                + " changed: restart the release (Resync / restart) so its pods use the new one.");
+                    }
                     LOG.info("OIDC_CREATE_SECRET: Secret '{}/{}' written for client '{}'", namespace, secretName, clientId);
 
                     Map<String, Object> res = new LinkedHashMap<>();
 
                     // GitLab OmniAuth: create a provider secret with the full YAML provider config
-                    if ("true".equals(childParams.get("oidcGitlabOmniauth"))) {
-                        String providerSecretName = (String) childParams.get("oidcProviderSecretName");
+                    if (providerSecretName != null) {
                         String callbackUrl = (String) childParams.get("oidcGitlabCallbackUrl");
-                        if (providerSecretName != null && !providerSecretName.isBlank()) {
+                        if (!providerSecretName.isBlank()) {
                             String providerYaml = buildGitlabOmniauthProviderYaml(clientId, clientSecret, issuerUrl, callbackUrl);
                             Map<String, byte[]> providerData = new LinkedHashMap<>();
                             providerData.put("provider", providerYaml.getBytes(StandardCharsets.UTF_8));
-                            this.kubernetesService.createOrUpdateOpaqueSecret(namespace, providerSecretName, providerData);
+                            this.kubernetesService.createOrUpdateOpaqueSecret(namespace, providerSecretName, providerData,
+                                    secretLabels, secretAnnotations);
                             appendCommandLog(child.getId(), "K8s Secret '" + namespace + "/" + providerSecretName + "' (GitLab OmniAuth) created/updated");
                             LOG.info("OIDC_CREATE_SECRET: GitLab OmniAuth secret '{}/{}' written", namespace, providerSecretName);
                             res.put("gitlabProviderSecretName", providerSecretName);
@@ -9040,6 +12772,7 @@ public class CommandService {
                             if (vaultAddr != null && !vaultAddr.isBlank()
                                     && vaultToken != null && !vaultToken.isBlank()) {
                                 writeOidcToVault(vaultAddr, vaultToken, vaultPath, clientId, clientSecret, issuerUrl);
+                                recordProvisioning(childParams, ledger -> ledger.addVaultPath(vaultPath));
                                 appendCommandLog(child.getId(), "Vault path '" + vaultPath + "' updated");
                                 LOG.info("OIDC_CREATE_SECRET: Vault path '{}' updated for client '{}'", vaultPath, clientId);
                             } else {
@@ -9057,18 +12790,55 @@ public class CommandService {
                     res.put("issuerUrl",   issuerUrl);
                     if (vaultPath != null && !vaultPath.isBlank()) res.put("vaultPath", vaultPath);
                     childSt.setResultJson(gson.toJson(res));
+                    if (oidcRegisterId != null) {
+                        // Written where the release reads it: the view no longer keeps a copy.
+                        oidcClientSecrets().forget(oidcRegisterId);
+                    }
                 }
 
                 default -> throw new IllegalStateException("Unsupported step type: " + child.getType());
             }
 
             // Success path for the child
+            if (CommandType.KEYTAB_ISSUE_PRINCIPAL.name().equals(child.getType())) {
+                // The principal stays in the KDC after the release is gone: its uninstall reports it.
+                String issuedPrincipal = stringValue(childParams.get("principalFqdn"));
+                String keytabSecret = stringValue(childParams.get("secretName"));
+                if (!issuedPrincipal.isBlank()) {
+                    recordProvisioning(childParams, ledger -> ledger.addPrincipal(new ProvisioningLedger.Principal(issuedPrincipal,
+                            keytabSecret.isBlank() ? null : keytabSecret)));
+                }
+            }
             childSt.setState(CommandState.SUCCEEDED.name());
-            childSt.setMessage("Done: " + (child.getTitle() != null ? child.getTitle() : child.getType()));
+            childSt.setMessage(stepDoneMessage != null ? stepDoneMessage
+                    : "Done: " + (child.getTitle() != null ? child.getTitle() : child.getType()));
             childSt.setAttempt(0);
             childSt.setUpdatedAt(Instant.now().toString());
             store(childSt);
             try { commandLogService.append(id, "Step succeeded: " + (child.getTitle() != null ? child.getTitle() : child.getType())); } catch (Exception ignored) {}
+
+            if (operationEndMessage != null) {
+                // A GitOps change waiting for a merge: the steps that need it applied cannot run yet.
+                List<String> notRun = skipRemainingSteps(root, child, "Not run: " + operationEndMessage);
+                String outcome = operationEndMessage
+                        + (notRun.isEmpty() ? "" : " Not run until then: " + String.join(", ", notRun)
+                                + ". Redeploy the release once the change is applied to run them.");
+                Map<String, Object> rootResult = new LinkedHashMap<>();
+                if (rootSt.getResultJson() != null && !rootSt.getResultJson().isBlank()) {
+                    rootResult.putAll(gson.fromJson(rootSt.getResultJson(), mapType));
+                }
+                if (childSt.getResultJson() != null) {
+                    rootResult.putAll(gson.fromJson(childSt.getResultJson(), mapType));
+                }
+                rootResult.put("waitingForMerge", true);
+                rootResult.put("notRun", notRun);
+                rootResult.put("message", outcome);
+                rootSt.setResultJson(gson.toJson(withNotices(rootResult, rootParams)));
+                appendCommandLog(id, outcome);
+                succeed(rootSt, outcome);
+                refreshCurrentStepSnapshot(root);
+                return;
+            }
 
             // Update snapshot & continue with the next step
             refreshCurrentStepSnapshot(root);
@@ -9091,6 +12861,8 @@ public class CommandService {
                 store(childSt);
                 LOG.error("Step exhausted retry attempts: {}", rex.toString(), rex);
                 try { commandLogService.append(id, "Step exhausted retry attempts: " + trim(rex.getMessage())); } catch (Exception ignored) {}
+                // Before the root fails: a failed deploy can be resumed, which must find the account as it is.
+                takeBackTagSyncAccountNow(id, rootParams);
                 fail(rootSt, "Failed at step '" + (child.getTitle() != null ? child.getTitle() : child.getType()) + "' after " + attempt + " retry attempts: " + trim(rex.getMessage()));
                 refreshCurrentStepSnapshot(root);
             } else {
@@ -9114,7 +12886,10 @@ public class CommandService {
                     CommandStatusEntity freshRoot = findCommandStatusById(root.getCommandStatusId());
                     if (freshRoot != null && !CommandState.FAILED.name().equals(freshRoot.getState())) {
                         freshRoot.setState(CommandState.CANCELED.name());
-                        freshRoot.setMessage("Canceled by user");
+                        // Carries the step's note when its Helm call is still running after the cancel.
+                        String stepMessage = freshChild.getMessage();
+                        freshRoot.setMessage(stepMessage != null && stepMessage.startsWith("Canceled by user")
+                                ? stepMessage : "Canceled by user");
                         freshRoot.setUpdatedAt(Instant.now().toString());
                         store(freshRoot);
                     }
@@ -9123,54 +12898,866 @@ public class CommandService {
                 }
             }
 
-            // ── YAML parse error recovery ─────────────────────────────────────────────
-            // helm-java can throw a YAML parse error when parsing the install/upgrade
-            // *response* even though the release was successfully deployed to the cluster.
-            // Before marking the step as failed, verify whether the release is actually up.
-            final String exMsg = ex.getMessage() != null ? ex.getMessage() : "";
-            if (exMsg.contains("YAML parse error") || exMsg.contains("error converting YAML to JSON")) {
-                Map<String, Object> childParams = null;
-                try {
-                    childParams = gson.fromJson(resolveParamsJson(child), mapType);
-                } catch (Exception ignored) {}
-
-                if (childParams != null) {
-                    final String releaseName = (String) childParams.get("releaseName");
-                    final String namespace    = (String) childParams.get("namespace");
-                    final String kubeconfig   = this.kubernetesService.getConfigurationService().getKubeconfigContents();
-                    if (releaseName != null && namespace != null) {
-                        Optional<Release> deployed = this.helmService.findDeployedRelease(releaseName, namespace, kubeconfig);
-                        if (deployed.isPresent()) {
-                            LOG.warn("[{}] Helm response parse error for '{}' but release is deployed — treating as success: {}",
-                                    id, releaseName, exMsg);
-                            try { commandLogService.append(id,
-                                    "Warning: Helm response parsing failed but release '" + releaseName + "' is deployed. Continuing."); }
-                            catch (Exception ignored) {}
-                            childSt.setState(CommandState.SUCCEEDED.name());
-                            childSt.setMessage("Deployed (response parse warning)");
-                            childSt.setUpdatedAt(Instant.now().toString());
-                            store(childSt);
-                            this.kubernetesService.ensureReleaseLabelsOnIngresses(namespace, releaseName);
-                            refreshCurrentStepSnapshot(root);
-                            scheduleNow(id);
-                            return;
-                        }
-                    }
-                }
-            }
-
             // ── Regular failure ───────────────────────────────────────────────────────
+            // Helm's "YAML parse error" and "error converting YAML to JSON" are failures like any other: Helm
+            // raises them while rendering, before any revision is created, so the release still deployed is the
+            // previous one and the step must not pass for a successful deploy.
             childSt.setState(CommandState.FAILED.name());
             childSt.setMessage("Failed: " + trim(ex.getMessage()));
             childSt.setUpdatedAt(Instant.now().toString());
             store(childSt);
             LOG.error("Step execution failed: {}", ex.toString(), ex);
             appendCommandLog(id, "Step failed: " + trim(ex.getMessage()));
+            // Before the root fails: a failed deploy can be resumed, which must find the account as it is.
+            takeBackTagSyncAccountNow(id, rootParams);
             fail(rootSt, "Failed at step '" + stepTitle + "': " + trim(ex.getMessage()));
             refreshCurrentStepSnapshot(root);
         } finally {
             activeStepLogId.remove();
             org.slf4j.MDC.remove(CommandLogAppender.COMMAND_MDC_KEY);
+        }
+    }
+
+    /**
+     * The values the Helm install of a dependency receives on top of its chart's: the image settings of its definition,
+     * its fullnameOverride, the keytab webhook's backend URL and CA bundle, its resolved dynamic values (e.g. the
+     * Kerberos realm), and the chart repository's image registry and pull Secret, which is created in the dependency's
+     * namespace. The Helm install and the GitOps commit of a dependency both take them from here, so a commit writes
+     * what the install would pass.
+     *
+     * @param depParams the parameters of the dependency's Helm steps ({@link CommandPlanFactory#dependencyReleaseParams})
+     * @param namespace the namespace the dependency is installed in
+     * @param repoId    the chart repository the dependency's chart comes from (the deploy's), whose image registry and
+     *                  credentials it uses
+     */
+    private Map<String, String> dependencyReleaseOverrides(Map<String, Object> depParams, String namespace,
+                                                           String repoId) throws Exception {
+        String chartName = (String) depParams.get("chart");
+        Object imageTagObj = depParams.get("imageTag");
+        String imageTag = null;
+        if (imageTagObj instanceof String) {
+            imageTag = (String) imageTagObj;
+        }
+        String imageRepository = (String) depParams.get("imageRepository");
+        String imageGlobalRegistryProperty = (String) depParams.get("imageGlobalRegistryProperty");
+        Object secretName = depParams.get("secretName");
+        Object serviceAccountsObj = depParams.get("serviceAccounts");
+        List<String> serviceAccounts = new ArrayList<>();
+        if (serviceAccountsObj instanceof List) {
+            @SuppressWarnings("unchecked")
+            List<Object> serviceAccountsList = (List<Object>) serviceAccountsObj;
+            for (Object sa : serviceAccountsList) {
+                if (sa instanceof String) {
+                    serviceAccounts.add((String) sa);
+                }
+            }
+        }
+        Map<String, String> overrideProperties = new HashMap<>();
+        HelmRepoEntity repository = repositoryDao.findById(repoId);
+        List<String> images = new ArrayList<>();
+        Object imagesObj = depParams.get("images");
+        if (imagesObj instanceof List) {
+            @SuppressWarnings("unchecked")
+            List<Object> imagesList = (List<Object>) imagesObj;
+            for (Object img : imagesList) {
+                if (img instanceof String) {
+                    images.add((String) img);
+                }
+            }
+        }
+        /**
+         the logic is to part images[] direct which can look like:
+         "images": [
+         "kerberos-keytab-mutating-webhook"
+         ], for hand custom images
+         or
+         "images": [
+         "kerberos-keytab-mutating-webhook:custom-image:tag"
+         ], for chart images override with tag override
+         or
+         "images": [
+         "kerberos-keytab-mutating-webhook:custom-image"
+         ], for chart images override with default tag
+
+         */
+        for (String img : images) {
+            if (!img.contains(":")) {
+
+                overrideProperties.put("image.repository", imageRepository + "/" + img);
+                overrideProperties.put("image.registry", repository.getUrl());
+                LOG.info("Injecting in values.yaml image.repository value: {}", imageRepository + "/" + img);
+                LOG.info("Injecting in values.yaml image.registry   value: {}", repository.getUrl());
+                if (imageTag != null){
+                    overrideProperties.put("image.tag", imageTag);
+                    LOG.info("Injecting in values.yaml image.tag        value: {}", imageTag);
+                }else{
+                    LOG.warn("No tag specified for image: {} and no default imageTag provided", img);
+                    LOG.warn("Skipping injection of image." + imageRepository + ".tag value. The default chart value will be used.");
+                }
+            } else {
+                String[] imgParts = img.split(":");
+                overrideProperties.put("image." + imgParts[0] + ".repository", imageRepository + "/" + imgParts[1]);
+                overrideProperties.put("image." + imgParts[0] + ".registry", repository.getUrl());
+                LOG.info("Injecting in values.yaml image." + imgParts[0] + ".repository value: {}", imageRepository + "/" + imgParts[1]);
+                LOG.info("Injecting in values.yaml image." + imgParts[0] + ".registry   value: {}", repository.getUrl());
+                if (imgParts.length > 2) {
+                    LOG.info("Injecting in values.yaml image." + imgParts[0] + ".tag        value: {}", imgParts[2]);
+                    overrideProperties.put("image." + imgParts[0] + ".tag", imgParts[2]);
+                }else{
+                    if (imageTag != null){
+                        LOG.info("Injecting in values.yaml image." + imgParts[0] + ".tag        value: {}", imageTag);
+                        overrideProperties.put("image." + imgParts[0] + ".tag", imageTag);
+                    }else{
+                        LOG.warn("No tag specified for image: {} and no default imageTag provided", img);
+                        LOG.warn("Skipping injection of image." + imgParts[0] + ".tag value. The default chart value will be used.");
+                    }
+                }
+
+            }
+        }
+        Object fullnameOverrideObj = depParams.get("fullnameOverride");
+        String fullnameOverride = null;
+        if (fullnameOverrideObj instanceof String) {
+            fullnameOverride = (String) fullnameOverrideObj;
+            overrideProperties.put("fullnameOverride", fullnameOverride);
+            LOG.info("Injecting fullnameOverride property with value: {} for dependency: {}", fullnameOverride, chartName);
+        }
+        boolean isWebhook = false;
+        Object isWebhookObj = depParams.get("isWebhook");
+        if (isWebhookObj instanceof Boolean) {
+            isWebhook = (Boolean) isWebhookObj;
+        } else if (isWebhookObj instanceof String) {
+            isWebhook = Boolean.parseBoolean((String) isWebhookObj);
+        }
+        if (isWebhook) {
+            String backend_url = (String) depParams.get("backend.url");
+            overrideProperties.put("backend.url", backend_url);
+            overrideProperties.put("webhook.caBundle", this.webHookConfigurationService.currentCaBundleBase64());
+            // The Ambari account the webhook signs in with, which the view creates (see WebHookBootstrap).
+            overrideProperties.put(WebHookBootstrap.ACCOUNT_USERNAME_VALUE,
+                    WebHookBootstrap.webhookUserName(ctx, WebHookBootstrap.KEYTAB_WEBHOOK));
+            LOG.info("Injecting backend.url property with value: {} for webhook dependency", backend_url);
+            LOG.info("Injecting webhook.caBundle with CurrentCA");
+        }
+
+        // Always merge dynamic overrides (e.g., AMBARI_KERBEROS_REALM) for dependency installs
+        this.configResolutionService.mergeDynamicOverrides(depParams, overrideProperties);
+
+        if (secretName != null) {
+            LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
+            this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
+            overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
+            ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, depParams.get("serviceKey"), overrideProperties);
+        }
+        if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
+            // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
+            // registry as the main chart — i.e. the operator-selected Helm repo — not the
+            // hardcoded service.json default. Mirror the main-release behaviour
+            // (getEffectiveImageRegistry(repoId)); fall back to the service.json
+            // imageRepository only when the selected repo resolves no image registry.
+            String depRegistry = this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId);
+            if (depRegistry == null || depRegistry.isBlank()) {
+                depRegistry = imageRepository;
+            }
+            overrideProperties.put(imageGlobalRegistryProperty, depRegistry);
+            LOG.info("Injecting in values.yaml global image registry property: {} with value: {} (from repo {})", imageGlobalRegistryProperty, depRegistry, repoId);
+        }
+        return overrideProperties;
+    }
+
+    /**
+     * The values a release step passes to Helm on top of its values file: the plan's overrides, then each resolved
+     * dynamic value (e.g. the Kerberos realm) for a path the plan left unset. The Helm install and the GitOps commit
+     * both take them from here, so a commit writes what the install would pass.
+     */
+    private Map<String, String> plannedReleaseOverrides(Map<String, Object> childParams) {
+        Map<String, String> overrideProperties = new HashMap<>();
+        Object ovRaw = childParams.get("_ov");
+        if (ovRaw instanceof Map<?, ?> ovMap) {
+            for (Map.Entry<?, ?> e : ovMap.entrySet()) {
+                if (e.getKey() == null || e.getValue() == null) continue;
+                String helmPath = String.valueOf(e.getKey()).trim();
+                String val = String.valueOf(e.getValue());
+                if (!helmPath.isEmpty()) {
+                    overrideProperties.put(helmPath, val);
+                    LOG.info("Applying explicit override {} -> {}", helmPath, HelmSetValues.forLog(val));
+                }
+            }
+        }
+        // Apply dynamic value bindings (e.g., AMBARI_KERBEROS_REALM) on top of explicit overrides
+        this.configResolutionService.mergeDynamicOverrides(childParams, overrideProperties);
+        return overrideProperties;
+    }
+
+    /**
+     * Adds the image settings of a release step to its overrides: the image pull Secret, created in the namespace
+     * from the chart repository's credentials and also written into the value paths the service definition adds
+     * (OpenMetadata's Airflow and OpenSearch), the repository's image registry, and the image paths of charts that
+     * ignore {@code global.imageRegistry}. The Helm install and the GitOps commit both take them from here.
+     *
+     * <p>A value the step's own overrides ({@code _ov}, e.g. a security profile's extra properties) already set at one
+     * of those paths is kept: what the operator chose explicitly wins over what the chart repository gives, and the
+     * image paths then follow the registry the operator chose.
+     */
+    private void addReleaseImageOverrides(Map<String, Object> childParams, String repoId, Map<String, Object> valuesMap,
+                                          Map<String, String> overrideProperties, String stepType) throws Exception {
+        String namespace = (String) childParams.get("namespace");
+        String imageGlobalRegistryProperty = (String) childParams.get("imageGlobalRegistryProperty");
+        String registryProperty = imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()
+                ? imageGlobalRegistryProperty : ImageRegistryOverrides.DEFAULT_REGISTRY_PROPERTY;
+        String registry = this.helmService.getRepositoryService().getEffectiveImageRegistry(repoId);
+        Set<String> explicitPaths = childParams.get("_ov") instanceof Map<?, ?> ov
+                ? ov.keySet().stream().filter(Objects::nonNull).map(k -> String.valueOf(k).trim())
+                        .collect(java.util.stream.Collectors.toSet())
+                : Set.of();
+
+        Map<String, String> image = new LinkedHashMap<>();
+        Object secretName = childParams.get("secretName");
+        if (secretName != null) {
+            LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
+            this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
+            ImageRegistryOverrides.addReleasePullSecret(this.ctx, secretName, childParams.get("serviceKey"), image);
+        }
+        image.put(registryProperty, registry);
+        LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}",
+                stepType, registryProperty, registry);
+        for (Map.Entry<String, String> setting : image.entrySet()) {
+            if (explicitPaths.contains(setting.getKey())) {
+                LOG.info("Execution Action {}: keeping the explicit override {} of {} rather than the chart repository's {}",
+                        stepType, setting.getKey(), namespace, setting.getValue());
+            } else {
+                overrideProperties.put(setting.getKey(), setting.getValue());
+            }
+        }
+        // Charts that ignore global.imageRegistry (Z2JH) list their image value paths in the
+        // service definition; rewrite them onto the image registry the release uses.
+        String releaseRegistry = explicitPaths.contains(registryProperty)
+                ? firstNonBlank(overrideProperties.get(registryProperty), registry) : registry;
+        ImageRegistryOverrides.applyImageRegistryPaths(this.ctx, childParams.get("serviceKey"), releaseRegistry,
+                valuesMap, overrideProperties);
+    }
+
+    /**
+     * The Git options of a GitOps deploy as its command keeps them. The token and the SSH key go to Ambari's
+     * credential store, under the release's pending aliases ({@link GitCredentialService#pendingAlias}), and only the
+     * aliases are kept: neither secret is written to the command's parameters, nor logged with them. The release's
+     * own credential is left as it is: the commit makes the new one the release's only once it has reached Git with
+     * it. The SSH key takes {@code credentialAlias} when both are given, as it did when the commit stored them itself,
+     * and the token {@code authTokenAlias}. Each is bound to the host of the Git repository the deploy pushes to.
+     *
+     * @throws IllegalStateException when the credential store cannot take one of them: the deploy is refused rather
+     *                               than keeping the secret in its parameters
+     */
+    private HelmDeployRequest.GitOptions gitOptionsToPersist(HelmDeployRequest request) {
+        HelmDeployRequest.GitOptions git = request.getGit();
+        if (git == null) {
+            return null;
+        }
+        HelmDeployRequest.GitOptions kept = gson.fromJson(gson.toJson(git), HelmDeployRequest.GitOptions.class);
+        kept.setAuthToken(null);
+        kept.setSshKey(null);
+        // Set below, and only for a token stored here: never an alias the request names.
+        kept.setAuthTokenAlias(null);
+        boolean hasToken = git.getAuthToken() != null && !git.getAuthToken().isBlank();
+        boolean hasSshKey = git.getSshKey() != null && !git.getSshKey().isBlank();
+        if (!hasToken && !hasSshKey) {
+            return kept;
+        }
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        String repoUrl = git.getRepoUrl();
+        if (repoUrl == null || repoUrl.isBlank()) {
+            K8sReleaseEntity existing = new ReleaseMetadataService(ctx).find(namespace, release);
+            repoUrl = existing != null ? existing.getGitRepoUrl() : null;
+        }
+        String alias = GitCredentialService.pendingAlias(ctx.getInstanceName(), namespace, release);
+        String tokenAlias = GitCredentialService.pendingTokenAlias(ctx.getInstanceName(), namespace, release);
+        if (hasSshKey) {
+            kept.setCredentialAlias(storeGitSecret(alias, git.getSshKey(), repoUrl, "SSH key"));
+            if (hasToken) {
+                kept.setAuthTokenAlias(storeGitSecret(tokenAlias, git.getAuthToken(), repoUrl, "access token"));
+            }
+        } else {
+            kept.setCredentialAlias(storeGitSecret(alias, git.getAuthToken(), repoUrl, "access token"));
+        }
+        if (!(hasSshKey && hasToken)) {
+            // A token an earlier deploy kept next to an SSH key is not this deploy's.
+            gitCredentialService.removeSecret(tokenAlias);
+        }
+        return kept;
+    }
+
+    /**
+     * Stores a Git credential of a GitOps deploy in Ambari's credential store, under one of the release's pending
+     * aliases.
+     *
+     * @return its alias
+     * @throws IllegalStateException when the credential store cannot take it
+     */
+    private String storeGitSecret(String alias, String secret, String repoUrl, String what) {
+        String stored;
+        try {
+            stored = gitCredentialService.storeSecret(alias, secret, repoUrl);
+        } catch (RuntimeException e) {
+            LOG.warn("Could not store a Git credential in Ambari's credential store: {}", e.toString());
+            stored = null;
+        }
+        if (stored == null) {
+            throw new IllegalStateException("The Git " + what + " of this GitOps deploy could not be stored in Ambari's "
+                    + "credential store, so the deploy was not started: it would otherwise be kept in clear text with "
+                    + "the deploy. Check that Ambari's credential store is set up with a persisted master key "
+                    + "(ambari-server setup-security), then deploy again.");
+        }
+        return stored;
+    }
+
+    /**
+     * The values with their whole numbers as integers. A step reads its values file back with Gson, which makes every
+     * number a double: Helm takes 2.0 as it takes 2, but a HelmRelease reviewed in Git would show 2.0.
+     */
+    static Object wholeNumbersAsIntegers(Object node) {
+        if (node instanceof Map<?, ?> map) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            map.forEach((key, value) -> out.put(String.valueOf(key), wholeNumbersAsIntegers(value)));
+            return out;
+        }
+        if (node instanceof List<?> list) {
+            List<Object> out = new ArrayList<>(list.size());
+            list.forEach(value -> out.add(wholeNumbersAsIntegers(value)));
+            return out;
+        }
+        // Beyond 2^53 a double no longer holds every whole number exactly: left as it is.
+        if (node instanceof Double d && d == Math.rint(d) && Math.abs(d) < 9.007199254740992E15) {
+            long whole = d.longValue();
+            return whole == (int) whole ? (Object) (int) whole : (Object) whole;
+        }
+        return node;
+    }
+
+    /** The deploy request a GitOps commit step writes to Git, rebuilt from the step's parameters. */
+    @SuppressWarnings("unchecked")
+    private HelmDeployRequest gitOpsRequestFromParams(Map<String, Object> params, Map<String, Object> values) {
+        HelmDeployRequest request = new HelmDeployRequest();
+        request.setChart((String) params.get("chart"));
+        request.setReleaseName((String) params.get("releaseName"));
+        request.setNamespace((String) params.get("namespace"));
+        request.setVersion((String) params.get("version"));
+        request.setRepoId((String) params.get("repoId"));
+        request.setServiceKey((String) params.get("serviceKey"));
+        request.setSecurityProfile((String) params.get("securityProfile"));
+        // Only for the dependencies: the release's own image settings come with the planned overrides.
+        request.setSecretName((String) params.get("secretName"));
+        request.setDeploymentMode(DeploymentMode.FLUX_GITOPS.name());
+        request.setValues(new LinkedHashMap<>(values));
+        request.setFormValues(params.get("formValues"));
+        request.setStackConfigOverrides(params.get("stackOverrides"));
+        request.setTls(params.get("tls"));
+        if (params.get("git") != null) {
+            request.setGit(gson.fromJson(gson.toJsonTree(params.get("git")), HelmDeployRequest.GitOptions.class));
+        }
+        if (params.get(GITOPS_RELEASE_PARAM) instanceof Map<?, ?> release) {
+            if (release.get("dependencies") instanceof Map<?, ?> dependencies) {
+                request.setDependencies(new LinkedHashMap<>((Map<String, Object>) dependencies));
+            }
+            if (release.get("truststoreRefs") instanceof List<?> refs) {
+                List<String> truststores = new ArrayList<>();
+                refs.forEach(ref -> truststores.add(String.valueOf(ref)));
+                request.setTruststoreRefs(truststores);
+            }
+            request.setKerberos(release.get("kerberos"));
+        }
+        return request;
+    }
+
+    /** The parameters of the dependencies' Helm steps that a GitOps commit step carries, by dependency. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Map<String, Object>> gitOpsDependencySteps(Map<String, Object> params) {
+        Map<String, Map<String, Object>> steps = new LinkedHashMap<>();
+        if (params.get(GITOPS_RELEASE_PARAM) instanceof Map<?, ?> release
+                && release.get(GITOPS_DEPENDENCY_STEPS) instanceof Map<?, ?> planned) {
+            planned.forEach((name, stepParams) -> {
+                if (stepParams instanceof Map<?, ?> m) steps.put(String.valueOf(name), (Map<String, Object>) m);
+            });
+        }
+        return steps;
+    }
+
+    /** What a GitOps commit did, for the operation's log and the step's status. */
+    static String describeGitOpsCommit(FluxGitOpsBackend.CommitResult commit) {
+        String where = "branch " + commit.branch() + " of " + commit.repoUrl();
+        String pullRequest = commit.pullRequestUrl() == null || commit.pullRequestUrl().isBlank()
+                ? "" : " (pull request " + commit.pullRequestUrl() + ")";
+        if (commit.committed()) {
+            String sha = commit.commitSha().startsWith("PR-STUB:")
+                    ? commit.commitSha().substring("PR-STUB:".length()) + ", kept in the view's workspace: no Git "
+                            + "credentials to push it"
+                    : commit.commitSha();
+            return "Committed " + sha + " to " + where + pullRequest;
+        }
+        if ("NO_CHANGES".equals(commit.id())) {
+            return "Git already holds this version of the release on " + where + pullRequest + ": nothing committed";
+        }
+        return "Only passwords or secrets changed: updated the release's values Secret; Git is unchanged"
+                + (commit.commitSha() == null ? "" : " at " + commit.commitSha()) + " on " + where + pullRequest;
+    }
+
+    /**
+     * Adds what a GitOps commit did to the result of its operation, read again first: the commit can take long, and
+     * the operation may have been canceled meanwhile. Written from the copy read when the step started, the operation
+     * would be running again, and would end FAILED rather than CANCELED; one that ended keeps its state and result.
+     * {@code tickRoot}, the copy the step goes on with, gets the same result.
+     *
+     * @param rootStatusId the status id of the operation
+     * @param tickRoot     the operation's status as the step read it
+     * @param result       what the commit did
+     */
+    void recordGitOpsResult(String rootStatusId, CommandStatusEntity tickRoot, GitOpsDeployResult result) {
+        Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+        CommandStatusEntity fresh = findCommandStatusById(rootStatusId);
+        CommandStatusEntity base = fresh != null ? fresh : tickRoot;
+        Map<String, Object> rootResult = new LinkedHashMap<>();
+        if (base.getResultJson() != null && !base.getResultJson().isBlank()) {
+            rootResult.putAll(gson.fromJson(base.getResultJson(), mapType));
+        }
+        rootResult.put(GitOpsDeployResult.KEY, result);
+        String json = gson.toJson(rootResult);
+        tickRoot.setResultJson(json);
+        if (fresh == null || isTerminal(fresh.getState())) {
+            LOG.info("Operation status {} {}: what its GitOps commit did is not recorded on it", rootStatusId,
+                    fresh == null ? "not found" : "already ended " + fresh.getState());
+            return;
+        }
+        fresh.setResultJson(json);
+        store(fresh);
+    }
+
+    /**
+     * What a GitOps commit did, for the operator ({@link GitOpsDeployResult}). A commit that could not be pushed (no
+     * Git credentials) is named by its SHA; the operation's message says it waits in the view's workspace.
+     */
+    static GitOpsDeployResult gitOpsDeployResult(FluxGitOpsBackend.CommitResult commit) {
+        GitOpsDeployResult result = new GitOpsDeployResult();
+        String sha = commit.commitSha();
+        result.commit = sha != null && sha.startsWith("PR-STUB:") ? sha.substring("PR-STUB:".length()) : sha;
+        result.branch = commit.branch();
+        result.prUrl = commit.pullRequestUrl() == null || commit.pullRequestUrl().isBlank()
+                ? null : commit.pullRequestUrl();
+        result.prState = commit.pullRequestState() == null || commit.pullRequestState().isBlank()
+                ? null : commit.pullRequestState();
+        result.noChanges = !commit.committed();
+        return result;
+    }
+
+    /**
+     * What the answer to a deploy says of it before anything is committed: for a GitOps deploy, its mode and the branch
+     * the request names for the change, the base branch of a direct commit or the working branch of a pull request;
+     * the operation's result says the rest once its commit step ran. {@code null} for a deploy with Helm.
+     */
+    public static GitOpsDeployResult gitOpsSubmitted(HelmDeployRequest request) {
+        if (request == null || !DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(
+                String.valueOf(request.getDeploymentMode()).trim())) {
+            return null;
+        }
+        GitOpsDeployResult result = new GitOpsDeployResult();
+        HelmDeployRequest.GitOptions git = request.getGit();
+        if (git != null) {
+            String branch = "PR_MODE".equalsIgnoreCase(git.getCommitMode()) ? git.getBranch() : git.getBaseBranch();
+            result.branch = branch == null || branch.isBlank() ? null : branch;
+        }
+        return result;
+    }
+
+    /**
+     * Keeps a release deployed with Flux GitOps there. A redeploy that names no deployment mode (an API resync) goes
+     * through Git, with the repository, base branch and commit mode the release records when it names no Git options.
+     * One that asks for a direct Helm upgrade is refused: Flux would undo it at its next reconcile, and the release
+     * would no longer be recorded as held in Git, so its uninstall would leave its HelmRelease there.
+     *
+     * @param request  the deploy request, completed in place
+     * @param recorded the release as recorded by an earlier deploy, {@code null} for a first install
+     * @throws ReleaseHeldInGitException when the request asks for a direct Helm upgrade of a release held in Git
+     */
+    static void applyRecordedDeploymentMode(HelmDeployRequest request, K8sReleaseEntity recorded) {
+        if (request == null || recorded == null || !DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(recorded.getDeploymentMode())) {
+            return;
+        }
+        String asked = request.getDeploymentMode();
+        if (asked == null || asked.isBlank()) {
+            request.setDeploymentMode(DeploymentMode.FLUX_GITOPS.name());
+            if (request.getGit() == null) {
+                request.setGit(recordedGitOptions(recorded));
+            }
+            return;
+        }
+        if (!DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(asked.trim())) {
+            ReleaseHeldInGitException.refuseIfHeldInGit(recorded, request.getNamespace(), request.getReleaseName(),
+                    "a Helm upgrade");
+        }
+    }
+
+    /**
+     * The Git options a release deployed with Flux GitOps records: its repository, the base branch Flux reads and its
+     * commit mode, so a change is committed where Flux reads it, by a direct commit or through a pull request as
+     * before.
+     */
+    static HelmDeployRequest.GitOptions recordedGitOptions(K8sReleaseEntity metadata) {
+        HelmDeployRequest.GitOptions git = new HelmDeployRequest.GitOptions();
+        git.setRepoUrl(metadata.getGitRepoUrl());
+        // Only a base branch the record tells: one only assumed would be recorded as the one Flux reads.
+        git.setBaseBranch(FluxGitOpsBackend.knownBaseBranch(metadata));
+        git.setCommitMode(metadata.getGitCommitMode() == null || metadata.getGitCommitMode().isBlank()
+                ? "DIRECT_COMMIT" : metadata.getGitCommitMode());
+        return git;
+    }
+
+    /**
+     * The request that deploys a release again with other values, as a redeploy from the Releases page sends it: its
+     * chart, chart repository, service, security profile and platform context, at the chart version it runs (left out,
+     * so the deploy keeps it). A GitOps release keeps its repository, the base branch it records and its commit mode,
+     * so the change is committed where Flux reads it, by a direct commit or through a pull request as before.
+     *
+     * @param metadata the release's record
+     * @param values   the values to deploy
+     */
+    public static HelmDeployRequest releaseRedeployRequest(K8sReleaseEntity metadata, Map<String, Object> values) {
+        HelmDeployRequest request = new HelmDeployRequest();
+        request.setChart(metadata.getChartRef());
+        request.setReleaseName(metadata.getReleaseName());
+        request.setNamespace(metadata.getNamespace());
+        request.setValues(values);
+        request.setServiceKey(metadata.getServiceKey());
+        request.setSecurityProfile(metadata.getSecurityProfile());
+        request.setRepoId(metadata.getRepoId());
+        if (metadata.getPlatformContextId() != null && !metadata.getPlatformContextId().isBlank()) {
+            Map<String, Object> form = new LinkedHashMap<>();
+            form.put("platformContextId", metadata.getPlatformContextId());
+            request.setFormValues(form);
+        }
+        boolean gitOps = DeploymentMode.FLUX_GITOPS.name().equalsIgnoreCase(metadata.getDeploymentMode());
+        request.setDeploymentMode(gitOps ? DeploymentMode.FLUX_GITOPS.name() : DeploymentMode.DIRECT_HELM.name());
+        if (gitOps) {
+            request.setGit(recordedGitOptions(metadata));
+        }
+        return request;
+    }
+
+    /**
+     * The GitOps deploy of a release that has not finished: waiting to run, before its commit, or waiting for Flux to
+     * apply what it committed. Until it has, the values Helm reports for the release are not those Git holds, so a
+     * change built on them would drop what that deploy commits.
+     *
+     * @return the id of that deploy's operation, or {@code null} when none is running; also {@code null} when the
+     *         operations cannot be read (logged)
+     */
+    public String runningGitOpsDeploy(String namespace, String releaseName) {
+        Collection<CommandEntity> roots;
+        try {
+            roots = dataStore.findAll(CommandEntity.class, "childListJson IS NOT NULL");
+        } catch (Exception filterErr) {
+            try {
+                roots = dataStore.findAll(CommandEntity.class, null);
+            } catch (Exception e) {
+                LOG.warn("Could not tell whether a GitOps deploy of {}/{} is running: {}", namespace, releaseName,
+                        e.toString());
+                return null;
+            }
+        }
+        return runningGitOpsDeploy(roots, this::findCommandStatusById, namespace, releaseName);
+    }
+
+    /**
+     * {@link #runningGitOpsDeploy(String, String)} among the operations given.
+     *
+     * @param roots    operations, steps among them are skipped
+     * @param statuses the status of an operation, by its status id
+     */
+    static String runningGitOpsDeploy(Collection<CommandEntity> roots,
+                                      java.util.function.Function<String, CommandStatusEntity> statuses,
+                                      String namespace, String releaseName) {
+        if (roots == null) return null;
+        Gson reader = new Gson();
+        Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+        for (CommandEntity root : roots) {
+            if (root == null || root.getChildListJson() == null || root.getChildListJson().isBlank()
+                    || !CommandType.K8S_MANAGER_RELEASE_DEPLOY.name().equals(root.getType())) {
+                continue;
+            }
+            CommandStatusEntity status = statuses.apply(root.getCommandStatusId());
+            if (status == null || !(CommandState.RUNNING.name().equals(status.getState())
+                    || CommandState.PENDING.name().equals(status.getState()))) {
+                continue;
+            }
+            Map<String, Object> params;
+            try {
+                params = reader.fromJson(CommandUtils.resolveParamsPayload(root.getParamsJson()), mapType);
+            } catch (RuntimeException unreadable) {
+                continue;
+            }
+            if (params != null && params.get(GITOPS_RELEASE_PARAM) != null
+                    && namespace.equals(params.get("namespace")) && releaseName.equals(params.get("releaseName"))) {
+                return root.getId();
+            }
+        }
+        return null;
+    }
+
+    /** The result of a GitOps commit step, which the wait for Flux reads. */
+    static Map<String, Object> gitOpsCommitResult(FluxGitOpsBackend.CommitResult commit) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("commitSha", commit.commitSha());
+        result.put("committed", commit.committed());
+        result.put("repoUrl", commit.repoUrl());
+        result.put("branch", commit.branch());
+        result.put("baseBranch", commit.baseBranch());
+        result.put("pullRequestUrl", commit.pullRequestUrl());
+        result.put("pullRequestState", commit.pullRequestState());
+        result.put("appliedOnCommit", commit.appliedOnCommit());
+        result.put("specDigest", commit.specDigest());
+        return result;
+    }
+
+    /** Why the change of a GitOps deploy is not applied yet, and what applies it. */
+    static String gitOpsMergeWait(FluxGitOpsBackend.CommitResult commit) {
+        String base = commit.baseBranch() == null || commit.baseBranch().isBlank()
+                ? "the branch Flux reconciles" : "branch " + commit.baseBranch();
+        if (commit.commitSha() != null && commit.commitSha().startsWith("PR-STUB:")) {
+            return "The pull request branch " + commit.branch() + " could not be pushed to " + commit.repoUrl()
+                    + ": the deploy has no Git credentials. Give it a token or an SSH key and deploy again.";
+        }
+        if (commit.pullRequestUrl() != null && !commit.pullRequestUrl().isBlank()) {
+            return "Waiting for the pull request " + commit.pullRequestUrl() + " to be merged into " + base
+                    + ": Flux applies the change once it is merged.";
+        }
+        return "Waiting for branch " + commit.branch() + " of " + commit.repoUrl() + " to be merged into " + base
+                + ": Flux applies the change once it is merged.";
+    }
+
+    /** The result of the GitOps commit step of an operation; empty when it has none. */
+    private Map<String, Object> gitOpsCommitResultOf(CommandEntity root) {
+        Type listType = new TypeToken<ArrayList<String>>() {}.getType();
+        List<String> steps = gson.fromJson(root.getChildListJson(), listType);
+        if (steps != null) {
+            for (String stepId : steps) {
+                CommandEntity step = findCommandById(stepId);
+                if (step == null || !CommandType.GITOPS_COMMIT.name().equals(step.getType())) continue;
+                CommandStatusEntity st = findCommandStatusById(step.getCommandStatusId());
+                if (st != null && st.getResultJson() != null && !st.getResultJson().isBlank()) {
+                    Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+                    return gson.fromJson(st.getResultJson(), mapType);
+                }
+            }
+        }
+        return Collections.emptyMap();
+    }
+
+    /**
+     * How long the wait for Flux lasts for a release of the service: the longest Flux may take on its first install
+     * (see {@link FluxGitOpsBackend#readyTimeoutSeconds}), never less than {@link #FLUX_READY_TIMEOUT_SECONDS}.
+     */
+    private int gitOpsReadyTimeoutSeconds(String serviceKey) {
+        StackServiceDef def = null;
+        if (serviceKey != null && !serviceKey.isBlank()) {
+            try {
+                def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
+            } catch (Exception e) {
+                LOG.warn("Could not read the GitOps timeout of service definition {}: {}", serviceKey, e.toString());
+            }
+        }
+        return FluxGitOpsBackend.readyTimeoutSeconds(def, FLUX_READY_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * Waits until the HelmRelease on the cluster is the version the deploy committed and Flux reports it Ready.
+     *
+     * @param retryGivenUp whether a version Flux already gave up on is to be tried again: then Flux is asked for a new
+     *                     attempt ({@link KubernetesService#requestFluxReset}) and its outcome is waited for. The same
+     *                     holds for a HelmRelease the release depends on.
+     * @throws IllegalStateException when Flux gives up on the release or on a HelmRelease it depends on, or the release
+     *                               is not ready in time, with Flux's message, and "Canceled by user" when the step is
+     *                               canceled
+     */
+    private FluxGitOpsBackend.Readiness awaitFluxReady(String commandId, CommandEntity step, String namespace,
+                                                      String releaseName, String expectedDigest, boolean retryGivenUp,
+                                                      int timeoutSeconds, int pollSeconds) throws InterruptedException {
+        String helmRelease = namespace + "/" + releaseName;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(Math.max(0, timeoutSeconds));
+        String lastMessage = null;
+        String resetRequestedAt = null;
+        Map<FluxGitOpsBackend.NamespacedName, String> dependencyResets = new HashMap<>();
+        Map<FluxGitOpsBackend.NamespacedName, String> dependencyMessages = new HashMap<>();
+        for (;;) {
+            CommandStatusEntity st = findCommandStatusById(step.getCommandStatusId());
+            if (st != null && CommandState.CANCELED.name().equals(st.getState())) {
+                throw new IllegalStateException("Canceled by user");
+            }
+            FluxGitOpsBackend.Readiness readiness;
+            io.fabric8.kubernetes.api.model.GenericKubernetesResource onCluster = null;
+            try {
+                onCluster = this.kubernetesService.getFluxHelmRelease(namespace, releaseName);
+                readiness = FluxGitOpsBackend.readiness(onCluster, expectedDigest, resetRequestedAt);
+            } catch (Exception ex) {
+                readiness = new FluxGitOpsBackend.Readiness(false, false,
+                        "the HelmRelease could not be read: " + ex.getMessage(), false);
+            }
+            if (!readiness.message().equals(lastMessage)) {
+                appendCommandLog(commandId, "Flux, HelmRelease " + helmRelease + ": " + readiness.message());
+                lastMessage = readiness.message();
+            }
+            if (readiness.ready()) {
+                return readiness;
+            }
+            if (readiness.failed() && retryGivenUp && resetRequestedAt == null) {
+                // Flux gave up on this version before this wait: the deploy is the operator's way to try it again.
+                resetRequestedAt = requestFluxRetry(commandId, namespace, releaseName, "HelmRelease " + helmRelease,
+                        readiness.message());
+                continue;
+            }
+            if (readiness.failed()) {
+                throw new IllegalStateException("Flux could not apply HelmRelease " + helmRelease + ": "
+                        + readiness.message() + ". Fix the cause on the cluster, then resume the operation or deploy "
+                        + "the release again: Flux is asked to try it again.");
+            }
+            // Flux installs the release only once each HelmRelease it depends on is Ready, and never marks the release
+            // Stalled for one it gave up on: that one is looked at here, rather than waiting out the timeout.
+            List<FluxGitOpsBackend.NamespacedName> awaited = readiness.applied()
+                    ? FluxGitOpsBackend.awaitedDependencies(onCluster) : List.of();
+            if (checkAwaitedDependencies(commandId, helmRelease, awaited, retryGivenUp, dependencyResets,
+                    dependencyMessages)) {
+                continue;
+            }
+            if (System.nanoTime() >= deadline) {
+                StringBuilder dependencyStates = new StringBuilder();
+                for (FluxGitOpsBackend.NamespacedName dependency : awaited) {
+                    if (!dependencyMessages.containsKey(dependency)) continue;
+                    dependencyStates.append(dependencyStates.length() == 0 ? " (" : "; ").append("dependency ")
+                            .append(dependency.namespace()).append('/').append(dependency.name()).append(": ")
+                            .append(dependencyMessages.get(dependency));
+                }
+                if (dependencyStates.length() > 0) dependencyStates.append(')');
+                throw new IllegalStateException("HelmRelease " + helmRelease + " is not ready after "
+                        + (timeoutSeconds % 60 == 0 ? (timeoutSeconds / 60) + " minutes" : timeoutSeconds + " seconds")
+                        + ": " + readiness.message() + dependencyStates + ". " + (readiness.applied()
+                                ? "Fix what Flux reports, then resume the operation to wait again."
+                                : "Check the Flux GitRepository and Kustomization that apply the release, then resume "
+                                        + "the operation to wait again."));
+            }
+            if (pollSeconds > 0) {
+                Thread.sleep(TimeUnit.SECONDS.toMillis(pollSeconds));
+            }
+        }
+    }
+
+    /**
+     * Looks at the HelmReleases that hold the release back ({@link FluxGitOpsBackend#awaitedDependencies}). One Flux
+     * gave up on (Stalled) holds it back for good: Flux does not try it again on its own, whatever the release's
+     * commit changes.
+     *
+     * @param dependencies the HelmReleases the release waits for
+     * @param retryGivenUp whether one Flux already gave up on is to be tried again, once
+     * @param resets       the resets this wait asked for, by dependency; one is added when Flux is asked to try again
+     * @param messages     what Flux last reported of each dependency, logged when it changes
+     * @return whether Flux was just asked to try a dependency again
+     * @throws IllegalStateException when Flux gave up on a dependency that is not to be tried again, or that it gave
+     *                               up on again, with Flux's message
+     */
+    private boolean checkAwaitedDependencies(String commandId, String helmRelease,
+                                             List<FluxGitOpsBackend.NamespacedName> dependencies, boolean retryGivenUp,
+                                             Map<FluxGitOpsBackend.NamespacedName, String> resets,
+                                             Map<FluxGitOpsBackend.NamespacedName, String> messages) {
+        for (FluxGitOpsBackend.NamespacedName dependency : dependencies) {
+            String name = dependency.namespace() + "/" + dependency.name();
+            FluxGitOpsBackend.Readiness readiness;
+            try {
+                readiness = FluxGitOpsBackend.readiness(
+                        this.kubernetesService.getFluxHelmRelease(dependency.namespace(), dependency.name()), null,
+                        resets.get(dependency));
+            } catch (Exception ex) {
+                // What the release reports, logged with it, still names the dependency it waits for.
+                LOG.warn("Could not read HelmRelease {}, which HelmRelease {} depends on: {}", name, helmRelease,
+                        ex.toString());
+                continue;
+            }
+            if (!readiness.message().equals(messages.put(dependency, readiness.message()))) {
+                appendCommandLog(commandId, "Flux, dependency HelmRelease " + name + ": " + readiness.message());
+            }
+            if (!readiness.failed()) {
+                continue;
+            }
+            String what = "dependency " + name + " of HelmRelease " + helmRelease;
+            if (retryGivenUp && !resets.containsKey(dependency)) {
+                resets.put(dependency, requestFluxRetry(commandId, dependency.namespace(), dependency.name(), what,
+                        readiness.message()));
+                return true;
+            }
+            throw new IllegalStateException("Flux could not apply " + what + ": " + readiness.message()
+                    + ". Fix the cause on the cluster, then resume the operation or deploy the release again: Flux is "
+                    + "asked to try it again.");
+        }
+        return false;
+    }
+
+    /**
+     * Asks Flux to try again a HelmRelease it gave up on ({@link KubernetesService#requestFluxReset}).
+     *
+     * @param what  the HelmRelease, as the operation's messages name it
+     * @param cause what Flux reports of it
+     * @return the reset asked for, which Flux reports once it has handled it
+     * @throws IllegalStateException when Flux could not be asked, saying how to ask it by hand
+     */
+    private String requestFluxRetry(String commandId, String namespace, String name, String what, String cause) {
+        String resetRequestedAt = null;
+        String retryProblem = null;
+        try {
+            resetRequestedAt = this.kubernetesService.requestFluxReset(namespace, name);
+        } catch (Exception ex) {
+            LOG.warn("Could not ask Flux to try HelmRelease {}/{} again: {}", namespace, name, ex.toString());
+            retryProblem = ex.getMessage();
+        }
+        if (resetRequestedAt == null) {
+            throw new IllegalStateException("Flux could not apply " + what + ": " + cause + ". Flux does not try it "
+                    + "again on its own, and it could not be asked to" + (retryProblem == null ? "" : " (" + retryProblem
+                    + ")") + ": run 'flux reconcile helmrelease " + name + " -n " + namespace + " --reset' once the "
+                    + "cause is fixed.");
+        }
+        appendCommandLog(commandId, "Flux had given up on " + what + ": asked it to try again");
+        return resetRequestedAt;
+    }
+
+    /**
+     * Marks the steps of an operation still to run after the given one as not run, and returns their titles. Used
+     * when the operation ends early because what they need is not there yet.
+     */
+    private List<String> skipRemainingSteps(CommandEntity root, CommandEntity after, String message) {
+        Type listType = new TypeToken<ArrayList<String>>() {}.getType();
+        List<String> steps = gson.fromJson(root.getChildListJson(), listType);
+        List<String> skipped = new ArrayList<>();
+        if (steps == null) {
+            return skipped;
+        }
+        boolean past = false;
+        for (String stepId : steps) {
+            if (!past) {
+                past = after.getId().equals(stepId);
+                continue;
+            }
+            CommandEntity step = findCommandById(stepId);
+            CommandStatusEntity st = step == null ? null : findCommandStatusById(step.getCommandStatusId());
+            if (st == null || !CommandState.PENDING.name().equals(st.getState())) continue;
+            st.setState(CommandState.CANCELED.name());
+            st.setMessage(message);
+            st.setUpdatedAt(Instant.now().toString());
+            store(st);
+            skipped.add(step.getTitle() != null ? step.getTitle() : step.getType());
+        }
+        return skipped;
+    }
+
+    private static int intParam(Object value, int defaultValue) {
+        if (value instanceof Number n) return n.intValue();
+        try {
+            return value == null ? defaultValue : Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
         }
     }
 
@@ -9214,28 +13801,41 @@ public class CommandService {
      * True when the MIT/IPA keytab bytes contain an entry for {@code wantedPrincipal} ({@code primary@REALM},
      * where a service principal's primary is {@code service/instance}). Used by the KEYTAB_ISSUE_PRINCIPAL
      * reuse short-circuit to re-issue (self-heal) when the stored keytab is for a DIFFERENT principal than
-     * requested — e.g. after the principal scheme changed on an upgrade (AMBARI-564).
+     * requested — e.g. after the principal scheme changed on an upgrade.
      *
-     * <p>Parses the standard {@code 0x0502} (big-endian) keytab format. On any parse failure — or an
-     * unrecognised format — returns {@code true}, i.e. assume it matches and keep the safe
-     * "reuse, do not re-key" behaviour; we only force a re-issue when we can positively confirm the
-     * requested principal is absent.
+     * <p>Bytes that cannot be parsed do not match: reusing them could leave the release with a keytab that does not
+     * log in, while issuing it again repairs it.
      *
      * @param keytab          raw keytab bytes from the Secret
      * @param wantedPrincipal the principal about to be issued ({@code primary@REALM})
-     * @return true if the keytab contains the principal, or the bytes cannot be confidently parsed
+     * @return true if the keytab parses and contains the principal
      */
-    private boolean keytabContainsPrincipal(byte[] keytab, String wantedPrincipal) {
-        if (keytab == null || keytab.length < 2 || wantedPrincipal == null || wantedPrincipal.isBlank()) {
-            return true;
+    static boolean keytabContainsPrincipal(byte[] keytab, String wantedPrincipal) {
+        Integer kvno = keytabKeyVersion(keytab, wantedPrincipal);
+        return kvno != null && kvno >= 0;
+    }
+
+    /**
+     * The highest key version a keytab holds for a principal, read from the standard {@code 0x0502} (big-endian)
+     * keytab format.
+     *
+     * @param keytab    raw keytab bytes
+     * @param principal the principal ({@code primary@REALM})
+     * @return the key version; -1 when the keytab parses but holds no key of the principal; null when the bytes are
+     *         not a keytab this method can read
+     */
+    static Integer keytabKeyVersion(byte[] keytab, String principal) {
+        if (keytab == null || keytab.length < 2 || principal == null || principal.isBlank()) {
+            return null;
         }
         try {
             java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(keytab).order(java.nio.ByteOrder.BIG_ENDIAN);
             int v0 = buf.get() & 0xff;
             int v1 = buf.get() & 0xff;
             if (v0 != 0x05 || v1 != 0x02) {
-                return true; // not the format we parse → don't force a re-key
+                return null;
             }
+            int highest = -1;
             while (buf.remaining() >= 4) {
                 int size = buf.getInt();
                 if (size == 0) {
@@ -9245,34 +13845,564 @@ public class CommandService {
                     buf.position(Math.min(buf.limit(), buf.position() + (-size)));
                     continue;
                 }
-                int entryStart = buf.position();
                 if (size > buf.remaining()) {
-                    return true; // truncated/unexpected → be safe
+                    return null; // truncated
                 }
+                int entryStart = buf.position();
+                int entryEnd = entryStart + size;
                 int numComponents = buf.getShort() & 0xffff;
-                int realmLen = buf.getShort() & 0xffff;
-                byte[] realmB = new byte[realmLen];
-                buf.get(realmB);
-                String realm = new String(realmB, StandardCharsets.UTF_8);
+                String realm = countedString(buf);
                 StringBuilder primary = new StringBuilder();
                 for (int i = 0; i < numComponents; i++) {
-                    int clen = buf.getShort() & 0xffff;
-                    byte[] cb = new byte[clen];
-                    buf.get(cb);
                     if (i > 0) {
                         primary.append('/');
                     }
-                    primary.append(new String(cb, StandardCharsets.UTF_8));
+                    primary.append(countedString(buf));
                 }
-                if ((primary + "@" + realm).equals(wantedPrincipal)) {
-                    return true;
+                buf.getInt();                   // name type
+                buf.getInt();                   // timestamp
+                int kvno = buf.get() & 0xff;    // 8-bit key version
+                buf.getShort();                 // key type
+                int keyLength = buf.getShort() & 0xffff;
+                buf.position(buf.position() + keyLength);
+                // A 32-bit key version may follow the key; when set, it is the real one (the 8-bit one wraps).
+                if (entryEnd - buf.position() >= 4) {
+                    int kvno32 = buf.getInt();
+                    if (kvno32 != 0) {
+                        kvno = kvno32;
+                    }
                 }
-                buf.position(entryStart + size); // skip nameType/timestamp/vno/keyblock
+                if ((primary + "@" + realm).equals(principal)) {
+                    highest = Math.max(highest, kvno);
+                }
+                buf.position(entryEnd);
             }
-            return false; // parsed OK, principal not present
+            return highest;
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read a keytab ({}); it is treated as not holding {}", e.toString(), principal);
+            return null;
+        }
+    }
+
+    private static String countedString(java.nio.ByteBuffer buf) {
+        int length = buf.getShort() & 0xffff;
+        byte[] bytes = new byte[length];
+        buf.get(bytes);
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    /** Tells whether a keytab still logs its principal in to the KDC. */
+    @FunctionalInterface
+    interface KeytabLogin {
+        /**
+         * @return true when the KDC accepts the keytab's key, false when it rejects it (the key changed in the KDC
+         *         since the keytab was issued, or the principal no longer exists there), null when it cannot be told
+         *         (no Kerberos configuration, KDC unreachable)
+         */
+        Boolean authenticates(byte[] keytab, String principal);
+    }
+
+    /**
+     * One Kerberos login of the principal with the keytab, from the Ambari server, which has the cluster's krb5.conf.
+     * One attempt only: failed logins count toward an Active Directory account lockout.
+     */
+    static Boolean loginWithKeytab(byte[] keytab, String principal) {
+        java.nio.file.Path file = null;
+        try {
+            try {
+                file = java.nio.file.Files.createTempFile("kdps-keytab-check", ".keytab",
+                        java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                                java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+            } catch (UnsupportedOperationException notPosix) {
+                file = java.nio.file.Files.createTempFile("kdps-keytab-check", ".keytab");
+            }
+            java.nio.file.Files.write(file, keytab);
+            Map<String, String> options = new LinkedHashMap<>();
+            options.put("useKeyTab", "true");
+            options.put("keyTab", file.toString());
+            options.put("principal", principal);
+            options.put("storeKey", "false");
+            options.put("doNotPrompt", "true");
+            options.put("isInitiator", "true");
+            javax.security.auth.login.AppConfigurationEntry[] entries = {
+                    new javax.security.auth.login.AppConfigurationEntry("com.sun.security.auth.module.Krb5LoginModule",
+                            javax.security.auth.login.AppConfigurationEntry.LoginModuleControlFlag.REQUIRED, options)};
+            javax.security.auth.login.Configuration configuration = new javax.security.auth.login.Configuration() {
+                @Override
+                public javax.security.auth.login.AppConfigurationEntry[] getAppConfigurationEntry(String name) {
+                    return entries;
+                }
+            };
+            javax.security.auth.login.LoginContext login = new javax.security.auth.login.LoginContext(
+                    "kdps-keytab-check", new javax.security.auth.Subject(), null, configuration);
+            login.login();
+            login.logout();
+            return Boolean.TRUE;
+        } catch (javax.security.auth.login.LoginException e) {
+            Boolean verdict = failedKeytabLoginVerdict(e);
+            if (Boolean.FALSE.equals(verdict)) {
+                LOG.info("The KDC rejects the stored keytab of {}: {}", principal, e.getMessage());
+            } else {
+                LOG.info("Could not check the stored keytab of {} against the KDC ({}); it is used as it is",
+                        principal, e.getMessage());
+            }
+            return verdict;
         } catch (Exception e) {
-            LOG.warn("keytabContainsPrincipal: parse failed ({}); assuming match to avoid a re-key", e.toString());
-            return true;
+            LOG.info("Could not check the stored keytab of {} against the KDC ({}); it is used as it is",
+                    principal, e.toString());
+            return null;
+        } finally {
+            if (file != null) {
+                try {
+                    java.nio.file.Files.deleteIfExists(file);
+                } catch (java.io.IOException ignored) {
+                    // a temporary file the JVM's temp cleanup removes
+                }
+            }
+        }
+    }
+
+    /**
+     * What a failed keytab login says about the keytab: false when the KDC gave a definite answer against it (its key
+     * changed in the KDC, or the principal no longer exists there), null when the failure tells nothing about the
+     * keytab (no Kerberos configuration, KDC unreachable, clock skew). An unknown principal is definite too: the
+     * stored keytab can never log in again, and the principal must be created anew.
+     *
+     * @param failure the login failure, whose cause chain carries the KDC's error
+     * @return {@link Boolean#FALSE} or null
+     */
+    static Boolean failedKeytabLoginVerdict(Throwable failure) {
+        StringBuilder reasons = new StringBuilder();
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            reasons.append(' ').append(String.valueOf(t.getMessage()).toLowerCase(Locale.ROOT));
+        }
+        String why = reasons.toString();
+        if (why.contains("pre-authentication") || why.contains("preauthentication")
+                || why.contains("integrity check") || why.contains("checksum failed")
+                || why.contains("specified version of key is not available")
+                || why.contains("client not found") || why.contains("principal_unknown")) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    /** The value of the label naming a keytab Secret's principal: a label value cannot hold '@' or '/'. */
+    static String keytabPrincipalLabel(String principal) {
+        return sha256Hex(principal.getBytes(StandardCharsets.UTF_8)).substring(0, 40);
+    }
+
+    /** The labels of a keytab Secret KDPS writes for {@code release} and {@code principal}. */
+    static Map<String, String> keytabSecretLabels(String release, String principal) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("app.kubernetes.io/managed-by", VIEW_MANAGED_BY);
+        labels.put(KEYTAB_PRINCIPAL_LABEL, keytabPrincipalLabel(principal));
+        if (release != null && release.matches("[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?")) {
+            labels.put(KEYTAB_RELEASE_LABEL, release);
+        }
+        // The uninstall of the release removes its keytab Secret (the principal stays in the KDC).
+        labels.putAll(KdpsReleaseObjects.labels(release));
+        return labels;
+    }
+
+    /** A keytab read from a Secret: the data key holding it and its bytes. */
+    record StoredKeytab(String secretName, String key, byte[] bytes, String release) {}
+
+    /**
+     * The other keytab Secrets KDPS wrote in {@code namespace} for {@code principal}: releases of one service in a
+     * namespace share its principal, so all their Secrets must hold the same key. Empty when they cannot be listed.
+     *
+     * <p>Secrets written before KDPS labelled them with their principal are found by the keytab they hold, and are
+     * labelled on the way, so a regeneration also reaches the releases deployed before the labels existed.
+     *
+     * @param ownSecret the Secret of the release at hand, left out
+     */
+    List<StoredKeytab> siblingKeytabs(String namespace, String ownSecret, String principal) {
+        List<StoredKeytab> siblings = new ArrayList<>();
+        List<io.fabric8.kubernetes.api.model.Secret> secrets;
+        try {
+            secrets = kubernetesService.listSecretsWithLabel(namespace, KEYTAB_PRINCIPAL_LABEL,
+                    keytabPrincipalLabel(principal));
+        } catch (Exception e) {
+            LOG.warn("Could not list the keytab Secrets of {} in {}: {}", principal, namespace, e.toString());
+            return siblings;
+        }
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (io.fabric8.kubernetes.api.model.Secret secret : secrets == null
+                ? List.<io.fabric8.kubernetes.api.model.Secret>of() : secrets) {
+            if (secret == null || secret.getMetadata() == null || secret.getData() == null) continue;
+            String name = secret.getMetadata().getName();
+            Map<String, String> annotations = secret.getMetadata().getAnnotations();
+            if (name == null || name.equals(ownSecret) || annotations == null
+                    || !VIEW_MANAGED_BY.equals(annotations.get("managed-by"))) {
+                continue;
+            }
+            seen.add(name);
+            Map<String, String> labels = secret.getMetadata().getLabels();
+            String release = labels == null ? null : labels.get(KEYTAB_RELEASE_LABEL);
+            StoredKeytab found = storedKeytabOf(secret, principal, release);
+            siblings.add(found != null ? found : new StoredKeytab(name, null, null, release));
+        }
+        List<io.fabric8.kubernetes.api.model.Secret> unlabelled;
+        try {
+            unlabelled = kubernetesService.listViewManagedSecretsWithoutLabel(namespace, KEYTAB_PRINCIPAL_LABEL);
+        } catch (Exception e) {
+            LOG.warn("Could not list the unlabelled Secrets of namespace {}: {}", namespace, e.toString());
+            return siblings;
+        }
+        for (io.fabric8.kubernetes.api.model.Secret secret : unlabelled == null
+                ? List.<io.fabric8.kubernetes.api.model.Secret>of() : unlabelled) {
+            if (secret == null || secret.getMetadata() == null || secret.getData() == null) continue;
+            String name = secret.getMetadata().getName();
+            if (name == null || name.equals(ownSecret) || !seen.add(name)) continue;
+            StoredKeytab found = storedKeytabOf(secret, principal, null);
+            if (found == null) continue;
+            found = new StoredKeytab(name, found.key(), found.bytes(), keytabSecretRelease(namespace, name, principal));
+            siblings.add(found);
+            // Rewriting a Secret with several entries would drop the others: only a keytab-only Secret is labelled.
+            if (secret.getData().size() == 1) {
+                labelKeytabSecret(namespace, name, found.key(), found.bytes(), found.release(), principal);
+            }
+        }
+        return siblings;
+    }
+
+    /** The keytab of {@code principal} a Secret holds, or null when none of its entries is one. */
+    private static StoredKeytab storedKeytabOf(io.fabric8.kubernetes.api.model.Secret secret, String principal,
+                                               String release) {
+        for (Map.Entry<String, String> data : secret.getData().entrySet()) {
+            if (data.getValue() == null) continue;
+            try {
+                byte[] bytes = java.util.Base64.getDecoder().decode(data.getValue());
+                if (keytabContainsPrincipal(bytes, principal)) {
+                    return new StoredKeytab(secret.getMetadata().getName(), data.getKey(), bytes, release);
+                }
+            } catch (IllegalArgumentException notBase64) {
+                // not a keytab entry
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The release of the namespace whose keytab Secret is {@code secretName}, from the Secret names the Kerberos
+     * entries of each recorded release resolve to; null when no release record names it.
+     */
+    private String keytabSecretRelease(String namespace, String secretName, String principal) {
+        String realm = principal.contains("@") ? principal.substring(principal.indexOf('@') + 1) : "";
+        try {
+            StackDefinitionService definitions = new StackDefinitionService(ctx);
+            for (K8sReleaseEntity record : new ReleaseMetadataService(ctx).findAll()) {
+                if (record == null || !namespace.equals(record.getNamespace()) || record.getReleaseName() == null
+                        || record.getServiceKey() == null || record.getServiceKey().isBlank()) {
+                    continue;
+                }
+                StackServiceDef definition = definitions.getServiceDefinition(record.getServiceKey());
+                if (definition == null || definition.kerberos == null || definition.kerberos.isEmpty()) continue;
+                for (Map<String, Object> entry
+                        : normalizeKerberosEntries(buildKerberosSpecMapFromServiceDefinition(definition.kerberos))) {
+                    String serviceName = resolveStringValue(entry.get("serviceName"), record.getReleaseName());
+                    if (secretName.equals(resolveKerberosEntrySecretName(entry, serviceName, namespace,
+                            record.getReleaseName(), realm))) {
+                        return record.getReleaseName();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.info("Could not find the release of keytab Secret {}/{}: {}", namespace, secretName, e.toString());
+        }
+        return null;
+    }
+
+    /**
+     * The keytab another release of the namespace holds for the principal, to copy into this release's Secret instead
+     * of issuing it: issuing it again may change the principal's key in the KDC and break the other releases.
+     *
+     * @param commandId       the operation, whose log says what was decided
+     * @param ownSecret       the Secret of the release at hand
+     * @param rejectedVersion the key version of the release's own keytab, which the KDC just rejected; null when
+     *                        there was none. The copy must then hold a newer key: no second login is attempted, since
+     *                        failed logins count toward an account lockout.
+     * @return the step's result naming the Secret to copy from, or null to issue the keytab
+     */
+    Map<String, Object> siblingKeytabToCopy(String commandId, String namespace, String ownSecret, String principal,
+                                            Integer rejectedVersion) {
+        StoredKeytab newest = null;
+        int newestVersion = -1;
+        for (StoredKeytab sibling : siblingKeytabs(namespace, ownSecret, principal)) {
+            Integer version = sibling.bytes() == null ? null : keytabKeyVersion(sibling.bytes(), principal);
+            if (version != null && version > newestVersion) {
+                newest = sibling;
+                newestVersion = version;
+            }
+        }
+        if (newest == null) {
+            return null;
+        }
+        String source = namespace + "/" + newest.secretName();
+        boolean usable = rejectedVersion != null
+                ? newestVersion > rejectedVersion
+                : !Boolean.FALSE.equals(keytabLogin.authenticates(newest.bytes(), principal));
+        if (!usable) {
+            appendCommandLog(commandId, "The keytab of " + principal + " in Secret " + source
+                    + " is outdated too: issuing a new one");
+            return null;
+        }
+        appendCommandLog(commandId, "Copying the keytab of " + principal + " from Secret " + source
+                + (newest.release() == null ? "" : " (release " + newest.release() + ")")
+                + ": releases of the namespace share the principal, and issuing it again could change its key");
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("copiedFrom", newest.secretName());
+        result.put("copiedKey", newest.key());
+        result.put("payloadSha256", sha256Hex(newest.bytes()));
+        return result;
+    }
+
+    /**
+     * After a keytab was issued for {@code principal}, rewrites the other keytab Secrets of the principal in the
+     * namespace that hold an older key: issuing it may have changed the key in the KDC (a new key version), which
+     * makes their keytabs fail at the next login. Their releases are flagged for a restart.
+     *
+     * @param commandId the operation, whose log says what was rewritten
+     * @param issued    the issued keytab
+     */
+    void syncSiblingKeytabs(String commandId, String namespace, String ownSecret, String principal, byte[] issued) {
+        Integer issuedVersion = keytabKeyVersion(issued, principal);
+        if (issuedVersion == null || issuedVersion < 0) {
+            return;
+        }
+        for (StoredKeytab sibling : siblingKeytabs(namespace, ownSecret, principal)) {
+            Integer version = sibling.bytes() == null ? null : keytabKeyVersion(sibling.bytes(), principal);
+            if (version != null && version >= issuedVersion) {
+                continue;
+            }
+            String key = sibling.key() != null ? sibling.key() : "service.keytab";
+            try {
+                kubernetesService.createOrUpdateOpaqueSecret(namespace, sibling.secretName(), key, issued,
+                        keytabSecretLabels(sibling.release(), principal), KdpsReleaseObjects.annotations(namespace),
+                        Boolean.TRUE);
+            } catch (Exception e) {
+                appendCommandLog(commandId, "WARNING: could not write the new keytab of " + principal + " to Secret "
+                        + namespace + "/" + sibling.secretName() + ", which now holds an outdated key: " + e.getMessage()
+                        + ". Run Regenerate keytabs on the release using that Secret.");
+                continue;
+            }
+            String release = sibling.release() == null ? "" : sibling.release();
+            if (!release.isBlank()) {
+                markRestartRequired(namespace, release);
+            }
+            appendCommandLog(commandId, "Secret " + namespace + "/" + sibling.secretName() + " also holds the keytab of "
+                    + principal + ": rewrote it with the new key (version " + issuedVersion + ")"
+                    + (release.isBlank() ? "." : "; restart release " + release + " (Resync / restart) so it uses it."));
+        }
+    }
+
+    /**
+     * Flags a release for a restart on the Releases page ("Resync / restart"), after something its pods read at
+     * startup changed outside a deploy: its keytab or its OIDC client secret. The next deploy of the release clears it.
+     */
+    private void markRestartRequired(String namespace, String releaseName) {
+        try {
+            new ReleaseMetadataService(ctx).markRestartRequired(namespace, releaseName);
+        } catch (Exception e) {
+            LOG.warn("Could not flag release {}/{} for a restart: {}", namespace, releaseName, e.toString());
+        }
+    }
+
+    /**
+     * Warns in a deploy's log when another release of the namespace already holds a keytab of the principal the
+     * deploy issues: principals are named per namespace, so the releases share it and must keep the same key.
+     */
+    private void warnOfSharedPrincipal(String commandId, String namespace, String releaseName, PlannedKeytab keytab) {
+        List<String> others = siblingKeytabs(namespace, keytab.secretName(), keytab.principalFqdn()).stream()
+                .map(StoredKeytab::release)
+                .filter(release -> release != null && !release.isBlank() && !release.equals(releaseName))
+                .distinct()
+                .toList();
+        if (!others.isEmpty()) {
+            appendCommandLog(commandId, "WARNING: release(s) " + String.join(", ", others) + " in namespace "
+                    + namespace + " already use the Kerberos principal " + keytab.principalFqdn() + ". Releases of"
+                    + " one service in a namespace share it: this release gets a copy of their keytab, and"
+                    + " regenerating the keytab of any of them rewrites the others' and flags them for a restart.");
+        }
+    }
+
+    /**
+     * The SHA-256 of the keytab a release's Secret holds, as a keytab issuing step records it before the operation
+     * writes one (see {@link #PRIOR_KEYTAB_SHA256}); null when it cannot be read.
+     */
+    private String priorKeytabSha256(String namespace, String secretName, String key) {
+        if (namespace == null || namespace.isBlank() || secretName == null || secretName.isBlank()) {
+            return null;
+        }
+        try {
+            Optional<byte[]> held = kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName,
+                    key == null || key.isBlank() ? "service.keytab" : key);
+            return held.isPresent() ? sha256Hex(held.get()) : NO_PRIOR_KEYTAB;
+        } catch (Exception e) {
+            LOG.info("Could not read keytab Secret {}/{} before issuing: {}", namespace, secretName, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * The SHA-256 of the keytab the release's Secret held before the operation, null when it held none: as the issuing
+     * step recorded it, else (for an operation planned before it recorded it) the keytab the Secret holds now.
+     */
+    private static String keytabBeforeOperation(Map<String, Object> issuerResult, Optional<byte[]> current) {
+        Object recorded = issuerResult == null ? null : issuerResult.get(PRIOR_KEYTAB_SHA256);
+        if (recorded != null) {
+            return NO_PRIOR_KEYTAB.equals(recorded) ? null : String.valueOf(recorded);
+        }
+        return current.isPresent() ? sha256Hex(current.get()) : null;
+    }
+
+    /**
+     * Once a keytab step stored a new keytab in the release's Secret: gives it to the other Secrets of the principal
+     * that hold an older key, and flags the release for a restart when its keytab changed. Repeating it is harmless,
+     * so a retried step does it again.
+     */
+    private void afterKeytabStored(CommandEntity root, String commandId, String namespace, String secretName,
+                                   String principal, String releaseName, String beforeSha256, byte[] stored,
+                                   String storedSha256) {
+        if (principal != null && !principal.isBlank()) {
+            syncSiblingKeytabs(commandId, namespace, secretName, principal, stored);
+        }
+        flagKeytabRestart(root, commandId, namespace, releaseName, beforeSha256, storedSha256);
+    }
+
+    /**
+     * After a keytab step changed the keytab in a release's Secret, flags the release for a restart: its pods read
+     * the keytab at startup, and Kubernetes does not refresh a Secret already mounted in a running pod when it is
+     * recreated. After "Regenerate keytabs", the release is restarted by its next Resync / restart. In a deploy that
+     * replaced the keytab of a running release, the deploy restarts the pods itself once Helm has applied it, since a
+     * Helm upgrade whose values did not change leaves them running. A keytab written where there was none needs no
+     * restart: no pod could start without it.
+     *
+     * @param beforeSha256 the SHA-256 of the keytab the Secret held before the operation; null when there was none
+     * @param afterSha256  the SHA-256 of the keytab the Secret holds now
+     */
+    private void flagKeytabRestart(CommandEntity root, String commandId, String namespace, String releaseName,
+                                   String beforeSha256, String afterSha256) {
+        boolean changed = beforeSha256 == null || !beforeSha256.equals(afterSha256);
+        if (!changed || releaseName == null || releaseName.isBlank()) {
+            return;
+        }
+        if (CommandType.REGENERATE_KEYTABS.name().equals(root.getType())) {
+            markRestartRequired(namespace, releaseName);
+            appendCommandLog(commandId, "The keytab of " + namespace + "/" + releaseName
+                    + " changed: restart the release (Resync / restart) so its pods use it.");
+        } else if (beforeSha256 != null) {
+            markRestartRequired(namespace, releaseName);
+            appendCommandLog(commandId, "The keytab of " + namespace + "/" + releaseName
+                    + " changed: its pods are restarted once the deploy is applied, so they use it.");
+        }
+    }
+
+    /** Whether the record of a release flags it for a restart (see {@link #markRestartRequired}). */
+    private boolean restartFlagged(String namespace, String releaseName) {
+        try {
+            return ReleaseMetadataService.restartMarked(new ReleaseMetadataService(ctx).find(namespace, releaseName));
+        } catch (Exception e) {
+            LOG.warn("Could not read the restart flag of release {}/{}: {}", namespace, releaseName, e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Restarts the pods of a release that was flagged for a restart, once a deploy (the Resync / restart of the
+     * Releases page) has applied it, and only then clears the flag. The deploy alone does not restart them: a Helm
+     * upgrade whose values did not change leaves the pods running, with the keytab or client secret they read at
+     * startup. When the pods cannot be restarted, the release stays flagged.
+     *
+     * @param commandId           the operation, whose log says what was restarted
+     * @param globalConfigVersion the global configuration fingerprint the deploy records, which replaces the flag
+     */
+    private void restartFlaggedRelease(String commandId, String namespace, String releaseName,
+                                       String globalConfigVersion) {
+        List<String> restarted;
+        try {
+            restarted = kubernetesService.restartReleaseWorkloads(namespace, releaseName);
+        } catch (Exception e) {
+            markRestartRequired(namespace, releaseName);
+            appendCommandLog(commandId, "WARNING: could not restart the pods of release " + namespace + "/"
+                    + releaseName + ": " + e.getMessage() + ". They still use the keytab or client secret they"
+                    + " started with: run Resync / restart again, or restart them by hand.");
+            return;
+        }
+        if (restarted.isEmpty()) {
+            markRestartRequired(namespace, releaseName);
+            appendCommandLog(commandId, "WARNING: release " + namespace + "/" + releaseName + " has no Deployment,"
+                    + " StatefulSet or DaemonSet to restart; restart its pods by hand so they use the new keytab or"
+                    + " client secret.");
+            return;
+        }
+        try {
+            new ReleaseMetadataService(ctx).clearRestartRequired(namespace, releaseName, globalConfigVersion);
+        } catch (Exception e) {
+            LOG.warn("Could not clear the restart flag of release {}/{}: {}", namespace, releaseName, e.toString());
+        }
+        appendCommandLog(commandId, "Restarted the pods of release " + namespace + "/" + releaseName
+                + " so they use the new keytab or client secret: " + String.join(", ", restarted));
+    }
+
+    /** The global configuration fingerprint a deploy records for its release, from its planned metadata. */
+    private static String plannedGlobalConfigVersion(Map<String, Object> params) {
+        Object metadata = params == null ? null : params.get(RELEASE_METADATA_PARAM);
+        return metadata instanceof Map<?, ?> m && m.get("globalConfigVersion") != null
+                ? String.valueOf(m.get("globalConfigVersion")) : null;
+    }
+
+    /**
+     * Labels a keytab Secret an earlier version wrote without the labels naming its principal and release, so the
+     * other releases of the principal find it, and the uninstall of its release removes it. Best effort: the keytab is
+     * rewritten unchanged, and one already labelled with its principal only gets the release labels it lacks, its data
+     * left as it is. A Secret the view did not write (one an administrator provided), or one another release claims,
+     * is not given the release labels, so the release's uninstall leaves it.
+     */
+    private void labelKeytabSecret(String namespace, String secretName, String key, byte[] keytab, String releaseName,
+                                   String principal) {
+        if (principal == null || principal.isBlank()) {
+            return;
+        }
+        try {
+            io.fabric8.kubernetes.api.model.Secret secret = kubernetesService.getSecret(namespace, secretName);
+            if (secret == null || secret.getMetadata() == null) {
+                return;
+            }
+            Map<String, String> labels = secret.getMetadata().getLabels();
+            boolean viewWritten = secret.getMetadata().getAnnotations() != null
+                    && VIEW_MANAGED_BY.equals(secret.getMetadata().getAnnotations().get("managed-by"));
+            if (labels != null && labels.containsKey(KEYTAB_PRINCIPAL_LABEL)) {
+                // Written with its principal's label before the release labels existed: a reused keytab is not written
+                // again, so this is the only step that can make it the release's.
+                Map<String, String> missing = KdpsReleaseObjects.missingLabels(secret.getMetadata(), viewWritten,
+                        namespace, releaseName, KEYTAB_RELEASE_LABEL);
+                if (!missing.isEmpty()) {
+                    kubernetesService.addSecretLabels(namespace, secretName, missing,
+                            KdpsReleaseObjects.annotations(namespace));
+                }
+                return;
+            }
+            Map<String, String> keytabLabels = keytabSecretLabels(releaseName, principal);
+            if (!viewWritten) {
+                keytabLabels.remove(KdpsReleaseObjects.LABEL_RELEASE);
+            }
+            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, key, keytab, keytabLabels,
+                    viewWritten ? KdpsReleaseObjects.annotations(namespace) : null, Boolean.TRUE);
+        } catch (Exception e) {
+            LOG.info("Could not label keytab Secret {}/{}: {}", namespace, secretName, e.toString());
+        }
+    }
+
+    /** A key of a Secret as UTF-8 text; null when the Secret or the key is absent or cannot be read. */
+    private String secretValue(String namespace, String secretName, String key) {
+        try {
+            return kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, key)
+                    .map(bytes -> new String(bytes, StandardCharsets.UTF_8))
+                    .orElse(null);
+        } catch (Exception e) {
+            LOG.debug("Could not read {} of Secret {}/{}: {}", key, namespace, secretName, e.toString());
+            return null;
         }
     }
 
@@ -9350,20 +14480,38 @@ public class CommandService {
         e.setState(CommandState.SUCCEEDED.name());
         e.setMessage(message);
         e.setUpdatedAt(Instant.now().toString());
-        store(e);
+        storeTerminal(e);
     }
 
     private void fail(CommandStatusEntity e, String message) {
         e.setState(CommandState.FAILED.name());
         e.setMessage(message);
         e.setUpdatedAt(Instant.now().toString());
-        store(e);
+        storeTerminal(e);
     }
 
-    private void store(CommandStatusEntity e) {
-        try { dataStore.store(e); }
+    /**
+     * Writes a final state. A write that is lost leaves the operation RUNNING for good, so it is tried a few times
+     * and then reported to the caller, which schedules another scan of the operation.
+     */
+    private void storeTerminal(CommandStatusEntity e) {
+        for (int attempt = 1; attempt <= TERMINAL_WRITE_ATTEMPTS; attempt++) {
+            if (store(e)) return;
+            if (attempt < TERMINAL_WRITE_ATTEMPTS) {
+                try { Thread.sleep(terminalWriteBackoffMillis * attempt); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+            }
+        }
+        LOG.error("Could not persist the final state {} of command status {}", e.getState(), e.getId());
+        throw new StoreWriteException("Cannot write the final state " + e.getState() + " of command status " + e.getId());
+    }
+
+    /** @return whether the status was persisted */
+    private boolean store(CommandStatusEntity e) {
+        try { dataStore.store(e); return true; }
         catch (PersistenceException ex) {
             LOG.error("Persist error", ex);
+            return false;
         }
     }
 
@@ -9386,20 +14534,10 @@ public class CommandService {
     private void store(CommandEntity e) {
         try {
             String rawParams = e.getParamsJson();
-            if (rawParams != null && !rawParams.startsWith("@@file:")) {
-                // Always externalize params to a file for predictability and to avoid datastore limits.
-                try {
-                    ViewConfigurationService cfg = new ViewConfigurationService(ctx);
-                    String base = cfg.getConfigurationDirectoryPath();
-                    Path paramsDir = Paths.get(base, "params");
-                    Files.createDirectories(paramsDir);
-                    Path filePath = paramsDir.resolve(e.getId() + "-params.json");
-                    Files.writeString(filePath, rawParams, StandardCharsets.UTF_8);
-                    e.setParamsJson("@@file:" + filePath.toString());
-                    LOG.info("Persisting params for command {} to file {}", e.getId(), filePath);
-                } catch (Exception ioEx) {
-                    LOG.warn("Could not externalize paramsJson for {}: {}", e.getId(), ioEx.toString());
-                }
+            if (rawParams != null && !CommandParamsStore.isFileReference(rawParams)) {
+                // Always externalize params to a file for predictability and to avoid datastore limits: encrypted,
+                // owner-only, without the form's secrets no step reads (see CommandParamsStore).
+                e.setParamsJson(CommandParamsStore.persist(ctx, e.getId(), rawParams));
             }
             dataStore.store(e);
         } catch (PersistenceException ex) {
@@ -9411,46 +14549,31 @@ public class CommandService {
      * Load the persisted global security configuration from the datastore.
      *
      * @param requestedProfile explicit profile name requested by the caller (may be null/blank)
-     * @return SecurityConfigDTO or null when absent/invalid.
+     * @return SecurityConfigDTO, or null when no profile is named or none has that name
+     * @throws IllegalStateException when the profiles cannot be read
      */
     private SecurityConfigDTO loadSecurityConfig(String requestedProfile) {
         if (requestedProfile == null || requestedProfile.isBlank()) {
             return null;
         }
-        try {
-            SecurityProfileService profileService = new SecurityProfileService(ctx);
-            return profileService.resolveProfile(requestedProfile);
-        } catch (Exception ex) {
-            LOG.warn("Could not load global security configuration: {}", ex.toString());
-            return null;
-        }
+        return new SecurityProfileService(ctx).resolveProfile(requestedProfile);
     }
 
     /**
-     * Resolve the profile name to use, considering defaults.
+     * The security profile a deploy applies: the one it names, or none when it names none (no profile is applied
+     * unless the operator picked one). A deploy that names a profile never goes on without it.
      *
      * @param requestedProfile explicit profile name requested by caller; may be null/blank
-     * @return resolved profile name or null when no profiles are stored
+     * @return the requested profile name, or null when none is requested
+     * @throws IllegalArgumentException when the requested profile does not exist
+     * @throws IllegalStateException    when the profiles cannot be read
      */
     private String resolveSecurityProfileName(String requestedProfile) {
         if (requestedProfile == null || requestedProfile.isBlank()) {
             return null;
         }
-        try {
-            SecurityProfileService profileService = new SecurityProfileService(ctx);
-            SecurityProfilesDTO profiles = profileService.loadProfiles();
-            if (profiles == null || profiles.profiles == null || profiles.profiles.isEmpty()) {
-                return null;
-            }
-            // Only honor an explicitly requested profile. If the user did not select one, do not auto-apply any profile.
-            if (profiles.profiles.containsKey(requestedProfile)) {
-                return requestedProfile;
-            }
-            return null;
-        } catch (Exception ex) {
-            LOG.warn("Could not resolve security profile name: {}", ex.toString());
-            return null;
-        }
+        new SecurityProfileService(ctx).requireProfile(requestedProfile);
+        return requestedProfile;
     }
 
     /**
@@ -9463,9 +14586,9 @@ public class CommandService {
      * JWT). The returned map is suitable for handing to
      * {@link AmbariActionClient#updateClusterConfig(String, String, Map, String)}.
      *
-     * <p>Idempotency is handled by {@code updateClusterConfig} (it compares against
-     * current desired-config and skips the PUT if nothing changed); this method just
-     * computes the desired-state delta.
+     * <p>Idempotency is handled by {@link #writeTagSyncSite} and {@code updateClusterConfig}
+     * (they compare against the current desired config, the token through its digest, and skip
+     * the PUT if nothing changed); this method just computes the desired-state delta.
      *
      * @param spec              the service.json ranger entry (must have {@code type:
      *                          "ranger-tagsync-source"}; other types raise IAE)
@@ -9510,18 +14633,7 @@ public class CommandService {
         if (omEndpoint == null || omEndpoint.isBlank()) throw new IllegalArgumentException("omEndpoint is required");
         if (jwt == null || jwt.isBlank()) throw new IllegalArgumentException("jwt is required");
 
-        // The "source key" is the token Ranger's TagSynchronizer uses as the <name> in
-        // `ranger.tagsync.source.<name>.*`. It MUST be the name the concrete TagSource
-        // implementation reads its own config under: OpenmetadataRESTTagSource hard-codes the
-        // prefix `ranger.tagsync.source.openmetadatarest.*` (see TagSyncConfig), so the endpoint
-        // and token MUST live under `openmetadatarest`, not the service.json entry name. Honor an
-        // explicit `source_key` from the spec, else default to the built-in `openmetadatarest`
-        // (NOT entryKey — using the entry name e.g. "ranger-openmetadata-tagsync" makes the impl
-        // report "OpenmetadataEndpoint not specified" because it never reads that prefix).
-        Object sourceKeyOverride = spec.get("source_key");
-        String sourceKey = (sourceKeyOverride != null && !String.valueOf(sourceKeyOverride).isBlank())
-                ? String.valueOf(sourceKeyOverride)
-                : "openmetadatarest";
+        String sourceKey = tagSyncSourceKey(spec);
 
         Map<String, String> props = new LinkedHashMap<>();
         // ----- per-source endpoint + auth + class -----
@@ -9541,9 +14653,10 @@ public class CommandService {
         // silently skipped ("TagSync is not configured for any tag-sources"). `ranger.tagsync.sources`
         // is NOT read by this TagSynchronizer, so the enable flag — not the CSV — is what matters.
         props.put("ranger.tagsync.source." + sourceKey, "true");
-        // Turn OFF the default Atlas (Kafka) source: it's enabled by default and, with no Atlas
-        // Kafka wired, loops "Failed to initialize TAG source atlas" and can crowd out our source.
-        props.put("ranger.tagsync.source.atlas", "false");
+        // The Atlas source (ranger.tagsync.source.atlas) is deliberately left as the cluster has it.
+        // Turning it off here cut Atlas classifications off from Ranger on every cluster that relies
+        // on them (tag-based masking and deny policies stopped covering newly tagged data); an
+        // operator without Atlas turns it off in Ambari themselves.
 
         // ----- service-name mapper: maps OM database-service name → Ranger service name -----
         // Without a mapping, OpenmetadataResourceMapper (RANGER-4978) targets the Ranger service
@@ -9585,6 +14698,232 @@ public class CommandService {
         props.put("ranger.tagsync.sources", String.join(",", sources));
 
         return props;
+    }
+
+    /**
+     * The token Ranger's TagSynchronizer uses as the {@code <name>} in
+     * {@code ranger.tagsync.source.<name>.*}. It MUST be the name the concrete TagSource
+     * implementation reads its own config under: OpenmetadataRESTTagSource hard-codes the
+     * prefix {@code ranger.tagsync.source.openmetadatarest.*} (see TagSyncConfig), so the endpoint
+     * and token MUST live under {@code openmetadatarest}, not the service.json entry name. Honor an
+     * explicit {@code source_key} from the spec, else default to the built-in {@code openmetadatarest}
+     * (NOT the entry name — "ranger-openmetadata-tagsync" makes the impl report
+     * "OpenmetadataEndpoint not specified" because it never reads that prefix).
+     */
+    static String tagSyncSourceKey(Map<String, Object> spec) {
+        Object sourceKeyOverride = spec == null ? null : spec.get("source_key");
+        return (sourceKeyOverride != null && !String.valueOf(sourceKeyOverride).isBlank())
+                ? String.valueOf(sourceKeyOverride)
+                : "openmetadatarest";
+    }
+
+    /** Ambari config type the Ranger TagSync daemon is configured from. */
+    static final String TAGSYNC_SITE = "ranger-tagsync-site";
+
+    /**
+     * Adds the digest of the source's token to {@code props} and drops the token itself when the
+     * cluster already stores that same token.
+     *
+     * <p>The token is stored as a password property, which Ambari masks on every read, so the
+     * stored value can never be compared with the new one. Its SHA-256 is stored beside it under
+     * {@code <token key>.sha256} (Ranger ignores the key: a source is only discovered from
+     * {@code ranger.tagsync.source.<name>}) and compared instead. A token whose digest is unchanged
+     * is left out of the write, so a redeploy that changes nothing writes no config version and
+     * does not restart Ranger TagSync.
+     *
+     * @param props    the delta from {@link #buildTagSyncRangerSiteOverrides}
+     * @param tokenKey the key holding the token in {@code props}
+     * @param current  the current {@code ranger-tagsync-site} properties (password values masked)
+     * @return a new ordered map; {@code props} is not modified
+     */
+    static Map<String, String> withTagSyncTokenDigest(Map<String, String> props,
+                                                       String tokenKey,
+                                                       Map<String, String> current) {
+        Map<String, String> out = new LinkedHashMap<>(props);
+        String token = out.get(tokenKey);
+        if (token == null || token.isBlank()) return out;
+        String digest = sha256Hex(token.getBytes(StandardCharsets.UTF_8));
+        out.put(tokenKey + ".sha256", digest);
+        String stored = current == null ? null : current.get(tokenKey);
+        if (current != null && digest.equals(current.get(tokenKey + ".sha256")) && stored != null && !stored.isBlank()) {
+            out.remove(tokenKey);
+        }
+        return out;
+    }
+
+    /**
+     * Registers the TagSync source in the cluster's {@code ranger-tagsync-site} through Ambari and
+     * says whether a new config version was written, in which case Ranger TagSync must be restarted.
+     * The bot token is stored as a password property (masked in Ambari's API, UI and config history)
+     * and is only sent when it changed (see {@link #withTagSyncTokenDigest}). Ambari still hands the
+     * real value to the Ranger TagSync host, where the Ranger service script moves it into a credential
+     * store and renders it blank in {@code ranger-tagsync-site.xml}.
+     */
+    static boolean writeTagSyncSite(AmbariActionClient ambari,
+                                    String cluster,
+                                    Map<String, Object> spec,
+                                    String entryKey,
+                                    String omEndpoint,
+                                    String jwt,
+                                    String tagSuffix) throws Exception {
+        AmbariActionClient.DesiredConfig current = ambari.getDesiredConfig(cluster, TAGSYNC_SITE);
+        Map<String, String> props = buildTagSyncRangerSiteOverrides(spec, entryKey, omEndpoint, jwt,
+                current.properties().get("ranger.tagsync.sources"));
+        String tokenKey = tagSyncTokenKey(spec);
+        Map<String, String> delta = withTagSyncTokenDigest(props, tokenKey, current.properties());
+        return ambari.updateClusterConfig(cluster, TAGSYNC_SITE, delta, Set.of(tokenKey), tagSuffix);
+    }
+
+    /** Key of the source's bot token in {@code ranger-tagsync-site}. */
+    static String tagSyncTokenKey(Map<String, Object> spec) {
+        return "ranger.tagsync.source." + tagSyncSourceKey(spec) + ".token";
+    }
+
+    /** Whether Ambari stores {@code key} of this config as a password (masked in its API and UI). */
+    private static boolean isPasswordProperty(AmbariActionClient.DesiredConfig config, String key) {
+        return "true".equals(config.attributes().getOrDefault("password", Map.of()).get(key));
+    }
+
+    /**
+     * A warning when the cluster holds this same token in clear, or null. Earlier KDPS versions wrote
+     * it without the password attribute: masking it now does not reach the earlier config versions,
+     * which Ambari keeps readable in its configuration history, and the token stays valid there until
+     * it expires or is regenerated (OpenMetadata then accepts only the new one).
+     */
+    static String clearTokenWarning(AmbariActionClient.DesiredConfig current, String tokenKey, String jwt) {
+        String stored = current.properties().get(tokenKey);
+        if (isPasswordProperty(current, tokenKey) || stored == null || !stored.equals(jwt)) return null;
+        return "An earlier KDPS version stored the OpenMetadata ingestion-bot token in clear in ranger-tagsync-site,"
+                + " and that token is still valid: anyone who can read Ambari's configuration history can use it until"
+                + " it expires. KDPS now stores it as a password property. "
+                + org.apache.ambari.view.k8s.service.om.OmBotJwtClient.REGENERATE_HINT
+                + ", so that the old copies stop working, "
+                + org.apache.ambari.view.k8s.service.om.OmBotJwtClient.AFTER_REGENERATE_HINT + ".";
+    }
+
+    /**
+     * A warning when the cluster's Atlas tag source is turned off while Atlas is installed, or null.
+     * Earlier KDPS versions turned it off on every OpenMetadata registration, and Atlas classifications
+     * have not reached Ranger since. KDPS no longer touches the property, so it does not turn it back
+     * on either: an operator may have turned it off on purpose.
+     */
+    static String atlasSourceOffWarning(AmbariActionClient ambari, String cluster, Map<String, String> current) {
+        if (!"false".equalsIgnoreCase(String.valueOf(current.get("ranger.tagsync.source.atlas")).trim())) return null;
+        try {
+            if (ambari.getComponentHosts(cluster, "ATLAS", "ATLAS_SERVER").isEmpty()) return null;
+        } catch (Exception e) {
+            // Ambari answers 404 for a service the cluster does not have: no Atlas, nothing lost.
+            LOG.debug("OM_RANGER_TAGSYNC_REGISTER: no Atlas server found on cluster '{}': {}", cluster, e.toString());
+            return null;
+        }
+        return "ranger.tagsync.source.atlas is false in ranger-tagsync-site although Atlas is installed, so Atlas"
+                + " classifications (PII and others) do not reach Ranger and tag-based policies do not cover newly"
+                + " tagged data. Earlier KDPS versions turned it off when registering OpenMetadata. Unless that is"
+                + " intended, set it to true in Ambari (Ranger > Configs > Advanced ranger-tagsync-site) and restart"
+                + " Ranger TagSync.";
+    }
+
+    /**
+     * What the cluster's {@code ranger-tagsync-site} holds that the operator of a release with Ranger
+     * TagSync turned off must hear about, read without changing anything and without asking
+     * OpenMetadata for the bot token. Earlier KDPS versions registered OpenMetadata on every deploy
+     * whatever the switch said: they turned the Atlas tag source off and stored a bot token that never
+     * expires in clear. Those releases all deploy with the switch off now (they carry no value for
+     * it), so this is where their operators learn about it.
+     */
+    static List<String> switchedOffTagSyncWarnings(AmbariActionClient ambari,
+                                                   String cluster,
+                                                   Map<String, Object> spec,
+                                                   Instant now) throws Exception {
+        AmbariActionClient.DesiredConfig current = ambari.getDesiredConfig(cluster, TAGSYNC_SITE);
+        List<String> warnings = new ArrayList<>();
+        String atlasOff = atlasSourceOffWarning(ambari, cluster, current.properties());
+        if (atlasOff != null) warnings.add(atlasOff);
+
+        String sourceFlag = "ranger.tagsync.source." + tagSyncSourceKey(spec);
+        if (!"true".equalsIgnoreCase(String.valueOf(current.properties().get(sourceFlag)).trim())) return warnings;
+        String endpoint = current.properties().get(sourceFlag + ".endpoint");
+        String registered = "OpenMetadata is registered as a tag source of Ranger TagSync in ranger-tagsync-site"
+                + (endpoint == null || endpoint.isBlank() ? "" : " (" + endpoint + ")")
+                + ", and Ranger TagSync is turned off for this release: KDPS leaves that registration as it is and"
+                + " no longer updates it.";
+        String clearToken = storedClearTokenWarning(current, tagSyncTokenKey(spec), now);
+        warnings.add(registered + " " + (clearToken != null ? clearToken
+                : "If it is no longer wanted, remove the OpenMetadata source from ranger-tagsync-site in Ambari; to"
+                        + " keep it up to date, turn 'Enable Ranger TagSync' on with Upgrade / Config."));
+        return warnings;
+    }
+
+    /**
+     * A warning when {@code ranger-tagsync-site} holds a bot token in clear that may still be valid,
+     * or null. Read without OpenMetadata, so the token counts as valid unless its own expiry passed.
+     */
+    static String storedClearTokenWarning(AmbariActionClient.DesiredConfig current, String tokenKey, Instant now) {
+        String stored = current.properties().get(tokenKey);
+        if (stored == null || stored.isBlank() || isPasswordProperty(current, tokenKey)) return null;
+        Instant expiresAt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.expiryOf(stored);
+        if (expiresAt != null && !expiresAt.isAfter(now)) return null;
+        return "It holds the OpenMetadata ingestion-bot token in clear, "
+                + (expiresAt == null ? "one that never expires" : "valid until " + expiresAt)
+                + ": unless the bot's token was regenerated since, anyone who can read Ambari's configuration (its"
+                + " history included) can call OpenMetadata as the bot. "
+                + org.apache.ambari.view.k8s.service.om.OmBotJwtClient.REGENERATE_HINT
+                + ", so that OpenMetadata refuses the copies in Ambari. Then either turn 'Enable Ranger TagSync' on"
+                + " with Upgrade / Config, which stores the new token as a password property, or remove the"
+                + " OpenMetadata source from ranger-tagsync-site in Ambari; and "
+                + org.apache.ambari.view.k8s.service.om.OmBotJwtClient.PIPELINES_HINT + ".";
+    }
+
+    /**
+     * Restarts Ranger TagSync when this run wrote {@code ranger-tagsync-site}, and only then.
+     *
+     * <p>Ambari keeps a single "restart required" flag per component, which a change to any config
+     * type Ranger TagSync reads sets (ranger-tagsync-site, atlas-tagsync-ssl, tagsync-log4j, ...)
+     * and a restart clears; it does not say which changes the restart is waiting for. A run that
+     * wrote nothing therefore cannot tell a restart of its own that failed from an administrator's
+     * change left for a maintenance window, and restarting would apply the latter: the pending
+     * restart is reported in {@code warnings} instead, so the run does not report the source active
+     * in silence while Ranger TagSync may still run without it.
+     *
+     * @return the Ambari request id of the restart, or null when Ranger TagSync was not restarted
+     * @throws IllegalStateException when the restart does not complete within {@code timeout}
+     */
+    static Integer restartTagSyncIfNeeded(AmbariActionClient ambari,
+                                          String cluster,
+                                          String entryKey,
+                                          boolean wrote,
+                                          String tagSuffix,
+                                          List<String> warnings,
+                                          java.time.Duration timeout) throws Exception {
+        if (!wrote) {
+            if (!ambari.componentRestartRequired(cluster, "RANGER", "RANGER_TAGSYNC")) {
+                LOG.info("ranger-tagsync-site already had source '{}'; skipping Ranger TagSync restart", entryKey);
+                return null;
+            }
+            String tag = ambari.getDesiredConfig(cluster, TAGSYNC_SITE).tag();
+            warnings.add(AmbariActionClient.isConfigTagWrittenWith(tag, tagSuffix)
+                    ? "Ranger TagSync is waiting for a restart in Ambari, and its ranger-tagsync-site is the one KDPS"
+                            + " wrote for this release: if the restart KDPS made then did not complete, Ranger TagSync"
+                            + " does not run the OpenMetadata source yet. KDPS does not restart it now, since Ambari does"
+                            + " not say which changes the restart is waiting for and some may not be KDPS's. Restart Ranger"
+                            + " TagSync in Ambari when convenient."
+                    : "Ranger TagSync has configuration changes waiting for a restart in Ambari that KDPS did"
+                            + " not make, so KDPS leaves that restart to you. Until Ranger TagSync restarts, it may not run"
+                            + " the OpenMetadata source.");
+            LOG.info("Ranger TagSync is waiting for a restart (ranger-tagsync-site {}); not restarting it for changes"
+                    + " this run did not make", tag);
+            return null;
+        }
+        int reqId = ambari.submitComponentRestart(cluster, "RANGER", "RANGER_TAGSYNC",
+                "KDPS: restart Ranger TagSync after registering source '" + entryKey + "'");
+        if (!ambari.waitUntilComplete(reqId, timeout.toSeconds(), java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Ranger TagSync restart did not complete (Ambari requestId=" + reqId
+                    + "). ranger-tagsync-site already holds the OpenMetadata source: restart Ranger TagSync in Ambari"
+                    + " once it can start. Running the deployment again does not restart it, since KDPS restarts"
+                    + " Ranger TagSync only right after changing its configuration.");
+        }
+        LOG.info("Ranger TagSync restarted; source '{}' is now active", entryKey);
+        return reqId;
     }
 
     /**
@@ -9636,9 +14975,19 @@ public class CommandService {
      *       integration honest about its limits instead of silently doing nothing.</li>
      * </ul>
      *
+     * <p>The release's "Enable Ranger TagSync" switch is checked again here. During a deploy a
+     * release with the switch off only gets {@link #checkTagSyncSite} (nothing is read from
+     * OpenMetadata and the cluster is not changed); the operator's explicit "Re-register Ranger
+     * TagSync source" action ({@code _tagSyncReplay}) still registers, with a warning in its result.
+     *
+     * <p>A bot token that never expires is registered with a warning (see
+     * {@link org.apache.ambari.view.k8s.service.om.OmBotJwtClient#neverExpiresWarning}); an expired
+     * one is refused.
+     *
      * @return a small JSON payload to record on the command's status; never null
-     * @throws Exception when any required input is missing or an Ambari call fails
-     *                   (only on the Ambari-managed branch)
+     * @throws Exception when any required input is missing, the token cannot be read or has
+     *                   expired, or an Ambari call fails (only on the
+     *                   Ambari-managed branch)
      */
     @SuppressWarnings("unchecked")
     String registerRangerTagSyncSource(Map<String, Object> childParams) throws Exception {
@@ -9672,6 +15021,20 @@ public class CommandService {
             LOG.info("OM_RANGER_TAGSYNC_REGISTER: read live helm release values for {}/{} ({} keys)",
                     namespace, releaseName, values.size());
         }
+        boolean replay = "true".equalsIgnoreCase(String.valueOf(childParams.get("_tagSyncReplay")));
+        String replayNote = null;
+        if (!isTagSyncSwitchOn(values, settings)) {
+            String switchOff = "Ranger TagSync is turned off for " + namespace + "/" + releaseName + " ('"
+                    + tagSyncEnabledPath(settings) + "' is not true).";
+            if (!replay) {
+                LOG.info("OM_RANGER_TAGSYNC_REGISTER: {} The cluster's Ranger TagSync is only checked, not changed.",
+                        switchOff);
+                return checkTagSyncSite(childParams, spec, switchOff);
+            }
+            replayNote = switchOff + " The source is registered because it was asked for explicitly; the next"
+                    + " deployment of the release leaves it in place but no longer updates it.";
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", replayNote);
+        }
         String endpointHelmPath = String.valueOf(spec.getOrDefault(
                 "endpoint_helm_prop",
                 settings.getOrDefault("endpoint_helm_prop", "ranger.tagSync.endpoint")));
@@ -9681,48 +15044,6 @@ public class CommandService {
             throw new IllegalStateException("Could not resolve OM endpoint at helm path '" + endpointHelmPath
                     + "' — the operator must enable Ranger TagSync and provide an endpoint in the wizard.");
         }
-
-        // ----- Mint a fresh Unlimited-TTL JWT for OM's ingestion-bot via the
-        // OM-deps airflow scheduler pod. The previous design read the JWT from a
-        // K8s Secret that a helm hook Job populated; chart 1.13.5 deletes that
-        // Job (and the Secret), so the Ambari step now mints the JWT itself.
-        // See OmBotJwtClient for the why-exec-not-JDBC rationale.
-        //
-        // Fernet Secret coordinates come from settings (chart-specific) with sensible
-        // defaults — release-name templated since the Secret is per-release.
-        String fernetSecretNameTpl = String.valueOf(
-                settings.getOrDefault("fernet_secret_name_template", "{{releaseName}}-fernet"));
-        String fernetSecretName = fernetSecretNameTpl.replace("{{releaseName}}", releaseName);
-        String fernetSecretKey = String.valueOf(settings.getOrDefault("fernet_secret_key", "fernet-key"));
-        String fernetKey = null;
-        try {
-            io.fabric8.kubernetes.api.model.Secret fernetSec =
-                    this.kubernetesService.getSecret(namespace, fernetSecretName);
-            if (fernetSec != null && fernetSec.getData() != null
-                    && fernetSec.getData().containsKey(fernetSecretKey)) {
-                fernetKey = new String(
-                        java.util.Base64.getDecoder().decode(fernetSec.getData().get(fernetSecretKey)),
-                        java.nio.charset.StandardCharsets.UTF_8).trim();
-            }
-        } catch (Exception ex) {
-            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read '{}/{}' Secret key '{}', falling back to chart default: {}",
-                    namespace, fernetSecretName, fernetSecretKey, ex.toString());
-        }
-        // OM service host + port from settings (chart-specific). Default: just the
-        // release name + 8585 (matches OM chart's `<release>` Service name).
-        String omSvcTpl = String.valueOf(settings.getOrDefault("om_service_template", "{{releaseName}}"));
-        String omSvc = omSvcTpl.replace("{{releaseName}}", releaseName);
-        Object omPortRaw = settings.get("om_port");
-        Integer omPort = (omPortRaw instanceof Number) ? ((Number) omPortRaw).intValue() :
-                (omPortRaw != null && !String.valueOf(omPortRaw).isBlank() ? Integer.parseInt(String.valueOf(omPortRaw)) : Integer.valueOf(8585));
-        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
-                this.kubernetesService.getClient(),
-                namespace,
-                releaseName,
-                fernetKey,
-                omSvc,
-                omPort,
-                java.time.Duration.ofSeconds(120));
 
         // ----- Branch on Ranger ownership via the selected Platform Context -----
         // The per-service Ranger discovery fields were removed (feedback: TagSync must
@@ -9754,15 +15075,60 @@ public class CommandService {
             }
         }
 
-        // Always compute the property delta — both branches need it. Don't pass currentSources
-        // on the external branch (we can't read the foreign cluster's config).
-        String currentSources = external
-                ? null
-                : new AmbariActionClient(ctx,
-                        java.net.URI.create((String) childParams.get("_baseUri")).resolve("/api/v1").toString(),
-                        cluster,
-                        AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders")))
-                                .getDesiredConfigProperty(cluster, "ranger-tagsync-site", "ranger.tagsync.sources");
+        // ----- Ambari-managed Ranger: read what Ranger TagSync runs with before the token, so what it
+        // says about the cluster (the Atlas tag source turned off) still reaches the operator when the
+        // token is refused or cannot be read.
+        List<String> warnings = new ArrayList<>();
+        AmbariActionClient ambari = null;
+        AmbariActionClient.DesiredConfig currentSite = null;
+        if (!external) {
+            if (cluster == null || cluster.isBlank()) {
+                throw new IllegalStateException("Missing _cluster in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
+            }
+            String baseUriStr = (String) childParams.get("_baseUri");
+            if (baseUriStr == null || baseUriStr.isBlank()) {
+                throw new IllegalStateException("Missing _baseUri in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
+            }
+            String ambariApiBase = java.net.URI.create(baseUriStr).resolve("/api/v1").toString();
+            Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+            ambari = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
+            currentSite = ambari.getDesiredConfig(cluster, TAGSYNC_SITE);
+            String atlasOff = atlasSourceOffWarning(ambari, cluster, currentSite.properties());
+            if (atlasOff != null) {
+                warnings.add(atlasOff);
+                LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", atlasOff);
+            }
+        }
+
+        // ----- Read the OM ingestion-bot's current JWT through the OM-deps airflow scheduler pod.
+        // OpenMetadata only accepts the token it stores for the bot, and only an OpenMetadata
+        // administrator can replace it, so KDPS hands Ranger TagSync the current one (see
+        // OmBotJwtClient).
+        org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken;
+        try {
+            botToken = readOmBotToken(namespace, releaseName, settings);
+        } catch (IllegalStateException e) {
+            throw withWarnings(e, warnings);
+        }
+        String jwt = botToken.jwt();
+        if (currentSite != null) {
+            String clearToken = clearTokenWarning(currentSite, tagSyncTokenKey(spec), jwt);
+            if (clearToken != null) warnings.add(clearToken);
+        }
+        // OpenMetadata 1.12 creates the bot with a token that never expires and does not let KDPS
+        // rotate it: it is handed over with a warning that says how to replace it with one that expires.
+        String neverExpires = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.neverExpiresWarning(botToken);
+        if (neverExpires != null) {
+            warnings.add(neverExpires);
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", neverExpires);
+        }
+        if (replayNote != null) warnings.add(0, replayNote);
+        String lifetimeWarning = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.lifetimeWarning(botToken, Instant.now());
+        if (lifetimeWarning != null) {
+            warnings.add(lifetimeWarning);
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", lifetimeWarning);
+        }
+
         // The service.json entry is static; the OM-service → Ranger-service mapping lives in the
         // release's helm values (wizard fields rangerTagSyncTrinoServiceFqn /
         // rangerTagSyncRangerTrinoService → ranger.tagSync.*). Copy it into the spec so the
@@ -9781,10 +15147,12 @@ public class CommandService {
                     + "target '<OM service>_trino' and uploads will fail with HTTP 400 unless a mapping is set.",
                     namespace, releaseName);
         }
-        Map<String, String> propsToSet = buildTagSyncRangerSiteOverrides(effectiveSpec, entryKey, omEndpoint, jwt, currentSources);
+        String tokenExpiresAt = String.valueOf(botToken.expiresAt());
 
         if (external) {
-            // No Ambari mutation, no restart. Surface what the operator must apply.
+            // No Ambari mutation, no restart. Surface what the operator must apply. We can't read the
+            // foreign cluster's config, so no current sources to merge with.
+            Map<String, String> propsToSet = buildTagSyncRangerSiteOverrides(effectiveSpec, entryKey, omEndpoint, jwt, null);
             String snippet = renderTagSyncXmlSnippet(propsToSet);
             LOG.info("OM_RANGER_TAGSYNC_REGISTER (external) source='{}' rangerUrl='{}' authMode='{}' "
                             + "— rendered {} props to snippet (see command status JSON / deploy log). "
@@ -9801,38 +15169,24 @@ public class CommandService {
             if (!externalRangerSecretName.isEmpty()) result.put("credsSecretName", externalRangerSecretName);
             result.put("xmlSnippet", snippet);
             result.put("propertiesCount", propsToSet.size());
+            result.put("tokenExpiresAt", tokenExpiresAt);
+            if (!warnings.isEmpty()) result.put("warnings", warnings);
             return gson.toJson(result);
         }
 
-        // ----- Ambari-managed Ranger path (current behavior, regression-safe) -----
-        if (cluster == null || cluster.isBlank()) {
-            throw new IllegalStateException("Missing _cluster in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
-        }
-        String baseUriStr = (String) childParams.get("_baseUri");
-        if (baseUriStr == null || baseUriStr.isBlank()) {
-            throw new IllegalStateException("Missing _baseUri in OM_RANGER_TAGSYNC_REGISTER params (Ambari-managed branch)");
-        }
-        java.net.URI baseUri = java.net.URI.create(baseUriStr);
-        String ambariApiBase = baseUri.resolve("/api/v1").toString();
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-        var ambari = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
-
-        LOG.info("OM_RANGER_TAGSYNC_REGISTER (Ambari-managed): writing {} props to ranger-tagsync-site for source '{}' on cluster '{}'",
-                propsToSet.size(), entryKey, cluster);
-        boolean wrote = ambari.updateClusterConfig(cluster, "ranger-tagsync-site", propsToSet, "om-tagsync-" + releaseName);
-
-        Integer restartReqId = null;
-        if (wrote) {
-            int reqId = ambari.submitComponentRestart(cluster, "RANGER", "RANGER_TAGSYNC",
-                    "KDPS: restart Ranger TagSync after registering source '" + entryKey + "'");
-            restartReqId = reqId;
-            boolean ok = ambari.waitUntilComplete(reqId, 600L, java.util.concurrent.TimeUnit.SECONDS);
-            if (!ok) {
-                throw new IllegalStateException("Ranger TagSync restart did not complete (Ambari requestId=" + reqId + ")");
-            }
-            LOG.info("Ranger TagSync restarted; source '{}' is now active", entryKey);
-        } else {
-            LOG.info("ranger-tagsync-site already had source '{}'; skipping Ranger TagSync restart", entryKey);
+        // ----- Ambari-managed Ranger path -----
+        LOG.info("OM_RANGER_TAGSYNC_REGISTER (Ambari-managed): registering source '{}' in ranger-tagsync-site on cluster '{}'",
+                entryKey, cluster);
+        String tagSuffix = "om-tagsync-" + releaseName;
+        boolean wrote;
+        Integer restartReqId;
+        try {
+            wrote = writeTagSyncSite(ambari, cluster, effectiveSpec, entryKey, omEndpoint, jwt, tagSuffix);
+            recordTagSyncSource(childParams, effectiveSpec, entryKey, omEndpoint, jwt);
+            restartReqId = restartTagSyncIfNeeded(ambari, cluster, entryKey, wrote, tagSuffix, warnings,
+                    java.time.Duration.ofSeconds(600));
+        } catch (IllegalStateException e) {
+            throw withWarnings(e, warnings);
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -9840,12 +15194,94 @@ public class CommandService {
         result.put("sourceKey", entryKey);
         result.put("configChanged", wrote);
         if (restartReqId != null) result.put("restartRequestId", restartReqId);
+        result.put("tokenExpiresAt", tokenExpiresAt);
+        if (!warnings.isEmpty()) result.put("warnings", warnings);
         return gson.toJson(result);
     }
 
     /**
-     * Body of the {@code OM_ATLAS_FEDERATION_REGISTER} step. Mints an Unlimited-TTL
-     * JWT for the OM ingestion-bot, then calls OM REST four times to set up the
+     * {@code e} with {@code warnings} added to its message, so a step that fails still reports what
+     * it found on the cluster (the step's warnings otherwise only reach its result).
+     */
+    static IllegalStateException withWarnings(IllegalStateException e, List<String> warnings) {
+        if (warnings == null || warnings.isEmpty()) return e;
+        return new IllegalStateException(e.getMessage() + " Also: " + String.join(" ", warnings), e);
+    }
+
+    /**
+     * The OpenMetadata ingestion-bot's current token, read through the release's Airflow scheduler
+     * pod with the release's Fernet key. Fernet Secret coordinates come from settings
+     * (chart-specific) with sensible defaults — release-name templated since the Secret is
+     * per-release; the chart default key is used when the Secret cannot be read.
+     */
+    org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken readOmBotToken(String namespace,
+                                                                                  String releaseName,
+                                                                                  Map<String, Object> settings) throws Exception {
+        String fernetSecretNameTpl = String.valueOf(
+                settings.getOrDefault("fernet_secret_name_template", "{{releaseName}}-fernet"));
+        String fernetSecretName = fernetSecretNameTpl.replace("{{releaseName}}", releaseName);
+        String fernetSecretKey = String.valueOf(settings.getOrDefault("fernet_secret_key", "fernet-key"));
+        String fernetKey = null;
+        try {
+            io.fabric8.kubernetes.api.model.Secret fernetSec =
+                    this.kubernetesService.getSecret(namespace, fernetSecretName);
+            if (fernetSec != null && fernetSec.getData() != null
+                    && fernetSec.getData().containsKey(fernetSecretKey)) {
+                fernetKey = new String(
+                        java.util.Base64.getDecoder().decode(fernetSec.getData().get(fernetSecretKey)),
+                        java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+        } catch (Exception ex) {
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read '{}/{}' Secret key '{}', falling back to chart default: {}",
+                    namespace, fernetSecretName, fernetSecretKey, ex.toString());
+        }
+        return org.apache.ambari.view.k8s.service.om.OmBotJwtClient.readBotToken(
+                this.kubernetesService.getClient(),
+                namespace,
+                releaseName,
+                fernetKey,
+                java.time.Duration.ofSeconds(120));
+    }
+
+    /**
+     * Body of the step for a release with Ranger TagSync turned off (queued as a check, see
+     * {@link #planRangerTagSyncSources}): reads the cluster's {@code ranger-tagsync-site} and reports
+     * what {@link #switchedOffTagSyncWarnings} finds. It changes nothing: no token is read from
+     * OpenMetadata, nothing is written and Ranger TagSync is not restarted. It never fails the
+     * deploy either: what it cannot read, it logs.
+     */
+    String checkTagSyncSite(Map<String, Object> childParams, Map<String, Object> spec, String switchOff) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("skipped", true);
+        result.put("reason", switchOff);
+        String cluster = stringValue(childParams.get("_cluster"));
+        String baseUriStr = stringValue(childParams.get("_baseUri"));
+        if (cluster.isBlank() || baseUriStr.isBlank()) return gson.toJson(result);
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        if (rc != null && "EXTERNAL".equalsIgnoreCase(stringValue(rc.getKind()))) {
+            // An external platform's Ranger TagSync is configured by its operator (KDPS only ever rendered a
+            // snippet for it): this cluster's ranger-tagsync-site says nothing about it.
+            return gson.toJson(result);
+        }
+        try {
+            AmbariActionClient ambari = new AmbariActionClient(ctx,
+                    java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster,
+                    AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders")));
+            List<String> warnings = switchedOffTagSyncWarnings(ambari, cluster, spec, Instant.now());
+            if (!warnings.isEmpty()) {
+                result.put("warnings", warnings);
+                warnings.forEach(w -> LOG.warn("OM_RANGER_TAGSYNC_REGISTER: {}", w));
+            }
+        } catch (Exception e) {
+            LOG.warn("OM_RANGER_TAGSYNC_REGISTER: could not read ranger-tagsync-site on cluster '{}' to check it: {}",
+                    cluster, e.toString());
+        }
+        return gson.toJson(result);
+    }
+
+    /**
+     * Body of the {@code OM_ATLAS_FEDERATION_REGISTER} step. Reads the OM
+     * ingestion-bot's current JWT, then calls OM REST four times to set up the
      * federation: {@code metadataServices} (Atlas), {@code databaseServices}
      * (CustomDatabase landing zone), {@code ingestionPipelines} (metadata pipeline
      * with the operator-chosen schedule), and a {@code trigger} POST to start the
@@ -9864,7 +15300,17 @@ public class CommandService {
      * ({@code _platformContextId} / {@code _cluster} / {@code _baseUri} / {@code _callerHeaders}).
      * Returns null on failure (callers fall back to legacy form values).
      */
-    private org.apache.ambari.view.k8s.model.ResolvedContext resolvePlatformContextForStep(
+    /**
+     * How the view checks the certificate of the {@code component} (Ranger, Atlas) of a platform context before it
+     * sends administrator credentials there: verified unless the context turned verification off.
+     *
+     * @param rc the resolved context; null for the cluster this Ambari manages, which is always verified
+     */
+    TlsPolicy tlsOf(org.apache.ambari.view.k8s.model.ResolvedContext rc, String component) {
+        return ContextService.tlsPolicyOf(ctx, rc, component);
+    }
+
+    org.apache.ambari.view.k8s.model.ResolvedContext resolvePlatformContextForStep(
             Map<String, Object> childParams) {
         try {
             String cluster = (String) childParams.get("_cluster");
@@ -9919,6 +15365,11 @@ public class CommandService {
         String namespace   = (String) childParams.get("namespace");
         if (releaseName == null || releaseName.isBlank() || namespace == null || namespace.isBlank()) {
             throw new IllegalStateException("Missing releaseName/namespace in OM_ATLAS_FEDERATION_REGISTER params");
+        }
+        // Atlas offers OpenMetadata no way to sign in that the operator allowed: say why, instead of a 401 later.
+        String federationBlocked = stringValue(childParams.get("_atlasFederationBlocked"));
+        if (!federationBlocked.isBlank()) {
+            throw new IllegalStateException(federationBlocked);
         }
 
         // Two callers, two value sources:
@@ -9991,6 +15442,11 @@ public class CommandService {
             String existingSecret = stringValue(
                     ConfigResolutionService.getByDottedPath(values, "atlasFederation.existingSecret"));
             if (!existingSecret.isBlank()) {
+                // An LDAP service account can only come from this Secret: signing in with another source's
+                // credentials would be refused by Atlas, so a missing or incomplete Secret is reported as such.
+                if ("ldap".equals(stringValue(childParams.get("_atlasAuthMode")))) {
+                    ldapServiceAccountUsername(namespace, existingSecret.trim());
+                }
                 io.fabric8.kubernetes.api.model.Secret sec =
                         this.kubernetesService.getSecret(namespace, existingSecret);
                 if (sec != null && sec.getData() != null && sec.getData().containsKey("password")) {
@@ -9998,6 +15454,13 @@ public class CommandService {
                             java.util.Base64.getDecoder().decode(sec.getData().get("password")),
                             java.nio.charset.StandardCharsets.UTF_8);
                     credsSource = "operator-secret:" + existingSecret;
+                    // The Secret names the account the password belongs to (e.g. an LDAP service account).
+                    if (sec.getData().containsKey("username")) {
+                        String secretUser = new String(
+                                java.util.Base64.getDecoder().decode(sec.getData().get("username")),
+                                java.nio.charset.StandardCharsets.UTF_8).trim();
+                        if (!secretUser.isBlank()) atlasUsername = secretUser;
+                    }
                 }
             }
         }
@@ -10038,6 +15501,8 @@ public class CommandService {
                     + "'" + releaseName + "-atlas-federation' that this step falls back to).");
         }
         LOG.info("OM_ATLAS_FEDERATION_REGISTER: using credentials source={} username={}", credsSource, atlasUsername);
+        String authzNotice = federationAuthzNotice(childParams, atlasUsername);
+        if (authzNotice != null) LOG.warn("OM_ATLAS_FEDERATION_REGISTER: {}", authzNotice);
 
         // databaseServiceNames is bound as a list (csvToList) in the OM service.json;
         // tolerate both list and CSV-string shapes for robustness.
@@ -10064,7 +15529,7 @@ public class CommandService {
             LOG.info("OM_ATLAS_FEDERATION_REGISTER: atlasFederation.databaseServiceNames is blank — targeting '{}'", hiveSvc);
         }
 
-        // Mint the JWT (chart-default Fernet unless the operator's <release>-fernet
+        // Read the bot's JWT (chart-default Fernet unless the operator's <release>-fernet
         // Secret carries an override).
         String fernetKey = null;
         try {
@@ -10080,10 +15545,12 @@ public class CommandService {
             LOG.warn("OM_ATLAS_FEDERATION_REGISTER: could not read '{}/{}-fernet' Secret, falling back to chart default: {}",
                     namespace, releaseName, ex.toString());
         }
-        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
-                this.kubernetesService.getClient(),
-                namespace, releaseName, fernetKey,
-                java.time.Duration.ofSeconds(120));
+        org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken =
+                org.apache.ambari.view.k8s.service.om.OmBotJwtClient.readBotToken(
+                        this.kubernetesService.getClient(),
+                        namespace, releaseName, fernetKey,
+                        java.time.Duration.ofSeconds(120));
+        String jwt = botToken.jwt();
 
         org.apache.ambari.view.k8s.service.om.OmAtlasFederationClient.Result result =
                 org.apache.ambari.view.k8s.service.om.OmAtlasFederationClient.register(
@@ -10099,12 +15566,20 @@ public class CommandService {
         resultMap.put("pipelineId", result.pipelineId);
         resultMap.put("deployStatus", result.deployStatus);
         resultMap.put("triggerStatus", result.triggerStatus);
+        putBotTokenLifetimeWarning(resultMap, botToken);
+        if (authzNotice != null) {
+            // On the step's warnings, so the operator reads it in the deploy's log.
+            List<Object> warnings = new ArrayList<>();
+            if (resultMap.get("warnings") instanceof List<?> earlier) warnings.addAll(earlier);
+            warnings.add(authzNotice);
+            resultMap.put("warnings", warnings);
+        }
         return gson.toJson(resultMap);
     }
 
     /**
      * Body of the {@code OM_HIVE_BASE_INGESTION_REGISTER} step — layer 1 of
-     * Atlas+Hive federation. Mints an Unlimited-TTL JWT for the OM ingestion-bot,
+     * Atlas+Hive federation. Reads the OM ingestion-bot's current JWT,
      * then calls OM REST to create the Hive DatabaseService (e.g. {@code hive-clemlab}),
      * a metadata ingestion pipeline, deploys it (generates the Airflow DAG) and
      * triggers the first run. The Atlas federation step (queued after this) then
@@ -10222,7 +15697,7 @@ public class CommandService {
         LOG.info("OM_HIVE_BASE_INGESTION_REGISTER: service='{}' scheme='{}' hostPort='{}' auth='{}' schedule='{}'",
                 serviceName, scheme, hostPort, authMode, schedule);
 
-        // Layer 1.5: grant the provisioned OM ingestion principal read access in the Hive Ranger
+        // Layer 1.5: grant the provisioned OM ingestion principal its access in the Hive Ranger
         // service so its metadata queries aren't denied. Only for kerberos auth (the provisioned
         // oma-ing principal); ldap/basic deployments use an operator-managed Hive user. Non-fatal —
         // a grant failure logs a warning but still deploys the pipeline (operator can grant manually).
@@ -10230,7 +15705,7 @@ public class CommandService {
             grantHiveRangerReadForOmIngestion(childParams, rc, namespace, releaseName);
         }
 
-        // Mint the JWT (chart-default Fernet unless the operator's <release>-fernet override exists).
+        // Read the bot's JWT (chart-default Fernet unless the operator's <release>-fernet override exists).
         String fernetKey = null;
         try {
             io.fabric8.kubernetes.api.model.Secret fernetSec =
@@ -10245,10 +15720,12 @@ public class CommandService {
             LOG.warn("OM_HIVE_BASE_INGESTION_REGISTER: could not read '{}/{}-fernet' Secret, using chart default: {}",
                     namespace, releaseName, ex.toString());
         }
-        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
-                this.kubernetesService.getClient(),
-                namespace, releaseName, fernetKey,
-                java.time.Duration.ofSeconds(120));
+        org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken =
+                org.apache.ambari.view.k8s.service.om.OmBotJwtClient.readBotToken(
+                        this.kubernetesService.getClient(),
+                        namespace, releaseName, fernetKey,
+                        java.time.Duration.ofSeconds(120));
+        String jwt = botToken.jwt();
 
         org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.Result result =
                 org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.register(
@@ -10267,17 +15744,53 @@ public class CommandService {
         resultMap.put("pipelineId", result.pipelineId);
         resultMap.put("deployStatus", result.deployStatus);
         resultMap.put("triggerStatus", result.triggerStatus);
+        putBotTokenLifetimeWarning(resultMap, botToken);
         return gson.toJson(resultMap);
     }
 
     /**
-     * Grant the provisioned OM ingestion principal ({@code oma-ing-<ns>}) read access in the Hive
-     * Ranger service so the SPNEGO base-ingestion's metadata queries aren't denied by the Hive
-     * plugin. MANAGED context → delegate to the Ambari server (it holds the Ranger admin creds, the
-     * view never sees them); EXTERNAL context → direct Ranger REST with the context creds; no Ranger
-     * in context → log that the operator must grant it. Non-fatal: any failure is logged and the
-     * ingestion pipeline is still deployed (operator can grant manually).
+     * Hive access the OpenMetadata ingestion principal ({@code oma-ing-<ns>}) is granted. Metadata
+     * ingestion needs {@code select}, not just {@code read}: Ranger's Hive plugin authorizes
+     * describing a table (its columns) and {@code SHOW CREATE TABLE} (view definitions, and the
+     * lineage built from them) as {@code select}, and the column-level tags OpenMetadata hands to
+     * Ranger build on those columns. It also lets the account query Hive data, so it is a
+     * privileged service account; narrowing it is an operator decision, documented in
+     * {@code docs/RANGER_POLICIES_AND_TAGS.md}.
      */
+    static final String OM_HIVE_INGESTION_ACCESS = "select";
+
+    /**
+     * Access of a service identity that reads Hive data as itself (Trino's Hive catalog connects as
+     * its own service identity and cannot impersonate the end user), so it needs {@code select}.
+     */
+    static final String HIVE_SERVICE_DATA_ACCESS = "select";
+
+    /** Every database, table and column of a Hive Ranger repository, as the {@code ranger_policy} resource set. */
+    static final String HIVE_ALL_RESOURCES = "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}";
+
+    /**
+     * Ask the Ambari server to grant {@code principal} {@link #OM_HIVE_INGESTION_ACCESS} on the whole
+     * Hive repository, and wait for it.
+     *
+     * @return whether the request completed in time
+     */
+    static boolean grantOmIngestionHiveAccessViaAmbari(AmbariActionClient ambari, String hiveService,
+            String principal, String policyName) throws Exception {
+        int req = ambari.submitRangerPolicyGrant(hiveService, principal, OM_HIVE_INGESTION_ACCESS,
+                HIVE_ALL_RESOURCES, policyName,
+                "KDPS: OpenMetadata Hive metadata ingestion (columns, view definitions and lineage)", 60,
+                "KDPS base ingestion: grant Hive " + OM_HIVE_INGESTION_ACCESS + " to " + principal);
+        boolean done = ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS);
+        if (done) {
+            LOG.info("OM_HIVE_BASE_INGESTION: granted Hive '{}' to '{}' on '{}' via Ambari (req {})",
+                    OM_HIVE_INGESTION_ACCESS, principal, hiveService, req);
+        } else {
+            LOG.warn("OM_HIVE_BASE_INGESTION: Ambari ranger_policy request {} for '{}' did not complete; "
+                    + "grant Hive access manually if ingestion is denied.", req, principal);
+        }
+        return done;
+    }
+
     /**
      * Resolve the Hive Ranger service (repository) name to grant on, context-kind-agnostically:
      * an explicit {@code _hiveRangerServiceName} step param wins, else the context's resolved
@@ -10339,6 +15852,14 @@ public class CommandService {
         }
     }
 
+    /**
+     * Grant the provisioned OM ingestion principal ({@code oma-ing-<ns>}) the Hive access
+     * {@link #OM_HIVE_INGESTION_ACCESS} so the SPNEGO base-ingestion's metadata queries
+     * aren't denied by the Hive plugin. MANAGED context → delegate to the Ambari server (it holds the
+     * Ranger admin creds, the view never sees them); EXTERNAL context → direct Ranger REST with the
+     * context creds; no Ranger in context → log that the operator must grant it. Non-fatal: any
+     * failure is logged and the ingestion pipeline is still deployed (operator can grant manually).
+     */
     private void grantHiveRangerReadForOmIngestion(Map<String, Object> childParams,
             org.apache.ambari.view.k8s.model.ResolvedContext rc, String namespace, String releaseName) {
         // Ranger maps the kerberos principal oma-ing-<ns>@<realm> to user oma-ing-<ns> (KDPS kerberos
@@ -10346,7 +15867,6 @@ public class CommandService {
         String principal = "oma-ing-" + namespace;
         String cluster = stringValue(childParams.get("_cluster"));
         String hiveService = resolveHiveRangerServiceName(childParams, rc, cluster);
-        String resources = "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}";
         String policyName = "kdps-openmetadata-" + releaseName + "-hive-read";
         try {
             String baseUriStr = stringValue(childParams.get("_baseUri"));
@@ -10354,29 +15874,26 @@ public class CommandService {
             // win — direct REST; else a managed context delegates the grant to the Ambari server; else
             // there is no Ranger to grant on and we log a manual-remediation hint (non-fatal).
             if (rc != null && rc.hasDirectRangerCreds()) {
-                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(
+                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(tlsOf(rc, "Ranger"),
                         rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
-                        hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
-                LOG.info("OM_HIVE_BASE_INGESTION: context Ranger Hive read policy id={} for '{}' on '{}' (direct REST)",
-                        pid, principal, hiveService);
+                        hiveService, policyName, principal, OM_HIVE_INGESTION_ACCESS,
+                        java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+                LOG.info("OM_HIVE_BASE_INGESTION: context Ranger Hive '{}' policy id={} for '{}' on '{}' (direct REST)",
+                        OM_HIVE_INGESTION_ACCESS, pid, principal, hiveService);
+                recordRangerGrant(childParams, hiveService, principal, OM_HIVE_INGESTION_ACCESS, HIVE_ALL_RESOURCES,
+                        policyName, true, true);
             } else if (rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUriStr.isBlank()) {
                 Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
                 AmbariActionClient ambari = new AmbariActionClient(ctx,
                         java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
-                int req = ambari.submitRangerPolicyGrant(hiveService, principal, "select", resources,
-                        policyName, "KDPS: OpenMetadata Hive metadata-ingestion read access", 60,
-                        "KDPS base ingestion: grant Hive select to " + principal);
-                if (ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS)) {
-                    LOG.info("OM_HIVE_BASE_INGESTION: granted Hive 'select' to '{}' on '{}' via Ambari (req {})",
-                            principal, hiveService, req);
-                } else {
-                    LOG.warn("OM_HIVE_BASE_INGESTION: Ambari ranger_policy request {} for '{}' did not complete; "
-                            + "grant Hive access manually if ingestion is denied.", req, principal);
-                }
+                grantOmIngestionHiveAccessViaAmbari(ambari, hiveService, principal, policyName);
+                recordRangerGrant(childParams, hiveService, principal, OM_HIVE_INGESTION_ACCESS, HIVE_ALL_RESOURCES,
+                        policyName, true, true);
             } else {
-                LOG.warn("OM_HIVE_BASE_INGESTION: Ranger is not part of the platform context — grant Hive read "
-                        + "access to '{}' manually (Ranger service '{}', database/table/column=* with 'select'), "
-                        + "or the Hive plugin will deny the ingestion's metadata queries.", principal, hiveService);
+                LOG.warn("OM_HIVE_BASE_INGESTION: Ranger is not part of the platform context — grant Hive "
+                        + "access to '{}' manually (Ranger service '{}', database/table/column=* with '{}'), "
+                        + "or the Hive plugin will deny the ingestion's metadata queries.",
+                        principal, hiveService, OM_HIVE_INGESTION_ACCESS);
             }
         } catch (Exception e) {
             LOG.warn("OM_HIVE_BASE_INGESTION: Ranger Hive grant for '{}' failed ({}). Pipeline still deployed; "
@@ -10464,8 +15981,10 @@ public class CommandService {
             LOG.warn("OM_TRINO_BASE_INGESTION_REGISTER: could not read '{}/{}-fernet' Secret, using chart default: {}",
                     namespace, releaseName, ex.toString());
         }
-        String jwt = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.mintUnlimitedJwt(
-                this.kubernetesService.getClient(), namespace, releaseName, fernetKey, java.time.Duration.ofSeconds(120));
+        org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken =
+                org.apache.ambari.view.k8s.service.om.OmBotJwtClient.readBotToken(
+                        this.kubernetesService.getClient(), namespace, releaseName, fernetKey, java.time.Duration.ofSeconds(120));
+        String jwt = botToken.jwt();
         org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.Result result =
                 org.apache.ambari.view.k8s.service.om.OmBaseIngestionClient.register(
                         this.kubernetesService.getClient(), namespace, releaseName, jwt,
@@ -10486,7 +16005,34 @@ public class CommandService {
         resultMap.put("trinoRelease", trinoRelease);
         resultMap.put("hostPort", hostPort);
         resultMap.put("rangerTrinoServiceName", rangerRepo);
+        putBotTokenLifetimeWarning(resultMap, botToken);
         return gson.toJson(resultMap);
+    }
+
+    /**
+     * Adds the bot token's renewal warning to a step result, when it is due. Every OpenMetadata step
+     * reports it, not only the TagSync registration: the pipelines these steps deploy run with the
+     * same token and stop when it expires.
+     */
+    static void putBotTokenLifetimeWarning(Map<String, Object> resultMap,
+                                           org.apache.ambari.view.k8s.service.om.OmBotJwtClient.BotToken botToken) {
+        String lifetimeWarning = org.apache.ambari.view.k8s.service.om.OmBotJwtClient.lifetimeWarning(botToken, Instant.now());
+        if (lifetimeWarning != null) {
+            addStepWarning(resultMap, lifetimeWarning);
+        }
+    }
+
+    /** Appends a sentence for the operator to the step result's {@code warnings} and logs it. */
+    @SuppressWarnings("unchecked")
+    static void addStepWarning(Map<String, Object> resultMap, String warning) {
+        List<String> warnings = new ArrayList<>();
+        Object existing = resultMap.get("warnings");
+        if (existing instanceof List) {
+            warnings.addAll((List<String>) existing);
+        }
+        warnings.add(warning);
+        resultMap.put("warnings", warnings);
+        LOG.warn("{}", warning);
     }
 
     /**
@@ -10530,18 +16076,21 @@ public class CommandService {
                 if (direct) {
                     java.util.Map<String, java.util.List<String>> resources = gson.fromJson(g[1],
                             new TypeToken<java.util.Map<String, java.util.List<String>>>() {}.getType());
-                    long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+                    long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(tlsOf(rc, "Ranger"),
                             rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                             trinoService, policyName, description, resources, Arrays.asList(g[2].split(",")),
                             principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
                     LOG.info("OM_TRINO_BASE_INGESTION: Ranger policy '{}' id={} for '{}' on '{}' (direct REST)",
                             policyName, pid, principal, trinoService);
+                    recordRangerGrant(childParams, trinoService, principal, g[2], g[1], policyName, false);
                 } else {
                     Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
                     AmbariActionClient ambari = new AmbariActionClient(ctx,
                             java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
                     int req = ambari.submitRangerPolicyGrant(trinoService, principal, g[2], g[1], policyName,
                             description, 60, "KDPS OpenMetadata Trino ingestion: grant " + g[2] + " (" + g[0] + ") to " + principal);
+                    // The Trino service user holds access of its own: only the policy named for this release goes.
+                    recordRangerGrant(childParams, trinoService, principal, g[2], g[1], policyName, false);
                     if (ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS)) {
                         LOG.info("OM_TRINO_BASE_INGESTION: granted '{}' ({}) to '{}' on '{}' via Ambari (req {})",
                                 g[2], g[0], principal, trinoService, req);
@@ -10595,6 +16144,222 @@ public class CommandService {
             LOG.warn("Could not list coordinator Services of {}/{}: {}", namespace, release, e.toString());
         }
         return null;
+    }
+
+    /** The clemlab-trino chart value naming the audience its JWT authenticator requires. */
+    static final String TRINO_JWT_AUDIENCE_PATH = "global.security.auth.oidc.jwt.requiredAudience";
+    /** The Superset chart value that runs the sidecar refreshing its OIDC service token for Trino. */
+    static final String TRINO_JWT_SIDECAR_PATH = "trinoJwt.enabled";
+    /** The Superset chart file (under {@code extraConfigs}) holding the Trino database connection. */
+    static final String TRINO_DATASOURCE_FILE = "import_datasources_trino.yaml";
+    private static final java.util.regex.Pattern TRINO_SQLALCHEMY_HOST =
+            java.util.regex.Pattern.compile("sqlalchemy_uri:\\s*['\"]?trino://(?:[^@/\\s'\"]*@)?([^/\\s'\"]+)");
+    private static final java.util.regex.Pattern AUTH_METHOD =
+            java.util.regex.Pattern.compile("\\\\?\"auth_method\\\\?\"\\s*:\\s*\\\\?\"([^\"\\\\]+)");
+
+    /**
+     * {host:port, auth method} of the Trino connection a Superset release's values hold (the
+     * {@link #TRINO_DATASOURCE_FILE} the wizard wrote), the auth method blank when the connection names none; null
+     * when the values hold no such connection.
+     */
+    static String[] trinoJwtConnection(Map<String, Object> values) {
+        Object extra = values == null ? null : values.get("extraConfigs");
+        Object file = extra instanceof Map<?, ?> m ? m.get(TRINO_DATASOURCE_FILE) : null;
+        if (file == null) return null;
+        String yaml = String.valueOf(file);
+        java.util.regex.Matcher host = TRINO_SQLALCHEMY_HOST.matcher(yaml);
+        if (!host.find()) return null;
+        java.util.regex.Matcher auth = AUTH_METHOD.matcher(yaml);
+        return new String[] {host.group(1), auth.find() ? auth.group(1) : ""};
+    }
+
+    /**
+     * The chart value an OIDC entry fills with its client id (an external profile's JWT audience when set), so that
+     * the service accepts only the JWTs minted for that client (service.json {@code oidc[].jwtAudiencePath}, Trino's {@link #TRINO_JWT_AUDIENCE_PATH}), or null
+     * when the entry declares none. Set like the rest of the OIDC wiring, over the deploy's own values: the client
+     * changes with the security profile, and an audience kept from an earlier deploy would refuse every token.
+     */
+    static String jwtAudiencePath(Map<String, Object> entry) {
+        String path = entry == null ? "" : stringValue(entry.get("jwtAudiencePath"));
+        return path.isEmpty() ? null : path;
+    }
+
+    /**
+     * The audience a service using an external provider requires of the JWTs it accepts: the security profile's
+     * {@code oidc.audience} when set, since many providers do not put the client id in the access tokens they issue
+     * (an application ID URI such as {@code api://...}, a custom authorization server's {@code api://default}),
+     * else its client id.
+     */
+    static String externalJwtAudience(org.apache.ambari.view.k8s.dto.security.OidcConfig oidc) {
+        if (oidc == null) return null;
+        String audience = oidc.audience == null ? "" : oidc.audience.trim();
+        return audience.isEmpty() ? oidc.clientId : audience;
+    }
+
+    /**
+     * The audiences the access tokens of a deploy's OIDC client carry, or null to keep the ones the client has.
+     * <ul>
+     *   <li>A service that checks the audience of the JWTs it accepts ({@code jwtAudiencePath}) names its own
+     *       client, so a token a user gets for it passes.</li>
+     *   <li>A release that calls a KDPS Trino with its own service token (Superset, Trino authentication "OIDC")
+     *       names the audience that Trino requires. The Trino comes from the form, or, when the form names none
+     *       (an Upgrade/Config wizard does not get that form-only field back), from the connection the release
+     *       values still hold while they run the token sidecar. Null when the Trino is not a KDPS release, or
+     *       the values run the sidecar but do not say for which Trino: KDPS cannot tell what it requires, and
+     *       dropping an audience the client has would break the connection.</li>
+     * </ul>
+     */
+    List<String> oidcTokenAudiences(Map<String, Object> entry, String clientId, Map<String, Object> formValues,
+                                    Map<String, Object> values) {
+        List<String> audiences = new ArrayList<>();
+        if (jwtAudiencePath(entry) != null && clientId != null && !clientId.isBlank()) {
+            audiences.add(clientId);
+        }
+        Map<String, Object> fv = formValues == null ? Collections.emptyMap() : formValues;
+        String trinoHost = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_host"));
+        if (!trinoHost.isBlank()) {
+            String trinoAuthMode = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_auth_mode"));
+            if (!"oidc".equalsIgnoreCase(trinoAuthMode.trim())) return audiences;
+        } else {
+            Map<String, Object> v = values == null ? Collections.emptyMap() : values;
+            if (!asBoolean(ConfigResolutionService.getByDottedPath(v, TRINO_JWT_SIDECAR_PATH), false)) return audiences;
+            String[] connection = trinoJwtConnection(v);
+            if (connection == null) return null;
+            if (!"kdps_file_jwt".equals(connection[1])) return audiences;
+            trinoHost = connection[0];
+        }
+        String trinoAudience = trinoJwtAudience(trinoHost);
+        if (trinoAudience == null) return null;
+        audiences.add(trinoAudience);
+        return audiences;
+    }
+
+    /**
+     * The audience the KDPS Trino answering at {@code trinoHost} requires of the JWTs it accepts: its
+     * {@link #TRINO_JWT_AUDIENCE_PATH} value, else the client id KDPS registers for it ({@code <release>-<namespace>}),
+     * so that a token minted now still passes once that Trino is redeployed and checks it. Null when the host is not
+     * a KDPS Trino release.
+     */
+    String trinoJwtAudience(String trinoHost) {
+        String[] ref = trinoReleaseFromServiceHost(trinoHost);
+        if (ref == null) return null;
+        try {
+            Map<String, Object> v = kubernetesService.getHelmReleaseValues(ref[0], ref[1]);
+            Object aud = v == null ? null : ConfigResolutionService.getByDottedPath(v, TRINO_JWT_AUDIENCE_PATH);
+            if (aud != null && !String.valueOf(aud).isBlank()) return String.valueOf(aud).trim();
+        } catch (Exception e) {
+            LOG.warn("Could not read helm values of Trino release {}/{}: {}", ref[0], ref[1], e.toString());
+        }
+        return ref[1] + "-" + ref[0];
+    }
+
+    /**
+     * The KDPS releases that call the Trino release {@code trinoNamespace/trinoRelease} with their own OIDC service
+     * token: their values run the token sidecar ({@link #TRINO_JWT_SIDECAR_PATH}) and their Trino connection, in that
+     * mode, answers at this release's coordinator. Each comes as {namespace, release, clientId}, the client id being
+     * the one KDPS registers for it (its service's first enabled {@code oidc[]} entry).
+     *
+     * <p>Such a release (Superset) was registered with the audiences the Trino required then, so a Trino that starts
+     * checking the audience, or checks another one, refuses its token until that release is redeployed. Releases
+     * whose values cannot be read are skipped with a warning: the Trino deploy must not wait on them.
+     */
+    List<Map<String, String>> trinoJwtCallers(String trinoNamespace, String trinoRelease, String realm) {
+        List<Map<String, String>> callers = new ArrayList<>();
+        List<K8sReleaseEntity> releases;
+        try {
+            releases = new ReleaseMetadataService(this.ctx).findAll();
+        } catch (Exception e) {
+            LOG.warn("Could not list the KDPS releases calling Trino {}/{}: {}", trinoNamespace, trinoRelease,
+                    e.toString());
+            return callers;
+        }
+        StackDefinitionService definitions = new StackDefinitionService(this.ctx);
+        Map<String, Map<String, Object>> oidcEntryByService = new HashMap<>();
+        for (K8sReleaseEntity r : releases) {
+            if (r == null || r.getNamespace() == null || r.getReleaseName() == null || r.getServiceKey() == null
+                    || (trinoNamespace.equals(r.getNamespace()) && trinoRelease.equals(r.getReleaseName()))) {
+                continue;
+            }
+            // Only a service KDPS registers an OIDC client for has a token to fix.
+            Map<String, Object> oidcEntry = oidcEntryByService.computeIfAbsent(r.getServiceKey(), key -> {
+                try {
+                    StackServiceDef def = definitions.getServiceDefinition(key);
+                    if (def == null || def.oidc == null) return null;
+                    for (Map<String, Object> e : def.oidc) {
+                        if (e != null && isEntryEnabled(e.get("enabled")) && jwtAudiencePath(e) == null) return e;
+                    }
+                } catch (Exception e) {
+                    LOG.debug("Service definition {} could not be read: {}", key, e.toString());
+                }
+                return null;
+            });
+            if (oidcEntry == null) continue;
+            Map<String, Object> values;
+            try {
+                values = kubernetesService.getHelmReleaseValues(r.getNamespace(), r.getReleaseName());
+            } catch (Exception e) {
+                LOG.warn("Could not read helm values of {}/{} to tell whether it calls Trino {}/{}: {}",
+                        r.getNamespace(), r.getReleaseName(), trinoNamespace, trinoRelease, e.toString());
+                continue;
+            }
+            if (values == null
+                    || !asBoolean(ConfigResolutionService.getByDottedPath(values, TRINO_JWT_SIDECAR_PATH), false)) {
+                continue;
+            }
+            String[] connection = trinoJwtConnection(values);
+            if (connection == null || !"kdps_file_jwt".equals(connection[1])) continue;
+            String[] ref = trinoReleaseFromServiceHost(connection[0]);
+            if (ref == null || !trinoNamespace.equals(ref[0]) || !trinoRelease.equals(ref[1])) continue;
+            String clientId = renderOidcTemplate(
+                    resolveStringValue(oidcEntry.get("clientIdTemplate"), "{{releaseName}}-{{namespace}}"),
+                    r.getReleaseName(), r.getNamespace(), realm);
+            Map<String, String> caller = new LinkedHashMap<>();
+            caller.put("namespace", r.getNamespace());
+            caller.put("release", r.getReleaseName());
+            caller.put("clientId", clientId);
+            callers.add(caller);
+        }
+        return callers;
+    }
+
+    /** "ns/release, ns/release" of {@link #trinoJwtCallers} entries, for the command log. */
+    private static String callerNames(List<?> callers) {
+        List<String> names = new ArrayList<>();
+        for (Object c : callers) {
+            if (c instanceof Map<?, ?> m) names.add(m.get("namespace") + "/" + m.get("release"));
+        }
+        return String.join(", ", names);
+    }
+
+    /**
+     * Adds {@code audience} to the tokens of the OIDC clients of the releases planned as calling this Trino
+     * ({@link #trinoJwtCallers}), before the upgrade restarts it requiring that audience. A failure is logged, never
+     * thrown: the Trino deploy goes on, and the log names the release to redeploy so that its connection works again.
+     */
+    void addAudienceToCallers(KeycloakAdminClient keycloak, String audience, Object plannedCallers, String logId) {
+        if (!(plannedCallers instanceof List<?> callers)) return;
+        for (Object c : callers) {
+            if (!(c instanceof Map<?, ?> caller)) continue;
+            String clientId = stringValue(caller.get("clientId"));
+            String release = caller.get("namespace") + "/" + caller.get("release");
+            if (clientId.isBlank()) continue;
+            String failure;
+            try {
+                if (keycloak.addAudience(clientId, audience)) {
+                    appendCommandLog(logId, "Access tokens of '" + clientId + "' (release " + release
+                            + ") carry the audience '" + audience + "' this Trino requires");
+                    continue;
+                }
+                failure = "the realm has no client '" + clientId + "'";
+            } catch (Exception e) {
+                LOG.warn("Could not add audience {} to OIDC client {} of {}: {}", audience, clientId, release,
+                        e.toString());
+                failure = e.getMessage() == null ? e.toString() : e.getMessage();
+            }
+            appendCommandLog(logId, "WARNING: could not add the audience '" + audience + "' to the OIDC client of"
+                    + " release " + release + " (" + failure + "). This Trino refuses that release's service token,"
+                    + " so its connection to Trino fails until you redeploy it (Upgrade/Config, no change needed).");
+        }
     }
 
     /**
@@ -10676,14 +16441,20 @@ public class CommandService {
      * OM_ATLAS_FEDERATION_REGISTER step (which the caller queues after this
      * returns).
      *
-     * <p>Step matrix (Ambari-managed Atlas):
+     * <p>Step matrix (Ambari-managed Atlas). OpenMetadata signs in to Atlas with a user name and password,
+     * so how it does depends on what Atlas offers ({@link org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning#planFederationAuth}):
      * <pre>
-     *   basic   + simple   → ATLAS_USER_PROVISION_OM, ATLAS_SIMPLE_AUTHZ_GRANT_OM
-     *   basic   + ranger   → ATLAS_USER_PROVISION_OM, RANGER_POLICY_CREATE_ATLAS_OM_READ
-     *   kerberos + simple  → (no user provision)    , ATLAS_SIMPLE_AUTHZ_GRANT_OM (principal-based)
-     *   kerberos + ranger  → (no user provision)    , RANGER_POLICY_CREATE_ATLAS_OM_READ (principal-based)
-     *   ldap     + any     → (no user provision)    , ACL step keyed on the operator-typed LDAP user
+     *   ldap + operator Secret   + ranger → (no user provision), ACL step keyed on the Secret's LDAP account
+     *   ldap + operator Secret   + simple → (no user provision), the deploy's log tells the operator to grant the
+     *                                       account in atlas-simple-authz-policy.json by hand
+     *       (an LDAP Atlas with a Secret takes these two rows even when file auth is also on, unless an earlier
+     *       deploy already put the Secret's account in the file user store: that account is then kept in step)
+     *   file auth on             + simple → ATLAS_USER_PROVISION_OM, ATLAS_SIMPLE_AUTHZ_GRANT_OM
+     *   file auth on             + ranger → ATLAS_USER_PROVISION_OM, RANGER_POLICY_CREATE_ATLAS_OM_READ
+     *   file auth off, allowed   + any    → as above; the user-provision step turns file auth on (operator's choice)
+     *   anything else                     → FederationAuthUnavailableException (Kerberos-only Atlas, or LDAP without a service account)
      * </pre>
+     * File authentication is never turned on without the operator's say-so.
      *
      * <p>External Atlas (no Ambari-managed Atlas in the cluster) skips everything;
      * the caller's OM_ATLAS_FEDERATION_REGISTER step uses operator-supplied creds.
@@ -10715,6 +16486,89 @@ public class CommandService {
         return false;
     }
 
+    /**
+     * Queues the Atlas federation of a deploy: the Atlas-side steps, then the OpenMetadata registration last. When
+     * Atlas offers OpenMetadata no way to sign in that the operator allowed, no Atlas-side step is queued and the
+     * registration step carries the reason, so the deploy fails with it.
+     */
+    void queueAtlasFederationSteps(CommandEntity rootCommand, HelmDeployRequest request, Map<String, Object> params,
+                                   String cluster, AmbariActionClient ambariActionClient) {
+        String federationBlocked = queueAtlasFederationProvisioning(rootCommand, request, params, cluster,
+                ambariActionClient);
+        // Thread the platform context + Ambari params so the register step resolves Atlas URL/creds
+        // from the context instead of per-service form fields.
+        Map<String, Object> atlasParams = new LinkedHashMap<>();
+        atlasParams.put("releaseName", request.getReleaseName());
+        atlasParams.put("namespace", request.getNamespace());
+        atlasParams.put("serviceKey", request.getServiceKey());
+        String pcId = stringValue(ConfigResolutionService.getByDottedPath(
+                request.getFormValues() != null ? request.getFormValues()
+                        : Collections.emptyMap(), "platformContextId"));
+        if (!pcId.isBlank()) atlasParams.put("_platformContextId", pcId);
+        if (params.get("_cluster") != null) atlasParams.put("_cluster", params.get("_cluster"));
+        if (params.get("_baseUri") != null) atlasParams.put("_baseUri", params.get("_baseUri"));
+        if (params.get("_callerHeaders") != null) atlasParams.put("_callerHeaders", params.get("_callerHeaders"));
+        if (federationBlocked != null) atlasParams.put("_atlasFederationBlocked", federationBlocked);
+        if (params.get("_atlasAuthMode") != null) atlasParams.put("_atlasAuthMode", params.get("_atlasAuthMode"));
+        if (params.get("_atlasAclMode") != null) atlasParams.put("_atlasAclMode", params.get("_atlasAclMode"));
+        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, atlasParams);
+        LOG.info("Queued OM_ATLAS_FEDERATION_REGISTER post-deploy step for release '{}'", request.getReleaseName());
+    }
+
+    /**
+     * Queues the Atlas federation of a release again from what it was deployed with: the Atlas-side steps planned
+     * from the release's live values (the Secret OpenMetadata signs in with), then the OpenMetadata registration.
+     */
+    void queueAtlasFederationReapplySteps(CommandEntity rootCommand, Map<String, Object> rootParams,
+                                          String namespace, String releaseName,
+                                          String clusterName, AmbariActionClient ambariActionClient) {
+        Map<String, Object> liveValues = null;
+        try {
+            liveValues = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        } catch (Exception ex) {
+            LOG.warn("Atlas federation reapply: could not read the values of '{}/{}' ({}). "
+                    + "Continuing with bare OM_ATLAS_FEDERATION_REGISTER step.", namespace, releaseName, ex.toString());
+        }
+        if (liveValues != null) {
+            HelmDeployRequest reqForDispatch = new HelmDeployRequest();
+            reqForDispatch.setNamespace(namespace);
+            reqForDispatch.setReleaseName(releaseName);
+            // Whether Atlas file authentication is on is read from Atlas itself; the values only say which
+            // Secret OpenMetadata signs in with.
+            reqForDispatch.setFormValues(liveValues);
+            String federationBlocked = queueAtlasFederationProvisioning(rootCommand, reqForDispatch, rootParams,
+                    clusterName, ambariActionClient);
+            if (federationBlocked != null) rootParams.put("_atlasFederationBlocked", federationBlocked);
+        }
+        // createOmAtlasFederationRegister self-manages rootCommand.childListJson +
+        // re-stores the root, so we don't need to do it again after this call.
+        this.commandPlanFactory.createOmAtlasFederationRegister(rootCommand, rootParams);
+    }
+
+    /**
+     * Plans the Atlas-side federation steps ({@link #queueAtlasFederationProvisioningSteps}).
+     *
+     * @return why OpenMetadata cannot sign in to Atlas, or null when the steps were planned (or skipped on a
+     *         failure the registration step may still get past)
+     */
+    private String queueAtlasFederationProvisioning(CommandEntity rootCommand, HelmDeployRequest request,
+                                                    Map<String, Object> params, String cluster,
+                                                    AmbariActionClient ambariActionClient) {
+        try {
+            queueAtlasFederationProvisioningSteps(rootCommand, request, params, cluster, ambariActionClient);
+            return null;
+        } catch (org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException ex) {
+            // The registration step fails with the reason, so the operator sees it on the deploy.
+            LOG.warn("Atlas federation for '{}' cannot go ahead: {}", request.getReleaseName(), ex.getMessage());
+            return ex.getMessage();
+        } catch (Exception ex) {
+            LOG.warn("Atlas federation provisioning dispatch failed for '{}': {} "
+                    + "(continuing with bare OM_ATLAS_FEDERATION_REGISTER step)",
+                    request.getReleaseName(), ex.toString());
+            return null;
+        }
+    }
+
     private void queueAtlasFederationProvisioningSteps(CommandEntity rootCommand,
                                                        HelmDeployRequest request,
                                                        Map<String, Object> params,
@@ -10740,42 +16594,43 @@ public class CommandService {
             return;
         }
 
-        // Resolve auth + acl modes from Atlas config (mirrors DiscoveryResource priority:
-        // basic > ldap > kerberos — matches what OM's Atlas connector can actually use).
-        String kerberosOn = ambariActionClient.getDesiredConfigProperty(cluster,
-                "application-properties", "atlas.authentication.method.kerberos");
-        String ldapOn = ambariActionClient.getDesiredConfigProperty(cluster,
-                "application-properties", "atlas.authentication.method.ldap");
-        String fileOn = ambariActionClient.getDesiredConfigProperty(cluster,
-                "application-properties", "atlas.authentication.method.file");
-        String authMode;
-        if ("true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "")) {
-            authMode = "basic";
-        } else if ("true".equalsIgnoreCase(ldapOn != null ? ldapOn.trim() : "")) {
-            authMode = "ldap";
-        } else if ("true".equalsIgnoreCase(kerberosOn != null ? kerberosOn.trim() : "")) {
-            authMode = "kerberos";
-        } else {
-            authMode = "none";
+        // OM's Atlas connector ONLY speaks HTTP Basic (no kerberos/SSO), so it needs either Atlas file
+        // authentication or an LDAP-backed Atlas with a service account. KDPS never turns file authentication
+        // on by itself: the ODP Atlas scripts then add a local administrator to the user store, which on a
+        // Kerberos or LDAP cluster is a new way in. It is on already, or the operator allowed it in the wizard.
+        Map<String, Object> federationForm = request.getFormValues() != null
+                ? request.getFormValues() : java.util.Collections.emptyMap();
+        String existingSecret = stringValue(ConfigResolutionService.getByDottedPath(
+                federationForm, "atlasFederation.existingSecret"));
+        boolean allowFileAuth = "true".equalsIgnoreCase(stringValue(ConfigResolutionService.getByDottedPath(
+                federationForm, "atlasFederation.allowFileAuth")));
+        // The Secret's account is read here only to recognise a release whose earlier deploy put it in Atlas's file
+        // user store. The Secret may not exist yet (the install can create it, e.g. through external-secrets): the
+        // steps read it when they run.
+        String[] secretCredentials = existingSecret.isBlank() ? null
+                : federationSecretCredentials(request.getNamespace(), existingSecret.trim());
+        org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth federationAuth =
+                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.planFederationAuth(
+                        ambariActionClient, cluster, !existingSecret.isBlank(),
+                        secretCredentials != null ? secretCredentials[0] : null, allowFileAuth);
+        if (federationAuth == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.NONE) {
+            throw new org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException(
+                    org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.federationAuthUnavailableMessage(
+                            ambariActionClient, cluster));
         }
+        boolean fileUserStore = federationAuth != org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.LDAP_ACCOUNT;
+        String authMode = fileUserStore ? "basic" : "ldap";
         String authzImpl = ambariActionClient.getDesiredConfigProperty(cluster,
                 "application-properties", "atlas.authorizer.impl");
         String aclMode = (authzImpl != null && authzImpl.trim().toLowerCase().contains("ranger"))
                 ? "ranger" : "simple";
 
-        LOG.info("Atlas federation dispatch: cluster='{}' detected authMode={} aclMode={} (Ambari-managed Atlas)",
-                cluster, authMode, aclMode);
-
-        // OM's Atlas connector ONLY speaks HTTP Basic (no kerberos/SSO). When Atlas is Ambari-managed
-        // and federation is enabled, KDPS makes the Basic path work regardless of the currently-
-        // detected authMode: the user-provision step asserts atlas.authentication.method.file=true
-        // (idempotent; coexists with kerberos/ldap) and provisions the federation user. So drive the
-        // Basic provisioning path even if file auth is currently off — otherwise federation would be
-        // silently skipped on a kerberos/ldap-only Atlas and OM could never authenticate.
-        if (!"basic".equals(authMode)) {
-            LOG.info("Atlas federation dispatch: current authMode='{}' is not Basic, but OM requires it — KDPS will enable "
-                    + "file auth (coexisting with existing methods) and provision the federation user.", authMode);
-            authMode = "basic";
+        LOG.info("Atlas federation dispatch: cluster='{}' federationAuth={} authMode={} aclMode={} (Ambari-managed Atlas)",
+                cluster, federationAuth, authMode, aclMode);
+        if (federationAuth == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.FILE_OPT_IN) {
+            LOG.warn("Atlas federation dispatch: the operator allowed Atlas file authentication to be turned on for the "
+                    + "federation user. The ODP Atlas scripts add a local administrator account to Atlas's user store "
+                    + "while file authentication is on.");
         }
 
         // Stash discovered modes on params so each step body can re-read them
@@ -10783,16 +16638,16 @@ public class CommandService {
         params.put("_atlasAuthMode", authMode);
         params.put("_atlasAclMode", aclMode);
 
-        // ----- 1) User provision (KDPS enables file auth + provisions the Basic user) -----
-        if ("basic".equals(authMode)) {
+        // ----- 1) User provision (the Basic user lives in Atlas's file user store) -----
+        if (fileUserStore) {
             Map<String, Object> stepParams = new LinkedHashMap<>(params);
             stepParams.put("_atlasFederationRole", "ROLE_USER");
+            // Only an operator's explicit choice lets the step turn file authentication on.
+            stepParams.put("_atlasEnableFileAuth", String.valueOf(
+                    federationAuth == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.FILE_OPT_IN));
             // ④ operator-provided federation Secret (e.g. Vault via external-secrets) — the same
             //    Secret the OM-side connection reads (atlasFederation.existingSecret), keeping the
             //    Atlas-side hash and OM-side password in sync. Blank ⇒ KDPS generates + manages it.
-            String existingSecret = stringValue(ConfigResolutionService.getByDottedPath(
-                    request.getFormValues() != null ? request.getFormValues() : java.util.Collections.emptyMap(),
-                    "atlasFederation.existingSecret"));
             if (!existingSecret.isBlank()) stepParams.put("_atlasFederationSecret", existingSecret);
             // ② operator's deploy-time Atlas-restart authorization (confirmation modal). Default:
             //    authorized; "false" ⇒ the step writes config but skips the restart (and warns).
@@ -10802,32 +16657,33 @@ public class CommandService {
             // Atlas REST URL for the post-write auth-probe — prefer the form's federation hostPort
             // (exactly what the OM connector will hit); the step derives it from cluster config when blank.
             String atlasHostPort = stringValue(ConfigResolutionService.getByDottedPath(
-                    request.getFormValues() != null ? request.getFormValues() : java.util.Collections.emptyMap(),
-                    "atlasFederation.hostPort"));
+                    federationForm, "atlasFederation.hostPort"));
             if (!atlasHostPort.isBlank()) stepParams.put("_atlasHostPort", atlasHostPort);
             this.commandPlanFactory.createAtlasUserProvisionOm(rootCommand, stepParams);
-            LOG.info("Atlas federation dispatch: queued ATLAS_USER_PROVISION_OM (federationSecret={}, restartAuthorized={})",
+            LOG.info("Atlas federation dispatch: queued ATLAS_USER_PROVISION_OM (federationSecret={}, restartAuthorized={}, "
+                            + "enableFileAuth={})",
                     existingSecret.isBlank() ? "<kdps-managed>" : existingSecret,
-                    restartAuth != null ? restartAuth : "<default:true>");
+                    restartAuth != null ? restartAuth : "<default:true>",
+                    stepParams.get("_atlasEnableFileAuth"));
+        } else {
+            LOG.info("Atlas federation dispatch: Atlas signs users in against LDAP — OpenMetadata uses the service account "
+                    + "in Secret '{}'; nothing is provisioned or changed in Atlas's user store.", existingSecret);
         }
 
         // ----- 2) ACL grant — simple OR ranger -----
         if ("simple".equals(aclMode)) {
-            if ("basic".equals(authMode)) {
+            if (fileUserStore) {
                 // The simple-authz grant only makes sense if we have a user identity
                 // recorded in atlas-env (which ATLAS_USER_PROVISION_OM just did).
                 this.commandPlanFactory.createAtlasSimpleAuthzGrantOm(rootCommand, params);
                 LOG.info("Atlas federation dispatch: queued ATLAS_SIMPLE_AUTHZ_GRANT_OM");
             } else {
-                // Kerberos / LDAP + simple authz: requires writing the principal/user
-                // into simple-authz-policy.json directly. Out of scope for this
-                // iteration — log a clear warning so the operator knows the
-                // federation will fail authz unless they patch the file by hand.
-                LOG.warn("Atlas federation dispatch: ({},{}) requires writing principal '{}' into "
-                                + "atlas-simple-authz-policy.json manually — KDPS does not yet automate "
-                                + "this combination. The OM_ATLAS_FEDERATION_REGISTER REST call will "
-                                + "likely return 403 until the operator grants access.",
-                        authMode, aclMode, "openmetadata");
+                // The simple-authz grant comes from the federation user in atlas-env, which an LDAP account never
+                // gets, so the operator grants it by hand. The registration step repeats this on the deploy's log,
+                // naming the account read from the Secret then (it may not exist yet).
+                LOG.warn("Atlas federation dispatch: {}", simpleAuthzManualGrantNotice(
+                        secretCredentials != null && secretCredentials[0] != null
+                                ? "'" + secretCredentials[0] + "'" : "the account in Secret '" + existingSecret.trim() + "'"));
             }
         } else if ("ranger".equals(aclMode)) {
             Map<String, Object> stepParams = new LinkedHashMap<>(params);
@@ -10860,15 +16716,17 @@ public class CommandService {
                 }
                 principal = "oma-ing-" + request.getNamespace() + "@"
                         + (kerbRealm == null ? "REALM-MISSING" : kerbRealm.trim());
-            } else if ("basic".equals(authMode)) {
+                stepParams.put("_omPrincipal", principal);
+            } else if (existingSecret.isBlank()) {
                 principal = "openmetadata-federation";  // matches ATLAS_USER_PROVISION_OM default
-            } else /* ldap */ {
-                principal = stringValue(ConfigResolutionService.getByDottedPath(
-                        request.getValues() != null ? request.getValues() : Collections.emptyMap(),
-                        "atlasFederation.username"));
-                if (principal.isBlank()) principal = "openmetadata-federation";
+                stepParams.put("_omPrincipal", principal);
+            } else {
+                // The account of the operator's Secret: the LDAP service account, or the user written to Atlas's
+                // file user store. The grant step reads it when it runs, after the install that may create the Secret.
+                principal = "<from Secret '" + existingSecret.trim() + "'>";
+                stepParams.put("_omPrincipalSecret", existingSecret.trim());
+                stepParams.put("namespace", request.getNamespace());
             }
-            stepParams.put("_omPrincipal", principal);
 
             String atlasRepo = rc.getAtlasRangerServiceName();
             if (atlasRepo == null || atlasRepo.isBlank()) {
@@ -10884,10 +16742,10 @@ public class CommandService {
                         + "principal='{}' service='{}' (managed context)", principal, atlasRepo);
             } else {
                 // EXTERNAL context → the view calls Ranger Admin REST directly with the
-                // context's stored URL + credentials.
+                // context's stored URL + credentials. The password stays in the context's encrypted
+                // store: the step reads it there when it runs (rangerAdminPasswordForStep).
                 stepParams.put("_rangerUrl", rc.getRangerUrl());
                 stepParams.put("_rangerAdminUsername", rc.getRangerAdminUsername());
-                stepParams.put("_rangerAdminPassword", rc.getRangerAdminPassword());
                 stepParams.put("_atlasAuthMode", authMode);
                 this.commandPlanFactory.createRangerPolicyCreateAtlasOmRead(rootCommand, stepParams);
                 LOG.info("Atlas federation dispatch: queued RANGER_POLICY_CREATE_ATLAS_OM_READ "
@@ -10895,6 +16753,101 @@ public class CommandService {
                         principal, atlasRepo, rc.getName());
             }
         }
+    }
+
+    /**
+     * The Atlas user a federation Ranger grant names. When it is the account of the operator's Secret, it is read from
+     * that Secret now, as the step runs: the Secret may have been created by the install, after the steps were planned.
+     *
+     * @throws org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException when an LDAP
+     *         service account Secret is still missing or incomplete
+     */
+    String federationPrincipalForStep(Map<String, Object> childParams) {
+        String secretName = stringValue(childParams.get("_omPrincipalSecret"));
+        if (secretName.isBlank()) return stringValue(childParams.get("_omPrincipal"));
+        String namespace = stringValue(childParams.get("namespace"));
+        return "ldap".equals(stringValue(childParams.get("_atlasAuthMode")))
+                ? ldapServiceAccountUsername(namespace, secretName)
+                : fileUserStoreUsername(namespace, secretName);
+    }
+
+    /**
+     * What the operator must still do when OpenMetadata signs in to Atlas with an LDAP service account and Atlas uses
+     * its simple authorizer: KDPS grants nothing there, since the stack only adds the file-store federation user to the
+     * policy file.
+     *
+     * @param account the account OpenMetadata signs in with, as the operator should look for it
+     */
+    static String simpleAuthzManualGrantNotice(String account) {
+        return "Atlas on this cluster uses its simple authorizer, and KDPS grants nothing to an LDAP service account "
+                + "there: add " + account + " (or a group it belongs to) with read access to Atlas's "
+                + "atlas-simple-authz-policy.json and restart Atlas. Until then Atlas refuses OpenMetadata's reads, "
+                + "unless the account is already in a group the policy grants.";
+    }
+
+    /**
+     * The notice the registration step puts on the deploy's log for the account it signs in with, or null when
+     * KDPS granted that account read access itself (see {@link #simpleAuthzManualGrantNotice}).
+     */
+    static String federationAuthzNotice(Map<String, Object> childParams, String account) {
+        boolean manualGrant = "ldap".equals(stringValue(childParams.get("_atlasAuthMode")))
+                && "simple".equals(stringValue(childParams.get("_atlasAclMode")));
+        return manualGrant ? simpleAuthzManualGrantNotice("'" + account + "'") : null;
+    }
+
+    /**
+     * The user OpenMetadata signs in with against Atlas's file user store, decided the way the provision step does:
+     * the {@code username} in the operator's Secret when that Secret carries a password, else the default. The Ranger
+     * grant must name this same user, or Atlas denies every read of the federation.
+     */
+    private String fileUserStoreUsername(String namespace, String secretName) {
+        String fallback = "openmetadata-federation";
+        if (secretName == null || secretName.isBlank()) return fallback;
+        io.fabric8.kubernetes.api.model.Secret sec;
+        try {
+            sec = kubernetesService.getSecret(namespace, secretName.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+        Map<String, String> data = sec != null && sec.getData() != null ? sec.getData() : Collections.emptyMap();
+        if (data.get("password") == null || data.get("username") == null) return fallback;
+        String username = new String(java.util.Base64.getDecoder().decode(data.get("username")),
+                java.nio.charset.StandardCharsets.UTF_8).trim();
+        return username.isBlank() ? fallback : username;
+    }
+
+    /**
+     * The LDAP service account OpenMetadata signs in to Atlas with, read from the operator's Secret.
+     *
+     * @throws org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException when the Secret
+     *         is not there, cannot be read, or lacks a {@code username} or a {@code password}
+     */
+    private String ldapServiceAccountUsername(String namespace, String secretName) {
+        String where = "Secret '" + namespace + "/" + secretName + "'";
+        io.fabric8.kubernetes.api.model.Secret sec;
+        try {
+            sec = kubernetesService.getSecret(namespace, secretName);
+        } catch (Exception e) {
+            throw new org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException(
+                    "OpenMetadata signs in to Atlas through LDAP with the account in " + where
+                            + ", but that Secret could not be read (" + e.getMessage() + ").");
+        }
+        if (sec == null) {
+            throw new org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException(
+                    "OpenMetadata signs in to Atlas through LDAP with the account in " + where
+                            + ", but that Secret does not exist. Create it with the keys 'username' and 'password' first.");
+        }
+        Map<String, String> data = sec.getData() != null ? sec.getData() : Collections.emptyMap();
+        String username = "";
+        if (data.get("username") != null) {
+            username = new String(java.util.Base64.getDecoder().decode(data.get("username")),
+                    java.nio.charset.StandardCharsets.UTF_8).trim();
+        }
+        if (username.isBlank() || data.get("password") == null) {
+            throw new org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuthUnavailableException(
+                    where + " must hold both 'username' and 'password' (the LDAP service account OpenMetadata signs in to Atlas with).");
+        }
+        return username;
     }
 
     // ---------------------------------------------------------------------
@@ -10943,60 +16896,115 @@ public class CommandService {
      * <p>Checks: (1) {@code atlas.authentication.method.file=true} (OM's connector is Basic-only);
      * (2) the {@code openmetadata.federation.username} in atlas-env matches the release's K8s Secret;
      * (3) the password hash in atlas-env matches the Secret's password; (4) whether ATLAS_SERVER has
-     * a pending stale-config restart. Returns a never-null report consumed by the KDPS view.
+     * a pending stale-config restart. On a release whose OpenMetadata signs in through LDAP with the operator's
+     * service account Secret ({@link org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth#LDAP_ACCOUNT})
+     * checks 1 to 3 do not apply: nothing is kept in Atlas for it, and the live probe is made with that account. When
+     * that Atlas uses its simple authorizer, a warning says the account must be granted in its policy file by hand.
+     * Returns a never-null report consumed by the KDPS view.
      */
     public Map<String, Object> checkAtlasFederationConfig(String namespace, String releaseName,
             Map<String, java.util.List<String>> callerHeaders, java.net.URI baseUri) throws Exception {
+        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
+        String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
+        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        return checkAtlasFederationConfig(namespace, releaseName, cluster, ambari);
+    }
+
+    Map<String, Object> checkAtlasFederationConfig(String namespace, String releaseName, String cluster,
+                                                   AmbariActionClient ambari) throws Exception {
         Map<String, Object> report = new LinkedHashMap<>();
         java.util.List<Map<String, Object>> checks = new java.util.ArrayList<>();
         report.put("namespace", namespace);
         report.put("release", releaseName);
         report.put("checks", checks);
 
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
-        String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
-        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
-
-        // Expected user/hash from the release's federation Secret (operator-provided or KDPS-managed).
-        String secretName = releaseName + "-atlas-federation";
-        String expUser = null, expHash = null, expPlain = null;
+        // How OpenMetadata signs in is decided as the deploy decided it: from the Secret named in the release's
+        // values and the sign-in methods Atlas has on.
+        String operatorSecret = "";
         try {
-            io.fabric8.kubernetes.api.model.Secret sec = kubernetesService.getSecret(namespace, secretName);
-            if (sec != null && sec.getData() != null) {
-                java.util.Base64.Decoder dec = java.util.Base64.getDecoder();
-                if (sec.getData().containsKey("username"))
-                    expUser = new String(dec.decode(sec.getData().get("username")), java.nio.charset.StandardCharsets.UTF_8);
-                if (sec.getData().containsKey("password")) {
-                    expPlain = new String(dec.decode(sec.getData().get("password")), java.nio.charset.StandardCharsets.UTF_8);
-                    expHash = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.sha256Hex(expPlain);
-                }
+            operatorSecret = federationExistingSecret(namespace, releaseName);
+        } catch (Exception e) {
+            LOG.warn("checkAtlasFederationConfig({}/{}): could not read the release values ({}); checking the "
+                    + "KDPS-managed federation user.", namespace, releaseName, e.toString());
+        }
+        String[] operatorCredentials = operatorSecret.isBlank() ? null
+                : federationSecretCredentials(namespace, operatorSecret);
+        boolean ldapAccount = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.planFederationAuth(
+                ambari, cluster, !operatorSecret.isBlank(), operatorCredentials != null ? operatorCredentials[0] : null, false)
+                == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.LDAP_ACCOUNT;
+        report.put("federationAuth", ldapAccount ? "ldap" : "file");
+        // Nothing is kept in Atlas for an LDAP service account, so there is nothing for KDPS to re-assert.
+        report.put("fixRestartAvailable", !ldapAccount);
+
+        // Expected user/password: the LDAP account in the operator's Secret; for the file user store the same Secret
+        // the provision step takes (the operator's when it carries a password, else the KDPS-managed one).
+        String[] expected = null;
+        if (ldapAccount) {
+            expected = operatorCredentials;
+        } else {
+            if (!operatorSecret.isBlank() && !operatorSecret.equals(releaseName + "-atlas-federation")) {
+                expected = operatorCredentials;
             }
-        } catch (Exception ignore) { /* secret may be absent on a non-federated release */ }
-        report.put("federationConfigured", expUser != null);
+            if (expected == null || expected[1] == null) {
+                expected = federationSecretCredentials(namespace, releaseName + "-atlas-federation");
+            }
+            // A Secret with a password and no username gets the default user, as in the provision step.
+            if (expected != null && expected[1] != null && expected[0] == null) expected[0] = "openmetadata-federation";
+        }
+        String expUser = expected != null ? expected[0] : null;
+        String expPlain = expected != null ? expected[1] : null;
+        String expHash = expPlain != null ? org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.sha256Hex(expPlain) : null;
+        // A release naming an LDAP service account is federated even when its Secret is broken: the check says why.
+        report.put("federationConfigured", ldapAccount || expUser != null);
 
         String fileOn = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authentication.method.file");
         boolean fileOk = "true".equalsIgnoreCase(fileOn != null ? fileOn.trim() : "");
-        checks.add(driftCheck("atlas.method.file", fileOk, "critical",
-                fileOk ? "Atlas file-based (Basic) auth is enabled."
-                        : "Atlas file-based auth is DISABLED (atlas.authentication.method.file=" + fileOn + "). OM's connector "
-                          + "only speaks HTTP Basic, so ingestion will get 401.",
-                fileOk ? null : "Re-run the OM deploy (KDPS re-asserts it idempotently) or set "
-                          + "atlas.authentication.method.file=true in Ambari and restart Atlas."));
+        boolean userOk = true;
+        boolean hashOk = true;
+        boolean simpleAuthzManual = false;
+        if (ldapAccount) {
+            boolean accountOk = expUser != null && expPlain != null;
+            checks.add(driftCheck("atlas.method.ldap", accountOk, "critical",
+                    accountOk
+                            ? "Atlas signs users in against LDAP; OpenMetadata uses the service account '" + expUser
+                              + "' from Secret '" + operatorSecret + "', so no user is kept in Atlas."
+                            : "OpenMetadata signs in to Atlas through LDAP with the account in Secret '" + operatorSecret
+                              + "', but that Secret is missing or lacks 'username' or 'password'.",
+                    accountOk ? null : "Create the Secret with the LDAP service account's 'username' and 'password'."));
+            // KDPS cannot tell from here whether the policy grants the account (it may do so through an LDAP group),
+            // so this is a reminder rather than a failure.
+            String authzImpl = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authorizer.impl");
+            simpleAuthzManual = authzImpl == null || !authzImpl.trim().toLowerCase().contains("ranger");
+            if (simpleAuthzManual) {
+                checks.add(driftCheck("atlas.authz.simple", false, "warning",
+                        "Atlas uses its simple authorizer, and KDPS grants nothing there to an LDAP service account.",
+                        simpleAuthzManualGrantNotice(expUser != null ? "'" + expUser + "'"
+                                : "the account in Secret '" + operatorSecret + "'")));
+            }
+        } else {
+            checks.add(driftCheck("atlas.method.file", fileOk, "critical",
+                    fileOk ? "Atlas file-based (Basic) auth is enabled."
+                            : "Atlas file-based auth is DISABLED (atlas.authentication.method.file=" + fileOn + "). OM's connector "
+                              + "only speaks HTTP Basic, so ingestion will get 401.",
+                    fileOk ? null : "KDPS does not turn Atlas file authentication on by itself (it adds a local administrator "
+                              + "account to Atlas). Either enable it in Ambari and restart Atlas, or upgrade the release with "
+                              + "an LDAP service account Secret (Atlas on LDAP) or 'Allow Atlas file authentication' ticked."));
 
-        String liveUser = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.username");
-        String liveHash = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.password_hash");
-        boolean userOk = expUser != null && expUser.equals(liveUser);
-        checks.add(driftCheck("atlas.federation.user", userOk, "critical",
-                (liveUser == null || liveUser.isBlank())
-                        ? "No openmetadata.federation.username present in atlas-env."
-                        : "atlas-env user='" + liveUser + "'" + (userOk ? " matches the release Secret."
-                          : " does NOT match the release Secret user '" + expUser + "'."),
-                userOk ? null : "Re-run the OM Atlas-federation step (actions/om-atlas-federation) to re-provision the user."));
-        boolean hashOk = expHash != null && expHash.equals(liveHash);
-        checks.add(driftCheck("atlas.federation.passwordHash", hashOk, "critical",
-                hashOk ? "Federation password hash in atlas-env matches the release Secret."
-                        : "Federation password hash in atlas-env does NOT match the release Secret (password rotated or edited by hand).",
-                hashOk ? null : "Re-run the OM Atlas-federation step so atlas-env and the Secret are re-synced, then restart Atlas."));
+            String liveUser = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.username");
+            String liveHash = ambari.getDesiredConfigProperty(cluster, "atlas-env", "openmetadata.federation.password_hash");
+            userOk = expUser != null && expUser.equals(liveUser);
+            checks.add(driftCheck("atlas.federation.user", userOk, "critical",
+                    (liveUser == null || liveUser.isBlank())
+                            ? "No openmetadata.federation.username present in atlas-env."
+                            : "atlas-env user='" + liveUser + "'" + (userOk ? " matches the release Secret."
+                              : " does NOT match the release Secret user '" + expUser + "'."),
+                    userOk ? null : "Re-run the OM Atlas-federation step (actions/om-atlas-federation) to re-provision the user."));
+            hashOk = expHash != null && expHash.equals(liveHash);
+            checks.add(driftCheck("atlas.federation.passwordHash", hashOk, "critical",
+                    hashOk ? "Federation password hash in atlas-env matches the release Secret."
+                            : "Federation password hash in atlas-env does NOT match the release Secret (password rotated or edited by hand).",
+                    hashOk ? null : "Re-run the OM Atlas-federation step so atlas-env and the Secret are re-synced, then restart Atlas."));
+        }
 
         boolean restartPending = ambari.componentRestartRequired(cluster, "ATLAS", "ATLAS_SERVER");
         report.put("restartPending", restartPending);
@@ -11013,28 +17021,64 @@ public class CommandService {
         String atlasRestUrl = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveAtlasRestUrl(ambari, cluster);
         org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe probe =
                 (expUser != null && expPlain != null)
-                        ? org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(atlasRestUrl, expUser, expPlain)
+                        ? org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(tlsOf(null, "Atlas"), atlasRestUrl, expUser, expPlain)
                         : org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.UNKNOWN;
         boolean authActive = probe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.LOADED;
         boolean authNotLoaded = probe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.NOT_LOADED;
         report.put("federationUserActive", authActive);
+        String refusedDetail = ldapAccount
+                ? "Atlas refuses the LDAP service account '" + expUser + "' (HTTP 401) at " + atlasRestUrl + "."
+                : "Federation user '" + expUser + "' is NOT loaded in Atlas's running store (HTTP 401) at " + atlasRestUrl + ". "
+                  + "atlas-env is correct, but Atlas hasn't materialized users-credentials.properties (regenerated only on restart).";
+        String refusedRemediation = ldapAccount
+                ? "Check the account in LDAP (it exists, is not locked, its password is the one in Secret '"
+                  + operatorSecret + "'). KDPS keeps nothing in Atlas for it, so restarting Atlas does not help."
+                : "Restart ATLAS_SERVER (the ODP hook writes the user into users-credentials.properties), or re-run the OM "
+                  + "Atlas-federation deploy with restart authorized — the deploy now self-heals via this same probe.";
         checks.add(driftCheck("atlas.federation.authProbe", authActive, authNotLoaded ? "critical" : "warning",
                 authActive
-                    ? "Federation user '" + expUser + "' authenticates to Atlas (" + atlasRestUrl + ") — federation is LIVE."
+                    ? (simpleAuthzManual
+                        ? "LDAP service account '" + expUser + "' signs in to Atlas (" + atlasRestUrl + "); whether it may "
+                          + "read depends on atlas-simple-authz-policy.json (see the simple authorizer check)."
+                        : "Federation user '" + expUser + "' authenticates to Atlas (" + atlasRestUrl + ") — federation is LIVE.")
                 : authNotLoaded
-                    ? "Federation user '" + expUser + "' is NOT loaded in Atlas's running store (HTTP 401) at " + atlasRestUrl + ". "
-                      + "atlas-env is correct, but Atlas hasn't materialized users-credentials.properties (regenerated only on restart)."
+                    ? refusedDetail
                     : "Could not probe Atlas auth at " + atlasRestUrl + " (no creds / unreachable) — inconclusive.",
-                authNotLoaded
-                    ? "Restart ATLAS_SERVER (the ODP hook writes the user into users-credentials.properties), or re-run the OM "
-                      + "Atlas-federation deploy with restart authorized — the deploy now self-heals via this same probe."
-                    : null));
+                authNotLoaded ? refusedRemediation : null));
 
         boolean ok = checks.stream().allMatch(c -> Boolean.TRUE.equals(c.get("ok")) || !"critical".equals(c.get("severity")));
         report.put("ok", ok);
-        LOG.info("checkAtlasFederationConfig({}/{}): ok={} fileOk={} userOk={} hashOk={} restartPending={} authProbe={}",
-                namespace, releaseName, ok, fileOk, userOk, hashOk, restartPending, probe);
+        LOG.info("checkAtlasFederationConfig({}/{}): ok={} federationAuth={} fileOk={} userOk={} hashOk={} restartPending={} "
+                        + "authProbe={}",
+                namespace, releaseName, ok, report.get("federationAuth"), fileOk, userOk, hashOk, restartPending, probe);
         return report;
+    }
+
+    /** The Secret the release's OpenMetadata signs in to Atlas with, from its deployed values; blank when none is named. */
+    private String federationExistingSecret(String namespace, String releaseName) {
+        Map<String, Object> values = kubernetesService.getHelmReleaseValues(namespace, releaseName);
+        return stringValue(ConfigResolutionService.getByDottedPath(
+                values != null ? values : Collections.emptyMap(), "atlasFederation.existingSecret")).trim();
+    }
+
+    /**
+     * The {@code username} (trimmed, as the deploy reads it) and {@code password} in a federation Secret; either is
+     * null when absent, and the whole result is null when the Secret cannot be read or does not exist.
+     */
+    private String[] federationSecretCredentials(String namespace, String secretName) {
+        io.fabric8.kubernetes.api.model.Secret sec;
+        try {
+            sec = kubernetesService.getSecret(namespace, secretName);
+        } catch (Exception e) {
+            return null;  // absent on a release that is not federated
+        }
+        if (sec == null || sec.getData() == null) return null;
+        java.util.Base64.Decoder dec = java.util.Base64.getDecoder();
+        String user = sec.getData().containsKey("username")
+                ? new String(dec.decode(sec.getData().get("username")), java.nio.charset.StandardCharsets.UTF_8).trim() : null;
+        String password = sec.getData().containsKey("password")
+                ? new String(dec.decode(sec.getData().get("password")), java.nio.charset.StandardCharsets.UTF_8) : null;
+        return new String[] {user == null || user.isBlank() ? null : user, password};
     }
 
     private static Map<String, Object> driftCheck(String id, boolean ok, String severity, String detail, String remediation) {
@@ -11049,20 +17093,40 @@ public class CommandService {
 
     /**
      * One-click "Fix &amp; restart Atlas" from the config-check modal. Re-asserts the federation config
-     * idempotently (file auth + atlas-env user/hash from the release Secret) and submits an ATLAS_SERVER
-     * restart, returning the Ambari request id so the UI can poll progress. Non-blocking. The federation
-     * user becomes active once Atlas finishes restarting (the ODP metadata.py hook materializes it).
+     * idempotently (atlas-env user/hash from the Secret the release signs in with; Atlas file auth is never turned
+     * on here, it must already be on) and submits an ATLAS_SERVER restart, returning the Ambari request id so the
+     * UI can poll progress. Non-blocking. The federation user becomes active once Atlas finishes restarting (the
+     * ODP metadata.py hook materializes it). Refused for a release that signs in through LDAP with a service
+     * account: nothing is kept in Atlas for it.
      */
     public Map<String, Object> fixAndRestartAtlasFederation(String namespace, String releaseName,
             Map<String, java.util.List<String>> callerHeaders, java.net.URI baseUri) throws Exception {
         Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(callerHeaders);
         String cluster = commandUtils.resolveClusterName(baseUri.toString(), authHeaders);
         AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        return fixAndRestartAtlasFederation(namespace, releaseName, cluster, ambari);
+    }
 
+    Map<String, Object> fixAndRestartAtlasFederation(String namespace, String releaseName, String cluster,
+                                                     AmbariActionClient ambari) throws Exception {
+        // The user re-asserted is the one the deploy wrote: from the operator's Secret when the release names one.
+        String operatorSecret = federationExistingSecret(namespace, releaseName);
+        String[] operatorCredentials = operatorSecret.isBlank() ? null
+                : federationSecretCredentials(namespace, operatorSecret);
+        if (org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.planFederationAuth(
+                ambari, cluster, !operatorSecret.isBlank(), operatorCredentials != null ? operatorCredentials[0] : null, false)
+                == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.FederationAuth.LDAP_ACCOUNT) {
+            throw new IllegalStateException("OpenMetadata signs in to Atlas through LDAP with the service account in Secret '"
+                    + operatorSecret + "'. KDPS keeps nothing in Atlas for it, so there is nothing to fix or restart: "
+                    + "check the account in LDAP.");
+        }
+        // Re-asserts the user only: Atlas file authentication is left as it is, and when it is off the
+        // operator is told to decide (see applyFileAuthDecision) instead of KDPS turning it on again.
+        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.applyFileAuthDecision(
+                ambari, cluster, false);
         org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.Credentials creds =
                 org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveOrCreate(
-                        this.kubernetesService.getClient(), namespace, releaseName, null);
-        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureFileAuthEnabled(ambari, cluster);
+                        this.kubernetesService.getClient(), namespace, releaseName, null, operatorSecret);
         boolean envChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
                 ambari, cluster, creds.username, creds.passwordSha256Hex, "ROLE_USER");
 
@@ -11093,17 +17157,37 @@ public class CommandService {
     }
 
     String provisionAtlasUserForOm(Map<String, Object> childParams) throws Exception {
+        String cluster = (String) childParams.get("_cluster");
+        String baseUriStr = (String) childParams.get("_baseUri");
+        AmbariActionClient ambari = null;
+        if (cluster != null && baseUriStr != null) {
+            Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+            java.net.URI baseUri = java.net.URI.create(baseUriStr);
+            ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
+        }
+        return provisionAtlasUserForOm(childParams, ambari);
+    }
+
+    String provisionAtlasUserForOm(Map<String, Object> childParams, AmbariActionClient ambari) throws Exception {
         String releaseName = (String) childParams.get("releaseName");
         String namespace   = (String) childParams.get("namespace");
         String cluster     = (String) childParams.get("_cluster");
-        if (releaseName == null || namespace == null || cluster == null) {
-            throw new IllegalStateException("Missing releaseName/namespace/_cluster in ATLAS_USER_PROVISION_OM params");
+        if (releaseName == null || namespace == null || cluster == null || ambari == null) {
+            throw new IllegalStateException("Missing releaseName/namespace/_cluster/_baseUri in ATLAS_USER_PROVISION_OM params");
         }
         String overrideUsername = stringValue(childParams.get("_atlasFederationUsername"));
         String role = stringValue(childParams.get("_atlasFederationRole"));
         if (role.isBlank()) role = "ROLE_USER";
 
-        // 1. Resolve federation credentials. The operator may supply their own Secret
+        // 1. File-based auth: OM's Atlas connector only speaks HTTP Basic, but it is turned on only when
+        //    the operator allowed it (never silently — the ODP scripts then add a local administrator
+        //    to Atlas). When it is off and not allowed, the step fails with the reason before anything
+        //    is written, also for a step planned before the operator had that choice.
+        boolean allowFileAuth = "true".equalsIgnoreCase(stringValue(childParams.get("_atlasEnableFileAuth")));
+        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.applyFileAuthDecision(
+                ambari, cluster, allowFileAuth);
+
+        // 2. Resolve federation credentials. The operator may supply their own Secret
         //    (e.g. Vault-synced via external-secrets) through atlasFederation.existingSecret; else
         //    KDPS generates + manages <release>-atlas-federation. Same Secret feeds the OM side.
         String operatorSecret = stringValue(childParams.get("_atlasFederationSecret"));
@@ -11111,16 +17195,12 @@ public class CommandService {
                 org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveOrCreate(
                         this.kubernetesService.getClient(), namespace, releaseName, overrideUsername, operatorSecret);
 
-        // 2. Ambari config (both merge-idempotent → no-op causes no new config version):
-        //    (a) assert file-based auth is enabled — OM's Atlas connector only speaks HTTP Basic;
-        //    (b) write the federation user's hash into atlas-env (→ users-credentials.properties).
-        String baseUriStr = (String) childParams.get("_baseUri");
-        Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-        java.net.URI baseUri = java.net.URI.create(baseUriStr);
-        AmbariActionClient ambari = new AmbariActionClient(ctx, baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
-        boolean fileAuthChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureFileAuthEnabled(ambari, cluster);
+        // Write the federation user's hash into atlas-env (→ users-credentials.properties); merge-idempotent,
+        // so a no-op causes no new config version.
         boolean envChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
                 ambari, cluster, creds.username, creds.passwordSha256Hex, role);
+        recordProvisioning(childParams, ledger -> ledger.setAtlasFederation(
+                new ProvisioningLedger.AtlasFederation(creds.username, fileAuthChanged)));
 
         // 3. Decide if Atlas needs a restart. Atlas loads its file user store only at startup, so the
         //    federation user is active only after a restart. The DECISIVE signal is a live auth-probe:
@@ -11138,9 +17218,11 @@ public class CommandService {
         if (atlasRestUrl.isBlank()) {
             atlasRestUrl = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.resolveAtlasRestUrl(ambari, cluster);
         }
+        // The Atlas of the cluster this Ambari manages: its certificate is always verified.
+        TlsPolicy atlasTls = tlsOf(null, "Atlas");
         org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe probe =
                 org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(
-                        atlasRestUrl, creds.username, creds.plaintextPassword);
+                        atlasTls, atlasRestUrl, creds.username, creds.plaintextPassword);
         boolean needsRestart;
         String restartReason;
         switch (probe) {
@@ -11173,7 +17255,7 @@ public class CommandService {
                 if (ok) {
                     // Re-probe to CONFIRM the restart actually materialized + activated the user (closes the loop).
                     postProbe = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.probeFederationUser(
-                            atlasRestUrl, creds.username, creds.plaintextPassword);
+                            atlasTls, atlasRestUrl, creds.username, creds.plaintextPassword);
                     if (postProbe == org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.AtlasAuthProbe.NOT_LOADED) {
                         LOG.warn("ATLAS_USER_PROVISION_OM: Atlas restarted (requestId={}) but federation user '{}' STILL gets 401 — "
                                 + "verify atlas.authentication.method.file=true is in effect and the ODP metadata.py hook ran.",
@@ -11267,10 +17349,28 @@ public class CommandService {
     }
 
     /**
+     * The Ranger admin password of the step's external platform context, read from the context's encrypted store
+     * when the step runs: it is not kept with the step's parameters. A step planned by an earlier version still
+     * carries it there and uses that.
+     *
+     * @param childParams the step's parameters ({@code _platformContextId} names the context)
+     * @return the password, empty when the context has none or cannot be resolved
+     */
+    String rangerAdminPasswordForStep(Map<String, Object> childParams) {
+        String legacy = stringValue(childParams.get("_rangerAdminPassword"));
+        if (!legacy.isBlank()) {
+            return legacy;
+        }
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        return rc == null ? "" : stringValue(rc.getRangerAdminPassword());
+    }
+
+    /**
      * Body of {@code RANGER_POLICY_CREATE_ATLAS_OM_READ} — the EXTERNAL-context path.
      * The Ranger Admin URL + credentials come from the resolved external context
-     * (params {@code _rangerUrl} / {@code _rangerAdminUsername} / {@code _rangerAdminPassword}),
-     * since an external cluster has no {@code ranger-env} on this Ambari to read. Delegates
+     * (params {@code _rangerUrl} / {@code _rangerAdminUsername}, the password from the context
+     * itself, see {@link #rangerAdminPasswordForStep}), since an external cluster has no
+     * {@code ranger-env} on this Ambari to read. Delegates
      * to {@code OmAtlasProvisioning.createOrFindAtlasReadPolicy} (idempotent grant + poll).
      *
      * <p>MANAGED contexts never reach here — they use {@code RANGER_POLICY_GRANT_VIA_AMBARI},
@@ -11284,18 +17384,18 @@ public class CommandService {
 
         String rangerUrl  = stringValue(childParams.get("_rangerUrl"));
         String rangerUser = stringValue(childParams.get("_rangerAdminUsername"));
-        String rangerPass = stringValue(childParams.get("_rangerAdminPassword"));
+        String rangerPass = rangerAdminPasswordForStep(childParams);
         if (rangerUrl.isBlank() || rangerUser.isBlank() || rangerPass.isBlank()) {
             throw new IllegalStateException(
-                    "External-context Ranger grant requires _rangerUrl + _rangerAdminUsername + "
-                    + "_rangerAdminPassword in step params (set on the EXTERNAL platform context). "
+                    "External-context Ranger grant requires the Ranger URL, admin user and admin password "
+                    + "of the EXTERNAL platform context; set them on the context. "
                     + "A MANAGED context should use RANGER_POLICY_GRANT_VIA_AMBARI instead.");
         }
 
         String atlasService = stringValue(childParams.get("_atlasRangerServiceName"));
         if (atlasService.isBlank()) atlasService = (cluster == null ? "" : cluster) + "_atlas";
 
-        String principal = stringValue(childParams.get("_omPrincipal"));
+        String principal = federationPrincipalForStep(childParams);
         boolean isKerberos = "kerberos".equalsIgnoreCase(stringValue(childParams.get("_atlasAuthMode")));
         if (principal.isBlank()) {
             throw new IllegalStateException("Missing _omPrincipal in RANGER_POLICY_CREATE_ATLAS_OM_READ params.");
@@ -11306,8 +17406,10 @@ public class CommandService {
                 + "isKerberos={} policyName='{}'", rangerUrl, atlasService, principal, isKerberos, policyName);
 
         long policyId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindAtlasReadPolicy(
+                tlsOf(resolvePlatformContextForStep(childParams), "Ranger"),
                 rangerUrl, rangerUser, rangerPass, atlasService, policyName, principal, isKerberos,
                 java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+        recordAtlasReadGrants(childParams, atlasService, principal, policyName);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("policyId", policyId);
@@ -11348,7 +17450,7 @@ public class CommandService {
         String atlasService = stringValue(childParams.get("_atlasRangerServiceName"));
         if (atlasService.isBlank()) atlasService = cluster + "_atlas";
 
-        String principal = stringValue(childParams.get("_omPrincipal"));
+        String principal = federationPrincipalForStep(childParams);
         if (principal.isBlank()) {
             throw new IllegalStateException("Missing _omPrincipal in RANGER_POLICY_GRANT_VIA_AMBARI params.");
         }
@@ -11384,6 +17486,7 @@ public class CommandService {
 
         LOG.info("RANGER_POLICY_GRANT_VIA_AMBARI: granted entity-read+type-read to '{}' on '{}' "
                 + "(Ambari requests {} + {})", principal, atlasService, entitiesReq, typesReq);
+        recordAtlasReadGrants(childParams, atlasService, principal, base);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("atlasServiceName", atlasService);
@@ -11428,11 +17531,14 @@ public class CommandService {
         // there). One grant: select on database/table/column — Hive maps DESCRIBE (and thus Superset's
         // column reflection) to 'select', the minimum that unblocks "tables list but show no columns".
         if (rc != null && rc.hasDirectRangerCreds()) {
-            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindHiveReadPolicy(tlsOf(rc, "Ranger"),
                     rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
-                    hiveService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
+                    hiveService, policyName, principal, HIVE_SERVICE_DATA_ACCESS,
+                    java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
             LOG.info("RANGER_POLICY_GRANT_HIVE_READ: granted select to '{}' on '{}' via context Ranger (direct REST, policy id={})",
                     principal, hiveService, pid);
+            recordRangerGrant(childParams, hiveService, principal, HIVE_SERVICE_DATA_ACCESS, HIVE_ALL_RESOURCES,
+                    policyName, principalMintedByKdps(childParams), principalPerNamespace(childParams));
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("hiveServiceName", hiveService);
             result.put("principal", principal);
@@ -11450,12 +17556,12 @@ public class CommandService {
         AmbariActionClient ambari = new AmbariActionClient(ctx,
                 baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
         int req = ambari.submitRangerPolicyGrant(
-                hiveService, principal, "select",
-                "{\"database\":[\"*\"],\"table\":[\"*\"],\"column\":[\"*\"]}",
+                hiveService, principal, HIVE_SERVICE_DATA_ACCESS,
+                HIVE_ALL_RESOURCES,
                 policyName,
-                "KDPS: Superset service user Hive read (table/column reflection)",
+                "KDPS: service identity Hive data read (it reads Hive as itself and cannot impersonate the user)",
                 timeoutSeconds,
-                "KDPS Superset->Hive: grant select to " + principal);
+                "KDPS service->Hive: grant select to " + principal);
         if (!ambari.waitUntilComplete(req, timeoutSeconds + 30, java.util.concurrent.TimeUnit.SECONDS)) {
             throw new IllegalStateException("Ambari ranger_policy request " + req
                     + " (hive read) did not complete successfully");
@@ -11463,6 +17569,8 @@ public class CommandService {
 
         LOG.info("RANGER_POLICY_GRANT_HIVE_READ: granted select to '{}' on '{}' (Ambari request {})",
                 principal, hiveService, req);
+        recordRangerGrant(childParams, hiveService, principal, HIVE_SERVICE_DATA_ACCESS, HIVE_ALL_RESOURCES,
+                policyName, principalMintedByKdps(childParams), principalPerNamespace(childParams));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("hiveServiceName", hiveService);
@@ -11480,6 +17588,9 @@ public class CommandService {
      * <p>Replayable: the file name and its contents come from the release, so re-installing the same
      * release rewrites identical text and the commit is skipped. Nothing is pushed when the content
      * has not moved.
+     *
+     * <p>Over SSH, the repository's server must present one of the host keys given with the release
+     * ({@code airflow.dagRepoHostKey}); without one the publish is refused, naming the key presented.
      */
     private String publishDbtAirflowDag(Map<String, Object> childParams) throws Exception {
         String releaseName = (String) childParams.get("releaseName");
@@ -11498,6 +17609,7 @@ public class CommandService {
         String kubeConn  = (String) childParams.get("kubeConnectionId");
         String token     = (String) childParams.get("gitToken");
         String sshKey    = (String) childParams.get("gitSshKey");
+        String knownHosts = (String) childParams.get("gitSshKnownHosts");
         int timeoutMin   = 60;
         Object rawTimeout = childParams.get("runTimeoutMinutes");
         if (rawTimeout != null) {
@@ -11513,13 +17625,17 @@ public class CommandService {
         try {
             org.apache.ambari.view.k8s.service.deployment.GitClient git =
                     new org.apache.ambari.view.k8s.service.deployment.GitClient(workspace, repoUrl, branch, token, sshKey)
-                            .withAuthor("KDPS", "kdps@clemlab.com");
+                            .withAuthor("KDPS", "kdps@clemlab.com")
+                            .withTimeout(FluxGitOpsBackend.gitTimeoutSeconds(ctx))
+                            .withProxy(ViewConfigurationService.outboundProxy(ctx))
+                            .withHostKeys(knownHosts);
             git.sync();
             git.checkoutBranch(branch);
             git.writeFile(java.nio.file.Path.of(dagDir, fileName), content);
             changed = git.hasChanges();
             if (changed) {
-                commitSha = git.commitAndPush("KDPS: dbt DAG for release " + releaseName + " in " + namespace);
+                commitSha = git.commit("KDPS: dbt DAG for release " + releaseName + " in " + namespace);
+                git.push();
             }
         } finally {
             deleteRecursively(workspace);
@@ -11798,6 +17914,113 @@ public class CommandService {
     }
 
     /**
+     * Takes back the OpenShift SCCs KDPS granted to a release, once the release is uninstalled (see
+     * {@link KubernetesService#removeSccGrants}). The service definitions say which SCCs the release needed, so grants
+     * made outside KDPS that its service accounts still hold can be listed for the platform team, and which SCCs the
+     * other releases of the project still need, so that none of them loses one.
+     *
+     * <p>Failures are reported, never thrown: the release is already gone.
+     *
+     * @param serviceKey the release's service definition, or null when unknown
+     * @return what the platform team may still do, or null when there is nothing to tell
+     */
+    public String removeSccGrantsForRelease(String namespace, String releaseName, String serviceKey) {
+        if (!kubernetesService.isOpenShiftCluster()) return null;
+        StackDefinitionService definitions = new StackDefinitionService(this.ctx);
+        Map<String, List<Map<String, Object>>> declared = new HashMap<>();
+        List<Map<String, Object>> sccGrants = openshiftScc(definitions, declared, serviceKey);
+        // The other releases of the project, as recorded when KDPS deployed them; this release's record is gone.
+        Map<String, List<Map<String, Object>>> otherReleases = new LinkedHashMap<>();
+        try {
+            for (K8sReleaseEntity other : new ReleaseMetadataService(ctx).findAll()) {
+                if (other == null || !namespace.equals(other.getNamespace())
+                        || other.getReleaseName() == null || other.getReleaseName().equals(releaseName)) {
+                    continue;
+                }
+                List<Map<String, Object>> otherScc = openshiftScc(definitions, declared, other.getServiceKey());
+                if (otherScc != null && !otherScc.isEmpty()) otherReleases.put(other.getReleaseName(), otherScc);
+            }
+        } catch (Exception e) {
+            LOG.warn("SCC cleanup for {}/{}: the other releases of the project could not be read: {}",
+                    namespace, releaseName, e.toString());
+            otherReleases = null;
+        }
+        return kubernetesService.removeSccGrants(namespace, releaseName, sccGrants, otherReleases);
+    }
+
+    /**
+     * Removes what KDPS created for a release outside its chart, once the release is uninstalled (see
+     * {@link KubernetesService#revokeKdpsObjectsForRelease}): in both deployment modes, since Helm and Flux only remove
+     * what the release's manifests hold.
+     *
+     * <p>Failures are reported, never thrown: the release is already gone.
+     *
+     * @param recordedObjects the objects the release's record names (see {@link K8sReleaseEntity#getKdpsObjects}); null
+     *                        for a release recorded before KDPS recorded them, whose report then says what to look for
+     * @return the report ({@code removed}, {@code left} with the commands that remove them, {@code note}), or null when
+     *         KDPS created nothing for the release
+     */
+    public Map<String, Object> revokeKdpsObjectsForRelease(String namespace, String releaseName,
+                                                           List<String> recordedObjects) {
+        KdpsReleaseObjects.Cleanup cleanup;
+        try {
+            cleanup = kubernetesService.revokeKdpsObjectsForRelease(namespace, releaseName, recordedObjects);
+        } catch (RuntimeException e) {
+            LOG.warn("Cleanup of the objects KDPS created for {}/{} failed: {}", namespace, releaseName, e.toString());
+            cleanup = new KdpsReleaseObjects.Cleanup(List.of(), List.of(new KdpsReleaseObjects.Leftover(
+                    "Objects KDPS created for the release", "the cleanup failed: " + reasonOf(e),
+                    "oc delete secret,configmap,serviceaccount,role,rolebinding -l "
+                            + KdpsReleaseObjects.LABEL_MANAGED_BY + "=" + KdpsReleaseObjects.MANAGED_BY + ","
+                            + KdpsReleaseObjects.LABEL_RELEASE + "=" + releaseName + " -n " + namespace)));
+        }
+        if (recordedObjects == null && cleanup != null) {
+            // Deployed, and not since redeployed, by a version that neither labelled nor recorded what it created:
+            // an empty report would read as a complete cleanup.
+            List<KdpsReleaseObjects.Leftover> kept = new ArrayList<>(cleanup.kept());
+            kept.add(new KdpsReleaseObjects.Leftover("Objects an earlier KDPS version created for the release",
+                    "that version did not mark them, so they cannot be told from objects an administrator provided."
+                            + " Look for the autoscaler's monitoring token with its service account, Role and"
+                            + " RoleBinding, the cert-manager Certificate or ExternalSecret and the ingress certificate"
+                            + " Secret named after the release, and delete those nothing else uses",
+                    "oc get secret,serviceaccount,role,rolebinding,certificate.cert-manager.io,"
+                            + "externalsecret.external-secrets.io -n " + namespace + " | grep " + releaseName));
+            cleanup = new KdpsReleaseObjects.Cleanup(cleanup.removed(), cleanup.left(), kept);
+        }
+        return cleanup == null || cleanup.isEmpty() ? null : cleanup.toMap();
+    }
+
+    /**
+     * The objects the uninstall of a release would remove of those KDPS created for it (see
+     * {@link #revokeKdpsObjectsForRelease}), as {@code <Kind>/<name>}: what the uninstall confirmation lists. The
+     * ClusterRoleBindings are those the release's record names.
+     */
+    public List<String> kdpsObjectsOfRelease(String namespace, String releaseName, List<String> recordedObjects) {
+        List<String> found = kubernetesService.listKdpsObjectsForRelease(namespace, releaseName);
+        List<String> objects = new ArrayList<>(found == null ? List.of() : found);
+        String clusterScoped = KdpsReleaseObjects.CLUSTER_ROLE_BINDING + "/";
+        objects.removeIf(o -> o.startsWith(clusterScoped)
+                && (recordedObjects == null || !recordedObjects.contains(o)));
+        return objects;
+    }
+
+    /** A service's {@code openshiftScc}, read once per service; null when unknown or unreadable. */
+    private static List<Map<String, Object>> openshiftScc(StackDefinitionService definitions,
+                                                          Map<String, List<Map<String, Object>>> read,
+                                                          String serviceKey) {
+        if (serviceKey == null || serviceKey.isBlank()) return null;
+        if (read.containsKey(serviceKey)) return read.get(serviceKey);
+        List<Map<String, Object>> sccGrants = null;
+        try {
+            StackServiceDef def = definitions.getServiceDefinition(serviceKey);
+            sccGrants = def == null ? null : def.openshiftScc;
+        } catch (Exception e) {
+            LOG.warn("SCC cleanup: service definition {} could not be read: {}", serviceKey, e.toString());
+        }
+        read.put(serviceKey, sccGrants);
+        return sccGrants;
+    }
+
+    /**
      * Takes back what a release was given in Polaris when it is uninstalled, and removes the
      * credential Secret. Driven from the uninstall endpoint rather than the command plan, because
      * an uninstall is a single synchronous action and there is nothing left to replay afterwards.
@@ -11948,6 +18171,984 @@ public class CommandService {
         }
     }
 
+    /**
+     * Root parameter of a deploy that gave the Atlas tag projector of its release a Ranger account the release did not
+     * have before: the platform context the account is on ({@link ContextService#DEFAULT_CONTEXT_ID} for the managed
+     * cluster). Should the deploy end without installing the release, the account is taken back (see
+     * {@link #takeBackTagSyncAccountOfUninstalledRelease}), and given again if the deploy is resumed.
+     */
+    static final String TAG_SYNC_NEW_ACCOUNT_PARAM = "_tagSyncNewAccount";
+
+    /**
+     * Root parameter set with {@link #TAG_SYNC_NEW_ACCOUNT_PARAM}: the deploy as the account's record names it (see
+     * {@link TagSyncRangerAccount.Recorded#grant}). Once a later deploy of the release was given the account, the
+     * record names that one, and this deploy no longer takes the account back.
+     */
+    static final String TAG_SYNC_GRANT_PARAM = "_tagSyncGrant";
+
+    /** How long after the view starts the deploys a restart interrupted look whether to take their account back. */
+    private static final int TAG_SYNC_TAKE_BACK_AFTER_START_SECONDS = 5;
+
+    /** How often a take-back waiting for a Helm call still running on the release looks again: every 30 s for 30 min. */
+    private static final int TAG_SYNC_TAKE_BACK_ATTEMPTS = 60;
+    private static final int TAG_SYNC_TAKE_BACK_INTERVAL_SECONDS = 30;
+
+    /**
+     * Takes back, from the thread failing a deploy, the account its tag projector was given (see
+     * {@link #takeBackTagSyncAccountOfUninstalledRelease}); while a Helm call on the release still runs, looks again
+     * later.
+     */
+    private void takeBackTagSyncAccountNow(String rootId, Map<String, Object> rootParams) {
+        if (!takeBackTagSyncAccountOfUninstalledRelease(rootId, rootParams, false)) {
+            scheduleTagSyncTakeBack(rootId, 1, TAG_SYNC_TAKE_BACK_INTERVAL_SECONDS);
+        }
+    }
+
+    /**
+     * Looks, after {@code delaySeconds}, whether the deploy ended without installing its release, and takes back the
+     * account its tag projector was given (see {@link #takeBackTagSyncAccountOfUninstalledRelease}). While a Helm call
+     * on the release still runs, looks again, and after the last attempt says what is left to do.
+     */
+    private void scheduleTagSyncTakeBack(String rootId, int attempt, long delaySeconds) {
+        try {
+            timer.schedule(() -> workers.submit(() -> {
+                CommandEntity root = find(rootId);
+                if (root == null) return;
+                Map<String, Object> rootParams;
+                try {
+                    rootParams = gson.fromJson(resolveParamsJson(root),
+                            new TypeToken<LinkedHashMap<String, Object>>() {}.getType());
+                } catch (RuntimeException unreadable) {
+                    return;
+                }
+                if (takeBackTagSyncAccountOfUninstalledRelease(rootId, rootParams, true)) return;
+                if (attempt + 1 < TAG_SYNC_TAKE_BACK_ATTEMPTS) {
+                    scheduleTagSyncTakeBack(rootId, attempt + 1, TAG_SYNC_TAKE_BACK_INTERVAL_SECONDS);
+                    return;
+                }
+                TagSyncRangerAccount.Recorded account = tagSyncAccounts.find(stringValue(rootParams.get("namespace")),
+                        stringValue(rootParams.get("releaseName")));
+                appendCommandLog(rootId, "WARNING: The Helm call on release " + rootParams.get("namespace") + "/"
+                        + rootParams.get("releaseName") + " is still running. If it does not install the release,"
+                        + " uninstall it, or disable the Ranger account"
+                        + (account == null ? "" : " '" + account.userName() + "'") + " that KDPS gave its Atlas tag"
+                        + " projector, and delete the Secret " + rootParams.get("namespace") + "/"
+                        + TagSyncRangerAccount.secretName(stringValue(rootParams.get("releaseName"))) + ".");
+            }), delaySeconds, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException shuttingDown) {
+            LOG.warn("Atlas tag sync: the account check of operation {} was not scheduled: the view is stopping", rootId);
+        }
+    }
+
+    /**
+     * Takes back the Ranger account a deploy gave the Atlas tag projector of its release (see
+     * {@link #TAG_SYNC_NEW_ACCOUNT_PARAM}) when the deploy failed or was canceled without installing the release. The
+     * Releases page lists only what Helm has, so no uninstall would ever disable the account, which holds the Ranger
+     * administrator role, nor delete its Secret. A release Helm has, in any state, or that a GitOps commit recorded,
+     * keeps the account for its uninstall. What was done, or is left for an administrator, goes to the operation log.
+     * Never throws.
+     *
+     * @param requireEnded whether the deploy must have ended FAILED or CANCELED, rather than be failing on this thread
+     * @return false while a Helm call on the release still runs, which may yet install it; true otherwise
+     */
+    boolean takeBackTagSyncAccountOfUninstalledRelease(String rootId, Map<String, Object> rootParams,
+                                                       boolean requireEnded) {
+        if (rootParams == null || stringValue(rootParams.get(TAG_SYNC_NEW_ACCOUNT_PARAM)).isBlank()) return true;
+        String namespace = stringValue(rootParams.get("namespace"));
+        String release = stringValue(rootParams.get("releaseName"));
+        if (namespace.isBlank() || release.isBlank()) return true;
+        synchronized (tagSyncTakeBackLock) {
+            try {
+                if (requireEnded && !endedWithoutSuccess(rootId)) return true;
+                TagSyncRangerAccount.Recorded account = tagSyncAccounts.find(namespace, release);
+                if (account == null) return true;
+                // A later deploy of the release was given the account since: it is that deploy's to take back.
+                String grant = stringValue(rootParams.get(TAG_SYNC_GRANT_PARAM));
+                if (grant.isBlank() || !grant.equals(account.grant())) return true;
+                if (HelmOperationRegistry.isRunning(namespace, release)) return false;
+                Boolean installed = releaseInstalled(namespace, release, rootParams.get(GITOPS_RELEASE_PARAM) != null);
+                if (installed == null) {
+                    appendCommandLog(rootId, "WARNING: KDPS could not tell whether release " + namespace + "/" + release
+                            + " was installed. If it was not, disable the Ranger account '" + account.userName()
+                            + "' that KDPS gave its Atlas tag projector, and delete the Secret " + namespace + "/"
+                            + TagSyncRangerAccount.secretName(release) + "; otherwise its uninstall does.");
+                    return true;
+                }
+                if (installed) return true;
+                TagSyncRangerAccount.Revoked revoked = TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts,
+                        namespace, release, null, tagSyncRangers.apply(rootParams));
+                if (!revoked.done().isEmpty()) {
+                    appendCommandLog(rootId, "The deploy did not install release " + namespace + "/" + release
+                            + ", so KDPS " + String.join(" and ", revoked.done()) + ". Resuming the deploy gives the"
+                            + " Atlas tag projector a Ranger account again.");
+                }
+                if (revoked.note() != null) appendCommandLog(rootId, "WARNING: " + revoked.note());
+            } catch (RuntimeException e) {
+                LOG.warn("Atlas tag sync: the account of release {}/{} could not be taken back after operation {}: {}",
+                        namespace, release, rootId, e.toString());
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Looks again, once the view has started, at every deploy that ended without installing its release and gave the
+     * Atlas tag projector its account (see {@link #TAG_SYNC_NEW_ACCOUNT_PARAM}), and takes the account back (see
+     * {@link #takeBackTagSyncAccountOfUninstalledRelease}). A restart fails the deploys it interrupts (see
+     * {@link #recoverOrphanedCommands}) without running what takes the account back on failure, and drops the checks
+     * that were still waiting for a Helm call to end. A deploy whose account a later deploy was given, or whose release
+     * was installed, is left as it is. Never throws.
+     */
+    private void takeBackTagSyncAccountsAfterStart() {
+        try {
+            Collection<CommandEntity> all = dataStore.findAll(CommandEntity.class, null);
+            if (all == null) return;
+            Set<String> steps = new java.util.HashSet<>();
+            for (CommandEntity cmd : all) {
+                steps.addAll(childIdsOf(cmd));
+            }
+            for (CommandEntity root : all) {
+                if (root == null || steps.contains(root.getId()) || !endedWithoutSuccess(root.getId())) continue;
+                Map<String, Object> rootParams;
+                try {
+                    rootParams = gson.fromJson(resolveParamsJson(root),
+                            new TypeToken<LinkedHashMap<String, Object>>() {}.getType());
+                } catch (RuntimeException unreadable) {
+                    continue;
+                }
+                if (rootParams == null || stringValue(rootParams.get(TAG_SYNC_NEW_ACCOUNT_PARAM)).isBlank()) continue;
+                scheduleTagSyncTakeBack(root.getId(), 0, TAG_SYNC_TAKE_BACK_AFTER_START_SECONDS);
+            }
+        } catch (Exception e) {
+            LOG.warn("Atlas tag sync: the deploys that ended without installing their release could not be looked at"
+                    + " after the view started: {}", e.toString());
+        }
+    }
+
+    /** Whether the operation ended FAILED or CANCELED. */
+    private boolean endedWithoutSuccess(String rootId) {
+        CommandEntity root = find(rootId);
+        CommandStatusEntity status = root == null ? null : findCommandStatusById(root.getCommandStatusId());
+        return status != null && (CommandState.FAILED.name().equals(status.getState())
+                || CommandState.CANCELED.name().equals(status.getState()));
+    }
+
+    /**
+     * Whether a release exists for an uninstall to find: Helm has it, in any state, or, for a GitOps deploy, the view
+     * recorded it, which only its commit does. Null when Helm cannot be asked.
+     */
+    private Boolean releaseInstalled(String namespace, String release, boolean gitOps) {
+        if (gitOps && releaseRecorded(namespace, release)) return true;
+        try {
+            String kubeconfig = kubernetesService.getConfigurationService().getKubeconfigContents();
+            return helmService.list(namespace, kubeconfig).stream().anyMatch(r -> release.equals(r.getName()));
+        } catch (Exception e) {
+            LOG.warn("Atlas tag sync: the Helm releases of {} could not be listed: {}", namespace, e.toString());
+            return null;
+        }
+    }
+
+    /** Whether the view has a record of the release; false when it cannot be read. */
+    private boolean releaseRecorded(String namespace, String release) {
+        try {
+            return new ReleaseMetadataService(ctx).find(namespace, release) != null;
+        } catch (RuntimeException e) {
+            LOG.warn("Atlas tag sync: the release record of {}/{} could not be read: {}", namespace, release,
+                    e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Gives the Atlas tag projector, when a failed deploy is resumed, the Ranger account that was taken back because
+     * the deploy failed without installing the release (see {@link #takeBackTagSyncAccountOfUninstalledRelease}): the
+     * steps still to run point the chart at its Secret. The account gets a new password, on the Ranger it was on.
+     *
+     * @throws IllegalStateException when the account cannot be given again, before anything of the deploy is changed
+     */
+    private void giveBackTagSyncAccountOnResume(String rootId) {
+        CommandEntity root = find(rootId);
+        Map<String, Object> rootParams = root == null ? null : gson.fromJson(resolveParamsJson(root),
+                new TypeToken<LinkedHashMap<String, Object>>() {}.getType());
+        String contextId = rootParams == null ? "" : stringValue(rootParams.get(TAG_SYNC_NEW_ACCOUNT_PARAM));
+        if (contextId.isBlank()) return;
+        String namespace = stringValue(rootParams.get("namespace"));
+        String release = stringValue(rootParams.get("releaseName"));
+        if (namespace.isBlank() || release.isBlank() || tagSyncAccountRecorded(namespace, release)) return;
+        String contextKey = TagSyncRangerAccount.contextKey(contextId);
+        try {
+            TagSyncRangerAccount.RangerLocator locator = tagSyncRangers.apply(rootParams);
+            String grant = stringValue(rootParams.get(TAG_SYNC_GRANT_PARAM));
+            TagSyncRangerAccount.Provisioned account = TagSyncRangerAccount.provision(kubernetesService,
+                    tagSyncAccounts, locator.forContext(contextKey), locator, namespace, release, contextKey, null,
+                    tagSyncInstanceId(), kubernetesClusterUrl(), grant.isBlank() ? null : grant);
+            appendCommandLog(rootId, "KDPS gave the Atlas tag projector of release " + namespace + "/" + release
+                    + " its Ranger account '" + account.userName() + "' again, with a new password.");
+            account.warnings().forEach(w -> appendCommandLog(rootId, "WARNING: " + w));
+        } catch (Exception e) {
+            String reason = e.getMessage() == null || e.getMessage().isBlank() ? e.toString() : e.getMessage();
+            throw new IllegalStateException("This deploy cannot be resumed: the Ranger account of its Atlas tag"
+                    + " projector, taken back when the deploy failed, could not be given again (" + reason + ")."
+                    + " Deploy the release again from the wizard.", e);
+        }
+    }
+
+    /**
+     * Takes back the Ranger account the Atlas tag projector of a release wrote tags with, once the release is
+     * uninstalled: the account KDPS recorded for the release is disabled in the Ranger it was created on, and the
+     * Secret holding it deleted (see {@link TagSyncRangerAccount#revoke}). A release that never synced Atlas tags has
+     * neither, and nothing is done.
+     *
+     * <p>Failures are reported, never thrown: the release is already gone.
+     *
+     * @param platformContextId the release's platform context as the view recorded it, where an earlier KDPS version
+     *                          created its account
+     * @param callerHeaders     the uninstalling user's request headers, through which the Ranger of the managed
+     *                          cluster is reached (the Ambari server holds its administrator)
+     * @return what is left for an administrator to do, or null when there is nothing
+     */
+    public String revokeTagSyncRangerAccountForRelease(String namespace, String releaseName, String platformContextId,
+                                                       MultivaluedMap<String, String> callerHeaders) {
+        return TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts, namespace, releaseName,
+                platformContextId, tagSyncRangersFor(callerHeaders)).note();
+    }
+
+    // ---------- What KDPS registered for a release outside Kubernetes (see ProvisioningLedger) ----------
+
+    /**
+     * Records what a deploy step registered for its release outside Kubernetes, which the release's uninstall takes
+     * back (see {@link #revokeExternalForRelease}). Never fails the step.
+     *
+     * @param stepParams the step's parameters, which name the release
+     * @param change     what to add to the release's ledger
+     */
+    void recordProvisioning(Map<String, Object> stepParams,
+                            java.util.function.Consumer<ProvisioningLedger> change) {
+        if (stepParams == null) return;
+        try {
+            new ReleaseMetadataService(ctx).recordProvisioning(stringValue(stepParams.get("namespace")),
+                    stringValue(stepParams.get("releaseName")), change);
+        } catch (RuntimeException e) {
+            LOG.warn("Could not record what KDPS registered for {}/{}: {}", stepParams.get("namespace"),
+                    stepParams.get("releaseName"), e.toString());
+        }
+    }
+
+    /** Records a Ranger grant a step made (see {@link ProvisioningLedger.RangerGrant}). */
+    void recordRangerGrant(Map<String, Object> stepParams, String service, String user, String access,
+                           String resourcesJson, String policy, boolean exclusive) {
+        recordRangerGrant(stepParams, service, user, access, resourcesJson, policy, exclusive, false);
+    }
+
+    /**
+     * Records a Ranger grant a step made; {@code perNamespace} says the account is one KDPS mints for the release's
+     * namespace (see {@link ProvisioningLedger.RangerGrant#perNamespace}).
+     */
+    void recordRangerGrant(Map<String, Object> stepParams, String service, String user, String access,
+                           String resourcesJson, String policy, boolean exclusive, boolean perNamespace) {
+        String contextId = stepParams == null ? "" : stringValue(stepParams.get("_platformContextId"));
+        recordProvisioning(stepParams, ledger -> ledger.addRangerGrant(
+                new ProvisioningLedger.RangerGrant(contextId.isBlank() ? null : contextId, service, user, access,
+                        resourcesJson, policy, exclusive, perNamespace)));
+    }
+
+    /**
+     * Records the two Atlas read grants of the OpenMetadata federation principal (entities and types). The account of
+     * an operator's Secret is the operator's, and may hold access of its own; the one KDPS names is KDPS's.
+     */
+    private void recordAtlasReadGrants(Map<String, Object> stepParams, String atlasService, String principal,
+                                       String policyBase) {
+        boolean minted = stringValue(stepParams.get("_omPrincipalSecret")).isBlank();
+        recordRangerGrant(stepParams, atlasService, principal, "entity-read",
+                "{\"entity-type\":[\"*\"],\"entity-classification\":[\"*\"],\"entity\":[\"*\"]}",
+                policyBase + "-entities", minted);
+        recordRangerGrant(stepParams, atlasService, principal, "type-read",
+                "{\"type-category\":[\"*\"],\"type\":[\"*\"]}", policyBase + "-types", minted);
+    }
+
+    /**
+     * Step parameter set when the account a Ranger grant names is one KDPS minted for its releases, which no operator
+     * input can name: only such an account's access is taken back from every policy at uninstall (see
+     * {@link ProvisioningLedger.RangerGrant#exclusive}). A step planned without it takes back only its own policy.
+     */
+    static final String PRINCIPAL_MINTED_BY_KDPS = "_principalMintedByKdps";
+
+    static boolean principalMintedByKdps(Map<String, Object> stepParams) {
+        return stepParams != null && "true".equalsIgnoreCase(stringValue(stepParams.get(PRINCIPAL_MINTED_BY_KDPS)));
+    }
+
+    /**
+     * Step parameter set, with {@link #PRINCIPAL_MINTED_BY_KDPS}, when the account KDPS minted is named after the
+     * release's namespace, so that only releases of that namespace can share it (see
+     * {@link ProvisioningLedger.RangerGrant#perNamespace}). A step planned without it is taken as shared by the
+     * releases of every namespace.
+     */
+    static final String PRINCIPAL_PER_NAMESPACE = "_principalPerNamespace";
+
+    static boolean principalPerNamespace(Map<String, Object> stepParams) {
+        return principalMintedByKdps(stepParams)
+                && "true".equalsIgnoreCase(stringValue(stepParams.get(PRINCIPAL_PER_NAMESPACE)));
+    }
+
+    /**
+     * Records the Ranger repository of a release, when it is the release's own: it has the name KDPS gives the
+     * repository of a release, {@code <release>-<namespace>}. A name the operator chose may be that of a repository
+     * other workloads use, and is never the release's to delete; the caller also leaves out a repository Ranger
+     * already had.
+     */
+    void recordReleaseRangerRepository(Map<String, Object> stepParams, String repositoryName) {
+        if (!isReleaseOwnRangerRepository(stepParams, repositoryName)) return;
+        String contextId = stringValue(stepParams.get("_platformContextId"));
+        recordProvisioning(stepParams, ledger -> ledger.addRangerRepository(new ProvisioningLedger.RangerRepository(
+                contextId.isBlank() ? null : contextId, repositoryName)));
+    }
+
+    /**
+     * Creates the Ranger repository of a release in the Ranger of its platform context, or finds the one Ranger
+     * already has, and records it with the release only when KDPS created it: a repository it adopted holds policies
+     * that are not the release's, and is never the release's to delete.
+     *
+     * @return the Ranger service id
+     */
+    long ensureRangerRepositoryInContext(Map<String, Object> stepParams,
+                                         org.apache.ambari.view.k8s.model.ResolvedContext rc, String repositoryName,
+                                         String serviceType, Map<String, String> configs) throws Exception {
+        boolean existed = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.serviceExists(tlsOf(rc, "Ranger"),
+                rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(), repositoryName);
+        long id = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindService(tlsOf(rc, "Ranger"),
+                rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(), repositoryName,
+                serviceType, configs);
+        if (!existed) recordReleaseRangerRepository(stepParams, repositoryName);
+        return id;
+    }
+
+    /** Whether {@code repositoryName} is the name KDPS gives the Ranger repository of the step's release. */
+    static boolean isReleaseOwnRangerRepository(Map<String, Object> stepParams, String repositoryName) {
+        String releaseName = stepParams == null ? "" : stringValue(stepParams.get("releaseName"));
+        String namespace = stepParams == null ? "" : stringValue(stepParams.get("namespace"));
+        return repositoryName != null && !releaseName.isBlank() && !namespace.isBlank()
+                && repositoryName.trim().equals(releaseName + "-" + namespace);
+    }
+
+    /** Records the OpenMetadata source a release added to Ranger TagSync, with the mapper key it wrote, if any. */
+    private void recordTagSyncSource(Map<String, Object> stepParams, Map<String, Object> spec, String entryKey,
+                                     String omEndpoint, String jwt) {
+        String mapperKey = null;
+        try {
+            mapperKey = buildTagSyncRangerSiteOverrides(spec, entryKey, omEndpoint, jwt, null).keySet().stream()
+                    .filter(k -> k.startsWith("ranger.tagsync.openmetadata.")).findFirst().orElse(null);
+        } catch (RuntimeException ignore) {
+            // Written already by then, so this cannot fail; the source is recorded without its mapper key otherwise.
+        }
+        String mapper = mapperKey;
+        recordProvisioning(stepParams, ledger -> ledger.setTagSyncSource(new ProvisioningLedger.TagSyncSource(
+                tagSyncSourceKey(spec), omEndpoint, mapper)));
+    }
+
+    /**
+     * What the uninstall of a release would do outside Kubernetes (see {@link #revokeExternalForRelease}), for its
+     * confirmation to list.
+     *
+     * @param mode {@code credentials}, {@code all} or {@code none}
+     * @return the report of {@link ExternalCleanup#preview}, as the uninstall answers it, with {@code recorded} false
+     *         when nothing is recorded for the release (one deployed by an earlier version)
+     */
+    public Map<String, Object> externalRegistrationsOfRelease(String namespace, String releaseName, String mode) {
+        ReleaseMetadataService metadata = new ReleaseMetadataService(ctx);
+        ProvisioningLedger ledger = metadata.provisioningOf(namespace, releaseName);
+        Map<String, Object> answer = new LinkedHashMap<>(ExternalCleanup.preview(namespace, ledger, ExternalCleanup.Mode.of(mode),
+                metadata.otherReleasesProvisioning(namespace, releaseName)).toMap());
+        answer.put("recorded", !ledger.isEmpty());
+        return answer;
+    }
+
+    /**
+     * Takes back what KDPS registered for a release outside Kubernetes, once the release is uninstalled, as its ledger
+     * records it (see {@link ExternalCleanup}): Ranger access, the Atlas federation user and the OpenMetadata source of
+     * Ranger TagSync, Ambari view instances, Vault copies and, when the release's sign-in Secrets were already gone,
+     * its Keycloak clients. The client secrets kept for the release's registration steps are forgotten whatever the
+     * mode. Failures are reported, never thrown.
+     *
+     * @param ledger            the release's ledger, read before its record was deleted
+     * @param mode              {@code credentials} (the default), {@code all} or {@code none}
+     * @param signInSecretsSeen whether the release's sign-in is already dealt with: its Secrets were found and their
+     *                          cleanup ran, or the uninstall asked to keep it; its Keycloak clients are then left to
+     *                          that cleanup
+     * @param callerHeaders     the uninstalling user's request headers, through which the Ambari server is reached
+     * @return the report ({@code removed}, {@code left}, {@code kept}, {@code note}), or null when nothing is recorded
+     */
+    public Map<String, Object> revokeExternalForRelease(String namespace, String releaseName,
+                                                        ProvisioningLedger ledger,
+                                                        String mode, boolean signInSecretsSeen,
+                                                        MultivaluedMap<String, String> callerHeaders) {
+        forgetOidcClientSecretsOfRelease(namespace, releaseName);
+        if (ledger == null || ledger.isEmpty()) return null;
+        ExternalCleanup.Mode cleanupMode;
+        try {
+            cleanupMode = ExternalCleanup.Mode.of(mode);
+        } catch (IllegalArgumentException e) {
+            cleanupMode = ExternalCleanup.Mode.CREDENTIALS;
+        }
+        ExternalCleanup.Report report = ExternalCleanup.run(namespace, releaseName, ledger, cleanupMode,
+                signInSecretsSeen, new ReleaseMetadataService(ctx).otherReleasesProvisioning(namespace, releaseName),
+                new ReleasePlatform(namespace, releaseName, callerHeaders));
+        LOG.info("External cleanup of {}/{}: {}", namespace, releaseName, report.note());
+        return report.isEmpty() ? null : report.toMap();
+    }
+
+    /**
+     * Forgets the client secrets kept for the OIDC registration steps of a release, and clears one an earlier version
+     * kept in a step result: a deploy that failed between registering the client and writing its Secret left them in
+     * the view, and the operation history outlives the release.
+     */
+    void forgetOidcClientSecretsOfRelease(String namespace, String releaseName) {
+        try {
+            Collection<CommandEntity> all = dataStore.findAll(CommandEntity.class, null);
+            if (all == null) return;
+            for (CommandEntity step : all) {
+                if (step == null || !CommandType.OIDC_REGISTER_CLIENT.name().equals(step.getType())) continue;
+                Map<String, Object> params;
+                try {
+                    params = gson.fromJson(resolveParamsJson(step), new TypeToken<LinkedHashMap<String, Object>>() {}.getType());
+                } catch (RuntimeException unreadable) {
+                    continue;
+                }
+                if (params == null || !namespace.equals(stringValue(params.get("namespace")))
+                        || !releaseName.equals(stringValue(params.get("releaseName")))) {
+                    continue;
+                }
+                oidcClientSecrets().forget(step.getId());
+                CommandStatusEntity status = findCommandStatusById(step.getCommandStatusId());
+                String cleared = status == null ? null : OidcClientSecrets.withoutClientSecret(status.getResultJson());
+                if (cleared != null) {
+                    status.setResultJson(cleared);
+                    store(status);
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not forget the OIDC client secrets kept for {}/{}: {}", namespace, releaseName, e.toString());
+        }
+    }
+
+    /** Where the external cleanup of a release acts: the Ranger, Keycloak and Ambari of its platform contexts. */
+    private final class ReleasePlatform implements ExternalCleanup.Platform {
+        private final String namespace;
+        private final String releaseName;
+        private final MultivaluedMap<String, String> callerHeaders;
+        private Map<String, Object> ambariAccess;
+
+        ReleasePlatform(String namespace, String releaseName, MultivaluedMap<String, String> callerHeaders) {
+            this.namespace = namespace;
+            this.releaseName = releaseName;
+            this.callerHeaders = callerHeaders;
+        }
+
+        private Map<String, Object> ambariAccess() {
+            if (ambariAccess == null) ambariAccess = ambariAccessOf(callerHeaders);
+            return ambariAccess;
+        }
+
+        /** The Ambari server of the managed cluster, with the uninstalling user's session. */
+        private AmbariActionClient ambari() {
+            Map<String, Object> access = ambariAccess();
+            String cluster = stringValue(access.get("_cluster"));
+            String baseUri = stringValue(access.get("_baseUri"));
+            if (cluster.isBlank() || baseUri.isBlank()) {
+                throw new IllegalStateException("KDPS has no access to the Ambari server of the managed cluster");
+            }
+            return new AmbariActionClient(ctx, URI.create(baseUri).resolve("/api/v1").toString(), cluster,
+                    AmbariActionClient.toAuthHeaders(access.get("_callerHeaders")));
+        }
+
+        private String cluster() {
+            return stringValue(ambariAccess().get("_cluster"));
+        }
+
+        /** The platform context a ledger entry names, refused when KDPS no longer has it. */
+        private org.apache.ambari.view.k8s.model.ResolvedContext context(String contextId) {
+            if (contextId != null && !contextId.isBlank() && !ContextService.DEFAULT_CONTEXT_ID.equals(contextId)
+                    && !ContextService.NO_CONTEXT_ID.equals(contextId) && new ContextService(ctx).get(contextId) == null) {
+                throw new IllegalStateException("the platform context '" + contextId + "' no longer exists in KDPS");
+            }
+            Map<String, Object> params = new LinkedHashMap<>(ambariAccess());
+            if (contextId != null && !contextId.isBlank()) params.put("_platformContextId", contextId);
+            return resolvePlatformContextForStep(params);
+        }
+
+        @Override
+        public int revokeRangerGrant(ProvisioningLedger.RangerGrant grant)
+                throws Exception {
+            org.apache.ambari.view.k8s.model.ResolvedContext rc = context(grant.contextId());
+            Set<String> access = new LinkedHashSet<>();
+            for (String a : stringValue(grant.access()).split(",")) {
+                if (!a.isBlank()) access.add(a.trim());
+            }
+            if (rc != null && rc.hasDirectRangerCreds()) {
+                Map<String, List<String>> scope = gson.fromJson(grant.resources(),
+                        new TypeToken<LinkedHashMap<String, List<String>>>() {}.getType());
+                return org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.revokeGrant(tlsOf(rc, "Ranger"),
+                        rc.getRangerUrl().trim(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                        grant.service(), scope == null ? Map.of() : scope, grant.user(), access, grant.policy(),
+                        !grant.exclusive());
+            }
+            if (rc != null && !rc.isRangerManaged()) {
+                throw new IllegalStateException("KDPS holds no Ranger administrator for that platform context");
+            }
+            AmbariActionClient ambari = ambari();
+            int req = ambari.submitRangerPolicyRevoke(grant.service(), grant.user(), String.join(",", access),
+                    grant.resources(), grant.policy(), !grant.exclusive(), 60,
+                    "KDPS: take back the Ranger access of " + grant.user() + " (uninstall of " + releaseName + ")");
+            if (!ambari.waitUntilComplete(req, 120, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(requestDidNotComplete(ambari, req));
+            }
+            return ambari.taskStructuredOut(req)
+                    .filter(out -> out.has("changedPolicies") && out.get("changedPolicies").isJsonPrimitive())
+                    .map(out -> out.get("changedPolicies").getAsInt())
+                    .orElse(1);
+        }
+
+        @Override
+        public boolean deleteRangerRepository(
+                ProvisioningLedger.RangerRepository repository) throws Exception {
+            org.apache.ambari.view.k8s.model.ResolvedContext rc = context(repository.contextId());
+            if (rc != null && rc.hasDirectRangerCreds()) {
+                return org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.deleteService(tlsOf(rc, "Ranger"),
+                        rc.getRangerUrl().trim(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                        repository.name());
+            }
+            // The Ambari server deletes no Ranger repository, and KDPS never holds the managed Ranger's administrator.
+            throw new IllegalStateException("KDPS cannot delete a repository of the managed cluster's Ranger");
+        }
+
+        @Override
+        public String deleteKeycloakClient(ProvisioningLedger.OidcClient client) {
+            return deleteKeycloakClientOfRelease(namespace, releaseName,
+                    new OidcClientRef(client.clientId(), client.realm(), client.contextId()), callerHeaders);
+        }
+
+        @Override
+        public Map<String, String> managedConfig(String type) throws Exception {
+            return ambari().getDesiredConfigProperties(cluster(), type);
+        }
+
+        @Override
+        public void updateManagedConfig(String type, Map<String, String> properties, String tagSuffix) throws Exception {
+            ambari().updateClusterConfig(cluster(), type, properties, tagSuffix);
+        }
+
+        @Override
+        public Integer restartManagedComponent(String service, String component, String context) throws Exception {
+            return ambari().submitComponentRestart(cluster(), service, component, context);
+        }
+
+        @Override
+        public boolean deleteViewInstance(ProvisioningLedger.ViewInstance instance)
+                throws Exception {
+            return ambari().deleteViewInstance(instance.view(), instance.version(), instance.instance());
+        }
+
+        @Override
+        public boolean deleteVaultPath(String path) throws Exception {
+            String vaultAddr = ctx.getProperties() == null ? null : ctx.getProperties().get("k8s.view.vault.address");
+            String vaultToken = ctx.getProperties() == null ? null : ctx.getProperties().get("k8s.view.vault.token");
+            if (vaultAddr == null || vaultAddr.isBlank() || vaultToken == null || vaultToken.isBlank()) {
+                return false;
+            }
+            deleteFromVault(vaultAddr, vaultToken, path);
+            return true;
+        }
+    }
+
+    /** Labels of the Secrets holding the OIDC client of a release, and GitLab's OmniAuth provider built from it. */
+    static final String OIDC_LABEL_MANAGED_BY = "app.kubernetes.io/managed-by";
+    static final String OIDC_MANAGED_BY_KDPS = "kdps";
+    static final String OIDC_LABEL_INSTANCE = "app.kubernetes.io/instance";
+    static final String OIDC_LABEL_TYPE = "ambari.clemlab.com/type";
+    static final String OIDC_TYPE_CLIENT = "oidc-client";
+
+    /**
+     * Annotations on those Secrets, recording what the uninstall of the release removes with them: the client and the
+     * realm it is in, the platform context whose Keycloak registered it, whether it was registered by KDPS
+     * ({@code internal}) or supplied by a security profile ({@code external}), GitLab's OmniAuth provider Secret and
+     * the Vault copy. They live with the Secrets because the release's record is deleted with the release.
+     */
+    static final String OIDC_ANN_CLIENT_ID       = "kdps.clemlab.com/oidc-client-id";
+    static final String OIDC_ANN_REALM           = "kdps.clemlab.com/oidc-realm";
+    static final String OIDC_ANN_CONTEXT         = "kdps.clemlab.com/oidc-context";
+    static final String OIDC_ANN_SOURCE          = "kdps.clemlab.com/oidc-source";
+    static final String OIDC_ANN_PROVIDER_SECRET = "kdps.clemlab.com/oidc-provider-secret";
+    static final String OIDC_ANN_VAULT_PATH      = "kdps.clemlab.com/oidc-vault-path";
+    static final String OIDC_SOURCE_INTERNAL = "internal";
+    static final String OIDC_SOURCE_EXTERNAL = "external";
+
+    /** The annotation every Secret the view writes carries, since before it labelled them. */
+    private static final String VIEW_MANAGED_BY_ANNOTATION = "managed-by";
+    private static final String VIEW_MANAGED_BY_VALUE = "ambari-k8s-view";
+
+    /**
+     * The labels of the Secrets holding the OIDC client of a release. They carry the release label too, but keep their
+     * own {@code managed-by} value: {@link #revokeOidcForRelease} removes them with the Keycloak client, or leaves
+     * them when the uninstall asks to keep the sign-in, so the sweep of the release's other objects does not.
+     */
+    static Map<String, String> oidcSecretLabels(String releaseName) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put(OIDC_LABEL_MANAGED_BY, OIDC_MANAGED_BY_KDPS);
+        if (releaseName != null && !releaseName.isBlank()) labels.put(OIDC_LABEL_INSTANCE, releaseName);
+        labels.put(OIDC_LABEL_TYPE, OIDC_TYPE_CLIENT);
+        return KdpsReleaseObjects.withReleaseLabel(labels, releaseName);
+    }
+
+    /**
+     * The annotations of the Secrets holding the OIDC client of a release (see {@link #OIDC_ANN_CLIENT_ID}).
+     *
+     * @param contextId the platform context; blank for the managed cluster
+     */
+    static Map<String, String> oidcSecretAnnotations(String clientId, String realm, String contextId, boolean external,
+                                                     String providerSecretName, String vaultPath) {
+        Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put(OIDC_ANN_CLIENT_ID, clientId);
+        if (realm != null && !realm.isBlank()) annotations.put(OIDC_ANN_REALM, realm);
+        annotations.put(OIDC_ANN_CONTEXT, contextId == null || contextId.isBlank()
+                ? ContextService.DEFAULT_CONTEXT_ID : contextId);
+        annotations.put(OIDC_ANN_SOURCE, external ? OIDC_SOURCE_EXTERNAL : OIDC_SOURCE_INTERNAL);
+        if (providerSecretName != null && !providerSecretName.isBlank()) {
+            annotations.put(OIDC_ANN_PROVIDER_SECRET, providerSecretName);
+        }
+        if (vaultPath != null && !vaultPath.isBlank()) annotations.put(OIDC_ANN_VAULT_PATH, vaultPath);
+        return annotations;
+    }
+
+    /** The Keycloak realm an issuer URL names ({@code .../realms/<realm>}), or null. */
+    static String realmOfIssuer(String issuerUrl) {
+        if (issuerUrl == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("/realms/([^/?#]+)").matcher(issuerUrl);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** One Keycloak client a release's Secrets name. */
+    private record OidcClientRef(String clientId, String realm, String contextId) {}
+
+    /**
+     * Removes what a release was given to sign in through OIDC, once the release is uninstalled: the Secrets holding
+     * its client ({@code <release>-oidc-client}, and GitLab's {@code <release>-omniauth-provider}), their Vault copy,
+     * and the client KDPS registered in Keycloak. Driven from the uninstall endpoint, like
+     * {@link #revokePolarisForRelease}, and read from the Secrets' own annotations (see {@link #OIDC_ANN_CLIENT_ID}).
+     *
+     * <ul>
+     *   <li>A client KDPS registered is deleted only when its mark names this release and this KDPS instance (see
+     *       {@link KeycloakAdminClient#deleteClient}). One without a mark, registered by an earlier version, is never
+     *       deleted: it is reported with the command that deletes it.</li>
+     *   <li>A client a security profile supplied ({@code external}) belongs to that identity provider, which is never
+     *       called.</li>
+     *   <li>The Secrets and the Vault copy are removed in every case, Keycloak unreachable or its administrator
+     *       credential expired included. A Secret written before KDPS labelled them is removed when its name is the
+     *       release's and the view's annotation says the view wrote it.</li>
+     * </ul>
+     *
+     * <p>Failures are reported, never thrown: the release is already gone.
+     *
+     * @param platformContextId the release's platform context as the view recorded it, for a Secret that does not name
+     *                          the context of its client
+     * @param callerHeaders     the uninstalling user's request headers, through which the Keycloak of the managed
+     *                          cluster is reached (its administrator is in the Ambari server's {@code oidc-env})
+     * @return what was removed and what is left for an administrator to do, or null when the release had no OIDC
+     *         client Secret
+     */
+    public String revokeOidcForRelease(String namespace, String releaseName, String platformContextId,
+                                       MultivaluedMap<String, String> callerHeaders) {
+        try {
+            return revokeOidc(namespace, releaseName, platformContextId, callerHeaders);
+        } catch (RuntimeException e) {
+            LOG.warn("OIDC cleanup for {}/{} failed: {}", namespace, releaseName, e.toString());
+            return "The single sign-on cleanup of " + namespace + "/" + releaseName + " failed (" + reasonOf(e)
+                    + "). Delete the Secrets " + releaseName + "-oidc-client and " + releaseName
+                    + "-omniauth-provider if they are left, and the release's client in Keycloak.";
+        }
+    }
+
+    private String revokeOidc(String namespace, String releaseName, String platformContextId,
+                              MultivaluedMap<String, String> callerHeaders) {
+        // The Secrets KDPS wrote for the release's sign-in, by name.
+        Map<String, io.fabric8.kubernetes.api.model.Secret> owned = new LinkedHashMap<>();
+        try {
+            List<io.fabric8.kubernetes.api.model.Secret> labelled =
+                    kubernetesService.listSecretsWithLabel(namespace, OIDC_LABEL_TYPE, OIDC_TYPE_CLIENT);
+            for (io.fabric8.kubernetes.api.model.Secret secret : labelled == null
+                    ? List.<io.fabric8.kubernetes.api.model.Secret>of() : labelled) {
+                Map<String, String> labels = labelsOf(secret);
+                if (OIDC_MANAGED_BY_KDPS.equals(labels.get(OIDC_LABEL_MANAGED_BY))
+                        && releaseName.equals(labels.get(OIDC_LABEL_INSTANCE))) {
+                    owned.put(secret.getMetadata().getName(), secret);
+                }
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("OIDC cleanup for {}/{}: the labelled Secrets could not be listed ({}); looking them up by name",
+                    namespace, releaseName, e.toString());
+        }
+        // GitLab's provider Secret as its client's Secret names it, and the Secrets earlier versions wrote unlabelled.
+        Set<String> byName = new LinkedHashSet<>();
+        for (io.fabric8.kubernetes.api.model.Secret secret : owned.values()) {
+            String provider = annotationsOf(secret).get(OIDC_ANN_PROVIDER_SECRET);
+            if (provider != null && !provider.isBlank()) byName.add(provider);
+        }
+        byName.add(releaseName + "-oidc-client");
+        byName.add(releaseName + "-omniauth-provider");
+        for (String name : byName) {
+            if (owned.containsKey(name)) continue;
+            io.fabric8.kubernetes.api.model.Secret secret;
+            try {
+                secret = kubernetesService.getSecret(namespace, name);
+            } catch (RuntimeException e) {
+                LOG.warn("OIDC cleanup for {}/{}: Secret {} could not be read: {}", namespace, releaseName, name,
+                        e.toString());
+                continue;
+            }
+            // Only the view's own: a Secret of that name the operator made stays.
+            if (secret != null && VIEW_MANAGED_BY_VALUE.equals(annotationsOf(secret).get(VIEW_MANAGED_BY_ANNOTATION))) {
+                owned.put(name, secret);
+            }
+        }
+        if (owned.isEmpty()) return null;
+
+        // What the Secrets say is to be removed with them, read before they are deleted.
+        Set<OidcClientRef> registered = new LinkedHashSet<>();
+        Set<String> external = new LinkedHashSet<>();
+        Set<String> vaultPaths = new LinkedHashSet<>();
+        List<String> keycloakNotes = new ArrayList<>();
+        for (io.fabric8.kubernetes.api.model.Secret secret : owned.values()) {
+            Map<String, String> ann = annotationsOf(secret);
+            String clientId = ann.get(OIDC_ANN_CLIENT_ID);
+            if (clientId == null || clientId.isBlank()) {
+                // Written by an earlier version, which did not record where its client is: it is reported, not
+                // looked for (it may belong to an external identity provider).
+                String legacyClient = secretValue(secret, "client_id");
+                if (legacyClient != null && !legacyClient.isBlank()) {
+                    String realm = realmOfIssuer(secretValue(secret, "issuer_url"));
+                    keycloakNotes.add("The Secret " + secret.getMetadata().getName() + " was written by an earlier"
+                            + " KDPS version, which did not record where its single sign-on client '" + legacyClient
+                            + "' is registered, so the client was left as it is. If KDPS registered it in Keycloak and"
+                            + " nothing else uses it, delete it: " + kcadmDeleteCommand(legacyClient, realm));
+                }
+                continue;
+            }
+            String vaultPath = ann.get(OIDC_ANN_VAULT_PATH);
+            if (vaultPath != null && !vaultPath.isBlank()) vaultPaths.add(vaultPath.trim());
+            if (OIDC_SOURCE_EXTERNAL.equals(ann.get(OIDC_ANN_SOURCE))) {
+                external.add(clientId);
+            } else {
+                String contextId = ann.get(OIDC_ANN_CONTEXT);
+                registered.add(new OidcClientRef(clientId, ann.get(OIDC_ANN_REALM),
+                        contextId == null || contextId.isBlank() ? platformContextId : contextId));
+            }
+        }
+
+        // The Secrets go in every case: the client secret they hold must not outlive the release.
+        List<String> removed = new ArrayList<>();
+        List<String> left = new ArrayList<>();
+        for (String name : owned.keySet()) {
+            try {
+                kubernetesService.deleteSecret(namespace, name);
+                removed.add(name);
+            } catch (RuntimeException e) {
+                LOG.warn("OIDC cleanup for {}/{}: Secret {} could not be deleted: {}", namespace, releaseName, name,
+                        e.toString());
+                left.add(name);
+            }
+        }
+        List<String> secretNotes = new ArrayList<>();
+        if (!removed.isEmpty()) {
+            secretNotes.add("Removed the Secret" + (removed.size() > 1 ? "s " : " ") + String.join(", ", removed)
+                    + " holding the client secret.");
+        }
+        if (!left.isEmpty()) {
+            secretNotes.add("Could not remove the Secret" + (left.size() > 1 ? "s " : " ") + String.join(", ", left)
+                    + " holding the client secret. Delete " + (left.size() > 1 ? "them" : "it") + ": oc delete secret "
+                    + String.join(" ", left) + " -n " + namespace);
+        }
+        for (String path : vaultPaths) {
+            secretNotes.add(oidcVaultCopyNote(path));
+        }
+
+        for (String clientId : external) {
+            keycloakNotes.add("The single sign-on client '" + clientId + "' comes from the security profile's"
+                    + " identity provider, which KDPS does not manage: it was left as it is there.");
+        }
+        for (OidcClientRef ref : registered) {
+            keycloakNotes.add(deleteKeycloakClientOfRelease(namespace, releaseName, ref, callerHeaders));
+        }
+
+        List<String> notes = new ArrayList<>(keycloakNotes);
+        notes.addAll(secretNotes);
+        String note = String.join("\n", notes);
+        LOG.info("OIDC cleanup for {}/{}: {}", namespace, releaseName, note);
+        return note;
+    }
+
+    /** Deletes the Keycloak client of a release when its mark says it is this release's; says what was done. */
+    private String deleteKeycloakClientOfRelease(String namespace, String releaseName, OidcClientRef ref,
+                                                 MultivaluedMap<String, String> callerHeaders) {
+        String realm = ref.realm();
+        KeycloakAdminClient.ClientMarker marker = oidcClientMarker(namespace, releaseName);
+        if (marker == null) {
+            return "The single sign-on client '" + ref.clientId() + "' was left in Keycloak: KDPS could not read the"
+                    + " id of this instance, which the client must be marked with to be deleted. If nothing else uses"
+                    + " it, delete it: " + kcadmDeleteCommand(ref.clientId(), realm);
+        }
+        String contextId = ref.contextId() == null ? "" : ref.contextId().trim();
+        try {
+            if (!contextId.isBlank() && !ContextService.DEFAULT_CONTEXT_ID.equals(contextId)
+                    && !ContextService.NO_CONTEXT_ID.equals(contextId) && new ContextService(ctx).get(contextId) == null) {
+                return "The single sign-on client '" + ref.clientId() + "' was left in Keycloak: the platform context '"
+                        + contextId + "' whose Keycloak registered it no longer exists in KDPS. Delete it in that"
+                        + " Keycloak: " + kcadmDeleteCommand(ref.clientId(), realm);
+            }
+            Map<String, Object> params = new LinkedHashMap<>(ambariAccessOf(callerHeaders));
+            if (!contextId.isBlank()) params.put("_platformContextId", contextId);
+            KeycloakAdminClient keycloak = resolveKeycloakAdmin(params).client(realm);
+            realm = keycloak.realm();
+            String where = "'" + ref.clientId() + "' in Keycloak realm '" + realm + "'";
+            return switch (keycloak.deleteClient(ref.clientId(), marker)) {
+                case DELETED -> "Removed the single sign-on client " + where + ".";
+                case NOT_FOUND -> "The single sign-on client " + where + " was already gone.";
+                case NOT_MARKED -> "Kept the single sign-on client " + where + ": it was registered before KDPS marked"
+                        + " the clients it registers, so KDPS cannot tell that it is this release's. If nothing else"
+                        + " uses it, delete it: " + kcadmDeleteCommand(ref.clientId(), realm);
+                case MARKED_FOR_ANOTHER -> "Kept the single sign-on client " + where + ": it belongs to another"
+                        + " release, or to another KDPS sharing the realm.";
+            };
+        } catch (Exception e) {
+            LOG.warn("OIDC cleanup for {}/{}: Keycloak client {} not deleted: {}", namespace, releaseName,
+                    ref.clientId(), e.toString());
+            return "The single sign-on client '" + ref.clientId() + "' could not be removed from Keycloak ("
+                    + reasonOf(e) + "). It still signs users in with its old secret: delete it in Keycloak: "
+                    + kcadmDeleteCommand(ref.clientId(), realm);
+        }
+    }
+
+    /** The Keycloak admin CLI command deleting a client by its client id. */
+    static String kcadmDeleteCommand(String clientId, String realm) {
+        String r = realm == null || realm.isBlank() ? "<realm>" : realm;
+        return "kcadm.sh delete clients/$(kcadm.sh get clients -r " + r + " -q clientId=" + clientId
+                + " --fields id --format csv --noquotes) -r " + r;
+    }
+
+    /**
+     * Says where the Vault copy of a release's client credentials was written. The uninstall never deletes it: the
+     * path comes from an annotation on a Secret that anyone able to edit Secrets in the release namespace can change,
+     * and the view's Vault token must not delete a path such a user chose.
+     */
+    private static String oidcVaultCopyNote(String vaultPath) {
+        return "If a copy of the client credentials was written to Vault at '" + vaultPath
+                + "', it was not removed: delete it in Vault.";
+    }
+
+    private static Map<String, String> labelsOf(io.fabric8.kubernetes.api.model.Secret secret) {
+        return secret == null || secret.getMetadata() == null || secret.getMetadata().getLabels() == null
+                ? Map.of() : secret.getMetadata().getLabels();
+    }
+
+    private static Map<String, String> annotationsOf(io.fabric8.kubernetes.api.model.Secret secret) {
+        return secret == null || secret.getMetadata() == null || secret.getMetadata().getAnnotations() == null
+                ? Map.of() : secret.getMetadata().getAnnotations();
+    }
+
+    /** A key of a Secret, decoded; null when absent or unreadable. */
+    private static String secretValue(io.fabric8.kubernetes.api.model.Secret secret, String key) {
+        try {
+            String encoded = secret.getData() == null ? null : secret.getData().get(key);
+            return encoded == null ? null
+                    : new String(java.util.Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The Ranger of tag sync accounts, reached with a user's request headers. The Ambari server is only asked for its
+     * cluster once a Ranger is needed: a release that never synced Atlas tags costs nothing.
+     */
+    private TagSyncRangerAccount.RangerLocator tagSyncRangersFor(MultivaluedMap<String, String> callerHeaders) {
+        return contextId -> tagSyncRangers.apply(ambariAccessOf(callerHeaders)).forContext(contextId);
+    }
+
+    /**
+     * The step parameters through which the Ambari server is reached with a user's request headers
+     * ({@code _baseUri}, {@code _callerHeaders}, {@code _cluster}); empty when it cannot be.
+     */
+    private Map<String, Object> ambariAccessOf(MultivaluedMap<String, String> callerHeaders) {
+        Map<String, Object> access = new LinkedHashMap<>();
+        if (callerHeaders == null) return access;
+        try {
+            java.net.URI baseUri = org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver.resolveApiBaseUri(ctx);
+            String cluster = this.commandUtils.resolveClusterName(baseUri.toString(),
+                    AmbariActionClient.toAuthHeaders(callerHeaders));
+            access.put("_baseUri", baseUri.toString());
+            access.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
+            access.put("_cluster", cluster);
+        } catch (Exception e) {
+            LOG.warn("No Ambari access ({}); the managed cluster's Ranger and Keycloak cannot be reached.", e.toString());
+        }
+        return access;
+    }
+
+    /**
+     * Where the tag sync accounts of releases are created and disabled: the Ranger of a platform context, reached
+     * directly with the administrator credentials stored on the context, or, on the managed cluster, through the
+     * Ambari server that {@code stepParams} reach ({@code _baseUri}, {@code _callerHeaders}, {@code _cluster}). A
+     * platform context KDPS no longer has is reported as such: resolving it would fall back to the managed cluster,
+     * whose Ranger never had the account.
+     */
+    TagSyncRangerAccount.RangerLocator tagSyncRangersOf(Map<String, Object> stepParams) {
+        return contextId -> {
+            if (contextId != null && !contextId.isBlank() && !ContextService.NO_CONTEXT_ID.equals(contextId)
+                    && new ContextService(ctx).get(contextId) == null) {
+                throw new TagSyncRangerAccount.ContextGone(contextId);
+            }
+            Map<String, Object> ctxParams = new LinkedHashMap<>();
+            for (String key : List.of("_baseUri", "_callerHeaders", "_cluster")) {
+                if (stepParams.get(key) != null) ctxParams.put(key, stepParams.get(key));
+            }
+            if (contextId != null && !contextId.isBlank()) ctxParams.put("_platformContextId", contextId);
+            org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(ctxParams);
+            if (rc != null && rc.hasDirectRangerCreds()) {
+                return TagSyncRangerAccount.direct(tlsOf(rc, "Ranger"), rc.getRangerUrl().trim(), rc.getRangerAdminUsername(),
+                        rc.getRangerAdminPassword());
+            }
+            String cluster = stringValue(ctxParams.get("_cluster"));
+            String baseUri = stringValue(ctxParams.get("_baseUri"));
+            if (rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUri.isBlank()) {
+                AmbariActionClient ambari = new AmbariActionClient(ctx,
+                        java.net.URI.create(baseUri).resolve("/api/v1").toString(), cluster,
+                        AmbariActionClient.toAuthHeaders(ctxParams.get("_callerHeaders")));
+                return TagSyncRangerAccount.viaAmbari(ambari, TagSyncRangerAccount.AMBARI_TIMEOUT_SECONDS);
+            }
+            String where = rc != null && rc.getName() != null ? "platform context '" + rc.getName() + "'"
+                    : contextId == null || contextId.isBlank() ? "the managed cluster"
+                    : "platform context '" + contextId + "'";
+            throw new IllegalStateException("KDPS cannot reach the Ranger of " + where + " as an administrator"
+                    + (cluster.isBlank() && (rc == null || rc.isRangerManaged()) ? " (no access to the Ambari server)"
+                    : ""));
+        };
+    }
+
+    /**
+     * The Kubernetes cluster KDPS deploys to, as its API server URL: part of what makes the tag sync account of a
+     * release its own (see {@link TagSyncRangerAccount#userName}). Null when it cannot be read.
+     */
+    String kubernetesClusterUrl() {
+        try {
+            io.fabric8.kubernetes.client.KubernetesClient client = kubernetesService.getClient();
+            String url = client != null && client.getConfiguration() != null
+                    ? client.getConfiguration().getMasterUrl() : null;
+            if (url == null || url.isBlank()) return null;
+            url = url.trim().toLowerCase(Locale.ROOT);
+            return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        } catch (RuntimeException e) {
+            LOG.warn("The Kubernetes API server URL could not be read: {}", e.toString());
+            return null;
+        }
+    }
+
     /** Deleting the credential Secret must never be what fails an uninstall. */
     private void deleteSecretQuietly(String namespace, String secretName) {
         try {
@@ -12028,6 +19229,9 @@ public class CommandService {
 
         int timeoutSeconds = 60;
         boolean direct = rc != null && rc.hasDirectRangerCreds();
+        // The principal is named after the release and its namespace, unless the name had to be cut short.
+        boolean principalPerNamespace = principal.equals(PolarisProvisioningService.deterministicName(releaseName,
+                stringValue(childParams.get("namespace")), Integer.MAX_VALUE));
         AmbariActionClient ambari = null;
         if (!direct) {
             if (cluster == null || baseUriStr == null) {
@@ -12056,12 +19260,14 @@ public class CommandService {
             }
 
             if (direct) {
-                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(
+                long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindPolicy(tlsOf(rc, "Ranger"),
                         rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                         polarisService, policyName, description, resources,
                         java.util.List.of(level[2].split(",")), principal,
                         java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
                 levels.put(levelName, Map.of("policyId", pid, "via", "context-ranger-rest"));
+                recordRangerGrant(childParams, polarisService, principal, level[2], gson.toJson(resources), policyName,
+                        true, principalPerNamespace);
             } else {
                 int req = ambari.submitRangerPolicyGrant(
                         polarisService, principal, level[2], gson.toJson(resources),
@@ -12072,6 +19278,8 @@ public class CommandService {
                             + " (polaris " + levelName + ") did not complete successfully");
                 }
                 levels.put(levelName, Map.of("requestId", req, "via", "ambari-server-action"));
+                recordRangerGrant(childParams, polarisService, principal, level[2], gson.toJson(resources), policyName,
+                        true, principalPerNamespace);
             }
         }
 
@@ -12102,6 +19310,190 @@ public class CommandService {
         return (cluster == null || cluster.isBlank()) ? "polaris" : cluster + "_polaris";
     }
 
+    /** Resource scope of every Trino user, as the Ambari {@code ranger_policy} action takes it. */
+    static final String TRINO_EVERY_USER_SCOPE = "{\"trinouser\":[\"*\"]}";
+
+    /** Resource scope of the requesting Trino user only: Ranger replaces the macro with that user. */
+    static final String TRINO_REQUESTING_USER_SCOPE = "{\"trinouser\":[\""
+            + org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.RANGER_USER_MACRO + "\"]}";
+
+    /**
+     * What the impersonation rules of a Trino repository came to: the warning to show when users
+     * could not be allowed to act as themselves (null when they can), and how many policies lost the
+     * every-user rule (-1 when the Ambari server did not say).
+     */
+    record TrinoImpersonationRules(String selfGrantWarning, int revokedPolicies) {}
+
+    /**
+     * Context-Ranger side of the Trino repository impersonation rules, straight against a Ranger the
+     * view holds the admin credentials of. Same rules and order as
+     * {@link #restrictTrinoImpersonationViaAmbari}.
+     */
+    static TrinoImpersonationRules restrictTrinoImpersonationViaRanger(TlsPolicy tls, String rangerUrl, String rangerAdminUser,
+                                                                       String rangerAdminPassword,
+                                                                       String rangerRepositoryName, int timeoutSeconds) {
+        String selfGrantWarning = null;
+        try {
+            org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureTrinoSelfImpersonationPolicy(tls,
+                    rangerUrl, rangerAdminUser, rangerAdminPassword, rangerRepositoryName,
+                    TimeUnit.SECONDS.toMillis(timeoutSeconds));
+        } catch (Exception e) {
+            LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
+            selfGrantWarning = trinoSelfImpersonationMissing(rangerRepositoryName, reasonOf(e));
+        }
+
+        int revoked;
+        try {
+            revoked = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.revokeTrinoImpersonationOfEveryone(tls,
+                    rangerUrl, rangerAdminUser, rangerAdminPassword, rangerRepositoryName);
+        } catch (Exception e) {
+            throw new IllegalStateException(trinoImpersonationRevokeFailure(rangerRepositoryName, e), e);
+        }
+        return new TrinoImpersonationRules(selfGrantWarning, revoked);
+    }
+
+    /**
+     * Managed-context side of the Trino repository impersonation rules, through the Ambari server
+     * (which holds the Ranger admin password). A fresh Trino repository only lets the service users
+     * impersonate, so without a rule of their own every person is refused with "Principal X cannot
+     * become user X" before any table policy is consulted: each user is allowed to impersonate
+     * themselves, and only themselves. Table access stays governed by the operator's policies.
+     *
+     * <p>Then the rule earlier versions added is taken back — the {@code {USER}} macro allowed to
+     * impersonate every Trino user, so anyone could act as anyone. The revoke runs last so that,
+     * whatever policy the grant landed in, the step never ends with that rule in place; it fails the
+     * step when it cannot be confirmed. The self grant does not: users are then refused, never
+     * over-granted, and the returned warning tells the operator so.
+     */
+    static TrinoImpersonationRules restrictTrinoImpersonationViaAmbari(AmbariActionClient ambari,
+                                                                       String rangerRepositoryName, int timeoutSeconds) {
+        String macro = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.RANGER_USER_MACRO;
+        String selfGrantWarning = null;
+        try {
+            int polReq = ambari.submitRangerPolicyGrant(
+                    rangerRepositoryName, macro, "impersonate", TRINO_REQUESTING_USER_SCOPE,
+                    org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.TRINO_SELF_IMPERSONATION_POLICY,
+                    "KDPS-managed: lets every authenticated user run Trino queries as themselves, and only as themselves.",
+                    timeoutSeconds, "KDPS: Trino self-impersonation policy on " + rangerRepositoryName);
+            if (!ambari.waitUntilComplete(polReq, timeoutSeconds, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(requestDidNotComplete(ambari, polReq));
+            }
+        } catch (Exception e) {
+            LOG.warn("Ranger repository '{}': could not add the self-impersonation policy: {}", rangerRepositoryName, e.toString());
+            selfGrantWarning = trinoSelfImpersonationMissing(rangerRepositoryName, reasonOf(e));
+        }
+
+        int revokeReq;
+        try {
+            revokeReq = ambari.submitRangerPolicyRevoke(
+                    rangerRepositoryName, macro, "impersonate", TRINO_EVERY_USER_SCOPE,
+                    org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.LEGACY_TRINO_SELF_IMPERSONATION_POLICY,
+                    timeoutSeconds, "KDPS: stop users acting as any other Trino user on " + rangerRepositoryName);
+            if (!ambari.waitUntilComplete(revokeReq, timeoutSeconds, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(requestDidNotComplete(ambari, revokeReq));
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException(trinoImpersonationRevokeFailure(rangerRepositoryName, e), e);
+        }
+
+        // The count only feeds the operation log; the revoke itself is already confirmed.
+        int revoked = -1;
+        try {
+            revoked = ambari.taskStructuredOut(revokeReq)
+                    .filter(out -> out.has("changedPolicies") && out.get("changedPolicies").isJsonPrimitive())
+                    .map(out -> out.get("changedPolicies").getAsInt())
+                    .orElse(-1);
+        } catch (Exception e) {
+            LOG.debug("Ranger repository '{}': revoke request {} did not say how many policies changed: {}",
+                    rangerRepositoryName, revokeReq, e.toString());
+        }
+        return new TrinoImpersonationRules(selfGrantWarning, revoked);
+    }
+
+    /** Why an Ambari request ended badly, with what its failed task answered when Ambari has it. */
+    private static String requestDidNotComplete(AmbariActionClient ambari, int requestId) {
+        String detail = ambari.failureDetail(requestId);
+        return "Ambari request " + requestId + " did not complete successfully"
+                + (detail == null || detail.isBlank() ? "" : ": " + detail);
+    }
+
+    private static String reasonOf(Exception e) {
+        return e.getMessage() == null || e.getMessage().isBlank() ? e.toString() : e.getMessage();
+    }
+
+    /**
+     * Puts what a Ranger repository step did in its operation log and result: a warning that the
+     * every-user Trino impersonation rule was removed, naming the accounts that may now be refused,
+     * and a warning when users cannot act as themselves.
+     */
+    private void recordRangerRepositoryResult(String commandId, CommandStatusEntity childSt, String rangerRepositoryName,
+                                              TrinoImpersonationRules impersonation, Map<String, Object> result) {
+        if (impersonation != null) {
+            List<String> warnings = new ArrayList<>();
+            if (impersonation.revokedPolicies() > 0) {
+                warnings.add(trinoImpersonationRevokedWarning(rangerRepositoryName, impersonation.revokedPolicies()));
+            }
+            if (impersonation.selfGrantWarning() != null) {
+                warnings.add(impersonation.selfGrantWarning());
+            }
+            if (!warnings.isEmpty()) {
+                result.put("warnings", warnings);
+            }
+        }
+        recordStepResult(commandId, childSt, gson.toJson(result));
+    }
+
+    /**
+     * Warning recorded when users could not be allowed to run Trino queries as themselves. The
+     * every-user rule is gone, so until such a policy exists only the service accounts get through.
+     */
+    static String trinoSelfImpersonationMissing(String rangerRepositoryName, String reason) {
+        return "Ranger repository '" + rangerRepositoryName + "': could not add the policy that lets each user run "
+                + "Trino queries as themselves (" + reason + "). Until the repository has an 'impersonate' policy "
+                + "on Trino user '{USER}' granted to '{USER}', Trino refuses every user who is not a service "
+                + "account (\"Principal <user> cannot become user <user>\"). Add that policy in Ranger, or fix "
+                + "the cause and deploy again.";
+    }
+
+    /** Why a Trino repository step failed when the every-user impersonation rule could not be taken back. */
+    static String trinoImpersonationRevokeFailure(String rangerRepositoryName, Exception cause) {
+        return "Could not remove the Ranger rule on repository '" + rangerRepositoryName + "' that lets any user "
+                + "run Trino queries as any other user: " + cause.getMessage()
+                + ". Remove the '{USER}' item from the 'impersonate' policy on Trino user '*' in Ranger, or fix "
+                + "the cause and deploy again.";
+    }
+
+    /**
+     * Warning recorded when an existing repository had the every-user impersonation rule. Service
+     * accounts that run queries for other users may have relied on it without a policy of their own,
+     * and their queries are refused from now on: the warning names the ones KDPS does not grant, so
+     * the operator does not have to work it out from Trino's refusals.
+     */
+    static String trinoImpersonationRevokedWarning(String rangerRepositoryName, int policies) {
+        return "Ranger repository '" + rangerRepositoryName + "': removed the rule that let any user act as any "
+                + "other Trino user (" + policies + (policies == 1 ? " policy" : " policies") + " updated). "
+                + "An account that runs queries on behalf of other users now needs its own 'impersonate' policy "
+                + "on Trino user '*' in this repository, or Trino refuses its queries (\"User <account> cannot "
+                + "impersonate user <user>\"). KDPS adds that policy for its own service user and for Superset, "
+                + "but not for a Superset that connects with OIDC and has no Trino service principal set, nor for "
+                + "the account of a dbt project that sets 'Run queries as'. Add the missing policies in Ranger, "
+                + "or set the Superset Trino service principal and deploy Superset again.";
+    }
+
+    /**
+     * Deploy warning for a release that reaches Trino with an OIDC service token but names no Trino
+     * service principal. Which account Trino sees comes from the Keycloak claim mapping, so KDPS
+     * cannot allow it to act for the logged-in user by itself.
+     */
+    static String trinoOidcPrincipalMissing(String releaseName) {
+        return "Release '" + releaseName + "' connects to Trino with an OIDC service token, but no Trino service "
+                + "principal is set, so KDPS does not allow that account to run queries as the logged-in user. "
+                + "Where Trino is governed by Ranger, every query from this release is refused (\"User <account> "
+                + "cannot impersonate user <user>\") until the Trino Ranger repository has an 'impersonate' policy "
+                + "on Trino user '*' for that account. Set 'Trino service principal (for the impersonation grant)' "
+                + "and deploy again, or add that policy in Ranger.";
+    }
+
     /**
      * Body of {@link CommandType#RANGER_POLICY_GRANT_TRINO_IMPERSONATE}: grants the deploying
      * service's Trino auth principal {@code impersonate} on the Trino Ranger service repo (resource
@@ -12121,13 +19513,19 @@ public class CommandService {
         String releaseName = (String) childParams.get("releaseName");
         String baseUriStr = (String) childParams.get("_baseUri");
 
-        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
-        String trinoService = resolveTrinoRangerServiceName(childParams, rc, cluster);
-
         String principal = stringValue(childParams.get("_principal"));
         if (principal.isBlank()) {
             throw new IllegalStateException("Missing _principal in RANGER_POLICY_GRANT_TRINO_IMPERSONATE params.");
         }
+        // The grant covers every Trino user, so it must name one service identity. A Ranger macro such
+        // as {USER} matches every user and would let anyone act as anyone.
+        if (principal.startsWith("{")) {
+            throw new IllegalStateException("'" + principal + "' cannot be allowed to impersonate every Trino user: "
+                    + "it stands for every user. Set the account the service authenticates to Trino with.");
+        }
+
+        org.apache.ambari.view.k8s.model.ResolvedContext rc = resolvePlatformContextForStep(childParams);
+        String trinoService = resolveTrinoRangerServiceName(childParams, rc, cluster);
 
         String policyName = "kdps-" + releaseName + "-trino-impersonate";
         int timeoutSeconds = 60;
@@ -12135,11 +19533,13 @@ public class CommandService {
         // Context Ranger creds win → direct REST against the context's Ranger (external CDP / manual);
         // otherwise a managed context delegates the grant to the Ambari server.
         if (rc != null && rc.hasDirectRangerCreds()) {
-            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(
+            long pid = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindTrinoImpersonatePolicy(tlsOf(rc, "Ranger"),
                     rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
                     trinoService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
             LOG.info("RANGER_POLICY_GRANT_TRINO_IMPERSONATE: granted impersonate to '{}' on '{}' via context Ranger (direct REST, policy id={})",
                     principal, trinoService, pid);
+            recordRangerGrant(childParams, trinoService, principal, "impersonate", TRINO_EVERY_USER_SCOPE, policyName,
+                principalMintedByKdps(childParams), principalPerNamespace(childParams));
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("trinoServiceName", trinoService);
             result.put("principal", principal);
@@ -12158,7 +19558,7 @@ public class CommandService {
                 baseUri.resolve("/api/v1").toString(), cluster, authHeaders);
         int req = ambari.submitRangerPolicyGrant(
                 trinoService, principal, "impersonate",
-                "{\"trinouser\":[\"*\"]}",
+                TRINO_EVERY_USER_SCOPE,
                 policyName,
                 "KDPS: Superset service user Trino impersonation",
                 timeoutSeconds,
@@ -12170,6 +19570,8 @@ public class CommandService {
 
         LOG.info("RANGER_POLICY_GRANT_TRINO_IMPERSONATE: granted impersonate to '{}' on '{}' (Ambari request {})",
                 principal, trinoService, req);
+        recordRangerGrant(childParams, trinoService, principal, "impersonate", TRINO_EVERY_USER_SCOPE, policyName,
+                principalMintedByKdps(childParams), principalPerNamespace(childParams));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("trinoServiceName", trinoService);
@@ -12331,7 +19733,12 @@ public class CommandService {
             var resolverCtx = new ExternalCredentialResolver.ResolverContext(secretName, secretData, formValues);
             Map<String, String> overrides = ExternalCredentialResolver.resolveApplyTo(mode, resolverCtx);
             for (Map.Entry<String, String> ov : overrides.entrySet()) {
-                this.commandUtils.addOverride(params, ov.getKey(), ov.getValue());
+                // A value read from the Secret's data is a credential: marked like a password field, it is kept out
+                // of the logs, and a GitOps deploy writes it to the release's values Secret instead of Git.
+                String template = mode.applyTo.get(ov.getKey());
+                boolean fromSecretData = template != null && template.contains("secret.data");
+                this.commandUtils.addOverride(params, ov.getKey(),
+                        fromSecretData ? HelmSetValues.asText(ov.getValue()) : ov.getValue());
             }
 
             // (5) Resolve the service principal PER deploy: an operator-typed field wins (so each
@@ -12402,38 +19809,6 @@ public class CommandService {
     }
 
     /**
-     * Inject the image-pull secret name into the extra helm value paths declared by
-     * the service definition's {@code imagePullSecretTargets} list. KDPS always
-     * writes two universal paths inline at the call sites
-     * ({@code imagePullSecrets[0].name} and {@code global.imagePullSecrets[0]});
-     * this method handles the chart-specific carve-outs (e.g. the airflow sub-chart
-     * inside OpenMetadata which reads {@code dependencies.airflow.registry.secretName}
-     * rather than honoring {@code global.imagePullSecrets}).
-     *
-     * <p>No-op when secretName, serviceKey, or the service.json's
-     * {@code imagePullSecretTargets} is absent — i.e. existing services unaffected.
-     */
-    private void applyImagePullSecretTargets(Object secretName, Object serviceKey,
-                                             Map<String, String> overrideProperties) {
-        if (secretName == null) return;
-        String svcKey = serviceKey == null ? null : String.valueOf(serviceKey);
-        if (svcKey == null || svcKey.isBlank()) return;
-        try {
-            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(svcKey);
-            if (def == null || def.imagePullSecretTargets == null) return;
-            for (String path : def.imagePullSecretTargets) {
-                if (path == null || path.isBlank()) continue;
-                overrideProperties.put(path, String.valueOf(secretName));
-                LOG.info("Image-pull-secret cascade: set {}='{}' from service.json imagePullSecretTargets ({})",
-                        path, secretName, svcKey);
-            }
-        } catch (Exception ex) {
-            LOG.warn("Could not load service def {} for pull-secret target injection: {}",
-                    svcKey, ex.toString());
-        }
-    }
-
-    /**
      * Translate global security configuration into Helm overrides (global.security.*).
      *
      * @param cfg    security config
@@ -12492,29 +19867,13 @@ public class CommandService {
     }
 
     /**
-     * Resolve a non-managed platform context's {@code <capability>.<field>} values for a deploy, so
-     * dynamic-value tokens (Kerberos realm, OIDC issuer/realm) can be sourced from the selected
-     * context rather than this cluster's Ambari config. Returns an empty map for the managed/default
-     * context (or when none is selected), keeping the managed deploy path unchanged.
+     * Resolve a non-managed platform context's {@code <capability>.<field>} values for a deploy (see
+     * {@link DynamicValuesResolver#contextResolvedFields}); empty for the managed/default context or when none is
+     * selected, keeping the managed deploy path unchanged.
      */
     private Map<String, String> contextResolvedFieldsForDeploy(Object formValuesObj,
                                                                AmbariActionClient ambari, String cluster) {
-        try {
-            if (!(formValuesObj instanceof Map)) {
-                return Collections.emptyMap();
-            }
-            Object pc = ((Map<?, ?>) formValuesObj).get("platformContextId");
-            String pcId = pc == null ? null : String.valueOf(pc);
-            if (pcId == null || pcId.isBlank() || ContextService.DEFAULT_CONTEXT_ID.equals(pcId)) {
-                return Collections.emptyMap();
-            }
-            org.apache.ambari.view.k8s.model.ResolvedContext rc =
-                    new ContextService(ctx).resolve(pcId, ambari, cluster);
-            return (rc != null && rc.getResolvedFields() != null) ? rc.getResolvedFields() : Collections.emptyMap();
-        } catch (Exception e) {
-            LOG.warn("Context-aware dynamicValues: could not resolve platform context: {}", e.toString());
-            return Collections.emptyMap();
-        }
+        return dynamicValuesResolver.contextResolvedFields(formValuesObj, ambari, cluster);
     }
 
     /**
@@ -12760,7 +20119,8 @@ public class CommandService {
     }
 
     /**
-     * Resolve dynamic override tokens (e.g., AMBARI_KERBEROS_REALM:path) into Helm override map.
+     * Resolve dynamic override tokens (e.g., AMBARI_KERBEROS_REALM:path) into Helm override map, as
+     * {@link CommandPlanFactory} does for the Helm steps of the release and of its dependencies.
      *
      * @param dynamicValuesObj raw dynamicValues object from params (usually a List<String>)
      * @param formValues       wizard form state (carries platformContextId for context-aware tokens)
@@ -12768,84 +20128,13 @@ public class CommandService {
      * @param callerHeaders    headers to propagate to Ambari
      * @return map of helmPath -> value or null when nothing resolved
      */
-    private Map<String, String> resolveDynamicOverrides(Object dynamicValuesObj, Object formValues, URI baseUri, Map<String, String> callerHeaders) {
-        if (dynamicValuesObj == null) {
+    Map<String, String> resolveDynamicOverrides(Object dynamicValuesObj, Object formValues, URI baseUri,
+                                                Map<String, String> callerHeaders) {
+        if (DynamicValuesResolver.entriesOf(dynamicValuesObj).isEmpty()) {
             return null;
         }
-        List<String> tokens = new ArrayList<>();
-        if (dynamicValuesObj instanceof List) {
-            @SuppressWarnings("unchecked")
-            List<Object> list = (List<Object>) dynamicValuesObj;
-            for (Object o : list) {
-                if (o instanceof String s && !s.isBlank()) {
-                    tokens.add(s.trim());
-                }
-            }
-        }
-        if (tokens.isEmpty() || baseUri == null) {
-            return null;
-        }
-        Map<String, String> resolved = new LinkedHashMap<>();
-        try {
-            String cluster = commandUtils.resolveClusterName(baseUri.toString(), callerHeaders);
-            AmbariActionClient ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, callerHeaders);
-            // When a non-managed platform context is selected, source tokens from it.
-            Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(formValues, ambariActionClient, cluster);
-            for (String token : tokens) {
-                String[] parts = token.split(":", 2);
-                if (parts.length != 2) {
-                    LOG.warn("Invalid dynamic value token '{}', expected 'SOURCE:helm.path'", token);
-                    continue;
-                }
-                String sourceKey = parts[0].trim();
-                String helmPath = parts[1].trim();
-                if (helmPath.isEmpty()) {
-                    LOG.warn("Empty helm path in token '{}', skipping", token);
-                    continue;
-                }
-                // Optional path-suffix syntax: "TOKEN[/sub/path]:helm.path" — strip the
-                // bracketed suffix off the source key so DYNAMIC_SOURCE_MAP lookup hits,
-                // and remember it to append to the resolved value below. Mirrors the
-                // sister parser in CommandPlanFactory; keeping both in sync.
-                String suffix = "";
-                int lb = sourceKey.indexOf('[');
-                if (lb > 0 && sourceKey.endsWith("]")) {
-                    suffix = sourceKey.substring(lb + 1, sourceKey.length() - 1);
-                    sourceKey = sourceKey.substring(0, lb);
-                }
-                AmbariConfigRef ref = CommandUtils.DYNAMIC_SOURCE_MAP.get(sourceKey);
-                if (ref == null) {
-                    LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
-                    continue;
-                }
-                try {
-                    // Non-managed platform context takes precedence over local Ambari config.
-                    String value = CommandUtils.contextValueForToken(sourceKey, ctxResolved);
-                    if (value == null || value.isBlank()) {
-                        value = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
-                    }
-                    // AMBARI_OIDC_ISSUER_URL fallback: in many clusters oidc-env.oidc_issuer_url
-                    // is left blank because operators only set oidc_admin_url + oidc_realm.
-                    // resolveOidcIssuerUrl() composes admin_url + "/realms/" + realm; reuse it
-                    // so services that map this token (Jupyter, etc.) don't render an empty value.
-                    if ((value == null || value.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(sourceKey)) {
-                        value = resolveOidcIssuerUrl(ambariActionClient, cluster);
-                    }
-                    if (value == null || value.isBlank()) {
-                        LOG.warn("Resolved empty value for token '{}' (type={}, key={})", token, ref.type, ref.key);
-                        continue;
-                    }
-                    String resolvedValue = suffix.isEmpty() ? value
-                            : (value.endsWith("/") ? value.substring(0, value.length() - 1) : value) + suffix;
-                    resolved.put(helmPath, resolvedValue);
-                    LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolvedValue);
-                } catch (Exception ex) {
-                    LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
-                }
-            }
-        } catch (Exception ex) {
-            LOG.warn("Failed to resolve dynamic overrides: {}", ex.toString());
-        }
+        Map<String, String> resolved = dynamicValuesResolver.resolve(dynamicValuesObj, formValues,
+                baseUri == null ? null : baseUri.toString(), callerHeaders, "the release chart");
         return resolved.isEmpty() ? null : resolved;
     }
 
@@ -12857,10 +20146,135 @@ public class CommandService {
         catch (PersistenceException ex) { LOG.error("Find error", ex); return null; }
     }
 
+    /** Like {@link #findCommandStatusById} but a database failure is thrown, not mistaken for a missing row. */
+    private CommandStatusEntity findStatusOrThrow(String id) {
+        try { return dataStore.find(CommandStatusEntity.class, id); }
+        catch (PersistenceException ex) {
+            LOG.error("Find error", ex);
+            throw new StoreReadException("Cannot read command status " + id, ex);
+        }
+    }
+
+    /** Like {@link #find} but a database failure is thrown, not mistaken for a missing row. */
+    private CommandEntity findOrThrow(String id) {
+        try { return dataStore.find(CommandEntity.class, id); }
+        catch (PersistenceException ex) {
+            LOG.error("Find error", ex);
+            throw new StoreReadException("Cannot read command " + id, ex);
+        }
+    }
+
     private CommandEntity find(String id) {
         try { return dataStore.find(CommandEntity.class, id); }
         catch (PersistenceException ex) { LOG.error("Find error", ex); return null; }
     }
+
+    /** The types of every step planned under a command, the steps of its sub-steps included. */
+    private List<String> plannedStepTypes(CommandEntity root) {
+        List<String> types = new ArrayList<>();
+        for (CommandEntity step : plannedStepsOf(root)) {
+            types.add(step.getType());
+        }
+        return types;
+    }
+
+    /** Every step planned under a command, the steps of its sub-steps included. */
+    private List<CommandEntity> plannedStepsOf(CommandEntity root) {
+        List<CommandEntity> steps = new ArrayList<>();
+        java.util.Deque<String> pending = new java.util.ArrayDeque<>(childIdsOf(root));
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        while (!pending.isEmpty()) {
+            String childId = pending.poll();
+            if (childId == null || !seen.add(childId)) continue;
+            CommandEntity child = find(childId);
+            if (child == null) continue;
+            steps.add(child);
+            pending.addAll(childIdsOf(child));
+        }
+        return steps;
+    }
+
+    /**
+     * Closes a deploy refused after its steps were stored but before any of them ran. The operation stays in the list
+     * as failed, with the reason, so the operator sees why nothing happened; its steps are canceled and the operation
+     * is marked so that {@link #resume} refuses it too.
+     *
+     * @param root       the deploy's root command
+     * @param rootStatus the root command's status
+     * @param reason     why the deploy was refused, as shown to the operator
+     */
+    private void refuseStoredPlan(CommandEntity root, CommandStatusEntity rootStatus, String reason) {
+        String now = Instant.now().toString();
+        for (CommandEntity step : plannedStepsOf(root)) {
+            CommandStatusEntity stepStatus = findCommandStatusById(step.getCommandStatusId());
+            if (stepStatus == null) continue;
+            stepStatus.setState(CommandState.CANCELED.name());
+            stepStatus.setMessage("Not run: the deploy was refused before it started.");
+            stepStatus.setUpdatedAt(now);
+            store(stepStatus);
+        }
+        rootStatus.setResultJson(gson.toJson(Map.of(REFUSED_BEFORE_START, true)));
+        fail(rootStatus, reason);
+        appendCommandLog(root.getId(), "Deploy refused before it started: " + reason);
+    }
+
+    /** Whether the operation is a deploy refused before it started, see {@link #refuseStoredPlan}. */
+    private boolean wasRefusedBeforeStart(CommandStatusEntity status) {
+        String result = status.getResultJson();
+        if (result == null || result.isBlank()) {
+            return false;
+        }
+        try {
+            JsonElement parsed = JsonParser.parseString(result);
+            return parsed.isJsonObject() && parsed.getAsJsonObject().has(REFUSED_BEFORE_START)
+                    && parsed.getAsJsonObject().get(REFUSED_BEFORE_START).getAsBoolean();
+        } catch (RuntimeException unreadable) {
+            return false;
+        }
+    }
+
+    private List<String> childIdsOf(CommandEntity cmd) {
+        if (cmd == null || cmd.getChildListJson() == null || cmd.getChildListJson().isBlank()) {
+            return Collections.emptyList();
+        }
+        try {
+            List<String> ids = gson.fromJson(cmd.getChildListJson(), new TypeToken<ArrayList<String>>() {}.getType());
+            return ids == null ? Collections.emptyList() : ids;
+        } catch (Exception e) {
+            LOG.warn("Unreadable child list on command {}: {}", cmd.getId(), e.toString());
+            return Collections.emptyList();
+        }
+    }
+
+    /** The Ambari user behind the current request, as Ambari knows it (before any auth_to_local shortening). */
+    private String ambariUserName() {
+        String user = ctx.getLoggedinUser();
+        return user == null || user.isBlank() ? ctx.getUsername() : user;
+    }
+
+    /** Whether the deploy uses the Ambari-managed platform context, whose steps talk to the local Ambari. */
+    static boolean usesManagedContext(Map<String, Object> params) {
+        String contextId = stringValue(params.get("_platformContextId"));
+        return contextId.isBlank() || ContextService.DEFAULT_CONTEXT_ID.equals(contextId);
+    }
+
+    /**
+     * Whether the deploy reads the Ambari-managed cluster with the operator's session: its Kerberos state and the
+     * settings of the services the release connects to. It does on the managed context whenever Ambari manages a
+     * cluster: the one the view is bound to or discovered, or one Ambari would not list for the operator. A view bound
+     * to no cluster, with discovery off, deploys without reading one.
+     *
+     * @param params                 the deploy parameters
+     * @param cluster                the cluster the deploy acts on; {@code null} when it could not be resolved
+     * @param ambariManagesNoCluster whether Ambari answered that it manages no cluster
+     * @param discoveryEnabled       whether the cluster is discovered from Ambari when the view is bound to none
+     */
+    static boolean readsManagedCluster(Map<String, Object> params, String cluster, boolean ambariManagesNoCluster,
+                                       boolean discoveryEnabled) {
+        return usesManagedContext(params) && !ambariManagesNoCluster
+                && ((cluster != null && !cluster.isBlank()) || discoveryEnabled);
+    }
+
     private CommandEntity findCommandById(String id) {
         try { return dataStore.find(CommandEntity.class, id); }
         catch (PersistenceException ex) { LOG.error("Find error", ex); return null; }
@@ -13043,100 +20457,6 @@ public class CommandService {
         return null;
     }
 
-    /** Registry prefix every KDPS service definition uses for its default images. */
-    static final String DEFAULT_IMAGE_REGISTRY = "registry.clemlab.com/clemlabprojects";
-
-    /**
-     * Moves an image reference onto {@code effectiveRegistry} (host or host/project, as the Helm
-     * repository resolves it). The Clemlab default prefix is replaced as a whole; any other registry
-     * host (quay.io, registry.k8s.io, ghcr.io, docker.io) is replaced by the target, Docker Hub's
-     * {@code library/} is dropped, tags and digests are kept, and a reference already on the target
-     * registry is returned unchanged. Mirrors therefore keep the upstream repository path, which is
-     * how the Clemlab registry itself is laid out (kedacore/keda, prometheus/prometheus, ...).
-     */
-    static String rewriteImageRegistry(String image, String effectiveRegistry) {
-        if (image == null || image.isBlank() || effectiveRegistry == null || effectiveRegistry.isBlank()) return image;
-        String ref = image.trim();
-        String target = effectiveRegistry.trim().replaceAll("/+$", "");
-        if (ref.equals(target) || ref.startsWith(target + "/")) return ref;
-        String path = ref;
-        if (path.startsWith(DEFAULT_IMAGE_REGISTRY + "/")) {
-            path = path.substring(DEFAULT_IMAGE_REGISTRY.length() + 1);
-        } else {
-            int slash = path.indexOf('/');
-            if (slash > 0) {
-                String first = path.substring(0, slash);
-                if (first.contains(".") || first.contains(":") || first.equals("localhost")) {
-                    path = path.substring(slash + 1);
-                }
-            }
-            if (path.startsWith("library/")) path = path.substring("library/".length());
-        }
-        return target + "/" + path;
-    }
-
-    /**
-     * Applies {@link #rewriteImageRegistry} to every path the service definition lists in
-     * {@code imageRegistryPaths}. The current value comes from the explicit overrides first, then
-     * from the submitted values; paths without a value are left to the chart (nothing to rewrite).
-     */
-    private void applyImageRegistryPaths(Object serviceKeyObj, String effectiveRegistry,
-                                         Map<String, Object> valuesMap, Map<String, String> overrideProperties) {
-        if (serviceKeyObj == null || effectiveRegistry == null || effectiveRegistry.isBlank()) return;
-        String serviceKey = String.valueOf(serviceKeyObj).trim();
-        if (serviceKey.isEmpty() || "null".equals(serviceKey)) return;
-        List<Object> entries;
-        try {
-            StackServiceDef def = new StackDefinitionService(this.ctx).getServiceDefinition(serviceKey);
-            entries = (def == null) ? null : def.imageRegistryPaths;
-        } catch (Exception e) {
-            LOG.warn("imageRegistryPaths: cannot load the definition of {}: {}", serviceKey, e.toString());
-            return;
-        }
-        if (entries == null || entries.isEmpty()) return;
-        for (Object entry : entries) {
-            String[] pd = imageRegistryEntry(entry);
-            if (pd == null) continue;
-            String path = pd[0], fallback = pd[1];
-            Object current = overrideProperties.get(path);
-            if (current == null && valuesMap != null) current = getByPath(valuesMap, path);
-            String value = (current instanceof String s && !s.isBlank()) ? s : null;
-            if (value == null) {
-                if (fallback == null || fallback.isBlank()) {
-                    LOG.debug("imageRegistryPaths: {} has no value in the request and no default; chart default stays", path);
-                    continue;
-                }
-                value = fallback;
-                LOG.info("imageRegistryPaths: {} not in the request; using the definition default {}", path, fallback);
-            }
-            String rewritten = rewriteImageRegistry(value, effectiveRegistry);
-            if (!rewritten.equals(value)) {
-                LOG.info("imageRegistryPaths: {} follows the repository registry: {} -> {}", path, value, rewritten);
-            }
-            if (current == null || !rewritten.equals(current)) {
-                overrideProperties.put(path, rewritten);
-            }
-        }
-    }
-
-    /**
-     * Normalises one {@code imageRegistryPaths} entry: a bare path string, or a map with
-     * {@code path} and an optional {@code default} image. Returns {path, default-or-null}, or null
-     * for an unusable entry.
-     */
-    static String[] imageRegistryEntry(Object entry) {
-        if (entry instanceof String str) {
-            return str.isBlank() ? null : new String[] {str.trim(), null};
-        }
-        if (entry instanceof Map<?, ?> m) {
-            Object path = m.get("path");
-            if (!(path instanceof String ps) || ps.isBlank()) return null;
-            Object def = m.get("default");
-            return new String[] {ps.trim(), (def instanceof String ds && !ds.isBlank()) ? ds.trim() : null};
-        }
-        return null;
-    }
-
     private Object getByPath(Map<String, Object> root, String path) {
         if (root == null || path == null || path.isBlank()) return null;
         String[] parts = path.split("\\.");
@@ -13279,6 +20599,33 @@ public class CommandService {
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new IllegalStateException("Vault write to '" + vaultPath
                     + "' returned HTTP " + resp.statusCode());
+        }
+    }
+
+    /**
+     * Deletes what {@link #writeOidcToVault} wrote, every version of it: a KV v2 path {@code <mount>/data/<key>} is
+     * deleted through its {@code <mount>/metadata/<key>} path; any other path is deleted as given.
+     */
+    static String vaultDeleteUrl(String vaultAddr, String vaultPath) {
+        String path = vaultPath.trim().replaceAll("^/+", "");
+        int data = path.indexOf("/data/");
+        if (data > 0) path = path.substring(0, data) + "/metadata/" + path.substring(data + "/data/".length());
+        return vaultAddr.replaceAll("/$", "") + "/v1/" + path;
+    }
+
+    private void deleteFromVault(String vaultAddr, String vaultToken, String vaultPath) throws Exception {
+        var req = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create(vaultDeleteUrl(vaultAddr, vaultPath)))
+                .timeout(java.time.Duration.ofSeconds(15))
+                .header("X-Vault-Token", vaultToken)
+                .DELETE()
+                .build();
+        var httpClient = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(15))
+                .build();
+        var resp = httpClient.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+        if ((resp.statusCode() < 200 || resp.statusCode() >= 300) && resp.statusCode() != 404) {
+            throw new IllegalStateException("Vault delete of '" + vaultPath + "' returned HTTP " + resp.statusCode());
         }
     }
 

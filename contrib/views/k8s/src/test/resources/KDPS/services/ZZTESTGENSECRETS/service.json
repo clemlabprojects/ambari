@@ -1,0 +1,32 @@
+{
+  "label": "ZZ Test generated credentials (test only, NOT in catalog.json)",
+  "chart": "example/zz-test-gensecrets",
+  "version": "1.0.0",
+  "form": [],
+  "generatedSecrets": [
+    {
+      "key": "admin",
+      "secretNameTemplate": "{{releaseName}}-zz-admin",
+      "label": "the ZZ administrator password",
+      "chartVersion": ">=1.0.0",
+      "keys": { "password": {} },
+      "values": {
+        "admin.existingSecret": "{{secretName}}",
+        "admin.resetPassword": "{{generated}}"
+      },
+      "notice": "ZZ administrator: its password is in the Secret {{namespace}}/{{secretName}}. Read it with: {{readCommand}}"
+    },
+    {
+      "key": "database",
+      "secretNameTemplate": "{{releaseName}}-zz-db",
+      "label": "the ZZ database password",
+      "chartVersion": ">=1.0.0",
+      "when": "database.enabled",
+      "dataVolume": "data-{{releaseName}}-db-0",
+      "keys": { "password": { "keptByVolume": true } },
+      "values": {
+        "database.existingSecret": "{{secretName}}"
+      }
+    }
+  ]
+}

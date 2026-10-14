@@ -25,12 +25,28 @@ import java.util.Set;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.container.ContainerRequestContext;
 import javax.ws.rs.container.ContainerRequestFilter;
+import javax.ws.rs.container.PreMatching;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
 import org.apache.ambari.server.api.services.ResultStatus;
 import org.apache.ambari.server.api.services.serializers.JsonSerializer;
 
+/**
+ * Rejects state-changing REST API calls that do not carry the X-Requested-By header.
+ * <p/>
+ * A web page on another site can make a browser send a form POST with the Ambari session cookie,
+ * but it cannot add a custom header without a CORS preflight, and Ambari allows no cross-origin
+ * requests. Requiring the header therefore keeps such forged requests out.
+ * <p/>
+ * The check runs before resource matching so that a rejected request never reaches any resource
+ * code, including the sub-resource locators that hand requests over to views.
+ * <p/>
+ * This class is deliberately not annotated as a provider: package scanning would then also apply it
+ * to the agent and certificate servlets, whose callers do not send the header. The REST API servlet
+ * registers it explicitly when {@code api.csrfPrevention.enabled} is true.
+ */
+@PreMatching
 public class AmbariCsrfProtectionFilter implements ContainerRequestFilter {
   private static final Set<String> IGNORED_METHODS;
   private static final String CSRF_HEADER = "X-Requested-By";

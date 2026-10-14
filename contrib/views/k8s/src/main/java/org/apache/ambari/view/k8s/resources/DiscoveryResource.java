@@ -19,7 +19,9 @@
 package org.apache.ambari.view.k8s.resources;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
 import org.apache.ambari.view.k8s.model.MonitoringDiscoveryResponse;
@@ -44,10 +46,20 @@ public class DiscoveryResource {
     private final ViewContext viewContext;
 
     private final KubernetesService kubernetesService;
+    /** Headers of the request this resource serves: the role check asks Ambari with the caller's credentials. */
+    private final HttpHeaders callerHeaders;
 
-    public DiscoveryResource(ViewContext viewContext, KubernetesService kubernetesService) {
+    /**
+     * Creates the resource for one request.
+     *
+     * @param viewContext       active Ambari view context
+     * @param kubernetesService Kubernetes access of the view
+     * @param callerHeaders     headers of the request; {@code null} when unknown
+     */
+    public DiscoveryResource(ViewContext viewContext, KubernetesService kubernetesService, HttpHeaders callerHeaders) {
         this.viewContext = viewContext;
         this.kubernetesService = kubernetesService;
+        this.callerHeaders = callerHeaders;
     }
 
     @GET
@@ -414,6 +426,9 @@ public class DiscoveryResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response discoverK8sSecrets(@QueryParam("label") String label,
                                        @QueryParam("namespace") String namespace) {
+        // Secret names (never their content) for the deploy wizard's Secret pickers: operators need them to
+        // deploy, read-only users do not.
+        new AuthHelper(viewContext, callerHeaders).checkWritePermission();
         try {
             List<Map<String, String>> secrets;
             if (namespace != null && !namespace.isBlank()) {
@@ -471,13 +486,22 @@ public class DiscoveryResource {
     public Response discoverMonitoringPrometheus() {
         try {
             var info = kubernetesService.discoverAndHealMonitoringState();
-            String state = viewContext.getInstanceData("monitoring.bootstrap.state");
-            String message = viewContext.getInstanceData("monitoring.bootstrap.message");
+            InstanceSettings settings = new InstanceSettings(viewContext);
+            String state = settings.get("monitoring.bootstrap.state");
+            String message = settings.get("monitoring.bootstrap.message");
             if (info == null) {
                 // Bootstrap in progress or not started — return stored state so UI shows RUNNING/FAILED badge.
                 return Response.ok(new MonitoringDiscoveryResponse(null, null, null, state, message)).build();
             }
-            return Response.ok(new MonitoringDiscoveryResponse(info.namespace(), info.release(), info.url(), state, message)).build();
+            MonitoringDiscoveryResponse found = new MonitoringDiscoveryResponse(info.namespace(), info.release(), info.url(), state, message);
+            found.serviceMonitorLabels = info.serviceMonitorLabels();
+            found.warning = info.warning();
+            // Only an in-cluster address may go into the deploy (an Ambari-property URL is for the view itself).
+            found.queryUrl = info.inCluster() ? info.url() : null;
+            if (kubernetesService.isOpenShiftCluster()) {
+                found.userWorkloadMonitoring = kubernetesService.userWorkloadMonitoringEnabled();
+            }
+            return Response.ok(found).build();
         } catch (Exception e) {
             LOG.error("Failed to discover monitoring stack", e);
             return Response.serverError().entity(Collections.singletonMap("error", e.getMessage())).build();

@@ -1,0 +1,51 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# The plan CommandServiceGoldenPlanTest expects for SUPERSET-secure: one step per line, in plan order, with its key
+# parameters indented below it. Lines starting with '#' are ignored.
+HELM_REPO_LOGIN
+    repoId = charts
+KEYTAB_ISSUE_PRINCIPAL
+    principalFqdn = superset-dashboard-analytics@EXAMPLE.COM
+    secretName = superset-keytab
+    keyNameInSecret = service.keytab
+    kerberosEntryKey = service
+KEYTAB_CREATE_SECRET
+    principalFqdn = superset-dashboard-analytics@EXAMPLE.COM
+    secretName = superset-keytab
+    keyNameInSecret = service.keytab
+    kerberosEntryKey = service
+OIDC_REGISTER_CLIENT
+    oidcClientId = superset-analytics
+    oidcRedirectUri = https://superset.example.org/oauth-authorized/generic
+    oidcSecretName = superset-oidc-client
+    oidcEntryKey = superset
+    publicClient = false
+    standardFlowEnabled = true
+    implicitFlowEnabled = false
+    oidcAudiences = []
+OIDC_CREATE_SECRET
+    oidcClientId = superset-analytics
+    oidcSecretName = superset-oidc-client
+    oidcEntryKey = superset
+CONFIG_MATERIALIZE
+HELM_DEPLOY_DRY_RUN
+    chart = apache/superset
+    _dynamicOverrides = {global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.realm=odp, global.security.kerberos.realm=EXAMPLE.COM}
+    _ov = {global.security.auth.mode=oidc, global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.secretRef.clientIdKey=client_id, global.security.auth.oidc.secretRef.clientSecretKey=client_secret, global.security.auth.oidc.secretRef.name=superset-oidc-client, global.security.kerberos.configMapName=superset-krb5-conf, global.security.kerberos.enabled=true, global.security.kerberos.injectionMode=PRE_PROVISIONED, global.security.kerberos.keytab.mountPath=/etc/security/keytabs, global.security.kerberos.keytab.secretDataKey=service.keytab, global.security.kerberos.keytab.secretName=superset-keytab, global.security.kerberos.kinitSidecar.principal=superset-dashboard-analytics@EXAMPLE.COM}
+HELM_DEPLOY
+    chart = apache/superset
+    _dynamicOverrides = {global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.realm=odp, global.security.kerberos.realm=EXAMPLE.COM}
+    _ov = {global.security.auth.mode=oidc, global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.secretRef.clientIdKey=client_id, global.security.auth.oidc.secretRef.clientSecretKey=client_secret, global.security.auth.oidc.secretRef.name=superset-oidc-client, global.security.kerberos.configMapName=superset-krb5-conf, global.security.kerberos.enabled=true, global.security.kerberos.injectionMode=PRE_PROVISIONED, global.security.kerberos.keytab.mountPath=/etc/security/keytabs, global.security.kerberos.keytab.secretDataKey=service.keytab, global.security.kerberos.keytab.secretName=superset-keytab, global.security.kerberos.kinitSidecar.principal=superset-dashboard-analytics@EXAMPLE.COM}

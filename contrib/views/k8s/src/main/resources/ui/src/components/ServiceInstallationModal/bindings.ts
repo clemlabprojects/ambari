@@ -157,6 +157,10 @@ export const interpolate = (tpl: string, ctx: Record<string, any>): string =>
       return v == null ? '' : String(v);
     });
 
+/** The entries of a comma-separated (or one-per-line) field, trimmed, blanks dropped: "alice, bob," -> [alice, bob]. */
+export const listEntries = (raw: unknown): string[] =>
+    raw == null ? [] : String(raw).split(/[,\n]/).map(s => s.trim()).filter(s => s !== '');
+
 /* ==============================================================================================
    VARIABLE CONTEXT ENGINE
    This section builds the "Intermediate State" used for bindings.
@@ -164,7 +168,11 @@ export const interpolate = (tpl: string, ctx: Record<string, any>): string =>
    ============================================================================================== */
 
 export type VariableSpec =
-    | { name: string; from: { type: 'form'; field: string } }
+    // `format: 'jsonList'` turns a comma-separated (or one-per-line) field into the JSON array of its entries, e.g.
+    // `["alice","bob"]`, and `[]` when it holds none, so that clearing the field clears the list it writes. A template
+    // made of the variable alone writes a YAML list; the array is also a valid Python list, so a template can put free
+    // text into a Python snippet (a JupyterHub extraConfig, say) without a quote in the field breaking the code.
+    | { name: string; from: { type: 'form'; field: string; format?: 'jsonList' } }
     | { name: string; from: { type: 'mountPath'; mountKey: string; suffix?: string } }
     // `context` reads a value the KDPS engine resolved for the selected Platform Context, keyed
     // `<capability>.<field>` (e.g. `hive.metastoreUri`, `ranger.rangerUrl`, `kerberos.realm`).
@@ -184,7 +192,9 @@ export type VariableSpec =
     // "true for anything that is NOT binary" (http / all / unresolved) — the safe default branch.
     // Declare an `equals` var AFTER the variable it references (phase-1 resolution is in array order).
     | { name: string; from: { type: 'equals'; var: string; value: string; negate?: boolean; caseInsensitive?: boolean } }
-    | { name: string; template: string };
+    // `overrideField`: when that form field is non-blank its value wins over the template (e.g. a Prometheus
+    // address filled by discovery overrides the address built from namespace and release).
+    | { name: string; template: string; overrideField?: string };
 
 /**
  * Builds a dictionary of variables (key-value pairs) based on charts.json definitions.
@@ -223,7 +233,12 @@ export const buildVarContext = (
   (vars || []).forEach(v => {
     if ('from' in v) {
       if (v.from.type === 'form') {
-        setAtStr(ctx, v.name, getAtStr(formVals, v.from.field));
+        const raw = getAtStr(formVals, v.from.field);
+        if (v.from.format === 'jsonList') {
+          setAtStr(ctx, v.name, JSON.stringify(listEntries(raw)));
+        } else {
+          setAtStr(ctx, v.name, raw);
+        }
       } else if (v.from.type === 'mountPath') {
         const m = mounts?.[v.from.mountKey];
         const base = m?.mountPath || '/data';
@@ -263,7 +278,8 @@ export const buildVarContext = (
       const composed: Record<string, any> = {};
       deepMerge(composed, formVals || {});
       deepMerge(composed, ctx); // ctx overrides formVals if names collide
-      const val = interpolate(v.template, composed);
+      const override = v.overrideField ? getAtStr(formVals, v.overrideField) : undefined;
+      const val = nonBlank(override) ? String(override).trim() : interpolate(v.template, composed);
       setAtStr(ctx, v.name, val);
     }
   });
@@ -309,6 +325,10 @@ export function valueFromTargetSource(
   // failure mode otherwise).
   if (t.from.type === 'form') {
     const v = getAtStr(formVals, t.from.field);
+    if ((t.from as any).format === 'labels') {
+      const labels = parseLabels(v);
+      return Object.keys(labels).length ? labels : undefined;
+    }
     if (t.from.suffix) {
       return (v == null ? '' : String(v)) + t.from.suffix;
     }
@@ -358,6 +378,23 @@ export function valueFromTargetSource(
    TARGET PATCH GENERATION
    These functions apply the logic defined in charts.json "bindings" to create the final YAML.
    ============================================================================================== */
+
+/** Parses "key=value, key2=value2" (commas or new lines) into a label map; entries without "=" are ignored. */
+export const parseLabels = (raw: any): Record<string, string> => {
+  const labels: Record<string, string> = {};
+  if (raw == null) return labels;
+  for (const part of String(raw).split(/[,\n]/)) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    if (key) labels[key] = part.slice(eq + 1).trim();
+  }
+  return labels;
+};
+
+/** Formats a label map as "key=value, key2=value2" (the inverse of {@link parseLabels}). */
+export const formatLabels = (labels: Record<string, string> | undefined | null): string =>
+  Object.entries(labels || {}).map(([k, v]) => `${k}=${v}`).join(', ');
 
 /** `skipIfVarEmpty` gate: skip when the referenced var is empty. Accepts a single var name or an
  *  array (skip if ANY is empty — i.e. all must be non-empty for the target/binding to apply). */

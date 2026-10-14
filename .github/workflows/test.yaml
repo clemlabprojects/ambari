@@ -1,10 +1,14 @@
 name: test
 
+# Release branches too: the ambari-server REST resources KDPS ships with (Ranger plugin repositories and policies,
+# ad hoc keytabs, OIDC checks) must pass their tests on the branch a release is built from. Those include
+# ResourceProviderCreateAuthorizationTest, which fails when a resource provider lets a caller create resources without
+# a role check: by overriding createResources, or by neither naming the required roles nor checking the caller itself.
 on:
   push:
-    branches: ["master"]
+    branches: ["master", "release/**", "kdps-release-*"]
   pull_request:
-    branches: ["master"]
+    branches: ["master", "release/**", "kdps-release-*"]
   workflow_dispatch:
 
 jobs:

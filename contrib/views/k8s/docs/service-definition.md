@@ -27,6 +27,11 @@ Key fields:
 - bindings: targets to project variables/form data into Helm values. Supports `skipIfVarEmpty`, `skipIfExists`, `kind` (volume/mount), templates, and form/var sources.
 - endpoints: templated URLs for UI display
 - ranger, requiredConfigMaps, dynamicValues: passed through to backend
+- platforms, unsupportedPlatformMessage: the platforms (`kubernetes`, `openshift`) the service can be deployed on; on
+  any other the catalog hides it and the server refuses the deploy with that message (see service-json.md)
+- generatedSecrets: Secrets of credentials (an administrator password, bundled database passwords) the backend
+  creates with random values before Helm installs the release, keeps from one deploy to the next, and passes to the
+  chart by name only (see service-json.md, "Generated credentials")
 - form: dynamic form fields (types: string, number, boolean, select, password, group, service-select, k8s-discovery). `defaultValue` seeds form values. Conditions hide/show fields.
 
 Propagation rules:

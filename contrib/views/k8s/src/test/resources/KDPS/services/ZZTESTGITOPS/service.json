@@ -1,0 +1,15 @@
+{
+  "label": "ZZ Test GitOps (test only, NOT in catalog.json)",
+  "chart": "example/zz-test-gitops",
+  "version": "0.0.1",
+  "form": [],
+  "imagePullSecretTargets": ["workers.registry.secretName"],
+  "imageRegistryPaths": [{"path": "sidecar.image", "default": "quay.io/example/sidecar:1.0"}],
+  "postDeploy": {
+    "ambariViewInstance": {
+      "viewName": "ZZ-TEST-VIEW",
+      "viewVersion": "1.0.0.0",
+      "serviceUrlTemplate": "http://{{releaseName}}.{{namespace}}.svc.cluster.local:8080"
+    }
+  }
+}

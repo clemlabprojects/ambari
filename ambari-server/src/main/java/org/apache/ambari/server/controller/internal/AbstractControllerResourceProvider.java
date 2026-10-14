@@ -20,14 +20,21 @@ package org.apache.ambari.server.controller.internal;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.ResourceProviderFactory;
+import org.apache.ambari.server.controller.spi.Request;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.ResourceProvider;
 import org.apache.ambari.server.controller.utilities.ClusterControllerHelper;
+import org.apache.ambari.server.security.authorization.AuthorizationHelper;
+import org.apache.ambari.server.security.authorization.ResourceType;
+import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.state.Cluster;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.security.core.Authentication;
 
 /**
  * Abstract resource provider implementation that maps to an Ambari management controller.
@@ -117,6 +124,46 @@ public abstract class AbstractControllerResourceProvider extends AbstractAuthori
   protected Long getClusterResourceId(Long clusterId) throws AmbariException {
     Cluster cluster = (clusterId == null) ? null : managementController.getClusters().getClusterById(clusterId);
     return (cluster == null) ? null : cluster.getResourceId();
+  }
+
+  /**
+   * Tests whether the authenticated user holds one of the required authorizations on every cluster
+   * named by the items of a request.
+   * <p/>
+   * Providers whose request body names the cluster to act on use this so that the check is made on
+   * the cluster the operation really touches, rather than on any cluster. A name that matches no
+   * cluster is checked against any cluster: the operation then fails on the unknown name, so nothing
+   * is done on its behalf.
+   *
+   * @param authentication         the authenticated user and associated access privileges
+   * @param request                the request whose items name the clusters
+   * @param clusterNameOf          resolves the cluster name of one request item, exactly as the operation does
+   * @param requiredAuthorizations a set of authorizations for which one match is needed on every cluster
+   * @return true if authorized on every named cluster; otherwise false
+   */
+  protected boolean isAuthorizedOnRequestedClusters(Authentication authentication, Request request,
+                                                    Function<Map<String, Object>, String> clusterNameOf,
+                                                    Set<RoleAuthorization> requiredAuthorizations) {
+    Set<Map<String, Object>> items = (request == null) ? null : request.getProperties();
+    if (items == null || items.isEmpty()) {
+      return AuthorizationHelper.isAuthorized(authentication, ResourceType.CLUSTER, null, requiredAuthorizations);
+    }
+
+    for (Map<String, Object> properties : items) {
+      String clusterName = clusterNameOf.apply(properties);
+      Long resourceId = null;
+      if (StringUtils.isNotBlank(clusterName)) {
+        try {
+          resourceId = getClusterResourceId(clusterName);
+        } catch (AmbariException e) {
+          // Unknown cluster: the operation reports it once authorization is settled.
+        }
+      }
+      if (!AuthorizationHelper.isAuthorized(authentication, ResourceType.CLUSTER, resourceId, requiredAuthorizations)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**

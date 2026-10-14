@@ -38,6 +38,8 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.ContextDTO;
 import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
+import org.apache.ambari.view.k8s.security.AuthHelper;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.ServiceAdvisorService;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
@@ -64,9 +66,27 @@ public class ContextResource {
     private static final Logger LOG = LoggerFactory.getLogger(ContextResource.class);
 
     private final ViewContext viewContext;
+    /** Headers of the request this resource serves: the role check asks Ambari with the caller's credentials. */
+    private final HttpHeaders callerHeaders;
+    private AuthHelper authHelper;
 
-    public ContextResource(ViewContext viewContext) {
+    /**
+     * Creates the resource for one request.
+     *
+     * @param viewContext   active Ambari view context
+     * @param callerHeaders headers of the request; {@code null} when unknown
+     */
+    public ContextResource(ViewContext viewContext, HttpHeaders callerHeaders) {
         this.viewContext = viewContext;
+        this.callerHeaders = callerHeaders;
+    }
+
+    /** The caller's KDPS role for this request, looked up at most once. */
+    private AuthHelper auth() {
+        if (authHelper == null) {
+            authHelper = new AuthHelper(viewContext, callerHeaders);
+        }
+        return authHelper;
     }
 
     @GET
@@ -117,9 +137,8 @@ public class ContextResource {
             }
             AmbariActionClient client = ambariClient(headers);
             ResolvedContext rc = svc.resolve(id, client, cluster);
-            // Never expose the (external) Ranger admin password over REST.
-            rc.setRangerAdminPassword(rc.getRangerAdminPassword() == null ? null : "********");
-            return Response.ok(rc).build();
+            // Every user of the view may read a context; none of them may read the credentials it holds.
+            return Response.ok(rc.toClientView()).build();
         } catch (Exception e) {
             LOG.warn("Failed to resolve context {}: {}", id, e.toString());
             return Response.serverError().entity(java.util.Map.of("error", e.getMessage())).build();
@@ -201,6 +220,8 @@ public class ContextResource {
     @POST
     @Path("probe-remote")
     public Response probeRemote(java.util.Map<String, Object> body) {
+        // The probe calls whatever URL it is given, with the credentials it is given: a configuration task.
+        auth().checkConfigurationPermission();
         try {
             String url = body == null ? null : java.util.Objects.toString(body.get("remoteAmbariUrl"), null);
             String user = body == null ? null : java.util.Objects.toString(body.get("remoteUsername"), null);
@@ -226,12 +247,14 @@ public class ContextResource {
     @POST
     @Path("probe-cdp")
     public Response probeCdp(java.util.Map<String, Object> body) {
+        auth().checkConfigurationPermission();
         try {
             String url = body == null ? null : java.util.Objects.toString(body.get("cmUrl"), null);
             String user = body == null ? null : java.util.Objects.toString(body.get("cmUsername"), null);
             String pass = body == null ? null : java.util.Objects.toString(body.get("cmPassword"), null);
-            boolean verifySsl = body != null && "true".equalsIgnoreCase(
-                    java.util.Objects.toString(body.get("verifySsl"), "false"));
+            // verifySsl defaults to true unless explicitly false, as for a remote Ambari.
+            boolean verifySsl = body == null || !"false".equalsIgnoreCase(
+                    java.util.Objects.toString(body.get("verifySsl"), "true"));
             java.util.Map<String, Object> result =
                     new ContextService(viewContext).probeCdp(url, user, pass, verifySsl);
             return Response.ok(result).build();
@@ -243,12 +266,15 @@ public class ContextResource {
 
     @POST
     public Response save(ContextRequest request) {
+        auth().checkConfigurationPermission();
         try {
             KdpsContextEntity saved = new ContextService(viewContext).save(request);
             return Response.ok(ContextDTO.fromEntity(saved)).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(java.util.Map.of("error", iae.getMessage())).build();
+        } catch (MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (Exception e) {
             LOG.warn("Failed to save context: {}", e.toString());
             return Response.serverError().entity(java.util.Map.of("error", e.getMessage())).build();
@@ -258,6 +284,7 @@ public class ContextResource {
     @DELETE
     @Path("{id}")
     public Response delete(@PathParam("id") String id) {
+        auth().checkConfigurationPermission();
         try {
             new ContextService(viewContext).delete(id);
             return Response.ok().build();

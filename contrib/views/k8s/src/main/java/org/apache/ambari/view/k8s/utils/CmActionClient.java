@@ -24,25 +24,23 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
-import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Minimal read-only client for the Cloudera Manager (CDP) REST API — the CDP analogue of
  * {@link AmbariActionClient}'s discovery reads. Used to resolve a KDPS context of kind {@code CDP}:
  * it discovers Hive (HiveServer2/Metastore), Ranger, and Atlas connection properties + the Kerberos
  * realm from a Cloudera-managed cluster so KDPS-deployed services (Trino, Superset, OpenMetadata)
- * can connect to it. HTTP Basic auth over TLS (7183) or plaintext (7180); trust-all SSL for the
- * typically self-signed CM cert (mirrors the {@code verifySsl=false} remote-Ambari path).
+ * can connect to it. HTTP Basic auth over TLS (7183) or plaintext (7180). The CM certificate and host
+ * name are checked as the context's {@link TlsPolicy} says: verified by default, accepted whatever they
+ * are only when the operator turned verification off for the context.
  *
  * <p>Read-only by construction: only issues GETs. All discovery flows through the well-known CM
  * endpoints: {@code /api/version}, {@code /clusters}, {@code /clusters/{c}/services},
@@ -51,35 +49,41 @@ import javax.net.ssl.X509TrustManager;
  */
 public class CmActionClient {
 
+    private static final Logger LOG = LoggerFactory.getLogger(CmActionClient.class);
+
     private final String baseNoApi;   // e.g. https://cm-host:7183  (no trailing slash)
     private final String authHeader;  // "Basic ..." or null
     private final HttpClient http;
     private final Gson gson = new Gson();
     private volatile String apiVersion; // e.g. "v54" (lazy)
 
+    /**
+     * @param verifySsl false to accept any certificate of Cloudera Manager (for this client only); true checks it
+     *                  against the JVM trust
+     */
     public CmActionClient(String cmUrl, String username, String password, boolean verifySsl) {
+        this(cmUrl, username, password, verifySsl ? TlsPolicy.JVM_DEFAULT
+                : TlsPolicy.trustingAnyCertificate("Cloudera Manager at " + cmUrl));
+    }
+
+    /**
+     * @param tls how the certificate of Cloudera Manager is checked. A policy that does not verify skips the
+     *            certificate and host-name checks of this client only; nothing JVM-wide is changed.
+     */
+    public CmActionClient(String cmUrl, String username, String password, TlsPolicy tls) {
         this.baseNoApi = cmUrl == null ? "" : cmUrl.replaceAll("/+$", "").replaceAll("/api(/v\\d+)?$", "");
         this.authHeader = (username != null && !username.isBlank() && password != null)
                 ? "Basic " + Base64.getEncoder().encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8))
                 : null;
         HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8));
-        if (!verifySsl) {
+        if (baseNoApi.regionMatches(true, 0, "https:", 0, 6)) {
             try {
-                SSLContext sc = SSLContext.getInstance("TLS");
-                sc.init(null, new TrustManager[]{ new X509TrustManager() {
-                    public void checkClientTrusted(X509Certificate[] c, String a) {}
-                    public void checkServerTrusted(X509Certificate[] c, String a) {}
-                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-                }}, new SecureRandom());
-                // The trust-all TrustManager skips chain validation, but java.net.http still enforces
-                // HTTPS endpoint-identity (hostname/SAN) checks — which fail on an IP-addressed URL or
-                // a self-signed cert whose SAN doesn't match the CM host. verifySsl=false means "trust
-                // this endpoint completely", so disable hostname verification too. HttpClient only
-                // honors this via the global system property (it ignores SSLParameters'
-                // endpointIdentificationAlgorithm), so set it before building the client.
-                System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
-                b.sslContext(sc);
-            } catch (Exception ignore) { /* fall back to default SSL */ }
+                b.sslContext((tls == null ? TlsPolicy.JVM_DEFAULT : tls).sslContext(URI.create(baseNoApi).getHost()));
+            } catch (Exception e) {
+                // Without its SSL context the client would fall back to the JVM default trust: still verifying.
+                LOG.warn("Cloudera Manager client at {}: TLS setup failed, using the JVM default trust: {}",
+                        baseNoApi, e.toString());
+            }
         }
         this.http = b.build();
     }

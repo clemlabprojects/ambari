@@ -27,25 +27,36 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import org.apache.ambari.view.PersistenceException;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.dto.security.OidcConfig;
+import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
 import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
+import org.apache.ambari.view.k8s.store.KdpsContextBlobEntity;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
 import org.apache.ambari.view.k8s.store.KdpsContextRepo;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
+import org.apache.ambari.view.k8s.utils.TlsPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
 /**
  * CRUD + resolution for {@link KdpsContextEntity} platform contexts.
  *
  * <p>Secrets (e.g. an external Ranger admin password) are encrypted with
- * {@link EncryptionService} and stored in the view instance data under
- * {@code context.<id>.<name>} — never in the DataStore, never echoed back.
+ * {@link EncryptionService} and stored in the instance settings ({@link InstanceSettings}) under
+ * {@code context.<id>.<name>}, so every user of the view instance deploys with them — never in the
+ * context entity, never echoed back.
  *
  * <p>{@link #resolve} turns a stored context into a {@link ResolvedContext}: for MANAGED
  * contexts it discovers Atlas/Ranger live from Ambari (mirroring DiscoveryResource); for
@@ -67,27 +78,58 @@ public class ContextService {
     // the network with stored credentials (the "connect to remote cluster" context).
     public static final String KIND_REMOTE   = "REMOTE";
     // CDP: like REMOTE but the remote cluster is Cloudera-managed — discovery runs against its
-    // Cloudera Manager REST API instead of Ambari. Config: cmUrl, cmUsername, verifySsl, clusterName;
-    // secret: cmPassword.
+    // Cloudera Manager REST API instead of Ambari. Config: cmUrl, cmUsername, verifySsl (default
+    // true), clusterName; secret: cmPassword.
     public static final String KIND_CDP      = "CDP";
 
     private static final String SECRET_PREFIX = "context.";
-    private static final Gson GSON = new Gson();
+
+    /**
+     * Config key every context saved by this version carries: its Kerberos, OIDC and Polaris realms are
+     * stored under their own keys. Older versions stored all three under the one key {@code realm}, so
+     * the last one entered replaced the others, and those values cannot be told apart any more.
+     */
+    static final String SEPARATE_REALMS_KEY = "separateRealms";
+    /** Config key of the Kerberos realm, which older versions also used for the OIDC and Polaris realms. */
+    static final String LEGACY_REALM_KEY = "realm";
+    /** Config key of the Polaris realm (the polaris capability's {@code configKey}). */
+    static final String POLARIS_REALM_KEY = "polarisRealm";
+    /** Notice on an older context whose single stored realm is now read as its Kerberos realm only. */
+    static final String SHARED_REALM_NOTICE = "This context was saved before the Kerberos, single sign-on (OIDC) and"
+            + " Polaris realms were stored separately, and only one realm was kept for all three. It is now used as"
+            + " the Kerberos realm. Review the OIDC realm and the Polaris realm, then save the context again.";
+    /**
+     * Writes {@code <}, {@code >}, {@code =}, {@code &} and {@code '} as they are: escaped, each took six characters,
+     * which made pasted XML half as long again. Configs stored escaped by earlier versions read the same.
+     */
+    private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    /** Reads security profiles as {@link SecurityProfileService} stores them. */
+    private static final ObjectMapper PROFILE_MAPPER = new ObjectMapper();
 
     /**
      * Max serialized length of {@code configJson}. Matches Ambari view persistence's per-String
-     * column cap ({@code DataStoreImpl.MAX_ENTITY_STRING_FIELD_LENGTH}); a context config is a
-     * handful of URLs/usernames, so this is never reached in practice.
+     * column cap ({@code DataStoreImpl.MAX_ENTITY_STRING_FIELD_LENGTH}). The pasted files (site XML,
+     * krb5.conf, CA chain) are kept apart in {@link KdpsContextBlobEntity} parts, so what is left is a
+     * handful of URLs and names.
      */
     private static final int MAX_CONFIG_JSON_LENGTH = 3000;
 
+    /**
+     * Longest pasted file a context keeps (site XML, krb5.conf, CA chain): the hdfs-site.xml of a large
+     * cluster is a few tens of kilobytes.
+     */
+    static final int MAX_LARGE_TEXT_LENGTH = 128 * 1024;
+
     private final ViewContext viewContext;
     private final KdpsContextRepo repo;
-    private final EncryptionService encryptionService = new EncryptionService();
+    private final InstanceSettings settings;
+    /** Storage keys of the pasted files, from the capability schema; read once per service. */
+    private Map<String, String> largeTextLabels;
 
     public ContextService(ViewContext ctx) {
         this.viewContext = ctx;
         this.repo = new KdpsContextRepo(ctx.getDataStore());
+        this.settings = new InstanceSettings(ctx);
     }
 
     // ------------------------------------------------------------------ CRUD
@@ -104,7 +146,7 @@ public class ContextService {
         try {
             for (KdpsContextEntity e : repo.findAll()) {
                 if (!DEFAULT_CONTEXT_ID.equals(e.getId())) {
-                    out.add(e);
+                    out.add(withLargeTexts(e));
                 }
             }
         } catch (Exception ex) {
@@ -120,7 +162,170 @@ public class ContextService {
         if (id == null || id.isBlank() || DEFAULT_CONTEXT_ID.equals(id)) {
             return managedDefault(null);
         }
-        return repo.findById(id);
+        return findWithConfig(id);
+    }
+
+    /**
+     * A stored context with its whole config: {@code configJson} then holds the pasted files kept apart in
+     * {@link KdpsContextBlobEntity} parts as well, so whoever reads the config (the edit form, the Hadoop client
+     * configuration, the krb5.conf and the Ranger CA of a deploy) finds every field in one place. The entity
+     * returned is never stored as it is: {@link #save} keeps the pasted files apart again.
+     *
+     * @param id the context id
+     * @return the context, or {@code null} when there is none
+     */
+    KdpsContextEntity findWithConfig(String id) {
+        return withLargeTexts(repo.findById(id));
+    }
+
+    /** {@link #findWithConfig} for a context already read: adds its pasted files to its {@code configJson}. */
+    private KdpsContextEntity withLargeTexts(KdpsContextEntity entity) {
+        if (entity == null || entity.getId() == null) {
+            return entity;
+        }
+        Map<String, Object> config = parseConfig(entity.getConfigJson());
+        boolean added = false;
+        for (String key : largeTextLabels().keySet()) {
+            String text;
+            try {
+                text = readLargeText(entity.getId(), key);
+            } catch (RuntimeException e) {
+                LOG.warn("ContextService: could not read '{}' of context {}: {}", key, entity.getId(), e.toString());
+                continue;
+            }
+            if (text != null) {
+                // Contexts saved by earlier versions kept the file in configJson; the part store wins once it holds one.
+                config.put(key, text);
+                added = true;
+            }
+        }
+        if (added) {
+            entity.setConfigJson(GSON.toJson(config));
+        }
+        return entity;
+    }
+
+    /** The storage keys of the pasted-file fields, with the label the form shows them under. */
+    private Map<String, String> largeTextLabels() {
+        if (largeTextLabels == null) {
+            largeTextLabels = new ContextSchemaService().largeTextFields();
+        }
+        return largeTextLabels;
+    }
+
+    /**
+     * Reads a pasted file of a context from its parts.
+     *
+     * @return the file, or {@code null} when none is kept apart (or a part is missing: half a file is worse than none)
+     */
+    private String readLargeText(String contextId, String key) {
+        KdpsContextBlobEntity first = findBlob(KdpsContextBlobEntity.idOf(contextId, key, 0));
+        if (first == null) {
+            return null;
+        }
+        int parts = first.getParts() == null ? 1 : first.getParts();
+        StringBuilder text = new StringBuilder(first.getValue() == null ? "" : first.getValue());
+        for (int i = 1; i < parts; i++) {
+            KdpsContextBlobEntity part = findBlob(KdpsContextBlobEntity.idOf(contextId, key, i));
+            if (part == null || part.getValue() == null) {
+                LOG.warn("ContextService: '{}' of context {} is missing part {} of {}; it is ignored", key, contextId,
+                        i, parts);
+                return null;
+            }
+            text.append(part.getValue());
+        }
+        return text.toString();
+    }
+
+    /**
+     * Keeps a pasted file of a context in parts of at most {@link KdpsContextBlobEntity#PART_LENGTH} characters, and
+     * removes the parts a longer earlier value left.
+     *
+     * @param text the file; {@code null} removes it
+     */
+    private void writeLargeText(String contextId, String key, String text) {
+        KdpsContextBlobEntity first;
+        try {
+            first = findBlob(KdpsContextBlobEntity.idOf(contextId, key, 0));
+        } catch (IllegalStateException e) {
+            if (text == null) {
+                // A store that cannot hold pasted files (the view instance was registered by an earlier build of
+                // this version) holds none to remove, so contexts without one still save and delete.
+                LOG.debug("ContextService: no stored '{}' of context {} to remove: {}", key, contextId, e.toString());
+                return;
+            }
+            throw new IllegalStateException("Could not save the " + largeTextLabels().getOrDefault(key, key)
+                    + " of this platform context: this Ambari Server cannot store pasted files for the view yet."
+                    + " Reinstall the view on Ambari Server, then save again.", e);
+        }
+        int before = first == null ? 0 : (first.getParts() == null ? 1 : first.getParts());
+        int parts = 0;
+        if (text != null) {
+            int size = KdpsContextBlobEntity.PART_LENGTH;
+            parts = Math.max(1, (text.length() + size - 1) / size);
+            // The other parts first, then part 0 with the count, so the count never names a part not written yet.
+            for (int i = parts - 1; i >= 0; i--) {
+                String value = text.substring(i * size, Math.min(text.length(), (i + 1) * size));
+                storeBlob(new KdpsContextBlobEntity(KdpsContextBlobEntity.idOf(contextId, key, i), value,
+                        i == 0 ? parts : null));
+            }
+        }
+        for (int i = parts; i < before; i++) {
+            removeBlob(KdpsContextBlobEntity.idOf(contextId, key, i));
+        }
+    }
+
+    private KdpsContextBlobEntity findBlob(String id) {
+        try {
+            return viewContext.getDataStore().find(KdpsContextBlobEntity.class, id);
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("Could not read the platform context value " + id, e);
+        }
+    }
+
+    private void storeBlob(KdpsContextBlobEntity blob) {
+        try {
+            viewContext.getDataStore().store(blob);
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("Could not save the platform context value " + blob.getId(), e);
+        }
+    }
+
+    private void removeBlob(String id) {
+        try {
+            KdpsContextBlobEntity blob = viewContext.getDataStore().find(KdpsContextBlobEntity.class, id);
+            if (blob != null) {
+                viewContext.getDataStore().remove(blob);
+            }
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("Could not remove the platform context value " + id, e);
+        }
+    }
+
+    /**
+     * Whether the deploy steps that write to a context's platform (Ranger repositories, TagSync
+     * sources, Atlas federation) run for it, from the stored context alone: always for the managed
+     * cluster and for a context that cannot be read, otherwise unless the operator turned
+     * {@code autoConfigureRemote} off. The rule the steps apply at run time to the resolved context,
+     * without the live discovery of {@link #resolve}, so a submit can apply it up front.
+     */
+    public boolean writesToPlatform(String contextId) {
+        if (contextId == null || contextId.isBlank() || DEFAULT_CONTEXT_ID.equals(contextId)
+                || NO_CONTEXT_ID.equals(contextId)) {
+            return true;
+        }
+        try {
+            return writesToPlatform(repo.findById(contextId));
+        } catch (Exception e) {
+            LOG.warn("ContextService.writesToPlatform: could not read context '{}' ({})", contextId, e.toString());
+            return true;
+        }
+    }
+
+    /** {@link #writesToPlatform(String)} for a stored context; null stands for the managed default. */
+    static boolean writesToPlatform(KdpsContextEntity entity) {
+        if (entity == null || entity.getKind() == null || KIND_MANAGED.equals(entity.getKind())) return true;
+        return !"false".equalsIgnoreCase(str(parseConfig(entity.getConfigJson()).get("autoConfigureRemote")));
     }
 
     /** Synthesize the virtual MANAGED default context (never persisted). */
@@ -139,9 +344,9 @@ public class ContextService {
     /**
      * Create or update a context from a {@link ContextRequest}. The non-secret {@link
      * ContextRequest#config} map is serialized into the entity's {@code configJson}; each plaintext
-     * secret in {@link ContextRequest#secrets} is encrypted into the view instance data and its key
-     * name recorded in {@code secretKeys}. Plaintext secrets are never persisted to the DataStore
-     * nor returned. The persisted {@link KdpsContextEntity} carries only scalar columns (see that
+     * secret in {@link ContextRequest#secrets} is encrypted into the instance settings shared by every
+     * user of the view, and its key name recorded in {@code secretKeys}. Plaintext secrets are never
+     * persisted nor returned. The persisted {@link KdpsContextEntity} carries only scalar columns (see that
      * class's persistence contract).
      */
     public KdpsContextEntity save(ContextRequest request) {
@@ -161,29 +366,55 @@ public class ContextService {
         entity.setClusterName(request.clusterName);
         entity.setDescription(request.description);
 
-        // Serialize non-secret config. Ambari stores String columns up to 3000 chars; guard with a
-        // clear error rather than letting the persistence layer throw an opaque one.
-                Map<String, Object> config = request.config != null ? new LinkedHashMap<>(request.config) : new LinkedHashMap<>();
+        Map<String, Object> config = request.config != null ? new LinkedHashMap<>(request.config) : new LinkedHashMap<>();
         // Defence in depth: a secret typed into `config` (the wizard sends secrets separately, an API
         // caller may not) must never be persisted in clear nor echoed by GET. Move every schema-secret
         // key out of config into the encrypted secrets.
         Map<String, String> secrets = request.secrets != null ? new LinkedHashMap<>(request.secrets) : new LinkedHashMap<>();
         for (org.apache.ambari.view.k8s.model.ContextCapabilitySchema cap : new ContextSchemaService().loadSchema()) {
             for (org.apache.ambari.view.k8s.model.ContextCapabilitySchema.ContextFieldDef f : cap.fields) {
-                if (f.secret && config.containsKey(f.name)) {
-                    Object v = config.remove(f.name);
-                    if (v != null && !String.valueOf(v).isBlank() && !secrets.containsKey(f.name)) {
-                        secrets.put(f.name, String.valueOf(v));
+                String key = f.storageKey();
+                if (f.secret && config.containsKey(key)) {
+                    Object v = config.remove(key);
+                    if (v != null && !String.valueOf(v).isBlank() && !secrets.containsKey(key)) {
+                        secrets.put(key, String.valueOf(v));
                     }
                 }
             }
         }
+        // On a REMOTE context the only realm an operator could enter was the Polaris one, so a bare
+        // "realm" from an older client is that realm, kept under its own key from now on.
+        if (KIND_REMOTE.equals(request.kind) && config.containsKey(LEGACY_REALM_KEY)
+                && isBlank(str(config.get(POLARIS_REALM_KEY)))) {
+            config.put(POLARIS_REALM_KEY, config.remove(LEGACY_REALM_KEY));
+        }
+        config.put(SEPARATE_REALMS_KEY, Boolean.TRUE);
+        // The pasted files are kept apart, in parts; everything is checked before anything is written.
+        Map<String, String> largeTexts = new LinkedHashMap<>();
+        for (Map.Entry<String, String> field : largeTextLabels().entrySet()) {
+            String text = str(config.remove(field.getKey()));
+            if (isBlank(text)) {
+                continue;
+            }
+            if (text.length() > MAX_LARGE_TEXT_LENGTH) {
+                throw new IllegalArgumentException("The field '" + field.getValue() + "' is too long to be saved ("
+                        + text.length() + " characters, at most " + MAX_LARGE_TEXT_LENGTH + ").");
+            }
+            largeTexts.put(field.getKey(), text);
+        }
+        // Ambari stores String columns up to 3000 chars; guard with a clear error naming the
+        // longest fields rather than letting the persistence layer throw an opaque one.
         String configJson = GSON.toJson(config);
         if (configJson.length() > MAX_CONFIG_JSON_LENGTH) {
-            throw new IllegalArgumentException("Context configuration is too large ("
-                    + configJson.length() + " chars; max " + MAX_CONFIG_JSON_LENGTH + ").");
+            throw new IllegalArgumentException("The context configuration is too large to be saved ("
+                    + configJson.length() + " characters, at most " + MAX_CONFIG_JSON_LENGTH + "). Longest fields: "
+                    + longestFields(config) + ".");
         }
         entity.setConfigJson(configJson);
+
+        for (Map.Entry<String, String> e : secrets.entrySet()) {
+            InstanceSettings.checkSecretLength("value of '" + e.getKey() + "'", e.getValue());
+        }
 
         // Encrypt + store provided secrets; track key names. Merge with existing keys so a
         // partial update (only some secrets re-entered) does not drop previously stored ones.
@@ -201,9 +432,7 @@ public class ContextService {
                 if (name == null || name.isBlank() || plain == null || plain.isBlank()) {
                     continue;
                 }
-                String ref = SECRET_PREFIX + request.id + "." + name;
-                String enc = Base64.getEncoder().encodeToString(encryptionService.encrypt(plain.getBytes()));
-                viewContext.putInstanceData(ref, enc);
+                settings.putSecret(SECRET_PREFIX + request.id + "." + name, plain);
                 if (!keys.contains(name)) {
                     keys.add(name);
                 }
@@ -214,7 +443,12 @@ public class ContextService {
         String now = Instant.now().toString();
         entity.setCreatedAt(prior != null && prior.getCreatedAt() != null ? prior.getCreatedAt() : now);
         entity.setUpdatedAt(now);
+        for (String key : largeTextLabels().keySet()) {
+            // A field left empty removes the file saved before, as it does for every other field.
+            writeLargeText(request.id, key, largeTexts.get(key));
+        }
         KdpsContextEntity saved = repo.upsert(entity);
+        saved = withLargeTexts(saved);
         // Deterministic security-profile derivation: (re)derive this context's OIDC profile now — on
         // create/update only, never lazily — so the Step-1 picker is stable and reproducible. EXTERNAL/
         // REMOTE resolve without a local Ambari (REMOTE builds its own remote client).
@@ -230,80 +464,243 @@ public class ContextService {
         if (entity != null && entity.getSecretKeys() != null) {
             for (String name : entity.getSecretKeys().split(",")) {
                 if (!name.isBlank()) {
-                    viewContext.removeInstanceData(SECRET_PREFIX + id + "." + name.trim());
+                    settings.remove(SECRET_PREFIX + id + "." + name.trim());
                 }
             }
         }
         repo.deleteById(id);
+        for (String key : largeTextLabels().keySet()) {
+            try {
+                writeLargeText(id, key, null);
+            } catch (RuntimeException e) {
+                LOG.warn("ContextService.delete: could not remove '{}' of context {}: {}", key, id, e.toString());
+            }
+        }
         pruneDerivedOidcProfile(id);
+    }
+
+    /** The three longest values of a context config, by key and length, for the message refusing it. */
+    private static String longestFields(Map<String, Object> config) {
+        List<Map.Entry<String, Integer>> sizes = new ArrayList<>();
+        for (Map.Entry<String, Object> e : config.entrySet()) {
+            sizes.add(Map.entry(e.getKey(), GSON.toJson(e.getValue()).length()));
+        }
+        sizes.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<String, Integer> e : sizes.subList(0, Math.min(3, sizes.size()))) {
+            out.add(e.getKey() + " (" + e.getValue() + " characters)");
+        }
+        return String.join(", ", out);
     }
 
     // ----- Derived OIDC security profiles (one per OIDC-bearing context, deterministic on CRUD) -----
 
+    /** Name of the OIDC profile earlier versions created for the local cluster, before the per-context derivation. */
+    static final String LEGACY_OIDC_PROFILE = "keycloak";
+    /** Instance setting recording that the legacy OIDC profile was looked at once; it is never looked at again. */
+    static final String LEGACY_OIDC_PROFILE_CHECKED_KEY = "securityProfiles.legacyOidcProfileChecked";
+
     private static String derivedOidcProfileKey(String contextId) { return "ctx-oidc-" + contextId; }
 
     /**
-     * (Re)derive the OIDC security profile for a persisted context — invoked on create/update only.
-     * A profile keyed {@code ctx-oidc-<id>} and named after the context is upserted when the context
-     * carries OIDC (an issuer) + client-registration admin creds + a compatible backend (for REMOTE,
-     * Ambari &gt;= 2.8.2.0 with OIDC enabled); otherwise any previously-derived profile for this context
-     * is pruned. Operator-authored profiles ({@code derivedFromContext == null}) are never touched.
+     * (Re)derive the OIDC security profile for a persisted context — invoked on create/update, and by every read of
+     * the security profiles for the virtual default context. A profile keyed {@code ctx-oidc-<id>} and named after
+     * the context is upserted when the context carries OIDC (an issuer) + client-registration admin creds + a
+     * compatible backend (for REMOTE, Ambari &gt;= 2.8.2.0 with OIDC enabled); otherwise any previously-derived
+     * profile for this context is pruned, unless releases deploy with it. When some of the context's OIDC settings
+     * could not be read, nothing is written nor pruned. Only that one row is ever written, and only when it changes:
+     * every other profile is the operator's.
      * Best-effort — never fails the context save.
      */
     public void reconcileDerivedOidcProfile(String contextId, AmbariActionClient ambari, String cluster) {
         try {
-            ResolvedContext rc = resolve(contextId, ambari, cluster);
-            SecurityProfileService sps = new SecurityProfileService(viewContext);
-            org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO profiles = sps.loadProfiles();
-            if (profiles.profiles == null) profiles.profiles = new java.util.HashMap<>();
-            String key = derivedOidcProfileKey(contextId);
-            boolean isDefault = DEFAULT_CONTEXT_ID.equals(contextId);
-            // A profile is derivable when the context exposes OIDC (an issuer) on a compatible backend
-            // AND KDPS can register clients for it — either via the context's own admin creds
-            // (EXTERNAL/REMOTE) or, for the default local context, via the local Ambari oidc-env.
-            boolean canRegister = rc != null && (rc.hasContextOidcAdminCreds() || isDefault);
-            boolean derive = rc != null && rc.hasOidc() && oidcVersionSupported(rc) && canRegister;
-            if (derive) {
-                profiles.profiles.put(key, buildOidcProfileFromContext(rc));
-                // Migrate the legacy bespoke auto-profile (keyed "keycloak") the old bootstrap created
-                // for the local cluster — it is now superseded by the unified per-context derivation.
-                if (isDefault) {
-                    if (profiles.profiles.remove("keycloak") != null) {
-                        LOG.info("Migrated legacy auto OIDC profile 'keycloak' -> '{}'", key);
-                    }
-                    if ("keycloak".equals(profiles.defaultProfile)) profiles.defaultProfile = key;
-                }
-                if (profiles.defaultProfile == null || profiles.defaultProfile.isBlank()) {
-                    profiles.defaultProfile = key;
-                }
-                LOG.info("Derived OIDC security profile '{}' (source=internal) from context '{}' (issuer={})",
-                        key, rc.getName(), rc.getOidcIssuerUrl());
-            } else if (profiles.profiles.remove(key) != null) {
-                LOG.info("Pruned derived OIDC security profile '{}' — context '{}' no longer exposes usable OIDC",
-                        key, contextId);
-            }
-            sps.saveProfiles(profiles);
+            reconcileDerivedOidcProfile(contextId, resolve(contextId, ambari, cluster));
         } catch (Exception e) {
             LOG.warn("reconcileDerivedOidcProfile: could not derive OIDC profile for context {}: {}", contextId, e.toString());
         }
     }
 
+    /**
+     * {@link #reconcileDerivedOidcProfile(String, AmbariActionClient, String)} for a context already resolved.
+     *
+     * @param rc the resolved context; {@code null} when it could not be resolved, which leaves its profile as it is
+     * @throws IllegalStateException when the stored profiles cannot be read; nothing is written then
+     */
+    void reconcileDerivedOidcProfile(String contextId, ResolvedContext rc) {
+        SecurityProfileService sps = new SecurityProfileService(viewContext);
+        String key = derivedOidcProfileKey(contextId);
+        boolean defaultContext = DEFAULT_CONTEXT_ID.equals(contextId);
+        // A profile is derivable when the context exposes OIDC (an issuer) on a compatible backend
+        // AND KDPS can register clients for it — either via the context's own admin creds
+        // (EXTERNAL/REMOTE) or, for the default local context, via the local Ambari oidc-env.
+        boolean canRegister = rc != null && (rc.hasContextOidcAdminCreds() || defaultContext);
+        boolean derive = rc != null && rc.hasOidc() && oidcVersionSupported(rc) && canRegister;
+        synchronized (sps.writeLock()) {
+            if (!derive) {
+                if (sps.readStored(key) == null) {
+                    return;
+                }
+                if (!oidcSettingsRead(rc)) {
+                    // Not knowing is not "off": the profile stays until a read succeeds, which derives it again or
+                    // prunes it.
+                    LOG.info("Kept derived OIDC security profile '{}': the OIDC settings of context '{}' could not be"
+                            + " read", key, contextId);
+                    return;
+                }
+                pruneUnlessUsed(sps, key, "context '" + contextId + "' no longer exposes usable OIDC");
+                return;
+            }
+            if (!oidcSettingsRead(rc)) {
+                // The issuer was read but another OIDC setting was not: a profile built now would silently drop,
+                // say, the TLS or principal-domain setting releases deploy with. Nothing is written until a read
+                // gets them all, the legacy profile included.
+                LOG.info("Left derived OIDC security profile '{}' as it is: some OIDC settings of context '{}' could"
+                        + " not be read ({})", key, contextId, rc.getUnreadFields());
+                return;
+            }
+            SecurityProfileService.StoredProfile own = sps.readStored(key);
+            SecurityConfigDTO derived = buildOidcProfileFromContext(rc);
+            // The default flag is the operator's choice: it is only set while no profile carries it.
+            boolean markDefault = (own != null && own.isDefault()) || !sps.anyMarkedDefault();
+            if (own == null || own.isDefault() != markDefault || !sps.sameContent(own, derived)) {
+                sps.writeProfile(key, derived, markDefault);
+                LOG.info("Derived OIDC security profile '{}' (source=internal) from context '{}' (issuer={})",
+                        key, rc.getName(), rc.getOidcIssuerUrl());
+            }
+            if (defaultContext) {
+                retireLegacyOidcProfile(sps, key, derived, rc.getOidcIssuerUrl());
+            }
+        }
+    }
+
+    /**
+     * Whether a context's OIDC settings were read, so that finding none means OIDC is off: not when the context could
+     * not be resolved, when a REMOTE context's Ambari did not answer (it then reports no version), or when a call
+     * reading one of its OIDC settings failed.
+     */
+    static boolean oidcSettingsRead(ResolvedContext rc) {
+        if (rc == null) return false;
+        if (KIND_REMOTE.equals(rc.getKind()) && isBlank(rc.getAmbariVersion())) return false;
+        return rc.getUnreadFields() == null || rc.getUnreadFields().stream().noneMatch(f -> f.startsWith("oidc."));
+    }
+
+    /**
+     * Removes a derived profile unless releases deploy with it: like any profile, it is never removed from under
+     * them, since their next deploy would be refused for asking for a profile that does not exist. Callers hold the
+     * profiles' write lock.
+     *
+     * @param reason why the profile is no longer derived, for the log
+     */
+    private void pruneUnlessUsed(SecurityProfileService sps, String key, String reason) {
+        List<String> users = new ReleaseMetadataService(viewContext).findReleasesUsingProfile(key);
+        if (!users.isEmpty()) {
+            LOG.warn("Kept derived OIDC security profile '{}' although {}: releases {} deploy with it", key, reason,
+                    users);
+            return;
+        }
+        if (sps.removeStored(key)) {
+            LOG.info("Pruned derived OIDC security profile '{}' — {}", key, reason);
+        }
+    }
+
+    /**
+     * Removes the OIDC profile earlier versions created for the local cluster ({@value #LEGACY_OIDC_PROFILE}), now
+     * replaced by the derived {@code ctx-oidc-default}, once: only when it still is exactly what those versions
+     * created for the same issuer, and no release uses it. A profile of that name the operator wrote or changed,
+     * or that a release deploys with, is theirs and stays. When earlier versions already removed it, the releases
+     * still recorded with it move to the derived profile. Callers hold the profiles' write lock.
+     */
+    private void retireLegacyOidcProfile(SecurityProfileService sps, String derivedKey, SecurityConfigDTO derived,
+                                         String issuerUrl) {
+        if ("true".equals(settings.get(LEGACY_OIDC_PROFILE_CHECKED_KEY))) {
+            return;
+        }
+        SecurityProfileService.StoredProfile legacy = sps.readStored(LEGACY_OIDC_PROFILE);
+        if (legacy == null) {
+            // Earlier versions replaced it by the derived profile without updating the releases deployed with it,
+            // whose next deploy would now be refused for asking for a profile that does not exist.
+            List<String> moved = new ReleaseMetadataService(viewContext)
+                    .reassignSecurityProfile(LEGACY_OIDC_PROFILE, derivedKey);
+            if (!moved.isEmpty()) {
+                LOG.info("Releases {} now use the security profile '{}': they were deployed with '{}', which earlier"
+                        + " versions replaced by it", moved, derivedKey, LEGACY_OIDC_PROFILE);
+            }
+        } else {
+            List<String> users = new ReleaseMetadataService(viewContext).findReleasesUsingProfile(LEGACY_OIDC_PROFILE);
+            // Its row never holds its secrets: one stored apart makes it a profile the operator completed.
+            if (!isLegacyBootstrapProfile(legacy.profile(), issuerUrl) || sps.hasStoredSecrets(LEGACY_OIDC_PROFILE)) {
+                LOG.info("Kept security profile '{}': it is not the profile earlier versions created automatically",
+                        LEGACY_OIDC_PROFILE);
+            } else if (!users.isEmpty()) {
+                LOG.info("Kept security profile '{}' that earlier versions created automatically: releases {} use it",
+                        LEGACY_OIDC_PROFILE, users);
+            } else {
+                if (legacy.isDefault()) {
+                    sps.writeProfile(derivedKey, derived, true);
+                }
+                sps.removeStored(LEGACY_OIDC_PROFILE);
+                LOG.info("Migrated legacy auto OIDC profile '{}' -> '{}'", LEGACY_OIDC_PROFILE, derivedKey);
+            }
+        }
+        settings.put(LEGACY_OIDC_PROFILE_CHECKED_KEY, "true");
+    }
+
+    /**
+     * Whether a profile is exactly the OIDC profile earlier versions created for the local cluster: the source,
+     * scopes and claims they set, the given issuer, optionally the principal domain, and nothing else.
+     */
+    static boolean isLegacyBootstrapProfile(SecurityConfigDTO cfg, String issuerUrl) {
+        if (cfg == null || cfg.oidc == null || !"oidc".equals(cfg.mode)) return false;
+        OidcConfig o = cfg.oidc;
+        if (!"internal".equals(o.source) || !"openid email profile".equals(o.scopes)
+                || !"preferred_username".equals(o.userClaim) || !"groups".equals(o.groupsClaim)) {
+            return false;
+        }
+        if (isBlank(o.issuerUrl) || isBlank(issuerUrl)
+                || !o.issuerUrl.trim().replaceAll("/+$", "").equals(issuerUrl.trim().replaceAll("/+$", ""))) {
+            return false;
+        }
+        // Whatever else the profile holds must be empty: the Global Security page saves empty sections and unset
+        // switches along with a profile, which change nothing.
+        ObjectNode rest = PROFILE_MAPPER.valueToTree(cfg);
+        rest.remove("mode");
+        ObjectNode oidc = (ObjectNode) rest.get("oidc");
+        for (String field : List.of("source", "issuerUrl", "scopes", "userClaim", "groupsClaim", "principalDomain")) {
+            oidc.remove(field);
+        }
+        return isEmptyNode(rest);
+    }
+
+    /** A JSON value that sets nothing: null, blank text, false, or a container of such values only. */
+    private static boolean isEmptyNode(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) return true;
+        if (node.isTextual()) return node.asText().isBlank();
+        if (node.isBoolean()) return !node.asBoolean();
+        if (node.isContainerNode()) {
+            for (JsonNode child : node) {
+                if (!isEmptyNode(child)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
     private void pruneDerivedOidcProfile(String contextId) {
         try {
             SecurityProfileService sps = new SecurityProfileService(viewContext);
-            org.apache.ambari.view.k8s.dto.security.SecurityProfilesDTO profiles = sps.loadProfiles();
-            if (profiles.profiles != null && profiles.profiles.remove(derivedOidcProfileKey(contextId)) != null) {
-                sps.saveProfiles(profiles);
-                LOG.info("Pruned derived OIDC security profile for deleted context {}", contextId);
+            synchronized (sps.writeLock()) {
+                String key = derivedOidcProfileKey(contextId);
+                if (sps.readStored(key) != null) {
+                    pruneUnlessUsed(sps, key, "context '" + contextId + "' was deleted");
+                }
             }
         } catch (Exception e) {
             LOG.warn("pruneDerivedOidcProfile: {}", e.toString());
         }
     }
 
-    private org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO buildOidcProfileFromContext(ResolvedContext rc) {
-        org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO cfg =
-                new org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO();
+    private SecurityConfigDTO buildOidcProfileFromContext(ResolvedContext rc) {
+        SecurityConfigDTO cfg = new SecurityConfigDTO();
         cfg.mode = "oidc";
         cfg.derivedFromContext = rc.getId();
         // Human title for the Step-1 picker: the context's own title + the auth type it carries, e.g.
@@ -311,8 +708,7 @@ public class ContextService {
         // ctx-oidc-<id> identifier; operators see this title, not the key.
         String ctxTitle = (rc.getName() != null && !rc.getName().isBlank()) ? rc.getName() : rc.getId();
         cfg.displayName = ctxTitle + " (OIDC)";
-        org.apache.ambari.view.k8s.dto.security.OidcConfig o =
-                new org.apache.ambari.view.k8s.dto.security.OidcConfig();
+        OidcConfig o = new OidcConfig();
         o.source = "internal"; // context carries admin creds → KDPS registers each service's client itself
         o.issuerUrl = rc.getOidcIssuerUrl();
         o.scopes = "openid email profile";
@@ -385,12 +781,7 @@ public class ContextService {
 
     /** Decrypt a stored secret for a context, or null if not present. */
     public String readSecret(String contextId, String name) {
-        String ref = SECRET_PREFIX + contextId + "." + name;
-        String enc = viewContext.getInstanceData(ref);
-        if (enc == null) {
-            return null;
-        }
-        return new String(encryptionService.decrypt(Base64.getDecoder().decode(enc)));
+        return settings.getSecret(SECRET_PREFIX + contextId + "." + name);
     }
 
     // ------------------------------------------------------------- resolution
@@ -417,7 +808,7 @@ public class ContextService {
         }
         KdpsContextEntity entity = (contextId == null || contextId.isBlank())
                 ? null
-                : repo.findById(contextId);
+                : findWithConfig(contextId);
 
         // REMOTE behaves like MANAGED but discovers against a remote cluster's Ambari, reached
         // with stored credentials. We build a client pointed at that Ambari and run the same
@@ -444,6 +835,8 @@ public class ContextService {
                 // would perform Ranger ops itself rather than hand them to the (local) server.
                 rc.setRangerManaged(false);
                 rc.setRemoteAmbariUrl(str(parseConfig(entity.getConfigJson()).get("remoteAmbariUrl")));
+                // The "ignore self-signed" choice made for the remote Ambari also covers its Ranger and Atlas.
+                rc.setVerifySsl(verifiesCertificates(parseConfig(entity.getConfigJson())));
                 // Operator opt-out of auto-configuring the remote cluster's Ranger/Atlas (writes only).
                 rc.setAutoConfigureRemote(!"false".equalsIgnoreCase(
                         str(parseConfig(entity.getConfigJson()).get("autoConfigureRemote"))));
@@ -461,7 +854,7 @@ public class ContextService {
                             rc.setStackVersion(info.get("stackVersion"));
                             String now = Instant.now().toString();
                             rc.setLastContactAt(now);
-                            persistRemoteInfo(entity, info, now);
+                            persistRemoteInfo(entity.getId(), info, now);
                         }
                     } catch (Exception e) {
                         LOG.debug("ContextService.resolve: remote info fetch failed for {}: {}",
@@ -474,6 +867,7 @@ public class ContextService {
         }
         // Schema-driven generic field view (what the UI renders) on top of the typed accessors.
         populateResolvedFields(rc, entity, effectiveAmbari, effectiveCluster, discover);
+        noteSharedRealm(rc, entity);
         alignRealmWithContextKrb5Conf(rc);
         markKerberosEnabled(rc, effectiveAmbari, effectiveCluster);
 
@@ -517,12 +911,39 @@ public class ContextService {
                         && effectiveAmbari != null && effectiveCluster != null) {
                     try {
                         secret = effectiveAmbari.getDesiredConfigProperty(effectiveCluster, "oidc-env", "oidc_admin_client_secret");
-                    } catch (Exception ignored) { }
+                    } catch (Exception e) {
+                        rc.getUnreadFields().add("oidc.adminClientSecret");
+                    }
                 }
                 if (secret != null && !secret.isBlank()) rc.setOidcAdminClientSecret(secret);
             }
         }
+        markOidcClientRegistration(rc, effectiveAmbari, effectiveCluster);
         return rc;
+    }
+
+    /**
+     * Sets {@code oidc.clientRegistration} to "true" when a deploy on this context without a security profile
+     * registers its OIDC client, so users sign in through single sign-on; absent otherwise, since the wizard reads
+     * any non-blank {@code oidc.*} field as the context providing OIDC. The same rule as the deploy
+     * (CommandService.hasConfiguredOidcProvider): the context carries the Keycloak administrator credentials, or it
+     * is the default one and the cluster's oidc-env names a Keycloak administration URL. An issuer alone (Ambari's
+     * own SSO, say) registers nothing, so the wizard must not take it for sign-in.
+     */
+    private void markOidcClientRegistration(ResolvedContext rc, AmbariActionClient ambari, String cluster) {
+        Map<String, String> rf = rc.getResolvedFields();
+        if (rf == null) return;
+        boolean registers = rc.hasContextOidcAdminCreds();
+        if (!registers && DEFAULT_CONTEXT_ID.equals(rc.getId()) && ambari != null
+                && cluster != null && !cluster.isBlank()) {
+            try {
+                String adminUrl = ambari.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
+                registers = adminUrl != null && !adminUrl.isBlank();
+            } catch (Exception e) {
+                LOG.debug("ContextService: oidc-env not readable on cluster {}: {}", cluster, e.toString());
+            }
+        }
+        if (registers) rf.put("oidc.clientRegistration", "true");
     }
 
     /**
@@ -532,7 +953,7 @@ public class ContextService {
      * rather than failing. The password is read from the encrypted secret store only to build the
      * request's Basic header; it is never logged nor placed on the {@link ResolvedContext}.
      */
-    private AmbariActionClient buildRemoteClient(KdpsContextEntity entity) {
+    AmbariActionClient buildRemoteClient(KdpsContextEntity entity) {
         try {
             Map<String, Object> cfg = parseConfig(entity.getConfigJson());
             String url = str(cfg.get("remoteAmbariUrl"));
@@ -544,8 +965,7 @@ public class ContextService {
                 return null;
             }
             // verifySsl defaults to true; a context that opted into "ignore self-signed" stores false.
-            boolean verifySsl = !"false".equalsIgnoreCase(str(cfg.get("verifySsl")));
-            return buildClient(url, user, pass, entity.getClusterName(), verifySsl);
+            return buildClient(url, user, pass, entity.getClusterName(), verifiesCertificates(cfg));
         } catch (Exception e) {
             LOG.warn("ContextService: failed to build remote Ambari client for {}: {}",
                     entity.getId(), e.toString());
@@ -614,7 +1034,8 @@ public class ContextService {
             return out;
         }
         try {
-            Map<String, Object> probe = new org.apache.ambari.view.k8s.utils.CmActionClient(url, user, pass, verifySsl).probe();
+            Map<String, Object> probe = new org.apache.ambari.view.k8s.utils.CmActionClient(url, user, pass,
+                    TlsPolicy.forContext(viewContext, verifySsl, null, "Cloudera Manager at " + url)).probe();
             if (!Boolean.TRUE.equals(probe.get("ok"))) {
                 out.put("ok", false);
                 out.put("error", humanizeConnError(new IllegalStateException(String.valueOf(probe.get("error")))));
@@ -667,7 +1088,7 @@ public class ContextService {
                 String key = cap.capability + "." + f.name;
                 if (f.secret) {
                     boolean set = !managed && entity != null && entity.getSecretKeys() != null
-                            && java.util.Arrays.asList(entity.getSecretKeys().split(",")).contains(f.name);
+                            && java.util.Arrays.asList(entity.getSecretKeys().split(",")).contains(f.storageKey());
                     if (set) rc.getSecretFieldsSet().add(key);
                     // A secret never travels on a resolved context: this object is serialised
                     // straight to the browser. That is right, but it means a secret field's
@@ -688,19 +1109,77 @@ public class ContextService {
                     // An explicit operator-entered value in the context config OVERRIDES the live
                     // resolver, so an auto-resolved field (e.g. the Hive metastore service principal on a
                     // MANAGED/REMOTE context) can be overridden per context. Blank/absent → resolve live.
-                    String override = str(config.get(f.name));
+                    // Only for a field the operator can enter on this kind of context: a stray key must
+                    // not replace a live value, such as the remote cluster's Kerberos realm.
+                    String override = overridable(f, rc.getKind()) ? storedValue(config, rc.getKind(), f) : null;
                     if (override != null && !override.isBlank()) {
                         value = override;
                     } else if (f.managedResolver != null && resolver != null) {
                         value = resolver.resolve(f.managedResolver);
+                        if (resolver.unread(f.managedResolver)) {
+                            rc.getUnreadFields().add(key);
+                        }
                     }
                 } else {
-                    value = str(config.get(f.name));
+                    value = storedValue(config, rc.getKind(), f);
                 }
                 if (value != null && !value.isBlank()) {
                     rc.getResolvedFields().put(key, value);
                 }
             }
+        }
+    }
+
+    /**
+     * The value a context stores for a field, under the field's storage key. A REMOTE context saved by an
+     * older version kept its Polaris realm under the bare {@code realm} key, the only realm it offered.
+     */
+    static String storedValue(Map<String, Object> config,
+                              String kind,
+                              org.apache.ambari.view.k8s.model.ContextCapabilitySchema.ContextFieldDef f) {
+        String value = str(config.get(f.storageKey()));
+        if (isBlank(value) && KIND_REMOTE.equals(kind) && POLARIS_REALM_KEY.equals(f.storageKey())) {
+            value = str(config.get(LEGACY_REALM_KEY));
+        }
+        return value;
+    }
+
+    /**
+     * Whether a stored value may replace the live value of a field on a context of this kind: when the
+     * field's {@code appliesTo} names the kind. A field without {@code appliesTo} applies to every kind,
+     * which keeps the Ranger administrator settings a REMOTE context may carry.
+     */
+    static boolean overridable(org.apache.ambari.view.k8s.model.ContextCapabilitySchema.ContextFieldDef f,
+                               String kind) {
+        if (f.appliesTo == null || f.appliesTo.isBlank()) return true;
+        if (kind == null) return false;
+        for (String k : f.appliesTo.split(",")) {
+            if (k.trim().equalsIgnoreCase(kind)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Adds {@link #SHARED_REALM_NOTICE} to an EXTERNAL or CDP context saved by an older version that kept one realm
+     * for Kerberos, OIDC and Polaris while it also configures OIDC or Polaris: that realm is read as the Kerberos
+     * realm, and the OIDC or Polaris realm it may have replaced is lost.
+     */
+    private static void noteSharedRealm(ResolvedContext rc, KdpsContextEntity entity) {
+        if (entity == null || !(KIND_EXTERNAL.equals(entity.getKind()) || KIND_CDP.equals(entity.getKind()))) return;
+        Map<String, Object> config = parseConfig(entity.getConfigJson());
+        if (Boolean.parseBoolean(String.valueOf(config.get(SEPARATE_REALMS_KEY)))
+                || isBlank(str(config.get(LEGACY_REALM_KEY)))) {
+            return;
+        }
+        boolean oidcOrPolaris = false;
+        for (String key : rc.getResolvedFields().keySet()) {
+            oidcOrPolaris |= key.startsWith("oidc.") || key.startsWith("polaris.");
+        }
+        for (String key : rc.getSecretFieldsSet()) {
+            oidcOrPolaris |= key.startsWith("oidc.") || key.startsWith("polaris.");
+        }
+        if (oidcOrPolaris) {
+            rc.getNotices().add(SHARED_REALM_NOTICE);
         }
     }
 
@@ -768,6 +1247,7 @@ public class ContextService {
                     authMode = "none";
                 }
                 r.setAtlasAuthMode(authMode);
+                r.setAtlasLdapAuth("true".equalsIgnoreCase(trim(ldapOn)));
 
                 String authzImpl = ambari.getDesiredConfigProperty(cluster, "application-properties", "atlas.authorizer.impl");
                 r.setAtlasAclMode(authzImpl != null && authzImpl.trim().toLowerCase().contains("ranger") ? "ranger" : "simple");
@@ -838,6 +1318,8 @@ public class ContextService {
         // Operator opt-out of KDPS auto-configuring the remote Ranger/Atlas (WRITE/push paths only).
         // Default true; only an explicit "false" disables. Property resolution (reads) is never gated.
         r.setAutoConfigureRemote(!"false".equalsIgnoreCase(str(config.get("autoConfigureRemote"))));
+        // Certificates of Ranger and Atlas are verified unless the operator turned it off for this context.
+        r.setVerifySsl(verifiesCertificates(config));
         r.setAtlasUrl(str(config.get("atlasUrl")));
         r.setAtlasAuthMode(defaultStr(str(config.get("atlasAuthMode")), "basic"));
         r.setAtlasAclMode(defaultStr(str(config.get("atlasAclMode")), "ranger"));
@@ -885,6 +1367,8 @@ public class ContextService {
         Map<String, Object> config = parseConfig(entity.getConfigJson());
         r.setClusterName(str(config.get("clusterName")));
         r.setAutoConfigureRemote(!"false".equalsIgnoreCase(str(config.get("autoConfigureRemote"))));
+        // Verified unless the operator turned it off: Cloudera Manager, Ranger and Atlas are all called with credentials.
+        r.setVerifySsl(verifiesCertificates(config));
         // CM does not expose Ranger/Atlas admin creds; those stay operator-supplied.
         r.setRangerAdminUsername(defaultStr(str(config.get("rangerAdminUsername")), "admin"));
         r.setRangerAdminPassword(readSecret(entity.getId(), "rangerAdminPassword"));
@@ -899,12 +1383,11 @@ public class ContextService {
             LOG.warn("CDP context {} has no cmUrl — nothing to discover", entity.getId());
             return r;
         }
-        boolean verifySsl = "true".equalsIgnoreCase(defaultStr(str(config.get("verifySsl")), "false"));
         String cmUser = str(config.get("cmUsername"));
         String cmPass = readSecret(entity.getId(), "cmPassword");
         try {
             org.apache.ambari.view.k8s.utils.CmActionClient cm =
-                    new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, verifySsl);
+                    new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, cmTlsPolicy(entity, config));
 
             String cluster = str(config.get("clusterName"));
             if (cluster == null || cluster.isBlank()) {
@@ -1101,7 +1584,7 @@ public class ContextService {
         if (url == null || url.isBlank()) { c.put("skipped", true); c.put("message", "No Ranger URL in context"); return c; }
         try {
             String body = httpGet(url.replaceAll("/+$", "") + "/service/public/v2/api/service",
-                    str(rc.getRangerAdminUsername()), rc.getRangerAdminPassword());
+                    str(rc.getRangerAdminUsername()), rc.getRangerAdminPassword(), tlsPolicyOf(viewContext, rc, "Ranger"));
             java.util.List<String> repos = new ArrayList<>();
             try { for (Object s : (List<?>) new com.google.gson.Gson().fromJson(body, List.class)) {
                 Object n = ((Map<?, ?>) s).get("name"); if (n != null) repos.add(String.valueOf(n)); } } catch (Exception ignore) {}
@@ -1122,7 +1605,7 @@ public class ContextService {
         if (url == null || url.isBlank()) { c.put("skipped", true); c.put("message", "No Atlas URL in context"); return c; }
         try {
             String body = httpGet(url.replaceAll("/+$", "") + "/api/atlas/admin/status",
-                    str(rc.getAtlasFederationUser()), rc.getAtlasFederationPassword());
+                    str(rc.getAtlasFederationUser()), rc.getAtlasFederationPassword(), tlsPolicyOf(viewContext, rc, "Atlas"));
             boolean active = body != null && body.contains("ACTIVE");
             c.put("ok", active);
             c.put("message", active ? "Atlas reachable + ACTIVE" : "Atlas reachable but not ACTIVE");
@@ -1134,22 +1617,17 @@ public class ContextService {
         return c;
     }
 
-    /** Minimal trust-all HTTPS GET with optional basic auth — for preflight probes of self-signed
-     * external Ranger/Atlas (mirrors the insecure read path used for remote-Ambari probes). */
-    private String httpGet(String url, String user, String password) throws Exception {
-        // Trust-all also implies skipping HTTPS endpoint-identity (hostname/SAN) checks — java.net.http
-        // enforces those independently of the TrustManager and only relaxes them via this global
-        // property (it ignores SSLParameters' endpointIdentificationAlgorithm). Self-signed Ranger/
-        // Atlas on an IP or mismatched SAN would otherwise fail preflight with a hostname error.
-        System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
-        javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
-        sc.init(null, new javax.net.ssl.TrustManager[]{ new javax.net.ssl.X509TrustManager() {
-            public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) {}
-            public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) {}
-            public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
-        }}, new java.security.SecureRandom());
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                .sslContext(sc).connectTimeout(java.time.Duration.ofSeconds(8)).build();
+    /**
+     * HTTPS GET with optional basic auth, for the preflight probes of a context's Ranger and Atlas. The certificate is
+     * checked as {@code tls} says; when the context turned verification off, only this client skips the checks.
+     */
+    static String httpGet(String url, String user, String password, TlsPolicy tls) throws Exception {
+        java.net.http.HttpClient.Builder cb = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(8));
+        if (url.regionMatches(true, 0, "https:", 0, 6)) {
+            cb.sslContext(tls.sslContext(java.net.URI.create(url).getHost()));
+        }
+        java.net.http.HttpClient client = cb.build();
         java.net.http.HttpRequest.Builder b = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
                 .timeout(java.time.Duration.ofSeconds(12)).GET();
         if (user != null && !user.isBlank() && password != null) {
@@ -1161,9 +1639,40 @@ public class ContextService {
         return resp.body();
     }
 
+    /**
+     * How the view checks the certificate of a context's {@code component} (Ranger, Atlas) when it calls it with
+     * credentials: verified unless the context turned verification off, trusting the JVM, the Ambari server truststore
+     * and the CA certificate stored on the context ({@code ranger.caCert}).
+     *
+     * @param ctx       the view context, for the Ambari server truststore
+     * @param rc        the resolved platform context; null verifies against the Ambari and JVM trust
+     * @param component what is called, for the log and the error message
+     */
+    public static TlsPolicy tlsPolicyOf(ViewContext ctx, ResolvedContext rc, String component) {
+        if (rc == null) {
+            return TlsPolicy.forContext(ctx, true, null, component);
+        }
+        String pem = rc.getResolvedFields() == null ? null : rc.getResolvedFields().get("ranger.caCert");
+        String name = rc.getName() != null && !rc.getName().isBlank() ? rc.getName() : rc.getId();
+        return TlsPolicy.forContext(ctx, rc.isVerifySsl(), pem,
+                component + (name == null ? "" : " of platform context " + name));
+    }
+
+    /** Whether a stored context config asks for certificate verification: yes unless it says {@code verifySsl: false}. */
+    static boolean verifiesCertificates(Map<String, Object> config) {
+        return config == null || !"false".equalsIgnoreCase(str(config.get("verifySsl")));
+    }
+
+    /** The TLS policy of the Cloudera Manager of a CDP context, from its stored config. */
+    private TlsPolicy cmTlsPolicy(KdpsContextEntity entity, Map<String, Object> config) {
+        return TlsPolicy.forContext(viewContext, verifiesCertificates(config), str(config.get("caCert")),
+                "Cloudera Manager of platform context " + entity.getName());
+    }
+
     private static String trimMsg(Throwable t) {
         String m = t == null ? "" : (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
-        return m.length() > 160 ? m.substring(0, 160) : m;
+        // Long enough for the advice of a refused certificate, which comes before the JDK's own detail.
+        return m.length() > 400 ? m.substring(0, 400) : m;
     }
 
     /**
@@ -1171,8 +1680,11 @@ public class ContextService {
      * {@code configJson} so the list/detail views can show it without another live call. Best-effort:
      * any failure (oversized config, persistence hiccup) is swallowed — it must never break resolve.
      */
-    private void persistRemoteInfo(KdpsContextEntity entity, Map<String, String> info, String now) {
+    private void persistRemoteInfo(String contextId, Map<String, String> info, String now) {
         try {
+            // The stored row, not the one resolve reads: that one holds the pasted files too, which stay apart.
+            KdpsContextEntity entity = repo.findById(contextId);
+            if (entity == null) return;
             Map<String, Object> cfg = parseConfig(entity.getConfigJson());
             if (info.get("ambariVersion") != null) cfg.put("ambariVersion", info.get("ambariVersion"));
             if (info.get("stackName") != null) cfg.put("stackName", info.get("stackName"));
@@ -1184,11 +1696,11 @@ public class ContextService {
                 repo.upsert(entity);
             }
         } catch (Exception e) {
-            LOG.debug("ContextService.persistRemoteInfo failed for {}: {}", entity.getId(), e.toString());
+            LOG.debug("ContextService.persistRemoteInfo failed for {}: {}", contextId, e.toString());
         }
     }
 
-    private Map<String, Object> parseConfig(String json) {
+    private static Map<String, Object> parseConfig(String json) {
         if (json == null || json.isBlank()) {
             return new LinkedHashMap<>();
         }
@@ -1229,7 +1741,7 @@ public class ContextService {
                 || wantedFiles == null || wantedFiles.isEmpty()) {
             return out;
         }
-        KdpsContextEntity entity = repo.findById(contextId);
+        KdpsContextEntity entity = findWithConfig(contextId);
         if (entity == null) {
             return out;
         }
@@ -1258,7 +1770,6 @@ public class ContextService {
             LOG.warn("downloadHadoopClientConfig: CDP context {} has no cmUrl", contextId);
             return;
         }
-        boolean verifySsl = "true".equalsIgnoreCase(defaultStr(str(config.get("verifySsl")), "false"));
         String cmUser = str(config.get("cmUsername"));
         String cmPass = readSecret(entity.getId(), "cmPassword");
 
@@ -1276,7 +1787,7 @@ public class ContextService {
         }
 
         org.apache.ambari.view.k8s.utils.CmActionClient cm =
-                new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, verifySsl);
+                new org.apache.ambari.view.k8s.utils.CmActionClient(cmUrl, cmUser, cmPass, cmTlsPolicy(entity, config));
         String cluster = str(config.get("clusterName"));
         if (isBlank(cluster)) {
             List<Map<String, Object>> cl = cm.listClusters();

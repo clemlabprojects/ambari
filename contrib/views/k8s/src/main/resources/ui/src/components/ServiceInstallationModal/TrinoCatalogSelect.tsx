@@ -42,6 +42,8 @@ export default function TrinoCatalogSelect({ value, onChange, disabled }: {
   // Ids seeded from a deployed release whose catalog was deleted since: show them so the operator
   // sees what is missing instead of a silently shrunken selection.
   const stale = (value || []).filter((id) => !known.has(id));
+  // Catalogs saved before KDPS refused credentials written out: the deploy refuses them until they are edited.
+  const exposed = new Set(catalogs.filter((c) => (c.literalCredentials || []).length > 0).map((c) => c.id));
   return (
     <Select
       mode="multiple"
@@ -55,12 +57,12 @@ export default function TrinoCatalogSelect({ value, onChange, disabled }: {
       options={[
         ...catalogs.map((c) => ({
           value: c.id as string,
-          label: `${c.name}${c.connectorName ? ` (${c.connectorName})` : ''}`,
+          label: `${c.name}${c.connectorName ? ` (${c.connectorName})` : ''}${exposed.has(c.id) ? ' — credential written out, edit it on the Trino Catalogs page' : ''}`,
         })),
         ...stale.map((id) => ({ value: id, label: `${id} — no longer exists` })),
       ]}
       tagRender={(p) => (
-        <Tag closable={p.closable} onClose={p.onClose} color={stale.includes(String(p.value)) ? 'red' : 'blue'} style={{ marginInlineEnd: 4 }}>
+        <Tag closable={p.closable} onClose={p.onClose} color={stale.includes(String(p.value)) || exposed.has(String(p.value)) ? 'red' : 'blue'} style={{ marginInlineEnd: 4 }}>
           {p.label}
         </Tag>
       )}

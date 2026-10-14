@@ -46,6 +46,9 @@ public class ResolvedContext {
     // Atlas
     private String atlasUrl;        // scheme://host:port (no trailing slash)
     private String atlasAuthMode;   // basic | ldap | kerberos | none
+    // Atlas signs users in against LDAP. atlasAuthMode names only the first method on (file before LDAP), and how
+    // OpenMetadata signs in to Atlas depends on LDAP being on even when file authentication is on too.
+    private boolean atlasLdapAuth;
     private String atlasAclMode;    // ranger | simple
     private boolean atlasManaged;   // Atlas is an Ambari-managed service in this context
     private String atlasRangerServiceName; // Ranger service repo name for Atlas (e.g. <cluster>_atlas)
@@ -57,6 +60,11 @@ public class ResolvedContext {
     // "verify" checks. This gates the WRITE/push paths ONLY — property RESOLUTION (reads) is
     // unaffected. Defaults to true (KDPS auto-configures). Meaningful for EXTERNAL/REMOTE contexts.
     private boolean autoConfigureRemote = true;
+
+    // Whether the view checks the TLS certificate and host name of the context's Ranger, Atlas and
+    // Cloudera Manager when it calls them with credentials. True unless the operator turned it off
+    // on an EXTERNAL, REMOTE or CDP context ("verifySsl": false); the managed cluster always verifies.
+    private boolean verifySsl = true;
 
     // Ranger
     private boolean rangerManaged;  // true → delegate ops to Ambari server; false → view-side REST
@@ -91,6 +99,15 @@ public class ResolvedContext {
     /** Names ({@code <capability>.<field>}) of secret fields that have a value set. */
     private java.util.List<String> secretFieldsSet = new java.util.ArrayList<>();
 
+    /**
+     * Names ({@code <capability>.<field>}) of fields left without a value because the cluster's Ambari could not be
+     * asked (unreachable, or a call to it failed), as opposed to fields the cluster does not set.
+     */
+    private java.util.List<String> unreadFields = new java.util.ArrayList<>();
+
+    /** Messages for the operator about how this context is stored, shown with the context (e.g. a value to review). */
+    private java.util.List<String> notices = new java.util.ArrayList<>();
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -124,6 +141,9 @@ public class ResolvedContext {
     public String getAtlasAuthMode() { return atlasAuthMode; }
     public void setAtlasAuthMode(String atlasAuthMode) { this.atlasAuthMode = atlasAuthMode; }
 
+    public boolean isAtlasLdapAuth() { return atlasLdapAuth; }
+    public void setAtlasLdapAuth(boolean atlasLdapAuth) { this.atlasLdapAuth = atlasLdapAuth; }
+
     public String getAtlasAclMode() { return atlasAclMode; }
     public void setAtlasAclMode(String atlasAclMode) { this.atlasAclMode = atlasAclMode; }
 
@@ -140,6 +160,8 @@ public class ResolvedContext {
     public void setRangerManaged(boolean rangerManaged) { this.rangerManaged = rangerManaged; }
     public boolean isAutoConfigureRemote() { return autoConfigureRemote; }
     public void setAutoConfigureRemote(boolean autoConfigureRemote) { this.autoConfigureRemote = autoConfigureRemote; }
+    public boolean isVerifySsl() { return verifySsl; }
+    public void setVerifySsl(boolean verifySsl) { this.verifySsl = verifySsl; }
 
     public String getRangerUrl() { return rangerUrl; }
     public void setRangerUrl(String rangerUrl) { this.rangerUrl = rangerUrl; }
@@ -210,4 +232,110 @@ public class ResolvedContext {
 
     public java.util.List<String> getSecretFieldsSet() { return secretFieldsSet; }
     public void setSecretFieldsSet(java.util.List<String> secretFieldsSet) { this.secretFieldsSet = secretFieldsSet; }
+
+    public java.util.List<String> getUnreadFields() { return unreadFields; }
+    public void setUnreadFields(java.util.List<String> unreadFields) { this.unreadFields = unreadFields; }
+
+    public java.util.List<String> getNotices() { return notices; }
+    public void setNotices(java.util.List<String> notices) { this.notices = notices; }
+
+    /**
+     * The context as GET /contexts/{id}/resolved returns it, to every user of the view: everything but the credentials
+     * it holds (the Ranger admin password, the Atlas federation password, the Keycloak admin client secret). Whether
+     * each of them is set shows in {@link ClientView#secretFieldsSet}. Only the deploy steps need the values, and they
+     * resolve the context themselves.
+     *
+     * @return the view, which shares nothing with this context
+     */
+    public ClientView toClientView() {
+        ClientView v = new ClientView();
+        v.id = id;
+        v.name = name;
+        v.kind = kind;
+        v.clusterName = clusterName;
+        v.remoteAmbariUrl = remoteAmbariUrl;
+        v.ambariVersion = ambariVersion;
+        v.stackName = stackName;
+        v.stackVersion = stackVersion;
+        v.lastContactAt = lastContactAt;
+        v.atlasUrl = atlasUrl;
+        v.atlasAuthMode = atlasAuthMode;
+        v.atlasLdapAuth = atlasLdapAuth;
+        v.atlasAclMode = atlasAclMode;
+        v.atlasManaged = atlasManaged;
+        v.atlasRangerServiceName = atlasRangerServiceName;
+        v.kerberosRealm = kerberosRealm;
+        v.autoConfigureRemote = autoConfigureRemote;
+        v.rangerManaged = rangerManaged;
+        v.rangerUrl = rangerUrl;
+        v.rangerAdminUsername = rangerAdminUsername;
+        v.atlasFederationUser = atlasFederationUser;
+        v.oidcIssuerUrl = oidcIssuerUrl;
+        v.oidcRealm = oidcRealm;
+        v.oidcAdminUrl = oidcAdminUrl;
+        v.oidcAdminRealm = oidcAdminRealm;
+        v.oidcAdminClientId = oidcAdminClientId;
+        v.oidcVerifyTls = oidcVerifyTls;
+        v.oidcPrincipalDomain = oidcPrincipalDomain;
+        v.verifySsl = verifySsl;
+        v.resolvedFields = resolvedFields == null ? new java.util.LinkedHashMap<>()
+                : new java.util.LinkedHashMap<>(resolvedFields);
+        v.unreadFields = unreadFields == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(unreadFields);
+        v.notices = notices == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(notices);
+        // The credentials a REMOTE context reads from its Ambari, or a context resolves from its own Ambari, are not
+        // among the context's stored secrets: their presence is added here.
+        java.util.Set<String> set = new java.util.LinkedHashSet<>(
+                secretFieldsSet == null ? java.util.List.of() : secretFieldsSet);
+        if (isSet(rangerAdminPassword)) set.add("ranger.rangerAdminPassword");
+        if (isSet(atlasFederationPassword)) set.add("atlas.federationPassword");
+        if (isSet(oidcAdminClientSecret)) set.add("oidc.adminClientSecret");
+        v.secretFieldsSet = new java.util.ArrayList<>(set);
+        return v;
+    }
+
+    private static boolean isSet(String secret) {
+        return secret != null && !secret.isBlank();
+    }
+
+    /**
+     * A resolved context without its credentials ({@link #toClientView}). Its fields are an allow-list: a field added
+     * to {@link ResolvedContext}, a new credential say, is only sent once it is added here too.
+     */
+    public static final class ClientView {
+        public String id;
+        public String name;
+        public String kind;
+        public String clusterName;
+        public String remoteAmbariUrl;
+        public String ambariVersion;
+        public String stackName;
+        public String stackVersion;
+        public String lastContactAt;
+        public String atlasUrl;
+        public String atlasAuthMode;
+        public boolean atlasLdapAuth;
+        public String atlasAclMode;
+        public boolean atlasManaged;
+        public String atlasRangerServiceName;
+        public String kerberosRealm;
+        public boolean autoConfigureRemote;
+        public boolean rangerManaged;
+        public String rangerUrl;
+        public String rangerAdminUsername;
+        public String atlasFederationUser;
+        public String oidcIssuerUrl;
+        public String oidcRealm;
+        public String oidcAdminUrl;
+        public String oidcAdminRealm;
+        public String oidcAdminClientId;
+        public String oidcVerifyTls;
+        public String oidcPrincipalDomain;
+        /** Whether the view checks the certificates of this context's Ranger, Atlas and Cloudera Manager. */
+        public boolean verifySsl;
+        public java.util.Map<String, String> resolvedFields;
+        /** Names ({@code <capability>.<field>}) of the credentials that have a value, never the values. */
+        public java.util.List<String> secretFieldsSet;
+        public java.util.List<String> unreadFields;
+        public java.util.List<String> notices;
+    }
 }

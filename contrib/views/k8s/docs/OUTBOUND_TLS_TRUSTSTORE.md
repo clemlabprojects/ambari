@@ -32,7 +32,7 @@ it alone if the keys are already present).
 
 | Key                  | Format                                                                  | Used by                       |
 | -------------------- | ----------------------------------------------------------------------- | ----------------------------- |
-| `ca.crt`             | PEM bundle: one or more `-----BEGIN CERTIFICATE-----` blocks concatenated | GitLab (Ruby/OpenSSL), curl, any non-JVM consumer |
+| `ca.crt`             | PEM bundle: one or more `-----BEGIN CERTIFICATE-----` blocks concatenated | Ruby/OpenSSL charts, curl, any non-JVM consumer |
 | `truststore.jks`     | Java KeyStore (binary), JKS format                                       | Superset/Trino/OpenMetadata and any JVM service via `javax.net.ssl.trustStore` |
 | `truststore.password` | UTF-8 password string for `truststore.jks`                              | Same JVM services |
 
@@ -52,10 +52,29 @@ The view builds the bundle from:
    the CA the view itself uses to sign mutating-webhook serving certs and
    other in-cluster leaves.
 
-The two are merged: every cert in the Ambari truststore is appended to the
-PEM bundle, plus the Ambari internal CA if not already present (verified
-by attempted-verify against each existing entry). Result: one
-deduplicated PEM bundle covering every CA the workload could need.
+3. **The default truststores** of the Truststores page (flagged *default*),
+   in the *Truststore project*.
+4. **The truststores selected for the release** in the deploy wizard
+   (`<namespace>/<name>`), read from the *Truststore project* only.
+
+All are merged and deduplicated by fingerprint. Result: one PEM bundle
+covering every CA the workload could need.
+
+A source trusted by every release (1–3) that cannot be read is left out
+with a warning in the operation log. A truststore selected for the
+release that cannot be read — deleted, renamed, or in a project KDPS may
+not read — stops the deploy before Helm runs or anything is committed to
+Git, naming it. So does a `<releaseName>-truststore` Secret that cannot
+be written when truststores were selected, or when the service mounts the
+Secret itself.
+
+The truststores of the Truststores page live in the *Truststore project*
+(Cluster Settings → *Truststores and Company CAs*; `ambari-pki` by
+default). Only that project counts: a Secret carrying the truststore label
+in any other project is listed as a plain Secret, never selectable nor
+trusted by default, so that whoever may write Secrets in a workload project
+cannot add a trust anchor to every release. Grant write access to the
+Truststore project only to those who manage the platform's trust.
 
 To add a CA system-wide (so every future KDPS install picks it up):
 
@@ -102,13 +121,13 @@ The chart templates mount the JKS at a known path and add
 `-Djavax.net.ssl.trustStore=…` to `JAVA_OPTS`. The JVM trusts everything in
 the JKS for all outbound TLS.
 
-### GitLab (Ruby/OpenSSL)
+### Ruby/OpenSSL charts
 
-GitLab can't read a JKS. The chart's `certificates` init container takes
-PEM input only. The view writes:
+Some charts can't read a JKS: their `certificates` init container takes
+PEM input only. The view then writes:
 
 ```yaml
-gitlab:
+<chart>:
   global:
     certificates:
       customCAs:
@@ -126,13 +145,13 @@ silent discard into a hard failure.
 
 The init container concatenates `ca.crt` into the system trust store
 (`/etc/ssl/certs/ca-bundle.crt`) and the empty-dir is shared with every
-GitLab sub-container (webservice, sidekiq, gitaly, toolbox, …). All
+sub-container of the chart. All
 outbound HTTPS from any of them — `Net::HTTP`, `curl`, `git fetch`,
 OmniAuth's JWKS poll — now sees the company CAs.
 
 ### Other non-JVM services
 
-Anything that wants PEM input follows the GitLab pattern: pick the
+Anything that wants PEM input follows this pattern: pick the
 `ca.crt` key from the same Secret. The view's binding template is:
 
 ```json
@@ -170,7 +189,7 @@ kubectl -n <namespace> exec -it <pod> -- \
 ```
 
 A passing trust chain shows `Verify return code: 0 (ok)`. Anything else,
-treat as the same class of bug as the GitLab/Keycloak failure above.
+treat as the same class of bug as the Keycloak failure above.
 
 ## Failure modes worth knowing
 

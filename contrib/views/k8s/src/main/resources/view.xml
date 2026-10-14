@@ -18,7 +18,7 @@ limitations under the License.
 <view>
     <name>K8S-VIEW</name>
     <label>Ambari K8S View</label>
-    <version>1.0.0.8</version>
+    <version>1.0.0.10</version>
     <build>${env.BUILD_NUMBER}</build>
     <min-ambari-version>2.5.0</min-ambari-version>
     <!--
@@ -28,14 +28,14 @@ limitations under the License.
       Ambari falls back to a generic copy that loses BeanInfo-hidden fields (release Git metadata).
       Keep data-version equal to the last number of <version>; ViewXmlMigrationContractTest enforces it.
     -->
-    <data-version>8</data-version>
+    <data-version>10</data-version>
     <data-migrator-class>org.apache.ambari.view.k8s.migration.KdpsDataMigrator</data-migrator-class>
 
-    <description>Une vue Ambari pour interagir avec un cluster Kubernetes.</description>
+    <description>An Ambari view to interact with a Kubernetes cluster.</description>
     
     <!--
-      Déclaration de notre service REST. Le nom 'api' sera utilisé dans l'URL.
-      Exemple: /api/v1/views/K8S_VIEW/versions/1.0.0.0/instances/K8S_VIEW_INSTANCE/resources/api/cluster/stats
+      Declaration of our REST service. The name 'api' is used in the URL.
+      Example: /api/v1/views/K8S_VIEW/versions/1.0.0.0/instances/K8S_VIEW_INSTANCE/resources/api/cluster/stats
     -->
     <resource>
         <name>api</name>
@@ -56,16 +56,15 @@ limitations under the License.
     <parameter>
         <name>k8s.view.working.dir</name>
         <description>
-          Répertoire sur le serveur Ambari où la vue stocke ses fichiers de configuration
-          (kubeconfig, repos Helm, registre OCI). NE PAS définir explicitement sauf besoin
-          d'override — laisser ce paramètre vide pour que le service utilise
-          /var/lib/ambari-server/resources/views/k8s-view-data/&lt;instanceName&gt;, chemin
-          persistant qui survit aux redéploiements de la vue (AMBARI-426). Une valeur
-          explicite pointant vers /var/lib/ambari-server/resources/views/work/...
-          serait perdue à chaque redéploiement du JAR — voir
-          ViewConfigurationService.defaultWorkDir().
+          Directory on the Ambari server where the view stores its configuration files
+          (kubeconfig, Helm repositories, OCI registry). Do NOT set it explicitly unless you
+          need to override the default: leave it empty so the service uses
+          /var/lib/ambari-server/resources/views/k8s-view-data/&lt;instanceName&gt;, a
+          persistent path that survives view redeployments. An explicit value pointing to
+          /var/lib/ambari-server/resources/views/work/... would be lost on every JAR
+          redeployment (see ViewConfigurationService.defaultWorkDir()).
         </description>
-        <label>Répertoire de Travail (optionnel)</label>
+        <label>Working Directory (optional)</label>
         <required>false</required>
     </parameter>
     <parameter>
@@ -77,14 +76,34 @@ limitations under the License.
     </parameter>
     <parameter>
         <name>view.admin.users</name>
-        <description>Comma-separated list of Ambari usernames allowed to configure the view (upload kubeconfig, manage repos). When left empty, any user with access to the view instance may configure it.</description>
+        <description>Comma-separated list of Ambari usernames with the KDPS admin role: they configure the view (kubeconfig, platform contexts, Helm repositories, security profiles, truststores, managed configurations) and can also do everything an operator does. When left empty, only Ambari administrators have the admin role.</description>
         <label>View Admin Users</label>
         <required>false</required>
     </parameter>
     <parameter>
         <name>view.operator.users</name>
-        <description>Comma-separated list of Ambari usernames with operator (write) access — may deploy/destroy releases but cannot change view configuration.</description>
+        <description>Comma-separated list of Ambari usernames with the KDPS operator role: they deploy, upgrade, roll back and uninstall releases and restart or delete their pods, but cannot change the view configuration. Every other user granted access to the view instance is read-only. The Ambari account of the view's own keytab webhook (webhook-user by default) does not need to be listed: it can still request pod keytabs in the WEBHOOK Kerberos injection mode.</description>
         <label>View Operator Users</label>
+        <required>false</required>
+    </parameter>
+    <parameter>
+        <name>k8s.view.allowed.namespaces</name>
+        <description>Optional comma-separated list of the Kubernetes namespaces where the view may write Opaque Secrets (keytabs, generated credentials, managed configurations) and read or delete managed configurations. When left empty, every namespace the view's Kubernetes account can reach is allowed.</description>
+        <label>Allowed Namespaces</label>
+        <required>false</required>
+    </parameter>
+    <parameter>
+        <name>k8s.view.git.timeout.seconds</name>
+        <description>How many seconds a GitOps clone, fetch or push may go without any data from the Git server before the deploy or uninstall fails with an error. A transfer that is slow but still moving is not cut off. When left empty, 120 seconds.</description>
+        <label>Git Timeout (seconds)</label>
+        <placeholder>120</placeholder>
+        <required>false</required>
+    </parameter>
+    <parameter>
+        <name>k8s.view.gitops.source.namespace</name>
+        <description>Optional namespace where the platform keeps its Flux chart sources, such as flux-system. When set, every GitOps release reads its chart from one HelmRepository per chart repository in that namespace, committed once under &lt;path prefix&gt;/_shared/sources/ and never removed by an uninstall; Flux must then allow references across namespaces. When left empty, each release reads its chart from a HelmRepository of its own in its own namespace, which multi-tenant Flux setups accept.</description>
+        <label>GitOps Chart Source Namespace</label>
+        <placeholder>flux-system</placeholder>
         <required>false</required>
     </parameter>
     <!--
@@ -128,32 +147,40 @@ limitations under the License.
             <class>org.apache.ambari.view.k8s.store.KdpsContextEntity</class>
             <id-property>id</id-property>
         </entity>
+        <!-- Long text values of a platform context (site XML, krb5.conf, CA chain), in parts. -->
+        <entity>
+            <class>org.apache.ambari.view.k8s.store.KdpsContextBlobEntity</class>
+            <id-property>id</id-property>
+        </entity>
         <entity>
             <class>org.apache.ambari.view.k8s.store.TrinoCatalogEntity</class>
+            <id-property>id</id-property>
+        </entity>
+        <!-- Instance-wide settings shared by every user (cluster connection, repository and context secrets). -->
+        <entity>
+            <class>org.apache.ambari.view.k8s.store.KdpsSettingEntity</class>
             <id-property>id</id-property>
         </entity>
         <!-- If more entities are added later, list them here as well -->
         <!-- <entity class="org.apache.ambari.view.k8s.store.OtherEntity"/> -->
     </persistence>
     <!--
-      Définition d'une instance par défaut.
-      Contrairement à la vue Capacity Scheduler, nous n'utilisons pas <auto-instance>
-      car notre vue ne dépend pas d'un service géré par Ambari (comme YARN).
-      Une création manuelle est plus appropriée.
+      Definition of a default instance.
+      Unlike the Capacity Scheduler view, we do not use <auto-instance> because this view
+      does not depend on an Ambari-managed service (such as YARN). Manual creation is more
+      appropriate.
     -->
     <instance>
         <name>K8S_VIEW_INSTANCE</name>
         <label>Kubernetes Cluster Manager</label>
-        <description>Instance par défaut pour la vue Kubernetes</description>
+        <description>Default instance for the Kubernetes view</description>
         <visible>true</visible>
         <public>false</public>
-        <roles>
-            <role>CLUSTER.ADMINISTRATOR</role>
-            <role>CLUSTER.OPERATOR</role>
-            <role>SERVICE.ADMINISTRATOR</role>
-            <role>SERVICE.OPERATOR</role>
-            <role>CLUSTER.USER</role>
-        </roles>
+        <!--
+          No <roles> here: Ambari applies view roles only to an <auto-instance>, so a list on this instance
+          would be ignored. An Ambari administrator grants the instance to users, and the KDPS role of each
+          user comes from view.admin.users and view.operator.users.
+        -->
     </instance>
     
 </view>

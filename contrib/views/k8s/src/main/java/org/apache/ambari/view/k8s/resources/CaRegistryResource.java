@@ -15,19 +15,24 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.CaRegistryService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.service.NamespaceScope;
+import org.apache.ambari.view.k8s.service.PkiNamespaces;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.ws.rs.*;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * REST endpoints for the Company Issuing CA registry. Backed by
  * {@link CaRegistryService}; each CA is persisted as a K8s Secret in a privileged
- * namespace (default {@code ambari-pki}).
+ * namespace (default {@code ambari-pki}, set in the view settings). A call KDPS may not make
+ * in that namespace answers 403 with what to do.
  *
  * <p>Mounted at {@code /resources/api/pki/cas}. All mutating endpoints require the
  * standard view write permission ({@link AuthHelper#checkWritePermission()}).
@@ -58,25 +63,64 @@ public class CaRegistryResource {
     private final KubernetesService kubernetesService;
     private final AuthHelper authHelper;
 
-    public CaRegistryResource(ViewContext viewContext, KubernetesService kubernetesService) {
+    /**
+     * Creates the resource for one request.
+     *
+     * @param viewContext       active Ambari view context
+     * @param kubernetesService Kubernetes access of the view
+     * @param callerHeaders     headers of the request; the role check asks Ambari with the caller's credentials
+     */
+    public CaRegistryResource(ViewContext viewContext, KubernetesService kubernetesService, HttpHeaders callerHeaders) {
         this.viewContext = viewContext;
         this.kubernetesService = kubernetesService;
-        this.authHelper = new AuthHelper(viewContext);
+        this.authHelper = new AuthHelper(viewContext, callerHeaders);
     }
 
     private CaRegistryService service() {
         return new CaRegistryService(viewContext, kubernetesService);
     }
 
+    /**
+     * A registry call refused because KDPS may not use Secrets in the registry namespace: 403 with what to do. An
+     * expected situation for an account limited to its own projects, so a warning, not an error.
+     */
+    private Response refused(CaRegistryService service, Exception ex) {
+        String message = PkiNamespaces.forbiddenMessage(service.registryNamespace());
+        LOG.warn("{} ({})", message, ex.getMessage());
+        return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", message)).build();
+    }
+
+    /** The answer to an unexpected failure: 403 with what to do when KDPS was refused, 500 otherwise. */
+    private Response failure(CaRegistryService service, String action, Exception ex) {
+        if (NamespaceScope.isForbidden(ex)) {
+            return refused(service, ex);
+        }
+        LOG.warn("CA registry {} failed: {}", action, ex.toString());
+        return Response.serverError().entity(Map.of("error", String.valueOf(ex.getMessage()))).build();
+    }
+
+    /**
+     * The registry entries, with where they are kept and whether KDPS may add one there.
+     * Body: {items, namespace, canWrite, message?}.
+     */
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     public Response list() {
+        CaRegistryService service = service();
         try {
-            List<CaRegistryService.CaEntry> entries = service().list();
-            return Response.ok(Map.of("items", entries)).build();
+            List<CaRegistryService.CaEntry> entries = service.list();
+            String namespace = service.registryNamespace();
+            boolean canWrite = kubernetesService.canI("create", "", "secrets", null, null, namespace);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("items", entries);
+            out.put("namespace", namespace);
+            out.put("canWrite", canWrite);
+            if (!canWrite) {
+                out.put("message", PkiNamespaces.forbiddenMessage(namespace));
+            }
+            return Response.ok(out).build();
         } catch (Exception ex) {
-            LOG.warn("CA registry list failed: {}", ex.toString());
-            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+            return failure(service, "list", ex);
         }
     }
 
@@ -84,13 +128,13 @@ public class CaRegistryResource {
     @Path("{name}")
     @Produces(MediaType.APPLICATION_JSON)
     public Response get(@PathParam("name") String caName) {
+        CaRegistryService service = service();
         try {
-            return Response.ok(service().get(caName)).build();
+            return Response.ok(service.get(caName)).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception ex) {
-            LOG.warn("CA registry get {} failed: {}", caName, ex.toString());
-            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+            return failure(service, "get " + caName, ex);
         }
     }
 
@@ -98,8 +142,10 @@ public class CaRegistryResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public Response upload(Map<String, Object> body) {
+        // A company CA comes with its private key and signs certificates every release trusts: configuration.
+        authHelper.checkConfigurationPermission();
+        CaRegistryService service = service();
         try {
-            authHelper.checkWritePermission();
             if (body == null) {
                 return Response.status(Response.Status.BAD_REQUEST)
                         .entity(Map.of("error", "Empty request body")).build();
@@ -108,13 +154,12 @@ public class CaRegistryResource {
             String caCertPem = strOrNull(body.get("caCertPem"));
             String caKeyPem = strOrNull(body.get("caKeyPem"));
             String description = strOrNull(body.get("description"));
-            CaRegistryService.CaEntry entry = service().upload(caName, caCertPem, caKeyPem, description);
+            CaRegistryService.CaEntry entry = service.upload(caName, caCertPem, caKeyPem, description);
             return Response.status(Response.Status.CREATED).entity(entry).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception ex) {
-            LOG.warn("CA registry upload failed: {}", ex.toString());
-            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+            return failure(service, "upload", ex);
         }
     }
 
@@ -122,15 +167,15 @@ public class CaRegistryResource {
     @Path("{name}")
     @Produces(MediaType.APPLICATION_JSON)
     public Response delete(@PathParam("name") String caName) {
+        authHelper.checkConfigurationPermission();
+        CaRegistryService service = service();
         try {
-            authHelper.checkWritePermission();
-            service().delete(caName);
+            service.delete(caName);
             return Response.noContent().build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception ex) {
-            LOG.warn("CA registry delete {} failed: {}", caName, ex.toString());
-            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+            return failure(service, "delete " + caName, ex);
         }
     }
 
@@ -151,9 +196,10 @@ public class CaRegistryResource {
     @Path("{name}/promote-to-cluster-issuer")
     @Produces(MediaType.APPLICATION_JSON)
     public Response promoteToClusterIssuer(@PathParam("name") String caName) {
+        authHelper.checkConfigurationPermission();
+        CaRegistryService service = service();
         try {
-            authHelper.checkWritePermission();
-            CaRegistryService.CaEntry entry = service().get(caName);
+            CaRegistryService.CaEntry entry = service.get(caName);
             // ClusterIssuer name we use: "clemlab-<sanitized-caName>". Keep predictable
             // so re-promotes don't proliferate issuers and the wizard's discovery list
             // shows a stable name.
@@ -170,8 +216,7 @@ public class CaRegistryResource {
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception ex) {
-            LOG.warn("CA registry promote {} failed: {}", caName, ex.toString());
-            return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+            return failure(service, "promote " + caName, ex);
         }
     }
 

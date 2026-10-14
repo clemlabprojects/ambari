@@ -73,6 +73,57 @@ class FormFieldTest {
     }
   }
 
+  @Test
+  void openMetadataTagSyncFieldsKeepTheirUpgradeSeeds() throws Exception {
+    // Same failure mode as targetHost/targetPort: an undeclared property never reaches the wizard,
+    // which would then show the TagSync switch off on every upgrade of a release that has it on.
+    try (InputStream in = getClass().getResourceAsStream("/KDPS/services/OPENMETADATA/service.json")) {
+      assertNotNull(in, "OPENMETADATA/service.json must be on the classpath");
+      JsonNode root = mapper.readTree(in);
+
+      FormField toggle = mapper.treeToValue(findFieldByName(root.get("form"), "rangerTagSyncEnabled"), FormField.class);
+      assertEquals("ranger.tagSync.enabled", toggle.seedFromValue);
+
+      FormField endpoint = mapper.treeToValue(findFieldByName(root.get("form"), "rangerTagSyncEndpoint"), FormField.class);
+      assertEquals("ranger.tagSync.endpoint", endpoint.seedFromValue);
+      assertEquals("https://${ingress.host}/api", endpoint.seedUnlessEquals);
+    }
+  }
+
+  @Test
+  void everyReleaseNameFieldWarnsWithHelmsRule() throws Exception {
+    // Same failure mode again: an undeclared "pattern" would never reach the wizard, which would then let any name
+    // through until the server refuses it.
+    for (String service : new String[] {"TRINO", "SUPERSET", "OPENMETADATA"}) {
+      try (InputStream in = getClass().getResourceAsStream("/KDPS/services/" + service + "/service.json")) {
+        assertNotNull(in, service);
+        JsonNode releaseName = null;
+        for (JsonNode field : mapper.readTree(in).get("form")) {
+          if ("releaseName".equals(field.path("name").asText(null))) {
+            releaseName = field;
+          }
+        }
+        assertNotNull(releaseName, service + " asks for a release name");
+
+        FormField field = mapper.treeToValue(releaseName, FormField.class);
+        assertNotNull(field.pattern, service);
+        assertNotNull(field.validationHint, service);
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(field.pattern);
+        for (String name : new String[] {"trino", "trino-prod", "superset.analytics", "a".repeat(53)}) {
+          assertTrue(pattern.matcher(name).find(), service + " accepts " + name);
+          org.apache.ambari.view.k8s.service.deployment.DeployRequestValidator.checkReleaseName(name);
+        }
+        for (String name : new String[] {"Trino", "trino_prod", "trino prod", "../x", "-trino", "trino-",
+            "a".repeat(54)}) {
+          assertFalse(pattern.matcher(name).find(), service + " warns about " + name);
+          assertThrows(IllegalArgumentException.class,
+              () -> org.apache.ambari.view.k8s.service.deployment.DeployRequestValidator.checkReleaseName(name),
+              "the server refuses " + name + " too");
+        }
+      }
+    }
+  }
+
   /** Depth-first search for a field by name, descending into group fields (their nested "fields"). */
   private JsonNode findFieldByName(JsonNode fields, String name) {
     if (fields == null || !fields.isArray()) {

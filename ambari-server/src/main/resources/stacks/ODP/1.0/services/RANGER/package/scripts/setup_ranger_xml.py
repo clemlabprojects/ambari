@@ -566,11 +566,11 @@ def setup_tagsync(upgrade_type=None):
 
   XmlConfig("ranger-tagsync-site.xml",
     conf_dir=ranger_tagsync_conf,
-    configurations=params.config['configurations']['ranger-tagsync-site'],
+    configurations=tagsync_site_without_openmetadata_token(),
     configuration_attributes=params.config['configurationAttributes']['ranger-tagsync-site'],
     owner=params.unix_user,
     group=params.unix_group,
-    mode=0o644)
+    mode=0o640)
 
   if params.stack_supports_ranger_tagsync_ssl_xml_support:
     Logger.info("Stack supports tagsync-ssl configurations, performing the same.")
@@ -612,6 +612,39 @@ def setup_tagsync(upgrade_type=None):
     group = params.unix_group,
     mode = 0o755
   )
+
+def tagsync_site_without_openmetadata_token():
+  """
+  Returns the ranger-tagsync-site properties to render, with the OpenMetadata tag source's token
+  moved into a credential store. The token is a bearer credential for OpenMetadata: written in the
+  XML file it would be readable on the host, and Ranger TagSync prints every property of this file
+  in its log on each start. TagSync reads the token from the store named by the source's
+  keystore.filename property when the token property is blank.
+  """
+  import params
+
+  token_property = 'ranger.tagsync.source.openmetadatarest.token'
+  tagsync_site = {}
+  tagsync_site.update(params.config['configurations']['ranger-tagsync-site'])
+  token = tagsync_site.get(token_property)
+  if token is None or not token.strip():
+    return tagsync_site
+
+  openmetadata_jceks = params.openmetadata_tagsync_jceks_path
+  # The alias is the property name: that is where TagSync looks the token up in the store.
+  ranger_credential_helper(params.tagsync_cred_lib, token_property, token, openmetadata_jceks)
+  File(openmetadata_jceks,
+    owner = params.unix_user,
+    group = params.unix_group,
+    only_if = format("test -e {openmetadata_jceks}"),
+    mode = 0o640
+  )
+  update_dot_jceks_crc_ownership(credential_provider_path = openmetadata_jceks, user = params.unix_user, group = params.unix_group)
+
+  # Blank, not the "_" placeholder of the SSL passwords: any other value is taken as the token itself.
+  tagsync_site[token_property] = ''
+  tagsync_site['ranger.tagsync.source.openmetadatarest.keystore.filename'] = openmetadata_jceks
+  return tagsync_site
 
 def ranger_credential_helper(lib_path, alias_key, alias_value, file_path):
   import params

@@ -24,13 +24,13 @@ import javax.ws.rs.ext.Provider;
 import java.lang.reflect.Type;
 
 import java.lang.reflect.Type;
-import java.time.ZonedDateTime;          // ← 4 lignes à ajouter
+import java.time.ZonedDateTime;
 import java.time.OffsetDateTime;
 import java.time.LocalDateTime;
 import java.time.Instant;
 import java.time.temporal.TemporalAccessor; 
 
-@Provider                    // Jersey le découvre automatiquement
+@Provider                    // discovered automatically by Jersey
 public class GsonConfigurator implements ContextResolver<Gson> {
 
   private final Gson gson;
@@ -50,6 +50,6 @@ public class GsonConfigurator implements ContextResolver<Gson> {
 
   @Override
   public Gson getContext(Class<?> type) {
-    return gson;    // Jersey l’utilise pour toutes les réponses JSON
+    return gson;    // used by Jersey for every JSON response
   }
 }

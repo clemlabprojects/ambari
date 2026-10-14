@@ -18,15 +18,21 @@
 
 // ui/src/pages/HelmReleasesPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
+import { Alert, Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress, Radio } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
-import { API_BASE_URL } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getReleaseKdpsObjects, getReleaseExternalRegistrations, type ExternalCleanupMode, type ExternalCleanupReport, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { EXTERNAL_CLEANUP_CHOICES, UNINSTALL_POLARIS_REVOCATION, uninstallExternalRemovals, uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
+import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import { getPods, listDeployments, type DeploymentRow } from '../api/client';
 import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
+import { gitOptionsForRelease, NOT_INSTALLED_BY_FLUX, notInstalledByFlux, releaseRedeployPayload, rollbackHeldInGit, ROLLBACK_IN_GIT } from './releaseRedeploy';
+import { deploySubmittedMessage } from '../components/common/operationOutcome';
+import { offersCatalogs } from './releaseCatalogs';
+import { repairActionState, type RepairAction, type RepairActionState } from './releaseRepairActions';
+import { offeredOnPlatform } from './catalogPlatforms';
 import type { MenuProps } from 'antd';
 import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -34,18 +40,48 @@ import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { serviceIcon } from '../assets/services';
+import { getAtStr } from '../components/ServiceInstallationModal/bindings';
+import { useCapabilities } from '../components/ServiceInstallationModal/capabilities';
 
 import TrinoCatalogsModal from '../components/common/TrinoCatalogsModal';
 import RangerPolicyModal from '../components/common/RangerPolicyModal';
+import TrinoAutoscalingModal from '../components/common/TrinoAutoscalingModal';
+import { atlasFixRestartOffered } from './atlasFederationAuth';
 import './Page.css';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
 
+/**
+ * The uninstall confirmation's choice of how far KDPS goes outside Kubernetes (Keycloak, Ranger, Atlas, Ranger TagSync,
+ * Ambari views, Vault), with what the chosen way removes and keeps.
+ */
+const ExternalCleanupChoice: React.FC<{
+  previews: Partial<Record<ExternalCleanupMode, ExternalCleanupReport | null>>;
+  onChange: (mode: ExternalCleanupMode) => void;
+}> = ({ previews, onChange }) => {
+  const [mode, setMode] = useState<ExternalCleanupMode>('credentials');
+  const lines = uninstallExternalRemovals(previews[mode]);
+  return (
+    <Space direction="vertical">
+      <Radio.Group
+        value={mode}
+        onChange={(e) => { setMode(e.target.value); onChange(e.target.value); }}
+      >
+        <Space direction="vertical">
+          {EXTERNAL_CLEANUP_CHOICES.map((c) => <Radio key={c.value} value={c.value}>{c.label}</Radio>)}
+        </Space>
+      </Radio.Group>
+      {(lines || []).map((line) => <span key={line}>{line}</span>)}
+    </Space>
+  );
+};
+
 const HelmReleasesPage: React.FC = () => {
   const { status, refresh, nodes, events } = useClusterStatus();
   const navigate = useNavigate();
   const [serviceDefinitions, setServiceDefinitions] = useState<AvailableServices>({});
+  const [servicesLoaded, setServicesLoaded] = useState(false);
   const [isCommandDrawerOpen, setIsCommandDrawerOpen] = useState(false);
   const [watchedCommandId, setWatchedCommandId] = useState<string | undefined>(undefined);
   const [isInstallPickerOpen, setIsInstallPickerOpen] = useState(false);
@@ -68,7 +104,10 @@ const HelmReleasesPage: React.FC = () => {
     { pods: [], deployments: [], loading: false });
   const [historyModalRelease, setHistoryModalRelease] = useState<HelmRelease | null>(null);
   const [catalogsRelease, setCatalogsRelease] = useState<HelmRelease | null>(null);
+  const [autoscalingRelease, setAutoscalingRelease] = useState<HelmRelease | null>(null);
   const [policyRelease, setPolicyRelease] = useState<HelmRelease | null>(null);
+  // Why the repair actions of a release cannot run, by "<namespace>/<name>", read when its menu opens.
+  const [actionRefusals, setActionRefusals] = useState<Record<string, Record<string, string>>>({});
 
   // When the detail modal opens, pull the release's live pods + deployments (by the Helm instance
   // label) so the modal shows real health/workloads instead of mostly-empty Flux reconcile metadata.
@@ -101,24 +140,18 @@ const HelmReleasesPage: React.FC = () => {
      * because the page can still render releases without this data; we avoid
      * blocking the UI on non-critical metadata.
      */
-    getAvailableServices().then(setServiceDefinitions).catch(() => {});
+    getAvailableServices().then((defs) => { setServiceDefinitions(defs); setServicesLoaded(true); }).catch(() => {});
     // The background-operations count is now polled globally by the app header
     // (AppLayout), so this page no longer tracks it.
   }, []);
 
-  /**
-   * Build GitOps options for a release when it is managed by Flux. This keeps
-   * submit payloads consistent across refresh/resync actions. Returns undefined
-   * for non-GitOps releases so callers can merge cleanly.
-   */
-  const gitOptionsForRelease = useCallback((release: HelmRelease) => {
-    if (release.deploymentMode !== 'FLUX_GITOPS') return undefined;
-    return {
-      repoUrl: release.gitRepoUrl,
-      branch: release.gitBranch,
-      commitMode: release.gitPrNumber ? 'PR_MODE' : 'DIRECT_COMMIT',
-    };
-  }, []);
+  // The install picker is a second service catalog, so it leaves out the services that cannot run on the cluster's
+  // platform (GitLab on OpenShift), like the Catalog page. serviceDefinitions itself stays complete: the releases
+  // already deployed still need their labels and versions.
+  const capabilities = useCapabilities();
+  const offeredServiceKeys = useMemo(
+    () => Object.keys(serviceDefinitions).filter((key) => offeredOnPlatform(serviceDefinitions[key], capabilities?.platform)),
+    [serviceDefinitions, capabilities?.platform]);
 
   const releaseKey = useCallback((release: HelmRelease) => `${release.namespace}/${release.name}`, []);
 
@@ -229,30 +262,21 @@ const HelmReleasesPage: React.FC = () => {
 
     /**
      * Re-apply the security profile for a release by re-submitting its current
-     * values. This triggers backend logic to regenerate secrets/config required
-     * by the selected profile. Command is tracked via the background ops modal
-     * when an ID is returned.
+     * values, at its current chart version and platform context. This triggers
+     * backend logic to regenerate secrets/config required by the selected
+     * profile. Command is tracked via the background ops modal when an ID is
+     * returned.
      */
     const refreshSecurityProfile = async (release: HelmRelease) => {
       const hide = message.loading('Refreshing security profile...', 0);
       try {
         const currentValues = await getReleaseValues(release.namespace, release.name);
-        const payload = {
-          chart: release.chartRef || release.chart,
-          releaseName: release.name,
-          namespace: release.namespace,
-          values: currentValues,
-          serviceKey: release.serviceKey,
-          securityProfile: release.securityProfile,
-          repoId: release.repoId,
-          deploymentMode: release.deploymentMode,
-          git: gitOptionsForRelease(release)
-        };
+        const payload = releaseRedeployPayload(release, currentValues, gitOptionsForRelease(release));
         const response = await submitHelmDeploy(payload as any);
         if (response?.id) {
           setWatchedCommandId(response.id);
           setIsCommandDrawerOpen(true);
-          message.success('Security refresh started');
+          message.success(deploySubmittedMessage('Security refresh', response));
         } else {
           message.success('Security refresh submitted');
         }
@@ -264,7 +288,21 @@ const HelmReleasesPage: React.FC = () => {
     };
 
   /**
-   * Re-sync a release (or trigger a restart) by re-submitting current values.
+   * Redeploys a release with new values at its current chart version, tracked in the operations drawer.
+   * Used by the worker autoscaling action.
+   */
+  const redeployWithValues = async (release: HelmRelease, values: any) => {
+    const response = await submitHelmDeploy(releaseRedeployPayload(release, values, gitOptionsForRelease(release)) as any);
+    if (response?.id) {
+      setWatchedCommandId(response.id);
+      setIsCommandDrawerOpen(true);
+    }
+    message.success(deploySubmittedMessage('Redeploy', response));
+  };
+
+  /**
+   * Re-sync a release (or trigger a restart) by re-submitting current values, at its current chart version and
+   * platform context.
    * This is used when restartRequired or securityProfileStale flags are set.
    * The request is tracked in the background ops modal when an ID is returned.
    */
@@ -272,22 +310,12 @@ const HelmReleasesPage: React.FC = () => {
     const hide = message.loading(reason, 0);
     try {
       const currentValues = await getReleaseValues(release.namespace, release.name);
-      const payload = {
-        chart: release.chartRef || release.chart,
-        releaseName: release.name,
-        namespace: release.namespace,
-        values: currentValues,
-        serviceKey: release.serviceKey,
-        securityProfile: release.securityProfile,
-        repoId: release.repoId,
-        deploymentMode: release.deploymentMode,
-        git: gitOptionsForRelease(release)
-      };
+      const payload = releaseRedeployPayload(release, currentValues, gitOptionsForRelease(release));
       const response = await submitHelmDeploy(payload as any);
       if (response?.id) {
         setWatchedCommandId(response.id);
         setIsCommandDrawerOpen(true);
-        message.success('Resync started');
+        message.success(deploySubmittedMessage('Resync', response));
       } else {
         message.success('Resync submitted');
       }
@@ -320,6 +348,23 @@ const HelmReleasesPage: React.FC = () => {
     }
   };
 
+  /**
+   * Ask Flux to try a GitOps release again without a new commit: for a release it gave up on (a first install that
+   * timed out, a prerequisite fixed outside Git). Refreshes the status of the row so the new attempt shows.
+   */
+  const triggerRetryReconcile = async (release: HelmRelease) => {
+    const hide = message.loading(`Asking Flux to retry ${release.name}...`, 0);
+    try {
+      await retryReleaseReconcile(release.namespace, release.name);
+      message.success(`Flux was asked to retry ${release.name}`);
+      void refreshReleaseStatus(release, { notifyOnError: true });
+    } catch (e: any) {
+      message.error(e?.message || 'Failed to ask Flux to retry the release');
+    } finally {
+      hide();
+    }
+  };
+
   const triggerKeytabRegeneration = async (release: HelmRelease) => {
     const hide = message.loading(`Regenerating keytabs for ${release.name}...`, 0);
     try {
@@ -342,9 +387,35 @@ const HelmReleasesPage: React.FC = () => {
    * Replay an arbitrary service.json-declared post-deploy action. The action
    * carries its own endpoint suffix (e.g. {@code actions/om-atlas-federation}),
    * so adding a new replayable step is purely a service.json change — no UI
-   * code touches when a new service surfaces one.
+   * code touches when a new service surfaces one. An action declaring `warnUnlessValueTrue` first
+   * asks the operator to confirm when that value of the deployed release is not true (e.g.
+   * re-registering Ranger TagSync on a release that has it turned off).
    */
   const triggerServiceReplayableAction = async (release: HelmRelease, action: ReplayableAction) => {
+    const warning = action.warnUnlessValueTrue;
+    if (warning?.path) {
+      let values: any = null;
+      try {
+        values = await getReleaseValues(release.namespace, release.name);
+      } catch {
+        // Values unreadable: run without the question; the step reports the switch state itself.
+      }
+      const current = values ? getAtStr(values, warning.path) : true;
+      if (current !== true && current !== 'true') {
+        Modal.confirm({
+          title: `${action.label}?`,
+          content: warning.message,
+          okText: 'Run anyway',
+          cancelText: 'Cancel',
+          onOk: () => runServiceReplayableAction(release, action),
+        });
+        return;
+      }
+    }
+    await runServiceReplayableAction(release, action);
+  };
+
+  const runServiceReplayableAction = async (release: HelmRelease, action: ReplayableAction) => {
     const hide = message.loading(`${action.label} for ${release.name}...`, 0);
     try {
       const response = await triggerReplayableAction(release.namespace, release.name, action.endpoint);
@@ -620,6 +691,58 @@ const HelmReleasesPage: React.FC = () => {
       return <Skeleton active paragraph={{ rows: 6 }} style={{ padding: 16 }} />;
     }
 
+    /** Whether the service of a release declares any of the repair actions (keytabs, OIDC client, Ranger repository). */
+    const offersRepairActions = (record: HelmRelease) => {
+      const serviceDefinition = record.serviceKey ? serviceDefinitions[record.serviceKey] : undefined;
+      return !!((serviceDefinition?.kerberos && serviceDefinition.kerberos.length > 0)
+        || (serviceDefinition?.oidc && serviceDefinition.oidc.length > 0)
+        || (serviceDefinition?.ranger && Object.keys(serviceDefinition.ranger).length > 0));
+    };
+
+    // Asks the backend, when the menu of a release opens, which repair actions its platform context cannot perform.
+    const loadActionRefusals = async (record: HelmRelease) => {
+      try {
+        const answer = await getReleaseActionRefusals(record.namespace, record.name);
+        setActionRefusals(prev => ({ ...prev, [`${record.namespace}/${record.name}`]: answer?.refusals || {} }));
+      } catch {
+        // The actions stay enabled; running one says why it cannot run.
+      }
+    };
+
+    const repairItem = (key: string, icon: React.ReactNode, label: string, state: RepairActionState, onClick: () => void) => ({
+      key,
+      icon,
+      disabled: state.disabled,
+      label: state.reason
+        ? <Tooltip title={state.reason} placement="left"><span>{label}</span></Tooltip>
+        : label,
+      onClick,
+    });
+
+    const SERVICE_RETIRED = 'This service is not part of this release; its releases can only be uninstalled.';
+    const serviceRetiredFor = (record: HelmRelease) =>
+      servicesLoaded && !!record.serviceKey && !serviceDefinitions[record.serviceKey];
+
+    // An action that redeploys the release from the values the cluster holds, which a GitOps release Flux has not
+    // installed has none of: disabled on it, with the reason.
+    // A release of a service this build no longer ships (JupyterHub) cannot be redeployed either, whatever its
+    // platform: only its history and its uninstall stay (keepForRetired).
+    const redeployItem = <T extends { label: React.ReactNode; disabled?: boolean }>(record: HelmRelease, item: T,
+                                                                                    keepForRetired = false): T =>
+      !keepForRetired && serviceRetiredFor(record)
+        ? {
+          ...item,
+          disabled: true,
+          label: <Tooltip title={SERVICE_RETIRED} placement="left"><span>{item.label}</span></Tooltip>,
+        }
+        : notInstalledByFlux(record)
+        ? {
+          ...item,
+          disabled: true,
+          label: <Tooltip title={NOT_INSTALLED_BY_FLUX} placement="left"><span>{item.label}</span></Tooltip>,
+        }
+        : item;
+
     const buildMenuItems = (record: HelmRelease): MenuProps['items'] => {
       // Resolve the service definition to know which post-install actions are supported.
       const serviceDefinition = record.serviceKey ? serviceDefinitions[record.serviceKey] : undefined;
@@ -627,6 +750,8 @@ const HelmReleasesPage: React.FC = () => {
       const supportsRangerReapply = !!(serviceDefinition?.ranger && Object.keys(serviceDefinition.ranger).length > 0);
       const supportsOidcRegistration = !!(serviceDefinition?.oidc && serviceDefinition.oidc.length > 0);
       const upgradeTargetVersion = upgradeAvailableFor(record);
+      const refusals = actionRefusals[`${record.namespace}/${record.name}`];
+      const repairState = (action: RepairAction) => repairActionState(refusals, action);
 
       return ([
         ...(upgradeTargetVersion ? [{
@@ -635,27 +760,34 @@ const HelmReleasesPage: React.FC = () => {
           label: `Upgrade chart to ${upgradeTargetVersion}`,
           onClick: () => triggerChartUpgrade(record, upgradeTargetVersion),
         }] : []),
-        {
+        redeployItem(record, {
           key: 'rollback',
           icon: <RollbackOutlined />,
-          label: 'Revision history…',
+          // A GitOps release goes back to an earlier version through Git: its history is shown, not rolled back.
+          label: rollbackHeldInGit(record) ? 'Revision history (read-only)…' : 'Revision history…',
           onClick: () => { void openHistoryModal(record); },
-        },
-        // Live catalog management, Trino releases only: runs on the coordinator as the operator.
-        ...((record.serviceKey || '').toUpperCase() === 'TRINO' ? [{
+        }, true),
+        // Live catalog management, on the Trino releases where it can run: runs on the coordinator as the operator.
+        ...(offersCatalogs(record) ? [{
           key: 'catalogs',
           icon: <DatabaseOutlined />,
           label: 'Catalogs…',
           onClick: () => setCatalogsRelease(record),
-        }, {
+        }] : []),
+        ...((record.serviceKey || '').toUpperCase() === 'TRINO' ? [{
           // One Ranger policy (allow / mask / row filter) without leaving KDPS; the backend routes to
           // the Ambari server (managed context) or to the context's Ranger (external context).
           key: 'ranger-policy',
           icon: <SafetyCertificateOutlined />,
           label: 'Ranger policy…',
           onClick: () => setPolicyRelease(record),
-        }] : []),
-        {
+        }, redeployItem(record, {
+          key: 'autoscaling',
+          icon: <SyncOutlined />,
+          label: 'Worker autoscaling…',
+          onClick: () => setAutoscalingRelease(record),
+        })] : []),
+        redeployItem(record, {
           key: 'update',
           icon: <SyncOutlined />,
           label: 'Upgrade / Config',
@@ -684,22 +816,40 @@ const HelmReleasesPage: React.FC = () => {
                 platformContextId: record.platformContextId,
                 // Reusable Trino catalogs attached at deploy time, so Upgrade/Config re-selects them.
                 catalogRefs: record.catalogRefs,
+                // Truststores selected at deploy time, so Upgrade/Config re-selects them.
+                truststoreRefs: record.truststoreRefs,
               },
             });
           }
-        },
-        ...(record.securityProfile ? [{
+        }),
+        ...(record.securityProfile ? [redeployItem(record, {
           key: 'refresh-security',
           icon: <ReloadOutlined />,
           disabled: !record.securityProfileStale,
           label: record.securityProfileStale ? 'Refresh security profile' : 'Refresh security profile (up-to-date)',
           onClick: () => refreshSecurityProfile(record)
-        }] : []),
-        ...((record.serviceKey && (record.restartRequired || record.securityProfileStale)) ? [{
+        })] : []),
+        ...((record.serviceKey && (record.restartRequired || record.securityProfileStale)) ? [redeployItem(record, {
           key: 'resync',
           icon: <ReloadOutlined />,
           label: 'Resync / restart',
           onClick: () => resyncRelease(record, 'Resyncing release...')
+        })] : []),
+        ...(record.deploymentMode === 'FLUX_GITOPS' ? [{
+          key: 'retry-reconcile',
+          icon: <ReloadOutlined />,
+          label: 'Retry reconcile',
+          onClick: () => {
+            Modal.confirm({
+              title: `Ask Flux to retry ${record.name}?`,
+              content: 'Flux runs the Helm install or upgrade of this release again, chart hooks such as database '
+                + 'migrations included. Use it for a release Flux gave up on; on a healthy release it creates a new '
+                + 'revision.',
+              okText: 'Retry',
+              cancelText: 'Cancel',
+              onOk: () => triggerRetryReconcile(record)
+            });
+          }
         }] : []),
         ...(!record.managedByUi ? [{
           key: 'adopt',
@@ -707,24 +857,12 @@ const HelmReleasesPage: React.FC = () => {
           label: 'Adopt into KDPS view',
           onClick: () => triggerAdopt(record)
         }] : []),
-        ...(supportsKerberosRegeneration ? [{
-          key: 'regenerate-keytabs',
-          icon: <KeyOutlined />,
-          label: 'Regenerate keytabs',
-          onClick: () => triggerKeytabRegeneration(record)
-        }] : []),
-        ...(supportsOidcRegistration ? [{
-          key: 'register-oidc',
-          icon: <SafetyCertificateOutlined />,
-          label: 'Re-register OIDC client',
-          onClick: () => triggerOidcRegistration(record)
-        }] : []),
-        ...(supportsRangerReapply ? [{
-          key: 'reapply-ranger',
-          icon: <SafetyCertificateOutlined />,
-          label: 'Reapply Ranger repository',
-          onClick: () => triggerRangerRepositoryReapply(record)
-        }] : []),
+        ...(supportsKerberosRegeneration ? [repairItem('regenerate-keytabs', <KeyOutlined />, 'Regenerate keytabs',
+          repairState('keytabs'), () => triggerKeytabRegeneration(record))] : []),
+        ...(supportsOidcRegistration ? [repairItem('register-oidc', <SafetyCertificateOutlined />, 'Re-register OIDC client',
+          repairState('oidc'), () => triggerOidcRegistration(record))] : []),
+        ...(supportsRangerReapply ? [repairItem('reapply-ranger', <SafetyCertificateOutlined />, 'Reapply Ranger repository',
+          repairState('ranger'), () => triggerRangerRepositoryReapply(record))] : []),
         ...(record.serviceKey === 'OPENMETADATA' ? [{
           key: 'check-atlas-federation',
           icon: <SafetyCertificateOutlined />,
@@ -757,10 +895,40 @@ const HelmReleasesPage: React.FC = () => {
           icon: <DeleteOutlined />,
           danger: true,
           label: 'Uninstall',
-          onClick: () => {
+          onClick: async () => {
+            // Names what goes with the release: its single sign-on client and the Secrets holding its client secret,
+            // and the other objects KDPS created for it outside its chart, as they are on the cluster now.
+            const signInRemovals = uninstallSignInRemovals(record, serviceDefinition?.oidc);
+            let kdpsObjects: string[] = [];
+            try {
+              kdpsObjects = await getReleaseKdpsObjects(record.name, record.namespace);
+            } catch {
+              // Not listed: the uninstall still removes them, and its result says which.
+            }
+            const objectRemovals = uninstallKdpsObjectRemovals(kdpsObjects);
+            // What KDPS registered outside Kubernetes, as each choice of the confirmation would leave it.
+            const modes: ExternalCleanupMode[] = ['credentials', 'all', 'none'];
+            const previewOf = async (m: ExternalCleanupMode) => {
+              try {
+                return await getReleaseExternalRegistrations(record.name, record.namespace, m);
+              } catch {
+                return null; // Not listed: the uninstall still does it, and its result says what was done.
+              }
+            };
+            const previews = Object.fromEntries(await Promise.all(modes.map(async (m) => [m, await previewOf(m)] as const)));
+            const choice: { mode: ExternalCleanupMode } = { mode: 'credentials' };
             Modal.confirm({
               title: `Uninstall ${record.name}?`,
-              content: `This action will remove the release in namespace ${record.namespace}.`,
+              content: (
+                <Space direction="vertical">
+                  <span>This action will remove the release in namespace {record.namespace}.</span>
+                  <span>{UNINSTALL_POLARIS_REVOCATION}</span>
+                  {signInRemovals ? <span>{signInRemovals}</span> : null}
+                  {objectRemovals ? <span>{objectRemovals}</span> : null}
+                  <ExternalCleanupChoice previews={previews} onChange={(m) => { choice.mode = m; }} />
+                </Space>
+              ),
+              width: 640,
               okText: 'Uninstall',
               okButtonProps: { danger: true },
               cancelText: 'Cancel',
@@ -769,11 +937,62 @@ const HelmReleasesPage: React.FC = () => {
                   const params = new URLSearchParams();
                   if (record.repoId) params.set('repoId', record.repoId);
                   if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
-                  await uninstallHelm(record.name, record.namespace, params);
+                  params.set('externalCleanup', choice.mode);
+                  const notes = await uninstallHelm(record.name, record.namespace, params);
+                  if (notes?.pendingDelete) {
+                    // A GitOps release removed through a pull request keeps running until it is merged.
+                    Modal.info({
+                      title: `Removal of ${record.name} proposed in a pull request`,
+                      width: 640,
+                      content: (
+                        <Space direction="vertical">
+                          <span>{notes.message}</span>
+                          {notes.pullRequestUrl ? (
+                            <a href={notes.pullRequestUrl} target="_blank" rel="noreferrer">{notes.pullRequestUrl}</a>
+                          ) : null}
+                        </Space>
+                      ),
+                    });
+                    await fetchReleases();
+                    return;
+                  }
                   message.success(`Release ${record.name} uninstalled successfully.`);
+                  // What KDPS took back (the Polaris principal, the single sign-on client and its Secrets, the objects
+                  // it created for the release) and what it did not (an SCC grant made by an administrator or still
+                  // used by another release, a Ranger account, a client or an object it could not remove): what to do,
+                  // and the commands that do it.
+                  const followUps = uninstallFollowUps(notes);
+                  if (followUps.length > 0) {
+                    Modal.info({
+                      title: followUps.length === 1 ? followUps[0].title : `After uninstalling ${record.name}`,
+                      width: 760,
+                      content: (
+                        <div>
+                          {followUps.map((f) => (
+                            <div key={f.title}>
+                              {followUps.length > 1 && <h4>{f.title}</h4>}
+                              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, margin: 0 }}>{f.text}</pre>
+                            </div>
+                          ))}
+                        </div>
+                      ),
+                    });
+                  }
+                  await fetchReleases();
                   await refresh();
                 } catch (e: any) {
-                  message.error(e?.message || 'Error during uninstallation');
+                  // The server says why the release could not be removed. It is still installed, and keeps its
+                  // record and its catalog access, so the list is reloaded to show it is still there.
+                  Modal.error({
+                    title: `${record.name} was not uninstalled`,
+                    width: 640,
+                    content: (
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, margin: 0 }}>
+                        {e?.message || 'Error during uninstallation'}
+                      </pre>
+                    ),
+                  });
+                  await fetchReleases();
                 }
               }
             });
@@ -825,9 +1044,9 @@ const HelmReleasesPage: React.FC = () => {
       );
       const onRenew = async () => {
         try {
-          const res = await fetch(
+          const res = await apiFetch(
             `${API_BASE_URL}/helm/releases/${encodeURIComponent(release.namespace)}/${encodeURIComponent(release.name)}/tls/renew`,
-            { method: 'POST', headers: { 'X-Requested-By': 'ambari' } }
+            { method: 'POST' }
           );
           if (!res.ok) throw new Error(await res.text());
           const body = await res.json();
@@ -880,9 +1099,11 @@ const HelmReleasesPage: React.FC = () => {
             );
           })}
           {renewable && (
-            <Button size="small" type="link" onClick={onRenew} style={{ padding: 0 }}>
-              Renew
-            </Button>
+            <PermissionGuard requires="canWrite">
+              <Button size="small" type="link" onClick={onRenew} style={{ padding: 0 }}>
+                Renew
+              </Button>
+            </PermissionGuard>
           )}
         </Space>
       );
@@ -951,13 +1172,15 @@ const HelmReleasesPage: React.FC = () => {
             const fluxTip = combined.deploymentMode === 'FLUX_GITOPS'
               ? [
                   combined.gitRepoUrl ? `Repo: ${combined.gitRepoUrl}` : null,
+                  combined.gitBaseBranch ? `Base branch (Flux): ${combined.gitBaseBranch}` : null,
+                  combined.gitCommitMode ? `Commit mode: ${combined.gitCommitMode === 'PR_MODE' ? 'pull request' : 'direct commit'}` : null,
                   combined.gitBranch ? `Branch: ${combined.gitBranch}` : null,
                   combined.gitPath ? `Path: ${combined.gitPath}` : null,
                   combined.gitCommitSha ? `Commit: ${combined.gitCommitSha}` : null,
                   combined.gitPrNumber ? `PR: ${combined.gitPrNumber}` : null,
                   combined.gitPrUrl ? `PR URL: ${combined.gitPrUrl}` : null,
                   combined.gitPrState ? `PR State: ${combined.gitPrState}` : null,
-                  combined.sourceName ? `Source: ${combined.sourceNamespace || 'flux-system'}/${combined.sourceName}` : null,
+                  combined.sourceName ? `Source: ${combined.sourceNamespace || combined.namespace}/${combined.sourceName}` : null,
                   combined.sourceStatus ? `Source status: ${combined.sourceStatus}` : null,
                   combined.sourceMessage ? `Source msg: ${combined.sourceMessage}` : null,
                   combined.reconcileState ? `Reconcile: ${combined.reconcileState}` : null,
@@ -977,6 +1200,7 @@ const HelmReleasesPage: React.FC = () => {
             const gitTooltip = combined.deploymentMode === 'FLUX_GITOPS'
               ? [
                   combined.gitRepoUrl ? `Repo: ${combined.gitRepoUrl}` : null,
+                  combined.gitBaseBranch ? `Base branch (Flux): ${combined.gitBaseBranch}` : null,
                   combined.gitBranch ? `Branch: ${combined.gitBranch}` : null,
                   combined.gitPath ? `Path: ${combined.gitPath}` : null
                 ].filter(Boolean).join('\n')
@@ -987,6 +1211,7 @@ const HelmReleasesPage: React.FC = () => {
             if (combined.restartRequired && combined.serviceKey) extraTags.push(<Tag key="restart" color="orange">Restart required</Tag>);
             if (combined.securityProfileStale) extraTags.push(<Tag key="security" color="orange">Security refresh</Tag>);
             if (combined.deploymentMode === 'FLUX_GITOPS') extraTags.push(<Tooltip key="gitops" title={fluxTip || 'Flux GitOps'}><Tag color="blue">GitOps</Tag></Tooltip>);
+            if (combined.gitPendingDelete) extraTags.push(<Tooltip key="pending-delete" title={combined.message || 'The removal waits for its pull request to be merged'}><Tag color="volcano">Removal pending</Tag></Tooltip>);
             if (combined.deploymentMode === 'FLUX_GITOPS' && combined.sourceStatus) {
               const isReady = combined.sourceStatus?.toLowerCase() === 'true' || combined.sourceStatus?.toLowerCase() === 'ready';
               extraTags.push(<Tooltip key="repo" title={combined.sourceMessage || 'HelmRepository status'}><Tag color={isReady ? 'green' : 'orange'}>Repo {combined.sourceStatus}</Tag></Tooltip>);
@@ -1044,7 +1269,8 @@ const HelmReleasesPage: React.FC = () => {
             const menuItems = buildMenuItems(record);
             return (
             <PermissionGuard requires="canWrite">
-                <Dropdown menu={{ items: menuItems }} trigger={['click']}>
+                <Dropdown menu={{ items: menuItems }} trigger={['click']}
+                    onOpenChange={(open) => { if (open && offersRepairActions(record)) void loadActionRefusals(record); }}>
                     <Button type="text" icon={<MoreOutlined />} />
                 </Dropdown>
             </PermissionGuard>
@@ -1254,7 +1480,7 @@ const HelmReleasesPage: React.FC = () => {
                     {/* GitOps/reconcile — only shown when the release is actually Flux-managed */}
                     {isGitOps ? (
                       <Descriptions column={1} size="small" bordered>
-                        <Descriptions.Item label="GitOps repo">{rel.gitRepoUrl || '—'}{rel.gitBranch ? ` (${rel.gitBranch})` : ''}{rel.gitPath ? ` · ${rel.gitPath}` : ''}</Descriptions.Item>
+                        <Descriptions.Item label="GitOps repo">{rel.gitRepoUrl || '—'}{rel.gitBaseBranch ? ` (${rel.gitBaseBranch})` : rel.gitBranch ? ` (${rel.gitBranch})` : ''}{rel.gitPath ? ` · ${rel.gitPath}` : ''}</Descriptions.Item>
                         <Descriptions.Item label="Reconcile">{rel.reconcileState || '—'}{rel.staleGeneration ? <Tag color="blue" style={{ marginLeft: 8 }}>reconciling</Tag> : null}{rel.lastHandledReconcileAt ? ` · ${rel.lastHandledReconcileAt}` : ''}</Descriptions.Item>
                         {rel.conditions?.length ? (
                           <Descriptions.Item label="Conditions">
@@ -1270,6 +1496,7 @@ const HelmReleasesPage: React.FC = () => {
 
             <TrinoCatalogsModal release={catalogsRelease} onClose={() => setCatalogsRelease(null)} />
             <RangerPolicyModal release={policyRelease} onClose={() => setPolicyRelease(null)} />
+            <TrinoAutoscalingModal release={autoscalingRelease} onClose={() => setAutoscalingRelease(null)} onApply={redeployWithValues} />
             <Modal
               title={`Revision history — ${historyModalRelease?.namespace || ''}/${historyModalRelease?.name || ''}`}
               open={!!historyModalRelease}
@@ -1277,6 +1504,10 @@ const HelmReleasesPage: React.FC = () => {
               footer={<Button onClick={() => setHistoryModalRelease(null)}>Close</Button>}
               width={820}
             >
+              {historyModalRelease && rollbackHeldInGit(historyModalRelease) ? (
+                <Alert type="info" showIcon style={{ marginBottom: 12 }}
+                  message="Read-only: this release is deployed with Flux GitOps" description={ROLLBACK_IN_GIT} />
+              ) : null}
               {historyError ? (
                 <Text type="danger">{historyError}</Text>
               ) : (
@@ -1312,6 +1543,16 @@ const HelmReleasesPage: React.FC = () => {
                         const isCurrent = entry.status === 'deployed';
                         if (isCurrent) {
                           return <Tag color="green">Current</Tag>;
+                        }
+                        // Flux installs what Git holds and would undo a Helm rollback: the history is read-only.
+                        if (historyModalRelease && rollbackHeldInGit(historyModalRelease)) {
+                          return (
+                            <Tooltip title={ROLLBACK_IN_GIT}>
+                              <Button size="small" icon={<RollbackOutlined />} disabled>
+                                Rollback to {entry.revision}
+                              </Button>
+                            </Tooltip>
+                          );
                         }
                         return (
                           <Button
@@ -1356,12 +1597,12 @@ const HelmReleasesPage: React.FC = () => {
               width={700}
             >
               <Row gutter={[12, 12]} style={{ marginTop: 8 }}>
-                {Object.keys(serviceDefinitions).length === 0 && (
+                {offeredServiceKeys.length === 0 && (
                   <Col span={24}>
                     <Typography.Text type="secondary">No services available.</Typography.Text>
                   </Col>
                 )}
-                {Object.keys(serviceDefinitions).map((key) => {
+                {offeredServiceKeys.map((key) => {
                   const svc = serviceDefinitions[key];
                   const icon = serviceIcon(key);
                   return (
@@ -1434,7 +1675,14 @@ const HelmReleasesPage: React.FC = () => {
                     {atlasCheck.report.federationUserActive === true && <Tag color="green">Federation LIVE</Tag>}
                     {atlasCheck.report.federationUserActive === false && <Tag color="red">Federation user NOT loaded</Tag>}
                   </div>
-                  {(atlasCheck.report.federationUserActive === false || atlasCheck.report.restartPending || !atlasCheck.report.ok) && (
+                  {atlasCheck.report.federationAuth === 'ldap' && (
+                    <Typography.Paragraph type="secondary" style={{ marginBottom: 14 }}>
+                      OpenMetadata signs in to Atlas through LDAP with a service account: KDPS keeps nothing in Atlas for
+                      it, so a sign-in problem is fixed in LDAP or in the Secret, not by restarting Atlas.
+                    </Typography.Paragraph>
+                  )}
+                  {atlasFixRestartOffered(atlasCheck.report)
+                    && (atlasCheck.report.federationUserActive === false || atlasCheck.report.restartPending || !atlasCheck.report.ok) && (
                     <div style={{ marginBottom: 14 }}>
                       <Button
                         type="primary"

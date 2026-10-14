@@ -43,6 +43,7 @@ class OpenShiftMonitoringSetupTest {
     Map<String, Object> trigger = new LinkedHashMap<>();
     trigger.put("metadata", new LinkedHashMap<>(Map.of("serverAddress", "https://thanos-querier.openshift-monitoring.svc:9091")));
     Map<String, Object> keda = new LinkedHashMap<>();
+    keda.put("enabled", true);
     keda.put("triggers", new ArrayList<>(List.of(trigger)));
     keda.put("triggerAuthentication", Map.of("enabled", true, "secretName", "trino-thanos-token"));
     Map<String, Object> values = new LinkedHashMap<>();
@@ -67,50 +68,78 @@ class OpenShiftMonitoringSetupTest {
     assertFalse(OpenShiftMonitoringSetup.scopeAutoscalingToProject(k8s, req));
     OpenShiftMonitoringSetup.prepare(k8s, req);
     assertTrue(serverAddress().endsWith(":9091"));
-    verify(k8s, never()).ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean());
+    verify(k8s, never()).ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean(), any());
   }
 
   @Test
   void projectLimitedAccountGetsTheProjectScopeEndToEnd() {
     when(k8s.isOpenShiftCluster()).thenReturn(true);
     when(k8s.canBindClusterRoles()).thenReturn(false);
-    when(k8s.canI(eq("create"), eq("monitoring.coreos.com"), eq("servicemonitors"), isNull(), eq("team-a"))).thenReturn(true);
+    when(k8s.canI(eq("create"), eq("monitoring.coreos.com"), eq("servicemonitors"), isNull(), isNull(), eq("team-a"))).thenReturn(true);
 
     assertTrue(OpenShiftMonitoringSetup.scopeAutoscalingToProject(k8s, req));
     assertTrue(serverAddress().endsWith(":9092"));
     OpenShiftMonitoringSetup.prepare(k8s, req);
-    verify(k8s).ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true);
+    verify(k8s).ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true, "trino");
   }
 
   @Test
   void clusterAdminKeepsTheClusterPort() {
     when(k8s.isOpenShiftCluster()).thenReturn(true);
     when(k8s.canBindClusterRoles()).thenReturn(true);
-    when(k8s.canI(any(), any(), any(), any(), any())).thenReturn(true);
+    when(k8s.canI(any(), any(), any(), any(), any(), any())).thenReturn(true);
 
     assertFalse(OpenShiftMonitoringSetup.scopeAutoscalingToProject(k8s, req));
     assertTrue(serverAddress().endsWith(":9091"));
     OpenShiftMonitoringSetup.prepare(k8s, req);
-    verify(k8s).ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", false);
+    verify(k8s).ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", false, "trino");
   }
 
   @Test
   void missingServiceMonitorRightStopsBeforeAnythingIsProvisioned() {
     when(k8s.isOpenShiftCluster()).thenReturn(true);
-    when(k8s.canI(any(), any(), any(), any(), any())).thenReturn(false);
+    when(k8s.canI(any(), any(), any(), any(), any(), any())).thenReturn(false);
 
     IllegalStateException e = assertThrows(IllegalStateException.class, () -> OpenShiftMonitoringSetup.prepare(k8s, req));
     assertTrue(e.getMessage().contains("oc policy add-role-to-user monitoring-edit"), e.getMessage());
-    verify(k8s, never()).ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean());
+    verify(k8s, never()).ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean(), any());
   }
 
   @Test
   void tokenProblemsStopTheDeployWithTheInstructions() {
     when(k8s.isOpenShiftCluster()).thenReturn(true);
-    when(k8s.canI(any(), any(), any(), any(), any())).thenReturn(true);
-    when(k8s.ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean())).thenReturn("ask an admin to run: ...");
+    when(k8s.canI(any(), any(), any(), any(), any(), any())).thenReturn(true);
+    when(k8s.ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean(), any())).thenReturn("ask an admin to run: ...");
 
     IllegalStateException e = assertThrows(IllegalStateException.class, () -> OpenShiftMonitoringSetup.prepare(k8s, req));
     assertTrue(e.getMessage().contains("ask an admin to run"), e.getMessage());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void autoscalingOffNeedsNoMonitoringTokenButServiceMonitorsStillNeedTheGrant() {
+    ((Map<String, Object>) ((Map<String, Object>) req.getValues().get("server")).get("keda")).put("enabled", false);
+    when(k8s.isOpenShiftCluster()).thenReturn(true);
+    when(k8s.canBindClusterRoles()).thenReturn(false);
+    when(k8s.canI(eq("create"), eq("monitoring.coreos.com"), eq("servicemonitors"), isNull(), isNull(), eq("team-a"))).thenReturn(true);
+
+    assertFalse(OpenShiftMonitoringSetup.scopeAutoscalingToProject(k8s, req));
+    OpenShiftMonitoringSetup.prepare(k8s, req);
+    verify(k8s, never()).ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean(), any());
+
+    when(k8s.canI(eq("create"), eq("monitoring.coreos.com"), eq("servicemonitors"), isNull(), isNull(), eq("team-a"))).thenReturn(false);
+    assertThrows(IllegalStateException.class, () -> OpenShiftMonitoringSetup.prepare(k8s, req));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void metricsOffWithAutoscalingOffNeedsNoMonitoringGrant() {
+    ((Map<String, Object>) ((Map<String, Object>) req.getValues().get("server")).get("keda")).put("enabled", false);
+    req.getValues().put("serviceMonitor", Map.of("enabled", false));
+    when(k8s.isOpenShiftCluster()).thenReturn(true);
+    when(k8s.canI(any(), any(), any(), any(), any(), any())).thenReturn(false);
+
+    assertDoesNotThrow(() -> OpenShiftMonitoringSetup.prepare(k8s, req));
+    verify(k8s, never()).ensureKedaThanosTokenSecret(any(), any(), any(), anyBoolean(), any());
   }
 }

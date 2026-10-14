@@ -1,0 +1,7 @@
+{
+  "label": "ZZ Test TagSync (post-deploy Ranger TagSync registration, NOT in catalog.json)",
+  "chart": "example/zz-test-tagsync",
+  "version": "0.0.1",
+  "form": [],
+  "postDeploy": {}
+}

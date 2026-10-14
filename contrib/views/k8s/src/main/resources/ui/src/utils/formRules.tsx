@@ -45,6 +45,16 @@ export const slug = {
   },
 };
 
+// Kubernetes Secret name (DNS subdomain), when one is given
+export const secretName = {
+  validator(_: any, v?: string) {
+    if (!v) return Promise.resolve();
+    return v.length <= 253 && /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/.test(v)
+      ? Promise.resolve()
+      : Promise.reject(new Error("Use lowercase letters, numbers, '-' and '.', starting and ending with a letter or number"));
+  },
+};
+
 // Cross-field matcher (when you need getFieldValue)
 export const matchField = (otherName: string, msg: string) =>
   ({ getFieldValue }: any) => ({

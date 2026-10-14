@@ -31,6 +31,8 @@ export interface HelmRelease {
   serviceKey?: string;   // ex: "trino", "prometheus"
   platformContextId?: string; // KDPS context the release was deployed against (Upgrade/Config preselect)
   catalogRefs?: Record<string, { id: string; hash: string }>; // reusable Trino catalogs attached at deploy time (name -> ref)
+  catalogManagement?: boolean | null; // Trino: false when the Catalogs action cannot run (no 'Let KDPS manage catalogs' or no internal HTTPS)
+  truststoreRefs?: string[]; // truststores selected at deploy time (absent: never recorded)
   repoId?: string;
   chartRef?: string;
   securityProfile?: string;
@@ -39,6 +41,11 @@ export interface HelmRelease {
   deploymentMode?: string; // DIRECT_HELM | FLUX_GITOPS
   gitCommitSha?: string;
   gitBranch?: string;
+  gitBaseBranch?: string; // the branch Flux reconciles, which every change of the release lands on
+  gitBaseBranchAssumed?: boolean; // no base branch is recorded: main is only assumed, and never sent back as one
+  gitCommitMode?: string; // DIRECT_COMMIT | PR_MODE, as the release was last deployed
+  gitPendingDelete?: boolean; // the uninstall waits for its removal pull request to be merged
+  installed?: boolean; // false: a GitOps release Helm does not list (not installed by Flux yet, or removed by it)
   gitPath?: string;
   gitRepoUrl?: string;
   gitPrUrl?: string;
@@ -132,6 +139,12 @@ export interface HelmRepo {
   authInvalid?: boolean;
   imageProject?: string;
   imageRegistryHostOverride?: string;
+  /** GitOps: an existing Secret Flux pulls charts with, in place of the one KDPS writes. */
+  fluxSecretName?: string;
+  /** GitOps: an existing Secret holding the ca.crt of the repository's server. */
+  fluxCertSecretName?: string;
+  /** GitOps: KDPS truststores (comma-separated) holding the CA of the repository's server. */
+  caTruststores?: string;
 }
 
 export interface HelmReleasePage {

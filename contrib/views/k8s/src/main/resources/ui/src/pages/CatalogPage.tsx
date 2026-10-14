@@ -28,6 +28,7 @@ import {
 } from '@ant-design/icons';
 import { getAvailableServices, getClusterCapabilities, getCatalogAppVersions, type ClusterCapabilities } from '../api/client';
 import { serviceIcon } from '../assets/services';
+import { offeredOnPlatform } from './catalogPlatforms';
 
 const { Title, Paragraph } = Typography;
 
@@ -105,14 +106,17 @@ const CatalogPage: React.FC = () => {
   }, []);
 
   const entries = React.useMemo(() => {
-    const list = Object.entries(services).map(([name, svc]) => ({ name, svc }));
+    // A service that cannot run on this platform (GitLab on OpenShift) is not offered at all.
+    const list = Object.entries(services)
+      .map(([name, svc]) => ({ name, svc }))
+      .filter(({ svc }) => offeredOnPlatform(svc, capabilities?.platform));
     const needle = filter.trim().toLowerCase();
     if (!needle) return list.sort((a, b) => (a.svc?.label || a.name).localeCompare(b.svc?.label || b.name));
     return list.filter(({ name, svc }) => {
       const hay = `${name} ${svc?.label || ''} ${svc?.description || ''} ${svc?.chart || ''}`.toLowerCase();
       return hay.includes(needle);
     });
-  }, [services, filter]);
+  }, [services, capabilities, filter]);
 
   return (
     <>

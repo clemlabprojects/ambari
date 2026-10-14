@@ -76,7 +76,9 @@ public class K8sReleaseEntityTest {
                 // the nine git columns are folded into ONE JSON column (frees 8 of the 21 String slots)
                 "gitMetaJson",
                 // reusable Trino catalogs attached to the release (name -> {id, hash})
-                "catalogRefsJson"
+                "catalogRefsJson",
+                // what KDPS registered for the release outside Kubernetes, which its uninstall takes back
+                "provisioningJson"
         );
 
         int totalLength = 0;

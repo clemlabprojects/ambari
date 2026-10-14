@@ -22,7 +22,7 @@ import urllib.request, urllib.error, urllib.parse
 
 import sys
 from ambari_commons.exceptions import FatalException, NonFatalException
-from ambari_commons.logging_utils import get_silent, print_info_msg
+from ambari_commons.logging_utils import get_silent, print_info_msg, print_warning_msg
 
 from ambari_server.serverConfiguration import get_ambari_properties
 from ambari_server.serverUtils import is_server_runing, get_ambari_admin_username_password_pair, \
@@ -45,10 +45,11 @@ SSO_OIDC_CLIENT_ID = "ambari.sso.oidc.clientId"
 SSO_OIDC_CLIENT_SECRET = "ambari.sso.oidc.clientSecret"
 SSO_OIDC_CALLBACK_URL = "ambari.sso.oidc.callbackUrl"
 SSO_JWT_USERNAME_CLAIM = "ambari.sso.jwt.usernameClaim"
-# Dedicated OIDC provider and service-dispatch properties (allow Knox SSO and OIDC SSO to coexist)
+# Dedicated OIDC provider properties (allow Knox SSO and OIDC SSO to coexist)
 SSO_OIDC_PROVIDER_URL = "ambari.sso.oidc.providerUrl"
 SSO_OIDC_PROVIDER_CERTIFICATE = "ambari.sso.oidc.providerCertificate"
 SSO_OIDC_AUTHENTICATION_ENABLED = "ambari.sso.oidc.authentication.enabled"
+# Reserved: Ambari does not push OIDC SSO to cluster services; setup-sso-oidc always clears these
 SSO_OIDC_MANAGE_SERVICES = "ambari.sso.oidc.manage_services"
 SSO_OIDC_ENABLED_SERVICES = "ambari.sso.oidc.enabled_services"
 # OIDC JIT (Just-In-Time) provisioning of users / groups from JWT claims
@@ -428,7 +429,7 @@ def populate_oidc_authentication_enabled(options, properties):
   Controls whether the OIDC browser-flow is active for Ambari login independently of the
   Knox SSO authentication.enabled flag.  Defaults to true when clientId/clientSecret are set
   (backward compatibility) but can be set explicitly to 'false' to disable the OIDC browser
-  flow while keeping the OIDC credentials for service dispatch.
+  flow while keeping the OIDC client credentials stored.
   """
   if options.sso_oidc_enabled_ambari is None:
     current = get_boolean_from_dictionary(properties, SSO_OIDC_AUTHENTICATION_ENABLED, True)
@@ -440,40 +441,25 @@ def populate_oidc_authentication_enabled(options, properties):
   properties[SSO_OIDC_AUTHENTICATION_ENABLED] = 'true' if enabled else 'false'
 
 
+OIDC_SERVICE_MANAGEMENT_NO_EFFECT_WARNING = \
+  "--sso-oidc-manage-services and --sso-oidc-enabled-services have no effect in this release; " \
+  "Ranger SSO goes through Knox: use --sso-manage-services/--sso-enabled-services"
+
+
 def populate_oidc_service_management(options, properties):
-  """Set ambari.sso.oidc.manage_services and ambari.sso.oidc.enabled_services.
+  """Clear ambari.sso.oidc.manage_services and ambari.sso.oidc.enabled_services.
 
-  Services listed in enabled_services will receive Keycloak OIDC SSO config instead of Knox
-  SSO config, enabling per-service dispatch (e.g. Ranger on OIDC, Hive on Knox).
-
-  Uses an ``is None`` check (not a falsy check) so that ``--sso-oidc-enabled-services=''``
-  (explicitly provided as empty) is treated as a non-interactive CLI invocation that clears
-  the service list rather than falling through to the interactive prompt.
+  Ambari does not push OIDC SSO configuration to cluster services: the stack advisors only read
+  the Knox keys (ambari.sso.manage_services / ambari.sso.enabled_services), and Ranger admin only
+  accepts Knox SSO tokens.  The two OIDC keys are therefore never asked for, and they are always
+  stored as 'false' and '' so that values saved by earlier versions do not suggest otherwise.
+  The CLI flags are still accepted so existing scripts keep working, but they only print a warning.
   """
-  if options.sso_oidc_enabled_services is None:
-    # Not provided on the CLI — interactive or default path.
-    if options.sso_oidc_manage_services is None:
-      manage = get_boolean_from_dictionary(properties, SSO_OIDC_MANAGE_SERVICES, False)
-      manage = get_YN_input(
-        "Manage OIDC SSO configuration for cluster services [y/n] ({0})? ".format('y' if manage else 'n'),
-        manage)
-    else:
-      manage = options.sso_oidc_manage_services == 'true'
+  if options.sso_oidc_manage_services is not None or options.sso_oidc_enabled_services is not None:
+    print_warning_msg(OIDC_SERVICE_MANAGEMENT_NO_EFFECT_WARNING)
 
-    if manage:
-      current_services = get_value_from_dictionary(properties, SSO_OIDC_ENABLED_SERVICES, "")
-      services = get_validated_string_input(
-        "OIDC SSO enabled services (comma-separated or * for all) ({0}): ".format(current_services or "empty"),
-        current_services, REGEX_ANYTHING, "Invalid value", False)
-    else:
-      services = ""
-  else:
-    # Explicitly provided on the CLI (even if empty string).
-    manage = True if not options.sso_oidc_manage_services else options.sso_oidc_manage_services == 'true'
-    services = options.sso_oidc_enabled_services.upper() if options.sso_oidc_enabled_services else ""
-
-  properties[SSO_OIDC_MANAGE_SERVICES] = 'true' if manage else 'false'
-  properties[SSO_OIDC_ENABLED_SERVICES] = services
+  properties[SSO_OIDC_MANAGE_SERVICES] = 'false'
+  properties[SSO_OIDC_ENABLED_SERVICES] = ""
 
 
 # --- JIT (Just-In-Time) provisioning helpers -------------------------------------------------

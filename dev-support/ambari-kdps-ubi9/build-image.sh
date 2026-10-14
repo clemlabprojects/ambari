@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Builds and pushes the standalone Ambari + KDPS image.
+# Builds and pushes the standalone Ambari + KDPS image. A native build is checked with test-image.sh,
+# and with test-image-postgres.sh when a PostgreSQL image is at hand, before it is pushed.
 #
 # Native per-architecture build by default, the same convention the ODP images follow: each
 # agent builds only its own architecture and pushes an arch-suffixed tag, so nothing runs
@@ -31,9 +32,13 @@ HARBOR="${HARBOR:-registry.clemlab.com}"
 PROJECT="${PROJECT:-clemlabprojects}"
 IMAGE_NAME="${IMAGE_NAME:-ambari-kdps}"
 
-AMBARI_VERSION="${AMBARI_VERSION:-2.8.2.0-137}"
+AMBARI_VERSION="${AMBARI_VERSION:-2.8.2.0-160}"
 UBI_VERSION="${UBI_VERSION:-9.6}"
-HELM_VERSION="${HELM_VERSION:-3.16.3}"
+HELM_VERSION="${HELM_VERSION:-3.22.0}"
+# sha256 of the official Helm tarballs. Unset = the values the Dockerfile pins for its own HELM_VERSION;
+# a different HELM_VERSION needs the matching value for the architecture being built, or the build fails.
+HELM_SHA256_AMD64="${HELM_SHA256_AMD64:-}"
+HELM_SHA256_ARM64="${HELM_SHA256_ARM64:-}"
 
 # Where the ambari-server RPM lives. There is no public mirror, so this has to be given: the
 # release pipeline publishes per-OS repositories under the build host's ambari-release tree.
@@ -62,6 +67,8 @@ BUILD_ARGS="--build-arg UBI_VERSION=${UBI_VERSION}
 # Optional mirror-friendly overrides (unset = Dockerfile defaults).
 [ -n "${BASE_IMAGE:-}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg BASE_IMAGE=${BASE_IMAGE}"
 [ -n "${HELM_URL:-}" ]   && BUILD_ARGS="${BUILD_ARGS} --build-arg HELM_URL=${HELM_URL}"
+[ -n "${HELM_SHA256_AMD64}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg HELM_SHA256_AMD64=${HELM_SHA256_AMD64}"
+[ -n "${HELM_SHA256_ARM64}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg HELM_SHA256_ARM64=${HELM_SHA256_ARM64}"
 [ -n "${DROP_VIEWS+x}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg DROP_VIEWS=${DROP_VIEWS}"
 
 case "$PLATFORMS" in
@@ -87,6 +94,19 @@ case "$PLATFORMS" in
     TARGET_IMAGE="${HARBOR}/${PROJECT}/${IMAGE_NAME}:${IMG_TAG}"
     echo "Building ${TARGET_IMAGE} for ${PLATFORMS}" >&2
     docker build ${BUILD_ARGS} -t "${TARGET_IMAGE}" .
+    # How the image starts and stops is what keeps the server's shutdown clean, its audit log in the
+    # pod logs and admin/admin off the Route; check it before anyone can pull the image.
+    ./test-image.sh "${TARGET_IMAGE}"
+    # Then the schema load and upgrade, against a real PostgreSQL: a stand-in cannot tell whether the
+    # DDL loads in one transaction or whether Ambari's schema upgrade finds its tables. An agent that
+    # has no PostgreSQL image and cannot pull one skips this, and says so, rather than fail the build.
+    POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
+    if docker image inspect "${POSTGRES_IMAGE}" >/dev/null 2>&1 || docker pull -q "${POSTGRES_IMAGE}"; then
+      POSTGRES_IMAGE="${POSTGRES_IMAGE}" ./test-image-postgres.sh "${TARGET_IMAGE}"
+    else
+      echo "WARNING: ${POSTGRES_IMAGE} is not available here, so the schema load and upgrade were NOT" \
+        "checked against PostgreSQL. Run ./test-image-postgres.sh ${TARGET_IMAGE} where it is." >&2
+    fi
     docker push "${TARGET_IMAGE}"
     ;;
 esac

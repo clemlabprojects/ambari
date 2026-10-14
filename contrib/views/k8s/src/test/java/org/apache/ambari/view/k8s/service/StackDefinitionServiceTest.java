@@ -65,6 +65,41 @@ class StackDefinitionServiceTest {
     assertEquals("ZZTESTCUSTOM", defs.get("ZZTESTCUSTOM").name);
   }
 
+  /**
+   * SQL Assistant and dbt are not part of this release. Every service directory is listed, catalog.json or not, so
+   * their definitions must be gone as well as their catalog entries.
+   */
+  @Test
+  void sqlAssistantAndDbtAreNotOffered() {
+    List<String> keys = svc.discoverServiceKeys();
+    assertFalse(keys.contains("SQL-ASSISTANT"), keys.toString());
+    assertFalse(keys.contains("DBT"), keys.toString());
+
+    Map<String, StackServiceDef> defs = svc.listServiceDefinitions();
+    assertFalse(defs.containsKey("SQL-ASSISTANT"), defs.keySet().toString());
+    assertFalse(defs.containsKey("DBT"), defs.keySet().toString());
+  }
+
+  /** GitLab left the catalog with this release: neither its key nor its definition is served any more. */
+  @Test
+  void gitLabIsNotOffered() {
+    assertFalse(svc.discoverServiceKeys().contains("GITLAB"), svc.discoverServiceKeys().toString());
+    assertFalse(svc.listServiceDefinitions().containsKey("GITLAB"));
+    assertFalse(svc.hasServiceDefinition("GITLAB"));
+    assertTrue(svc.hasServiceDefinition("TRINO"));
+  }
+
+  /** The catalog hides a Kubernetes-only service on OpenShift from the platforms its definition lists, so they must reach the UI. */
+  @Test
+  void thePlatformsOfAServiceReachTheCatalog() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    Map<String, Object> served = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("ZZTESTKUBEONLY")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+    assertEquals(List.of("kubernetes"), served.get("platforms"));
+    assertEquals("ZZ Test Kubernetes-only service is not supported on OpenShift in this release.", served.get("unsupportedPlatformMessage"));
+  }
+
   @Test
   void configurationFilesAreEnumeratedNotHardcoded() {
     // Known service: both legacy-named files still load.
@@ -72,6 +107,119 @@ class StackDefinitionServiceTest {
     // Drop-in service with an arbitrary file name: previously invisible, now loaded.
     assertEquals(1, svc.getServiceConfigurations("ZZTESTCUSTOM").size(),
         "configurations/*.json must be enumerated, not limited to <svc>-env.json/<svc>-files.json");
+  }
+
+  /**
+   * The wizard reads the form from the /services JSON, which is this class's model serialized back. A form
+   * property the model does not declare is dropped on the way, so the Trino heap check would silently vanish.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void trinoResourceChecksReachTheWizard() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    Map<String, Object> served = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("TRINO")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+    Map<String, Object> heap = formField(served, "workerResources", "worker.jvm.maxHeapSize");
+    assertEquals(Boolean.TRUE, heap.get("omitWhenBlank"));
+    assertEquals("75% of the memory limit", heap.get("placeholder"));
+    assertEquals(Map.of("kind", "javaHeap", "limitField", "worker.resources.limits.memory",
+        "blankSizedByChartFrom", "1.43.15"), heap.get("resourceCheck"));
+
+    Map<String, Object> request = formField(served, "coordinatorResources", "coordinator.resources.requests.memory");
+    assertEquals(Map.of("kind", "memoryRequest", "limitField", "coordinator.resources.limits.memory"),
+        request.get("resourceCheck"));
+    assertEquals(Boolean.FALSE, request.get("omitWhenBlank"));
+  }
+
+  /**
+   * The wizard hides the settings of the other platform, and leaves their values out of the chart values, from the
+   * {@code capability} of a field or group. Without it on the model, the kube-prometheus monitoring group of
+   * OpenMetadata showed on OpenShift and its "monitoring" namespace was sent to the chart.
+   */
+  @Test
+  void platformCapabilitiesReachTheWizard() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    Map<String, Object> served = mapper.readValue(
+        mapper.writeValueAsString(svc.getServiceDefinition("OPENMETADATA")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+    assertEquals("kubernetes", formGroup(served, "monitoringGeneric").get("capability"));
+    assertEquals("openshift", formGroup(served, "openshiftOptions").get("capability"));
+    assertEquals(Boolean.TRUE, formField(served, "monitoringGeneric", "monitoring.namespace").get("excludeFromValues"));
+    assertEquals(Boolean.TRUE, formField(served, "monitoringGeneric", "monitoring.release").get("excludeFromValues"));
+
+    Map<String, Object> ingressClass = formField(served, "ingressConfig", "ingress.ingressClassName");
+    assertEquals("kubernetes", ingressClass.get("capability"));
+    assertEquals(Boolean.TRUE, ingressClass.get("keepWhenHidden"));
+    assertEquals(Boolean.FALSE, formField(served, "ingressConfig", "ingress.host").get("keepWhenHidden"));
+  }
+
+  /**
+   * "Keep current certificate" is offered on Upgrade/Config only. Its {@code upgradeOnly} flag is read by the wizard
+   * alone, so it must survive the round trip through the model: without it a first install would offer to keep a
+   * certificate that does not exist, and send no certificate at all.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void theKeepCurrentCertificateOptionReachesTheWizardAsUpgradeOnly() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    for (String service : List.of("TRINO", "SUPERSET", "OPENMETADATA")) {
+      Map<String, Object> served = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition(service)),
+          new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+      List<Map<String, Object>> options =
+          (List<Map<String, Object>>) formField(served, "ingressConfig", "ingress.tlsMode").get("options");
+      Map<String, Object> keep = options.stream().filter(o -> "keepCurrent".equals(o.get("value"))).findFirst()
+          .orElseThrow(() -> new AssertionError(service + " offers no 'Keep current certificate'"));
+      assertEquals(Boolean.TRUE, keep.get("upgradeOnly"), service);
+      assertEquals("Keep current certificate", keep.get("label"), service);
+      assertTrue(options.stream().filter(o -> !"keepCurrent".equals(o.get("value")))
+          .noneMatch(o -> Boolean.TRUE.equals(o.get("upgradeOnly"))), service + ": the install modes stay offered");
+    }
+  }
+
+  /**
+   * The Superset SECRET_KEY is kept out of the values and in extraSecretEnv: an upgrade fills the field back from
+   * there (seedFromValues) and drops the copy an earlier deploy left in extraEnv (retiredValues). The Trino catalog
+   * credential Secrets are picked several at a time (multiple). All three are read by the wizard only, so they must
+   * survive the round trip through the model.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void secretHandlingReachesTheWizard() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    Map<String, Object> superset = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("SUPERSET")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+    Map<String, Object> secretKey = formField(superset, "superset", "superset.secretKey");
+    assertEquals(Boolean.TRUE, secretKey.get("excludeFromValues"));
+    assertEquals(List.of("extraSecretEnv.SUPERSET_SECRET_KEY", "extraEnv.SUPERSET_SECRET_KEY"),
+        secretKey.get("seedFromValues"));
+    assertTrue(((Map<String, Object>) superset.get("retiredValues")).containsKey("extraEnv.SUPERSET_SECRET_KEY"));
+
+    Map<String, Object> trino = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("TRINO")),
+        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+    Map<String, Object> credentials = formField(trino, "customCatalogs", "catalogCredentialSecrets");
+    assertEquals("secret-discovery", credentials.get("type"));
+    assertEquals(Boolean.TRUE, credentials.get("multiple"));
+    assertEquals(Boolean.FALSE, credentials.get("excludeFromValues"), "the chart reads the list from the values");
+    assertTrue(((Map<String, Object>) trino.get("retiredValues")).containsKey("internalSharedSecret"));
+    assertEquals(">=1.43.16", ((Map<String, Object>) trino.get("featureChartVersions")).get("catalogCredentialSecrets"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> formGroup(Map<String, Object> def, String group) {
+    for (Object g : (List<Object>) def.get("form")) {
+      if (group.equals(((Map<String, Object>) g).get("name"))) return (Map<String, Object>) g;
+    }
+    throw new AssertionError("no group " + group);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> formField(Map<String, Object> def, String group, String name) {
+    for (Object f : (List<Object>) formGroup(def, group).get("fields")) {
+      if (name.equals(((Map<String, Object>) f).get("name"))) return (Map<String, Object>) f;
+    }
+    throw new AssertionError("no field " + name + " in group " + group);
   }
 
   @Test

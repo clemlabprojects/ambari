@@ -57,7 +57,7 @@ public class FluxGitOpsBackendAdditionalTest {
     @Test
     public void pullRequestParserParsesGitHubResponse() {
         String body = "{\"html_url\":\"https://github.com/owner/repo/pull/1\",\"state\":\"open\",\"number\":1,\"mergeable_state\":\"clean\"}";
-        FluxGitOpsBackend.PullRequestInfo info = FluxGitOpsBackend.PullRequestParser.parseGithub(body, "1");
+        GitPullRequests.PullRequestInfo info = GitPullRequests.PullRequestParser.parseGithub(body, "1");
         assertEquals("open", info.state);
         assertEquals("https://github.com/owner/repo/pull/1", info.url);
         assertEquals("1", info.id);
@@ -66,7 +66,7 @@ public class FluxGitOpsBackendAdditionalTest {
     @Test
     public void pullRequestParserParsesGitLabResponse() {
         String body = "{\"web_url\":\"https://gitlab.com/owner/repo/-/merge_requests/2\",\"state\":\"opened\",\"iid\":2}";
-        FluxGitOpsBackend.PullRequestInfo info = FluxGitOpsBackend.PullRequestParser.parseGitlab(body, "2");
+        GitPullRequests.PullRequestInfo info = GitPullRequests.PullRequestParser.parseGitlab(body, "2");
         assertEquals("opened", info.state);
         assertEquals("https://gitlab.com/owner/repo/-/merge_requests/2", info.url);
         assertEquals("2", info.id);

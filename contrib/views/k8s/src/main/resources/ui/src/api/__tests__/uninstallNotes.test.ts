@@ -1,0 +1,117 @@
+import { getReleaseKdpsObjects, uninstallHelm } from '../client';
+
+/**
+ * An uninstall answers with what it could not take back itself, such as OpenShift security context
+ * constraints the platform team granted, so the Releases page can show the commands that do.
+ */
+describe('uninstallHelm', () => {
+  const originalFetch = (globalThis as any).fetch;
+
+  afterEach(() => {
+    (globalThis as any).fetch = originalFetch;
+  });
+
+  const answer = (body: string, status = 200) => {
+    (globalThis as any).fetch = jest.fn(() => Promise.resolve({
+      ok: status < 400,
+      status,
+      json: async () => JSON.parse(body),
+      text: async () => body,
+    }));
+  };
+
+  it('returns the SCC note left for the platform team', async () => {
+    answer(JSON.stringify({ sccCleanup: 'oc adm policy remove-scc-from-user anyuid -z om-airflow-worker -n data' }));
+
+    const notes = await uninstallHelm('om', 'data');
+
+    expect(notes.sccCleanup).toBe('oc adm policy remove-scc-from-user anyuid -z om-airflow-worker -n data');
+  });
+
+  it('returns no notes when the answer is empty', async () => {
+    answer('');
+
+    await expect(uninstallHelm('om', 'data')).resolves.toEqual({});
+  });
+
+  it('tells why an uninstall was refused, and what to do', async () => {
+    const reason = 'KDPS cannot remove data/om from Git with the Git credential recorded for it, so nothing was '
+      + 'removed. Deploy the release again once, giving its Git access token or SSH key, then uninstall it.';
+    answer(JSON.stringify({ error: reason }), 409);
+
+    await expect(uninstallHelm('om', 'data')).rejects.toThrow(`Uninstall failed: 409: ${reason}`);
+  });
+
+  it('tells why the cluster could not remove the release, which is kept', async () => {
+    const reason = 'Helm could not uninstall data/trino: another operation (install/upgrade/rollback) is in progress.'
+      + ' The release is still installed and keeps its record and its catalog access. Fix the cause, then uninstall'
+      + ' it again.';
+    answer(JSON.stringify({ error: reason, release: 'trino', namespace: 'data' }), 502);
+
+    await expect(uninstallHelm('trino', 'data')).rejects.toThrow(`Uninstall failed: 502: ${reason}`);
+  });
+
+  it('gives the status when a refusal has no reason', async () => {
+    answer('', 500);
+
+    await expect(uninstallHelm('om', 'data')).rejects.toThrow(/^Uninstall failed: 500$/);
+  });
+
+  it('returns the note on the Ranger account of Atlas tag sync', async () => {
+    const note = "The Ranger account 'kdps-tagsync-trino-data' that synced Atlas tags for this release could not be disabled";
+    answer(JSON.stringify({ tagSyncCleanup: note }));
+
+    const notes = await uninstallHelm('trino', 'data');
+
+    expect(notes.tagSyncCleanup).toBe(note);
+  });
+
+  it('returns the note on the single sign-on client of the release', async () => {
+    const note = "Kept the single sign-on client 'trino-data' in Keycloak realm 'odp': it was registered before KDPS"
+      + ' marked the clients it registers.';
+    answer(JSON.stringify({ oidcCleanup: note, polarisCleanup: "Removed the Polaris principal 'trino'." }));
+
+    const notes = await uninstallHelm('trino', 'data');
+
+    expect(notes.oidcCleanup).toBe(note);
+    expect(notes.polarisCleanup).toBe("Removed the Polaris principal 'trino'.");
+  });
+
+  it('returns the report on the objects KDPS created for the release', async () => {
+    const report = {
+      removed: ['Secret/trino-keytab'],
+      left: [{ object: 'Secret/trino-truststore', reason: 'this account may not delete it',
+        command: 'oc delete secret trino-truststore -n data' }],
+      note: 'Removed what KDPS created for the release outside its chart: Secret/trino-keytab.',
+    };
+    answer(JSON.stringify({ kdpsObjectsCleanup: report }));
+
+    const notes = await uninstallHelm('trino', 'data');
+
+    expect(notes.kdpsObjectsCleanup).toEqual(report);
+  });
+});
+
+/** The uninstall confirmation lists what KDPS created for the release outside its chart, as the server finds it. */
+describe('getReleaseKdpsObjects', () => {
+  const originalFetch = (globalThis as any).fetch;
+
+  afterEach(() => {
+    (globalThis as any).fetch = originalFetch;
+  });
+
+  it('returns the objects of the release', async () => {
+    (globalThis as any).fetch = jest.fn(() => Promise.resolve({
+      ok: true, status: 200, json: async () => ({ objects: ['Secret/trino-keytab', 'ConfigMap/trino-krb5-conf'] }),
+    }));
+
+    await expect(getReleaseKdpsObjects('trino', 'data')).resolves.toEqual(['Secret/trino-keytab', 'ConfigMap/trino-krb5-conf']);
+    expect(String((globalThis as any).fetch.mock.calls[0][0])).toContain('/helm/release/data/trino/kdps-objects');
+  });
+
+  it('returns none when they cannot be listed', async () => {
+    (globalThis as any).fetch = jest.fn(() => Promise.resolve({ ok: false, status: 403, json: async () => ({}) }));
+
+    await expect(getReleaseKdpsObjects('trino', 'data')).resolves.toEqual([]);
+  });
+});

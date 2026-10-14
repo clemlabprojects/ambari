@@ -35,6 +35,9 @@ public class SecurityMappingEntity extends BaseModel {
 
     public static final String SINGLETON_ID = "security-mapping";
 
+    /** Longest overrides JSON: the DataStore keeps at most 3000 characters in a String column. */
+    public static final int MAX_OVERRIDES_JSON_LENGTH = 3000;
+
     @Id
     @Column(length = 64)
     @Override
@@ -47,6 +50,7 @@ public class SecurityMappingEntity extends BaseModel {
         super.setId(id);
     }
 
+    /** Copy of the defaults earlier versions wrote; no longer written nor read (the defaults come from the classpath). */
     @Column(length = 8000)
     private String defaultJson;
 
@@ -71,7 +75,14 @@ public class SecurityMappingEntity extends BaseModel {
         return overridesJson;
     }
 
+    /**
+     * @throws IllegalArgumentException when the JSON is longer than the DataStore keeps in a String column
+     */
     public void setOverridesJson(String overridesJson) {
+        if (overridesJson != null && overridesJson.length() > MAX_OVERRIDES_JSON_LENGTH) {
+            throw new IllegalArgumentException("The security mapping overrides are too long to be saved ("
+                    + overridesJson.length() + " characters, at most " + MAX_OVERRIDES_JSON_LENGTH + ").");
+        }
         this.overridesJson = overridesJson;
     }
 

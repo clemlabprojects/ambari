@@ -50,10 +50,14 @@ import java.util.Objects;
  *     re-issue, ESO refresh, or no-op for operator-managed).
  *
  * Source inference rules (in order, first match wins):
- *   - Secret has annotation `cert-manager.io/certificate-name`            → "cert-manager"
- *   - Secret has annotation `external-secrets.io/managed-by` = "..."     → "external-secrets"
+ *   - Secret kept by cert-manager (its annotations, labels or owner)      → "cert-manager"
+ *   - Secret kept by the External Secrets Operator (same)                → "external-secrets"
  *   - Secret has label `ambari.clemlab.com/tls-issuer`                   → "k8s-view-self-signed"
  *   - Otherwise                                                          → "external"
+ *
+ * A self-signed entry also carries the CA it was minted with (`caMode`: ambariInternal | companyUploaded, and the
+ * sanitized `caName` of a company CA), and an external one `uploaded: true` when KDPS wrote it from a certificate
+ * the operator uploaded, so Upgrade/Config can tell the operator which certificate the release keeps.
  */
 public class ReleaseTlsService {
     private static final Logger LOG = LoggerFactory.getLogger(ReleaseTlsService.class);
@@ -109,7 +113,9 @@ public class ReleaseTlsService {
                         result.add(entry);
                         continue;
                     }
-                    entry.put("source", inferSource(secret));
+                    String source = inferSource(secret);
+                    entry.put("source", source);
+                    describeOrigin(secret, source, entry);
                     parseAndPopulate(secret, entry);
                 } catch (Exception ex) {
                     LOG.warn("Failed to read/parse TLS Secret {}/{}: {}", namespace, secretName, ex.toString());
@@ -131,19 +137,31 @@ public class ReleaseTlsService {
     }
 
     private String inferSource(Secret secret) {
-        Map<String, String> ann = secret.getMetadata().getAnnotations();
-        Map<String, String> labels = secret.getMetadata().getLabels();
-        if (ann != null && ann.containsKey("cert-manager.io/certificate-name")) {
-            return "cert-manager";
+        String controller = IngressTlsSecretGuard.controllerOf(secret);
+        if (controller != null) {
+            return controller;
         }
-        if (ann != null && (ann.containsKey("external-secrets.io/managed-by")
-                || ann.containsKey("reconcile.external-secrets.io/data-hash"))) {
-            return "external-secrets";
-        }
-        if (labels != null && labels.containsKey("ambari.clemlab.com/tls-issuer")) {
+        if (IngressTlsSecretGuard.mintedByView(secret)) {
             return "k8s-view-self-signed";
         }
         return "external";
+    }
+
+    /** The CA a self-signed leaf was minted with, or whether KDPS wrote an external one from an upload. */
+    private void describeOrigin(Secret secret, String source, Map<String, Object> entry) {
+        Map<String, String> labels = secret.getMetadata().getLabels() == null
+                ? Map.of() : secret.getMetadata().getLabels();
+        Map<String, String> ann = secret.getMetadata().getAnnotations() == null
+                ? Map.of() : secret.getMetadata().getAnnotations();
+        if ("k8s-view-self-signed".equals(source)) {
+            entry.put("caMode", labels.getOrDefault("ambari.clemlab.com/ca-mode", "ambariInternal"));
+            if (labels.containsKey("ambari.clemlab.com/ca-name")) {
+                entry.put("caName", labels.get("ambari.clemlab.com/ca-name"));
+            }
+        } else if ("external".equals(source) && "ambari-k8s-view".equals(ann.get("managed-by"))) {
+            // KubernetesService#createOrUpdateTlsSecret writes the certificate and key the operator uploaded.
+            entry.put("uploaded", true);
+        }
     }
 
     private void parseAndPopulate(Secret secret, Map<String, Object> entry) throws Exception {

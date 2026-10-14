@@ -1,0 +1,18 @@
+{
+  "label": "ZZ Test JWT audience (a service checking the audience of the JWTs it accepts, NOT in catalog.json)",
+  "chart": "example/zz-test-jwt-audience",
+  "version": "0.0.1",
+  "form": [],
+  "oidc": [
+    {
+      "key": "query",
+      "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+      "secretNameTemplate": "{{releaseName}}-oidc-client",
+      "redirectUriTemplate": "https://query.example.org/oauth2/callback",
+      "jwtAudiencePath": "global.security.auth.oidc.jwt.requiredAudience",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "enabled": true
+    }
+  ]
+}

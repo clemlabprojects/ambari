@@ -23,6 +23,8 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
+import org.apache.ambari.view.k8s.service.helm.HelmReleaseHistory;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 
 import java.util.*;
@@ -30,6 +32,7 @@ import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -63,7 +66,7 @@ public class HelmService {
     /**
      * Constructs a {@code HelmService} using the default {@link HelmClientDefault} implementation.
      *
-     * @param ctx the Ambari view context providing configuration and instance data
+     * @param ctx the Ambari view context providing configuration and the instance settings
      */
     public HelmService(ViewContext ctx) {
         this(ctx, new HelmClientDefault());
@@ -73,7 +76,7 @@ public class HelmService {
      * Constructs a {@code HelmService} with an explicit Helm client. The namespace scope is the one of the view
      * instance's {@link KubernetesService}, looked up on first use (only cluster-wide listings need it).
      *
-     * @param ctx  the Ambari view context providing configuration and instance data
+     * @param ctx  the Ambari view context providing configuration and the instance settings
      * @param helm the Helm client to delegate low-level Helm operations to
      */
     public HelmService(ViewContext ctx, HelmClient helm) {
@@ -83,7 +86,7 @@ public class HelmService {
     /**
      * Constructs a {@code HelmService} with an explicit Helm client and namespace scope.
      *
-     * @param ctx            the Ambari view context providing configuration and instance data
+     * @param ctx            the Ambari view context providing configuration and the instance settings
      * @param helm           the Helm client to delegate low-level Helm operations to
      * @param namespaceScope supplies the scope used when the account may not list releases across the cluster;
      *                       called only for cluster-wide listings
@@ -206,24 +209,39 @@ public class HelmService {
     /**
      * Uninstalls a Helm release from the specified namespace.
      *
+     * <p>The release is held in the {@link HelmOperationRegistry} until Helm returns: the uninstall is refused
+     * while another operation on the release is running, and no deploy, upgrade or rollback starts meanwhile.
+     *
      * @param namespace  the Kubernetes namespace containing the release
      * @param name       the Helm release name to uninstall
      * @param kubeconfig path or content of the kubeconfig used to authenticate
+     * @throws HelmOperationRegistry.ReleaseBusyException when another Helm operation on the release is running
      */
     public void uninstall(String namespace, String name, String kubeconfig) {
-        helmClient.uninstall(name, namespace, kubeconfig);
+        HelmOperationRegistry.run(namespace, name, () -> {
+            helmClient.uninstall(name, namespace, kubeconfig);
+            return null;
+        });
     }
 
     /**
      * Rolls back a Helm release to a specific revision.
      *
+     * <p>The release is held in the {@link HelmOperationRegistry} until Helm returns. While it waits, the newest
+     * revision is pending-rollback; without the hold, an upgrade started meanwhile would take that revision for
+     * one left behind by an interrupted operation and roll the release back a second time on top of this one.
+     *
      * @param namespace  the Kubernetes namespace containing the release
      * @param name       the Helm release name to roll back
      * @param revision   the target revision number to roll back to
      * @param kubeconfig path or content of the kubeconfig used to authenticate
+     * @throws HelmOperationRegistry.ReleaseBusyException when another Helm operation on the release is running
      */
     public void rollback(String namespace, String name, int revision, String kubeconfig) {
-        helmClient.rollback(name, namespace, revision, kubeconfig);
+        HelmOperationRegistry.run(namespace, name, () -> {
+            helmClient.rollback(name, namespace, revision, kubeconfig);
+            return null;
+        });
     }
 
     /**
@@ -354,19 +372,56 @@ public class HelmService {
             String versionOpt,
             boolean dryRun
     ) {
+        return deployOrUpgrade(chartName, releaseName, namespace, values, overrideOptions, kubeconfig, repoIdOpt,
+                versionOpt, dryRun, null);
+    }
+
+    /**
+     * Installs or upgrades a Helm release with override options and explicit dry-run control, reporting any
+     * recovery action (rollback of an interrupted upgrade, reinstall of a release that never deployed) to the
+     * operation's log.
+     *
+     * @param chartName       the chart name or OCI reference
+     * @param releaseName     the Helm release name
+     * @param namespace       the target Kubernetes namespace
+     * @param values          chart values to pass as {@code --values}
+     * @param overrideOptions additional dot-path key/value overrides applied on top of {@code values}
+     * @param kubeconfig      path or content of the kubeconfig used to authenticate
+     * @param repoIdOpt       optional repository ID to resolve the chart from; may be {@code null}
+     * @param versionOpt      optional chart version constraint; may be {@code null}
+     * @param dryRun          when {@code true} Helm performs a dry run without making cluster changes
+     * @param operationLog    receives each recovery action, for the operation's log; may be {@code null}, in
+     *                        which case an interrupted upgrade is reported as an error instead of rolled back
+     * @return the resulting Helm {@link Release}
+     */
+    public Release deployOrUpgrade(
+            String chartName,
+            String releaseName,
+            String namespace,
+            Map<String, Object> values,
+            Map<String, String> overrideOptions,
+            String kubeconfig,
+            String repoIdOpt,
+            String versionOpt,
+            boolean dryRun,
+            Consumer<String> operationLog
+    ) {
         int timeoutSeconds = 900;
         boolean wait = true;
         if(dryRun){
             wait = false;
         }
         boolean atomic = false;
-        return deployOrUpgrade(chartName, releaseName, namespace, values, overrideOptions, kubeconfig, repoIdOpt, versionOpt, timeoutSeconds, wait, atomic, dryRun);
+        return deployOrUpgrade(chartName, releaseName, namespace, values, overrideOptions, kubeconfig, repoIdOpt,
+                versionOpt, timeoutSeconds, wait, atomic, dryRun, operationLog);
     }
 
     // Full canonical implementation
     /**
      * Canonical install-or-upgrade implementation with full control over all Helm flags.
      * Checks whether the release already exists to decide between {@code helm install} and {@code helm upgrade}.
+     * There is no operation log to record a rollback in, so an interrupted upgrade fails instead of being rolled
+     * back (see the variant taking an {@code operationLog}).
      *
      * @param chartName       the chart name or OCI reference
      * @param releaseName     the Helm release name
@@ -396,6 +451,90 @@ public class HelmService {
             boolean atomic,
             boolean dryRun
     ) {
+        return deployOrUpgrade(chartName, releaseName, namespace, values, overrideOptions, kubeconfig, repoIdOpt,
+                versionOpt, timeoutSec, wait, atomic, dryRun, null);
+    }
+
+    /**
+     * Canonical install-or-upgrade implementation, reporting recovery actions to the operation's log.
+     *
+     * <p>A real (not dry-run) install or upgrade holds the release in the {@link HelmOperationRegistry} until Helm
+     * returns, so a second change of the same release is refused while one is running; a dry run is refused
+     * too, since it would validate against a release about to change.
+     *
+     * <p>When an upgrade fails because the release's last revision is still pending, or because it has no deployed
+     * revision, the release's Helm history decides what happens; KDPS never uninstalls a release that has served:
+     * <ul>
+     *   <li>no revision was ever deployed and the last one is pending-install or failed (an interrupted or failed
+     *       first install): the release is uninstalled and installed again;</li>
+     *   <li>the last revision is pending-upgrade or pending-rollback over an earlier good revision (an upgrade
+     *       interrupted by a restart or a cancel): the release is rolled back to that revision and the upgrade
+     *       retried once, unless a Helm operation KDPS started on it is still running or there is no
+     *       {@code operationLog} to record the rollback in, in which case the upgrade fails and nothing is
+     *       changed;</li>
+     *   <li>anything else, or a history that cannot be read: the upgrade fails and nothing is changed.</li>
+     * </ul>
+     * A dry run changes nothing, so it never recovers: a pending revision fails the validation. Once the operation
+     * is canceled, the Helm call already running finishes but no further one starts: a rollback is not followed by
+     * the retried upgrade, nor an uninstall by the new install.
+     *
+     * @param chartName       the chart name or OCI reference
+     * @param releaseName     the Helm release name
+     * @param namespace       the target Kubernetes namespace
+     * @param values          chart values to pass as {@code --values}
+     * @param overrideOptions additional dot-path key/value overrides applied on top of {@code values}
+     * @param kubeconfig      path or content of the kubeconfig used to authenticate
+     * @param repoIdOpt       optional repository ID to resolve the chart from; may be {@code null}
+     * @param versionOpt      optional chart version constraint; may be {@code null}
+     * @param timeoutSec      Helm operation timeout in seconds
+     * @param wait            when {@code true} Helm waits until all resources are ready
+     * @param atomic          when {@code true} Helm rolls back automatically on failure
+     * @param dryRun          when {@code true} Helm performs a dry run without making cluster changes
+     * @param operationLog    receives each recovery action, for the operation's log; may be {@code null}, in
+     *                        which case an interrupted upgrade is reported as an error instead of rolled back
+     * @return the resulting Helm {@link Release}
+     * @throws HelmOperationRegistry.ReleaseBusyException when another Helm operation on the release is running
+     */
+    public Release deployOrUpgrade(
+            String chartName,
+            String releaseName,
+            String namespace,
+            Map<String, Object> values,
+            Map<String, String> overrideOptions,
+            String kubeconfig,
+            String repoIdOpt,
+            String versionOpt,
+            int timeoutSec,
+            boolean wait,
+            boolean atomic,
+            boolean dryRun,
+            Consumer<String> operationLog
+    ) {
+        if (dryRun) {
+            HelmOperationRegistry.requireIdle(namespace, releaseName);
+            return installOrUpgrade(chartName, releaseName, namespace, values, overrideOptions, kubeconfig, repoIdOpt,
+                    versionOpt, timeoutSec, wait, atomic, true, operationLog);
+        }
+        return HelmOperationRegistry.run(namespace, releaseName, () -> installOrUpgrade(chartName, releaseName,
+                namespace, values, overrideOptions, kubeconfig, repoIdOpt, versionOpt, timeoutSec, wait, atomic,
+                false, operationLog));
+    }
+
+    private Release installOrUpgrade(
+            String chartName,
+            String releaseName,
+            String namespace,
+            Map<String, Object> values,
+            Map<String, String> overrideOptions,
+            String kubeconfig,
+            String repoIdOpt,
+            String versionOpt,
+            int timeoutSec,
+            boolean wait,
+            boolean atomic,
+            boolean dryRun,
+            Consumer<String> operationLog
+    ) {
         LOG.info("HelmService.deployOrUpgrade called with chartName='{}', releaseName='{}', namespace='{}', repoId='{}', version='{}', timeoutSec={}, wait={}, atomic={}, dryRun={}",
                 chartName, releaseName, namespace, repoIdOpt, versionOpt, timeoutSec, wait, atomic, dryRun);
         final RepoResolution rr = resolveChartRef(chartName, repoIdOpt);
@@ -418,6 +557,36 @@ public class HelmService {
         } catch (Exception e) {
             LOG.warn("Could not list releases to detect existence, will try install then upgrade fallback: {}", e.toString());
         }
+
+        final Supplier<Release> upgrade = () -> helmClient.upgrade(
+                chartRef,
+                versionOpt,
+                rr.isOci,
+                releaseName,
+                namespace,
+                pathConfiguration.repositoriesConfig(),
+                kubeconfig,
+                finalValues,
+                timeoutSec,
+                /*wait*/ wait,
+                /*atomic*/ atomic,
+                /*dryRun*/ dryRun
+        );
+        final Supplier<Release> freshInstall = () -> helmClient.install(
+                chartRef,
+                versionOpt,
+                rr.isOci,
+                releaseName,
+                namespace,
+                pathConfiguration.repositoriesConfig(),
+                kubeconfig,
+                finalValues,
+                timeoutSec,
+                /*createNs*/ helmShouldCreateNamespace(namespace),
+                /*wait*/ wait,
+                /*atomic*/ atomic,
+                /*dryRun*/ dryRun
+        );
 
         if (!releaseExists) {
             try {
@@ -500,89 +669,185 @@ public class HelmService {
                 final String msgLower = msg != null ? msg.toLowerCase(Locale.ROOT) : "";
                 if (msgLower.contains("already exists") || msgLower.contains("cannot re-use a name that is still in use")) {
                     LOG.warn("Install reported '{}', switching to upgrade.", msg);
-                    return helmClient.upgrade(
-                            chartRef,
-                            versionOpt,
-                            resolveChartRef(chartName,repoIdOpt).isOci,
-                            releaseName,
-                            namespace,
-                            pathConfiguration.repositoriesConfig(),
-                            kubeconfig,
-                            finalValues,
-                            timeoutSec,
-                            /*wait*/ wait,
-                            /*atomic*/ atomic,
-                            /*dryRun*/ dryRun
-                    );
+                    return upgradeOrRecover(releaseName, namespace, kubeconfig, dryRun, upgrade, freshInstall, operationLog);
                 }
                 throw alreadyExists;
             }
         } else {
             LOG.info("Release exists → upgrade: chartRef={}, ns={}, name={}, version={}, dryRun={}", chartRef, namespace, releaseName, versionOpt, dryRun);
-            try {
-                return helmClient.upgrade(
-                            chartRef,
-                            versionOpt,
-                            resolveChartRef(chartName,repoIdOpt).isOci,
-                            releaseName,
-                            namespace,
-                            pathConfiguration.repositoriesConfig(),
-                            kubeconfig,
-                            finalValues,
-                            timeoutSec,
-                            /*wait*/ wait,
-                            /*atomic*/ atomic,
-                            /*dryRun*/ dryRun
-                );
-            } catch (RuntimeException upErr) {
-                // A release whose FIRST revision failed or is stuck pending is "existing" but has no
-                // DEPLOYED revision, so `helm upgrade` errors "has no deployed releases" (and a stuck
-                // pending-install errors "another operation ... in progress"). This is exactly the
-                // state a timed-out/failed first install leaves behind — and the case the operation
-                // Resume must recover. Uninstall the dead release, then install fresh. On a dry-run
-                // we can't (and needn't) uninstall — just validate via a dry-run install.
-                final String m = upErr.getMessage() == null ? "" : upErr.getMessage().toLowerCase(Locale.ROOT);
-                boolean deadRelease = m.contains("has no deployed releases")
-                        || m.contains("another operation") || m.contains("in progress")
-                        || m.contains("pending");
-                if (!deadRelease) throw upErr;
-                LOG.warn("Upgrade failed on a non-deployed release ('{}'); recovering via {}install.",
-                        upErr.getMessage(), dryRun ? "dry-run " : "uninstall+");
-                if (!dryRun) {
-                    try { helmClient.uninstall(releaseName, namespace, kubeconfig); }
-                    catch (Exception ue) { LOG.warn("Uninstall of dead release '{}/{}' failed (continuing to install): {}", namespace, releaseName, ue.toString()); }
-                }
-                return helmClient.install(
-                            chartRef,
-                            versionOpt,
-                            resolveChartRef(chartName,repoIdOpt).isOci,
-                            releaseName,
-                            namespace,
-                            pathConfiguration.repositoriesConfig(),
-                            kubeconfig,
-                            finalValues,
-                            timeoutSec,
-                            /*createNs*/ helmShouldCreateNamespace(namespace),
-                            /*wait*/ wait,
-                            /*atomic*/ atomic,
-                            /*dryRun*/ dryRun
-                );
-            }
+            return upgradeOrRecover(releaseName, namespace, kubeconfig, dryRun, upgrade, freshInstall, operationLog);
         }
     }
 
     /**
-     * Returns true if the named release exists in the given namespace with status "deployed".
-     * Used to recover from helm-java response-parse failures where the chart was actually installed.
+     * Helm's {@code errPending}: the release's last revision is still pending-install, pending-upgrade or
+     * pending-rollback. Helm 3.16 raises it whatever the earlier revisions are, so a release can be serving
+     * from a deployed revision and still return it.
      */
-    public Optional<Release> findDeployedRelease(String releaseName, String namespace, String kubeconfig) {
+    static final String ERR_PENDING = "another operation (install/upgrade/rollback) is in progress";
+
+    /** Helm's {@code ErrNoDeployedReleases}. */
+    static final String ERR_NO_DEPLOYED = "has no deployed releases";
+
+    /**
+     * Runs the upgrade and, when Helm refuses it because of the release's state, recovers only as far as the
+     * release's history makes safe (see the canonical {@code deployOrUpgrade}).
+     */
+    private Release upgradeOrRecover(String releaseName, String namespace, String kubeconfig, boolean dryRun,
+                                     Supplier<Release> upgrade, Supplier<Release> freshInstall,
+                                     Consumer<String> operationLog) {
         try {
-            return helmClient.list(namespace, kubeconfig, true).stream()
-                    .filter(r -> releaseName.equals(r.getName()))
-                    .findFirst();
-        } catch (Exception e) {
-            LOG.warn("Could not list releases while checking post-install state: {}", e.toString());
-            return Optional.empty();
+            return upgrade.get();
+        } catch (RuntimeException upErr) {
+            final boolean pending = messageContains(upErr, ERR_PENDING);
+            if (!pending && !messageContains(upErr, ERR_NO_DEPLOYED)) {
+                throw upErr;
+            }
+            final String release = namespace + "/" + releaseName;
+            stopIfCanceled(release, upErr);
+
+            final HelmReleaseHistory history;
+            try {
+                history = HelmReleaseHistory.of(helmClient.history(releaseName, namespace, kubeconfig));
+            } catch (RuntimeException historyErr) {
+                IllegalStateException failure = new IllegalStateException("The upgrade of release " + release
+                        + " failed (" + upErr.getMessage() + ") and its Helm history could not be read, so nothing "
+                        + "was changed: " + historyErr.getMessage(), historyErr);
+                failure.addSuppressed(upErr);
+                throw failure;
+            }
+            final HelmReleaseHistory.Revision last = history.last();
+            final HelmReleaseHistory.Revision good = history.lastGood();
+
+            // A first install that never completed: nothing has served yet, so starting over loses nothing.
+            if (last != null && !history.everDeployed()
+                    && (last.is(HelmReleaseHistory.PENDING_INSTALL) || last.is(HelmReleaseHistory.FAILED))) {
+                if (dryRun) {
+                    if (pending) {
+                        throw new IllegalStateException("Release " + release + " has an install that is still "
+                                + "pending (revision " + last.number() + " " + last.status() + ") and has never been "
+                                + "deployed. Nothing was changed. Wait for that install to finish, or resume the "
+                                + "operation that started it.", upErr);
+                    }
+                    // Validates the chart the real step will install once the release is cleared.
+                    stopIfCanceled(release, upErr);
+                    return freshInstall.get();
+                }
+                stopIfCanceled(release, upErr);
+                report(operationLog, "Release " + release + " has never been deployed (revision " + last.number()
+                        + " is " + last.status() + "): uninstalling it before installing it again.");
+                boolean uninstalled = false;
+                try {
+                    helmClient.uninstall(releaseName, namespace, kubeconfig);
+                    uninstalled = true;
+                } catch (Exception ue) {
+                    report(operationLog, "Uninstalling the never-deployed release " + release + " failed ("
+                            + ue.getMessage() + "); installing it anyway.");
+                }
+                // The uninstall cannot be interrupted, so a cancel may have come in meanwhile: the operator asked
+                // to stop, so do not start an install that can wait for up to the full Helm timeout.
+                if (Thread.currentThread().isInterrupted()) {
+                    String canceled = (uninstalled ? "Uninstalled" : "Tried to uninstall")
+                            + " the never-deployed release " + release + "; it was not installed again because the "
+                            + "operation was canceled.";
+                    report(operationLog, canceled);
+                    throw new IllegalStateException(canceled, upErr);
+                }
+                return freshInstall.get();
+            }
+
+            // An upgrade or rollback cut short (server restart, cancel) while an earlier revision still serves.
+            if (last != null && good != null
+                    && (last.is(HelmReleaseHistory.PENDING_UPGRADE) || last.is(HelmReleaseHistory.PENDING_ROLLBACK))) {
+                final String interrupted = "Release " + release + " has an interrupted "
+                        + (last.is(HelmReleaseHistory.PENDING_UPGRADE) ? "upgrade" : "rollback")
+                        + " (revision " + last.number() + " " + last.status() + "); roll back to revision "
+                        + good.number() + " or wait for it to finish.";
+                if (dryRun) {
+                    throw new IllegalStateException(interrupted + " Nothing was changed.", upErr);
+                }
+                if (HelmOperationRegistry.isRunningElsewhere(namespace, releaseName)) {
+                    throw new IllegalStateException(interrupted + " A Helm operation that KDPS started on this "
+                            + "release is still running.", upErr);
+                }
+                // The rollback restarts the release on its previous configuration and drops the interrupted
+                // change. A caller with no operation log (a catalog saved to the release, a REST call) would get
+                // back a plain success with no sign of either, so the operator decides instead.
+                if (operationLog == null) {
+                    throw new IllegalStateException(interrupted + " Nothing was changed: roll it back from Revision "
+                            + "history on the Releases page, then try again.", upErr);
+                }
+                stopIfCanceled(release, upErr);
+                report(operationLog, "Release " + release + " has an interrupted operation (revision "
+                        + last.number() + " is " + last.status() + ") while revision " + good.number() + " is "
+                        + good.status() + ". No Helm operation started by KDPS is running on it: rolling back to "
+                        + "revision " + good.number() + ", then retrying the upgrade once.");
+                try {
+                    helmClient.rollback(releaseName, namespace, good.number(), kubeconfig);
+                } catch (RuntimeException rollbackErr) {
+                    throw new IllegalStateException("Rolling release " + release + " back to revision "
+                            + good.number() + " failed, so the upgrade was not retried: " + rollbackErr.getMessage(),
+                            rollbackErr);
+                }
+                final String rolledBack = "Rolled back release " + release + " to revision " + good.number();
+                // The rollback waits for the release to be ready and cannot be interrupted, so a cancel may have
+                // come in meanwhile: the operator asked to stop, so do not start the upgrade again.
+                if (Thread.currentThread().isInterrupted()) {
+                    String canceled = rolledBack + "; the upgrade was not retried because the operation was canceled.";
+                    report(operationLog, canceled);
+                    throw new IllegalStateException(canceled, upErr);
+                }
+                report(operationLog, rolledBack + "; retrying the upgrade.");
+                try {
+                    return upgrade.get();
+                } catch (RuntimeException retryErr) {
+                    throw new IllegalStateException("The upgrade of release " + release + " failed again after "
+                            + "rolling back to revision " + good.number() + ": " + retryErr.getMessage(), retryErr);
+                }
+            }
+
+            String state = last == null ? "an empty Helm history" : "its last " + last;
+            throw new IllegalStateException("The upgrade of release " + release + " failed (" + upErr.getMessage()
+                    + "). With " + state + ", KDPS has no safe way to recover it, so nothing was changed."
+                    + (history.everDeployed()
+                        ? " A release that has been deployed is only uninstalled when you confirm it from the "
+                          + "Releases page."
+                        : ""), upErr);
+        }
+    }
+
+    /**
+     * Refuses to start a recovery action once the operation was canceled: the cancel interrupts the thread running
+     * the Helm calls, but each call it makes runs to its end, so this is checked before every new one.
+     */
+    private static void stopIfCanceled(String release, RuntimeException upErr) {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new IllegalStateException("The upgrade of release " + release + " was canceled; nothing was "
+                    + "rolled back or uninstalled. Helm reported: " + upErr.getMessage(), upErr);
+        }
+    }
+
+    /** True when the failure, or one of its causes, carries Helm's error text. */
+    private static boolean messageContains(Throwable e, String helmError) {
+        Throwable t = e;
+        for (int depth = 0; t != null && depth < MAX_CAUSE_DEPTH; depth++, t = t.getCause()) {
+            String m = t.getMessage();
+            if (m != null && m.toLowerCase(Locale.ROOT).contains(helmError)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Logs a recovery action and hands it to the operation's log, where the operator sees it. */
+    private static void report(Consumer<String> operationLog, String message) {
+        LOG.warn(message);
+        if (operationLog != null) {
+            try {
+                operationLog.accept(message);
+            } catch (RuntimeException e) {
+                LOG.debug("Could not write to the operation log: {}", e.toString());
+            }
         }
     }
 
@@ -755,8 +1020,8 @@ public class HelmService {
      * "prometheus.ingress.enabled" while still shipping the structured YAML the Helm chart expects.
      */
     @SuppressWarnings("unchecked")
-    // package-private for unit testing
-    Map<String, Object> expandDotPaths(Map<String, Object> source) {
+    // package-private for unit testing, and for the GitOps commit, which writes the values Helm would get
+    static Map<String, Object> expandDotPaths(Map<String, Object> source) {
         if (source == null || source.isEmpty()) {
             return new LinkedHashMap<>();
         }
@@ -773,7 +1038,7 @@ public class HelmService {
      * Intermediate nodes are created as {@link LinkedHashMap} instances.
      */
     @SuppressWarnings("unchecked")
-    private void insertNested(Map<String, Object> target, String key, Object value) {
+    private static void insertNested(Map<String, Object> target, String key, Object value) {
         if (key == null || key.isBlank()) {
             return;
         }
@@ -862,7 +1127,7 @@ public class HelmService {
     }
 
     @SuppressWarnings("unchecked")
-    private Object expandIfNeeded(Object value) {
+    private static Object expandIfNeeded(Object value) {
         if (value instanceof Map) {
             return expandDotPaths((Map<String, Object>) value);
         }
@@ -1021,7 +1286,7 @@ public class HelmService {
         final String url = repoEntity.getUrl();
         final String registryServer = normalizeRegistryServer(url); // e.g. registry.clemlab.com
         final String username = repoEntity.getUsername();
-        final String password = repositoryService.readPlainSecret(repoEntity.getSecretRef());
+        final String password = repositoryService.readPlainSecret(repoEntity);
 
         // If the repo is marked anonymous, we still create a secret only if creds exist; else skip
         if (repositoryService.isAnonymous(repoEntity) && (username == null || username.isBlank() || password == null || password.isBlank())) {

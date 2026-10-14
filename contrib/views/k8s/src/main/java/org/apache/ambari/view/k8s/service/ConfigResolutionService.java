@@ -456,6 +456,12 @@ public class ConfigResolutionService {
             String literal = resolveConditionalLiteral(expr, helmValues);
             raw = literal;
 
+        } else if ("chartFullname".equals(source)) {
+            // The name a chart gives its Service: the chart's own fullname rule applied to the release,
+            // for a chart whose definition does not pin the name to the release name.
+            Object release = templateEnv == null ? null : templateEnv.get("releaseName");
+            raw = release == null ? null : chartFullname(asString(def.get("chartName")), String.valueOf(release), helmValues);
+
         } else if ("embedded".equals(source)) {
             // Read from params / templateEnv. Path can be "releaseName" or "namespace" etc.
             String path = asString(def.get("path"));
@@ -503,6 +509,32 @@ public class ConfigResolutionService {
         LOG.info("DEBUG: resolved property: source:{}, {}, {}, {}, from {}", source, raw, type, name, castInnerValue(raw, type, name));
         // Cast according to the declared type ("string", "integer", "boolean")
         return castInnerValue(raw, type, name);
+    }
+
+    /**
+     * What the standard {@code <chart>.fullname} helper of a chart renders: {@code fullnameOverride} when the values
+     * set it, else the release name when it contains the chart's name ({@code nameOverride} when set), else
+     * {@code <release>-<name>}; cut to 63 characters, without a trailing dash.
+     *
+     * @param chartName  the chart's name, e.g. {@code superset}
+     * @param release    the release name
+     * @param helmValues the release's chart values; may be null
+     * @return the fullname, or null without a chart name
+     */
+    public static String chartFullname(String chartName, String release, Map<String, Object> helmValues) {
+        String fullnameOverride = asString(getByDottedPath(helmValues, "fullnameOverride"));
+        String name;
+        if (fullnameOverride != null && !fullnameOverride.isBlank()) {
+            name = fullnameOverride;
+        } else {
+            String nameOverride = asString(getByDottedPath(helmValues, "nameOverride"));
+            String chart = nameOverride != null && !nameOverride.isBlank() ? nameOverride : chartName;
+            if (chart == null || chart.isBlank()) return null;
+            name = release.contains(chart) ? release : release + "-" + chart;
+        }
+        if (name.length() > 63) name = name.substring(0, 63);
+        while (name.endsWith("-")) name = name.substring(0, name.length() - 1);
+        return name;
     }
 
     /**

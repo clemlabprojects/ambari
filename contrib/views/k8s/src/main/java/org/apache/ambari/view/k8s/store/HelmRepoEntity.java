@@ -18,18 +18,22 @@
 
 package org.apache.ambari.view.k8s.store;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.ambari.view.k8s.store.base.BaseModel;
 
 import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.Table;
-import javax.persistence.Transient;
 import java.net.URI;
 
 /**
  * Entity representing a Helm repository configuration.
  * Stores metadata for Helm repositories and registries without secret values.
+ *
+ * <p>Ambari's DataStore keeps every bean property of an entity, whatever its JPA annotations, and the view migration
+ * copies every one of them to the next version: no property may ever carry the registry secret. The request that
+ * saves a repository carries it apart ({@code HelmRepoRequest}).</p>
  */
 @Entity
 @Table(name = "k8s_helm_repo")
@@ -63,7 +67,7 @@ public class HelmRepoEntity extends BaseModel {
     private String username;
 
     @Column(length = 128)
-    private String secretRef;   // pointer in InstanceData (encrypted); never expose
+    private String secretRef;   // key of the encrypted secret in InstanceSettings; never expose
 
     @Column(length = 256)
     private String imageProject; // e.g. "clemlabprojects"
@@ -74,14 +78,22 @@ public class HelmRepoEntity extends BaseModel {
     private boolean authInvalid;
 
     /**
-     * Transient carrier for the plain-text registry secret.
-     * Never persisted to the DataStore; read from the JSON request body and
-     * consumed immediately by HelmRepositoryService.save() to store in the
-     * credential store. Keeping it on the entity avoids a separate wrapper DTO
-     * while still ensuring the secret never travels as a URL query parameter.
+     * GitOps: an existing Secret Flux pulls charts with (created by SOPS, Sealed Secrets or External Secrets), in
+     * place of the one KDPS writes from the stored credentials. It must exist in every namespace of a chart source.
      */
-    @Transient
-    private String plainSecret;
+    @Column(length = 253)
+    private String fluxSecretName;
+
+    /** GitOps: an existing Secret holding the {@code ca.crt} Flux verifies the repository's server with. */
+    @Column(length = 253)
+    private String fluxCertSecretName;
+
+    /**
+     * GitOps: KDPS truststores (comma-separated names) holding the CA of the repository's server, written to a
+     * {@code ca.crt} Secret next to each chart source when no CA Secret is named.
+     */
+    @Column(length = 1024)
+    private String caTruststores;
 
     // Getters and setters
     public String getType() { 
@@ -124,10 +136,16 @@ public class HelmRepoEntity extends BaseModel {
         this.username = username; 
     }
     
+    /**
+     * The view setting holding this repository's encrypted secret. Set by the server only: never read from or written
+     * to a request body, and never used to look the secret up (see {@code HelmRepositoryService.readPlainSecret}).
+     */
+    @JsonIgnore
     public String getSecretRef() { 
         return secretRef; 
     }
     
+    @JsonIgnore
     public void setSecretRef(String secretRef) { 
         this.secretRef = secretRef; 
     }
@@ -178,12 +196,28 @@ public class HelmRepoEntity extends BaseModel {
         this.imageRegistryHostOverride = imageRegistryHostOverride;
     }
 
-    public String getPlainSecret() {
-        return plainSecret;
+    public String getFluxSecretName() {
+        return fluxSecretName;
     }
 
-    public void setPlainSecret(String plainSecret) {
-        this.plainSecret = plainSecret;
+    public void setFluxSecretName(String fluxSecretName) {
+        this.fluxSecretName = fluxSecretName;
+    }
+
+    public String getFluxCertSecretName() {
+        return fluxCertSecretName;
+    }
+
+    public void setFluxCertSecretName(String fluxCertSecretName) {
+        this.fluxCertSecretName = fluxCertSecretName;
+    }
+
+    public String getCaTruststores() {
+        return caTruststores;
+    }
+
+    public void setCaTruststores(String caTruststores) {
+        this.caTruststores = caTruststores;
     }
 
     public String getEffectiveRegistryHost() {

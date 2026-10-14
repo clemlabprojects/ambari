@@ -21,7 +21,7 @@ package org.apache.ambari.view.k8s.utils;
 import com.google.gson.*;
 import org.apache.ambari.view.URLStreamProvider;
 import org.apache.ambari.view.ViewContext;
-import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.EncryptedEnvelope;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -54,9 +54,17 @@ public class AmbariActionClient {
     private final String ambariApiBase; // e.g. "http://localhost:8080/api/v1"
     private final String clusterName;
     private final Map<String,String> defaultHeaders;
-    private final String permissionName = "AMBARI.ADMINISTRATOR";
+    private static final String AMBARI_ADMINISTRATOR = "AMBARI.ADMINISTRATOR";
+    /** The view permission that lets an account open a view instance, and nothing else. */
+    private static final String VIEW_USER = "VIEW.USER";
+
+    /**
+     * Query, appended to {@code /users/<name>}, that lists every privilege of a user: those granted to the user's
+     * groups and the implicit ones included. The {@code Users/admin} flag of the user resource only reflects
+     * privileges granted to the user by name, so a member of an administrators group reads as a non-administrator.
+     */
+    public static final String PRIVILEGES_QUERY = "/privileges?fields=PrivilegeInfo/permission_name,PrivilegeInfo/type";
     private Map<String,AmbariConfigPropertiesTypes> defaultConfigTypes;
-    public record WebhookCreds(String username, String password) {}
 
     /**
      * When false, the read-path methods used against a REMOTE context's Ambari
@@ -85,10 +93,6 @@ public class AmbariActionClient {
 
     private static final Logger LOG = LoggerFactory.getLogger(AmbariActionClient.class);
     private static final Gson GSON = new Gson();
-    private static final EncryptionService HEADER_ENCRYPTION = new EncryptionService();
-    private static final String PERSISTED_HEADERS_FORMAT_KEY = "_format";
-    private static final String PERSISTED_HEADERS_FORMAT_ENCRYPTED = "encrypted-v1";
-    private static final String PERSISTED_HEADERS_PAYLOAD_KEY = "payload";
     public record AdhocKeytabPayloadMetadata(String payloadRef, String payloadSha256, Integer kvno, Boolean created) {}
 
     public AmbariActionClient(ViewContext ctx, String ambariApiBase, String clusterName, Map<String,String> defaultHeaders) {
@@ -117,13 +121,45 @@ public class AmbariActionClient {
         this.initializeMainConfigurations();
     }
 
+    /**
+     * Asks Ambari to issue a keytab for a principal and returns the Ambari request id.
+     * {@code namespace} is the Kubernetes namespace whose Secret receives the keytab: Ambari only
+     * issues keytabs for principals named after that namespace.
+     */
     public int submitGenerateAdhocKeytab(
             String principal,
+            String namespace,         // namespace of the Secret receiving the keytab
             String kdcType,           // e.g. "IPA" or null
             String defaultRealm,      // e.g. "DEV21.HADOOP.CLEMLAB.COM" or null
             Integer timeoutSeconds,   // e.g. 600 or null
             String context            // e.g. "Generate ad-hoc keytab ..." or null
     ) throws Exception {
+        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/adhoc_keytab";
+        String payload = adhocKeytabRequestBody(clusterName, principal, namespace, kdcType, defaultRealm,
+                timeoutSeconds, context).toString();
+
+        try (InputStream is = stream.readFrom(
+                url,
+                "POST",
+                payload,
+                withStdHeaders(Map.of("Content-Type", "application/json"))
+        )) {
+            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject ro = o.getAsJsonObject("Requests");
+            if (ro == null || !ro.has("id")) {
+                throw new IllegalStateException("Unexpected response for adhoc keytab submission: " + json);
+            }
+            return ro.get("id").getAsInt();
+        }
+    }
+
+    /**
+     * The body of {@code POST /clusters/{cluster}/adhoc_keytab}, with the namespaced properties the
+     * Ambari resource provider expects.
+     */
+    static JsonObject adhocKeytabRequestBody(String clusterName, String principal, String namespace, String kdcType,
+                                             String defaultRealm, Integer timeoutSeconds, String context) {
         JsonObject root = new JsonObject();
 
         // RequestInfo block
@@ -145,28 +181,12 @@ public class AmbariActionClient {
         JsonObject body = new JsonObject();
         body.addProperty("Clusters/cluster_name", clusterName);
         body.addProperty("AdhocKeytab/principal", principal);
+        body.addProperty("AdhocKeytab/namespace", namespace);
         if (kdcType != null)      body.addProperty("AdhocKeytab/kdc_type", kdcType);
         if (defaultRealm != null) body.addProperty("AdhocKeytab/default_realm", defaultRealm);
         if (timeoutSeconds != null) body.addProperty("AdhocKeytab/timeout", timeoutSeconds);
         root.add("Body", body);
-
-        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/adhoc_keytab";
-        String payload = root.toString();
-
-        try (InputStream is = stream.readFrom(
-                url,
-                "POST",
-                payload,
-                withStdHeaders(Map.of("Content-Type", "application/json"))
-        )) {
-            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
-            JsonObject ro = o.getAsJsonObject("Requests");
-            if (ro == null || !ro.has("id")) {
-                throw new IllegalStateException("Unexpected response for adhoc keytab submission: " + json);
-            }
-            return ro.get("id").getAsInt();
-        }
+        return root;
     }
 
     /**
@@ -250,6 +270,32 @@ public class AmbariActionClient {
         } catch (Exception e) {
             LOG.debug("failureDetail({}) unavailable: {}", requestId, e.toString());
             return "";
+        }
+    }
+
+    /**
+     * What the task of an Ambari request reported besides its status (its {@code structured_out}),
+     * taken from the last task when there are several. Empty when no task reported anything.
+     */
+    public Optional<JsonObject> taskStructuredOut(int requestId) throws Exception {
+        String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/requests/" + requestId
+                + "/tasks?fields=Tasks/id,Tasks/structured_out";
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(Map.of()))) {
+            JsonObject o = JsonParser.parseString(new String(is.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+            JsonObject latest = null;
+            long latestId = Long.MIN_VALUE;
+            if (o.has("items") && o.get("items").isJsonArray()) {
+                for (JsonElement e : o.getAsJsonArray("items")) {
+                    JsonObject t = e.getAsJsonObject().getAsJsonObject("Tasks");
+                    if (t == null || !t.has("structured_out") || !t.get("structured_out").isJsonObject()) continue;
+                    long taskId = t.has("id") ? t.get("id").getAsLong() : 0L;
+                    if (latest == null || taskId >= latestId) {
+                        latest = t.getAsJsonObject("structured_out");
+                        latestId = taskId;
+                    }
+                }
+            }
+            return Optional.ofNullable(latest);
         }
     }
 
@@ -412,16 +458,17 @@ public class AmbariActionClient {
 
     /** this method call the clusters api path on ambari server in order to help discover existing cluster
      * the view is not linked to a cluster
-     * @return
-     * @throws Exception
+     * @return the cluster names; empty when Ambari manages no cluster
+     * @throws Exception when Ambari cannot be read or refuses the request
      */
     public List<String> listClusters() throws Exception {
         String url = ambariApiBase + "/clusters?fields=Clusters/cluster_name";
         LOG.info("Listing clusters from {}", url);
         LOG.debug("Using header keys: {}", this.defaultHeaders.keySet());
         try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
-            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+            // A refusal is not "no cluster": an account that may not list the clusters would otherwise deploy as if
+            // Ambari managed none, with nothing to inherit from it (Kerberos turned off).
+            JsonObject root = answer(new String(is.readAllBytes(), StandardCharsets.UTF_8), url);
 
             List<String> names = new ArrayList<>();
             if (root.has("items")) {
@@ -443,18 +490,13 @@ public class AmbariActionClient {
 
 
     /**
-     * Ensures that an Ambari local user exists, sets its password, and optionally grants
-     * AMBARI.ADMINISTRATOR privileges. All calls rely on the caller-provided cookie session.
+     * Ensures that an Ambari local user exists with the given password. All calls rely on this client's headers, which
+     * must be those of an Ambari administrator. The user gets no privilege here.
      *
      * @param username      Ambari local username
      * @param password      password to set
-     * @param requireAdmin  true to ensure the user has AMBARI.ADMINISTRATOR
      */
-    public void createWebhookAmbariUser(
-            String username,
-            String password,
-            boolean requireAdmin
-    ) throws Exception {
+    public void createWebhookAmbariUser(String username, String password) throws Exception {
         Objects.requireNonNull(username, "username");
         Objects.requireNonNull(password, "password");
         if (!userExists(username)) {
@@ -469,14 +511,106 @@ public class AmbariActionClient {
                 createUser(username, password);
             }
         }
+    }
 
-        if (requireAdmin) {
-            boolean isAdmin = hasAmbariAdminPrivilege(username);
-            if (!isAdmin) {
-                LOG.info("User '{}' lacks {}; granting.", username, permissionName);
-                grantAmbariAdminPrivilege(username);
-            } else {
-                LOG.info("User '{}' already has {}.", username, permissionName);
+    /**
+     * Removes the Ambari Administrator role granted to the user by name. A role the user gets through a group is left:
+     * it was not granted for this account.
+     *
+     * @param username Ambari user name
+     * @return true when a privilege was removed
+     * @throws Exception when Ambari cannot be read or refuses a change
+     */
+    public boolean revokeAmbariAdministrator(String username) throws Exception {
+        String url = ambariApiBase + "/users/" + encodePathSegment(username) + "/privileges?fields=PrivilegeInfo/*";
+        List<String> granted = new ArrayList<>();
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+            JsonObject root = itemsAnswer(new String(is.readAllBytes(), StandardCharsets.UTF_8), url);
+            for (JsonElement el : root.getAsJsonArray("items")) {
+                JsonObject pi = el.isJsonObject() ? el.getAsJsonObject().getAsJsonObject("PrivilegeInfo") : null;
+                if ("AMBARI".equalsIgnoreCase(jsonString(pi, "type"))
+                        && AMBARI_ADMINISTRATOR.equalsIgnoreCase(jsonString(pi, "permission_name"))
+                        && "USER".equalsIgnoreCase(jsonString(pi, "principal_type"))
+                        && username.equals(jsonString(pi, "principal_name"))
+                        && jsonString(pi, "privilege_id") != null) {
+                    granted.add(jsonString(pi, "privilege_id"));
+                }
+            }
+        }
+        for (String privilegeId : granted) {
+            send(ambariApiBase + "/privileges/" + encodePathSegment(privilegeId), "DELETE", null);
+            LOG.info("Removed {} from Ambari user '{}' (privilege {})", AMBARI_ADMINISTRATOR, username, privilegeId);
+        }
+        return !granted.isEmpty();
+    }
+
+    /**
+     * Grants the user {@code VIEW.USER} on one view instance, which lets the account open that instance and nothing
+     * else. Nothing is changed when the user already has it.
+     *
+     * @param viewName     the view, e.g. {@code K8S-VIEW}
+     * @param viewVersion  the view version
+     * @param instanceName the view instance
+     * @param username     Ambari user name
+     * @throws Exception when Ambari cannot be read or refuses the change
+     */
+    public void grantViewInstanceUser(String viewName, String viewVersion, String instanceName, String username)
+            throws Exception {
+        String url = ambariApiBase + "/views/" + encodePathSegment(viewName) + "/versions/"
+                + encodePathSegment(viewVersion) + "/instances/" + encodePathSegment(instanceName) + "/privileges";
+        String query = url + "?fields=PrivilegeInfo/permission_name,PrivilegeInfo/principal_name,"
+                + "PrivilegeInfo/principal_type";
+        try (InputStream is = stream.readFrom(query, "GET", (String) null, withStdHeaders(null))) {
+            JsonObject root = itemsAnswer(new String(is.readAllBytes(), StandardCharsets.UTF_8), query);
+            for (JsonElement el : root.getAsJsonArray("items")) {
+                JsonObject pi = el.isJsonObject() ? el.getAsJsonObject().getAsJsonObject("PrivilegeInfo") : null;
+                if (VIEW_USER.equalsIgnoreCase(jsonString(pi, "permission_name"))
+                        && "USER".equalsIgnoreCase(jsonString(pi, "principal_type"))
+                        && username.equals(jsonString(pi, "principal_name"))) {
+                    LOG.info("Ambari user '{}' already has {} on view instance {}", username, VIEW_USER, instanceName);
+                    return;
+                }
+            }
+        }
+        JsonObject info = new JsonObject();
+        info.addProperty("permission_name", VIEW_USER);
+        info.addProperty("principal_name", username);
+        info.addProperty("principal_type", "USER");
+        JsonObject privilege = new JsonObject();
+        privilege.add("PrivilegeInfo", info);
+        JsonArray body = new JsonArray();
+        body.add(privilege);
+        send(url, "POST", body.toString());
+        LOG.info("Granted {} on view instance {} to Ambari user '{}'", VIEW_USER, instanceName, username);
+    }
+
+    /**
+     * Deletes an Ambari user. Nothing happens when the user does not exist.
+     *
+     * @param username Ambari user name
+     * @return true when the user was deleted
+     * @throws Exception when Ambari refuses the deletion
+     */
+    public boolean deleteUser(String username) throws Exception {
+        if (!userExists(username)) {
+            return false;
+        }
+        send(ambariApiBase + "/users/" + encodePathSegment(username), "DELETE", null);
+        LOG.info("Deleted Ambari user '{}'", username);
+        return true;
+    }
+
+    /**
+     * Sends a change to Ambari and fails on an error answer: the view's stream provider may hand the body of an HTTP
+     * error back instead of throwing.
+     */
+    private void send(String url, String method, String body) throws Exception {
+        Map<String, String> headers = body == null ? withStdHeaders(null)
+                : withStdHeaders(Map.of("Content-Type", "application/json"));
+        try (InputStream is = stream.readFrom(url, method, body, headers)) {
+            String answer = is == null ? "" : new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            if (!answer.isBlank() && answer.trim().startsWith("{")) {
+                answer(answer, url);
             }
         }
     }
@@ -489,6 +623,48 @@ public class AmbariActionClient {
      */
     private String encode(String s) {
         return URLEncoder.encode(s,StandardCharsets.UTF_8);
+    }
+
+    /**
+     * A name (such as a user name) as one segment of an API path. URLEncoder writes a space as '+', which Ambari reads
+     * literally in a path, so a user called "John Smith" would be looked up as "John+Smith".
+     */
+    private static String encodePathSegment(String s) {
+        return URLEncoder.encode(s, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    /**
+     * Parses an Ambari answer, failing on an error. The view's stream provider hands back the body of an HTTP error
+     * instead of throwing, for instance {@code {"status": 403, "message": "..."}}; read as data, a refusal would look
+     * like an empty answer ("no cluster", "no permission").
+     *
+     * @param body the answer
+     * @param url  where it came from, for the error message
+     * @return the parsed answer
+     * @throws IOException when the answer is an HTTP error or not a JSON object
+     */
+    private static JsonObject answer(String body, String url) throws IOException {
+        JsonElement parsed = JsonParser.parseString(body);
+        if (!parsed.isJsonObject()) {
+            throw new IOException("Unexpected answer from " + url);
+        }
+        JsonObject root = parsed.getAsJsonObject();
+        JsonElement status = root.get("status");
+        if (status != null && status.isJsonPrimitive() && status.getAsJsonPrimitive().isNumber()
+                && status.getAsInt() >= 400) {
+            throw new IOException("HTTP " + status.getAsInt() + " from " + url
+                    + (jsonString(root, "message") == null ? "" : ": " + jsonString(root, "message")));
+        }
+        return root;
+    }
+
+    /** {@link #answer} for a collection: an answer without its {@code items} list is not one Ambari gives. */
+    private static JsonObject itemsAnswer(String body, String url) throws IOException {
+        JsonObject root = answer(body, url);
+        if (!root.has("items") || !root.get("items").isJsonArray()) {
+            throw new IOException("Unexpected answer from " + url + ": no items");
+        }
+        return root;
     }
 
     private Map<String,String> withStdHeaders(Map<String,String> extra) {
@@ -670,16 +846,12 @@ public class AmbariActionClient {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> decodePersistedHeaders(Map<String, Object> persisted) {
-        Object format = persisted.get(PERSISTED_HEADERS_FORMAT_KEY);
-        Object payload = persisted.get(PERSISTED_HEADERS_PAYLOAD_KEY);
-        if (!PERSISTED_HEADERS_FORMAT_ENCRYPTED.equals(format) || !(payload instanceof String payloadString) || payloadString.isBlank()) {
+        if (!EncryptedEnvelope.isEnvelope(persisted) || ((String) persisted.get(EncryptedEnvelope.PAYLOAD_KEY)).isBlank()) {
             return persisted;
         }
 
         try {
-            byte[] encrypted = Base64.getDecoder().decode(payloadString);
-            String decrypted = new String(HEADER_ENCRYPTION.decrypt(encrypted), StandardCharsets.UTF_8);
-            return GSON.fromJson(decrypted, Map.class);
+            return GSON.fromJson(EncryptedEnvelope.open(persisted), Map.class);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to decode persisted Ambari auth headers", e);
         }
@@ -694,28 +866,19 @@ public class AmbariActionClient {
     }
 
     /**
-     * helper method to check if a user does already exist in ambari's server internal database
+     * Whether a user exists in Ambari's internal database. Only an explicit "not found" means it does not: any other
+     * error (a refusal, for one, which the view's stream provider hands back as a body) is thrown, so that a caller
+     * deleting the user never takes "not allowed to look" for "already gone".
+     *
      * @param username the username to check existence for
-     * @return true or false
+     * @return true when Ambari knows the user, false when it answers 404
+     * @throws Exception when Ambari answers any other error, or something that is not a user
      */
     public boolean userExists(String username) throws Exception {
-        final String url = ambariApiBase + "/users/" + encode(username);
+        final String url = ambariApiBase + "/users/" + encodePathSegment(username);
+        final String body;
         try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
-            final String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            // Success shape:
-            // { "href": ".../api/v1/users/<user>", "Users": { "user_name": "<user>", ... } }
-            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-            if (root.has("Users")) {
-                JsonObject users = root.getAsJsonObject("Users");
-                String name = users.has("user_name") ? users.get("user_name").getAsString() : null;
-                return name != null && name.equals(username);
-            }
-            // Error shape often is: { "status":404, "message":"..." }
-            if (root.has("status") && root.get("status").getAsInt() == 404) {
-                return false;
-            }
-            // Defensive: if neither shape matched, treat as not found.
-            return false;
+            body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
         } catch (Exception e) {
             // Some Ambari builds throw on 404; normalize that to "not exists".
             String msg = String.valueOf(e.getMessage());
@@ -724,6 +887,23 @@ public class AmbariActionClient {
             }
             throw e;
         }
+        // Success shape:
+        // { "href": ".../api/v1/users/<user>", "Users": { "user_name": "<user>", ... } }
+        // Error shape: { "status":404, "message":"..." }
+        JsonElement parsed = JsonParser.parseString(body);
+        if (parsed.isJsonObject()) {
+            JsonObject root = parsed.getAsJsonObject();
+            JsonElement status = root.get("status");
+            if (status != null && status.isJsonPrimitive() && status.getAsJsonPrimitive().isNumber()
+                    && status.getAsInt() == 404) {
+                return false;
+            }
+            root = answer(body, url);
+            if (root.has("Users") && root.get("Users").isJsonObject()) {
+                return username.equalsIgnoreCase(jsonString(root.getAsJsonObject("Users"), "user_name"));
+            }
+        }
+        throw new IOException("Unexpected answer from " + url + ": no user");
     }
 
     /**
@@ -844,68 +1024,85 @@ public class AmbariActionClient {
             LOG.debug("setUserPassword('{}') response: {}", username, resp);
         }
     }
+
     /**
-     * Checks if the user has AMBARI.ADMINISTRATOR privilege.
-     * helper method to check the privileges attributed to a user to check if we need to add privileges
-     * @param username the
-     * @return
+     * The Ambari authorizations (for example {@code CLUSTER.TOGGLE_KERBEROS}) the user holds on a cluster, read with
+     * this client's headers, i.e. normally the user's own session. Authorizations granted at the Ambari level, such
+     * as those of an Ambari administrator, apply to every cluster.
+     *
+     * @param username Ambari user name
+     * @param cluster  cluster the authorizations must apply to; {@code null} keeps those of every cluster
+     * @return the authorization ids
+     * @throws Exception when Ambari cannot be read or refuses the request
      */
-    private boolean hasAmbariAdminPrivilege(String username) throws IOException {
-        String url = ambariApiBase
-                + "/users/" + encode(username)
-                + "/privileges?fields=PrivilegeInfo/permission_name,PrivilegeInfo/type";
-
-        try (InputStream is = stream.readFrom(
-                url,
-                "GET",
-                (String) null,
-                withStdHeaders(null)
-        )) {
-            String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-
-            if (!root.has("items") || !root.get("items").isJsonArray()) return false;
-
+    public Set<String> listUserAuthorizations(String username, String cluster) throws Exception {
+        String url = ambariApiBase + "/users/" + encodePathSegment(username) + "/authorizations?fields="
+                + "AuthorizationInfo/authorization_id,AuthorizationInfo/resource_type,AuthorizationInfo/cluster_name";
+        try (InputStream is = readVia(url, "GET", null, withStdHeaders(null))) {
+            JsonObject root = itemsAnswer(new String(is.readAllBytes(), StandardCharsets.UTF_8), url);
+            Set<String> granted = new LinkedHashSet<>();
             for (JsonElement el : root.getAsJsonArray("items")) {
-                JsonObject item = el.getAsJsonObject();
-                JsonObject pi   = item.getAsJsonObject("PrivilegeInfo");
-                if (pi == null) continue;
-                String type = pi.has("type") ? pi.get("type").getAsString() : null;
-                String perm = pi.has("permission_name") ? pi.get("permission_name").getAsString() : null;
-                if ("AMBARI".equalsIgnoreCase(type) && permissionName.equalsIgnoreCase(perm)) {
-                    return true;
+                JsonObject info = el.isJsonObject() ? el.getAsJsonObject().getAsJsonObject("AuthorizationInfo") : null;
+                String id = jsonString(info, "authorization_id");
+                if (id == null) {
+                    continue;
+                }
+                String clusterName = jsonString(info, "cluster_name");
+                if (cluster == null || clusterName == null || "AMBARI".equalsIgnoreCase(jsonString(info, "resource_type"))
+                        || cluster.equals(clusterName)) {
+                    granted.add(id);
                 }
             }
-            return false;
+            return granted;
         }
     }
+
+    private static String jsonString(JsonObject o, String key) {
+        if (o == null || !o.has(key) || o.get(key).isJsonNull()) {
+            return null;
+        }
+        String value = o.get(key).getAsString();
+        return value.isBlank() ? null : value;
+    }
+
     /**
-     * Grants AMBARI.ADMINISTRATOR to the user via POST /api/v1/privileges.
-     * @param username
-     * @throws Exception
+     * Whether the user holds the Ambari Administrator role, granted by name or through one of their groups, read
+     * with this client's headers. A user may read their own privileges; reading another user's needs an administrator.
+     *
+     * @param username Ambari user name
+     * @return true when the user is an Ambari administrator
+     * @throws IOException when Ambari cannot be read or refuses the request
      */
-    public void grantAmbariAdminPrivilege(String username) throws Exception {
-        String url = ambariApiBase + "/privileges";
-
-        JsonObject root  = new JsonObject();
-        JsonObject info  = new JsonObject();
-        info.addProperty("permission_name", "AMBARI.ADMINISTRATOR");
-        info.addProperty("principal_name",  username);
-        info.addProperty("principal_type",  "USER");
-        info.addProperty("type",            "AMBARI");
-        root.add("PrivilegeInfo", info);
-
-        try (InputStream is = stream.readFrom(
-                url,
-                "POST",
-                root.toString(),
-                withStdHeaders(Map.of("Content-Type", "application/json"))
-        )) {
-            String resp = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            LOG.debug("grantAmbariAdminPrivilege('{}') response: {}", username, resp);
+    public boolean isAmbariAdministrator(String username) throws IOException {
+        String url = ambariApiBase + "/users/" + encodePathSegment(username) + PRIVILEGES_QUERY;
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+            return grantsAmbariAdministrator(itemsAnswer(new String(is.readAllBytes(), StandardCharsets.UTF_8), url));
         }
     }
 
+    /**
+     * Whether a {@link #PRIVILEGES_QUERY} answer holds the Ambari Administrator role.
+     *
+     * @param privilegesJson body returned by Ambari
+     * @return true when one of the privileges is {@code AMBARI.ADMINISTRATOR} on the Ambari resource
+     */
+    public static boolean grantsAmbariAdministrator(String privilegesJson) {
+        JsonElement parsed = JsonParser.parseString(privilegesJson);
+        return parsed.isJsonObject() && grantsAmbariAdministrator(parsed.getAsJsonObject());
+    }
+
+    private static boolean grantsAmbariAdministrator(JsonObject root) {
+        if (!root.has("items") || !root.get("items").isJsonArray()) return false;
+
+        for (JsonElement el : root.getAsJsonArray("items")) {
+            JsonObject pi = el.isJsonObject() ? el.getAsJsonObject().getAsJsonObject("PrivilegeInfo") : null;
+            if ("AMBARI".equalsIgnoreCase(jsonString(pi, "type"))
+                    && AMBARI_ADMINISTRATOR.equalsIgnoreCase(jsonString(pi, "permission_name"))) {
+                return true;
+            }
+        }
+        return false;
+    }
     /**
      * static method to convert MultiValueMap from javax rs core to Classical MAP
      * @param h
@@ -937,14 +1134,7 @@ public class AmbariActionClient {
             return Map.of();
         }
 
-        String payloadJson = GSON.toJson(out);
-        String encryptedPayload = Base64.getEncoder().encodeToString(
-                HEADER_ENCRYPTION.encrypt(payloadJson.getBytes(StandardCharsets.UTF_8))
-        );
-
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put(PERSISTED_HEADERS_FORMAT_KEY, PERSISTED_HEADERS_FORMAT_ENCRYPTED);
-        envelope.put(PERSISTED_HEADERS_PAYLOAD_KEY, encryptedPayload);
+        Map<String, Object> envelope = EncryptedEnvelope.seal(GSON.toJson(out));
 
         try {
             LoggerFactory.getLogger(CommandService.class)
@@ -1184,23 +1374,97 @@ public class AmbariActionClient {
         }
         root.add("RangerPolicy", rangerPolicy);
 
+        LOG.info("Submitting Ranger policy grant for service='{}', user='{}', access='{}', policyNameHint='{}'",
+                rangerServiceName, userName, accessTypes, policyNameHint);
+        return postRangerPolicy(root, "grant");
+    }
+
+    /**
+     * Takes Ranger access back through the Ambari server ({@code POST /clusters/{c}/ranger_policy}
+     * with {@code revoke=true}). The server-side action removes {@code accessTypes} from
+     * {@code userName} in every allow policy of {@code rangerServiceName} whose resources are exactly
+     * {@code resourcesJson}, and deletes the policy named {@code ownedPolicyName} if that leaves it
+     * granting nothing. An Ambari server that does not know {@code revoke} refuses the whole request,
+     * so a revoke can never be mistaken for a grant.
+     *
+     * @return the Ambari request id to wait on with {@link #waitUntilComplete}; once it completes,
+     *         {@link #taskStructuredOut} gives {@code changedPolicies}, how many policies it changed
+     */
+    public int submitRangerPolicyRevoke(
+            String rangerServiceName,
+            String userName,
+            String accessTypes,
+            String resourcesJson,
+            String ownedPolicyName,
+            Integer timeoutSeconds,
+            String context
+    ) throws Exception {
+        return submitRangerPolicyRevoke(rangerServiceName, userName, accessTypes, resourcesJson, ownedPolicyName,
+                false, timeoutSeconds, context);
+    }
+
+    /**
+     * {@link #submitRangerPolicyRevoke(String, String, String, String, String, Integer, String)} that, with
+     * {@code ownedPolicyOnly}, changes only the policy named {@code ownedPolicyName}: for an account that also holds
+     * access of its own over the same resources, such as a service user listed in a repository's default policies.
+     * An Ambari server that does not know {@code ownedPolicyOnly} refuses the whole request, so it never takes back
+     * more than asked.
+     */
+    public int submitRangerPolicyRevoke(
+            String rangerServiceName,
+            String userName,
+            String accessTypes,
+            String resourcesJson,
+            String ownedPolicyName,
+            boolean ownedPolicyOnly,
+            Integer timeoutSeconds,
+            String context
+    ) throws Exception {
+        Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger policy revoke");
+        Objects.requireNonNull(rangerServiceName, "rangerServiceName");
+        if (userName == null || userName.isBlank()) {
+            throw new IllegalArgumentException("userName is required for a Ranger policy revoke");
+        }
+        JsonObject root = new JsonObject();
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("context",
+                (context == null || context.isBlank()) ? "Revoke Ranger access" : context);
+        root.add("RequestInfo", requestInfo);
+
+        JsonObject rangerPolicy = new JsonObject();
+        rangerPolicy.addProperty("rangerServiceName", rangerServiceName);
+        rangerPolicy.addProperty("userName", userName);
+        rangerPolicy.addProperty("accessTypes", accessTypes);
+        rangerPolicy.addProperty("resourcesJson", resourcesJson);
+        rangerPolicy.addProperty("policyNameHint", ownedPolicyName);
+        rangerPolicy.addProperty("revoke", true);
+        if (ownedPolicyOnly) {
+            rangerPolicy.addProperty("ownedPolicyOnly", true);
+        }
+        if (timeoutSeconds != null) {
+            rangerPolicy.addProperty("timeoutSeconds", timeoutSeconds);
+        }
+        root.add("RangerPolicy", rangerPolicy);
+
+        LOG.info("Submitting Ranger access revoke for service='{}', user='{}', access='{}', resources={}",
+                rangerServiceName, userName, accessTypes, resourcesJson);
+        return postRangerPolicy(root, "revoke");
+    }
+
+    /** POSTs a {@code ranger_policy} request and returns the id of the Ambari request it started. */
+    private int postRangerPolicy(JsonObject root, String what) throws Exception {
         String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/ranger_policy";
-        String payload = root.toString();
-
-        LOG.info("Submitting Ranger policy grant to {} for service='{}', user='{}', access='{}', policyNameHint='{}'",
-                url, rangerServiceName, userName, accessTypes, policyNameHint);
-
         try (InputStream is = stream.readFrom(
-                url, "POST", payload, withStdHeaders(Map.of("Content-Type", "application/json")))) {
+                url, "POST", root.toString(), withStdHeaders(Map.of("Content-Type", "application/json")))) {
             String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             JsonObject o = JsonParser.parseString(json).getAsJsonObject();
             JsonObject ro = o.getAsJsonObject("Requests");
             if (ro == null || !ro.has("id")) {
-                LOG.error("Unexpected response for Ranger policy grant submission: {}", json);
-                throw new IllegalStateException("Unexpected response for Ranger policy grant submission: " + json);
+                LOG.error("Unexpected response for Ranger policy {} submission: {}", what, json);
+                throw new IllegalStateException("Unexpected response for Ranger policy " + what + " submission: " + json);
             }
             int id = ro.get("id").getAsInt();
-            LOG.info("Ranger policy grant request accepted by Ambari, request id={}", id);
+            LOG.info("Ranger policy {} request accepted by Ambari, request id={}", what, id);
             return id;
         }
     }
@@ -1212,6 +1476,8 @@ public class AmbariActionClient {
      * KDPS uses it for the TagSync writer account: Ranger's {@code importServiceTags} is sys-admin
      * only, hence {@code userRoles = "ROLE_SYS_ADMIN"} for that caller.
      *
+     * @param userDescription the description a created user gets, naming what it belongs to; an existing user is then
+     *                        reset only when it has that description. Null for the server's default and no check
      * @return the Ambari request id to wait on with {@link #waitUntilComplete}
      */
     public int submitRangerUserUpsert(
@@ -1219,6 +1485,7 @@ public class AmbariActionClient {
             String password,
             String userRoles,
             boolean resetPassword,
+            String userDescription,
             Integer timeoutSeconds,
             String context
     ) throws Exception {
@@ -1240,22 +1507,65 @@ public class AmbariActionClient {
         if (resetPassword) {
             rangerPlugin.addProperty("resetPassword", "true");
         }
+        if (userDescription != null && !userDescription.isBlank()) {
+            rangerPlugin.addProperty("userDescription", userDescription);
+        }
         if (timeoutSeconds != null) {
             rangerPlugin.addProperty("timeoutSeconds", timeoutSeconds);
         }
         root.add("RangerPlugin", rangerPlugin);
+        LOG.info("Submitting Ranger user upsert for user='{}', roles='{}', reset={}", userName, userRoles, resetPassword);
+        return postRangerPluginUser(root, "upsert");
+    }
+
+    /**
+     * Disable an INTERNAL Ranger user through the Ambari server ({@code ranger_plugin_repository} in user-only mode
+     * with {@code disableUser}): Ranger keeps the account, disabled, with only {@code ROLE_USER} and a password the
+     * server makes up and tells nobody. KDPS uses it when a release is uninstalled, for the account its Atlas tag
+     * projector wrote tags with. A user Ranger does not have is not a failure: the task then reports
+     * {@code "found": false} in its structured output.
+     *
+     * @param userDescription the description the user must have to be disabled, naming what it belongs to; null to
+     *                        disable it whatever its description
+     * @return the Ambari request id to wait on with {@link #waitUntilComplete}
+     */
+    public int submitRangerUserDisable(String userName, String userDescription, Integer timeoutSeconds, String context)
+            throws Exception {
+        Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger user disable");
+        Objects.requireNonNull(userName, "userName");
+        JsonObject root = new JsonObject();
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("context", (context == null || context.isBlank())
+                ? ("Disable Ranger user " + userName) : context);
+        root.add("RequestInfo", requestInfo);
+        JsonObject rangerPlugin = new JsonObject();
+        rangerPlugin.addProperty("userOnly", "true");
+        rangerPlugin.addProperty("pluginUserName", userName);
+        rangerPlugin.addProperty("disableUser", "true");
+        if (userDescription != null && !userDescription.isBlank()) {
+            rangerPlugin.addProperty("userDescription", userDescription);
+        }
+        if (timeoutSeconds != null) {
+            rangerPlugin.addProperty("timeoutSeconds", timeoutSeconds);
+        }
+        root.add("RangerPlugin", rangerPlugin);
+        LOG.info("Submitting Ranger user disable for user='{}'", userName);
+        return postRangerPluginUser(root, "disable");
+    }
+
+    /** POSTs a user-only {@code ranger_plugin_repository} request and returns the id of the Ambari request it started. */
+    private int postRangerPluginUser(JsonObject root, String what) throws Exception {
         String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/ranger_plugin_repository";
-        LOG.info("Submitting Ranger user upsert to {} for user='{}', roles='{}', reset={}", url, userName, userRoles, resetPassword);
         try (InputStream is = stream.readFrom(url, "POST", root.toString(),
                 withStdHeaders(Map.of("Content-Type", "application/json")))) {
             String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             JsonObject o = JsonParser.parseString(json).getAsJsonObject();
             JsonObject ro = o.getAsJsonObject("Requests");
             if (ro == null || !ro.has("id")) {
-                throw new IllegalStateException("Unexpected response for Ranger user upsert submission: " + json);
+                throw new IllegalStateException("Unexpected response for Ranger user " + what + " submission: " + json);
             }
             int id = ro.get("id").getAsInt();
-            LOG.info("Ranger user upsert request accepted by Ambari, request id={}", id);
+            LOG.info("Ranger user {} request accepted by Ambari, request id={}", what, id);
             return id;
         }
     }
@@ -1419,6 +1729,21 @@ public class AmbariActionClient {
         }
     }
     /**
+     * The desired version of one Ambari config type: its tag, its properties and their attributes
+     * ({@code final}, {@code password}, ...), keyed by attribute name then property name.
+     *
+     * <p>Ambari masks the value of every password property in a GET (stack password types and
+     * custom properties marked {@code password}) as {@code SECRET:<type>:<version>:<key>}. Such a
+     * value can only be sent back as is when the PUT also marks the key as a password, which is
+     * why the attributes travel with the properties.
+     */
+    public record DesiredConfig(String tag,
+                                Map<String, String> properties,
+                                Map<String, Map<String, String>> attributes) {
+        static final DesiredConfig EMPTY = new DesiredConfig(null, Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    /**
      * Fetches the full properties map for the current desired configuration
      * of the given Ambari config {@code type} (e.g., "core-site", "hdfs-site").
      *
@@ -1432,6 +1757,19 @@ public class AmbariActionClient {
      * @throws Exception on transport or parsing errors
      */
     public Map<String, String> getDesiredConfigProperties(String cluster, String type) throws Exception {
+        return getDesiredConfig(cluster, type).properties();
+    }
+
+    /**
+     * Same lookup as {@link #getDesiredConfigProperties}, but also returns the desired tag and the
+     * properties' attributes, which a writer must send back to keep them.
+     *
+     * @param cluster the Ambari cluster name
+     * @param type the Ambari config type (e.g., "ranger-tagsync-site")
+     * @return the desired config; empty (never null) when the type has no desired version
+     * @throws Exception on transport or parsing errors
+     */
+    public DesiredConfig getDesiredConfig(String cluster, String type) throws Exception {
         Objects.requireNonNull(cluster, "cluster");
         Objects.requireNonNull(type, "type");
 
@@ -1450,7 +1788,7 @@ public class AmbariActionClient {
 
         if (desiredCfgs == null || !desiredCfgs.has(type)) {
             LOG.info("No desired config found for type '{}' on cluster '{}'", type, cluster);
-            return Collections.emptyMap();
+            return DesiredConfig.EMPTY;
         }
 
         String tag = desiredCfgs.getAsJsonObject(type).get("tag").getAsString();
@@ -1467,23 +1805,48 @@ public class AmbariActionClient {
         JsonArray items = rootCfg.getAsJsonArray("items");
         if (items == null || items.size() == 0) {
             LOG.info("Configuration items empty for type '{}' (tag='{}') on cluster '{}'", type, tag, cluster);
-            return Collections.emptyMap();
+            return new DesiredConfig(tag, Collections.emptyMap(), Collections.emptyMap());
         }
 
         JsonObject cfg0 = items.get(0).getAsJsonObject();
         JsonObject props = cfg0.getAsJsonObject("properties");
+        Map<String, String> result = new LinkedHashMap<>();
         if (props == null || props.entrySet().isEmpty()) {
             LOG.info("No properties present for type '{}' (tag='{}') on cluster '{}'", type, tag, cluster);
-            return Collections.emptyMap();
+        } else {
+            for (Map.Entry<String, com.google.gson.JsonElement> e : props.entrySet()) {
+                result.put(e.getKey(), e.getValue() == null || e.getValue().isJsonNull() ? null : e.getValue().getAsString());
+            }
         }
 
-        Map<String, String> result = new LinkedHashMap<>(props.entrySet().size());
-        for (Map.Entry<String, com.google.gson.JsonElement> e : props.entrySet()) {
-            result.put(e.getKey(), e.getValue() == null || e.getValue().isJsonNull() ? null : e.getValue().getAsString());
+        Map<String, Map<String, String>> attributes = new LinkedHashMap<>();
+        JsonObject attrs = cfg0.getAsJsonObject("properties_attributes");
+        if (attrs != null) {
+            for (Map.Entry<String, com.google.gson.JsonElement> byName : attrs.entrySet()) {
+                if (byName.getValue() == null || !byName.getValue().isJsonObject()) continue;
+                Map<String, String> perKey = new LinkedHashMap<>();
+                for (Map.Entry<String, com.google.gson.JsonElement> e : byName.getValue().getAsJsonObject().entrySet()) {
+                    if (e.getValue() != null && e.getValue().isJsonPrimitive()) perKey.put(e.getKey(), e.getValue().getAsString());
+                }
+                attributes.put(byName.getKey(), Collections.unmodifiableMap(perKey));
+            }
         }
 
         LOG.debug("Loaded {} properties for type '{}' (tag='{}') on cluster '{}'", result.size(), type, tag, cluster);
-        return Collections.unmodifiableMap(result);
+        return new DesiredConfig(tag, Collections.unmodifiableMap(result), Collections.unmodifiableMap(attributes));
+    }
+
+    /** The suffix {@link #updateClusterConfig} ends a tag it writes with. */
+    private static String configTagSuffix(String tagSuffix) {
+        return (tagSuffix == null || tagSuffix.isBlank()) ? "kdps" : tagSuffix.replaceAll("[^A-Za-z0-9._-]", "-");
+    }
+
+    /**
+     * Whether {@code tag} names a config version {@link #updateClusterConfig} wrote with
+     * {@code tagSuffix}, i.e. whether the desired version is still the one a caller wrote.
+     */
+    public static boolean isConfigTagWrittenWith(String tag, String tagSuffix) {
+        return tag != null && tag.endsWith("-" + configTagSuffix(tagSuffix));
     }
 
     /**
@@ -1510,15 +1873,43 @@ public class AmbariActionClient {
                                        String type,
                                        Map<String, String> propsToSet,
                                        String tagSuffix) throws Exception {
+        return updateClusterConfig(cluster, type, propsToSet, Collections.emptySet(), tagSuffix);
+    }
+
+    /**
+     * {@link #updateClusterConfig(String, String, Map, String)} that also stores the keys in
+     * {@code passwordKeys} as password properties, so Ambari masks them in its API, its UI and the
+     * config history instead of showing them in clear.
+     *
+     * <p>The attributes the config already has are sent back with it. Without them a PUT drops the
+     * {@code final} flags and, worse, stores the masked {@code SECRET:...} reference of a custom
+     * password property as its literal value.
+     *
+     * <p>A password key's current value is masked, so it can never be compared: passing one always
+     * writes a new version. A caller that wants an unchanged secret to be a no-op leaves it out of
+     * {@code propsToSet} when it knows the stored value is the same.
+     *
+     * @param passwordKeys keys of {@code propsToSet} to store as password properties; never null
+     * @return {@code true} when a new tag was written, {@code false} when no diff
+     */
+    public boolean updateClusterConfig(String cluster,
+                                       String type,
+                                       Map<String, String> propsToSet,
+                                       Set<String> passwordKeys,
+                                       String tagSuffix) throws Exception {
         Objects.requireNonNull(cluster, "cluster");
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(propsToSet, "propsToSet");
+        Objects.requireNonNull(passwordKeys, "passwordKeys");
         if (propsToSet.isEmpty()) {
             LOG.debug("updateClusterConfig: empty propsToSet for type '{}', no-op", type);
             return false;
         }
 
-        Map<String, String> current = new LinkedHashMap<>(getDesiredConfigProperties(cluster, type));
+        DesiredConfig desired = getDesiredConfig(cluster, type);
+        Map<String, String> current = new LinkedHashMap<>(desired.properties());
+        Map<String, Map<String, String>> attributes = new LinkedHashMap<>();
+        desired.attributes().forEach((name, perKey) -> attributes.put(name, new LinkedHashMap<>(perKey)));
         // Detect a real diff. An empty/null value is a delete request.
         boolean changed = false;
         for (Map.Entry<String, String> e : propsToSet.entrySet()) {
@@ -1528,10 +1919,21 @@ public class AmbariActionClient {
             if (v == null || v.isEmpty()) {
                 if (current.containsKey(k)) {
                     current.remove(k);
+                    attributes.values().forEach(perKey -> perKey.remove(k));
                     changed = true;
                 }
             } else if (!v.equals(current.get(k))) {
                 current.put(k, v);
+                changed = true;
+            }
+        }
+        // A secret written before it was declared one (stored in clear) is re-marked even when its
+        // value did not change.
+        for (String k : passwordKeys) {
+            if (!current.containsKey(k)) continue;
+            Map<String, String> passwords = attributes.computeIfAbsent("password", n -> new LinkedHashMap<>());
+            if (!"true".equals(passwords.get(k))) {
+                passwords.put(k, "true");
                 changed = true;
             }
         }
@@ -1540,20 +1942,30 @@ public class AmbariActionClient {
             return false;
         }
 
-        String safeSuffix = (tagSuffix == null || tagSuffix.isBlank()) ? "kdps" : tagSuffix.replaceAll("[^A-Za-z0-9._-]", "-");
-        String newTag = "version-" + System.currentTimeMillis() + "-" + safeSuffix;
+        String newTag = "version-" + System.currentTimeMillis() + "-" + configTagSuffix(tagSuffix);
 
-        // Build the desired PUT body: {"Clusters":{"desired_config":{"type":"...","tag":"...","properties":{...}}}}
+        // Build the desired PUT body:
+        // {"Clusters":{"desired_config":{"type":"...","tag":"...","properties":{...},"properties_attributes":{...}}}}
         JsonObject propsJson = new JsonObject();
         for (Map.Entry<String, String> e : current.entrySet()) {
             propsJson.addProperty(e.getKey(), e.getValue() == null ? "" : e.getValue());
         }
-        JsonObject desired = new JsonObject();
-        desired.addProperty("type", type);
-        desired.addProperty("tag", newTag);
-        desired.add("properties", propsJson);
+        JsonObject desiredJson = new JsonObject();
+        desiredJson.addProperty("type", type);
+        desiredJson.addProperty("tag", newTag);
+        desiredJson.add("properties", propsJson);
+        JsonObject attrsJson = new JsonObject();
+        for (Map.Entry<String, Map<String, String>> byName : attributes.entrySet()) {
+            if (byName.getValue().isEmpty()) continue;
+            JsonObject perKey = new JsonObject();
+            byName.getValue().forEach(perKey::addProperty);
+            attrsJson.add(byName.getKey(), perKey);
+        }
+        if (attrsJson.size() > 0) {
+            desiredJson.add("properties_attributes", attrsJson);
+        }
         JsonObject clusters = new JsonObject();
-        clusters.add("desired_config", desired);
+        clusters.add("desired_config", desiredJson);
         JsonObject root = new JsonObject();
         root.add("Clusters", clusters);
 
@@ -1708,6 +2120,60 @@ public class AmbariActionClient {
             String resp = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             LOG.info("View instance provisioned ({}): status response length={}", instanceName, resp.length());
         }
+    }
+
+    /**
+     * Whether Ambari has the view instance ({@code GET /views/{view}/versions/{version}/instances/{instance}}).
+     *
+     * @throws Exception when Ambari cannot be asked or refuses to say
+     */
+    public boolean viewInstanceExists(String viewName, String viewVersion, String instanceName) throws Exception {
+        String url = ambariApiBase
+                + "/views/" + encodePathSegment(viewName)
+                + "/versions/" + encodePathSegment(viewVersion)
+                + "/instances/" + encodePathSegment(instanceName);
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+            String body = is == null ? "" : new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            if (body.isBlank()) {
+                throw new IOException("Empty answer from " + url);
+            }
+            return answer(body, url).has("ViewInstanceInfo");
+        } catch (Exception e) {
+            // The stream provider may throw on an error status instead of handing back its body.
+            if (e.getMessage() != null && (e.getMessage().startsWith("HTTP 404") || e.getMessage().contains(" 404"))) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Deletes an Ambari view instance ({@code DELETE /views/{view}/versions/{version}/instances/{instance}}).
+     *
+     * @return false when Ambari has no such instance
+     * @throws Exception when Ambari refuses the deletion
+     */
+    public boolean deleteViewInstance(String viewName, String viewVersion, String instanceName) throws Exception {
+        String url = ambariApiBase
+                + "/views/" + encodePathSegment(viewName)
+                + "/versions/" + encodePathSegment(viewVersion)
+                + "/instances/" + encodePathSegment(instanceName);
+        try {
+            send(url, "DELETE", null);
+        } catch (IOException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("HTTP 404")) {
+                return false;
+            }
+            throw e;
+        } catch (Exception e) {
+            // The stream provider may throw on an error status instead of handing back its body.
+            if (e.getMessage() != null && e.getMessage().contains("404")) {
+                return false;
+            }
+            throw e;
+        }
+        LOG.info("Deleted Ambari view instance {}/{}/{}", viewName, viewVersion, instanceName);
+        return true;
     }
 
     private void initializeMainConfigurations(){

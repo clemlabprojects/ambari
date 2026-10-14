@@ -109,7 +109,8 @@ public class K8sReleaseEntity extends BaseModel {
     private String securityProfileHash;
 
     // ---------------------------------------------------------------------------------------
-    // Git (Flux GitOps) metadata — ONE persisted column holding a small JSON object instead of
+    // Small per-release metadata (the Flux GitOps attributes and the selected truststores) — ONE persisted column
+    // holding a small JSON object. Started as the git metadata column, instead of
     // nine separate columns. Ambari's DataStore forces every String property to 3000 chars against
     // a 65000-per-entity total, i.e. a hard ceiling of 21 String properties; nine flat git columns
     // consumed almost half the budget for metadata only FLUX_GITOPS releases ever set. Folding them
@@ -127,6 +128,15 @@ public class K8sReleaseEntity extends BaseModel {
     // show where a catalog is used. Null for every non-Trino release.
     @Column(length = 3000)
     private String catalogRefsJson;
+
+    // What KDPS registered for the release outside Kubernetes (Keycloak clients, Ranger access, Kerberos principals,
+    // Atlas, Ranger TagSync, view instances, Vault copies), which its uninstall takes back: see ProvisioningLedger.
+    // A column of its own rather than a key of gitMetaJson, which is already close to full for a GitOps release.
+    @Column(length = 3000)
+    private String provisioningJson;
+
+    /** What a release recorded since ledgers exist holds when KDPS registered nothing for it. */
+    static final String EMPTY_LEDGER = "{}";
 
     /** Parsed view of {@link #gitMetaJson}; rebuilt lazily and invalidated whenever the JSON is set. */
     @Transient
@@ -151,6 +161,14 @@ public class K8sReleaseEntity extends BaseModel {
 
     @Transient
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** Git metadata key of the Git server's SSH host keys, the one attribute that gives way when the column is full. */
+    @Transient
+    private static final String SSH_KNOWN_HOSTS = "sshKnownHosts";
+
+    /** Metadata key of the objects KDPS created for the release ({@link #getKdpsObjects}). */
+    @Transient
+    private static final String KDPS_OBJECTS = "kdpsObjects";
 
     // Basic columns
     public String getNamespace() {
@@ -289,6 +307,33 @@ public class K8sReleaseEntity extends BaseModel {
     public String getCatalogRefsJson() { return catalogRefsJson; }
     public void setCatalogRefsJson(String catalogRefsJson) { this.catalogRefsJson = catalogRefsJson; }
 
+    /** The only ledger property the DataStore persists (see {@link #provisioningLedger}). */
+    public String getProvisioningJson() { return provisioningJson; }
+    public void setProvisioningJson(String provisioningJson) { this.provisioningJson = provisioningJson; }
+
+    /** What KDPS registered for the release outside Kubernetes; empty when nothing is recorded. */
+    public ProvisioningLedger provisioningLedger() {
+        return ProvisioningLedger.parse(provisioningJson);
+    }
+
+    /**
+     * Records the ledger. One that would no longer fit the column keeps what was recorded before, marked as missing
+     * something ({@link ProvisioningLedger#fitting}): the DataStore would refuse the whole release record otherwise.
+     */
+    public void recordProvisioningLedger(ProvisioningLedger ledger) {
+        ProvisioningLedger fitting = ProvisioningLedger.fitting(provisioningLedger(),
+                ledger == null ? new ProvisioningLedger() : ledger, InstanceSettings.MAX_VALUE_LENGTH);
+        String json = fitting.toJson();
+        // Even an empty ledger is stored, so that a release recorded since ledgers exist is told apart from one
+        // deployed earlier, whose ledger is unknown (see hasProvisioningLedger).
+        this.provisioningJson = json == null ? EMPTY_LEDGER : json;
+    }
+
+    /** Whether the release has a ledger, which a release deployed before KDPS kept ledgers does not. */
+    public boolean hasProvisioningLedger() {
+        return provisioningJson != null && !provisioningJson.isBlank();
+    }
+
     // ---------- Git metadata (folded into the single gitMetaJson column) ----------
 
     /** The only git property the DataStore persists. Setting it invalidates the parsed cache. */
@@ -326,7 +371,12 @@ public class K8sReleaseEntity extends BaseModel {
         return cache;
     }
 
-    /** Write one git attribute, re-serialising the column. A null/blank value removes the key. */
+    /**
+     * Write one git attribute, re-serialising the column. A null/blank value removes the key. The Git server's SSH host
+     * keys give way to any other attribute that would no longer fit the column with them: the DataStore refuses a
+     * longer value when the release is stored, by then after Git was changed, while the host keys stay recorded with
+     * the release's Git credential.
+     */
     private void putGitMeta(String key, String value) {
         Map<String, String> meta = gitMeta();
         if (value == null || value.isBlank()) {
@@ -335,9 +385,82 @@ public class K8sReleaseEntity extends BaseModel {
             meta.put(key, value);
         }
         try {
-            this.gitMetaJson = meta.isEmpty() ? null : MAPPER.writeValueAsString(meta);
+            String json = meta.isEmpty() ? null : MAPPER.writeValueAsString(meta);
+            if (json != null && json.length() > InstanceSettings.MAX_VALUE_LENGTH && !SSH_KNOWN_HOSTS.equals(key)
+                    && meta.remove(SSH_KNOWN_HOSTS) != null) {
+                json = meta.isEmpty() ? null : MAPPER.writeValueAsString(meta);
+            }
+            this.gitMetaJson = json;
         } catch (Exception e) {
             // Should not happen for a Map<String,String>; keep the previous JSON rather than corrupting it.
+        }
+    }
+
+    /**
+     * Truststores selected for the release in the deploy wizard (null when none was ever recorded). Kept in the
+     * metadata JSON rather than a column of its own: a new column changes the entity, which needs a view version bump.
+     */
+    public java.util.List<String> getTruststoreRefs() {
+        String json = gitMeta().get("truststoreRefs");
+        if (json == null) {
+            return null;
+        }
+        try {
+            java.util.List<String> refs = new java.util.ArrayList<>();
+            MAPPER.readTree(json).forEach(n -> refs.add(n.asText()));
+            return refs;
+        } catch (Exception malformed) {
+            return null;
+        }
+    }
+
+    /** Records the selected truststores; an empty list means "none" (the defaults only), null forgets the choice. */
+    public void setTruststoreRefs(java.util.List<String> refs) {
+        try {
+            putGitMeta("truststoreRefs", refs == null ? null : MAPPER.writeValueAsString(refs));
+        } catch (Exception e) {
+            // A list of strings always serialises; keep the previous value otherwise.
+        }
+    }
+
+    /**
+     * The objects KDPS created for the release outside its chart, as {@code <Kind>/<name>}: what its uninstall removes,
+     * a cluster-scoped object only when named here. Empty when a deploy found none; null when no deploy ever recorded
+     * them (one by an earlier version, which did not label them either). Kept in the metadata JSON like the
+     * truststores, for the same reason.
+     */
+    public java.util.List<String> getKdpsObjects() {
+        String json = gitMeta().get(KDPS_OBJECTS);
+        if (json == null) {
+            return null;
+        }
+        try {
+            java.util.List<String> objects = new java.util.ArrayList<>();
+            MAPPER.readTree(json).forEach(n -> objects.add(n.asText()));
+            return objects;
+        } catch (Exception malformed) {
+            return null;
+        }
+    }
+
+    /**
+     * Records the objects KDPS created for the release, an empty list included (a deploy that labels what it creates
+     * found none). When they would not fit the column with the rest of the metadata, only the cluster-scoped ones are
+     * kept, which the uninstall cannot find by their labels alone; the namespaced ones it finds by their labels.
+     */
+    public void setKdpsObjects(java.util.List<String> objects) {
+        try {
+            putGitMeta(KDPS_OBJECTS, objects == null ? null : MAPPER.writeValueAsString(objects));
+            if (objects != null && gitMetaJson != null && gitMetaJson.length() > InstanceSettings.MAX_VALUE_LENGTH) {
+                java.util.List<String> clusterScoped = objects.stream()
+                        .filter(o -> o != null && o.startsWith("ClusterRoleBinding/")).toList();
+                putGitMeta(KDPS_OBJECTS, MAPPER.writeValueAsString(clusterScoped));
+                if (gitMetaJson != null && gitMetaJson.length() > InstanceSettings.MAX_VALUE_LENGTH) {
+                    putGitMeta(KDPS_OBJECTS, null);
+                }
+            }
+        } catch (Exception e) {
+            // A list of strings always serialises; keep the previous value otherwise.
         }
     }
 
@@ -355,6 +478,18 @@ public class K8sReleaseEntity extends BaseModel {
 
     public void setGitBranch(String gitBranch) {
         putGitMeta("branch", gitBranch);
+    }
+
+    /**
+     * The base branch of a GitOps release, which Flux reconciles (null when never recorded). The working branch
+     * ({@link #getGitBranch}) is another one for a pull request, still to merge.
+     */
+    public String getGitBaseBranch() {
+        return gitMeta().get("baseBranch");
+    }
+
+    public void setGitBaseBranch(String gitBaseBranch) {
+        putGitMeta("baseBranch", gitBaseBranch);
     }
 
     public String getGitRepoUrl() {
@@ -379,6 +514,27 @@ public class K8sReleaseEntity extends BaseModel {
 
     public void setGitCredentialAlias(String gitCredentialAlias) {
         putGitMeta("credentialAlias", gitCredentialAlias);
+    }
+
+    /**
+     * The SSH host keys of the release's Git server, as known_hosts lines (null when none is recorded): a connection
+     * over SSH requires the server to present one of them.
+     */
+    public String getGitSshKnownHosts() {
+        return gitMeta().get(SSH_KNOWN_HOSTS);
+    }
+
+    /**
+     * Records the SSH host keys of the release's Git server. When the metadata would no longer fit its column, the
+     * release keeps no host keys at all ({@link #getGitSshKnownHosts} gives null), rather than the previous ones: those
+     * may be keys the server no longer presents, and would take precedence over the current ones recorded with the
+     * release's Git credential. Dropped later when another Git attribute needs the room ({@link #putGitMeta}).
+     */
+    public void setGitSshKnownHosts(String knownHosts) {
+        putGitMeta(SSH_KNOWN_HOSTS, knownHosts);
+        if (gitMetaJson != null && gitMetaJson.length() > InstanceSettings.MAX_VALUE_LENGTH) {
+            putGitMeta(SSH_KNOWN_HOSTS, null);
+        }
     }
 
     public String getGitCommitMode() {
@@ -411,6 +567,57 @@ public class K8sReleaseEntity extends BaseModel {
 
     public void setGitPrState(String gitPrState) {
         putGitMeta("prState", gitPrState);
+    }
+
+    /**
+     * The spec digest annotation of the HelmRelease the last GitOps change of the release committed, which Flux copies
+     * to the cluster once it has applied that change (null when never recorded).
+     */
+    public String getGitSpecDigest() {
+        return gitMeta().get("specDigest");
+    }
+
+    public void setGitSpecDigest(String gitSpecDigest) {
+        putGitMeta("specDigest", gitSpecDigest);
+    }
+
+    /**
+     * Whether the uninstall of a GitOps release waits for its removal to be merged into the branch Flux reconciles: the
+     * release still runs, and its pull request is the one recorded ({@link #getGitPrUrl}).
+     */
+    public boolean isGitPendingDelete() {
+        return "true".equals(gitMeta().get("pendingDelete"));
+    }
+
+    public void setGitPendingDelete(boolean pendingDelete) {
+        putGitMeta("pendingDelete", pendingDelete ? "true" : null);
+    }
+
+    /**
+     * The HelmReleases a removal waiting for its merge takes out of Git, as {@code <namespace>/<name>}: the release's
+     * and its dependencies'. Their values Secrets are deleted once it is merged, when Git no longer names them.
+     * {@code null} when none is recorded.
+     */
+    public java.util.List<String> getGitRemovedHelmReleases() {
+        String json = gitMeta().get("removedHelmReleases");
+        if (json == null) {
+            return null;
+        }
+        try {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            MAPPER.readTree(json).forEach(n -> names.add(n.asText()));
+            return names;
+        } catch (Exception malformed) {
+            return null;
+        }
+    }
+
+    public void setGitRemovedHelmReleases(java.util.List<String> names) {
+        try {
+            putGitMeta("removedHelmReleases", names == null || names.isEmpty() ? null : MAPPER.writeValueAsString(names));
+        } catch (Exception e) {
+            // A list of strings always serialises; keep the previous value otherwise.
+        }
     }
 
     // ---------- Endpoints stored as JSON array ----------

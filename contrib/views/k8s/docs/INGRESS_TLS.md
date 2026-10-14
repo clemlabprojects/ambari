@@ -1,7 +1,7 @@
 # Ingress TLS — design + operations guide
 
 How the K8s view provisions TLS leaf certificates for every service it deploys
-(Superset, OpenMetadata, Trino, GitLab, …), with the four-mode operator UI on
+(Superset, OpenMetadata, Trino, …), with the four-mode operator UI on
 top of three independent provisioning engines.
 
 ## The three layers (mental model)
@@ -94,7 +94,9 @@ with `spec.ca.secretName` referencing it.
 
 ### Storage
 
-- Namespace: `ambari-pki` (configurable via view instance property `pki.namespace`).
+- Namespace: `ambari-pki`, or the *Company CA project* set in Cluster Settings (view setting
+  `pki.namespace`; the view instance property of the same name is still read when the setting is empty).
+  Never a project releases are deployed to: the Secrets hold the CA private keys.
 - One `kubernetes.io/tls` Secret per CA: `<view-instance>-<sanitized-caName>`.
 - Labels: `managed-by=ambari-k8s-view`, `ambari.clemlab.com/resource-type=issuing-ca`.
 - Validation on upload: PEMs parse, cert has `basicConstraints.CA=true`, not expired, key parses.
@@ -174,7 +176,7 @@ Click **Renew** to dispatch the right action per source:
 ```
 
 - `tlsProvisioning: "k8s-view"` — service participates in the four-mode pipeline (default; SUPERSET / OPENMETADATA / TRINO).
-- `tlsProvisioning: "chart-managed"` — chart owns its TLS (GITLAB uses `gitlab.global.hosts.https` + cert-manager). Wizard skips the TLS dropdown, OIDC pre-flight skips the `ingress.tls[]` check.
+- `tlsProvisioning: "chart-managed"` — chart owns its TLS (for example through its own `hosts.https` value and cert-manager). Wizard skips the TLS dropdown, OIDC pre-flight skips the `ingress.tls[]` check.
 
 ## Renew flow per source
 
@@ -242,11 +244,16 @@ Releases page → TLS column → **Renew** button. Dispatches based on source.
 
 ## Configuration
 
-View instance properties:
+View settings (Cluster Settings → *Truststores and Company CAs*):
 
-| Property | Default | Effect |
+| Setting | Default | Effect |
 |---|---|---|
-| `pki.namespace` | `ambari-pki` | Where Company CAs are persisted as Secrets. |
+| `pki.namespace` | `ambari-pki` | Where Company CAs are persisted as Secrets. Falls back to the view instance property of the same name. |
+| `truststore.namespace` | the Company CA project | Where the truststores of the Truststores page are persisted. |
+
+When KDPS may not write Secrets in that project (an account limited to its own projects), the
+Certificate Authorities and Truststores pages answer 403 with what to do: the platform team creates
+the project and grants the KDPS account `edit` there.
 
 Per-service in service.json:
 
@@ -255,6 +262,7 @@ Per-service in service.json:
 | `securityCoupling.requireIngress` | `true` | Auto-enable ingress when auth profile is selected. |
 | `securityCoupling.tlsProvisioning` | `"k8s-view"` | Participation in unified pipeline. |
 | `securityCoupling.minTlsMode` | `"signedByAmbariCA"` | Default TLS mode when auto-bumping off `none`. |
+| `securityCoupling.unauthenticatedExposure` | (none) | What anyone reaching the Ingress can do when no security profile requires sign-in. When set, the wizard warns on Chart Settings and asks for confirmation before deploying with the Ingress on and no LDAP, AD or OIDC profile (unless the platform context signs users in through its identity provider anyway). Set for TRINO, SUPERSET and OPENMETADATA. |
 | `requiredChartVersion` | (varies) | Semver range. Rejected at deploy time if chart drifts. |
 | `valueAliases` | `{}` | Rewrite canonical form-field paths to chart-specific values.yaml paths. |
 

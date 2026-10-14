@@ -19,14 +19,21 @@
 // ui/src/pages/ConfigurationPage.tsx
 import React from 'react';
 import { Typography, Card, Upload, Button, Alert, Collapse, Space, Layout, message, Form, Input, InputNumber, Switch, Select, Tag, Modal, Row, Col, Steps, Dropdown, Divider } from 'antd';
-import { UploadOutlined, ApiOutlined, ReloadOutlined, PlayCircleOutlined, PlusOutlined, CheckCircleTwoTone, DisconnectOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined, WarningOutlined, MinusCircleOutlined, ExclamationCircleOutlined, DownOutlined } from '@ant-design/icons';
+import { UploadOutlined, ApiOutlined, ReloadOutlined, PlayCircleOutlined, PlusOutlined, CheckCircleTwoTone, DisconnectOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined, WarningOutlined, MinusCircleOutlined, ExclamationCircleOutlined, InfoCircleOutlined, DownOutlined } from '@ant-design/icons';
 import { usePermissions } from '../hooks/usePermissions';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
 import './Page.css';
 import type { UploadRequestOption as RcCustomRequestOptions } from 'rc-upload/lib/interface';
-import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, getPreflight, type PreflightCheck, type KubeconfigContext } from '../api/client';
+import { installMonitoring, resetMonitoringCache, getHelmRepos, getViewSettings, saveViewSettings, saveHelmRepo, loginHelmRepo, API_BASE_URL, getKubeconfigContexts, selectKubeconfigContext, saveOpenShiftLogin, testOpenShiftLogin, getProxySettings, saveProxySettings, getPreflight, getMasterKeyStatus, type PreflightCheck, type KubeconfigContext, type MasterKeyStatus } from '../api/client';
 import { required, url, slug, trim } from "../utils/formRules";
+import InClusterServiceAccountSection from '../components/common/InClusterServiceAccountSection';
+import { MASKED_SECRET, SECRET_SET_PLACEHOLDER } from './globalSecurityFields';
+import { NAMESPACE_HINT, NAMESPACE_PATTERN, patternRules } from '../utils/nameRules';
+import { serverMessage } from '../utils/serverMessage';
+
+/** A stored credential comes masked: it is shown as a blank field, never as the mask. */
+const unmasked = (value: any) => (value === MASKED_SECRET ? '' : value);
 
 const { Title, Paragraph, Text } = Typography;
 const { Content } = Layout;
@@ -51,7 +58,7 @@ const MONITORING_STATE_CONFIG: Record<string, { color: string; label: string; ic
 };
 
 const ConfigurationPage: React.FC = () => {
-    const { permissions } = usePermissions();
+    const { permissions, loading: permissionsLoading } = usePermissions();
     const { status, fetchData, setClusterStatus, monitoringState } = useClusterStatus();
     const [form] = Form.useForm();
     const [repoForm] = Form.useForm();
@@ -65,6 +72,8 @@ const ConfigurationPage: React.FC = () => {
     const [clusterStepCompleted, setClusterStepCompleted] = React.useState(status !== 'unconfigured');
     const [authStepSaved, setAuthStepSaved] = React.useState(false);
     const [goToDashboardLoading, setGoToDashboardLoading] = React.useState(false);
+    // Whether the Thanos object store credentials are stored: the server never sends them back, only that they are set.
+    const [thanosKeysSet, setThanosKeysSet] = React.useState({ accessKey: false, secretKey: false });
     const navigate = useNavigate();
     const [contextModalOpen, setContextModalOpen] = React.useState(false);
     const [availableContexts, setAvailableContexts] = React.useState<KubeconfigContext[]>([]);
@@ -75,6 +84,7 @@ const ConfigurationPage: React.FC = () => {
     const [osSaving, setOsSaving] = React.useState(false);
     const [osTesting, setOsTesting] = React.useState(false);
     const [osTestOk, setOsTestOk] = React.useState(false);
+    const osSkipTls = Form.useWatch('insecure', osForm);
 
     const osFormValues = () => ({
         apiUrl: osForm.getFieldValue('apiUrl'),
@@ -123,6 +133,15 @@ const ConfigurationPage: React.FC = () => {
             setPreflightRunning(false);
         }
     };
+
+    // Whether the server can encrypt what is saved here: without the Ambari master key, every save is refused.
+    const [masterKey, setMasterKey] = React.useState<MasterKeyStatus | null>(null);
+    React.useEffect(() => {
+        getMasterKeyStatus()
+            .then(setMasterKey)
+            .catch(() => { /* an older server: the saves themselves say what is missing */ });
+    }, []);
+    const noMasterKey = masterKey !== null && !masterKey.available;
 
     // View-wide outbound proxy (for internet Helm/Git repos). Loaded once; password never returned.
     const [proxyForm] = Form.useForm();
@@ -227,6 +246,12 @@ const ConfigurationPage: React.FC = () => {
         }
     };
 
+    /** After a save: a credential typed in is now stored; one left blank kept what was stored. */
+    const rememberThanosKeys = (vals: any) => setThanosKeysSet((prev) => ({
+        accessKey: prev.accessKey || String(vals.monitoring?.thanosAccessKey ?? '').trim() !== '',
+        secretKey: prev.secretKey || String(vals.monitoring?.thanosSecretKey ?? '').trim() !== '',
+    }));
+
     const buildFullPayload = (vals: any) => ({
         monitoring: {
             autoBootstrap:              vals.monitoring?.autoBootstrap,
@@ -252,6 +277,9 @@ const ConfigurationPage: React.FC = () => {
             thanosNodePort:     vals.monitoring?.thanosNodePort,
         },
         kerberos: { injectionMode: vals.kerberos?.injectionMode },
+        // Where the Truststores tab and the Certificate Authorities page keep their Secrets; blank keeps ambari-pki.
+        truststore: { namespace: String(vals.truststore?.namespace ?? '').trim() || undefined },
+        pki: { namespace: String(vals.pki?.namespace ?? '').trim() || undefined },
     });
 
     const navButtons = (
@@ -269,9 +297,11 @@ const ConfigurationPage: React.FC = () => {
                         try {
                             await form.validateFields([['kerberos', 'injectionMode']]);
                             const vals = form.getFieldsValue(true);
-                            await saveViewSettings(buildFullPayload(vals));
+                            const { warning } = await saveViewSettings(buildFullPayload(vals));
+                            rememberThanosKeys(vals);
                             setAuthStepSaved(true);
-                            message.success('Authentication settings saved');
+                            if (warning) message.warning(`Authentication settings saved. ${warning}`, 15);
+                            else message.success('Authentication settings saved');
                         } catch (e: any) {
                             if (e?.errorFields) return;
                             message.error(e?.message || 'Save failed');
@@ -359,14 +389,21 @@ const ConfigurationPage: React.FC = () => {
                         thanosBucket:               settings?.monitoring?.thanos?.bucket,
                         thanosEndpoint:             settings?.monitoring?.thanos?.endpoint,
                         thanosRegion:               settings?.monitoring?.thanos?.region,
-                        thanosAccessKey:            settings?.monitoring?.thanos?.accessKey,
-                        thanosSecretKey:            settings?.monitoring?.thanos?.secretKey,
+                        // Left blank when stored (they come masked): sent back blank, they are kept.
+                        thanosAccessKey:            unmasked(settings?.monitoring?.thanos?.accessKey),
+                        thanosSecretKey:            unmasked(settings?.monitoring?.thanos?.secretKey),
                         thanosInsecure:             settings?.monitoring?.thanos?.insecure ?? false,
                         thanosHost:                 settings?.monitoring?.thanosHost,
                         thanosIngressClass:         settings?.monitoring?.thanosIngressClass ?? 'nginx',
                         thanosNodePort:             settings?.monitoring?.thanosNodePort,
                     },
                     kerberos: { injectionMode: settings?.kerberos?.injectionMode ?? 'WEBHOOK' },
+                    truststore: { namespace: settings?.truststore?.namespace },
+                    pki: { namespace: settings?.pki?.namespace },
+                });
+                setThanosKeysSet({
+                    accessKey: settings?.monitoring?.thanos?.accessKeySet === true,
+                    secretKey: settings?.monitoring?.thanos?.secretKeySet === true,
                 });
                 if (settings?.kerberos?.injectionMode) setAuthStepSaved(true);
             } catch { /* ignore */ }
@@ -433,6 +470,10 @@ const ConfigurationPage: React.FC = () => {
         },
     };
 
+    if (permissionsLoading) {
+        // The role arrives from the backend; do not flash the refusal at an administrator meanwhile.
+        return null;
+    }
     if (!permissions?.canConfigure) {
         return <Alert message="Insufficient Permissions" description="You do not have the required permissions to configure this view." type="error" showIcon style={{ margin: 24 }} />;
     }
@@ -500,6 +541,7 @@ const ConfigurationPage: React.FC = () => {
                                 try {
                                     const vals = form.getFieldsValue(true);
                                     await saveViewSettings(buildFullPayload(vals));
+                                    rememberThanosKeys(vals);
                                     message.success('Monitoring settings saved');
                                 } catch (e: any) { message.error(e?.message || 'Save failed'); }
                             }}
@@ -586,6 +628,7 @@ const ConfigurationPage: React.FC = () => {
                             try {
                                 const vals = form.getFieldsValue(true);
                                 await saveViewSettings(buildFullPayload(vals));
+                                rememberThanosKeys(vals);
                                 message.success('OpenShift settings saved');
                             } catch (e: any) { message.error(e?.message || 'Save failed'); }
                         }}
@@ -644,10 +687,10 @@ const ConfigurationPage: React.FC = () => {
                                         <Input placeholder="s3.amazonaws.com" />
                                     </Form.Item>
                                     <Form.Item name={['monitoring','thanosAccessKey']} label="Access key" className="form-compact-row">
-                                        <Input placeholder="ACCESS_KEY" />
+                                        <Input placeholder={thanosKeysSet.accessKey ? SECRET_SET_PLACEHOLDER : 'ACCESS_KEY'} autoComplete="off" />
                                     </Form.Item>
                                     <Form.Item name={['monitoring','thanosSecretKey']} label="Secret key" className="form-compact-row">
-                                        <Input.Password placeholder="SECRET_KEY" />
+                                        <Input.Password placeholder={thanosKeysSet.secretKey ? SECRET_SET_PLACEHOLDER : 'SECRET_KEY'} autoComplete="new-password" />
                                     </Form.Item>
                                 </Col>
                             </Row>
@@ -659,6 +702,7 @@ const ConfigurationPage: React.FC = () => {
                             try {
                                 const vals = await form.validateFields();
                                 await saveViewSettings(buildFullPayload(vals));
+                                rememberThanosKeys(vals);
                                 message.success('Storage settings saved');
                             } catch (e: any) {
                                 if (e?.errorFields) return;
@@ -686,6 +730,16 @@ const ConfigurationPage: React.FC = () => {
                         </Space>
                     </div>
 
+                    {noMasterKey && (
+                        <Alert
+                            type="error"
+                            showIcon
+                            style={{ marginBottom: 16 }}
+                            message="The Ambari master key is required"
+                            description={masterKey?.message}
+                        />
+                    )}
+
                     <Steps
                         style={{ marginBottom: 16 }}
                         current={currentStep}
@@ -700,7 +754,7 @@ const ConfigurationPage: React.FC = () => {
                         <Card title="Kubernetes Cluster Connection">
                             <Space direction="vertical" size="large" style={{ width: '100%' }}>
                                 {status === 'unconfigured' && (
-                                    <Alert message="Configuration required" description="Connect the view to your cluster: upload a kubeconfig (any Kubernetes or OpenShift cluster), or log into OpenShift with a username/password." type="info" showIcon />
+                                    <Alert message="Configuration required" description="Connect the view to your cluster: upload a kubeconfig (any Kubernetes or OpenShift cluster), log into OpenShift with a username/password, or, when Ambari runs in the cluster, connect with Ambari's own ServiceAccount." type="info" showIcon />
                                 )}
 
                                 {/* ── Kubernetes / kubeconfig ── */}
@@ -709,8 +763,8 @@ const ConfigurationPage: React.FC = () => {
                                     <Paragraph type="secondary" style={{ marginBottom: 12 }}>
                                         Upload a <code>kubeconfig</code> file. Works for any Kubernetes or OpenShift cluster (as long as its token stays valid).
                                     </Paragraph>
-                                    <Upload {...uploadProps}>
-                                        <Button icon={<UploadOutlined />}>Select Kubeconfig File</Button>
+                                    <Upload {...uploadProps} disabled={noMasterKey}>
+                                        <Button icon={<UploadOutlined />} disabled={noMasterKey}>Select Kubeconfig File</Button>
                                     </Upload>
                                     <Collapse ghost items={[{
                                         key: '1',
@@ -746,23 +800,43 @@ const ConfigurationPage: React.FC = () => {
                                             <Input.Password placeholder="••••••••" autoComplete="new-password" />
                                         </Form.Item>
                                         <Form.Item name="caData" label="Cluster CA certificate (PEM or base64)"
-                                            help="Optional. Leave blank and tick 'Skip TLS verification' for a self-signed cluster.">
+                                            help="Leave blank only if the API and OAuth-route certificates are signed by a CA the Ambari server already trusts; otherwise paste the CA bundle (API server CA + ingress CA).">
                                             <Input.TextArea rows={3} placeholder="-----BEGIN CERTIFICATE-----&#10;..." />
                                         </Form.Item>
                                         <Form.Item name="insecure" label="Skip TLS verification" valuePropName="checked">
                                             <Switch />
                                         </Form.Item>
+                                        {osSkipTls && (
+                                            <Alert
+                                                type="warning"
+                                                showIcon
+                                                style={{ marginBottom: 16 }}
+                                                message="Certificates are not verified"
+                                                description="Your password and the API token are sent to whatever server answers, without checking its certificate. Paste the cluster CA bundle instead and turn this off."
+                                            />
+                                        )}
                                         <Space>
                                             <Button icon={<ApiOutlined />} loading={osTesting} onClick={handleTestOpenShift}>
                                                 Test connection
                                             </Button>
-                                            <Button type="primary" loading={osSaving} disabled={!osTestOk} onClick={handleOpenShiftLogin}>
+                                            <Button type="primary" loading={osSaving} disabled={!osTestOk || noMasterKey} onClick={handleOpenShiftLogin}>
                                                 Connect{osTestOk ? '' : ' (test first)'}
                                             </Button>
                                             {osTestOk && <Tag color="green" icon={<CheckCircleOutlined />}>Connection verified</Tag>}
                                         </Space>
                                     </Form>
                                 </div>
+
+                                <Divider>or</Divider>
+
+                                {/* ── The Ambari pod's own ServiceAccount ── */}
+                                <InClusterServiceAccountSection
+                                    onConnected={() => {
+                                        setClusterStatus('connected');
+                                        setClusterStepCompleted(true);
+                                        void fetchData(true);
+                                    }}
+                                />
                             </Space>
                         </Card>
                     )}
@@ -771,10 +845,13 @@ const ConfigurationPage: React.FC = () => {
                     {currentStep === 0 && (
                         <Card title="Outbound proxy (for internet Helm / Git repositories)" style={{ marginTop: 16 }}>
                             <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                                Route the view's access to <strong>internet Helm and Git repositories</strong> through a
-                                corporate proxy. Applied only to repository egress — the Kubernetes API always stays direct.
-                                Credentials are stored encrypted. (Note: bundled <code>helm</code> chart pulls are Go-based
-                                and additionally need <code>HTTPS_PROXY</code> in <code>ambari-env.sh</code>.)
+                                Route the view's access to <strong>internet Git repositories</strong> (clone, push and pull
+                                requests) through a corporate proxy. Applied only to those connections — the Kubernetes API
+                                and the rest of the Ambari server are not affected. Credentials are stored encrypted. (Note:
+                                bundled <code>helm</code> chart pulls are Go-based and need <code>HTTPS_PROXY</code> in{' '}
+                                <code>ambari-env.sh</code>. A proxy that asks for a user name and password on HTTPS
+                                connections also needs <code>-Djdk.http.auth.tunneling.disabledSchemes=</code> in the Ambari
+                                server Java options.)
                             </Paragraph>
                             <Form form={proxyForm} layout="vertical" style={{ maxWidth: 620 }}>
                                 <Form.Item name="enabled" label="Enable outbound proxy" valuePropName="checked">
@@ -805,7 +882,7 @@ const ConfigurationPage: React.FC = () => {
                             <Paragraph type="secondary" style={{ marginBottom: 12 }}>
                                 Check that the connected account can perform the actions a deployment needs in a target
                                 namespace (equivalent to <code>oc auth can-i</code>). On OpenShift this also covers KEDA
-                                autoscaling and reading the platform monitoring — so a missing right is caught before you deploy.
+                                autoscaling and the objects of its monitoring token — so a missing right is caught before you deploy.
                             </Paragraph>
                             <Space style={{ marginBottom: 12 }}>
                                 <Input addonBefore="Namespace" value={preflightNs} onChange={(e) => setPreflightNs(e.target.value)} style={{ width: 320 }} />
@@ -817,14 +894,30 @@ const ConfigurationPage: React.FC = () => {
                                     {Array.from(new Set(preflightChecks.map(c => c.group))).map(group => (
                                         <div key={group} style={{ marginBottom: 8 }}>
                                             <Text strong style={{ fontSize: 12 }}>{group}</Text>
-                                            {preflightChecks.filter(c => c.group === group).map(c => (
-                                                <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
-                                                    {c.allowed
-                                                        ? <CheckCircleTwoTone twoToneColor="#52c41a" />
-                                                        : <ExclamationCircleOutlined style={{ color: '#faad14' }} />}
-                                                    <Text type={c.allowed ? undefined : 'warning'}>{c.name}</Text>
-                                                </div>
-                                            ))}
+                                            {preflightChecks.filter(c => c.group === group).map(c => {
+                                                // An advisory right that is missing is information, not a failed prerequisite.
+                                                const info = !c.allowed && !!c.advisory;
+                                                return (
+                                                    <div key={c.name} style={{ padding: '2px 0' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                            {c.allowed
+                                                                ? <CheckCircleTwoTone twoToneColor="#52c41a" />
+                                                                : info
+                                                                    ? <InfoCircleOutlined style={{ color: '#1677ff' }} />
+                                                                    : <ExclamationCircleOutlined style={{ color: '#faad14' }} />}
+                                                            <Text type={c.allowed || info ? undefined : 'warning'}>{c.name}</Text>
+                                                        </div>
+                                                        {!c.allowed && (c.note || c.remediation) && (
+                                                            <div style={{ marginLeft: 24 }}>
+                                                                {c.note && <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>{c.note}</Text>}
+                                                                {c.remediation && (
+                                                                    <Text type="secondary" style={{ fontSize: 12, display: 'block', whiteSpace: 'pre-wrap' }}>{c.remediation}</Text>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     ))}
                                 </div>
@@ -839,6 +932,12 @@ const ConfigurationPage: React.FC = () => {
                                 <Paragraph>
                                     Choose how Kerberos keytabs are delivered to pods. Webhook mode injects keytabs at
                                     admission time; pre-provisioned mode creates a Secret before Helm install.
+                                </Paragraph>
+                                <Paragraph type="secondary">
+                                    Leaving Webhook mode: redeploy every release deployed in Webhook mode, or its pods are
+                                    refused when they restart or scale once the webhook's Ambari account is removed. KDPS
+                                    keeps that account while the keytab webhook is still installed in the cluster; uninstall
+                                    the webhook, then save these settings again to remove it.
                                 </Paragraph>
                                 <Form.Item label="Kerberos keytab injection mode" name={['kerberos','injectionMode']} className="form-compact-row" style={{ maxWidth: 360 }}>
                                     <Select options={[
@@ -899,6 +998,51 @@ const ConfigurationPage: React.FC = () => {
                                 }}
                             >
                                 <Collapse ghost items={monitoringCollapseItems} />
+                            </Form>
+                        </Card>
+                    )}
+
+                    {/* ── Projects of the truststores and Company CAs ── */}
+                    {status !== 'unconfigured' && (
+                        <Card style={{ marginTop: 16 }} title="Truststores and Company CAs">
+                            <Paragraph type="secondary">
+                                The projects where KDPS keeps the truststores of the Truststores page and the Company CAs
+                                of the Certificate Authorities page. With an account limited to its own projects, ask the
+                                platform team to create a project for them and grant the KDPS account <Text code>edit</Text> there,
+                                then name it here. Company CAs carry their private keys: never use a project releases are
+                                deployed to. Leave blank for <Text code>ambari-pki</Text>.
+                            </Paragraph>
+                            <Form form={form} layout="vertical">
+                                <Row gutter={16}>
+                                    <Col xs={24} md={12}>
+                                        <Form.Item name={['pki', 'namespace']} label="Company CA project" className="form-compact-row"
+                                            rules={patternRules(NAMESPACE_PATTERN, NAMESPACE_HINT)}>
+                                            <Input placeholder="ambari-pki" autoComplete="off" />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col xs={24} md={12}>
+                                        <Form.Item name={['truststore', 'namespace']} label="Truststore project (optional)" className="form-compact-row"
+                                            extra="Blank: the Company CA project."
+                                            rules={patternRules(NAMESPACE_PATTERN, NAMESPACE_HINT)}>
+                                            <Input placeholder="same as the Company CA project" autoComplete="off" />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Button
+                                    type="primary" size="small"
+                                    onClick={async () => {
+                                        try {
+                                            await form.validateFields([['pki', 'namespace'], ['truststore', 'namespace']]);
+                                            const vals = form.getFieldsValue(true);
+                                            await saveViewSettings(buildFullPayload(vals));
+                                            rememberThanosKeys(vals);
+                                            message.success('Truststore and Company CA projects saved');
+                                        } catch (e: any) {
+                                            if (e?.errorFields) return;
+                                            message.error(serverMessage(e, 'Save failed'));
+                                        }
+                                    }}
+                                >Save</Button>
                             </Form>
                         </Card>
                     )}

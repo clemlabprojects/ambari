@@ -105,4 +105,77 @@ class HelmSetValuesTest {
     for (String leaked : new String[]{"abc", "\"pw\"", "t0k"}) assertFalse(logged.contains(leaked), logged);
     assertTrue(logged.contains("my-secret") && logged.contains("truststore.password"), "names and keys stay visible: " + logged);
   }
+
+  @Test
+  void sshAndPrivateKeysAreHidden() {
+    String json = new com.google.gson.Gson().toJson(java.util.Map.of("git", java.util.Map.of(
+        "sshKey", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl\n-----END OPENSSH PRIVATE KEY-----",
+        "credentialAlias", "gitops-1", "repoUrl", "git@git.example.org:platform/gitops.git"),
+        "tls", java.util.Map.of("privateKey", "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----")));
+    String logged = HelmSetValues.redactJson(json);
+    assertFalse(logged.contains("b3Bl") || logged.contains("MIIE"), logged);
+    assertTrue(logged.contains("gitops-1") && logged.contains("git@git.example.org"), "aliases and URLs stay visible: " + logged);
+  }
+
+  @Test
+  void theWizardFormIsHiddenWholeWithEverySecretItCarries() {
+    java.util.Map<String, Object> form = new java.util.LinkedHashMap<>();
+    form.put("superset", java.util.Map.of("secretKey", "flask-secret-751"));
+    form.put("ingress", java.util.Map.of("host", "superset.example.org", "tlsUpload",
+        java.util.Map.of("key", "-----BEGIN PRIVATE KEY-----\nMIIE-ingress-751\n-----END PRIVATE KEY-----")));
+    form.put("icebergCatalog", java.util.Map.of("s3SecretKey", "s3-secret-751", "s3AccessKey", "AKIA751"));
+    form.put("git", java.util.Map.of("sshKey", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl-751\n-----END OPENSSH PRIVATE KEY-----"));
+    java.util.Map<String, Object> params = new java.util.LinkedHashMap<>();
+    params.put("releaseName", "superset");
+    params.put("replicaCount", 2);
+    params.put("formValues", form);
+
+    String logged = HelmSetValues.redactJson(new com.google.gson.Gson().toJson(params));
+
+    for (String leaked : new String[]{"flask-secret-751", "MIIE-ingress-751", "s3-secret-751", "AKIA751", "b3Bl-751",
+        "superset.example.org"}) {
+      assertFalse(logged.contains(leaked), leaked + " in " + logged);
+    }
+    assertTrue(logged.contains("\"formValues\":\"<hidden>\"") && logged.contains("\"releaseName\":\"superset\"")
+        && logged.contains("\"replicaCount\":2"), logged);
+  }
+
+  @Test
+  void secretsOutsideTheFormAreHiddenByTheirKeyOrByTheirValue() {
+    java.util.Map<String, Object> params = new java.util.LinkedHashMap<>();
+    params.put("superset", java.util.Map.of("secretKey", "flask-1"));
+    params.put("s3SecretAccessKey", "s3s-1");
+    params.put("s3AccessKeyId", "akid-1");
+    params.put("objectStore", java.util.Map.of("accessKey", "ak-1", "apiKey", "api-1", "credentials", "cred-1"));
+    params.put("kerberos", java.util.Map.of("keytab", "BQIA-1", "keytabSecretName", "trino-keytab"));
+    params.put("ingressTlsUpload", java.util.Map.of("secretName", "superset-ingress-tls",
+        "keyPem", "-----BEGIN EC PRIVATE KEY-----\nMHcC-1\n-----END EC PRIVATE KEY-----",
+        "certPem", "-----BEGIN CERTIFICATE-----\nMIIB-cert\n-----END CERTIFICATE-----"));
+    params.put("entries", java.util.List.of(java.util.Map.of("key", "k-1", "name", "entry")));
+    params.put("ldap", java.util.Map.of("password", 123456));
+    params.put("secretName", "my-secret");
+    params.put("truststorePasswordKey", "truststore.password");
+    params.put("credentialAlias", "gitops-1");
+
+    String logged = HelmSetValues.redactJson(new com.google.gson.Gson().toJson(params));
+
+    for (String leaked : new String[]{"flask-1", "s3s-1", "akid-1", "ak-1", "api-1", "cred-1", "BQIA-1", "MHcC-1",
+        "k-1", "123456"}) {
+      assertFalse(logged.contains(leaked), leaked + " in " + logged);
+    }
+    for (String visible : new String[]{"trino-keytab", "superset-ingress-tls", "MIIB-cert", "my-secret",
+        "truststore.password", "gitops-1", "entry"}) {
+      assertTrue(logged.contains(visible), visible + " must stay readable: " + logged);
+    }
+  }
+
+  @Test
+  void aTextThatIsNotJsonIsHiddenByTheSameRules() {
+    String reference = "@@file:/var/lib/ambari-server/resources/views/k8s-view-data/kdps/params/1-params.json";
+    assertEquals(reference, HelmSetValues.redactJson(reference));
+
+    String cut = "{\"password\":\"pw-751\",\"key\":\"-----BEGIN RSA PRIVATE KEY-----\\nMIIC-751";
+    String logged = HelmSetValues.redactJson(cut);
+    assertFalse(logged.contains("pw-751") || logged.contains("MIIC-751"), logged);
+  }
 }

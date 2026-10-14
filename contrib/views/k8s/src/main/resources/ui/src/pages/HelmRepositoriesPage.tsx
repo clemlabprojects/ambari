@@ -31,7 +31,7 @@ import {
   installMonitoring, getMonitoringDiscovery,
 } from '../api/client';
 import type HelmRepo from '../types';
-import { required, url, slug, trim } from "../utils/formRules";
+import { required, url, slug, trim, secretName } from "../utils/formRules";
 import './Page.css';
 
 const { Title, Text } = Typography;
@@ -89,6 +89,9 @@ export default function RepositoriesPage() {
       imageProject: r.imageProject,
       imageRegistryHostOverride: r.imageRegistryHostOverride,
       authMode: r.authMode, username: r.username, secret: '',
+      fluxSecretName: r.fluxSecretName ?? '',
+      fluxCertSecretName: r.fluxCertSecretName ?? '',
+      caTruststores: r.caTruststores ?? '',
     });
     setModalOpen(true);
   };
@@ -402,6 +405,31 @@ export default function RepositoriesPage() {
               </Form.Item>
             </Col>
           </Row>
+
+          {/* ── GitOps (Flux) ── */}
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 12, color: '#8c8c8c' }}>
+            GitOps (Flux)
+          </Divider>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="fluxSecretName" label="Credentials Secret (optional)" getValueFromEvent={trim}
+                rules={[secretName]}
+                tooltip="An existing Secret, in every namespace a release is deployed to, that holds the credentials Flux pulls charts with (created by SOPS, Sealed Secrets or External Secrets). Leave blank to let KDPS write it from the username and password above.">
+                <Input placeholder="harbor-pull" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="fluxCertSecretName" label="CA Secret (optional)" getValueFromEvent={trim}
+                rules={[secretName]}
+                tooltip="An existing Secret holding the ca.crt Flux verifies the repository's server with. Leave blank to use the truststores below.">
+                <Input placeholder="corporate-ca" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="caTruststores" label="CA truststores (optional)"
+            tooltip="KDPS truststores holding the CA of the repository's server, comma-separated. KDPS writes their certificates to a ca.crt Secret next to each chart source.">
+            <Input placeholder="corporate-ca" />
+          </Form.Item>
         </Form>
       </Modal>
     </div>

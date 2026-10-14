@@ -40,6 +40,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
@@ -1243,6 +1244,57 @@ public class Configuration {
    * Kerberos authentication-specific properties (end)
    * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= */
 
+
+  /**
+   * Extra Keycloak hosts cluster administrators may reach with the cluster OIDC connection test,
+   * beyond the ones saved in the cluster's {@code oidc-env} configuration.
+   */
+  @Markdown(
+      description = "A comma-separated list of Keycloak host names that cluster administrators may contact with the OIDC connection test of a cluster, in addition to the hosts saved in the cluster's `oidc-env` configuration. Ambari administrators may test any host. An entry starting with `*.` matches every host of that domain. Use it to let cluster administrators test an identity provider before saving it, or one used by Kubernetes platform contexts.",
+      examples = { "keycloak.example.com", "keycloak.example.com,*.idp.example.com" })
+  public static final ConfigurationProperty<String> OIDC_CONNECTION_TEST_ALLOWED_HOSTS = new ConfigurationProperty<>(
+      "oidc.connection.test.allowed.hosts", "");
+
+  /**
+   * Principals Ambari may issue an ad-hoc keytab for although they are not named after the
+   * Kubernetes namespace that receives the keytab.
+   */
+  @Markdown(
+      description = "A comma-separated list of Kerberos principals that Ambari may issue an ad-hoc keytab for, although they are not named after the Kubernetes namespace that receives the keytab. Ad-hoc keytabs are requested by the Kubernetes workloads the KDPS view deploys; list here, for example, a service principal your KDC administrator created on a host of your choice, or the principals of a keytab webhook whose headless template appends the cluster name after the namespace. `*` matches any sequence of characters. The cluster's own principals and service accounts are refused even when they match.",
+      examples = { "jupyterhub/jupyterhub.example.com@EXAMPLE.COM", "jupyterhub/*.example.com@EXAMPLE.COM" })
+  public static final ConfigurationProperty<String> KERBEROS_ADHOC_KEYTAB_ALLOWED_PRINCIPALS = new ConfigurationProperty<>(
+      "kerberos.adhoc.keytab.allowed.principals", "");
+
+  /**
+   * The DNS suffixes ending the host of a Kubernetes workload's service principal.
+   */
+  @Markdown(
+      description = "A comma-separated list of the DNS suffixes that end the host of a Kubernetes workload's service principal, as in `<service>/<service>.<namespace>.<suffix>@REALM`. Ambari issues an ad-hoc keytab for such a principal only when the label right before the suffix is the namespace that receives the keytab.",
+      examples = { "k8s,svc,svc.cluster.local" })
+  public static final ConfigurationProperty<String> KERBEROS_ADHOC_KEYTAB_DNS_SUFFIXES = new ConfigurationProperty<>(
+      "kerberos.adhoc.keytab.dns.suffixes", "k8s,svc,svc.cluster.local");
+
+  /**
+   * The service names a principal named after a Kubernetes namespace may start with, as in
+   * {@code <service>-<namespace>@REALM}. Service and namespace names may both contain dashes, so
+   * only a known service tells where the namespace starts in such a name.
+   */
+  @Markdown(
+      description = "A comma-separated list of the service names Ambari accepts in the principals it issues ad-hoc keytabs for to the workloads of a Kubernetes namespace, as in `<service>-<namespace>@REALM` (or the shortened form the KDPS view gives a name longer than 32 characters) and `<service>-<namespace>/<host>@REALM`. Service and namespace names may both contain dashes, so a principal is only read as `<service>-<namespace>` for a listed service: otherwise `trino-team-analytics` could pass for namespace `analytics` although it is the Trino principal of namespace `team-analytics`. When a listed name starts with another listed name and a dash (`trino` and `trino-worker`), the longer one decides: `trino-worker-analytics` then belongs to namespace `analytics` only. The default lists the services the KDPS view deploys. If the KDPS keytab webhook issues headless principals (its default `PRINCIPAL_MODE`), add the service labels of the pods it serves, such as `trino-coordinator`, `trino-worker` or `openmetadata-ingestion`.",
+      examples = { "jupyterhub,trino,superset-dashboard,oma-ing",
+          "jupyterhub,trino,superset-dashboard,oma-ing,trino-coordinator,trino-worker" })
+  public static final ConfigurationProperty<String> KERBEROS_ADHOC_KEYTAB_HEADLESS_SERVICE_NAMES = new ConfigurationProperty<>(
+      "kerberos.adhoc.keytab.headless.service.names", "jupyterhub,trino,superset-dashboard,oma-ing");
+
+  /**
+   * The service names a Kubernetes workload's service principal may start with. The cluster treats
+   * {@code <service>/<host>@REALM} as the user {@code <service>}, whatever the host.
+   */
+  @Markdown(
+      description = "A comma-separated list of the service names Ambari accepts as the first part of a Kubernetes workload's service principal, as in `<service>/<service>.<namespace>.<suffix>@REALM`. The cluster treats such a principal as the user `<service>`, whatever its host, so every release of a listed service shares that user; a name that is not listed could be any user of the cluster and is refused. A name `<service>-<namespace>` built from the namespace that receives the keytab and a service listed in `kerberos.adhoc.keytab.headless.service.names` is accepted without being listed here. If the KDPS keytab webhook issues service principals (`PRINCIPAL_MODE` set to `service` or `auto`), list the service names of the workloads it serves.",
+      examples = { "jupyterhub", "jupyterhub,trino" })
+  public static final ConfigurationProperty<String> KERBEROS_ADHOC_KEYTAB_SERVICE_NAMES = new ConfigurationProperty<>(
+      "kerberos.adhoc.keytab.service.names", "jupyterhub");
 
   @Markdown(description = "The number of times failed Kerberos operations should be retried to execute.")
   public static final ConfigurationProperty<Integer> KERBEROS_OPERATION_RETRIES = new ConfigurationProperty<>(
@@ -6267,6 +6319,74 @@ public class Configuration {
         kerberosAuthProperties.getAuthToLocalRules());
 
     return kerberosAuthProperties;
+  }
+
+  /**
+   * Gets the extra Keycloak hosts the cluster OIDC connection test may contact.
+   *
+   * @return the configured host names (and {@code *.domain} entries) in lower case, never null
+   */
+  public Set<String> getOidcConnectionTestAllowedHosts() {
+    return lowerCaseEntries(getProperty(OIDC_CONNECTION_TEST_ALLOWED_HOSTS));
+  }
+
+  /**
+   * Gets the principals Ambari may issue an ad-hoc keytab for although they are not named after the
+   * namespace receiving the keytab.
+   *
+   * @return the configured principal patterns in lower case, never null
+   */
+  public Set<String> getKerberosAdhocKeytabAllowedPrincipals() {
+    return lowerCaseEntries(getProperty(KERBEROS_ADHOC_KEYTAB_ALLOWED_PRINCIPALS));
+  }
+
+  /**
+   * Gets the DNS suffixes ending the host of a Kubernetes workload's service principal.
+   *
+   * @return the configured suffixes in lower case and without a leading dot, never null
+   */
+  public Set<String> getKerberosAdhocKeytabDnsSuffixes() {
+    Set<String> suffixes = new HashSet<>();
+    for (String suffix : lowerCaseEntries(getProperty(KERBEROS_ADHOC_KEYTAB_DNS_SUFFIXES))) {
+      String bare = StringUtils.stripStart(suffix, ".");
+      if (!bare.isEmpty()) {
+        suffixes.add(bare);
+      }
+    }
+    return suffixes;
+  }
+
+  /**
+   * Gets the service names a principal named after a Kubernetes namespace may start with.
+   *
+   * @return the configured service names in lower case, never null
+   */
+  public Set<String> getKerberosAdhocKeytabHeadlessServiceNames() {
+    return lowerCaseEntries(getProperty(KERBEROS_ADHOC_KEYTAB_HEADLESS_SERVICE_NAMES));
+  }
+
+  /**
+   * Gets the service names a Kubernetes workload's service principal may start with.
+   *
+   * @return the configured service names in lower case, never null
+   */
+  public Set<String> getKerberosAdhocKeytabServiceNames() {
+    return lowerCaseEntries(getProperty(KERBEROS_ADHOC_KEYTAB_SERVICE_NAMES));
+  }
+
+  /**
+   * The non-blank entries of a comma-separated property value, trimmed and in lower case.
+   */
+  private static Set<String> lowerCaseEntries(String value) {
+    Set<String> entries = new HashSet<>();
+    if (StringUtils.isNotBlank(value)) {
+      for (String entry : value.split(",")) {
+        if (StringUtils.isNotBlank(entry)) {
+          entries.add(entry.trim().toLowerCase(Locale.ROOT));
+        }
+      }
+    }
+    return entries;
   }
 
   public int getKerberosOperationRetries() {

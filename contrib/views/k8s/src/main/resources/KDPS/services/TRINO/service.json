@@ -1,9 +1,8 @@
 {
   "label": "Trino",
   "chart": "trinodb/trino",
-  "pattern": "trino-.*",
   "secretName": "registry-credentials",
-  "version": "1.43.14",
+  "version": "1.43.18",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -15,6 +14,8 @@
       "clientIdTemplate": "{{releaseName}}-{{namespace}}",
       "secretNameTemplate": "{{releaseName}}-oidc-client",
       "redirectUriTemplate": "https://{{ingressHost}}/oauth2/callback",
+      "_jwtAudiencePath": "Trino's JWT authenticator (on beside OAUTH2 for programmatic clients such as Superset) accepts only tokens whose audience is this client id (with an External-source security profile, the profile's JWT Audience when set): KDPS writes it here and adds it to the tokens of the clients it registers that call this Trino. Without it any token of the realm authenticates, one issued to another application for a signed-in user included.",
+      "jwtAudiencePath": "global.security.auth.oidc.jwt.requiredAudience",
       "publicClient": false,
       "standardFlowEnabled": true,
       "enabled": true
@@ -45,8 +46,13 @@
         {
           "property": "jdbc.url",
           "type": "template",
-          "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=NONE",
+          "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}{{sslVerification}}",
           "properties": {
+            "sslVerification": {
+              "source": "embedded",
+              "type": "string",
+              "path": "rangerSslVerificationSuffix"
+            },
             "host": {
               "source": "template",
               "type": "string",
@@ -54,7 +60,7 @@
             },
             "port": {
               "source": "helm",
-              "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}server.config.https.port{% endif %}",
+              "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}service.port{% endif %}",
               "type": "integer"
             },
             "ssl": {
@@ -74,7 +80,7 @@
       "ranger_policymgr_file": "/etc/trino/ranger/ranger-policymgr-ssl-trino.xml",
       "helm_values_ranger_policymgr_file": "ranger.policymgrssl_path",
       "type": "ranger-security",
-      "cm_name": "ranger-trino-security",
+      "cm_name": "{{releaseName}}-ranger-trino-security",
       "cm_type": "config-map",
       "helm_values_property": "ranger.securityConfigMapName",
       "plugin_username": "trino_ranger_plugin_user",
@@ -85,30 +91,30 @@
       "service_type": "trino",
       "krb5_princ_srv": "trino",
       "type": "ranger-audit",
-      "cm_name": "ranger-trino-audit",
+      "cm_name": "{{releaseName}}-ranger-trino-audit",
       "cm_type": "config-map",
       "helm_values_property": "ranger.auditConfigMapName"
     },
     "ranger-policymgr-ssl": {
       "service_type": "trino",
       "type": "ranger-policymgr-ssl",
-      "cm_name": "ranger-policymgr-ssl",
+      "cm_name": "{{releaseName}}-ranger-policymgr-ssl",
       "cm_type": "config-map",
       "helm_values_property": "ranger.policymgrSslConfigMapName",
       "ranger_plugin_credential_provider_path": "/etc/trino/ranger/cred",
       "ranger_plugin_credential_provider_path_helm_prop": "ranger.cred.providerPath",
       "ranger_plugin_credential_provider_file": "cred.jceks",
       "ranger_plugin_credential_provider_file_helm_prop": "ranger.cred.providerFile",
-      "ranger_plugin_credential_provider_secretName": "ranger-trino-plugin-credential-provider",
+      "ranger_plugin_credential_provider_secretName": "{{releaseName}}-ranger-trino-plugin-credential-provider",
       "ranger_plugin_credential_provider_secretName_helm_prop": "ranger.cred.secretName"
     },
     "ranger-admin-truststore": {
       "service_type": "trino",
       "type": "ranger-admin-truststore",
-      "cm_name": "ranger-admin-truststore",
+      "cm_name": "{{releaseName}}-ranger-admin-truststore",
       "cm_type": "secret",
       "helm_values_property": "ranger.admin.ssl.truststore.secretName",
-      "truststore_password_secret_name": "ranger-admin-ts-pass",
+      "truststore_password_secret_name": "{{releaseName}}-ranger-admin-ts-pass",
       "truststore_password_helm_values_property": "ranger.admin.ssl.truststore.password",
       "truststore_file_key": "truststore.jks",
       "truststore_file_key_helm_values_property": "ranger.admin.ssl.truststore.fileKey",
@@ -128,8 +134,8 @@
       "fullnameOverride": "keytab-webhook",
       "secretName": "regcred",
       "chart": "kerberos-keytab-mutating-webhook",
-      "chartVersion": "0.1.0",
-      "imageTag": "1.0.0.1",
+      "chartVersion": "0.2.0",
+      "imageTag": "1.0.0.10",
       "imageRepository": "registry.clemlab.com/clemlabprojects",
       "namespace": "ambari-mutating-webhooks",
       "imageGlobalRegistryProperty": "global.imageRegistry",
@@ -151,6 +157,7 @@
       "imageGlobalRegistryProperty": "global.image.registry",
       "namespace": "keda",
       "namespaceFromForm": "keda.namespace",
+      "onlyWhenValueTrue": "server.keda.enabled",
       "skipIfReleaseExists": true,
       "skipIfCrdExists": "scaledobjects.keda.sh",
       "skipOnOpenShift": true,
@@ -168,6 +175,8 @@
       "chart": "kube-prometheus-stack",
       "chartVersion": "78.3.2",
       "skipIfReleaseExists": true,
+      "skipIfPrometheusPresent": true,
+      "namespaceFromForm": "monitoring.namespace",
       "skipOnOpenShift": true,
       "crds": [
         "servicemonitors.monitoring.coreos.com"
@@ -548,7 +557,8 @@
     },
     {
       "name": "prometheus.serverAddress",
-      "template": "http://${monitoring.release}-prometheus.${monitoring.namespace}.svc:9090"
+      "template": "http://${monitoring.release}-prometheus.${monitoring.namespace}.svc:9090",
+      "overrideField": "monitoring.url"
     },
     {
       "comment": "OpenShift: worker autoscaling reads metrics from the platform's built-in (user-workload) monitoring via the thanos-querier CLUSTER endpoint (:9091). The KEDA SA is bound to cluster-monitoring-view, so :9091 is the correct port (the :9092 tenancy port returns HTTP 400 for a cluster-view token and needs a per-request namespace param KEDA does not send). Verified on CRC: :9091 + bearer token returns the trino_* metrics. On vanilla K8s the kube-prometheus-stack address above is used instead.",
@@ -758,13 +768,6 @@
     { "name": "icebergS3CredentialSecret","from": { "type": "form", "field": "icebergCatalog.s3CredentialSecret" } },
     { "name": "releaseNameVar",          "from": { "type": "form", "field": "releaseName" } },
     { "name": "icebergProvision",        "from": { "type": "form", "field": "icebergCatalog.provision" } },
-    {
-      "name": "internalSharedSecret",
-      "from": {
-        "type": "form",
-        "field": "internalSharedSecret"
-      }
-    },
     {
       "name": "ingressCertManagerIssuerName",
       "from": {
@@ -1025,6 +1028,20 @@
       ]
     },
     {
+      "name": "init-container-resources",
+      "comment": "Kubernetes counts init containers when it sets the pod QoS class: the chart's own init containers get requests equal to limits so the coordinator and workers stay Guaranteed.",
+      "targets": [
+        {
+          "path": "initContainerResources",
+          "op": "set",
+          "value": {
+            "requests": { "cpu": "100m", "memory": "128Mi" },
+            "limits": { "cpu": "100m", "memory": "128Mi" }
+          }
+        }
+      ]
+    },
+    {
       "name": "fsGroup",
       "targets": [
         {
@@ -1039,22 +1056,8 @@
     },
     {
       "name": "keda-enable",
+      "comment": "server.keda.enabled, minReplicaCount and maxReplicaCount are wizard fields (Autoscaling group).",
       "targets": [
-        {
-          "path": "server.keda.enabled",
-          "op": "set",
-          "value": true
-        },
-        {
-          "path": "server.keda.minReplicaCount",
-          "op": "set",
-          "value": 1
-        },
-        {
-          "path": "server.keda.maxReplicaCount",
-          "op": "set",
-          "value": 10
-        },
         {
           "path": "server.keda.pollingInterval",
           "op": "set",
@@ -1069,12 +1072,8 @@
     },
     {
       "name": "service-monitor-enable",
+      "comment": "serviceMonitor.enabled is the 'Collect metrics' wizard field.",
       "targets": [
-        {
-          "path": "serviceMonitor.enabled",
-          "op": "set",
-          "value": true
-        },
         {
           "path": "serviceMonitor.apiVersion",
           "op": "set",
@@ -1091,7 +1090,10 @@
         {
           "path": "serviceMonitor.coordinator.enabled",
           "op": "set",
-          "value": true
+          "from": {
+            "type": "form",
+            "field": "serviceMonitor.enabled"
+          }
         },
         {
           "path": "serviceMonitor.coordinator.endpoints[]",
@@ -1108,7 +1110,10 @@
         {
           "path": "serviceMonitor.worker.enabled",
           "op": "set",
-          "value": true
+          "from": {
+            "type": "form",
+            "field": "serviceMonitor.enabled"
+          }
         },
         {
           "path": "serviceMonitor.worker.endpoints[]",
@@ -1133,6 +1138,15 @@
           "from": {
             "type": "form",
             "field": "monitoring.release"
+          }
+        },
+        {
+          "path": "serviceMonitor.labels",
+          "op": "merge",
+          "from": {
+            "type": "form",
+            "field": "monitoring.serviceMonitorLabels",
+            "format": "labels"
           }
         }
       ]
@@ -1345,7 +1359,6 @@
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "unsafeSsl": "true",
                 "threshold": "${keda.requiredWorkers.threshold}",
                 "query": "sum by (service) (avg_over_time(trino_execution_ClusterSizeMonitor_RequiredWorkers{service=\"${trino.fullname}\"}[${keda.requiredWorkers.window}]))"
               }
@@ -1366,7 +1379,6 @@
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "unsafeSsl": "true",
                 "threshold": "${keda.queuedQueries.threshold}",
                 "activationThreshold": "${keda.queuedQueries.activation}",
                 "query": "sum(trino_execution_QueryManager_QueuedQueries{namespace=\"${namespace}\"})"
@@ -1388,7 +1400,6 @@
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "unsafeSsl": "true",
                 "threshold": "${keda.runningQueries.threshold}",
                 "activationThreshold": "${keda.runningQueries.activation}",
                 "query": "sum(trino_execution_QueryManager_RunningQueries{namespace=\"${namespace}\"})"
@@ -1410,7 +1421,6 @@
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "unsafeSsl": "true",
                 "threshold": "${keda.heap.threshold}",
                 "activationThreshold": "${keda.heap.activation}",
                 "query": "((sum(java_lang_Memory_HeapMemoryUsage_used{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"}) / sum(java_lang_Memory_HeapMemoryUsage_max{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"})) * 100)"
@@ -1441,6 +1451,13 @@
           "op": "set",
           "skipIfVarEmpty": "isOpenShift",
           "from": { "type": "template", "template": "${keda.thanos.tokenSecret}" }
+        },
+        {
+          "comment": "service-ca.crt in the service-account-token Secret is the CA that signs the monitoring endpoint's certificate, so the triggers verify it instead of skipping the check.",
+          "path": "server.keda.triggerAuthentication.caKey",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": { "type": "template", "template": "service-ca.crt" }
         }
       ]
     },
@@ -1454,6 +1471,12 @@
             "type": "template",
             "template": "${tlsHttpsEnabled}"
           }
+        },
+        {
+          "comment": "Written when internal HTTPS is off too: an upgrade starts from the release's values, which hold true when it was installed with internal HTTPS, so skipping the target above would leave HTTPS on while the options that need it are turned off (kdps-service-user-needs-https).",
+          "path": "server.config.https.enabled",
+          "skipIfVarEmpty": "tlsHttpsDisabled",
+          "value": false
         },
         {
           "path": "server.config.https.port",
@@ -1520,15 +1543,6 @@
           }
         },
         {
-          "comment": "Only when the operator typed a keystore password. Left blank, KDPS generates one and the chart's init container appends it from the Secret — writing an empty key= line here would shadow nothing but is noise at best.",
-          "path": "coordinator.additionalConfigProperties[]",
-          "skipIfVarEmpty": ["tlsHttpsEnabled", "tlsHttpsPassword"],
-          "from": {
-            "type": "template",
-            "template": "http-server.https.keystore.key=${tlsHttpsPassword}"
-          }
-        },
-        {
           "path": "global.security.tls.enabled",
           "skipIfVarEmpty": "tlsHttpsEnabled",
           "from": {
@@ -1559,6 +1573,17 @@
       ]
     },
     {
+      "comment": "'Let KDPS manage catalogs' is a password login, which Trino only accepts over HTTPS: the chart refuses it without internal HTTPS and the dry run fails. The checkbox is on by default and only hidden once internal HTTPS is off, and a hidden field still sends its value, so it is turned off here.",
+      "name": "kdps-service-user-needs-https",
+      "skipIfVarEmpty": "tlsHttpsDisabled",
+      "targets": [
+        {
+          "path": "kdps.serviceUser.enabled",
+          "value": false
+        }
+      ]
+    },
+    {
       "name": "ldap-group-auth-pattern",
       "skipIfVarEmpty": "ldapGroupAuthPattern",
       "targets": [
@@ -1580,19 +1605,6 @@
           "from": {
             "type": "template",
             "template": "web-ui.enabled=${webUiEnabled}"
-          }
-        }
-      ]
-    },
-    {
-      "name": "internal-shared-secret",
-      "skipIfVarEmpty": "internalSharedSecret",
-      "targets": [
-        {
-          "path": "additionalConfigProperties[]",
-          "from": {
-            "type": "template",
-            "template": "internal-communication.shared-secret=${internalSharedSecret}"
           }
         }
       ]
@@ -1797,9 +1809,11 @@
     },
     {
       "name": "releaseName",
-      "label": "Nom du Release",
+      "label": "Release name",
       "type": "string",
-      "required": true
+      "required": true,
+      "pattern": "^(?=.{1,53}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+      "validationHint": "Use at most 53 lower-case letters, digits, '-' and '.', starting and ending with a letter or digit (Helm's rule for release names)."
     },
     {
       "name": "namespace",
@@ -1810,10 +1824,31 @@
     },
     {
       "name": "nameOverride",
-      "label": "Nom logique (nameOverride)",
+      "label": "Name override",
       "type": "string",
       "defaultValue": "clemlab-trino",
-      "help": "Sera concaténé au releaseName pour former le fullname (ex: <release>-clemlab-trino)"
+      "help": "Appended to the release name to form the full name (e.g. <release>-clemlab-trino)."
+    },
+    {
+      "name": "monitoringOpenShift",
+      "label": "Monitoring",
+      "type": "group",
+      "capability": "openshift",
+      "fields": [
+        {
+          "name": "monitoring.openshiftNotice",
+          "label": "OpenShift monitoring",
+          "type": "openshift-monitoring-notice",
+          "excludeFromValues": true
+        },
+        {
+          "name": "serviceMonitor.enabled",
+          "label": "Collect metrics (ServiceMonitor)",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "Lets OpenShift monitoring scrape Trino; needs the monitoring-edit role in the project. Required by worker autoscaling: turn autoscaling off to turn this off."
+        }
+      ]
     },
     {
       "name": "monitoringGeneric",
@@ -1826,38 +1861,59 @@
           "label": "Discover monitoring stack",
           "type": "monitoring-discovery",
           "excludeFromValues": true,
-          "help": "Auto-fill monitoring namespace and release from installed kube-prometheus-stack."
+          "autoSelectSingle": true,
+          "help": "Finds the Prometheus already running on the cluster (any namespace, any release name) and fills the fields below from it."
         },
         {
           "name": "monitoring.namespace",
           "label": "Monitoring namespace",
           "type": "string",
-          "defaultValue": "monitoring"
+          "defaultValue": "monitoring",
+          "condition": {
+            "field": "monitoring.discovery",
+            "operator": "empty"
+          },
+          "help": "Namespace of the Prometheus stack, or where KDPS installs one when none is found."
         },
         {
           "name": "monitoring.release",
           "label": "Monitoring release (Helm)",
           "type": "string",
           "defaultValue": "kube-prometheus-stack",
-          "help": "Utilisé pour construire l'URL du Prometheus interne."
+          "condition": {
+            "field": "monitoring.discovery",
+            "operator": "empty"
+          },
+          "help": "Release of the Prometheus stack: builds the Prometheus address when none is given below, and is put on the ServiceMonitors as their release label."
+        },
+        {
+          "name": "monitoring.url",
+          "label": "Prometheus address",
+          "type": "string",
+          "defaultValue": "",
+          "help": "Address the autoscaler queries, filled by discovery. Leave blank to use http://<release>-prometheus.<namespace>.svc:9090."
         },
         {
           "name": "serviceMonitor.enabled",
-          "label": "Expose ServiceMonitor",
+          "label": "Collect metrics (ServiceMonitor)",
           "type": "boolean",
-          "defaultValue": true
+          "defaultValue": true,
+          "help": "Lets Prometheus scrape Trino. Required by worker autoscaling."
         },
         {
           "name": "serviceMonitor.interval",
           "label": "Scrape interval",
           "type": "string",
+          "keepWhenHidden": true,
           "defaultValue": "30s"
         },
         {
-          "name": "serviceMonitor.labels.release",
-          "label": "Prometheus selector label value",
+          "name": "monitoring.serviceMonitorLabels",
+          "label": "ServiceMonitor labels",
           "type": "string",
-          "defaultValue": ""
+          "excludeFromValues": true,
+          "defaultValue": "",
+          "help": "Labels the Prometheus selects ServiceMonitors by, as key=value pairs separated by commas. Filled by discovery."
         }
       ]
     },
@@ -1866,13 +1922,18 @@
       "label": "Autoscaling (KEDA)",
       "type": "group",
       "capability": "kubernetes",
+      "condition": {
+        "field": "server.keda.enabled",
+        "value": true
+      },
       "fields": [
         {
           "name": "keda.discovery",
           "label": "Discover KEDA",
           "type": "keda-discovery",
           "excludeFromValues": true,
-          "help": "Detect an existing KEDA operator on the cluster (incl. the OpenShift Custom Metrics Autoscaler) so worker autoscaling reuses it instead of installing a conflicting one. Auto-fills the namespace below."
+          "autoSelectSingle": true,
+          "help": "Finds the KEDA operator already on the cluster, which worker autoscaling then uses. When none is found, KDPS installs KEDA in the namespace below."
         },
         {
           "name": "keda.namespace",
@@ -1880,56 +1941,39 @@
           "type": "string",
           "excludeFromValues": true,
           "defaultValue": "keda",
-          "help": "Namespace of the KEDA operator. Used to locate an existing install (skip) or to place a fresh one. Left at the default only matters when KDPS installs KEDA itself."
-        },
-        {
-          "name": "keda.release",
-          "label": "KEDA release (Helm)",
-          "type": "string",
-          "excludeFromValues": true,
-          "defaultValue": "keda",
-          "help": "Helm release name of an existing KEDA, when Helm-installed. Informational for OLM/OpenShift operators."
+          "condition": {
+            "field": "keda.discovery",
+            "operator": "empty"
+          },
+          "help": "Namespace KDPS installs KEDA into, as no KEDA operator was found."
         }
       ]
     },
     {
       "name": "networkAccess",
-      "label": "Accès Réseau (Service Trino)",
+      "label": "Network access (Trino service)",
       "type": "group",
       "fields": [
         {
           "name": "service.enabled",
-          "label": "Activer l'accès interne (ClusterIP)",
+          "label": "Enable internal access (ClusterIP)",
           "type": "boolean",
           "defaultValue": true
         },
         {
           "name": "nodePort.enabled",
-          "label": "Activer l'accès externe (NodePort)",
+          "label": "Enable external access (NodePort)",
           "type": "boolean",
           "defaultValue": false
         },
         {
           "name": "nodePort.port",
-          "label": "Port du Nœud (Optionnel)",
+          "label": "Node port (optional)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
             "value": true
           }
-        }
-      ]
-    },
-    {
-      "name": "security",
-      "label": "Sécurité interne",
-      "type": "group",
-      "fields": [
-        {
-          "name": "internalSharedSecret",
-          "label": "Shared secret interne",
-          "type": "password",
-          "help": "Valeur utilisée pour internal-communication.shared-secret afin de sécuriser les communications internes Trino."
         }
       ]
     },
@@ -1940,10 +1984,10 @@
       "fields": [
         {
           "name": "webUi.enabled",
-          "label": "Activer l'interface Web",
+          "label": "Enable the web UI",
           "type": "boolean",
           "defaultValue": true,
-          "help": "Pilote web-ui.enabled dans Trino (UI toujours disponible par défaut)."
+          "help": "Sets web-ui.enabled in Trino (the UI is available by default)."
         }
       ]
     },
@@ -1965,6 +2009,7 @@
           "label": "Ingress class",
           "type": "string",
           "capability": "kubernetes",
+          "keepWhenHidden": true,
           "required": true,
           "defaultValue": "nginx",
           "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller.",
@@ -2003,8 +2048,13 @@
           "type": "select",
           "defaultValue": "signedByAmbariCA",
           "excludeFromValues": true,
-          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1.",
+          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1. On Upgrade/Config this starts on **Keep current certificate**: the release keeps the certificate it serves and nothing is replaced (a release serving plain HTTP starts on **None**). Choose another mode only to replace that certificate; you are asked to confirm, and a Secret kept by cert-manager or an external Secret store is never overwritten.",
           "options": [
+            {
+              "label": "Keep current certificate",
+              "value": "keepCurrent",
+              "upgradeOnly": true
+            },
             {
               "label": "Sign via cert-manager (recommended)",
               "value": "signedByClusterIssuer",
@@ -2230,20 +2280,21 @@
     },
     {
       "name": "httpsInternal",
-      "label": "HTTPS interne (keystore auto)",
+      "label": "Internal HTTPS (generated keystore)",
       "type": "group",
       "fields": [
         {
           "name": "tls.https.enabled",
-          "label": "Activer HTTPS interne",
+          "label": "Enable internal HTTPS",
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
-          "help": "Activé par défaut : Trino termine lui-même le TLS (keystore signé par l'autorité interne). La Route OpenShift passe alors en passthrough et les clients internes (Superset, dbt, OpenMetadata) doivent utiliser https sur le port HTTPS. Désactiver ne laisse le TLS qu'en bordure : le trafic authentifié, jeton compris, traverse le réseau des pods en clair."
+          "seedFromValue": "server.config.https.enabled",
+          "help": "On by default: Trino terminates TLS itself (keystore signed by the internal CA). The OpenShift Route then uses passthrough, and internal clients (Superset, dbt, OpenMetadata) must use https on the HTTPS port. Turned off, TLS stops at the edge: authenticated traffic, tokens included, crosses the pod network in clear text, and 'Let KDPS manage catalogs' (Custom catalogs) is turned off, since Trino only accepts password logins over HTTPS."
         },
         {
           "name": "tls.https.autoGenerate",
-          "label": "Auto-générer le keystore",
+          "label": "Generate the keystore",
           "type": "boolean",
           "defaultValue": true,
           "excludeFromValues": true,
@@ -2251,7 +2302,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Si activé, Ambari génère un certificat signé par la CA interne et un Secret Kubernetes."
+          "help": "When on, Ambari issues a certificate signed by its internal CA and stores it in a Kubernetes Secret."
         },
         {
           "name": "tls.https.port",
@@ -2266,9 +2317,9 @@
         },
         {
           "name": "tls.https.secretName",
-          "label": "Secret keystore (optionnel)",
+          "label": "Keystore Secret (optional)",
           "type": "string",
-          "help": "Nom du Secret qui contiendra le keystore. Vide → <release>-https.",
+          "help": "Name of the Secret that holds the keystore. Blank: <release>-https.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -2277,7 +2328,7 @@
         },
         {
           "name": "tls.https.keystoreKey",
-          "label": "Clé du keystore dans le Secret",
+          "label": "Keystore key in the Secret",
           "type": "string",
           "defaultValue": "truststore.jks",
           "excludeFromValues": true,
@@ -2288,10 +2339,10 @@
         },
         {
           "name": "tls.https.password",
-          "label": "Mot de passe keystore",
+          "label": "Keystore password",
           "type": "password",
           "defaultValue": "",
-          "help": "Laisser vide pour génération aléatoire.",
+          "help": "Leave blank to generate a random one. With your own keystore (keystore generation off), the password is stored in the <keystore Secret>-pass Secret, from which Trino reads it. If you created that Secret yourself, it must already hold this password; leave the field blank to keep the one it holds.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -2300,7 +2351,7 @@
         },
         {
           "name": "tls.https.mountPath",
-          "label": "Chemin monté du keystore",
+          "label": "Keystore mount path",
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
@@ -2311,7 +2362,7 @@
         },
         {
           "name": "tls.https.keystorePath",
-          "label": "Chemin utilisé par Trino",
+          "label": "Path used by Trino",
           "type": "string",
           "defaultValue": "/etc/security/tls/https-keystore.p12",
           "excludeFromValues": true,
@@ -2319,11 +2370,11 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Valeur injectée dans server.config.https.keystore.path."
+          "help": "Value set as server.config.https.keystore.path."
         },
         {
           "name": "tls.https.keystoreType",
-          "label": "Format du keystore (JKS/PKCS12/PEM)",
+          "label": "Keystore format (JKS/PKCS12/PEM)",
           "type": "select",
           "defaultValue": "PKCS12",
           "options": [
@@ -2345,42 +2396,56 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Choisissez le format de stockage du certificat serveur. PEM crée tls.crt/tls.key/ca.crt."
+          "help": "Storage format of the server certificate. PEM creates tls.crt/tls.key/ca.crt."
         }
       ]
     },
     {
       "name": "coordinatorResources",
-      "label": "Ressources du Coordinateur",
+      "label": "Coordinator resources",
       "type": "group",
       "fields": [
         {
           "name": "coordinator.resources.requests.cpu",
-          "label": "CPU Demandé",
+          "label": "CPU request",
           "type": "string",
-          "defaultValue": "1"
+          "defaultValue": "2",
+          "help": "Same as the CPU limit by default. Cannot be higher than the limit.",
+          "resourceCheck": { "kind": "cpuRequest", "limitField": "coordinator.resources.limits.cpu" }
         },
         {
           "name": "coordinator.resources.requests.memory",
-          "label": "Mémoire Demandée",
+          "label": "Memory request",
           "type": "string",
-          "defaultValue": "4Gi"
+          "defaultValue": "8Gi",
+          "help": "Same as the memory limit by default, so Kubernetes reserves the memory and gives the pod the Guaranteed QoS class: it is not among the first pods evicted when the node runs short of memory. Requests count against the project quota. Cannot be higher than the limit.",
+          "resourceCheck": { "kind": "memoryRequest", "limitField": "coordinator.resources.limits.memory" }
         },
         {
           "name": "coordinator.resources.limits.cpu",
-          "label": "CPU Limite",
+          "label": "CPU limit",
           "type": "string",
           "defaultValue": "2"
         },
         {
           "name": "coordinator.resources.limits.memory",
-          "label": "Mémoire Limite",
+          "label": "Memory limit",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
+          "name": "coordinator.jvm.maxHeapSize",
+          "label": "Java heap size (optional)",
+          "type": "string",
+          "defaultValue": "",
+          "placeholder": "75% of the memory limit",
+          "omitWhenBlank": true,
+          "help": "Leave blank to give Java 75% of the memory limit (6G for 8Gi); the heap then follows the limit when you change it. To set it yourself, use the Java format (for example 6G or 6144M) and keep it at 70-80% of the memory limit: Java also needs memory outside the heap, and the pod is killed when it goes over the limit.",
+          "resourceCheck": { "kind": "javaHeap", "limitField": "coordinator.resources.limits.memory", "blankSizedByChartFrom": "1.43.15" }
+        },
+        {
           "name": "coordinator.config.nodeProperties.node\\.data-dir",
-          "label": "Répertoire de données (Coordinateur)",
+          "label": "Data directory (coordinator)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -2388,42 +2453,62 @@
     },
     {
       "name": "workerResources",
-      "label": "Ressources des Workers",
+      "label": "Worker resources",
       "type": "group",
       "fields": [
         {
-          "name": "worker.replicas",
-          "label": "Nombre de Workers",
+          "name": "server.workers",
+          "min": 1,
+          "label": "Number of workers",
           "type": "number",
-          "defaultValue": 3
+          "defaultValue": 3,
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": false
+          },
+          "help": "Fixed number of workers (at least 1), used when worker autoscaling is off."
         },
         {
           "name": "worker.resources.requests.cpu",
-          "label": "CPU Demandé / Worker",
+          "label": "CPU request per worker",
           "type": "string",
-          "defaultValue": "1"
+          "defaultValue": "2",
+          "help": "Same as the CPU limit by default. Cannot be higher than the limit.",
+          "resourceCheck": { "kind": "cpuRequest", "limitField": "worker.resources.limits.cpu" }
         },
         {
           "name": "worker.resources.requests.memory",
-          "label": "Mémoire Demandée / Worker",
+          "label": "Memory request per worker",
           "type": "string",
-          "defaultValue": "4Gi"
+          "defaultValue": "8Gi",
+          "help": "Same as the memory limit by default, so Kubernetes reserves the memory and gives each worker the Guaranteed QoS class: workers are not among the first pods evicted when the node runs short of memory. Requests count against the project quota, for every worker autoscaling adds. Cannot be higher than the limit.",
+          "resourceCheck": { "kind": "memoryRequest", "limitField": "worker.resources.limits.memory" }
         },
         {
           "name": "worker.resources.limits.cpu",
-          "label": "CPU Limite / Worker",
+          "label": "CPU limit per worker",
           "type": "string",
           "defaultValue": "2"
         },
         {
           "name": "worker.resources.limits.memory",
-          "label": "Mémoire Limite / Worker",
+          "label": "Memory limit per worker",
           "type": "string",
           "defaultValue": "8Gi"
         },
         {
+          "name": "worker.jvm.maxHeapSize",
+          "label": "Java heap size per worker (optional)",
+          "type": "string",
+          "defaultValue": "",
+          "placeholder": "75% of the memory limit",
+          "omitWhenBlank": true,
+          "help": "Leave blank to give Java 75% of the memory limit (6G for 8Gi); the heap then follows the limit when you change it. To set it yourself, use the Java format (for example 6G or 6144M) and keep it at 70-80% of the memory limit: Java also needs memory outside the heap, and the pod is killed when it goes over the limit.",
+          "resourceCheck": { "kind": "javaHeap", "limitField": "worker.resources.limits.memory", "blankSizedByChartFrom": "1.43.15" }
+        },
+        {
           "name": "worker.config.nodeProperties.node\\.data-dir",
-          "label": "Répertoire de données (Worker)",
+          "label": "Data directory (worker)",
           "type": "string",
           "defaultValue": "/data/trino"
         }
@@ -2435,50 +2520,112 @@
       "type": "group",
       "fields": [
         {
+          "name": "server.keda.enabled",
+          "label": "Worker autoscaling",
+          "type": "boolean",
+          "defaultValue": true,
+          "help": "Adds and removes workers with the load (KEDA). Off: a fixed number of workers (Worker resources)."
+        },
+        {
+          "name": "server.keda.minReplicaCount",
+          "min": 0,
+          "label": "Minimum workers",
+          "type": "number",
+          "defaultValue": 1,
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          }
+        },
+        {
+          "name": "server.keda.maxReplicaCount",
+          "min": 1,
+          "label": "Maximum workers",
+          "type": "number",
+          "defaultValue": 10,
+          "help": "Must be at least the minimum.",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          }
+        },
+        {
           "name": "requiredWorkers.window",
-          "label": "Fenêtre (required workers)",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
+          "label": "Window (required workers)",
           "type": "string",
           "defaultValue": "30s"
         },
         {
           "name": "requiredWorkers.threshold",
-          "label": "Seuil (required workers)",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
+          "label": "Threshold (required workers)",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "queuedQueries.threshold",
-          "label": "Seuil (queued queries)",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
+          "label": "Threshold (queued queries)",
           "type": "string",
           "defaultValue": "5"
         },
         {
           "name": "queuedQueries.activation",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Activation (queued queries)",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "runningQueries.threshold",
-          "label": "Seuil (running queries)",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
+          "label": "Threshold (running queries)",
           "type": "string",
           "defaultValue": "10"
         },
         {
           "name": "runningQueries.activation",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
           "label": "Activation (running queries)",
           "type": "string",
           "defaultValue": "1"
         },
         {
           "name": "heap.threshold",
-          "label": "Seuil (%) Heap",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
+          "label": "Threshold (heap %)",
           "type": "string",
           "defaultValue": "70"
         },
         {
           "name": "heap.activation",
-          "label": "Activation (%) Heap",
+          "condition": {
+            "field": "server.keda.enabled",
+            "value": true
+          },
+          "label": "Activation (heap %)",
           "type": "string",
           "defaultValue": "40"
         }
@@ -2497,13 +2644,13 @@
         },
         {
           "name": "jmx.configPath",
-          "label": "Chemin config YAML",
+          "label": "Config YAML path",
           "type": "string",
           "defaultValue": "/opt/java_metrics/config.yaml"
         },
         {
           "name": "jmx.jarPath",
-          "label": "Chemin jar javaagent",
+          "label": "Java agent jar path",
           "type": "string",
           "defaultValue": "/usr/lib/trino/lib/jmx_prometheus_javaagent.jar"
         }
@@ -2511,7 +2658,7 @@
     },
     {
       "name": "acls",
-      "label": "Contrôle d'accès (Service Trino)",
+      "label": "Access control (Trino service)",
       "type": "group",
       "fields": [
         {
@@ -2555,11 +2702,75 @@
           "defaultValue": false,
           "condition": { "field": "accessControl.type", "value": "ranger" },
           "autoEnableWhenContext": "atlasTags",
-          "help": "Projects the Platform Context's Atlas classifications onto Trino's Ranger service so tag-based masking, row-filtering and access policies apply to Trino the way they do for Hive/Impala. On by default when the context exposes Atlas tags. KDPS resolves the Ranger endpoint and credentials from the context; you only turn this on or off."
+          "help": "Projects the Platform Context's Atlas classifications onto Trino's Ranger service so tag-based masking, row-filtering and access policies apply to Trino the way they do for Hive/Impala. On by default when the context exposes Atlas tags. KDPS gives this release a Ranger account of its own for this, kept in the Secret <release>-tagsync-ranger of the release's project, with a new password at every deploy; turning this off or uninstalling the release disables it. Ranger lets only its administrators write tags, so that account is a Ranger administrator: anyone who can read Secrets in the project can use it to change any Ranger policy. Turn this on only where those people may be Ranger administrators."
+        },
+        {
+          "name": "ranger.audit.solrMode",
+          "label": "Ranger audit to Solr",
+          "type": "select",
+          "options": [
+            { "label": "Follow the platform context", "value": "auto" },
+            { "label": "On", "value": "on" },
+            { "label": "Off", "value": "off" }
+          ],
+          "defaultValue": "auto",
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "help": "Where Trino's Ranger audit events go, so they show in the Ranger Admin audit page. 'Follow the platform context' audits to Solr when the context's Ranger does (read from the cluster for a managed or remote context, or set on the context). 'On' and 'Off' decide for this release alone."
+        },
+        {
+          "name": "ranger.audit.solrUrls",
+          "label": "Solr URLs",
+          "type": "string",
+          "defaultValue": "",
+          "omitWhenBlank": true,
+          "placeholder": "http://solr.example.com:8886/solr/ranger_audits",
+          "condition": { "field": "ranger.audit.solrMode", "value": "on" },
+          "help": "Solr endpoint(s) for the audit events, comma separated. Replaces the platform context's Solr endpoint, ZooKeeper included. Leave blank to use the platform context's."
+        },
+        {
+          "name": "ranger.audit.solrZookeepers",
+          "label": "Solr ZooKeeper",
+          "type": "string",
+          "defaultValue": "",
+          "omitWhenBlank": true,
+          "placeholder": "zk1.example.com:2181/infra-solr",
+          "condition": { "field": "ranger.audit.solrMode", "value": "on" },
+          "help": "ZooKeeper connection string (with chroot) of a SolrCloud, instead of Solr URLs. Replaces the platform context's Solr endpoint, URLs included. Leave blank to use the platform context's."
+        },
+        {
+          "name": "ranger.audit.hdfsMode",
+          "label": "Ranger audit to HDFS",
+          "type": "select",
+          "options": [
+            { "label": "Follow the platform context", "value": "auto" },
+            { "label": "On", "value": "on" },
+            { "label": "Off", "value": "off" }
+          ],
+          "defaultValue": "auto",
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "help": "Audit events written to HDFS files. 'Follow the platform context' audits to HDFS when the context's Ranger does. 'On' and 'Off' decide for this release alone. The cluster's Hadoop configuration (core-site and hdfs-site) must reach the Trino pods to resolve the HDFS address."
+        },
+        {
+          "name": "ranger.audit.hdfsDir",
+          "label": "HDFS audit directory",
+          "type": "string",
+          "defaultValue": "",
+          "omitWhenBlank": true,
+          "placeholder": "hdfs://namenode.example.com:8020/ranger/audit",
+          "condition": { "field": "ranger.audit.hdfsMode", "value": "on" },
+          "help": "Directory the audit files are written to, with the file system in front. Leave blank to use the platform context's."
+        },
+        {
+          "name": "ranger.audit.log4j",
+          "label": "Also write Ranger audit to the pod log",
+          "type": "boolean",
+          "defaultValue": true,
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "help": "Keeps writing the audit events to the Trino pod log (kubectl logs) as well as to the destinations above."
         },
         {
           "name": "nodePort.port",
-          "label": "Port du Nœud (Optionnel)",
+          "label": "Node port (optional)",
           "type": "number",
           "condition": {
             "field": "nodePort.enabled",
@@ -2612,21 +2823,21 @@
           "label": "Hadoop LDAP group mapping",
           "type": "group",
           "collapsed": true,
-          "help": "Active la résolution des groupes Hadoop via un annuaire LDAP/FreeIPA. Indispensable pour que les politiques Ranger basées sur les groupes (banque_*, assurance_*, etc.) s'appliquent aux requêtes Trino (le conteneur Trino ne contient pas de SSSD). Voir HADOOP-LDAP-GROUP-MAPPING.md.",
+          "help": "Resolves Hadoop groups from an LDAP/FreeIPA directory. Needed for group-based Ranger policies to apply to Trino queries (the Trino container has no SSSD). See HADOOP-LDAP-GROUP-MAPPING.md.",
       "fields": [
         {
           "name": "hadoopConf.groupMapping.enabled",
-          "label": "Activer le mapping LDAP",
+          "label": "Enable LDAP group mapping",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Si activé, un init container fusionne les propriétés LdapGroupsMapping dans core-site.xml au démarrage du pod. Nécessite chart Trino >= 1.43.0."
+          "help": "When on, an init container merges the LdapGroupsMapping properties into core-site.xml when the pod starts. Needs Trino chart 1.43.0 or later."
         },
         {
           "name": "hadoopConf.groupMapping.ldap.url",
-          "label": "URL LDAP",
+          "label": "LDAP URL",
           "type": "string",
           "defaultValue": "",
-          "help": "Endpoint LDAP/IPA. Ex: ldap://admin01.dev01.hadoop.clemlab.com:389. Pour LDAPS utiliser ldaps://...:636 et vérifier que le CA est présent dans le truststore Trino.",
+          "help": "LDAP/IPA endpoint, e.g. ldap://ipa.example.com:389. For LDAPS use ldaps://...:636 and make sure the CA is in Trino's truststore.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2635,10 +2846,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.bindUser",
-          "label": "Utilisateur de bind",
+          "label": "Bind user",
           "type": "string",
           "defaultValue": "",
-          "help": "DN du compte de service utilisé pour interroger l'annuaire (IPA cache memberOf en lecture anonyme — un bind authentifié est requis). Ex: uid=hadoop-group-mapping,cn=users,cn=accounts,dc=dev01,dc=hadoop,dc=clemlab,dc=com",
+          "help": "DN of the service account that queries the directory (IPA hides memberOf from anonymous reads, so an authenticated bind is required), e.g. uid=hadoop-group-mapping,cn=users,cn=accounts,dc=example,dc=com",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2647,10 +2858,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.bindPasswordSecret.name",
-          "label": "Nom du Secret contenant le mot de passe",
+          "label": "Secret holding the password",
           "type": "string",
           "defaultValue": "",
-          "help": "Nom d'un Kubernetes Secret du namespace cible (à créer préalablement) qui contient le mot de passe du compte de bind. Le chart monte ce Secret sur /etc/hadoop/ldap-bind/password en lecture seule.",
+          "help": "Kubernetes Secret in the target namespace (create it beforehand) holding the bind account's password. The chart mounts it read-only at /etc/hadoop/ldap-bind/password.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2659,10 +2870,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.bindPasswordSecret.key",
-          "label": "Clé dans le Secret",
+          "label": "Key in the Secret",
           "type": "string",
           "defaultValue": "password",
-          "help": "Clé du Secret qui contient effectivement le mot de passe (par défaut 'password').",
+          "help": "Key of the Secret that holds the password (default 'password').",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2670,10 +2881,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.baseDn",
-          "label": "Base DN de recherche",
+          "label": "Search base DN",
           "type": "string",
           "defaultValue": "",
-          "help": "Racine de recherche pour les utilisateurs et les groupes. Ex (FreeIPA): cn=accounts,dc=dev01,dc=hadoop,dc=clemlab,dc=com",
+          "help": "Search base for users and groups, e.g. (FreeIPA) cn=accounts,dc=example,dc=com",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2682,10 +2893,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.userSearchFilter",
-          "label": "Filtre utilisateur (avancé)",
+          "label": "User filter (advanced)",
           "type": "string",
           "defaultValue": "(&(objectClass=person)(uid={0}))",
-          "help": "{0} est substitué par le nom de l'utilisateur. Ne pas modifier sauf annuaire non-IPA.",
+          "help": "{0} is replaced by the user name. Change it only for a non-IPA directory.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2693,10 +2904,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.groupSearchFilter",
-          "label": "Filtre groupe (avancé)",
+          "label": "Group filter (advanced)",
           "type": "string",
           "defaultValue": "(objectClass=posixGroup)",
-          "help": "Filtre LDAP pour énumérer les groupes. Compatible avec FreeIPA/RHIDM par défaut.",
+          "help": "LDAP filter that lists the groups. The default works with FreeIPA/RHIDM.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2704,10 +2915,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.memberAttr",
-          "label": "Attribut membre (avancé)",
+          "label": "Member attribute (advanced)",
           "type": "string",
           "defaultValue": "member",
-          "help": "Attribut LDAP qui contient les DN des membres du groupe. FreeIPA = 'member'.",
+          "help": "LDAP attribute holding the DNs of a group's members. FreeIPA: 'member'.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2715,10 +2926,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.cacheSeconds",
-          "label": "Cache positif (secondes, avancé)",
+          "label": "Group cache (seconds, advanced)",
           "type": "number",
           "defaultValue": 300,
-          "help": "Durée de mise en cache des résolutions de groupes côté Hadoop client.",
+          "help": "How long the Hadoop client caches resolved groups.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2726,10 +2937,10 @@
         },
         {
           "name": "hadoopConf.groupMapping.ldap.negativeCacheSeconds",
-          "label": "Cache négatif (secondes, avancé)",
+          "label": "Negative cache (seconds, advanced)",
           "type": "number",
           "defaultValue": 30,
-          "help": "Durée de mise en cache des utilisateurs sans groupe (évite de marteler LDAP).",
+          "help": "How long users without groups are cached (spares the directory).",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2798,7 +3009,8 @@
         {
           "name": "icebergCatalog.clientSecret",
           "label": "Polaris client secret",
-          "type": "string",
+          "type": "password",
+          "sensitive": true,
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
           "help": "OAuth2 client secret of the principal above."
@@ -2840,13 +3052,15 @@
               "name": "icebergCatalog.s3AccessKey",
               "label": "S3 access key",
               "type": "string",
+              "sensitive": true,
               "excludeFromValues": true,
               "help": "Static S3 access key. Stored in a chart-managed Kubernetes Secret and referenced as ${ENV:ICEBERG_S3_ACCESS_KEY}."
             },
             {
               "name": "icebergCatalog.s3SecretKey",
               "label": "S3 secret key",
-              "type": "string",
+              "type": "password",
+              "sensitive": true,
               "excludeFromValues": true,
               "help": "Secret key matching the access key above."
             }
@@ -2871,7 +3085,11 @@
           "label": "Let KDPS manage catalogs on the running Trino as the logged-in operator",
           "type": "boolean",
           "defaultValue": true,
-          "help": "Adds a dedicated Trino login for KDPS (a file password user beside your LDAP/OIDC/Kerberos setup) and grants it 'impersonate' in Ranger. The Catalogs action on the release then runs CREATE/DROP CATALOG as you, so Ranger decides what you may do. Needs chart 1.43.13 or later and Trino HTTPS (on by default)."
+          "condition": {
+            "field": "tls.https.enabled",
+            "value": true
+          },
+          "help": "Adds a dedicated Trino login for KDPS (a file password user beside your LDAP/OIDC/Kerberos setup) and grants it 'impersonate' in Ranger. The Catalogs action on the release then runs CREATE/DROP CATALOG as you, so Ranger decides what you may do. Needs chart 1.43.13 or later and 'Enable internal HTTPS' (Internal HTTPS, on by default): Trino only accepts password logins over HTTPS, so this option is hidden and turned off while internal HTTPS is off."
         },
         {
           "name": "customCatalogs.refs",
@@ -2879,17 +3097,26 @@
           "type": "trino-catalog-select",
           "excludeFromValues": true,
           "defaultValue": [],
-          "help": "Catalogs defined once on the Trino Catalogs page and attached here. Each selected catalog's properties are copied into this release at deploy time (the release keeps that copy until you re-apply it from Upgrade/Config). Add a catalog to the list from the Trino Catalogs page."
+          "help": "Catalogs defined once on the Trino Catalogs page and attached here. Each selected catalog's properties are copied into this release at deploy time (the release keeps that copy until you re-apply it from Upgrade/Config). Add a catalog to the list from the Trino Catalogs page. A catalog that references ${ENV:KEY} needs the Secret holding KEY under 'Secrets with catalog credentials' below."
         },
         {
           "name": "customCatalogs.text",
           "label": "Additional Trino catalogs",
           "type": "textarea",
+          "sensitive": true,
           "rows": 12,
           "excludeFromValues": true,
           "defaultValue": "",
           "placeholder": "[postgres_prod]\nconnector.name=postgresql\nconnection-url=jdbc:postgresql://db.example.com:5432/analytics\nconnection-user=trino\nconnection-password=${ENV:PG_PASSWORD}\n\n[kafka_events]\nconnector.name=kafka\nkafka.nodes=broker.example.com:9092",
-          "help": "One section per catalog: a [name] header followed by that catalog's .properties lines. Each becomes a Trino catalog of that name and any connector Trino supports will work. connector.name is required. The Hive and Iceberg catalogs above are built by KDPS from the platform context - configure them there, not here. Do not paste credentials inline: put them in a Secret and reference ${ENV:VAR}."
+          "help": "One section per catalog: a [name] header followed by that catalog's .properties lines. Each becomes a Trino catalog of that name and any connector Trino supports will work. connector.name is required. The Hive and Iceberg catalogs above are built by KDPS from the platform context - configure them there, not here. Credentials cannot be written inline: put them in a Secret selected under 'Secrets with catalog credentials' and reference each key as ${ENV:KEY}."
+        },
+        {
+          "name": "catalogCredentialSecrets",
+          "label": "Secrets with catalog credentials",
+          "type": "secret-discovery",
+          "multiple": true,
+          "defaultValue": [],
+          "help": "Kubernetes Secrets in the release namespace holding the passwords and keys of the catalogs above (reusable or additional). Every key of each Secret becomes an environment variable of the Trino pods: reference it in the catalog as ${ENV:KEY}, e.g. connection-password=${ENV:PG_PASSWORD}. The credential then never sits in the catalog ConfigMap or in KDPS. Create the Secret first, e.g.: kubectl -n <ns> create secret generic postgres-prod-credentials --from-literal=PG_PASSWORD=... Restart Trino after changing a Secret. Needs chart 1.43.16 or later."
         }
       ]
     }
@@ -2897,6 +3124,18 @@
   "description": "Distributed SQL query engine for big data. Run ANSI SQL queries across Hive, S3, RDBMS and other sources at scale.",
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
+  },
+  "retiredValues": {
+    "_comment": "Values an earlier version of this definition wrote, removed from the values of every deploy (wizard upgrades and redeploys without the wizard alike).",
+    "internalSharedSecret": "The chart generates the internal shared secret and keeps it in the <fullname>-internal-communication Secret; the operator-typed value is no longer used.",
+    "additionalConfigProperties": {
+      "reason": "The internal shared secret written out in the server configuration (a ConfigMap); the chart reads it from its Secret.",
+      "linesStartingWith": ["internal-communication.shared-secret="]
+    },
+    "coordinator.additionalConfigProperties": {
+      "reason": "The HTTPS keystore password written out in the coordinator configuration (a ConfigMap); the chart's init container appends it from the keystore password Secret.",
+      "linesStartingWith": ["http-server.https.keystore.key="]
+    }
   },
   "externalServiceTargets": {
     "hive": {
@@ -2925,13 +3164,20 @@
     "_comment": "Atlas tag sync renders a tag-projector CronJob that only exists from 1.43.11; on an older chart the toggle would deploy cleanly and do nothing.",
     "tagSync.enabled": ">=1.43.11",
     "dynamicCatalogs.enabled": ">=1.43.12",
-    "kdps.serviceUser.enabled": ">=1.43.13"
+    "kdps.serviceUser.enabled": ">=1.43.13",
+    "catalogCredentialSecrets": ">=1.43.16"
+  },
+  "secretChartVersions": {
+    "_comment": "Chart 1.43.16 reads the security profile's bind password and inline OIDC client secret from a Secret (${ENV:...} in the server configuration); an older chart writes them into the coordinator ConfigMap and plain environment variables. A wizard deploy that carries one of them with an older chart is refused; a resync or a security refresh is warned in its operation log.",
+    "global.security.auth.ldap.bindPassword": { "range": ">=1.43.16", "label": "the security profile's LDAP bind password" },
+    "global.security.auth.ad.bindPassword": { "range": ">=1.43.16", "label": "the security profile's Active Directory bind password" },
+    "global.security.auth.oidc.clientSecret": { "range": ">=1.43.16", "label": "the security profile's OIDC client secret" }
   },
   "platformOps": [
     { "op": "ranger.tagProjectorSecret", "when": "tagSync.enabled",
-      "_description": "When Atlas tag sync is on, KDPS mints a Secret {user,password} in the release namespace from the selected context's Ranger admin credential and injects tagSync.ranger.{url,existingSecret} into the values, so the tag-projector CronJob authenticates to the context's Ranger without the operator handling any credential." },
+      "_description": "When Atlas tag sync is on and access control is Ranger (the chart runs the projector only then), KDPS creates the release's own Ranger account, kdps-tagsync-<namespace>_<release>_<hash of the KDPS instance, Kubernetes API server and platform context>, on the selected context's Ranger (directly, or through the Ambari server on the managed cluster) with a new password at every deploy, records it in the view, writes only that account into the Secret <release>-tagsync-ranger {user,password} of the release namespace and injects tagSync.ranger.{url,existingSecret} into the values. The context's Ranger administrator credentials never leave KDPS. Ranger lets only ROLE_SYS_ADMIN import tags, so the account is a Ranger administrator for whoever can read Secrets in the namespace. Uninstalling the release, or a deploy that gives the projector no KDPS account (tag sync off, the operator's own Secret, auto-configuration off), disables the recorded account and deletes the Secret, as does a first install that fails or is canceled before the release is installed. Values naming another Secret in tagSync.ranger.existingSecret, or a Secret <release>-tagsync-ranger that KDPS did not write, bring the operator's own account instead: KDPS creates none and never replaces or deletes that Secret." },
     { "op": "ranger.hiveGrant", "when": "hiveCatalog.enabled",
-      "_description": "Trino reads Hive tables as its own service identity (hive.hdfs.trino.principal); the Hive metastore's Ranger plugin therefore authorises that identity, not the end user. Grant it SELECT on the context's Hive repository, the way Superset's Hive connection is granted." }
+      "_description": "Trino reads Hive tables as its own service identity (hive.hdfs.trino.principal); the Hive metastore's Ranger plugin therefore authorises that identity, not the end user. Trino cannot read Hive as the end user, so that identity is granted SELECT on the context's Hive repository. Superset's Hive connection impersonates the end user, so its service identity gets no Hive grant; OpenMetadata's ingestion identity is granted by its own base-ingestion step." }
   ],
   "requiresContext": [
     {
@@ -2952,6 +3198,7 @@
   ],
   "securityCoupling": {
     "requireIngress": true,
+    "unauthenticatedExposure": "Without sign-in Trino trusts the user name each client sends: anyone who reaches this address can run queries as any user, administrators included, and Ranger authorizes that name.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view"
   }

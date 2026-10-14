@@ -23,7 +23,9 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
+import org.apache.ambari.view.k8s.service.CommandParamsStore;
 import org.apache.ambari.view.k8s.service.CommandPlanFactory;
+import org.apache.ambari.view.k8s.service.KdpsReleaseObjects;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.slf4j.Logger;
@@ -35,7 +37,6 @@ import java.lang.reflect.Type;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.*;
 
 public class CommandUtils {
@@ -344,12 +345,16 @@ public class CommandUtils {
                 Object authToken = gitMap.get("authToken");
                 Object sshKey = gitMap.get("sshKey");
                 Object commitMode = gitMap.get("commitMode");
+                Object sshKnownHosts = gitMap.get("sshKnownHosts");
+                Object trustHostKeyOnFirstUse = gitMap.get("trustHostKeyOnFirstUse");
                 if (repoUrl instanceof String) opts.setRepoUrl((String) repoUrl);
                 if (baseBranch instanceof String) opts.setBaseBranch((String) baseBranch);
                 if (pathPrefix instanceof String) opts.setPathPrefix((String) pathPrefix);
                 if (authToken instanceof String) opts.setAuthToken((String) authToken);
                 if (sshKey instanceof String) opts.setSshKey((String) sshKey);
                 if (commitMode instanceof String) opts.setCommitMode((String) commitMode);
+                if (sshKnownHosts instanceof String) opts.setSshKnownHosts((String) sshKnownHosts);
+                if (trustHostKeyOnFirstUse instanceof Boolean) opts.setTrustHostKeyOnFirstUse((Boolean) trustHostKeyOnFirstUse);
                 req.setGit(opts);
             } else if (git instanceof String s && !s.isBlank()) {
                 try {
@@ -362,12 +367,16 @@ public class CommandUtils {
                         Object authToken = gitObj.get("authToken");
                         Object sshKey = gitObj.get("sshKey");
                         Object commitMode = gitObj.get("commitMode");
+                        Object sshKnownHosts = gitObj.get("sshKnownHosts");
+                        Object trustHostKeyOnFirstUse = gitObj.get("trustHostKeyOnFirstUse");
                         if (repoUrl instanceof String) opts.setRepoUrl((String) repoUrl);
                         if (baseBranch instanceof String) opts.setBaseBranch((String) baseBranch);
                         if (pathPrefix instanceof String) opts.setPathPrefix((String) pathPrefix);
                         if (authToken instanceof String) opts.setAuthToken((String) authToken);
                         if (sshKey instanceof String) opts.setSshKey((String) sshKey);
                         if (commitMode instanceof String) opts.setCommitMode((String) commitMode);
+                        if (sshKnownHosts instanceof String) opts.setSshKnownHosts((String) sshKnownHosts);
+                        if (trustHostKeyOnFirstUse instanceof Boolean) opts.setTrustHostKeyOnFirstUse((Boolean) trustHostKeyOnFirstUse);
                         req.setGit(opts);
                     }
                 } catch (Exception ignore) {
@@ -390,30 +399,14 @@ public class CommandUtils {
 
     /**
      * Resolves a params payload, optionally loading it from a file reference.
-     * When paramsJson is stored as "@@file:/absolute/path", the file contents are returned.
+     * When paramsJson is stored as "@@file:/absolute/path", the file contents are returned; encrypted parameters are
+     * decrypted (see {@link CommandParamsStore}).
      *
      * @param raw raw paramsJson value from the entity
-     * @return resolved JSON string (file contents) or the raw value when not a file reference
+     * @return resolved JSON string, or {@code null} when the file is gone or cannot be decrypted
      */
     public static String resolveParamsPayload(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        final String prefix = "@@file:";
-        if (raw.startsWith(prefix)) {
-            String path = raw.substring(prefix.length());
-            try {
-                return Files.readString(Paths.get(path), StandardCharsets.UTF_8);
-            } catch (java.nio.file.NoSuchFileException missing) {
-                // Older commands may point to files deleted during upgrade/cleanup; degrade gracefully.
-                LOG.info("Params payload file missing (likely purged): {}", path);
-                return null;
-            } catch (Exception ex) {
-                LOG.warn("Failed to read params payload from {}: {}", path, ex.toString());
-                return null;
-            }
-        }
-        return raw;
+        return CommandParamsStore.read(raw);
     }
 
 
@@ -544,6 +537,55 @@ public class CommandUtils {
     }
 
     /**
+     * The name of a release's krb5.conf ConfigMap, unique per release so installs never share one.
+     *
+     * @param releaseName the release; blank for the shared name
+     * @return {@code <release>-krb5-conf}
+     */
+    public static String krb5ConfigMapName(String releaseName) {
+        String release = releaseName == null ? "" : releaseName.trim();
+        return release.isEmpty() ? "krb5-conf" : release + "-krb5-conf";
+    }
+
+    /**
+     * Writes the krb5.conf ConfigMap of a Kerberized release, before anything is installed or committed to Git. The
+     * one preparation of Kerberos shared by direct and GitOps deploys: the caller sets
+     * {@code global.security.kerberos.enabled} and {@code configMapName} only once this returned, so a chart is never
+     * pointed at a ConfigMap that does not exist.
+     *
+     * @param namespace    the release namespace
+     * @param releaseName  the release
+     * @param contextKrb5  the krb5.conf of the selected platform context, or {@code null} for this host's
+     *                     /etc/krb5.conf
+     * @return the ConfigMap name
+     * @throws IllegalStateException when no krb5.conf can be found, or the ConfigMap cannot be written, with what to do
+     */
+    public String prepareKrb5ConfConfigMap(String namespace, String releaseName, String contextKrb5) {
+        String configMapName = krb5ConfigMapName(releaseName);
+        boolean written;
+        try {
+            written = ensureKrb5ConfConfigMap(namespace, configMapName, contextKrb5, releaseName);
+        } catch (RuntimeException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new IllegalStateException("Kerberos is enabled for this deploy but its krb5.conf ConfigMap "
+                    + configMapName + " could not be written in namespace " + namespace + ": "
+                    + (cause.getMessage() != null ? cause.getMessage() : cause.toString()), e);
+        }
+        if (!written) {
+            // Fails now with what to do, rather than letting the pod fail later with the opaque
+            // "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found".
+            throw new IllegalStateException(
+                    "Kerberos is enabled for this deploy but no krb5.conf could be found: the selected "
+                    + "platform context has no krb5.conf and this Ambari host has no /etc/krb5.conf. "
+                    + "For a backend in a different Kerberos realm (e.g. CDP), paste that realm's krb5.conf "
+                    + "into the platform context — Contexts → <your context> → Kerberos → krb5.conf — "
+                    + "then redeploy. (Expected ConfigMap: " + configMapName + " in namespace "
+                    + namespace + ".)");
+        }
+        return configMapName;
+    }
+
+    /**
      * Same as {@link #ensureKrb5ConfConfigMap(String, String)}, but when {@code krb5Override}
      * is non-blank the ConfigMap is built from that content (supplied by the selected external
      * platform context's {@code kerberos.krb5Conf}) instead of the host's /etc/krb5.conf.
@@ -551,6 +593,17 @@ public class CommandUtils {
      * from the Ambari-hosting cluster.
      */
     public boolean ensureKrb5ConfConfigMap(String namespace, String configMapName, String krb5Override) {
+        return ensureKrb5ConfConfigMap(namespace, configMapName, krb5Override, null);
+    }
+
+    /**
+     * Same as {@link #ensureKrb5ConfConfigMap(String, String, String)}, for the krb5.conf ConfigMap of
+     * {@code releaseName}, which gets the release labels so the uninstall of the release removes it.
+     *
+     * @param releaseName the release the ConfigMap is for; null for one shared by the namespace, left unlabelled
+     */
+    public boolean ensureKrb5ConfConfigMap(String namespace, String configMapName, String krb5Override,
+                                           String releaseName) {
         final boolean fromContext = (krb5Override != null && !krb5Override.isBlank());
         final String krb5Path = "/etc/krb5.conf";
         File f = new File(krb5Path);
@@ -587,14 +640,16 @@ public class CommandUtils {
             // key name inside the CM; this is what you mount with subPath: "krb5.conf"
             data.put("krb5.conf", content);
 
-            Map<String, String> labels = Map.of(
-                    "managed-by", "ambari-k8s-view",
-                    "purpose", "kerberos-krb5-conf"
-            );
+            Map<String, String> labels = new LinkedHashMap<>();
+            labels.put("managed-by", "ambari-k8s-view");
+            labels.put("purpose", "kerberos-krb5-conf");
+            labels.putAll(KdpsReleaseObjects.labels(releaseName));
 
-            Map<String, String> annotations = Map.of(
-                    "managed-at", java.time.Instant.now().toString()
-            );
+            Map<String, String> annotations = new LinkedHashMap<>();
+            annotations.put("managed-at", java.time.Instant.now().toString());
+            if (labels.containsKey(KdpsReleaseObjects.LABEL_RELEASE)) {
+                annotations.putAll(KdpsReleaseObjects.annotations(namespace));
+            }
 
             this.kubernetesService.createNamespace(namespace);
             this.kubernetesService.createOrUpdateConfigMap(

@@ -18,6 +18,7 @@
 
 import React from 'react';
 import { render, screen, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 jest.mock('../../../api/client');
 
@@ -91,4 +92,118 @@ describe('BackgroundOperationsModal', () => {
     // a FAILED watched command never auto-closes the modal
     expect(onAutoClose).not.toHaveBeenCalled();
   }, 10000);
+
+  const gitOpsDeploy = (result?: Record<string, unknown>) => ({
+    id: 'cmd-gitops', state: 'SUCCEEDED', percent: 100, step: 0, message: 'Install release trino with GitOps',
+    type: 'K8S_MANAGER_RELEASE_DEPLOY', hasChildren: true, result,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  }) as any;
+
+  it('stays open on a GitOps deploy that waits for a merge and says what it waits for', async () => {
+    const waiting = gitOpsDeploy({
+      waitingForMerge: true,
+      pullRequestUrl: 'https://git.example.org/platform/gitops/-/merge_requests/7',
+      message: 'Waiting for the pull request https://git.example.org/platform/gitops/-/merge_requests/7 to be merged '
+        + 'into branch main: Flux applies the change once it is merged. Not run until then: Ambari: provision view '
+        + 'instance for trino. Redeploy the release once the change is applied to run them.',
+    });
+    (listCommands as jest.Mock).mockResolvedValue([waiting]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(waiting);
+    const onAutoClose = jest.fn();
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={waiting.id} onAutoClose={onAutoClose} />);
+
+    await screen.findByText('Committed to Git, not applied yet');
+    expect(screen.getByText(/Not run until then: Ambari: provision view instance for trino/)).toBeTruthy();
+    expect(screen.getByText('Open the pull request').closest('a')?.getAttribute('href'))
+      .toBe('https://git.example.org/platform/gitops/-/merge_requests/7');
+    expect(screen.getByText('WAITING FOR MERGE')).toBeTruthy();
+    // past a tick of the poller, which closes the modal on an operation that ended otherwise
+    await act(async () => { await new Promise((r) => setTimeout(r, 2500)); });
+    expect(onAutoClose).not.toHaveBeenCalled();
+  }, 10000);
+
+  it('stays open on a deploy that says where to read a generated password', async () => {
+    const notice = "Superset administrator 'admin': its password is in the Secret bi/bi-superset-admin. Read it with: "
+      + "kubectl -n bi get secret bi-superset-admin -o jsonpath='{.data.password}' | base64 -d.";
+    const deployed = gitOpsDeploy({ notices: [notice] });
+    (listCommands as jest.Mock).mockResolvedValue([deployed]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(deployed);
+    const onAutoClose = jest.fn();
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={deployed.id} onAutoClose={onAutoClose} />);
+
+    await screen.findByText('Before you sign in');
+    expect(screen.getByText(notice)).toBeTruthy();
+    expect(screen.queryByText('Committed to Git, not applied yet')).toBeNull();
+    await act(async () => { await new Promise((r) => setTimeout(r, 2500)); });
+    expect(onAutoClose).not.toHaveBeenCalled();
+  }, 10000);
+
+  it('shows what a running GitOps deploy committed, while it waits for Flux', async () => {
+    const committed = {
+      ...gitOpsDeploy({
+        gitOps: {
+          mode: 'FLUX_GITOPS', commit: '3f0c9a52e7d14b6c8a9e', branch: 'main', noChanges: false,
+          prUrl: 'https://git.example.org/platform/gitops/pulls/7', prState: 'merged',
+        },
+      }),
+      state: 'RUNNING', percent: 60,
+    };
+    (listCommands as jest.Mock).mockResolvedValue([committed]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(committed);
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={committed.id} />);
+
+    await screen.findByText('Committed to Git');
+    expect(screen.getByText('Commit 3f0c9a52e7d1 · Branch main · Pull request (merged)')).toBeTruthy();
+    expect(screen.getByText('Open the pull request').closest('a')?.getAttribute('href'))
+      .toBe('https://git.example.org/platform/gitops/pulls/7');
+    expect(screen.queryByText('Committed to Git, not applied yet')).toBeNull();
+  }, 10000);
+
+  it('closes on a deploy that ended applied', async () => {
+    const applied = gitOpsDeploy();
+    (listCommands as jest.Mock).mockResolvedValue([applied]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(applied);
+    const onAutoClose = jest.fn();
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={applied.id} onAutoClose={onAutoClose} />);
+
+    await waitFor(() => expect(onAutoClose).toHaveBeenCalled(), { timeout: 5000 });
+    expect(screen.queryByText('Committed to Git, not applied yet')).toBeNull();
+  }, 10000);
+
+  describe('Abort', () => {
+    const running = {
+      id: 'cmd-abort', state: 'RUNNING', percent: 40, step: 0, message: 'Install release trino', type: 'TEST',
+      hasChildren: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as any;
+
+    const clickAbort = async () => {
+      (listCommands as jest.Mock).mockResolvedValue([running]);
+      (getCommandStatus as jest.Mock).mockResolvedValue(running);
+      render(<BackgroundOperationsModal open onClose={() => undefined} />);
+      await userEvent.click(await screen.findByRole('button', { name: 'Abort' }));
+    };
+
+    it('asks for confirmation and aborts nothing until it is given', async () => {
+      await clickAbort();
+
+      expect(await screen.findByText('Abort "Install release trino"?')).toBeTruthy();
+      expect(screen.getByText(/The step that is running now will finish, the remaining steps will be skipped, and the operation cannot be resumed/)).toBeTruthy();
+      expect(cancelCommand).not.toHaveBeenCalled();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Keep running' }));
+      expect(cancelCommand).not.toHaveBeenCalled();
+    });
+
+    it('aborts the operation once confirmed', async () => {
+      await clickAbort();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Abort operation' }));
+
+      await waitFor(() => expect(cancelCommand).toHaveBeenCalledWith('cmd-abort'));
+    });
+  });
 });

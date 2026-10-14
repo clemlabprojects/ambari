@@ -22,6 +22,7 @@ import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.HelmService;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 
 import java.util.List;
 
@@ -76,6 +77,9 @@ public class HelmDirectBackend implements DeploymentBackend {
         try {
             String kubeconfigContent = viewConfigurationService.getKubeconfigContents();
             helmService.uninstall(namespace, releaseName, kubeconfigContent);
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            // Not a failure to retry another way: the release has an operation running.
+            throw busy;
         } catch (Exception ex) {
             commandService.directHelmDestroy(namespace, releaseName);
         }

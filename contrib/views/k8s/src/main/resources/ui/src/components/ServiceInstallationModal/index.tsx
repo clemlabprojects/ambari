@@ -32,13 +32,18 @@ import { serviceIcon } from '../../assets/services';
 import type { FormField, AvailableServices } from '../../types/ServiceTypes';
 import type { HelmRepo } from '../../types';
 import type { MountSpec } from '../../types/MountSpec';
-import { getGitRepos } from '../../pages/GitRepositoriesPage';
+import { getGitRepos, type GitRepo } from '../../pages/GitRepositoriesPage';
+import GitSshFields from '../common/GitSshFields';
+import { savedRepoGitFields } from '../../utils/gitSsh';
+import { describeGitOps, gitOpsResult, operationNotices, waitingForMerge } from '../common/operationOutcome';
 
 import * as pako from 'pako';
 import { untar } from 'js-untar';
 
 import VolumeEditor from './VolumeEditor';
 import DynamicFormField from './DynamicFormField';
+import { UpgradeModeContext } from './fieldSync';
+import { BASE_BRANCH_TOOLTIP, COMMIT_MODE_LABELS, DEFAULT_BASE_BRANCH, WORKING_BRANCH_TOOLTIP, gitOptionsToSubmit, landingBranchOf, opensPullRequest, workingBranchProblem } from '../../utils/gitOpsBranches';
 import type { BindingSpec } from './types';
 import {
   makeTargetsPatch,
@@ -49,6 +54,8 @@ import {
   buildVarContext,
 } from './bindings';
 import { useCapabilities } from './capabilities';
+import { applyBlankValues } from './blankValues';
+import { fluxPreview } from './fluxPreview';
 
 import type { UploadFile } from 'antd/es/upload/interface';
 
@@ -192,6 +199,9 @@ type ServiceInstallationModalProps = {
     deploymentMode?: string;
     gitRepoUrl?: string;
     gitBranch?: string;
+    gitBaseBranch?: string;
+    gitBaseBranchAssumed?: boolean;
+    gitCommitMode?: string;
     gitPath?: string;
     gitPrNumber?: string;
   };
@@ -215,7 +225,7 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
   const [selectedServiceKey, setSelectedServiceKey] = useState<string>('');
 
   const [repos, setRepos] = useState<HelmRepo[]>([]);
-  const [gitRepos, setGitRepos] = useState<Array<{ id: string; name: string; url: string; credentialAlias?: string }>>([]);
+  const [gitRepos, setGitRepos] = useState<GitRepo[]>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [installMode, setInstallMode] = useState<'repo' | 'direct'>('repo');
   const [overrideChart, setOverrideChart] = useState(false);
@@ -270,10 +280,12 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
     if (mode === 'upgrade' && initialRelease) {
       form.setFieldsValue({ releaseName: initialRelease.name, namespace: initialRelease.namespace });
       form.setFieldsValue({ deploymentMode: initialRelease?.deploymentMode || 'DIRECT_HELM' });
+      // The base branch and commit mode the release was deployed with; never its working branch, which the server
+      // chooses again for each change, nor a base branch only assumed, which the server would record as the release's.
       const gitDefaults = initialRelease.gitRepoUrl ? {
         repoUrl: initialRelease.gitRepoUrl,
-        branch: initialRelease.gitBranch,
-        commitMode: initialRelease.gitPrNumber ? 'PR_MODE' : 'DIRECT_COMMIT'
+        baseBranch: initialRelease.gitBaseBranchAssumed ? undefined : initialRelease.gitBaseBranch,
+        commitMode: initialRelease.gitCommitMode || 'DIRECT_COMMIT'
       } : {};
       form.setFieldsValue({
         git: { ...(form.getFieldValue('git') || {}), ...gitDefaults },
@@ -465,14 +477,15 @@ const ServiceInstallationModal: React.FC<ServiceInstallationModalProps> = ({
       const currentGit = form.getFieldValue('git') || {};
       form.setFieldsValue({
         git: {
-          baseBranch: currentGit.baseBranch || 'main',
+          // An upgrade left empty keeps the release's base branch on the server; a new release starts on main.
+          baseBranch: currentGit.baseBranch || (mode === 'upgrade' ? undefined : 'main'),
           pathPrefix: currentGit.pathPrefix || 'clusters/default',
           commitMode: currentGit.commitMode || 'DIRECT_COMMIT',
           ...currentGit
         }
       });
     }
-  }, [deploymentModeWatch, form]);
+  }, [deploymentModeWatch, form, mode]);
 
   useEffect(() => {
     if (!visible) {
@@ -586,10 +599,11 @@ const handleServiceChange = (value: string) => {
       delete mergedValues.tls;
       delete mergedValues.oidc;
 
-      // 4. Remove fields marked as excludeFromValues in charts.json
+      // 4. Remove fields marked as excludeFromValues in charts.json, and resolve blank ones for the chart version
       if (svcAny?.form) {
         const excluded = getExcludedPaths(svcAny.form);
         excluded.forEach(path => deleteAtStr(mergedValues, path));
+        applyBlankValues(svcAny.form, mergedValues, raw.version || svcAny.version);
       }
 
       return yaml.stringify(mergedValues, { aliasDuplicateObjects: false });
@@ -641,43 +655,25 @@ const handleServiceChange = (value: string) => {
       const formValues = form.getFieldsValue(true) || {};
       const releaseName = formValues.releaseName || initialRelease?.name || 'release';
       const ns = formValues.namespace || initialRelease?.namespace || 'default';
-      const repoName = formValues.repoId || 'repo';
+      const repoId = formValues.repoId || initialRelease?.repoId;
       const chartRef = formValues.chartOverride || formValues.chartDirect || defaultChartName || formValues.chart || 'chart';
-      const selectedRepo = repos.find(r => r.id === (formValues.repoId || initialRelease?.repoId));
-      const helmRepoUrl = formValues?.git?.repoUrl || selectedRepo?.url || 'resolved-by-backend';
       const pathPrefix = formValues?.git?.pathPrefix || 'clusters/default';
-      const branch = formValues?.git?.branch || formValues?.git?.baseBranch || 'main';
-      const targetPath = `${pathPrefix}/${ns}/${releaseName}`;
-      const hr: any = {
-        apiVersion: 'source.toolkit.fluxcd.io/v1',
-        kind: 'HelmRepository',
-        metadata: { name: repoName, namespace: 'flux-system' },
-        spec: {
-          interval: '5m',
-          url: helmRepoUrl
-        }
-      };
-      const release: any = {
-        apiVersion: 'helm.toolkit.fluxcd.io/v2',
-        kind: 'HelmRelease',
-        metadata: { name: releaseName, namespace: ns },
-        spec: {
-          interval: '5m',
-          chart: {
-            spec: {
-              chart: chartRef,
-              sourceRef: {
-                kind: 'HelmRepository',
-                name: repoName,
-                namespace: 'flux-system'
-              }
-            }
-          },
-          values: rawValues || {}
-        }
-      };
+      const branch = landingBranchOf(formValues?.git);
+      // The chart repository's URL, never the Git repository's: Flux pulls the chart from it.
+      const preview = fluxPreview({
+        releaseName,
+        namespace: ns,
+        repoId,
+        repo: repos.find(r => r.id === repoId),
+        chart: chartRef,
+        values: rawValues || {},
+        pathPrefix,
+      });
+      const hr = preview.source;
+      const release = preview.release;
+      const targetPath = preview.directory;
       const docs = [
-        `# Path: ${targetPath} (branch ${branch})`,
+        `# Path: ${targetPath} on ${branch}`,
         yaml.stringify(hr, { aliasDuplicateObjects: false }).trim(),
         yaml.stringify(release, { aliasDuplicateObjects: false }).trim()
       ].join('\n---\n');
@@ -835,7 +831,7 @@ const handleServiceChange = (value: string) => {
             serviceKey: undefined,
             repoId: initialRelease?.repoId || form.getFieldValue('repoId'),
             deploymentMode: form.getFieldValue('deploymentMode') || 'DIRECT_HELM',
-            git: form.getFieldValue('git') || undefined
+            git: gitOptionsToSubmit(form.getFieldValue('git')) || undefined
         };
 
         if (initialRelease?.version) {
@@ -913,6 +909,7 @@ const handleServiceChange = (value: string) => {
         if (currentService?.form) {
             const excluded = getExcludedPaths(currentService.form);
             excluded.forEach(path => deleteAtStr(mergedValues, path));
+            applyBlankValues(currentService.form, mergedValues, version || currentService.version);
         }
         // Envelope keys (wizard meta / request top-levels) that strict chart
         // schemas reject as additionalProperties. Kept in sync with the
@@ -1047,7 +1044,7 @@ const handleServiceChange = (value: string) => {
             // Only send when explicitly selected; prevents implicit profile attachment.
             securityProfile: allValues.securityProfile || undefined,
             deploymentMode: allValues.deploymentMode || 'DIRECT_HELM',
-            git: allValues.git || undefined,
+            git: gitOptionsToSubmit(allValues.git) || undefined,
         };
       } // End Deploy Mode Logic
 
@@ -1058,8 +1055,53 @@ const handleServiceChange = (value: string) => {
         if ((s as any).message) message.loading({ content: (s as any).message, key: 'deploy', duration: 0 });
       });
 
+      const pendingMerge = final.state === 'SUCCEEDED' ? waitingForMerge(final) : null;
+      // What a GitOps deploy did in Git: the commit, the branch and the pull request.
+      const gitOps = gitOpsResult(final);
+      const gitOpsSummary = gitOps ? describeGitOps(gitOps) : null;
+      const gitOpsLine = gitOpsSummary && gitOpsSummary.lines.length > 0 ? gitOpsSummary.lines.join(' · ') : null;
+      // Where to read the passwords KDPS generated for the release (an administrator's, for one).
+      const notices = final.state === 'SUCCEEDED' ? operationNotices(final) : [];
+      const noticeList = notices.map((notice, i) => (
+        <span key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{notice}</span>
+      ));
+      if (pendingMerge) {
+        // Committed to Git but not applied: Flux waits for the merge, and the steps that need the running release
+        // were not run. Kept on screen until the operator closes it.
+        message.destroy('deploy');
+        Modal.warning({
+          title: 'Committed to Git, not applied yet',
+          width: 560,
+          content: (
+            <Space direction="vertical" size={4}>
+              {gitOpsLine && <span style={{ wordBreak: 'break-word' }}>{gitOpsLine}</span>}
+              <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{pendingMerge.message}</span>
+              {pendingMerge.pullRequestUrl && (
+                <Typography.Link href={pendingMerge.pullRequestUrl} target="_blank" rel="noopener noreferrer">
+                  Open the pull request
+                </Typography.Link>
+              )}
+              {noticeList}
+            </Space>
+          ),
+        });
+      } else if (notices.length > 0) {
+        // Kept on screen until the operator closes it, so the location of the password is not missed.
+        Modal.info({
+          title: 'Before you sign in',
+          width: 560,
+          content: <Space direction="vertical" size={4}>{noticeList}</Space>,
+        });
+      }
       if (final.state === 'SUCCEEDED') {
-        message.success({ content: `${mode === 'upgrade' ? 'Upgrade' : 'Deployment'} completed`, key: 'deploy', duration: 3 });
+        if (!pendingMerge) {
+          message.success({
+            content: `${mode === 'upgrade' ? 'Upgrade' : 'Deployment'} completed`
+              + (gitOpsSummary ? ` — ${gitOpsSummary.title}${gitOpsLine ? `: ${gitOpsLine}` : ''}` : ''),
+            key: 'deploy',
+            duration: gitOpsSummary ? 6 : 3,
+          });
+        }
         onDeploy();
         onClose();
         form.resetFields();
@@ -1270,8 +1312,7 @@ const handleServiceChange = (value: string) => {
                     form.setFieldsValue({
                       git: {
                         ...form.getFieldValue('git'),
-                        repoUrl: repo.url,
-                        credentialAlias: repo.credentialAlias,
+                        ...savedRepoGitFields(repo),
                       }
                     });
                   }
@@ -1297,8 +1338,8 @@ const handleServiceChange = (value: string) => {
           <Form.Item name={['git','repoUrl']} label="Git repository URL" rules={[{ required: true, message: 'Git repository is required in GitOps mode' }]}>
             <Input placeholder="https://git.example.com/org/cluster-config.git" />
           </Form.Item>
-          <Form.Item name={['git','baseBranch']} label="Base branch" tooltip="Branch to base commits/PRs on">
-            <Input placeholder="main" />
+          <Form.Item name={['git','baseBranch']} label="Base branch" tooltip={BASE_BRANCH_TOOLTIP}>
+            <Input placeholder={DEFAULT_BASE_BRANCH} />
           </Form.Item>
           <Form.Item
             name={['git','pathPrefix']}
@@ -1311,24 +1352,36 @@ const handleServiceChange = (value: string) => {
           >
             <Input placeholder="clusters/default" />
           </Form.Item>
-          <Form.Item name={['git','branch']} label="Working branch" tooltip="If empty, a branch will be generated automatically">
-            <Input placeholder="feature/ambari-flux" />
-          </Form.Item>
           <Form.Item name={['git','commitMode']} label="Commit mode" initialValue="DIRECT_COMMIT">
             <Select>
-              <Option value="DIRECT_COMMIT">Direct commit</Option>
-              <Option value="PR_MODE">Open PR (token required)</Option>
+              <Option value="DIRECT_COMMIT">{COMMIT_MODE_LABELS.DIRECT_COMMIT}</Option>
+              <Option value="PR_MODE">{COMMIT_MODE_LABELS.PR_MODE}</Option>
             </Select>
           </Form.Item>
-          <Form.Item name={['git','credentialAlias']} label="Saved credential alias" tooltip="Reuse a previously stored token/SSH key (optional)">
-            <Input placeholder="alias from credential store" />
+          {/* Only a pull request has a working branch: a direct commit goes to the base branch. */}
+          <Form.Item noStyle shouldUpdate={(prev, next) => prev?.git?.commitMode !== next?.git?.commitMode}>
+            {() => opensPullRequest(form.getFieldValue('git')) ? (
+              <Form.Item
+                name={['git','branch']}
+                label="Working branch"
+                tooltip={WORKING_BRANCH_TOOLTIP}
+                preserve={false}
+                dependencies={[['git','baseBranch']]}
+                rules={[({ getFieldValue }) => ({
+                  validator: (_, value) => {
+                    const problem = workingBranchProblem({ ...(getFieldValue('git') || {}), branch: value });
+                    return problem ? Promise.reject(new Error(problem)) : Promise.resolve();
+                  },
+                })]}
+              >
+                <Input placeholder="Left empty: a new branch for each change" />
+              </Form.Item>
+            ) : null}
           </Form.Item>
           <Form.Item name={['git','authToken']} label="Auth token" tooltip="HTTPS personal access token (stored securely)" >
             <Input.Password placeholder="Token (optional if using SSH key)" />
           </Form.Item>
-          <Form.Item name={['git','sshKey']} label="SSH private key" tooltip="PEM private key (optional)" >
-            <Input.TextArea rows={3} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
-          </Form.Item>
+          <GitSshFields />
         </Card>
       )}
 
@@ -1453,9 +1506,11 @@ const handleServiceChange = (value: string) => {
             />
           )}
 
-          {applyAuthCascadeToFields(currentService.form, currentServiceCascade).map((field: FormField) => (
-            <DynamicFormField key={field.name} field={field} />
-          ))}
+          <UpgradeModeContext.Provider value={mode === 'upgrade'}>
+            {applyAuthCascadeToFields(currentService.form, currentServiceCascade).map((field: FormField) => (
+              <DynamicFormField key={field.name} field={field} />
+            ))}
+          </UpgradeModeContext.Provider>
         </>
       ) : (
         // installMode === 'direct' → no dynamic form; let user provide chart and we load values.yaml
@@ -1572,7 +1627,7 @@ const handleServiceChange = (value: string) => {
       {deploymentModeWatch === 'FLUX_GITOPS' && (
         <Card size="small" title="Flux manifests preview" style={{ marginBottom: 16 }}>
           <Typography.Paragraph>
-            <Text type="secondary">HelmRepository and HelmRelease that will be committed when using GitOps.</Text>
+            <Text type="secondary">HelmRepository and HelmRelease that will be committed when using GitOps. The chart source is the release's own, in its namespace; dependencies shared with other releases (KEDA, monitoring, the keytab webhook) go to the shared directory of the path prefix.</Text>
           </Typography.Paragraph>
           <Editor
             height="280px"

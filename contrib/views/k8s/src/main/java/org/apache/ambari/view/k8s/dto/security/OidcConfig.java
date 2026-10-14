@@ -18,6 +18,8 @@
 
 package org.apache.ambari.view.k8s.dto.security;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /**
  * OIDC configuration.
  */
@@ -27,6 +29,12 @@ public class OidcConfig {
     public String issuerUrl;
     public String clientId;
     public String clientSecret;
+    /**
+     * External source only: the audience the provider puts in the access tokens it issues for this client, which a
+     * service checking the audience of the JWTs it accepts (Trino) then requires. Blank means the client id; set it
+     * for a provider that issues another audience, such as an application ID URI ({@code api://...}).
+     */
+    public String audience;
     public String scopes;
     public String redirectUri;
     public String userClaim;
@@ -34,10 +42,16 @@ public class OidcConfig {
     public Boolean skipTlsVerify;
     public String caSecret;
     /**
-     * Email domain the IdP issues for human users (e.g. "dev21.hadoop.clemlab.com").
+     * Email domain the IdP issues for human users (e.g. "example.com").
      * Bootstrapped from {@code oidc-env/oidc_principal_domain}. Consumed by services
      * (e.g. OpenMetadata) that need to bootstrap admin user records with matching
      * email addresses to avoid "Account already exists" on first OIDC login.
      */
     public String principalDomain;
+    /**
+     * On a read of the profiles, whether a client secret is stored: the secret itself is never sent back (see
+     * {@code SecurityProfileService#loadMaskedProfiles}). Never stored with the profile.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public Boolean clientSecretSet;
 }

@@ -62,7 +62,7 @@ import java.util.concurrent.TimeUnit;
  * already has python3 + urllib + a direct ClusterIP route to OM is simpler
  * and more reliable than threading certs through {@code java.net.HttpClient}
  * + trust store config in the view. See {@link OmBotJwtClient} for the same
- * decision applied to the JWT-mint step.
+ * decision applied to reading the bot JWT.
  */
 public final class OmAtlasFederationClient {
 
@@ -94,8 +94,8 @@ public final class OmAtlasFederationClient {
      * @param client K8s client the view holds for the deploy
      * @param namespace release namespace
      * @param release helm release name
-     * @param jwt Unlimited-TTL JWT for OM's ingestion-bot
-     *            (typically obtained via {@link OmBotJwtClient#mintUnlimitedJwt})
+     * @param jwt JWT of OM's ingestion-bot
+     *            (typically obtained via {@link OmBotJwtClient#readBotToken})
      * @param atlasHostPort Atlas REST endpoint, e.g. {@code http://atlas.host:21000}
      * @param atlasUsername Atlas bot account
      * @param atlasPassword Atlas bot password (used in cleartext via env var
@@ -160,7 +160,7 @@ public final class OmAtlasFederationClient {
             "set -eu\n" +
             "python3 - <<'PY'\n" +
             "import os, json, sys, urllib.request\n" +
-            "OM = 'http://' + os.environ.get('OM_SVC_HOST', os.environ['OM_RELEASE']) + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ.get('OM_PORT', '8585')\n" +
+            "OM = 'http://' + os.environ['OM_SVC_HOST'] + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ.get('OM_PORT', '8585')\n" +
             "HDR = {'Authorization': 'Bearer ' + os.environ['OM_JWT'], 'Content-Type': 'application/json'}\n" +
             "def om(method, path, body=None):\n" +
             "    req = urllib.request.Request(OM + '/api/v1' + path,\n" +
@@ -262,9 +262,7 @@ public final class OmAtlasFederationClient {
         // The Atlas password is the only secret on the env list. Bash interpolation
         // here is safe because we always shell-quote (single-quote escape) below.
         String envExports =
-                "OM_RELEASE=" + OmBotJwtClient.shellQuote(release)
-              + " OM_NAMESPACE=" + OmBotJwtClient.shellQuote(namespace)
-              + " OM_JWT=" + OmBotJwtClient.shellQuote(jwt)
+                OmBotJwtClient.connectionEnv(release, namespace, jwt)
               + " ATLAS_HOST_PORT=" + OmBotJwtClient.shellQuote(atlasHostPort)
               + " ATLAS_USER=" + OmBotJwtClient.shellQuote(atlasUsername)
               + " ATLAS_PASSWORD=" + OmBotJwtClient.shellQuote(atlasPassword)

@@ -21,7 +21,6 @@ package org.apache.ambari.view.k8s.utils;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.*;
 import org.apache.ambari.view.k8s.security.AESEncryptor;
-import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,10 +63,23 @@ public final class AmbariAliasResolver {
         persistedCredentialStore = new FileBasedCredentialStore(this.getMasterKeyStoreLocation());
         MasterKeyService masterKeyService = null;
         LOG.info("Persisted Crendential Store file at path: {}", persistedCredentialStore.getKeyStorePath().getAbsolutePath());
-        masterKeyService = new MasterKeyServiceImpl();
+        masterKeyService = new MasterKeyServiceImpl(ctx);
         persistedCredentialStore.setMasterKeyService(masterKeyService);
         this.credentialProvider = new CredentialProvider(this.persistedCredentialStore);
 
+    }
+
+    /**
+     * Resolves aliases against the given credential store rather than Ambari's own.
+     *
+     * @param ctx             the view context
+     * @param credentialStore a credential store whose master key service is set
+     */
+    public AmbariAliasResolver(ViewContext ctx, FileBasedCredentialStore credentialStore) {
+        this.properties = ctx.getProperties();
+        this.ctx = ctx;
+        this.persistedCredentialStore = Objects.requireNonNull(credentialStore, "credentialStore");
+        this.credentialProvider = new CredentialProvider(this.persistedCredentialStore);
     }
 
     public <T> String getProperty(ConfigurationProperty<T> configurationProperty) {
@@ -124,6 +136,31 @@ public final class AmbariAliasResolver {
     public void addAliasToCredentialStore(String alias, String password) throws AmbariException {
         this.credentialProvider.addAliasToCredentialStore(alias, password);
     }
+
+    /**
+     * Deletes an alias and its credential from the credential store; nothing happens when it does not exist.
+     *
+     * @param alias the alias
+     * @throws AmbariException when the credential store cannot be read or written
+     */
+    public void removeAlias(String alias) throws AmbariException {
+        // Only rewritten when the alias is there: removing from a store that does not exist yet would create it.
+        if (persistedCredentialStore.containsCredential(alias)) {
+            persistedCredentialStore.removeCredential(alias);
+        }
+    }
+
+    /**
+     * Lists the aliases of the credential store, in lower case as it keeps them.
+     *
+     * @return the aliases; empty when the store does not exist yet
+     * @throws AmbariException when the credential store cannot be read
+     */
+    public Set<String> listAliases() throws AmbariException {
+        Set<String> aliases = persistedCredentialStore.listCredentials();
+        return aliases == null ? Set.of() : aliases;
+    }
+
     public File getMasterKeyStoreLocation() {
         final String keysDir = opt(ctx.getAmbariProperty("security.server.keys_dir"),
                 "/var/lib/ambari-server/keys");
@@ -291,7 +328,7 @@ public final class AmbariAliasResolver {
             }
 
             ConfigurationProperty<?> other = (ConfigurationProperty<?>) obj;
-            return StringUtils.equals(this.m_key, other.m_key);
+            return Objects.equals(this.m_key, other.m_key);
         }
 
         /**

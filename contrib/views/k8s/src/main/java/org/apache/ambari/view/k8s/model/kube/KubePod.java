@@ -28,6 +28,10 @@ public class KubePod {
     public String nodeName;
     public String podIP;
     public String startTime;
+    /** Kind of the controller that owns the pod (StatefulSet, ReplicaSet, ...), or null for a bare pod. */
+    public String ownerKind;
+    /** Set once the pod is being deleted: the pod is Terminating until its containers have stopped. */
+    public String deletionTimestamp;
     public Map<String, String> labels;
     public List<KubePodContainerStatus> containers;
 }

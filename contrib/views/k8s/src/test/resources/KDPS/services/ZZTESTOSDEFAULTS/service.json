@@ -1,0 +1,17 @@
+{
+  "label": "Test service with OpenShift defaults",
+  "description": "Test fixture: a chart whose scheduler cannot run on OpenShift, so the definition turns it off there.",
+  "chart": "scheduler-chart",
+  "version": "1.0.0",
+  "defaultRepo": "charts",
+  "openshiftValueDefaults": {
+    "scheduling.userScheduler.enabled": false
+  },
+  "openshiftScc": [
+    {
+      "scc": "nonroot-v2",
+      "serviceAccounts": ["hub", "default"]
+    }
+  ],
+  "form": []
+}

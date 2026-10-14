@@ -35,6 +35,8 @@ public class HelmReleaseDTO {
     public boolean managedByUi;
     public String serviceKey;
     public java.util.Map<String, java.util.Map<String, String>> catalogRefs; // reusable Trino catalogs attached: name -> {id, hash}
+    public Boolean catalogManagement; // Trino: whether the Catalogs action can run on the release (null: not Trino, or unknown)
+    public java.util.List<String> truststoreRefs; // truststores selected for the release (null: never recorded)
     public String platformContextId; // KDPS context the release was deployed against (for Upgrade/Config preselect)
     public String repoId;
     public String chartRef;
@@ -48,6 +50,11 @@ public class HelmReleaseDTO {
     public String deploymentMode; // DIRECT_HELM (default) or FLUX_GITOPS
     public String gitCommitSha;
     public String gitBranch;
+    public String gitBaseBranch; // the branch Flux reconciles, which every change of the release lands on
+    public Boolean gitBaseBranchAssumed; // true when no base branch is recorded and main is only assumed
+    public String gitCommitMode; // DIRECT_COMMIT or PR_MODE, as the release was last deployed
+    public Boolean gitPendingDelete; // true while the uninstall waits for its removal pull request to be merged
+    public Boolean installed; // false for a GitOps release Helm does not list (not installed by Flux yet, or removed)
     public String gitPath;
     public String gitRepoUrl;
     public String gitPrUrl;

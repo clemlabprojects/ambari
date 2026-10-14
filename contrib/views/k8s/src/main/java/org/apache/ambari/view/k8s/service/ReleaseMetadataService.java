@@ -31,8 +31,10 @@ import io.fabric8.kubernetes.api.model.networking.v1.HTTPIngressRuleValue;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.ReleaseEndpointDTO;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.store.K8sReleaseRepo;
+import org.apache.ambari.view.k8s.store.ProvisioningLedger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,6 +61,9 @@ import java.util.stream.Collectors;
  */
 public class ReleaseMetadataService {
     private static final Logger LOG = LoggerFactory.getLogger(ReleaseMetadataService.class);
+
+    /** The reusable-catalog references of a release that has none, see {@link #recordCatalogRefs}. */
+    static final String NO_CATALOG_REFS = "{}";
 
     private final ViewContext viewContext;
     private final K8sReleaseRepo releaseRepository;
@@ -93,6 +98,136 @@ public class ReleaseMetadataService {
      */
     public void delete(String namespace, String name) {
         releaseRepository.deleteById(K8sReleaseEntity.idOf(namespace, name));
+        forgetPendingProvisioning(namespace, name);
+    }
+
+    // ---------- What KDPS registered outside Kubernetes (see ProvisioningLedger) ----------
+
+    /** Prefix of the view settings keeping the ledger of a release that has no record yet. */
+    static final String PENDING_PROVISIONING_PREFIX = "release.provisioning.";
+
+    /** Serialises the read-modify-write of the ledgers: steps of different releases run on several threads. */
+    private static final Object PROVISIONING_LOCK = new Object();
+
+    /**
+     * Records what a deploy step registered for a release outside Kubernetes. A release that has no record yet (a
+     * GitOps release is recorded by its commit, after the steps that register it) keeps its ledger in the view
+     * settings until its record is created, which then takes it over. Never throws: a ledger that cannot be written is
+     * logged, and the deploy goes on.
+     *
+     * @param change what to add to the ledger
+     */
+    public void recordProvisioning(String namespace, String releaseName,
+                                   java.util.function.Consumer<ProvisioningLedger> change) {
+        if (namespace == null || namespace.isBlank() || releaseName == null || releaseName.isBlank() || change == null) {
+            return;
+        }
+        synchronized (PROVISIONING_LOCK) {
+            try {
+                K8sReleaseEntity e = find(namespace, releaseName);
+                if (e != null) {
+                    ProvisioningLedger ledger = e.provisioningLedger();
+                    change.accept(ledger);
+                    String before = e.getProvisioningJson();
+                    e.recordProvisioningLedger(ledger);
+                    if (!java.util.Objects.equals(before, e.getProvisioningJson())) {
+                        releaseRepository.update(e);
+                    }
+                    return;
+                }
+                InstanceSettings settings = new InstanceSettings(viewContext);
+                String key = pendingProvisioningKey(namespace, releaseName);
+                ProvisioningLedger current = ProvisioningLedger.parse(settings.get(key));
+                ProvisioningLedger updated = current.copy();
+                change.accept(updated);
+                settings.put(key, ProvisioningLedger.fitting(current, updated, InstanceSettings.MAX_VALUE_LENGTH).toJson());
+            } catch (RuntimeException ex) {
+                LOG.warn("Could not record what KDPS registered for {}/{} outside Kubernetes: {}", namespace,
+                        releaseName, ex.toString());
+            }
+        }
+    }
+
+    /**
+     * What KDPS registered for a release outside Kubernetes: what its record holds, with what was recorded while it
+     * had none. Empty when nothing is recorded; truncated when it cannot be read.
+     */
+    public ProvisioningLedger provisioningOf(String namespace, String releaseName) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        return provisioningOf(e, namespace, releaseName);
+    }
+
+    /** {@link #provisioningOf(String, String)} for a record already read ({@code null} when there is none). */
+    public ProvisioningLedger provisioningOf(K8sReleaseEntity record, String namespace, String releaseName) {
+        ProvisioningLedger ledger = record != null ? record.provisioningLedger() : new ProvisioningLedger();
+        try {
+            ledger.merge(ProvisioningLedger.parse(
+                    new InstanceSettings(viewContext).get(pendingProvisioningKey(namespace, releaseName))));
+        } catch (RuntimeException ex) {
+            LOG.warn("Could not read what KDPS registered for {}/{} before its record existed: {}", namespace,
+                    releaseName, ex.toString());
+        }
+        return ledger;
+    }
+
+    /**
+     * The ledgers of the other releases KDPS knows, by {@code namespace/release}: what the uninstall of a release
+     * checks before taking back something another release may share with it (a Ranger account, a principal, the Atlas
+     * federation user, a view instance, a Vault path). A release deployed before KDPS kept ledgers is listed with {@link ProvisioningLedger#unrecorded}.
+     * Null when they cannot be read, which the caller takes as "may be shared".
+     */
+    public Map<String, ProvisioningLedger> otherReleasesProvisioning(String namespace, String releaseName) {
+        try {
+            Map<String, ProvisioningLedger> others = new java.util.LinkedHashMap<>();
+            for (K8sReleaseEntity other : findAll()) {
+                if (other == null || (namespace.equals(other.getNamespace()) && releaseName.equals(other.getReleaseName()))) {
+                    continue;
+                }
+                String key = other.getNamespace() + "/" + other.getReleaseName();
+                if (!other.hasProvisioningLedger()) {
+                    others.put(key, ProvisioningLedger.unrecorded());
+                    continue;
+                }
+                ProvisioningLedger ledger = other.provisioningLedger();
+                if (!ledger.isEmpty()) others.put(key, ledger);
+            }
+            return others;
+        } catch (RuntimeException ex) {
+            LOG.warn("Could not read the other releases' ledgers: {}", ex.toString());
+            return null;
+        }
+    }
+
+    private static String pendingProvisioningKey(String namespace, String releaseName) {
+        return PENDING_PROVISIONING_PREFIX + K8sReleaseEntity.idOf(namespace, releaseName);
+    }
+
+    /**
+     * Moves the ledger kept while a release had no record into the record just created. The record gets a ledger even
+     * when nothing was kept, which tells it apart from a release deployed before KDPS kept ledgers.
+     */
+    private void adoptPendingProvisioning(K8sReleaseEntity entity) {
+        entity.recordProvisioningLedger(entity.provisioningLedger());
+        try {
+            InstanceSettings settings = new InstanceSettings(viewContext);
+            String key = pendingProvisioningKey(entity.getNamespace(), entity.getReleaseName());
+            ProvisioningLedger pending = ProvisioningLedger.parse(settings.get(key));
+            if (pending.isEmpty()) return;
+            ProvisioningLedger ledger = entity.provisioningLedger();
+            ledger.merge(pending);
+            entity.recordProvisioningLedger(ledger);
+        } catch (RuntimeException ex) {
+            LOG.warn("Could not move what KDPS registered for {}/{} into its record: {}", entity.getNamespace(),
+                    entity.getReleaseName(), ex.toString());
+        }
+    }
+
+    private void forgetPendingProvisioning(String namespace, String releaseName) {
+        try {
+            new InstanceSettings(viewContext).delete(pendingProvisioningKey(namespace, releaseName));
+        } catch (RuntimeException ex) {
+            LOG.warn("Could not forget the ledger kept for {}/{}: {}", namespace, releaseName, ex.toString());
+        }
     }
 
     /**
@@ -150,6 +285,47 @@ public class ReleaseMetadataService {
     }
 
     /**
+     * What the global configuration version of a release record holds once the release must be restarted: something
+     * its pods read at startup (its keytab, its OIDC client secret) changed outside a deploy. It never equals a
+     * configuration fingerprint, so the Releases page offers "Resync / restart" until a deploy has restarted the
+     * release's pods and recorded the current fingerprint (see {@link #clearRestartRequired}).
+     */
+    public static final String RESTART_REQUIRED_MARKER = "restart-required";
+
+    /**
+     * Flags a release for a restart, see {@link #RESTART_REQUIRED_MARKER}. Does nothing for a release without a
+     * record.
+     */
+    public void markRestartRequired(String namespace, String name) {
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        if (entity == null || RESTART_REQUIRED_MARKER.equals(entity.getGlobalConfigVersion())) {
+            return;
+        }
+        entity.setGlobalConfigVersion(RESTART_REQUIRED_MARKER);
+        releaseRepository.update(entity);
+    }
+
+    /**
+     * Clears the restart flag of a release once its pods were restarted, see {@link #RESTART_REQUIRED_MARKER}. Does
+     * nothing for a release that is not flagged.
+     *
+     * @param globalConfigVersion the global configuration fingerprint the release was deployed with
+     */
+    public void clearRestartRequired(String namespace, String name, String globalConfigVersion) {
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        if (!restartMarked(entity)) {
+            return;
+        }
+        entity.setGlobalConfigVersion(globalConfigVersion);
+        releaseRepository.update(entity);
+    }
+
+    /** Whether a release record says the release must be restarted, see {@link #RESTART_REQUIRED_MARKER}. */
+    public static boolean restartMarked(K8sReleaseEntity entity) {
+        return entity != null && RESTART_REQUIRED_MARKER.equals(entity.getGlobalConfigVersion());
+    }
+
+    /**
      * Return all managed releases recorded in the datastore.
      */
     public List<K8sReleaseEntity> findAll() {
@@ -173,6 +349,29 @@ public class ReleaseMetadataService {
             }
         }
         return results;
+    }
+
+    /**
+     * Points every release recorded with one security profile at another, for a profile replaced by another under a
+     * new name: their next deploy applies the new one.
+     *
+     * @param fromProfile the profile the releases are recorded with
+     * @param toProfile   the profile they use from now on
+     * @return the releases ({@code namespace/release}) that were changed
+     */
+    public List<String> reassignSecurityProfile(String fromProfile, String toProfile) {
+        if (fromProfile == null || fromProfile.isBlank() || toProfile == null || toProfile.isBlank()) {
+            return java.util.Collections.emptyList();
+        }
+        List<String> changed = new java.util.ArrayList<>();
+        for (K8sReleaseEntity entity : releaseRepository.findAll()) {
+            if (fromProfile.equals(entity.getSecurityProfile())) {
+                entity.setSecurityProfile(toProfile);
+                releaseRepository.update(entity);
+                changed.add(entity.getNamespace() + "/" + entity.getReleaseName());
+            }
+        }
+        return changed;
     }
 
     /**
@@ -206,14 +405,164 @@ public class ReleaseMetadataService {
      * Persist (or clear, with null/blank) the reusable-catalog references of a release. Separate
      * from {@link #recordInstallOrUpgrade} on purpose: only Trino deploys set it and the metadata
      * record call already carries twenty positional parameters.
+     * <p>
+     * No references are stored as {@code {}}, never as null: the DataStore leaves a column alone when
+     * it is given null, so a null would keep the catalogs of the previous deploy attached.
      */
     public void recordCatalogRefs(String namespace, String releaseName, String catalogRefsJson) {
         K8sReleaseEntity e = find(namespace, releaseName);
         if (e == null) return;
-        String v = catalogRefsJson == null || catalogRefsJson.isBlank() ? null : catalogRefsJson;
-        if (java.util.Objects.equals(v, e.getCatalogRefsJson())) return;
+        String v = catalogRefsJson == null || catalogRefsJson.isBlank() ? NO_CATALOG_REFS : catalogRefsJson;
+        String current = e.getCatalogRefsJson() == null || e.getCatalogRefsJson().isBlank()
+                ? NO_CATALOG_REFS : e.getCatalogRefsJson();
+        if (v.equals(current)) return;
         e.setCatalogRefsJson(v);
         releaseRepository.update(e);
+    }
+
+    /**
+     * Detaches one reusable catalog from a release, for a catalog removed from the release outside the wizard
+     * (dropped and forgotten on the Trino Catalogs page), so the release no longer holds it from deletion.
+     *
+     * @param catalogName the catalog's name in the release
+     */
+    public void forgetCatalogRef(String namespace, String releaseName, String catalogName) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || catalogName == null) return;
+        java.util.Map<String, java.util.Map<String, String>> refs = TrinoCatalogService.parseRefs(e.getCatalogRefsJson());
+        if (refs.remove(catalogName) == null) return;
+        recordCatalogRefs(namespace, releaseName, TrinoCatalogService.toRefsJson(refs));
+    }
+
+    /**
+     * Records the truststores selected for a release, so a later redeploy without a selection keeps them.
+     *
+     * @param refs the selection; an empty list is a choice too (default truststores only); null changes nothing
+     */
+    public void recordTruststoreRefs(String namespace, String releaseName, java.util.List<String> refs) {
+        if (refs == null) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || java.util.Objects.equals(refs, e.getTruststoreRefs())) return;
+        e.setTruststoreRefs(refs);
+        releaseRepository.update(e);
+    }
+
+    /**
+     * Records where the last GitOps change of a release went, exactly as given: a value left out is cleared, so a
+     * direct commit forgets the pull request of an earlier change and a deploy ends a removal that was waiting for its
+     * merge. The base branch is kept for the next deploys, which need not name it.
+     *
+     * @param branch     the branch the change was pushed to: the base branch for a direct commit
+     * @param baseBranch the branch Flux reconciles; null or blank keeps the recorded one
+     * @param commitMode DIRECT_COMMIT or PR_MODE
+     * @param prUrl      the pull request of the change, or null for none
+     * @param prNumber   its number, or null
+     * @param prState    its state, or null
+     * @param specDigest the spec digest annotation of the HelmRelease Git now holds for the release, or null
+     */
+    public void recordGitChange(String namespace, String releaseName, String branch, String baseBranch,
+                                String commitMode, String prUrl, String prNumber, String prState,
+                                String specDigest) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null) return;
+        e.setGitBranch(branch);
+        if (baseBranch != null && !baseBranch.isBlank()) {
+            e.setGitBaseBranch(baseBranch);
+        }
+        e.setGitCommitMode(commitMode);
+        e.setGitPrUrl(prUrl);
+        e.setGitPrNumber(prNumber);
+        e.setGitPrState(prState);
+        e.setGitSpecDigest(specDigest);
+        e.setGitPendingDelete(false);
+        e.setGitRemovedHelmReleases(null);
+        releaseRepository.update(e);
+    }
+
+    /**
+     * Records that the uninstall of a GitOps release waits for the merge of its removal: the release keeps running, and
+     * its record, until the removal reaches the branch Flux reconciles.
+     *
+     * @param branch       the branch the removal was pushed to
+     * @param prUrl        the pull request proposing it
+     * @param prNumber     its number
+     * @param prState      its state
+     * @param helmReleases the HelmReleases the removal takes out of Git, as {@code <namespace>/<name>}
+     */
+    public void recordPendingRemoval(String namespace, String releaseName, String branch, String prUrl,
+                                     String prNumber, String prState, List<String> helmReleases) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null) return;
+        e.setGitBranch(branch);
+        e.setGitPrUrl(prUrl);
+        e.setGitPrNumber(prNumber);
+        e.setGitPrState(prState);
+        e.setGitPendingDelete(true);
+        e.setGitRemovedHelmReleases(helmReleases);
+        releaseRepository.update(e);
+    }
+
+    /**
+     * Records the credential store alias a GitOps release pushes with, when a deploy that changed nothing in Git still
+     * gave it a new Git credential.
+     *
+     * @param alias the alias; null or blank changes nothing
+     */
+    public void recordGitCredentialAlias(String namespace, String releaseName, String alias) {
+        if (alias == null || alias.isBlank()) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || alias.equals(e.getGitCredentialAlias())) return;
+        e.setGitCredentialAlias(alias);
+        releaseRepository.update(e);
+    }
+
+    /**
+     * Records the SSH host keys of a GitOps release's Git server, which its later operations require the server to
+     * present.
+     *
+     * @param knownHosts known_hosts lines; null or blank changes nothing
+     */
+    public void recordGitSshKnownHosts(String namespace, String releaseName, String knownHosts) {
+        if (knownHosts == null || knownHosts.isBlank()) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || knownHosts.equals(e.getGitSshKnownHosts())) return;
+        e.setGitSshKnownHosts(knownHosts);
+        if (!knownHosts.equals(e.getGitSshKnownHosts())) {
+            // The keys recorded before are removed all the same, so that the later operations read the current ones
+            // from the Git credential rather than keys the server may no longer present.
+            LOG.warn("The Git server host keys of {}/{} were not recorded with the release: its Git metadata is full;"
+                    + " they stay recorded with its Git credential", namespace, releaseName);
+        }
+        releaseRepository.update(e);
+    }
+
+    /**
+     * Records the objects KDPS created for a release outside its chart (see {@link KdpsReleaseObjects}), as found on
+     * the cluster after a deploy. The ClusterRoleBindings recorded before are kept: an account that may not list them
+     * finds none, although they are still there, and the uninstall deletes one only when it is recorded.
+     *
+     * @param objects the objects found, as {@code <Kind>/<name>}; null changes nothing
+     */
+    public void recordKdpsObjects(String namespace, String releaseName, java.util.List<String> objects) {
+        if (objects == null) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null) return;
+        java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(objects);
+        java.util.List<String> before = e.getKdpsObjects();
+        if (before != null) {
+            before.stream().filter(o -> o != null && o.startsWith(KdpsReleaseObjects.CLUSTER_ROLE_BINDING + "/"))
+                    .forEach(merged::add);
+        }
+        java.util.List<String> recorded = new java.util.ArrayList<>(merged);
+        if (recorded.equals(before)) return;
+        e.setKdpsObjects(recorded);
+        releaseRepository.update(e);
+    }
+
+    /** The truststores recorded for a release, or {@code null} when no selection was ever recorded. */
+    public java.util.List<String> truststoreRefs(String namespace, String releaseName) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        return e == null ? null : e.getTruststoreRefs();
     }
 
     public void recordInstallOrUpgrade(
@@ -315,7 +664,12 @@ public class ReleaseMetadataService {
         entity.setUpdatedAt(Instant.now().toString());
 
         if (isNewEntity) {
-            releaseRepository.create(entity);
+            // What the deploy registered before the record existed comes with it.
+            synchronized (PROVISIONING_LOCK) {
+                adoptPendingProvisioning(entity);
+                releaseRepository.create(entity);
+                forgetPendingProvisioning(namespace, releaseName);
+            }
         } else {
             releaseRepository.update(entity);
         }

@@ -32,8 +32,11 @@ import org.apache.ambari.view.k8s.requests.HelmUpgradeRequest;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.*;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
+import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
+import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.store.ProvisioningLedger;
 import org.apache.ambari.view.k8s.service.PathConfig;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
@@ -54,6 +57,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,14 +94,20 @@ public class HelmResource {
     private static final long RELEASE_CACHE_TTL_MILLIS = 10_000; // 10s
 
 
-    public HelmResource(ViewContext context) {
+    /**
+     * Creates the resource for one request.
+     *
+     * @param context       active Ambari view context
+     * @param callerHeaders headers of the request; the role check asks Ambari with the caller's credentials
+     */
+    public HelmResource(ViewContext context, HttpHeaders callerHeaders) {
         this.viewContext = context;
         this.configService = new ViewConfigurationService(viewContext);
         this.kubernetesService = KubernetesService.get(viewContext);
         this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService, viewContext);
         this.commandService = CommandService.get(viewContext);
         this.releaseMetadataService = new ReleaseMetadataService(viewContext);
-        this.authHelper = new AuthHelper(viewContext);
+        this.authHelper = new AuthHelper(viewContext, callerHeaders);
     }
 
     /**
@@ -106,6 +116,7 @@ public class HelmResource {
     @GET
     @Path("/repos/{id}/check")
     public Response checkRepo(@PathParam("id") String id) {
+        authHelper.checkWritePermission();
         try {
             boolean ok = new HelmRepositoryService(viewContext).check(id);
             return Response.ok(Map.of("id", id, "ok", ok)).build();
@@ -121,6 +132,7 @@ public class HelmResource {
   @Path("/monitoring/install")
   public Response installMonitoring(@QueryParam("repoId") String repoId,
                                     @QueryParam("force") @DefaultValue("false") boolean force) {
+    authHelper.checkWritePermission();
     try {
       var info = KubernetesService.get(viewContext).ensureMonitoringInstalled(repoId, force);
       if (info == null) {
@@ -138,6 +150,7 @@ public class HelmResource {
     @POST
     @Path("/monitoring/reset")
     public Response resetMonitoring() {
+        authHelper.checkWritePermission();
         try {
             KubernetesService.get(viewContext).resetMonitoringCache();
             return Response.ok(Map.of("status", "reset")).build();
@@ -166,13 +179,11 @@ public class HelmResource {
                                      @QueryParam("limit") @DefaultValue("50") int limit,
                                      @QueryParam("offset") @DefaultValue("0") int offset,
                                      @QueryParam("managedOnly") @DefaultValue("false") boolean managedOnly) {
-        final String kubeconfigContent = getKubeconfigContents();
-        final HelmService helmService = new HelmService(viewContext);
         final GlobalConfigService globalConfigService = new GlobalConfigService();
         final String currentGlobalFingerprint = globalConfigService.fingerprint();
         final SecurityProfileService securityProfileService = new SecurityProfileService(viewContext);
 
-        List<Release> releases = helmService.list(namespace, kubeconfigContent);
+        List<Release> releases = helmReleases(namespace);
 
         // Robust "deployed by KDPS" signal: the KDPS label stamped on each Helm release Secret at deploy
         // time (see KubernetesService.tagHelmReleaseSecrets). Read k8s-native — so a release still shows
@@ -193,21 +204,31 @@ public class HelmResource {
         // that sort past the first page — e.g. superset/trino on a 38-release cluster where the first
         // page held none. Metadata is captured here and reused in the loop below (no second lookup).
         final java.util.Map<String, K8sReleaseEntity> metaByKey = new java.util.HashMap<>();
-        final List<Release> effective = new ArrayList<>();
+        final List<HelmReleaseDTO> effective = new ArrayList<>();
         for (Release r : releases) {
             String key = r.getNamespace() + "/" + r.getName();
             K8sReleaseEntity md = releaseMetadataService.find(r.getNamespace(), r.getName());
             metaByKey.put(key, md);
             boolean managed = kdpsManaged.contains(key) || (md != null && md.isManagedByUi());
             if (!managedOnly || managed) {
-                effective.add(r);
+                effective.add(HelmReleaseDTO.from(r));
             }
+        }
+        // GitOps releases Helm does not list yet (a pull request not merged, a branch Flux does not watch, a chart
+        // source failing) or no longer lists (a merged removal): listed from their record, before the paging, so the
+        // page shows what they wait for, their pull request and their Uninstall.
+        final java.util.Set<String> notInHelm = new java.util.HashSet<>();
+        for (HelmReleaseDTO recorded : gitOpsReleasesNotListed(namespace, metaByKey.keySet(), recordedReleases())) {
+            String key = recorded.namespace + "/" + recorded.name;
+            metaByKey.put(key, releaseMetadataService.find(recorded.namespace, recorded.name));
+            notInHelm.add(key);
+            effective.add(recorded);
         }
 
         int total = effective.size();
         int from = Math.min(Math.max(offset, 0), total);
         int to = Math.min(from + Math.max(limit, 1), total);
-        List<Release> page = effective.subList(from, to);
+        List<HelmReleaseDTO> page = effective.subList(from, to);
 
         List<HelmReleaseDTO> releaseList = new ArrayList<>();
         // Use a small thread pool to parallelize heavy lookups (status, endpoints, version).
@@ -216,8 +237,7 @@ public class HelmResource {
         List<Future<?>> workerFutures = new ArrayList<>();
         LOG.info("Refreshing Helm releases with parallel workers: {} item(s), pool size {}", page.size(), poolSize);
 
-        for (Release release : page) {
-            HelmReleaseDTO releaseDto = HelmReleaseDTO.from(release);
+        for (HelmReleaseDTO releaseDto : page) {
 
             boolean kdpsLabelled = kdpsManaged.contains(releaseDto.namespace + "/" + releaseDto.name);
             K8sReleaseEntity metadata = metaByKey.get(releaseDto.namespace + "/" + releaseDto.name);
@@ -225,35 +245,26 @@ public class HelmResource {
                 releaseDto.managedByUi = metadata.isManagedByUi() || kdpsLabelled;
                 releaseDto.serviceKey = metadata.getServiceKey();
                 releaseDto.platformContextId = metadata.getPlatformContextId();
+                releaseDto.truststoreRefs = metadata.getTruststoreRefs();
                 releaseDto.catalogRefs = org.apache.ambari.view.k8s.service.TrinoCatalogService.parseRefs(metadata.getCatalogRefsJson());
                 releaseDto.repoId = metadata.getRepoId();
                 releaseDto.chartRef = metadata.getChartRef();
-                if (metadata.getVersion() != null && !metadata.getVersion().isBlank()) {
-                    releaseDto.version = metadata.getVersion();
-                }
-                releaseDto.restartRequired =
-                        currentGlobalFingerprint != null
+                releaseDto.restartRequired = ReleaseMetadataService.restartMarked(metadata)
+                        || (currentGlobalFingerprint != null
                                 && metadata.getGlobalConfigVersion() != null
-                                && !currentGlobalFingerprint.equals(metadata.getGlobalConfigVersion());
+                                && !currentGlobalFingerprint.equals(metadata.getGlobalConfigVersion()));
                 if (metadata.getServiceKey() == null || metadata.getServiceKey().isBlank()) {
                     releaseDto.restartRequired = false;
                 }
                 releaseDto.securityProfile = metadata.getSecurityProfile();
                 releaseDto.deploymentMode = metadata.getDeploymentMode();
-                releaseDto.gitCommitSha = metadata.getGitCommitSha();
-                releaseDto.gitBranch = metadata.getGitBranch();
-                releaseDto.gitPath = metadata.getGitPath();
-                releaseDto.gitRepoUrl = metadata.getGitRepoUrl();
-                releaseDto.gitPrUrl = metadata.getGitPrUrl();
-                releaseDto.gitPrNumber = metadata.getGitPrNumber();
-                releaseDto.gitPrState = metadata.getGitPrState();
+                copyGitRecord(metadata, releaseDto);
 
                 if (metadata.getSecurityProfile() != null && !metadata.getSecurityProfile().isBlank()) {
                     try {
                         var currentProfile = securityProfileService.resolveProfile(metadata.getSecurityProfile());
-                        String currentHash = securityProfileService.fingerprint(currentProfile);
-                        String storedHash = metadata.getSecurityProfileHash();
-                        if (currentHash != null && storedHash != null && !currentHash.equals(storedHash)) {
+                        if (!securityProfileService.matchesFingerprint(currentProfile,
+                                metadata.getSecurityProfileHash())) {
                             releaseDto.securityProfileStale = true;
                         }
                     } catch (Exception ex) {
@@ -269,6 +280,23 @@ public class HelmResource {
             // Heavy work per release in parallel: status, endpoints, version.
             workerFutures.add(workerPool.submit(() -> {
                 try {
+                    // First, so a failed status or endpoint lookup still leaves the release with a version.
+                    releaseDto.version = releaseChartVersion(releaseDto.chart, releaseDto.version,
+                            () -> kubernetesService.deployedChartVersion(releaseDto.namespace, releaseDto.name),
+                            metadata != null ? metadata.getVersion() : null,
+                            metadata != null ? metadata.getDeploymentMode() : null);
+
+                    // So the page offers the Catalogs action only on a Trino release where it can run.
+                    if (notInHelm.contains(releaseDto.namespace + "/" + releaseDto.name)) {
+                        // Not installed by Flux (yet): there is no coordinator to run it on.
+                        releaseDto.catalogManagement = "TRINO".equalsIgnoreCase(releaseDto.serviceKey)
+                                ? Boolean.FALSE : null;
+                    } else {
+                        releaseDto.catalogManagement = catalogManagement(releaseDto.namespace, releaseDto.name,
+                                releaseDto.serviceKey,
+                                () -> kubernetesService.getHelmReleaseValues(releaseDto.namespace, releaseDto.name));
+                    }
+
                     // Backend-aware status lookup
                     if (metadata != null) {
                         HelmReleaseDTO refreshed = commandService.statusViaBackend(releaseDto.namespace, releaseDto.name, metadata.getDeploymentMode());
@@ -295,6 +323,9 @@ public class HelmResource {
                             }
                             if (refreshed.gitPrUrl != null) {
                                 releaseDto.gitPrUrl = refreshed.gitPrUrl;
+                            }
+                            if (refreshed.gitPendingDelete != null) {
+                                releaseDto.gitPendingDelete = refreshed.gitPendingDelete;
                             }
                         }
                     }
@@ -331,16 +362,6 @@ public class HelmResource {
                     if (!endpointsById.isEmpty()) {
                         releaseDto.endpoints = new ArrayList<>(endpointsById.values());
                     }
-
-                    // If the version couldn't be parsed from the `helm list` chart string, read the
-                    // DEPLOYED version straight from the release Secret's chart.metadata.version — i.e.
-                    // what is actually running on the cluster (source of truth). No remote registry
-                    // 'helm show chart' round-trip (slow + resolves the wrong thing + fails "not found"
-                    // for OCI refs) and no stale DB value.
-                    if (releaseDto.version == null || releaseDto.version.isBlank()) {
-                        releaseDto.version = kubernetesService.deployedChartVersion(
-                                releaseDto.namespace, releaseDto.name);
-                    }
                 } catch (Exception ex) {
                     LOG.warn("Async refresh failed for {}/{}: {}", releaseDto.namespace, releaseDto.name, ex.toString());
                 }
@@ -373,6 +394,153 @@ public class HelmResource {
     }
 
     /**
+     * What KDPS recorded of a GitOps release's Git state, for the Releases page: where its manifests are, the base
+     * branch Flux reconciles and the commit mode, which a redeploy from the page sends back, and the pull request of
+     * its last change or of its removal. A base branch only assumed, for a release recorded before base branches were,
+     * is shown but flagged, and not sent back: recorded as the release's, it would be taken for where Flux reads it.
+     * Nothing for a release deployed with Helm.
+     */
+    static void copyGitRecord(K8sReleaseEntity metadata, HelmReleaseDTO dto) {
+        dto.gitCommitSha = metadata.getGitCommitSha();
+        dto.gitBranch = metadata.getGitBranch();
+        dto.gitPath = metadata.getGitPath();
+        dto.gitRepoUrl = metadata.getGitRepoUrl();
+        dto.gitPrUrl = metadata.getGitPrUrl();
+        dto.gitPrNumber = metadata.getGitPrNumber();
+        dto.gitPrState = metadata.getGitPrState();
+        if ("FLUX_GITOPS".equalsIgnoreCase(metadata.getDeploymentMode())) {
+            dto.gitBaseBranch = FluxGitOpsBackend.recordedBaseBranch(metadata);
+            dto.gitBaseBranchAssumed = FluxGitOpsBackend.knownBaseBranch(metadata) == null;
+            dto.gitCommitMode = metadata.getGitCommitMode() == null || metadata.getGitCommitMode().isBlank()
+                    ? "DIRECT_COMMIT" : metadata.getGitCommitMode();
+            dto.gitPendingDelete = metadata.isGitPendingDelete();
+        }
+    }
+
+    /** The releases Helm lists, in {@code namespace} or, when it is {@code null}, in every namespace it can read. */
+    List<Release> helmReleases(String namespace) {
+        return new HelmService(viewContext).list(namespace, getKubeconfigContents());
+    }
+
+    /** Every release KDPS recorded; none when the records cannot be read (logged). */
+    private Collection<K8sReleaseEntity> recordedReleases() {
+        try {
+            return releaseMetadataService.findAll();
+        } catch (Exception ex) {
+            LOG.warn("Could not read the release records to list the GitOps releases Helm does not list: {}",
+                    ex.toString());
+            return List.of();
+        }
+    }
+
+    /**
+     * The GitOps releases KDPS recorded that Helm does not list, as rows of the Releases page. One not installed yet:
+     * Flux installs it once its change is merged into the branch it reconciles, its chart source is ready, or Flux
+     * watches that branch at all; until then it is listed from its record, so the page shows what it waits for
+     * ({@code PENDING_PR}, {@code NOT_FOUND}, {@code PROGRESSING} from Flux's status), its pull request and its
+     * Uninstall. One whose removal waits for its pull request, which Flux removed from the cluster once the removal
+     * was merged ({@code PENDING_DELETE}): listed so the uninstall that finishes its removal (the Polaris credential,
+     * the SCC grants, the Git credential, the record) can still be run from the page. A release KDPS recorded is one
+     * it deployed, so these rows are listed whether or not the page shows only managed releases.
+     *
+     * @param namespace the namespace listed, or {@code null} for all
+     * @param listed    the releases Helm listed, as {@code <namespace>/<name>}
+     * @param records   the releases KDPS recorded
+     */
+    static List<HelmReleaseDTO> gitOpsReleasesNotListed(String namespace, java.util.Set<String> listed,
+                                                        Collection<K8sReleaseEntity> records) {
+        List<HelmReleaseDTO> rows = new ArrayList<>();
+        for (K8sReleaseEntity meta : records) {
+            if (meta == null || meta.getNamespace() == null || meta.getReleaseName() == null
+                    || listed.contains(meta.getNamespace() + "/" + meta.getReleaseName())
+                    || (namespace != null && !namespace.isEmpty() && !namespace.equals(meta.getNamespace()))) {
+                continue;
+            }
+            boolean gitOps = "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode());
+            if (!gitOps && !meta.isGitPendingDelete()) {
+                continue;
+            }
+            HelmReleaseDTO row = new HelmReleaseDTO();
+            row.id = meta.getReleaseName();
+            row.name = meta.getReleaseName();
+            row.namespace = meta.getNamespace();
+            row.chart = meta.getChartRef();
+            row.version = meta.getVersion();
+            // Replaced by what Flux reports once the page reads the release's status.
+            row.status = meta.isGitPendingDelete() ? "PENDING_DELETE" : "NOT_FOUND";
+            // Helm has no values for it: the page offers no action that redeploys it from them.
+            row.installed = Boolean.FALSE;
+            rows.add(row);
+        }
+        rows.sort(Comparator.comparing((HelmReleaseDTO r) -> r.namespace).thenComparing(r -> r.name));
+        return rows;
+    }
+
+    /**
+     * The chart version of a release, as the Releases page shows it and Upgrade/Config starts from. For a release
+     * deployed with Helm, the one it runs: the version {@code helm list} reports, else the one in the release's latest
+     * Helm Secret, else the one KDPS recorded at its last deploy. The record is only the last resort there: it goes
+     * stale when the chart changes outside a KDPS deploy (a Helm rollback, a resync that took the newest chart). The
+     * {@code helm list} chart string is {@code <name>-<version>} and a version may itself hold dashes, so when the
+     * parsed version disagrees with the record, the exact one is read from the Secret instead.
+     *
+     * <p>For a GitOps release, the recorded one comes first: it is the version last committed to Git, which Flux
+     * enforces, while Helm still reports the previous one until Flux reconciles or while the change waits in a pull
+     * request. Starting Upgrade/Config from Helm's would commit the previous chart back over the upgrade.
+     *
+     * @param chart                  the {@code helm list} chart string, e.g. {@code trino-1.43.14}; may be {@code null}
+     * @param listed                 the version parsed from that string; may be {@code null}
+     * @param releaseSecret          reads the version from the release's Helm Secret; may return {@code null}
+     * @param recorded               the version KDPS recorded for the release; may be {@code null}
+     * @param recordedDeploymentMode the deployment mode KDPS recorded for the release; may be {@code null}
+     * @return the chart version, or {@code null} when none is known
+     */
+    static String releaseChartVersion(String chart, String listed, Supplier<String> releaseSecret, String recorded,
+                                      String recordedDeploymentMode) {
+        String record = CommandService.pinnedChartVersion(recorded);
+        if (record != null && CommandService.chartVersionHeldInGit(recordedDeploymentMode)) {
+            return record;
+        }
+        if (record != null && chart != null && chart.endsWith("-" + record)) {
+            // Helm and the record agree, dashes included: no Secret to read.
+            return record;
+        }
+        boolean hasListed = listed != null && !listed.isBlank();
+        if (!hasListed || record != null) {
+            String exact = releaseSecret.get();
+            if (exact != null && !exact.isBlank()) {
+                return exact.trim();
+            }
+        }
+        return hasListed ? listed : record;
+    }
+
+    /**
+     * Whether the Catalogs action can run on a release, for the Releases page to offer it: a Trino release deployed
+     * with 'Let KDPS manage catalogs' and 'Enable internal HTTPS' (see
+     * {@link org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService#serviceUserAvailable}). A release
+     * deployed with internal HTTPS off never has the first. Only a Trino release's values are read.
+     *
+     * @param namespace  the release namespace, for the log
+     * @param name       the release name, for the log
+     * @param serviceKey the service KDPS recorded for the release; may be {@code null}
+     * @param values     reads the release's values
+     * @return whether the action can run, or {@code null} when the release is not Trino or its values cannot be read,
+     *         in which case the page still offers the action and the action says what is missing
+     */
+    static Boolean catalogManagement(String namespace, String name, String serviceKey,
+                                     Supplier<Map<String, Object>> values) {
+        if (!"TRINO".equalsIgnoreCase(serviceKey)) return null;
+        try {
+            return org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.serviceUserAvailable(values.get());
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the values of Trino release {}/{} for its Catalogs action: {}", namespace, name,
+                    e.toString());
+            return null;
+        }
+    }
+
+    /**
      * Retrieve the current status and metadata for a single Helm release.
      *
      * @param namespace   Kubernetes namespace of the release
@@ -399,13 +567,7 @@ public class HelmResource {
                 status.serviceKey = metadata.getServiceKey();
                 status.platformContextId = metadata.getPlatformContextId();
                 status.deploymentMode = metadata.getDeploymentMode();
-                status.gitCommitSha = metadata.getGitCommitSha();
-                status.gitBranch = metadata.getGitBranch();
-                status.gitPath = metadata.getGitPath();
-                status.gitRepoUrl = metadata.getGitRepoUrl();
-                status.gitPrUrl = metadata.getGitPrUrl();
-                status.gitPrNumber = metadata.getGitPrNumber();
-                status.gitPrState = metadata.getGitPrState();
+                copyGitRecord(metadata, status);
                 status.securityProfile = metadata.getSecurityProfile();
             }
             return Response.ok(status).build();
@@ -443,6 +605,47 @@ public class HelmResource {
             return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", fe.getMessage())).build();
         } catch (Exception ex) {
             return Response.serverError().entity(Map.of("error", ex.getMessage())).build();
+        }
+    }
+
+    /**
+     * "Retry reconcile" of a GitOps release: asks Flux to try the release again after it gave up on it (a first
+     * install that timed out, a prerequisite fixed outside Git), without a new commit. Sets the Flux reset, force and
+     * reconcile request annotations of its HelmRelease to one timestamp, through the namespace-scoped client.
+     *
+     * @param namespace   release namespace
+     * @param releaseName release name
+     * @return HTTP 200 with the request's timestamp; 400 for a release Flux does not manage; 404 when its HelmRelease
+     *         is not on the cluster
+     */
+    @POST
+    @Path("/releases/{namespace}/{release}/actions/retry-reconcile")
+    public Response retryReleaseReconcile(@PathParam("namespace") String namespace,
+                                          @PathParam("release") String releaseName) {
+        try {
+            authHelper.checkWritePermission();
+            K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
+            if (meta == null || !"FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity(Map.of("error", "Retry reconcile applies to releases deployed with Flux GitOps; "
+                                + namespace + "/" + releaseName + " is not one."))
+                        .build();
+            }
+            String requestedAt = kubernetesService.requestFluxReset(namespace, releaseName);
+            if (requestedAt == null) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(Map.of("error", "The HelmRelease " + namespace + "/" + releaseName + " is not on the "
+                                + "cluster: Flux has not applied the release yet, so there is nothing to retry."))
+                        .build();
+            }
+            LOG.info("Asked Flux to retry the reconcile of {}/{}", namespace, releaseName);
+            return Response.ok(Map.of("requested", true, "namespace", namespace, "release", releaseName,
+                    "requestedAt", requestedAt)).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", fe.getMessage())).build();
+        } catch (Exception ex) {
+            LOG.warn("Could not ask Flux to retry {}/{}: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", String.valueOf(ex.getMessage()))).build();
         }
     }
 
@@ -548,8 +751,14 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/catalogs")
     public Response listTrinoCatalogs(@PathParam("namespace") String namespace, @PathParam("release") String releaseName) {
         try {
-            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
-                    .list(namespace, releaseName, viewContext.getUsername())).build();
+            List<org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.CatalogView> catalogs =
+                    new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+                            .list(namespace, releaseName, viewContext.getUsername());
+            // The properties come from the release values, which only those who may redeploy the release can read.
+            if (!authHelper.canWrite()) {
+                org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.withoutSecrets(catalogs);
+            }
+            return Response.ok(catalogs).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
         } catch (IllegalArgumentException | IllegalStateException e) {
@@ -560,20 +769,96 @@ public class HelmResource {
         }
     }
 
-    /** Body: {name, properties (text), persist (default true)}. Runs CREATE CATALOG as the operator, then writes the values. */
+    /**
+     * The live catalog editor of a release. Saving a catalog to a release deployed with Flux GitOps commits its values
+     * to Git, through a deploy as a redeploy from the Releases page runs it, with the caller's Ambari session; it is
+     * refused while a GitOps deploy of the release has not finished.
+     */
+    private org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService trinoCatalogs(HttpHeaders headers,
+                                                                                            UriInfo uriInfo) {
+        return catalogEditor(gitOpsRedeploy(headers, uriInfo));
+    }
+
+    /** The live catalog editor, saving the catalogs of a release deployed with Flux GitOps through {@code redeploy}. */
+    org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService catalogEditor(
+            org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.GitOpsRedeploy redeploy) {
+        return new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext, redeploy);
+    }
+
+    /**
+     * Refuses, before a catalog is changed live, what the submission of a release's deploy would refuse at once, as a
+     * deploy from the wizard is refused before it is submitted: no Ambari master key (the operation keeps its
+     * parameters encrypted with it), or a security profile the release records that is gone.
+     *
+     * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException without the master key
+     * @throws IllegalArgumentException when the release's security profile no longer exists
+     */
+    void requireDeploySubmittable(K8sReleaseEntity release) {
+        org.apache.ambari.view.k8s.security.EncryptionService.forServer(viewContext).requireMasterKey();
+        String profile = release == null ? null : release.getSecurityProfile();
+        if (profile != null && !profile.isBlank()) {
+            new SecurityProfileService(viewContext).requireProfile(profile);
+        }
+    }
+
+    /** Commits the values of a release deployed with Flux GitOps as a deploy does, with the caller's Ambari session. */
+    org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.GitOpsRedeploy gitOpsRedeploy(
+            HttpHeaders headers, UriInfo uriInfo) {
+        return new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.GitOpsRedeploy() {
+            @Override
+            public String submit(HelmDeployRequest request) {
+                try {
+                    return commandService.submitDeploy(request, request.getRepoId(), null, null,
+                            uriInfo == null ? null : getCommandsUrl(uriInfo),
+                            headers == null ? null : headers.getRequestHeaders(),
+                            AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext),
+                            new org.apache.ambari.view.k8s.utils.AmbariAliasResolver(viewContext));
+                } catch (RuntimeException e) {
+                    // A refusal of the backend comes wrapped: answered with its own status and message, as a
+                    // deploy is.
+                    if (e.getClass() == RuntimeException.class && e.getCause() instanceof RuntimeException cause) {
+                        throw cause;
+                    }
+                    throw e;
+                }
+            }
+
+            @Override
+            public String runningDeploy(String namespace, String release) {
+                return commandService.runningGitOpsDeploy(namespace, release);
+            }
+
+            @Override
+            public void checkSubmittable(K8sReleaseEntity release) {
+                requireDeploySubmittable(release);
+            }
+        };
+    }
+
+    /**
+     * Body: {name, properties (text), persist (default true)}. Runs CREATE CATALOG as the operator, then writes the
+     * values: with a Helm upgrade, or for a release deployed with Flux GitOps through a commit to Git, whose operation
+     * the answer names ({@code commandId}).
+     */
     @POST
     @Path("/releases/{namespace}/{release}/catalogs")
     public Response createTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
-                                       java.util.Map<String, Object> body) {
+                                       java.util.Map<String, Object> body,
+                                       @Context HttpHeaders requestHeaders, @Context UriInfo uriInfo) {
+        authHelper.checkWritePermission();
         try {
-            authHelper.checkWritePermission();
             String name = body == null ? null : java.util.Objects.toString(body.get("name"), null);
             String props = body == null ? null : java.util.Objects.toString(body.get("properties"), null);
             boolean persist = body == null || body.get("persist") == null || Boolean.parseBoolean(String.valueOf(body.get("persist")));
-            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+            return Response.ok(trinoCatalogs(requestHeaders, uriInfo)
                     .create(namespace, releaseName, name, props, persist, viewContext.getUsername())).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (HelmOperationRegistry.ReleaseBusyException | FluxGitOpsBackend.GitOpsBusyException
+                 | ReleaseHeldInGitException busy) {
+            return Response.status(Response.Status.CONFLICT).entity(java.util.Map.of("error", busy.getMessage())).build();
+        } catch (org.apache.ambari.view.k8s.security.MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
         } catch (Exception e) {
@@ -582,17 +867,26 @@ public class HelmResource {
         }
     }
 
-    /** DROP CATALOG as the operator; {@code ?forget=true} (default) also removes it from the release values. */
+    /**
+     * DROP CATALOG as the operator; {@code ?forget=true} (default) also removes it from the release values, through Git
+     * for a release deployed with Flux GitOps.
+     */
     @DELETE
     @Path("/releases/{namespace}/{release}/catalogs/{name}")
     public Response dropTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
-                                     @PathParam("name") String name, @QueryParam("forget") @DefaultValue("true") boolean forget) {
+                                     @PathParam("name") String name, @QueryParam("forget") @DefaultValue("true") boolean forget,
+                                     @Context HttpHeaders requestHeaders, @Context UriInfo uriInfo) {
+        authHelper.checkWritePermission();
         try {
-            authHelper.checkWritePermission();
-            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+            return Response.ok(trinoCatalogs(requestHeaders, uriInfo)
                     .drop(namespace, releaseName, name, forget, viewContext.getUsername())).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (HelmOperationRegistry.ReleaseBusyException | FluxGitOpsBackend.GitOpsBusyException
+                 | ReleaseHeldInGitException busy) {
+            return Response.status(Response.Status.CONFLICT).entity(java.util.Map.of("error", busy.getMessage())).build();
+        } catch (org.apache.ambari.view.k8s.security.MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
         } catch (Exception e) {
@@ -606,6 +900,7 @@ public class HelmResource {
     @Path("/releases/{namespace}/{release}/catalogs/{name}/test")
     public Response testTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
                                      @PathParam("name") String name) {
+        authHelper.checkWritePermission();
         try {
             return Response.ok(java.util.Map.of("schemas", new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
                     .test(namespace, releaseName, name, viewContext.getUsername()))).build();
@@ -618,17 +913,26 @@ public class HelmResource {
         }
     }
 
-    /** Adopt an unmanaged (runtime-only) catalog into the release values so it survives restarts. */
+    /**
+     * Adopt an unmanaged (runtime-only) catalog into the release values so it survives restarts; through Git for a
+     * release deployed with Flux GitOps.
+     */
     @POST
     @Path("/releases/{namespace}/{release}/catalogs/{name}/adopt")
     public Response adoptTrinoCatalog(@PathParam("namespace") String namespace, @PathParam("release") String releaseName,
-                                      @PathParam("name") String name) {
+                                      @PathParam("name") String name,
+                                      @Context HttpHeaders requestHeaders, @Context UriInfo uriInfo) {
+        authHelper.checkWritePermission();
         try {
-            authHelper.checkWritePermission();
-            return Response.ok(new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+            return Response.ok(trinoCatalogs(requestHeaders, uriInfo)
                     .adopt(namespace, releaseName, name, viewContext.getUsername())).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
+        } catch (HelmOperationRegistry.ReleaseBusyException | FluxGitOpsBackend.GitOpsBusyException
+                 | ReleaseHeldInGitException busy) {
+            return Response.status(Response.Status.CONFLICT).entity(java.util.Map.of("error", busy.getMessage())).build();
+        } catch (org.apache.ambari.view.k8s.security.MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(java.util.Map.of("error", e.getMessage())).build();
         } catch (Exception e) {
@@ -842,6 +1146,34 @@ public class HelmResource {
     }
 
     /**
+     * Why "Regenerate keytabs", "Re-register OIDC client" and "Reapply Ranger repository" cannot run for a release,
+     * so the Releases page disables them with the reason: a release on another platform context than the managed
+     * cluster, one deployed without OIDC login, a context without the credentials an action needs.
+     *
+     * @return HTTP 200 with {@code refusals}: action ({@code keytabs}, {@code oidc}, {@code ranger}) to the reason;
+     *         an action left out can run
+     */
+    @GET
+    @Path("/releases/{namespace}/{release}/actions/availability")
+    public Response releaseActionAvailability(@PathParam("namespace") String namespace,
+                                              @PathParam("release") String releaseName,
+                                              @Context HttpHeaders requestHeaders,
+                                              @Context UriInfo uriInfo) {
+        try {
+            authHelper.checkWritePermission();
+            return Response.ok(Map.of("refusals", commandService.releaseActionRefusals(namespace, releaseName,
+                    requestHeaders.getRequestHeaders(), uriInfo.getBaseUri()))).build();
+        } catch (ForbiddenException fe) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error", fe.getMessage()))
+                    .build();
+        } catch (Exception ex) {
+            LOG.warn("Could not tell which actions release {}/{} can run: {}", namespace, releaseName, ex.toString());
+            return Response.serverError().entity(Map.of("error", String.valueOf(ex.getMessage()))).build();
+        }
+    }
+
+    /**
      * Register (or re-register) the OIDC client(s) for a deployed release without re-installing
      * the chart.  Reads oidc[] from the service definition, calls Keycloak admin API, and
      * writes/rotates the resulting credentials in a Kubernetes Secret.
@@ -892,7 +1224,8 @@ public class HelmResource {
      * @param namespace      release namespace
      * @param releaseName    release name
      * @param revision       target Helm revision number (required, must be > 0)
-     * @return HTTP 200 on success
+     * @return HTTP 200 on success; 409 while another Helm operation on the release is running, or for a release
+     *         deployed with Flux GitOps, whose earlier version is brought back through Git
      */
     @POST
     @Path("/releases/{namespace}/{release}/actions/rollback")
@@ -906,6 +1239,8 @@ public class HelmResource {
                         .entity(Map.of("error", "revision query parameter is required and must be > 0"))
                         .build();
             }
+            ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(namespace, releaseName),
+                    namespace, releaseName, "a Helm rollback");
             LOG.info("Rolling back release {}/{} to revision {}", namespace, releaseName, revision);
             new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
             RELEASE_CACHE.clear();
@@ -913,6 +1248,10 @@ public class HelmResource {
         } catch (ForbiddenException fe) {
             return Response.status(Response.Status.FORBIDDEN)
                     .entity(Map.of("error", fe.getMessage()))
+                    .build();
+        } catch (HelmOperationRegistry.ReleaseBusyException | ReleaseHeldInGitException conflict) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", conflict.getMessage()))
                     .build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
@@ -1005,6 +1344,7 @@ public class HelmResource {
                                     @PathParam("release") String releaseName,
                                     @Context HttpHeaders headers,
                                     @Context UriInfo uriInfo) {
+        authHelper.checkWritePermission();
         try {
             String commandId = org.apache.ambari.view.k8s.service.CommandService.get(viewContext)
                     .submitReleaseTlsRenewal(namespace, releaseName,
@@ -1028,7 +1368,8 @@ public class HelmResource {
      * @param targetVersion  chart version to upgrade to; required
      * @param requestHeaders caller headers for downstream Ambari calls
      * @param uriInfo        request URI context for building command links
-     * @return HTTP 202 with command id and href
+     * @return HTTP 202 with command id and href; 409 while a Helm operation on the release is still running, or for a
+     *         release deployed with Flux GitOps, whose chart version is changed in Git
      */
     @POST
     @Path("/releases/{namespace}/{release}/actions/chart-upgrade")
@@ -1056,6 +1397,10 @@ public class HelmResource {
             return Response.status(Response.Status.FORBIDDEN)
                     .entity(Map.of("error", fe.getMessage()))
                     .build();
+        } catch (HelmOperationRegistry.ReleaseBusyException | ReleaseHeldInGitException conflict) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", conflict.getMessage()))
+                    .build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Map.of("error", iae.getMessage()))
@@ -1076,7 +1421,8 @@ public class HelmResource {
      * @param timeoutSeconds   maximum seconds to wait for the release to become ready
      * @param waitForCompletion whether to block until all Kubernetes resources are ready
      * @param atomicUpgrade    whether to roll back automatically on failure
-     * @return the deployed release details, or an error response on failure
+     * @return the deployed release details; 409 while another Helm operation on the release is running, or for a
+     *         release deployed with Flux GitOps, whose changes go through Git; or an error response on failure
      */
     @POST
     @Path("/deploy")
@@ -1089,11 +1435,18 @@ public class HelmResource {
                           @QueryParam("timeoutSec") @DefaultValue("900") int timeoutSeconds,
                           @QueryParam("wait") @DefaultValue("true") boolean waitForCompletion,
                           @QueryParam("atomic") @DefaultValue("false") boolean atomicUpgrade) {
-
+        authHelper.checkWritePermission();
         try {
+            // Flux would put back what Git holds at its next reconcile.
+            ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(deployRequest.getNamespace(),
+                    deployRequest.getReleaseName()), deployRequest.getNamespace(), deployRequest.getReleaseName(),
+                    "a Helm upgrade");
             if (kubeContext == null) {
                 kubeContext = getKubeconfigContents();
             }
+            // Values read back from the release carry its secrets hidden: the deployed ones are put back.
+            HiddenReleaseValues.restore(deployRequest.getValues(), () -> kubernetesService.getHelmReleaseValues(
+                    deployRequest.getNamespace(), deployRequest.getReleaseName()));
             
             HelmService helmService = new HelmService(viewContext);
             Release deployedRelease = helmService.deployOrUpgrade(
@@ -1102,6 +1455,10 @@ public class HelmResource {
             RELEASE_CACHE.clear(); // invalidate cache after mutation
             LOG.info("Deployed release: {} in namespace: {} with id:{}", deployedRelease.getName(), deployedRelease.getNamespace());
             return Response.ok(buildReleaseDto(deployedRelease)).build();
+        } catch (HelmOperationRegistry.ReleaseBusyException | ReleaseHeldInGitException conflict) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", conflict.getMessage()))
+                    .build();
         } catch (Exception e) {
             LOG.error("Deployment failed", e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
@@ -1114,13 +1471,26 @@ public class HelmResource {
      * Upgrade an existing Helm release to a new chart or values set.
      *
      * @param upgradeRequest release name, namespace, chart reference, version, repo id, and new values
-     * @return the updated release DTO
+     * @return the updated release DTO; 409 while another Helm operation on the release is running, or for a release
+     *         deployed with Flux GitOps, whose changes go through Git
      */
     @POST
     @Path("/upgrade")
     public HelmReleaseDTO upgrade(HelmUpgradeRequest upgradeRequest) {
+        authHelper.checkWritePermission();
         if (upgradeRequest == null) {
             throw new IllegalArgumentException("Empty request");
+        }
+        try {
+            // Flux would put back what Git holds at its next reconcile.
+            ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(upgradeRequest.getNamespace(),
+                    upgradeRequest.getReleaseName()), upgradeRequest.getNamespace(), upgradeRequest.getReleaseName(),
+                    "a Helm upgrade");
+        } catch (ReleaseHeldInGitException heldInGit) {
+            throw new WebApplicationException(Response.status(Response.Status.CONFLICT)
+                    .type(MediaType.APPLICATION_JSON)
+                    .entity(Map.of("error", heldInGit.getMessage()))
+                    .build());
         }
 
         // Build the same request type used by deploy
@@ -1139,10 +1509,21 @@ public class HelmResource {
         
         deployRequest.setChart(chartReference);
         deployRequest.setValues(upgradeRequest.getValues());
+        // Values read back from the release carry its secrets hidden: the deployed ones are put back.
+        HiddenReleaseValues.restore(deployRequest.getValues(), () -> kubernetesService.getHelmReleaseValues(
+                upgradeRequest.getNamespace(), upgradeRequest.getReleaseName()));
 
-        Release upgradedRelease = new HelmService(viewContext)
-                .deployOrUpgrade(deployRequest, getKubeconfigContents(), 
-                               upgradeRequest.getRepoId(), upgradeRequest.getVersion());
+        Release upgradedRelease;
+        try {
+            upgradedRelease = new HelmService(viewContext)
+                    .deployOrUpgrade(deployRequest, getKubeconfigContents(),
+                                   upgradeRequest.getRepoId(), upgradeRequest.getVersion());
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            throw new WebApplicationException(Response.status(Response.Status.CONFLICT)
+                    .type(MediaType.APPLICATION_JSON)
+                    .entity(Map.of("error", busy.getMessage()))
+                    .build());
+        }
 
         RELEASE_CACHE.clear(); // invalidate cache after mutation
         return HelmReleaseDTO.from(upgradedRelease);
@@ -1223,89 +1604,397 @@ public class HelmResource {
 
     /**
      * Uninstall a Helm release and delete its stored metadata.
-     * For Flux GitOps releases, the corresponding Git manifests are removed first.
+     * For Flux GitOps releases, the corresponding Git manifests are removed first. On OpenShift, the RoleBindings KDPS
+     * made to grant the release's service accounts an SCC are deleted once the release is gone. The Ranger account the
+     * release synced Atlas tags with, if any, is then disabled and its Secret deleted, and so is what the release signed
+     * in through OIDC with: the Secrets holding its client secret and the client KDPS registered for it in Keycloak
+     * ({@link CommandService#revokeOidcForRelease}). Last, the other objects KDPS created for the release outside its
+     * chart, which carry its labels, are deleted ({@link CommandService#revokeKdpsObjectsForRelease}), and what KDPS
+     * registered for it outside Kubernetes is taken back, as the release's record lists it
+     * ({@link CommandService#revokeExternalForRelease}): Ranger access, the Atlas federation user, the OpenMetadata
+     * source of Ranger TagSync, Ambari view instances and Vault copies. Kerberos principals are listed for the operator.
+     *
+     * <p>A GitOps release is removed from the repository, base branch and path its metadata records, with the Git
+     * credential KDPS saved for it ({@link FluxGitOpsBackend#destroy(String, String)}): a request naming another
+     * repository, branch or credential is refused, so the stored credential never goes elsewhere and no credential
+     * travels in the URL. A release deployed by direct commit is removed from the base branch at once. One deployed
+     * through pull requests gets a pull request removing it, and keeps running, with its record, its credentials and
+     * its grants, until that pull request is merged: the uninstall run again then finishes the removal.</p>
      *
      * @param namespace    Kubernetes namespace of the release
      * @param releaseName  name of the Helm release to uninstall
-     * @param gitRepoUrl   optional Git repository URL to override the stored value (Flux mode only)
-     * @param gitAuthToken optional Git token to override the stored credential (Flux mode only)
-     * @param gitSshKey    optional SSH private key to override the stored credential (Flux mode only)
-     * @param gitBranch    optional Git branch to override the stored value (Flux mode only)
      * @param polarisCleanup how far to go in Polaris for a release that was given catalog access:
      *                     {@code principal} (the default) takes back the principal and its role, so
      *                     the credential stops working while the catalog and its data stay;
      *                     {@code catalog} also drops the catalog; {@code none} leaves Polaris
      *                     untouched. The object-store bucket is never deleted.
-     * @return HTTP 200 on success, or an error response on failure
+     * @param oidcCleanup  {@code none} leaves the release's OIDC client and its Secrets in place; anything else, or
+     *                     nothing, removes them
+     * @param externalCleanup how far to go outside Kubernetes: {@code credentials} (the default) takes back everything
+     *                     that gives access and keeps the Ranger repositories of the release, with the policies an
+     *                     operator may have added; {@code all} also deletes those repositories; {@code none} leaves
+     *                     everything, the release's OIDC client and its Secrets included, and lists it. The Ranger
+     *                     account of Atlas tag sync, which holds the Ranger administrator role, is disabled whatever
+     *                     the value
+     * @return HTTP 200 on success, with {@code polarisCleanup}, {@code oidcCleanup}, {@code sccCleanup} and
+     *         {@code tagSyncCleanup} notes saying what was taken back and what is left for an administrator to do, and
+     *         {@code kdpsObjectsCleanup} ({@code removed}, {@code left}, {@code note}) for the objects KDPS created for
+     *         the release outside its chart, and {@code externalCleanup} ({@code removed}, {@code left}, {@code kept},
+     *         {@code note}) for what it registered outside Kubernetes; 202 when the removal of a GitOps release waits
+     *         for the merge of its pull request, with {@code pendingDelete}, {@code pullRequestUrl} and a
+     *         {@code message}, and nothing else done; 400, with nothing removed, when the request names a Git
+     *         repository, branch or credential, or for a GitOps release whose recorded Git directory is not its own
+     *         or holds another release's HelmRelease, or for an unknown {@code externalCleanup}; 409, with nothing
+     *         removed, while another Helm operation or
+     *         GitOps operation on the release is running or when the Git credential recorded for a GitOps release
+     *         cannot be used to remove it from Git; 502, with {@code error}, {@code release} and {@code namespace},
+     *         when Git refused or could not take the removal of a GitOps release, or Helm could not uninstall a
+     *         release that is still installed: the release then keeps its Polaris credential, SCC grants, tag sync
+     *         account, sign-in and record, from which the uninstall is retried. A direct Helm release found to be
+     *         gone although Helm reported a failure is cleaned up as if the uninstall had succeeded.
      */
     @DELETE
     @Path("/release/{namespace}/{name}")
     public Response uninstall(@PathParam("namespace") String namespace,
                              @PathParam("name") String releaseName,
-                             @QueryParam("gitRepoUrl") String gitRepoUrl,
-                             @QueryParam("gitAuthToken") String gitAuthToken,
-                             @QueryParam("gitSshKey") String gitSshKey,
-                             @QueryParam("gitBranch") String gitBranch,
                              @QueryParam("polarisCleanup") String polarisCleanup,
+                             @QueryParam("oidcCleanup") String oidcCleanup,
+                             @QueryParam("externalCleanup") String externalCleanup,
+                             @Context UriInfo uriInfo,
                              @Context HttpHeaders requestHeaders) {
+        authHelper.checkWritePermission();
+        String gitOverride = gitOverrideOf(uriInfo);
+        if (gitOverride != null) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "The uninstall request names '"
+                    + gitOverride + "'. A GitOps release is removed from the Git repository, branch and path recorded"
+                    + " for it, with the Git credential KDPS saved for it; they cannot be given with the request."))
+                    .build();
+        }
+        ExternalCleanup.Mode externalMode;
+        try {
+            externalMode = ExternalCleanup.Mode.of(externalCleanup);
+        } catch (IllegalArgumentException unknown) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", unknown.getMessage())).build();
+        }
         K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
         String polarisCleanupNote = null;
-        // If this was deployed via Flux GitOps, try to invoke the Flux backend first so Git manifests are removed.
+        // Refused before anything is removed: the release keeps everything it uses while another operation runs.
         try {
-            if (meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode())) {
+            HelmOperationRegistry.requireIdle(namespace, releaseName);
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
+        }
+        boolean gitOps = meta != null && "FLUX_GITOPS".equalsIgnoreCase(meta.getDeploymentMode());
+        if (gitOps) {
+            // A GitOps release whose recorded Git directory is not its own is refused here, before the cleanup below:
+            // its manifests stay in Git and Flux keeps running it, so it keeps its catalog credential and its record,
+            // which a retried uninstall needs once the record names the release's own directory.
+            String repoUrl = meta.getGitRepoUrl();
+            if (repoUrl != null && !repoUrl.isBlank()) {
                 try {
-                    String branchToUse = gitBranch != null && !gitBranch.isBlank() ? gitBranch : meta.getGitBranch();
-                    String repoUrlToUse = gitRepoUrl != null && !gitRepoUrl.isBlank() ? gitRepoUrl : meta.getGitRepoUrl();
-                    String repoPath = meta.getGitPath();
-                    String authTokenToUse = gitAuthToken;
-                    String sshKeyToUse = gitSshKey;
-                    if ((authTokenToUse == null || authTokenToUse.isBlank()) && (sshKeyToUse == null || sshKeyToUse.isBlank())) {
-                        GitCredentialService gitCredentialService = new GitCredentialService(viewContext);
-                        String resolved = gitCredentialService.resolveSecret(meta.getGitCredentialAlias());
-                        // Heuristic: if it looks like an RSA/PEM key, treat as sshKey, else token
-                        if (resolved != null && resolved.contains("BEGIN")) {
-                            sshKeyToUse = resolved;
-                        } else {
-                            authTokenToUse = resolved;
-                        }
-                    }
-                    fluxGitOpsBackend.destroy(repoUrlToUse, branchToUse, repoPath, authTokenToUse, sshKeyToUse);
-                    LOG.info("Requested Flux GitOps destroy for {}/{} (repo={}, branch={}, path={})",
-                            namespace, releaseName, repoUrlToUse, branchToUse, repoPath);
-                } catch (Exception ex) {
-                    LOG.warn("Flux destroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
-                    return Response.serverError().entity(Map.of(
-                            "error", "Flux destroy failed: " + ex.getMessage(),
+                    FluxGitOpsBackend.releaseDirectory(meta.getGitPath(), namespace, releaseName);
+                } catch (IllegalArgumentException refused) {
+                    LOG.warn("Uninstall of {}/{} refused: {}", namespace, releaseName, refused.getMessage());
+                    return Response.status(Response.Status.BAD_REQUEST).entity(Map.of(
+                            "error", refused.getMessage(),
                             "release", releaseName,
                             "namespace", namespace
                     )).build();
                 }
+            }
+            // For the same reason: a release KDPS cannot remove from Git would stay there, applied by Flux, once KDPS
+            // has forgotten it.
+            try {
+                fluxGitOpsBackend.checkRemovable(meta);
+            } catch (IllegalStateException refused) {
+                return Response.status(Response.Status.CONFLICT).entity(Map.of("error", refused.getMessage())).build();
+            }
+        }
+        // If this was deployed via Flux GitOps, the Flux backend removes the release from Git first, then from the
+        // cluster. A refused or failed removal returns at once: the release keeps its Polaris catalog credential, its
+        // Git credentials, its SCC grants and its record, from which the uninstall is retried.
+        try {
+            if (gitOps) {
+                try {
+                    // The values Secrets stay while the branch Flux reconciles still holds the release: a removal
+                    // proposed in a pull request is not applied until merged. Only the manifests the release wrote
+                    // into its own directory, as checked above, are removed, with what its metadata records.
+                    fluxGitOpsBackend.destroy(namespace, releaseName);
+                    LOG.info("Requested Flux GitOps destroy for {}/{} (repo={}, mode={}, path={})", namespace,
+                            releaseName, meta.getGitRepoUrl(), meta.getGitCommitMode(), meta.getGitPath());
+                } catch (FluxGitOpsBackend.NotOwnDirectoryException refused) {
+                    // Found once the branch is read, such as another HelmRelease in the release's directory:
+                    // nothing was removed, so the release keeps its credentials and its record, as above.
+                    LOG.warn("Uninstall of {}/{} refused: {}", namespace, releaseName, refused.getMessage());
+                    return Response.status(Response.Status.BAD_REQUEST).entity(Map.of(
+                            "error", refused.getMessage(),
+                            "release", releaseName,
+                            "namespace", namespace
+                    )).build();
+                } catch (FluxGitOpsBackend.GitOpsBusyException busy) {
+                    // Another deploy or uninstall of the release holds its Git workspace: nothing was removed.
+                    LOG.warn("Uninstall of {}/{} refused (409): {}", namespace, releaseName, busy.getMessage());
+                    return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
+                } catch (Exception ex) {
+                    // Git refused or could not take the removal: the manifests stay in Git and Flux keeps running
+                    // the release.
+                    LOG.warn("Flux destroy failed for {}/{}: {}", namespace, releaseName, ex.toString());
+                    return uninstallFailed(namespace, releaseName, "Flux destroy failed: " + ex.getMessage());
+                }
+                K8sReleaseEntity after = releaseMetadataService.find(namespace, releaseName);
+                if (after != null && after.isGitPendingDelete()) {
+                    // Flux keeps running the release until the pull request is merged: it keeps everything it uses.
+                    RELEASE_CACHE.clear();
+                    return Response.status(Response.Status.ACCEPTED).entity(pendingRemoval(after)).build();
+                }
             } else {
                 // Use backend dispatcher (defaults to direct Helm).
-                commandService.destroyViaBackend(namespace, releaseName, meta != null ? meta.getDeploymentMode() : null);
+                try {
+                    commandService.destroyViaBackend(namespace, releaseName,
+                            meta != null ? meta.getDeploymentMode() : null);
+                } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+                    throw busy;
+                } catch (RuntimeException ex) {
+                    // Helm also fails on a release that is already gone, such as one a partial uninstall removed
+                    // before failing, or a stale record: that one is finished below like any other removal.
+                    if (!directReleaseGone(namespace, releaseName, ex)) {
+                        String reason = rootMessage(ex);
+                        LOG.warn("Helm uninstall failed for {}/{}: {}", namespace, releaseName, reason);
+                        return uninstallFailed(namespace, releaseName, "Helm could not uninstall " + namespace + "/"
+                                + releaseName + ": " + reason + ". The release is still installed and keeps its"
+                                + " record and its catalog access. Fix the cause, then uninstall it again.");
+                    }
+                    LOG.info("Helm uninstall of {}/{} failed, but the release is no longer installed: finishing the"
+                            + " removal ({})", namespace, releaseName, rootMessage(ex));
+                }
             }
-        } finally {
-            // A release that was given Polaris catalog access leaves a working credential behind
-            // unless it is taken back. Done after the release itself is gone, and never allowed to
-            // fail the uninstall: an unreachable Polaris must not leave a half-removed release.
+        } catch (HelmOperationRegistry.ReleaseBusyException busy) {
+            // An operation on the release started since the check above: the release is untouched.
+            return Response.status(Response.Status.CONFLICT).entity(Map.of("error", busy.getMessage())).build();
+        }
+        // A release that was given Polaris catalog access leaves a working credential behind unless it is taken back.
+        // Done after the release itself is gone, and never allowed to fail the uninstall: an unreachable Polaris must
+        // not leave a half-removed release.
+        try {
+            polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup,
+                    requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
+        } catch (Exception ex) {
+            LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+        }
+        // What KDPS registered outside Kubernetes, read before the record goes with it.
+        ProvisioningLedger ledger;
+        try {
+            ledger = releaseMetadataService.provisioningOf(meta, namespace, releaseName);
+        } catch (Exception ex) {
+            LOG.warn("Could not read what KDPS registered for {}/{}: {}", namespace, releaseName, ex.toString());
+            ledger = new ProvisioningLedger();
+            ledger.markTruncated();
+        }
+        // Only once the release is gone: a failed or refused removal keeps the record the uninstall is retried from.
+        try {
+            if (meta != null) {
+                releaseMetadataService.delete(namespace, releaseName);
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to delete metadata for {}/{} after uninstall: {}", namespace, releaseName, ex.toString());
+        }
+        RELEASE_CACHE.clear(); // invalidate cache after mutation
+        // Only once the release is gone: its pods no longer need the OpenShift SCCs KDPS granted to its service
+        // accounts. Never fails the uninstall; grants KDPS did not make are listed for the platform team instead.
+        String sccCleanupNote = null;
+        try {
+            sccCleanupNote = commandService.removeSccGrantsForRelease(namespace, releaseName,
+                    meta != null ? meta.getServiceKey() : null);
+        } catch (Exception ex) {
+            LOG.warn("SCC cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+        }
+        // Likewise, the Ranger account the release's Atlas tag projector wrote tags with is disabled and its Secret
+        // deleted: it holds the Ranger administrator role. Never fails the uninstall; what could not be done is left
+        // for an administrator.
+        String tagSyncCleanupNote = null;
+        try {
+            tagSyncCleanupNote = commandService.revokeTagSyncRangerAccountForRelease(namespace, releaseName,
+                    meta != null ? meta.getPlatformContextId() : null,
+                    requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
+        } catch (Exception ex) {
+            LOG.warn("Atlas tag sync account cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+        }
+        // Likewise, the release's sign-in: the Secrets holding its client secret, and the client KDPS registered for it
+        // in Keycloak, which would otherwise keep accepting that secret and be silently reused by a release deployed
+        // again under the same name. Never fails the uninstall.
+        String oidcCleanupNote = null;
+        boolean keepSignIn = oidcCleanup != null && "none".equalsIgnoreCase(oidcCleanup.trim());
+        if (!keepSignIn && externalMode != ExternalCleanup.Mode.NONE) {
             try {
-                polarisCleanupNote = commandService.revokePolarisForRelease(namespace, releaseName, polarisCleanup,
+                oidcCleanupNote = commandService.revokeOidcForRelease(namespace, releaseName,
+                        meta != null ? meta.getPlatformContextId() : null,
                         requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
             } catch (Exception ex) {
-                LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
+                LOG.warn("OIDC cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
             }
-            try {
-                if (meta != null) {
-                    releaseMetadataService.delete(namespace, releaseName);
-                }
-            } catch (Exception ex) {
-                LOG.warn("Failed to delete metadata for {}/{} after uninstall: {}", namespace, releaseName, ex.toString());
-            }
-            RELEASE_CACHE.clear(); // invalidate cache after mutation
         }
-        return polarisCleanupNote == null
-                ? Response.ok().build()
-                : Response.ok(Map.of("polarisCleanup", polarisCleanupNote)).build();
+        // Last, what KDPS created for the release outside its chart, which neither Helm nor Flux removes: its keytab,
+        // truststore and krb5.conf, its Ranger plugin configuration, its ingress certificate objects and its
+        // autoscaler's monitoring account. Only objects carrying the release's labels go, so what an administrator
+        // provided stays; done after the steps above, which read their own Secrets before removing them. Never fails
+        // the uninstall: what this account may not delete is listed with the command that deletes it.
+        // A release KDPS holds no record of is none it deployed: nothing of an earlier version to look for either.
+        Map<String, Object> kdpsObjectsCleanup = null;
+        try {
+            kdpsObjectsCleanup = commandService.revokeKdpsObjectsForRelease(namespace, releaseName,
+                    meta != null ? meta.getKdpsObjects() : List.of());
+        } catch (Exception ex) {
+            LOG.warn("Cleanup of the objects KDPS created for {}/{} failed: {}", namespace, releaseName, ex.toString());
+        }
+        // Then what KDPS registered for the release outside Kubernetes. Never fails the uninstall either: what could
+        // not be taken back is listed with what to do.
+        Map<String, Object> externalCleanupReport = null;
+        try {
+            externalCleanupReport = commandService.revokeExternalForRelease(namespace, releaseName, ledger,
+                    externalMode.name(), keepSignIn || oidcCleanupNote != null,
+                    requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
+        } catch (Exception ex) {
+            LOG.warn("Cleanup of what KDPS registered for {}/{} outside Kubernetes failed: {}", namespace, releaseName,
+                    ex.toString());
+        }
+        Map<String, Object> notes = new LinkedHashMap<>();
+        if (polarisCleanupNote != null) notes.put("polarisCleanup", polarisCleanupNote);
+        if (oidcCleanupNote != null) notes.put("oidcCleanup", oidcCleanupNote);
+        if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
+        if (tagSyncCleanupNote != null) notes.put("tagSyncCleanup", tagSyncCleanupNote);
+        if (kdpsObjectsCleanup != null) notes.put("kdpsObjectsCleanup", kdpsObjectsCleanup);
+        if (externalCleanupReport != null) notes.put("externalCleanup", externalCleanupReport);
+        return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
+    }
+
+    /**
+     * What the uninstall of a release would do with what KDPS registered for it outside Kubernetes (see
+     * {@link CommandService#revokeExternalForRelease}), for the uninstall confirmation to list.
+     *
+     * @param mode the {@code externalCleanup} the uninstall would be given: {@code credentials} (the default),
+     *             {@code all} or {@code none}
+     * @return 200 with {@code removed}, {@code left}, {@code kept}, {@code note} and {@code recorded} (false when KDPS
+     *         recorded nothing for the release); 400 for an unknown mode
+     */
+    @GET
+    @Path("/release/{namespace}/{name}/external-registrations")
+    public Response externalRegistrationsOfRelease(@PathParam("namespace") String namespace,
+                                                   @PathParam("name") String releaseName,
+                                                   @QueryParam("mode") String mode) {
+        authHelper.checkWritePermission();
+        try {
+            ExternalCleanup.Mode.of(mode);
+        } catch (IllegalArgumentException unknown) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", unknown.getMessage())).build();
+        }
+        try {
+            return Response.ok(commandService.externalRegistrationsOfRelease(namespace, releaseName, mode)).build();
+        } catch (Exception ex) {
+            LOG.warn("Could not list what KDPS registered for {}/{}: {}", namespace, releaseName, ex.toString());
+            Map<String, Object> answer = new LinkedHashMap<>();
+            answer.put("removed", List.of());
+            answer.put("left", List.of());
+            answer.put("kept", List.of());
+            answer.put("recorded", false);
+            return Response.ok(answer).build();
+        }
+    }
+
+    /**
+     * What the uninstall of a release removes of the objects KDPS created for it outside its chart (see
+     * {@link CommandService#revokeKdpsObjectsForRelease}), for the uninstall confirmation to list.
+     *
+     * @return 200 with {@code objects}, as {@code <Kind>/<name>}; empty when there are none or they cannot be listed
+     */
+    @GET
+    @Path("/release/{namespace}/{name}/kdps-objects")
+    public Response kdpsObjectsOfRelease(@PathParam("namespace") String namespace,
+                                         @PathParam("name") String releaseName) {
+        authHelper.checkWritePermission();
+        List<String> objects;
+        try {
+            K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
+            objects = commandService.kdpsObjectsOfRelease(namespace, releaseName,
+                    meta != null ? meta.getKdpsObjects() : null);
+        } catch (Exception ex) {
+            LOG.warn("Could not list the objects KDPS created for {}/{}: {}", namespace, releaseName, ex.toString());
+            objects = List.of();
+        }
+        return Response.ok(Map.of("objects", objects)).build();
+    }
+
+    /**
+     * What an uninstall that could not remove the release answers: 502, since the cluster or the Git server refused
+     * or could not take the removal, with the reason, the release and its namespace. The release list is read again:
+     * a failed removal can still have moved the release to another state (uninstalling, failed).
+     */
+    static Response uninstallFailed(String namespace, String releaseName, String error) {
+        RELEASE_CACHE.clear();
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("error", error);
+        answer.put("release", releaseName);
+        answer.put("namespace", namespace);
+        return Response.status(502).entity(answer).build(); // Bad Gateway, which JAX-RS 1 does not name
+    }
+
+    /**
+     * Whether a direct Helm release whose uninstall failed is gone all the same. Helm is asked first; when it cannot
+     * list the namespace, only its own "release: not found" answer counts: any other doubt keeps the release, its
+     * record and its credentials.
+     */
+    boolean directReleaseGone(String namespace, String releaseName, Throwable failure) {
+        try {
+            return !commandService.directHelmReleaseExists(namespace, releaseName);
+        } catch (Exception listing) {
+            LOG.warn("Could not check whether {}/{} is still installed: {}", namespace, releaseName,
+                    listing.toString());
+        }
+        for (Throwable t = failure; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t.getMessage() != null && t.getMessage().toLowerCase(Locale.ROOT).contains("release: not found")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The innermost message of a failure, without the wrapping exception class names. */
+    static String rootMessage(Throwable failure) {
+        String message = null;
+        for (Throwable t = failure; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t.getMessage() != null && !t.getMessage().isBlank()) {
+                message = t.getMessage();
+            }
+        }
+        return message != null ? message.trim() : failure.getClass().getSimpleName();
+    }
+
+    /** What an uninstall that waits for the merge of its removal pull request answers. */
+    static Map<String, Object> pendingRemoval(K8sReleaseEntity meta) {
+        String base = FluxGitOpsBackend.recordedBaseBranch(meta);
+        String pullRequest = meta.getGitPrUrl() != null && !meta.getGitPrUrl().isBlank()
+                ? meta.getGitPrUrl() : "#" + meta.getGitPrNumber();
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("pendingDelete", true);
+        if (meta.getGitPrUrl() != null && !meta.getGitPrUrl().isBlank()) {
+            answer.put("pullRequestUrl", meta.getGitPrUrl());
+        }
+        answer.put("message", "The removal of " + meta.getNamespace() + "/" + meta.getReleaseName() + " is proposed in"
+                + " pull request " + pullRequest + " into " + base + ". The release keeps running until it is merged;"
+                + " uninstall it again then to finish removing it from the cluster and KDPS.");
+        return answer;
+    }
+
+    /** Query parameters earlier versions read on an uninstall to override what a GitOps release records. */
+    static final List<String> GIT_OVERRIDE_PARAMETERS = List.of("gitRepoUrl", "gitBranch", "gitAuthToken", "gitSshKey");
+
+    /** The first Git override an uninstall request names, or {@code null}. */
+    static String gitOverrideOf(UriInfo uriInfo) {
+        if (uriInfo == null || uriInfo.getQueryParameters() == null) {
+            return null;
+        }
+        return GIT_OVERRIDE_PARAMETERS.stream()
+                .filter(name -> uriInfo.getQueryParameters().containsKey(name))
+                .findFirst().orElse(null);
     }
 
     /**
@@ -1314,14 +2003,24 @@ public class HelmResource {
      * @param namespace   Kubernetes namespace of the release
      * @param releaseName name of the Helm release to roll back
      * @param revision    target revision number to restore
-     * @return HTTP 200 on success, or an error response on failure
+     * @return HTTP 200 on success; 409 while another Helm operation on the release is running, or for a release
+     *         deployed with Flux GitOps, or an error response on failure
      */
     @POST
     @Path("/rollback")
     public Response rollback(@QueryParam("namespace") String namespace,
                             @QueryParam("name") String releaseName,
                             @QueryParam("revision") int revision) {
-        new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
+        authHelper.checkWritePermission();
+        try {
+            ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(namespace, releaseName),
+                    namespace, releaseName, "a Helm rollback");
+            new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
+        } catch (HelmOperationRegistry.ReleaseBusyException | ReleaseHeldInGitException conflict) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(Map.of("error", conflict.getMessage()))
+                    .build();
+        }
         RELEASE_CACHE.clear(); // invalidate cache after mutation
         return Response.ok().build();
     }
@@ -1420,21 +2119,36 @@ public class HelmResource {
 
 
     /**
-     * Retrieve the computed Helm values currently applied to a release.
+     * Retrieve the Helm values a release KDPS deployed runs with, to redeploy it (upgrade wizard, resync, security
+     * refresh, autoscaling change), so only users who may redeploy it can read them. Its secrets read as
+     * {@link HiddenReleaseValues#PLACEHOLDER}; a redeploy that sends the placeholder back keeps the deployed value. The
+     * values of a release KDPS did not deploy are not served.
      *
      * @param namespace   Kubernetes namespace of the release
      * @param releaseName name of the Helm release
-     * @return the effective values map, or an error response on failure
+     * @return the values; 404 for a release KDPS did not deploy; an error response on failure
      */
     @GET
     @Path("/{namespace}/{releaseName}/values")
     @Produces(MediaType.APPLICATION_JSON)
     public Response getValues(@PathParam("namespace") String namespace,
                               @PathParam("releaseName") String releaseName) {
+        authHelper.checkWritePermission();
         try {
-            // Call the method we just added to KubernetesService
+            K8sReleaseEntity metadata = releaseMetadataService.find(namespace, releaseName);
+            boolean managed = (metadata != null && metadata.isManagedByUi())
+                    || kubernetesService.listKdpsManagedReleaseKeys(java.util.Set.of(namespace))
+                            .contains(namespace + "/" + releaseName);
+            if (!managed) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(Map.of("error", "The release " + namespace + "/" + releaseName + " was not deployed by"
+                                + " KDPS: only the values of the releases KDPS deploys are shown."))
+                        .build();
+            }
             Map<String, Object> values = this.kubernetesService.getHelmReleaseValues(namespace, releaseName);
-            return Response.ok(values).build();
+            String serviceKey = metadata == null ? null : metadata.getServiceKey();
+            return Response.ok(HiddenReleaseValues.hide(values, SensitiveFields.valuePathsOfService(serviceKey)))
+                    .build();
         } catch (Exception e) {
             return Response.serverError()
                     .entity(Collections.singletonMap("error", e.getMessage()))

@@ -1,8 +1,8 @@
 // ui/src/api/client.ts
 import { getMockClusterStats, getMockComponentStatuses, getMockClusterEvents, getMockNodes, getMockHelmReleases, getChartsJSON, getMockHelmRepos, getMockCommandStatus, getMockCommands } from './mock';
-import { getMockSecurityConfig } from './mock';
+import { getMockSecurityConfig, getMockPermissions } from './mock';
 import type {ClusterService} from '../types/ServiceTypes';
-import type {HelmRepo} from '../types';
+import type {HelmRepo, UserPermissions} from '../types';
 import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
 // Dev-mode flag: Vite statically replaces process.env.NODE_ENV at build time, and jest provides it at
 // run time — unlike import.meta.env, which is a syntax error under CommonJS test transforms.
@@ -15,7 +15,7 @@ const IS_DEV: boolean = (() => { try { return typeof process !== 'undefined' && 
  */
 const resolveApiBase = (): string => {
   // Keep the version equal to view.xml's <version>: ViewXmlMigrationContractTest checks it.
-  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.8/instances/K8S_VIEW_INSTANCE/resources/api`;
+  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.10/instances/K8S_VIEW_INSTANCE/resources/api`;
   if (typeof window === 'undefined') return fallback;
   try {
     // Examples of pathname we might see:
@@ -32,6 +32,46 @@ const resolveApiBase = (): string => {
 };
 
 export const API_BASE_URL = resolveApiBase();
+
+/**
+ * Ambari refuses a state-changing call to its REST API (POST, PUT, DELETE) that lacks this header,
+ * with 400 "CSRF protection is turned on". The header is what tells a call made by this UI apart from
+ * a form that another web site makes the browser submit with the operator's session: such a form
+ * cannot add custom headers.
+ */
+export const CSRF_HEADER = 'X-Requested-By';
+const CSRF_HEADER_VALUE = 'ambari';
+
+/**
+ * Returns a copy of the request options whose headers carry {@link CSRF_HEADER}. The headers the
+ * caller set are kept, whatever form they were given in, and so is the caller's own CSRF header.
+ */
+export function withCsrfHeader(init: RequestInit = {}): RequestInit {
+  const headers: Record<string, string> = {};
+  const given = init.headers;
+  if (given) {
+    if (typeof Headers !== 'undefined' && given instanceof Headers) {
+      given.forEach((value, name) => { headers[name] = value; });
+    } else if (Array.isArray(given)) {
+      given.forEach(([name, value]) => { headers[name] = value; });
+    } else {
+      Object.assign(headers, given);
+    }
+  }
+  const csrfHeader = CSRF_HEADER.toLowerCase();
+  if (!Object.keys(headers).some((name) => name.toLowerCase() === csrfHeader)) {
+    headers[CSRF_HEADER] = CSRF_HEADER_VALUE;
+  }
+  return { ...init, headers };
+}
+
+/**
+ * fetch() for every call to the Ambari REST API, API_BASE_URL included. Going through one function
+ * means no call can miss the CSRF header; a jest test fails on any raw fetch() added elsewhere.
+ */
+export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, withCsrfHeader(init));
+}
 
 /**
  * When the Ambari session expires (e.g. after an ambari-server restart) the backend rejects
@@ -53,6 +93,9 @@ export function handleAuthExpiry(status: number, body?: string): boolean {
   // Ambari. Never bounce them to the Ambari login for that — it is surfaced as a "disconnected" cluster
   // badge and (for openshift-login) auto-healed server-side instead.
   if (b.includes('k8s_unauthorized')) return false;
+  // Likewise a refusal of the cluster for lack of rights ("K8S_FORBIDDEN"): its text often names a token or
+  // authentication (serviceaccounts/token, authentication.k8s.io) without the Ambari session being at fault.
+  if (b.includes('k8s_forbidden')) return false;
   const isAuthExpiry =
     status === 401 ||
     (status === 403 && (b.includes('authentication') || b.includes('token') || b.includes('not authenticated') || b.includes('csrf')));
@@ -76,7 +119,7 @@ export function handleAuthExpiry(status: number, body?: string): boolean {
  */
 export const pingSession = async (): Promise<void> => {
   try {
-    const res = await fetch(`${API_BASE_URL}/cluster/configured`, { credentials: 'include', cache: 'no-store' });
+    const res = await apiFetch(`${API_BASE_URL}/cluster/configured`, { credentials: 'include', cache: 'no-store' });
     if (!res.ok) {
       handleAuthExpiry(res.status, await res.text().catch(() => ''));
     }
@@ -85,8 +128,50 @@ export const pingSession = async (): Promise<void> => {
   }
 };
 
+/**
+ * The signed-in user's KDPS role and what it allows (GET /users/me/permissions). The development server has no
+ * backend, so it gets the admin mock there.
+ */
+export const getCurrentUserPermissions = async (): Promise<UserPermissions> => {
+  if (IS_DEV) {
+    return getMockPermissions('ADMIN');
+  }
+  const response = await apiFetch(`${API_BASE_URL}/users/me/permissions`, {
+    credentials: 'include',
+    cache: 'no-store',
+    headers: { 'X-Requested-By': 'ambari' },
+  });
+  return handleApiResponse(response);
+};
+
 // Backend uses single-L "CANCELED"; keep backward compatibility with old "CANCELLED"
 export type CommandState = 'PENDING'|'RUNNING'|'SUCCEEDED'|'FAILED'|'CANCELLED'|'CANCELED';
+
+/**
+ * What a GitOps deploy does in Git, as the backend words it: the answer to the deploy carries the mode and the branch
+ * the request names, the operation's result (result.gitOps) the commit, the pull request and whether Git
+ * already held the change once its commit step ran.
+ */
+export type GitOpsDeployResult = {
+  mode: 'FLUX_GITOPS';
+  /** The commit holding the change; the one Git already held when nothing was committed. */
+  commit?: string;
+  /** The branch the change goes to: the branch Flux reconciles, or the pull request's. */
+  branch?: string;
+  /** The pull request of the change, when one was opened. */
+  prUrl?: string;
+  /** Its state when known: open, merged, closed. */
+  prState?: string;
+  /** Git already held the change, so nothing was committed. Absent until the commit step ran. */
+  noChanges?: boolean;
+};
+
+/** The answer to an accepted deploy: the operation to follow, the deploy's mode and, for GitOps, what it does in Git. */
+export type DeployAccepted = {
+  id: string;
+  mode?: 'DIRECT_HELM' | 'FLUX_GITOPS';
+  gitOps?: GitOpsDeployResult;
+};
 
 export type CommandStatus = {
   id: string;
@@ -108,6 +193,8 @@ export interface ReplayableAction {
   label: string;
   endpoint: string;
   skipIfValueEmpty?: string;
+  /** Ask the operator to confirm when this value of the deployed release is not true. */
+  warnUnlessValueTrue?: { path: string; message: string };
 }
 
 export interface StackServiceDef {
@@ -117,6 +204,8 @@ export interface StackServiceDef {
   description: string;
   form: any[]; // FormField[]
   replayableActions?: ReplayableAction[];
+  /** Values an earlier version of the definition wrote, left out of what an upgrade sends (see removeRetiredValues). */
+  retiredValues?: Record<string, unknown>;
 }
 
 export interface StackConfig {
@@ -129,7 +218,7 @@ export const getGlobalConfigs = async (): Promise<StackConfig[]> => {
   if (IS_DEV) {
     return (await import('./mock')).getStackConfigsMock('GLOBAL') as any;
   }
-  const res = await fetch(`./api/v1/globals/configurations`, { headers: { 'X-Requested-By': 'ambari' } });
+  const res = await apiFetch(`./api/v1/globals/configurations`);
   if (!res.ok) throw new Error('Failed to load global configs');
   return res.json();
 };
@@ -166,11 +255,19 @@ export interface SecurityConfig {
     adBindPassword?: string;
     adUserSearchFilter?: string;
     adDomain?: string;
+    /** On a read: whether a bind password is stored (the password itself comes masked). */
+    bindPasswordSet?: boolean;
+    /** On a read: whether an Active Directory bind password is stored. */
+    adBindPasswordSet?: boolean;
   };
   oidc?: {
     issuerUrl?: string;
     clientId?: string;
     clientSecret?: string;
+    /** External source only: the audience the provider puts in its access tokens (blank = the client id). */
+    audience?: string;
+    /** On a read: whether a client secret is stored (the secret itself comes masked). */
+    clientSecretSet?: boolean;
     scopes?: string;
     redirectUri?: string;
     userClaim?: string;
@@ -188,21 +285,21 @@ export interface SecurityConfig {
 
 // Workloads browsing helpers (namespaces, pods, services, logs)
 export const getNamespaces = async (): Promise<KubeNamespace[]> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
 export const getPods = async (ns: string, labelSelector?: string): Promise<KubePod[]> => {
   const params = new URLSearchParams();
   if (labelSelector) params.set('labelSelector', labelSelector);
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods?${params.toString()}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods?${params.toString()}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
 export const getServices = async (ns: string, labelSelector?: string): Promise<KubeService[]> => {
   const params = new URLSearchParams();
   if (labelSelector) params.set('labelSelector', labelSelector);
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services?${params.toString()}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services?${params.toString()}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -221,7 +318,7 @@ export interface DeploymentRow {
 
 export const listDeployments = async (namespace?: string): Promise<DeploymentRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await fetch(`${API_BASE_URL}/workloads/deployments${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/deployments${qs}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -235,7 +332,7 @@ export interface ConfigMapRow {
 
 export const listConfigMaps = async (namespace?: string): Promise<ConfigMapRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await fetch(`${API_BASE_URL}/workloads/configmaps${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/configmaps${qs}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -251,7 +348,7 @@ export interface IngressRow {
 
 export const listIngresses = async (namespace?: string): Promise<IngressRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await fetch(`${API_BASE_URL}/workloads/ingresses${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/ingresses${qs}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -271,7 +368,7 @@ export interface RouteRow {
 
 export const listRoutes = async (namespace?: string): Promise<RouteRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await fetch(`${API_BASE_URL}/workloads/routes${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/routes${qs}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -279,7 +376,7 @@ export const getPodLogs = async (ns: string, pod: string, container?: string, ta
   const params = new URLSearchParams();
   if (container) params.set('container', container);
   if (tailLines) params.set('tailLines', tailLines.toString());
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/log?${params.toString()}`, {
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/log?${params.toString()}`, {
     credentials: 'include'
   });
   if (!res.ok) {
@@ -290,44 +387,66 @@ export const getPodLogs = async (ns: string, pod: string, container?: string, ta
 };
 
 export const getNamespaceEvents = async (ns: string): Promise<KubeEvent[]> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/events`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/events`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
 export const getPodEvents = async (ns: string, pod: string): Promise<KubeEvent[]> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/events`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/events`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
 export const describePod = async (ns: string, pod: string): Promise<string> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/describe`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/describe`, { credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
   return res.text();
 };
 
 export const describeService = async (ns: string, svc: string): Promise<string> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services/${encodeURIComponent(svc)}/describe`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services/${encodeURIComponent(svc)}/describe`, { credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
   return res.text();
 };
 
-export const deletePod = async (ns: string, pod: string, graceSeconds?: number): Promise<void> => {
+/**
+ * Deletes a pod. Without `graceSeconds` the pod shuts down within its own grace period; a grace period of 0
+ * force-deletes it and the server only accepts that together with `force`.
+ */
+export const deletePod = async (ns: string, pod: string, graceSeconds?: number, force?: boolean): Promise<void> => {
   const params = new URLSearchParams();
   if (graceSeconds != null) params.set('graceSeconds', graceSeconds.toString());
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}?${params.toString()}`, { method: 'DELETE', credentials: 'include' });
+  if (force) params.set('force', 'true');
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}?${params.toString()}`, { method: 'DELETE', credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
 };
 
 export const restartPod = async (ns: string, pod: string): Promise<void> => {
-  const res = await fetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/restart`, { method: 'POST', credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/restart`, { method: 'POST', credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
 };
+
+/** The `code` of the 412 the server answers when it has no Ambari master key to encrypt credentials with. */
+export const MASTER_KEY_UNAVAILABLE = 'MASTER_KEY_UNAVAILABLE';
+
+/**
+ * What to do when the server refused to store a credential because it has no Ambari master key, or `null` for any
+ * other answer. A 412 without that code means the view has no cluster connection yet.
+ */
+export function masterKeyRefusal(status: number, text: string): string | null {
+  if (status !== 412 || !text || !text.includes(MASTER_KEY_UNAVAILABLE)) return null;
+  try {
+    const body = JSON.parse(text);
+    return body?.code === MASTER_KEY_UNAVAILABLE ? String(body.error || '') || null : null;
+  } catch {
+    return null;
+  }
+}
 
 async function fetchJson<T = unknown>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await apiFetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     ...options,
@@ -335,6 +454,8 @@ async function fetchJson<T = unknown>(
   if (!response.ok) {
     const text = await response.text();
     if (handleAuthExpiry(response.status, text)) throw new Error('Session expired — redirecting to Ambari login');
+    const noMasterKey = masterKeyRefusal(response.status, text);
+    if (noMasterKey) throw new Error(noMasterKey);
     throw new Error(`HTTP ${response.status} – ${text || response.statusText}`);
   }
   if (response.status === 204) return undefined as unknown as T; // No-content
@@ -349,7 +470,7 @@ async function fetchJson<T = unknown>(
 function fetchWithTimeout(input: RequestInfo, init: RequestInit = {}, timeoutMs = 60000): Promise<Response> {
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
-  return fetch(input, { ...init, signal: abortController.signal })
+  return apiFetch(input, { ...init, signal: abortController.signal })
     .finally(() => clearTimeout(timeoutId));
 }
 
@@ -359,6 +480,10 @@ const handleApiResponse = async (response: Response) => {
   }
   const errorText = await response.text();
   if (handleAuthExpiry(response.status, errorText)) throw new Error('Session expired — redirecting to Ambari login');
+
+  // A missing Ambari master key is answered 412 too, but the view may well be configured.
+  const noMasterKey = masterKeyRefusal(response.status, errorText);
+  if (noMasterKey) throw new Error(noMasterKey);
 
   // Reliably detect the "unconfigured" state from the backend
   if (response.status === 412 || (errorText && errorText.includes("not configured with a kubeconfig"))) {
@@ -397,6 +522,8 @@ export interface ResolvedContext {
   clusterName?: string;
   atlasUrl?: string;
   atlasAuthMode?: string;
+  /** Atlas signs users in against LDAP, also when file authentication (reported first in atlasAuthMode) is on too. */
+  atlasLdapAuth?: boolean;
   atlasAclMode?: string;
   atlasManaged?: boolean;
   atlasRangerServiceName?: string;
@@ -415,6 +542,8 @@ export interface ResolvedContext {
   resolvedFields?: Record<string, string>;
   /** Names (<capability>.<field>) of secret fields that have a value set. */
   secretFieldsSet?: string[];
+  /** Messages for the operator about how the context is stored, such as a value to review. */
+  notices?: string[];
 }
 
 /** Result of a live "test connection & list clusters" probe against a remote Ambari. */
@@ -429,6 +558,8 @@ export interface RemoteProbeResult {
 
 export interface ContextFieldDef {
   name: string;
+  /** Key the value is stored under in the context config; defaults to name (see utils/contextFieldKeys). */
+  configKey?: string;
   label?: string;
   type?: string;        // string | password | enum | boolean
   secret?: boolean;
@@ -522,6 +653,36 @@ export const testOpenShiftLogin = (login: OpenShiftLogin): Promise<{ ok: boolean
     body: JSON.stringify(login),
   });
 
+/**
+ * The ServiceAccount of the pod Ambari runs in, which KDPS can connect with when Ambari runs in the cluster it manages
+ * (GET /cluster/in-cluster). Never carries the token.
+ */
+export interface InClusterServiceAccountStatus {
+  /** Whether the pod has a ServiceAccount token, CA and API server address to connect with. */
+  available: boolean;
+  /** Why not, when it is not available. */
+  reason?: string | null;
+  /** Whether KDPS connects with it now. */
+  active: boolean;
+  authMode: string;
+  /** system:serviceaccount:<namespace>:<name> */
+  username?: string | null;
+  serviceAccount?: string | null;
+  namespace?: string | null;
+  apiServer?: string;
+}
+
+/** Whether KDPS can connect with the Ambari pod's ServiceAccount, and as whom. */
+export const getInClusterServiceAccount = (): Promise<InClusterServiceAccountStatus> =>
+  fetchJson<InClusterServiceAccountStatus>("/cluster/in-cluster");
+
+/**
+ * Connect KDPS with the Ambari pod's ServiceAccount, for every user of the view (rebuilds the Kubernetes client and
+ * checks it reaches the cluster). Throws with the backend error, e.g. when the pod has no ServiceAccount token.
+ */
+export const connectWithInClusterServiceAccount = (): Promise<{ message: string; username?: string | null; note?: string }> =>
+  fetchJson<{ message: string; username?: string | null; note?: string }>("/cluster/in-cluster", { method: "POST" });
+
 export interface ProxySettings {
   enabled: boolean;
   url: string;
@@ -531,12 +692,18 @@ export interface ProxySettings {
   passwordSet?: boolean;
 }
 
-export interface PreflightCheck { name: string; group: string; allowed: boolean; }
+export interface PreflightCheck { name: string; group: string; allowed: boolean; remediation?: string; advisory?: boolean; note?: string; }
 export interface PreflightResult { platform: string; namespace: string; allOk: boolean; checks: PreflightCheck[]; }
 
 /** RBAC preflight (oc auth can-i) for the connected account against a target namespace. */
 export const getPreflight = (namespace: string): Promise<PreflightResult> =>
   fetchJson<PreflightResult>(`/cluster/preflight?namespace=${encodeURIComponent(namespace)}`);
+
+/** Whether the server found the Ambari master key KDPS encrypts the kubeconfig and every credential with. */
+export interface MasterKeyStatus { available: boolean; message?: string; code?: string; }
+
+/** Asked before anything is uploaded: without the master key, saving a credential is refused (412). */
+export const getMasterKeyStatus = (): Promise<MasterKeyStatus> => fetchJson<MasterKeyStatus>("/cluster/master-key");
 
 /** View-wide outbound proxy for reaching internet Helm/Git repos (Kubernetes API stays direct). */
 export const getProxySettings = (): Promise<ProxySettings> => fetchJson<ProxySettings>("/cluster/proxy");
@@ -614,7 +781,7 @@ export async function deployHelm(
 }
 
 export async function checkHelmRepo(id: string) {
-  const response = await fetch(`${API_BASE_URL}/helm/repos/${id}/check`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/repos/${id}/check`, {
     method: 'GET',
     credentials: 'include'
   });
@@ -626,7 +793,7 @@ export async function installMonitoring(repoId?: string, force?: boolean) {
   if (repoId) qs.set('repoId', repoId);
   if (force) qs.set('force', 'true');
   const query = qs.toString() ? `?${qs.toString()}` : '';
-  const response = await fetch(`${API_BASE_URL}/helm/monitoring/install${query}`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/monitoring/install${query}`, {
     method: 'POST',
     credentials: 'include'
   });
@@ -634,7 +801,7 @@ export async function installMonitoring(repoId?: string, force?: boolean) {
 }
 
 export async function resetMonitoringCache() {
-  const response = await fetch(`${API_BASE_URL}/helm/monitoring/reset`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/monitoring/reset`, {
     method: 'POST',
     credentials: 'include'
   });
@@ -647,7 +814,7 @@ export const getClusterEvents = async () => {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return getMockClusterEvents();
   }
-  const response = await fetch(`${API_BASE_URL}/cluster/events`);
+  const response = await apiFetch(`${API_BASE_URL}/cluster/events`);
   return handleApiResponse(response);
 };
 
@@ -658,7 +825,7 @@ export const getClusterEvents = async () => {
 export const getClusterServices = async (serviceType: string): Promise<ClusterService[]> => {
     // No more mock. Call the backend.
     const params = new URLSearchParams({ serviceType });
-    const response = await fetch(`${API_BASE_URL}/discovery/ambari?${params.toString()}`, {
+    const response = await apiFetch(`${API_BASE_URL}/discovery/ambari?${params.toString()}`, {
       credentials: 'include'
     });
     return handleApiResponse(response);
@@ -667,8 +834,11 @@ export const getClusterServices = async (serviceType: string): Promise<ClusterSe
 /**
  * Discover monitoring stack (kube-prometheus-stack) and return namespace/release.
  */
-export const getMonitoringDiscovery = async (): Promise<{ namespace: string; release: string; url?: string }> => {
-  const response = await fetch(`${API_BASE_URL}/discovery/monitoring/prometheus`, { credentials: 'include' });
+export const getMonitoringDiscovery = async (): Promise<{
+  namespace: string; release: string; url?: string; queryUrl?: string;
+  serviceMonitorLabels?: Record<string, string>; warning?: string;
+}> => {
+  const response = await apiFetch(`${API_BASE_URL}/discovery/monitoring/prometheus`, { credentials: 'include' });
   return handleApiResponse(response);
 };
 
@@ -678,12 +848,12 @@ export const getMonitoringDiscovery = async (): Promise<{ namespace: string; rel
  * incl. the OpenShift Custom Metrics Autoscaler in openshift-keda).
  */
 export const getKedaDiscovery = async (): Promise<{ present: boolean; namespace?: string; release?: string; source?: string; message?: string }> => {
-  const response = await fetch(`${API_BASE_URL}/discovery/keda`, { credentials: 'include' });
+  const response = await apiFetch(`${API_BASE_URL}/discovery/keda`, { credentials: 'include' });
   return handleApiResponse(response);
 };
 
 export const getViewSettings = async (): Promise<any> => {
-  const response = await fetch(`${API_BASE_URL}/configurations/settings`, { credentials: 'include' });
+  const response = await apiFetch(`${API_BASE_URL}/configurations/settings`, { credentials: 'include' });
   if (!response.ok) {
     const txt = await response.text();
     throw new Error(txt || 'Failed to load settings');
@@ -691,8 +861,12 @@ export const getViewSettings = async (): Promise<any> => {
   return response.json();
 };
 
-export const saveViewSettings = async (settings: any): Promise<void> => {
-  const response = await fetch(`${API_BASE_URL}/configurations/settings`, {
+/**
+ * Saves the view settings. The answer carries a `warning` when the settings were saved but need the administrator's
+ * attention (the keytab webhook's account kept while the webhook is still installed, for instance).
+ */
+export const saveViewSettings = async (settings: any): Promise<{ warning?: string }> => {
+  const response = await apiFetch(`${API_BASE_URL}/configurations/settings`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -702,18 +876,32 @@ export const saveViewSettings = async (settings: any): Promise<void> => {
     const txt = await response.text();
     throw new Error(txt || 'Failed to save settings');
   }
+  const txt = await response.text();
+  try {
+    const answer = txt ? JSON.parse(txt) : {};
+    return typeof answer?.warning === 'string' ? { warning: answer.warning } : {};
+  } catch {
+    return {};
+  }
 };
 
 export interface SecurityProfiles {
   defaultProfile?: string;
   profiles: Record<string, SecurityConfig>;
+  /** Set on a read when some stored profiles could not be read and are missing from `profiles`. */
+  incomplete?: boolean;
+  /**
+   * On a save, the profiles the page read before editing: only those left out of `profiles` are removed, so a
+   * profile created since, or never shown, is kept.
+   */
+  loadedProfiles?: string[];
 }
 
 export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
   if (IS_DEV) {
     return getMockSecurityConfig();
   }
-  const res = await fetch(`${API_BASE_URL}/configurations/security`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security`, { credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Failed to load security config');
@@ -722,15 +910,20 @@ export const getSecurityConfig = async (): Promise<SecurityProfiles> => {
 };
 
 export const saveSecurityConfig = async (cfg: SecurityProfiles): Promise<void> => {
-  const res = await fetch(`${API_BASE_URL}/configurations/security`, {
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cfg || {})
   });
   if (!res.ok) {
+    // The server names the profile it refused and why: too large to be saved, or still used by releases.
     const txt = await res.text();
-    throw new Error(txt || 'Failed to save security config');
+    let reason = txt;
+    try {
+      reason = JSON.parse(txt)?.error || txt;
+    } catch { /* not JSON: shown as it is */ }
+    throw new Error(reason || 'Failed to save security config');
   }
 };
 
@@ -743,7 +936,7 @@ export const getSecuritySchema = async (): Promise<any> => {
     const { getMockSecuritySchema } = await import('./mock');
     return getMockSecuritySchema();
   }
-  const res = await fetch(`${API_BASE_URL}/configurations/security/schema`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security/schema`, { credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Failed to load security schema');
@@ -755,7 +948,7 @@ export const getSecurityProfileUsage = async (profile: string): Promise<Security
   if (!profile) {
     throw new Error('Profile name is required');
   }
-  const res = await fetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}/usage`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}/usage`, { credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(txt || 'Failed to load profile usage');
@@ -767,7 +960,7 @@ export const deleteSecurityProfile = async (profile: string): Promise<void> => {
   if (!profile) {
     throw new Error('Profile name is required');
   }
-  const res = await fetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/configurations/security/${encodeURIComponent(profile)}`, {
     method: 'DELETE',
     credentials: 'include'
   });
@@ -803,7 +996,7 @@ export const getDiscoveredK8sServices = async (labelSelector: string): Promise<C
 
     const params = new URLSearchParams({ label: labelSelector });
     // Note: ensure API_BASE_URL includes the /resources/api part as defined in your file
-    const response = await fetch(`${API_BASE_URL}/discovery/k8s?${params.toString()}`);
+    const response = await apiFetch(`${API_BASE_URL}/discovery/k8s?${params.toString()}`);
     return handleApiResponse(response);
 };
 
@@ -822,7 +1015,7 @@ export const getDiscoveredK8sSecrets = async (labelSelector?: string, namespace?
     const params = new URLSearchParams();
     if (labelSelector) params.set('label', labelSelector);
     if (namespace) params.set('namespace', namespace);
-    const response = await fetch(`${API_BASE_URL}/discovery/secrets?${params.toString()}`);
+    const response = await apiFetch(`${API_BASE_URL}/discovery/secrets?${params.toString()}`);
     return handleApiResponse(response);
 };
 
@@ -831,7 +1024,7 @@ export const getDiscoveredClusterIssuers = async (includeNotReady = false): Prom
     if (IS_DEV) return [];
     const params = new URLSearchParams();
     if (includeNotReady) params.set('includeNotReady', 'true');
-    const response = await fetch(`${API_BASE_URL}/discovery/cluster-issuers${params.toString() ? '?' + params : ''}`);
+    const response = await apiFetch(`${API_BASE_URL}/discovery/cluster-issuers${params.toString() ? '?' + params : ''}`);
     return handleApiResponse(response);
 };
 
@@ -840,7 +1033,7 @@ export const getDiscoveredSecretStores = async (includeNotReady = false): Promis
     if (IS_DEV) return [];
     const params = new URLSearchParams();
     if (includeNotReady) params.set('includeNotReady', 'true');
-    const response = await fetch(`${API_BASE_URL}/discovery/secret-stores${params.toString() ? '?' + params : ''}`);
+    const response = await apiFetch(`${API_BASE_URL}/discovery/secret-stores${params.toString() ? '?' + params : ''}`);
     return handleApiResponse(response);
 }
 
@@ -853,7 +1046,7 @@ export const getClusterStats = async (forceRefresh = false) => {
   }
   const params = new URLSearchParams();
   if (forceRefresh) params.set('forceRefresh', 'true');
-  const response = await fetch(`${API_BASE_URL}/cluster/stats?${params.toString()}`);
+  const response = await apiFetch(`${API_BASE_URL}/cluster/stats?${params.toString()}`);
   return handleApiResponse(response);
 };
 
@@ -862,7 +1055,7 @@ export async function getCommandStatus(id: string) {
     return getMockCommandStatus(id);
   }
   // Explicit fetch keeps polling simple and avoids any header/caching surprises
-  const response = await fetch(`${API_BASE_URL}/commands/${id}`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}`, {
     credentials: 'include',
     cache: 'no-store',
   });
@@ -875,7 +1068,7 @@ export async function listCommands(limit = 10, offset = 0) {
     return getMockCommands(limit, offset);
   }
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  const response = await fetch(`${API_BASE_URL}/commands?${params.toString()}`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands?${params.toString()}`, {
     credentials: 'include',
     cache: 'no-store',
   });
@@ -885,7 +1078,7 @@ export async function listCommands(limit = 10, offset = 0) {
 
 export async function getCommandLogs(id: string, offset = 0, limit = 65536) {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
-  const response = await fetch(`${API_BASE_URL}/commands/${id}/logs?${params.toString()}`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}/logs?${params.toString()}`, {
     credentials: 'include',
     cache: 'no-store'
   });
@@ -894,7 +1087,7 @@ export async function getCommandLogs(id: string, offset = 0, limit = 65536) {
 }
 
 export async function listChildCommands(id: string) {
-  const response = await fetch(`${API_BASE_URL}/commands/${id}/children`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}/children`, {
     credentials: 'include',
     cache: 'no-store',
   });
@@ -903,7 +1096,7 @@ export async function listChildCommands(id: string) {
 }
 
 export async function cancelCommand(id: string) {
-  const response = await fetch(`${API_BASE_URL}/commands/${id}/cancel`, { method: 'POST' });
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}/cancel`, { method: 'POST' });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(text || `Cancel failed: ${response.status}`);
@@ -916,7 +1109,7 @@ export async function cancelCommand(id: string) {
  * re-running the whole KDPS wizard flow.
  */
 export async function resumeCommand(id: string) {
-  const response = await fetch(`${API_BASE_URL}/commands/${id}/resume`, { method: 'POST' });
+  const response = await apiFetch(`${API_BASE_URL}/commands/${id}/resume`, { method: 'POST' });
   if (!response.ok) {
     let msg = `Resume failed: ${response.status}`;
     try {
@@ -931,7 +1124,7 @@ export async function resumeCommand(id: string) {
 }
 
 export async function refreshDependencies() {
-  const response = await fetch(`${API_BASE_URL}/commands/dependencies/refresh`, {
+  const response = await apiFetch(`${API_BASE_URL}/commands/dependencies/refresh`, {
     method: 'POST',
     credentials: 'include'
   });
@@ -946,7 +1139,7 @@ export const getComponentStatuses = async () => {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return getMockComponentStatuses();
   }
-  const response = await fetch(`${API_BASE_URL}/cluster/componentstatuses`);
+  const response = await apiFetch(`${API_BASE_URL}/cluster/componentstatuses`);
   return handleApiResponse(response);
 };
 
@@ -958,7 +1151,7 @@ export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = fals
     // managedOnly filters to KDPS-managed releases SERVER-SIDE (before pagination) so managed
     // releases that sort onto a later page are not hidden by a page-local client filter.
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset), managedOnly: String(managedOnly) });
-    const response = await fetch(`${API_BASE_URL}/helm/releases?${params.toString()}`, { credentials: 'include' });
+    const response = await apiFetch(`${API_BASE_URL}/helm/releases?${params.toString()}`, { credentials: 'include' });
     return handleApiResponse(response);
 };
 
@@ -966,7 +1159,7 @@ export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = fals
  * Fetches the latest backend-aggregated status for a release via Flux/Helm backends.
  */
 export const getReleaseStatus = async (namespace: string, releaseName: string): Promise<HelmRelease> => {
-  const response = await fetch(`${API_BASE_URL}/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/status`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/status`, {
     credentials: 'include',
     cache: 'no-store'
   });
@@ -993,12 +1186,32 @@ export const adoptRelease = async (namespace: string, releaseName: string) => {
 };
 
 /**
+ * Asks Flux to try a GitOps release again after it gave up on it (a first install that timed out, a prerequisite
+ * fixed outside Git), without a new commit. Resolves once the request is on the HelmRelease; Flux then reports the
+ * outcome in the release's status.
+ */
+export const retryReleaseReconcile = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/retry-reconcile`;
+  return fetchJson<{ requested: boolean; requestedAt: string }>(requestPath, { method: 'POST' });
+};
+
+/**
  * Re-register the OIDC client in Keycloak for a deployed release.
  * Idempotent: updates the existing client if it already exists.
  */
 export const registerReleaseOidcClient = async (namespace: string, releaseName: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/oidc`;
   return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+};
+
+/**
+ * Why "Regenerate keytabs" (`keytabs`), "Re-register OIDC client" (`oidc`) and "Reapply Ranger repository" (`ranger`)
+ * cannot run for a deployed release: the platform context it runs on cannot perform them, or it was deployed without
+ * OIDC login. An action left out can run.
+ */
+export const getReleaseActionRefusals = async (namespace: string, releaseName: string) => {
+  const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/availability`;
+  return fetchJson<{ refusals: Record<string, string> }>(requestPath);
 };
 
 /**
@@ -1024,6 +1237,10 @@ export interface AtlasFederationCheck {
   release?: string;
   ok: boolean;
   federationConfigured: boolean;
+  /** How OpenMetadata signs in to Atlas: a user in Atlas's file user store, or an LDAP service account. */
+  federationAuth?: 'file' | 'ldap';
+  /** False when nothing is kept in Atlas for the release (LDAP service account): "Fix & restart Atlas" does not apply. */
+  fixRestartAvailable?: boolean;
   restartPending?: boolean;
   federationUserActive?: boolean;
   checks: AtlasFederationCheckItem[];
@@ -1149,6 +1366,12 @@ export interface ReleaseTlsEntry {
   serial?: string;
   sans?: string[];
   error?: string;
+  /** k8s-view-self-signed only: the CA the leaf was minted with (ambariInternal | companyUploaded). */
+  caMode?: string;
+  /** k8s-view-self-signed with a company CA: its registry name, lowercased and sanitized as a label. */
+  caName?: string;
+  /** external only: KDPS wrote this Secret from a certificate and key uploaded at deploy time. */
+  uploaded?: boolean;
 }
 export const getReleaseTlsState = async (namespace: string, releaseName: string): Promise<ReleaseTlsEntry[]> => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/tls`;
@@ -1211,11 +1434,7 @@ export const getKubeconfigContent = async (): Promise<string> => {
     return "apiVersion: v1\nclusters:\n- name: mocked-cluster\n  cluster:\n    server: https://mock.server:6443";
   }
 
-  const response = await fetch(`${API_BASE_URL}/cluster/config`, {
-    headers: {
-      'X-Requested-By': 'ambari',
-    },
-  });
+  const response = await apiFetch(`${API_BASE_URL}/cluster/config`);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -1230,7 +1449,7 @@ export const getNodes = async (limit = 200, offset = 0) => {
     return { items: getMockNodes(), total: getMockNodes().length };
   }
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  const response = await fetch(`${API_BASE_URL}/nodes?${params.toString()}`);
+  const response = await apiFetch(`${API_BASE_URL}/nodes?${params.toString()}`);
   return handleApiResponse(response);
 };
 
@@ -1238,7 +1457,7 @@ export const isViewConfigured = async () => {
   if (IS_DEV) {
     return !sessionStorage.getItem('isUnconfigured');
   }
-  const response = await fetch(`${API_BASE_URL}/cluster/configured`);
+  const response = await apiFetch(`${API_BASE_URL}/cluster/configured`);
   try {
     const data = await handleApiResponse(response);
     return data.message === "CONFIGURED";
@@ -1248,7 +1467,7 @@ export const isViewConfigured = async () => {
 };
 
 export async function loginHelmRepo(id: string) {
-  const response = await fetch(`${API_BASE_URL}/helm/repos/${encodeURIComponent(id)}/login`, {
+  const response = await apiFetch(`${API_BASE_URL}/helm/repos/${encodeURIComponent(id)}/login`, {
     method: 'POST',
   });
 
@@ -1277,7 +1496,7 @@ export async function loginHelmRepo(id: string) {
 export async function loginRepo(repoId: string) {
   const url = `${API_BASE_URL}/helm/repos/${encodeURIComponent(repoId)}/login`;
 
-  const response = await fetch(url, { method: 'POST' });
+  const response = await apiFetch(url, { method: 'POST' });
   if (!response.ok) throw new Error(`Login repo failed: ${response.status}`);
   return response.json().catch(() => ({}));
 }
@@ -1325,12 +1544,19 @@ export async function submitHelmDeploy(payload: {
   mounts?: any;
   tls?: any;
   ingressTlsUpload?: any;
+  ingressTlsSelfSign?: any;
+  ingressTlsCertManager?: any;
+  ingressTlsExternalSecret?: any;
+  // Lets the ingress certificate above overwrite a Secret KDPS did not mint (an uploaded or the operator's own
+  // certificate). Sent only once the operator confirmed the replacement; never overrides cert-manager or ESO.
+  replaceExistingTls?: boolean;
   dependencies?: any;
   ranger?: any;
   requiredConfigMaps?: any;
   dynamicValues?: any;
-  // Optional chart-version override, sent as the deploy's ?version= (helm --version). Blank ⇒ backend
-  // default (catalog/latest). For OCI charts the version MUST go here, never tagged onto the chart ref.
+  // Optional chart version, sent in the body and as the deploy's ?version= (helm --version). Blank ⇒ a
+  // redeploy keeps the version the release runs; a first install takes the newest chart (direct Helm) or the
+  // service definition's version (GitOps). For OCI charts the version MUST go here, never tagged onto the chart ref.
   version?: string;
   // Snapshot of the wizard's raw form state (envelope keys stripped) so the backend can
   // read excludeFromValues form fields when resolving service-definition variables like
@@ -1346,7 +1572,7 @@ export async function submitHelmDeploy(payload: {
     params.set('version', String(payload.version).trim());
   }
   const url = `${API_BASE_URL}/commands/helm/deploy?${params.toString()}`;
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type':'application/json' },
     body: JSON.stringify(payload),
@@ -1356,15 +1582,118 @@ export async function submitHelmDeploy(payload: {
     // (e.g. "Chart version 1.13.1 does not match the range '>=1.13.2'") and
     // the operator only sees "Submit failed: 400" which is useless.
     let detail = '';
+    let body: any = null;
     try {
-      const body: any = await response.clone().json();
+      body = await response.clone().json();
       detail = body?.error ? `: ${body.error}` : '';
     } catch {
       try { detail = `: ${await response.text()}`; } catch { /* keep empty */ }
     }
-    throw new Error(`Submit failed: ${response.status}${detail}`);
+    const err = new Error(`Submit failed: ${response.status}${detail}`);
+    (err as any).status = response.status;
+    // A refusal the wizard can resolve by asking the operator (an existing ingress certificate Secret to replace)
+    // carries its code and the Secret it names.
+    if (body?.code) {
+      (err as any).code = body.code;
+      (err as any).namespace = body.namespace;
+      (err as any).secretName = body.secretName;
+    }
+    throw err;
   }
-  return response.json() as Promise<{id: string}>;
+  return response.json() as Promise<DeployAccepted>;
+}
+
+/** What an uninstall took back, and what it could not take back itself and leaves to an administrator. */
+export interface UninstallNotes {
+  /** The removal of a GitOps release waits for its pull request to be merged: the release keeps running until then. */
+  pendingDelete?: boolean;
+  /** The pull request removing the release. */
+  pullRequestUrl?: string;
+  /** What finishes the removal. */
+  message?: string;
+  /** What became of the release's Polaris access: the principal removed, or what is left to remove in Polaris. */
+  polarisCleanup?: string;
+  /** What became of the release's single sign-on: the Keycloak client and the Secrets holding its client secret removed, or what is left to remove by hand. */
+  oidcCleanup?: string;
+  /** OpenShift SCC grants that KDPS did not take back (made outside KDPS, or still used by another release), with the platform team's commands. */
+  sccCleanup?: string;
+  /** The Ranger account of the release's Atlas tag sync that KDPS could not disable, or a Ranger password to change. */
+  tagSyncCleanup?: string;
+  /** What became of the objects KDPS created for the release outside its chart (keytab, truststore, autoscaler account...). */
+  kdpsObjectsCleanup?: KdpsObjectsCleanup;
+  /** What became of what KDPS registered for the release outside Kubernetes (Ranger access, Atlas, Ranger TagSync, ...). */
+  externalCleanup?: ExternalCleanupReport;
+}
+
+/** How far the uninstall of a release goes outside Kubernetes. */
+export type ExternalCleanupMode = 'credentials' | 'all' | 'none';
+
+/**
+ * What the uninstall of a release removes, could not remove (`left`, with what to do) and leaves on purpose (`kept`) of
+ * what KDPS registered for it outside Kubernetes: Keycloak clients, Ranger access and repositories, Kerberos principals,
+ * the Atlas federation user, the OpenMetadata source of Ranger TagSync, Ambari view instances and Vault copies.
+ */
+export interface ExternalCleanupReport {
+  removed: string[];
+  left: KdpsObjectLeftover[];
+  kept?: KdpsObjectLeftover[];
+  note?: string;
+  /** In a preview: false when KDPS recorded nothing for the release (one deployed by an earlier version). */
+  recorded?: boolean;
+}
+
+/** An object KDPS created for a release that its uninstall could not remove, why, and the command that removes it. */
+export interface KdpsObjectLeftover {
+  object: string;
+  reason: string;
+  command?: string;
+}
+
+/** What the uninstall of a release removed of the objects KDPS created for it outside its chart, and what it left. */
+export interface KdpsObjectsCleanup {
+  /** The objects removed, as `<Kind>/<name>`. */
+  removed: string[];
+  left: KdpsObjectLeftover[];
+  /** Objects left on purpose: one another release still uses, or one KDPS cannot prove it created. */
+  kept?: KdpsObjectLeftover[];
+  /** The same, as the operator reads it. */
+  note?: string;
+}
+
+/**
+ * The objects KDPS created for a release outside its chart, which its uninstall removes, as `<Kind>/<name>`: what the
+ * uninstall confirmation lists. Empty when there are none or they cannot be listed.
+ */
+export async function getReleaseKdpsObjects(name: string, namespace: string): Promise<string[]> {
+  const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/kdps-objects`;
+  const response = await apiFetch(url, { method: 'GET' });
+  if (!response.ok) return [];
+  const body: any = await response.json().catch(() => ({}));
+  return Array.isArray(body?.objects) ? body.objects.map(String) : [];
+}
+
+/**
+ * What the uninstall of a release would do outside Kubernetes with the given mode, for its confirmation to list. Null
+ * when it cannot be read: the uninstall still does it, and its result says what was done.
+ */
+export async function getReleaseExternalRegistrations(
+  name: string,
+  namespace: string,
+  mode: ExternalCleanupMode,
+): Promise<ExternalCleanupReport | null> {
+  const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`
+    + `/external-registrations?mode=${encodeURIComponent(mode)}`;
+  const response = await apiFetch(url, { method: 'GET' });
+  if (!response.ok) return null;
+  const body: any = await response.json().catch(() => null);
+  if (!body || typeof body !== 'object') return null;
+  return {
+    removed: Array.isArray(body.removed) ? body.removed.map(String) : [],
+    left: Array.isArray(body.left) ? body.left : [],
+    kept: Array.isArray(body.kept) ? body.kept : [],
+    note: typeof body.note === 'string' ? body.note : undefined,
+    recorded: body.recorded === true,
+  };
 }
 
 /**
@@ -1372,17 +1701,27 @@ export async function submitHelmDeploy(payload: {
  *
  * @param name release name
  * @param namespace release namespace
+ * @returns the notes the server returns; empty when there is nothing left to do
  */
 export async function uninstallHelm(
   name: string,
   namespace: string,
   params: URLSearchParams = new URLSearchParams()
-) {
+): Promise<UninstallNotes> {
   const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}?${params.toString()}`;
-  const response = await fetch(url, { method: 'DELETE' });
-  if (!response.ok) throw new Error(`Uninstall failed: ${response.status}`);
-  // backend returns empty body → don't call .json()
-  return;
+  const response = await apiFetch(url, { method: 'DELETE' });
+  if (!response.ok) {
+    // The server says why it refused and what to do: another operation on the release is running, or a GitOps
+    // release must be deployed again with its Git token before KDPS can remove it from Git.
+    let detail = '';
+    try {
+      const body: any = await response.json();
+      detail = body?.error ? `: ${body.error}` : '';
+    } catch { /* keep the status only */ }
+    throw new Error(`Uninstall failed: ${response.status}${detail}`);
+  }
+  // The body is empty when there is nothing to report.
+  return response.json().catch(() => ({}));
 }
 
 /**
@@ -1404,7 +1743,7 @@ export async function upgradeHelm(
   params: URLSearchParams = new URLSearchParams()
 ) {
   const url = `${API_BASE_URL}/helm/upgrade?${params.toString()}`;
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1454,38 +1793,30 @@ export interface ManagedConfig {
 export const listManagedConfigs = async (): Promise<ManagedConfig[]> => {
   // Pass namespace=dashboarding or handle in backend logic
   // Using relative path assuming proxy is set up or base URL matches
-  const response = await fetch(`${API_BASE_URL}/configurations`, {
-    headers: { 'X-Requested-By': 'ambari' }
-  });
+  const response = await apiFetch(`${API_BASE_URL}/configurations`);
   if (!response.ok) throw new Error('Failed to fetch configurations');
   return response.json();
 };
 
 export const getManagedConfigContent = async (namespace: string, name: string, filename: string): Promise<string> => {
-  const response = await fetch(`${API_BASE_URL}/configurations/${namespace}/${name}?filename=${filename}`, {
-    headers: { 'X-Requested-By': 'ambari' }
-  });
+  const response = await apiFetch(`${API_BASE_URL}/configurations/${namespace}/${name}?filename=${filename}`);
   if (!response.ok) throw new Error('Failed to fetch content');
   const json = await response.json();
   return json.content || '';
 };
 
 export const saveManagedConfig = async (config: ManagedConfig) => {
-  const response = await fetch(`${API_BASE_URL}/configurations`, {
+  const response = await apiFetch(`${API_BASE_URL}/configurations`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Requested-By': 'ambari'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config)
   });
   if (!response.ok) throw new Error('Failed to save config');
 };
 
 export const deleteManagedConfig = async (name: string, namespace: string) => {
-  const response = await fetch(`${API_BASE_URL}/configurations/${namespace}/${name}`, {
+  const response = await apiFetch(`${API_BASE_URL}/configurations/${namespace}/${name}`, {
     method: 'DELETE',
-    headers: { 'X-Requested-By': 'ambari' }
   });
   if (!response.ok) throw new Error('Failed to delete config');
 };
@@ -1499,12 +1830,9 @@ export const getReleaseValues = async (namespace: string, releaseName: string): 
   // Construct the URL. Adjust the base path ('./api/v1') if your setup differs.
   const url = `${API_BASE_URL}/helm/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/values`;
   
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method: 'GET',
-    headers: { 
-      'Content-Type': 'application/json',
-      'X-Requested-By': 'ambari' // Required by Ambari CSRF protection
-    }
+    headers: { 'Content-Type': 'application/json' },
   });
 
   if (!response.ok) {
@@ -1521,7 +1849,7 @@ export const getStackService = async (name: string): Promise<StackServiceDef> =>
   if (IS_DEV) {
     return (await import('./mock')).getStackServiceMock(name);
   }
-  const res = await fetch(`${API_BASE_URL}/services/${name}`, { headers: { 'X-Requested-By': 'ambari' } });
+  const res = await apiFetch(`${API_BASE_URL}/services/${name}`);
   if (!res.ok) throw new Error("Failed to load service definition");
   return res.json();
 };
@@ -1530,7 +1858,7 @@ export const getStackConfigs = async (name: string): Promise<StackConfig[]> => {
   if (IS_DEV) {
     return (await import('./mock')).getStackConfigsMock(name) as any;
   }
-  const res = await fetch(`${API_BASE_URL}/services/${name}/configurations`, { headers: { 'X-Requested-By': 'ambari' } });
+  const res = await apiFetch(`${API_BASE_URL}/services/${name}/configurations`);
   if (!res.ok) throw new Error("Failed to load configs");
   return res.json();
 };
@@ -1541,7 +1869,7 @@ export const getAvailableServices = async () => {
     // Use KDPS-style mocks in dev
     return getChartsJSON();
   }
-  const response = await fetch(`${API_BASE_URL}/services`, { headers: { 'X-Requested-By': 'ambari' } });
+  const response = await apiFetch(`${API_BASE_URL}/services`);
   return handleApiResponse(response);
 }
 
@@ -1598,6 +1926,17 @@ export const listTruststores = async (namespace?: string): Promise<TruststoreSum
   return fetchJson<TruststoreSummary[]>(`/truststores${qs}`);
 };
 
+/** Where truststores created in the Truststores tab are written, and whether KDPS may write Secrets there. */
+export interface TruststoreRegistryStatus {
+  namespace: string;
+  canWrite: boolean;
+  /** What to do when KDPS may not write there. */
+  message?: string;
+}
+
+export const getTruststoreRegistry = async (): Promise<TruststoreRegistryStatus> =>
+  fetchJson<TruststoreRegistryStatus>('/truststores/registry');
+
 /** Create a truststore from a public certificate PEM (trust anchor, no private key). */
 export const createTruststore = async (
   name: string,
@@ -1642,6 +1981,11 @@ export interface TrinoCatalog {
   createdAt?: string;
   updatedAt?: string;
   usedBy?: string[];
+  /**
+   * Properties that write a credential out instead of reading it with ${ENV:KEY} (a catalog saved before KDPS refused
+   * them). Until it is edited, an Upgrade/Config of a release using it is refused. Response only.
+   */
+  literalCredentials?: string[];
 }
 
 export const getTrinoCatalogs = (): Promise<TrinoCatalog[]> =>
@@ -1667,12 +2011,20 @@ export interface ReleaseCatalog {
   reusableId?: string;
   properties?: string;
 }
+/**
+ * How a catalog change was saved to the release: on a release deployed with Flux GitOps, by a deploy that commits the
+ * values to Git, whose operation is named; nothing more for a Helm upgrade.
+ */
+export interface CatalogSaved {
+  committedToGit?: boolean;
+  commandId?: string;
+}
 const relCat = (ns: string, rel: string) => `/helm/releases/${encodeURIComponent(ns)}/${encodeURIComponent(rel)}/catalogs`;
 export const listReleaseCatalogs = (ns: string, rel: string): Promise<ReleaseCatalog[]> => fetchJson<ReleaseCatalog[]>(relCat(ns, rel));
 export const createReleaseCatalog = (ns: string, rel: string, body: { name: string; properties: string; persist: boolean }) =>
-  fetchJson<{ name: string; connector?: string; live: boolean; persisted?: boolean }>(relCat(ns, rel), { method: 'POST', body: JSON.stringify(body) });
+  fetchJson<{ name: string; connector?: string; live: boolean; persisted?: boolean } & CatalogSaved>(relCat(ns, rel), { method: 'POST', body: JSON.stringify(body) });
 export const dropReleaseCatalog = (ns: string, rel: string, name: string, forget = true) =>
-  fetchJson<{ name: string }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}?forget=${forget}`, { method: 'DELETE' });
+  fetchJson<{ name: string } & CatalogSaved>(`${relCat(ns, rel)}/${encodeURIComponent(name)}?forget=${forget}`, { method: 'DELETE' });
 export const testReleaseCatalog = (ns: string, rel: string, name: string) =>
   fetchJson<{ schemas: string[] }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/test`, { method: 'POST' });
 /** Releases → "Ranger policy…": one Ranger policy (allow / mask / row filter) on a Trino release's repo or its tag service. */
@@ -1701,4 +2053,4 @@ export const createReleaseRangerPolicy = (ns: string, rel: string, body: RangerP
     { method: 'POST', body: JSON.stringify(body) });
 
 export const adoptReleaseCatalog = (ns: string, rel: string, name: string) =>
-  fetchJson<{ name: string; properties: string }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, { method: 'POST' });
+  fetchJson<{ name: string; properties: string } & CatalogSaved>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, { method: 'POST' });

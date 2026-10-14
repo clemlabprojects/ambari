@@ -1,16 +1,15 @@
 {
   "label": "Superset",
   "chart": "apache/superset",
-  "pattern": "superset-.*",
   "secretName": "registry-credentials",
-  "version": "0.12.47",
+  "version": "0.12.50",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
       "secretName": "regcred",
       "chart": "kerberos-keytab-mutating-webhook",
-      "chartVersion": "0.1.0",
-      "imageTag": "1.0.0.1",
+      "chartVersion": "0.2.0",
+      "imageTag": "1.0.0.10",
       "imageRepository": "registry.clemlab.com/clemlabprojects",
       "namespace": "ambari-mutating-webhooks",
       "imageGlobalRegistryProperty": "global.imageRegistry",
@@ -59,10 +58,15 @@
       "type": "template",
       "template": "http://{{host}}:{{port}}/",
       "properties": {
+        "fullname": {
+          "source": "chartFullname",
+          "type": "string",
+          "chartName": "superset"
+        },
         "host": {
           "source": "template",
           "type": "string",
-          "template": "{{releaseName}}-superset.{{namespace}}.svc.cluster.local"
+          "template": "{{fullname}}.{{namespace}}.svc.cluster.local"
         },
         "port": {
           "source": "helm",
@@ -822,10 +826,11 @@
     },
     {
       "name": "superset-secret-key",
+      "comment": "extraSecretEnv, not extraEnv: the chart puts it in the <fullname>-env Secret the pods read through envFrom, so the key does not show in the pod specs (anyone allowed to read Deployments could sign a session cookie or decrypt the stored database passwords with it). Superset still reads SUPERSET_SECRET_KEY, so the key, and what it encrypted, are unchanged.",
       "skipIfVarEmpty": "supersetSecret",
       "targets": [
         {
-          "path": "extraEnv.SUPERSET_SECRET_KEY",
+          "path": "extraSecretEnv.SUPERSET_SECRET_KEY",
           "from": {
             "type": "var",
             "name": "supersetSecret"
@@ -943,7 +948,9 @@
       "name": "releaseName",
       "label": "release name",
       "type": "string",
-      "required": true
+      "required": true,
+      "pattern": "^(?=.{1,53}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+      "validationHint": "Use at most 53 lower-case letters, digits, '-' and '.', starting and ending with a letter or digit (Helm's rule for release names)."
     },
     {
       "name": "namespace",
@@ -990,7 +997,7 @@
         { "label": "Kerberos (SPNEGO)", "value": "kerberos" },
         { "label": "OIDC / JWT (service token, SSO)", "value": "oidc" }
       ],
-      "help": "How Superset authenticates to the Trino coordinator — match the security profile Trino was deployed with (usually the same as your cluster profile). Superset ALWAYS impersonates the logged-in user (their username becomes the Trino session user), so Ranger authorises each person individually no matter which mode is chosen. OIDC uses a Keycloak service token minted by a refresh sidecar (the Superset OIDC client must have service accounts enabled), and requires the Trino coordinator's JWT authenticator (Trino chart >= 1.43.7)."
+      "help": "How Superset authenticates to the Trino coordinator — match the security profile Trino was deployed with (usually the same as your cluster profile). Superset ALWAYS impersonates the logged-in user (their username becomes the Trino session user), so Ranger authorises each person individually no matter which mode is chosen. OIDC uses a Keycloak service token minted by a refresh sidecar (the Superset OIDC client must have service accounts enabled), and requires the Trino coordinator's JWT authenticator (Trino chart >= 1.43.7). A Trino deployed by KDPS accepts only tokens minted for it, so KDPS adds that Trino's audience to the Superset client's tokens; any other Trino must accept the audience your identity provider puts in them."
     },
     {
       "name": "ui_trino_catalog",
@@ -1016,7 +1023,7 @@
       "type": "password",
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_auth_mode", "value": "ldap" },
-      "help": "Password for the Trino service account above."
+      "help": "Password for the Trino service account above. It is written into the release's datasource import file, which chart 0.12.49 and later keep in a Kubernetes Secret (the deploy is refused with an older chart)."
     },
     {
       "name": "ui_trino_ranger_service",
@@ -1032,7 +1039,7 @@
       "type": "string",
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_auth_mode", "value": "oidc" },
-      "help": "Optional. The principal the Trino JWT authenticator derives from Superset's service token (jwt.principal-field, default the preferred_username claim — for a Keycloak client-credentials token that is usually 'service-account-<client-id>'). If set, KDPS auto-grants it 'impersonate' on the Trino Ranger repo. Leave blank if you prefer to grant the impersonation policy yourself (the exact principal depends on your Keycloak claim mapping)."
+      "help": "Optional. The principal the Trino JWT authenticator derives from Superset's service token (jwt.principal-field, default the preferred_username claim — for a Keycloak client-credentials token that is usually 'service-account-<client-id>'). If set, KDPS grants it 'impersonate' on Trino user '*' in the Trino Ranger repository, which Superset needs to run queries as the logged-in user. If you leave it blank, add that policy for the account in Ranger yourself (the exact principal depends on your Keycloak claim mapping): without the principal or that policy, Trino refuses every Superset query."
     },
     {
       "name": "hiveDatabase",
@@ -1119,7 +1126,7 @@
           "type": "password",
           "condition": { "field": "hiveDb.ldapUser", "operator": "non-empty" },
           "excludeFromValues": true,
-          "help": "Password of the LDAP service account above. It is written into the release's datasource import file and encrypted by Superset in its metadata database."
+          "help": "Password of the LDAP service account above. It is written into the release's datasource import file, which chart 0.12.49 and later keep in a Kubernetes Secret (the deploy is refused with an older chart), and encrypted by Superset in its metadata database."
         },
         {
           "name": "hiveDb.externalKeytabSecret",
@@ -1159,6 +1166,7 @@
           "label": "Ingress class",
           "type": "string",
           "capability": "kubernetes",
+          "keepWhenHidden": true,
           "required": true,
           "defaultValue": "nginx",
           "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller.",
@@ -1197,8 +1205,13 @@
           "type": "select",
           "defaultValue": "signedByAmbariCA",
           "excludeFromValues": true,
-          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1.",
+          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1. On Upgrade/Config this starts on **Keep current certificate**: the release keeps the certificate it serves and nothing is replaced (a release serving plain HTTP starts on **None**). Choose another mode only to replace that certificate; you are asked to confirm, and a Secret kept by cert-manager or an external Secret store is never overwritten.",
           "options": [
+            {
+              "label": "Keep current certificate",
+              "value": "keepCurrent",
+              "upgradeOnly": true
+            },
             {
               "label": "Sign via cert-manager (recommended)",
               "value": "signedByClusterIssuer",
@@ -1432,7 +1445,9 @@
           "label": "SECRET_KEY",
           "type": "password",
           "required": true,
-          "help": "Superset SECRET_KEY used for session and CSRF signing."
+          "excludeFromValues": true,
+          "seedFromValues": ["extraSecretEnv.SUPERSET_SECRET_KEY", "extraEnv.SUPERSET_SECRET_KEY"],
+          "help": "Superset SECRET_KEY used for session and CSRF signing, and to encrypt the database passwords Superset stores. Kept in a Kubernetes Secret. On an upgrade it is filled with the key the release runs with: keep it, or the stored database passwords can no longer be decrypted."
         },
         {
           "name": "superset.openstreetmapServerUrl",
@@ -1475,6 +1490,13 @@
           "excludeFromValues": true,
           "condition": { "field": "security.dynamicRoleFromGroup", "value": true },
           "help": "Optional regex a role name must match to be auto-granted (e.g. ^ad_). Leave blank to allow any role whose name matches a group. Recommended in production so an arbitrary IdP group cannot match a sensitive role like Admin or sql_lab."
+        },
+        {
+          "name": "global.security.auth.localLoginFallback",
+          "label": "Break-glass local sign-in",
+          "type": "boolean",
+          "defaultValue": false,
+          "help": "With an LDAP, Active Directory or OIDC security profile, lets the local administrator 'admin' sign in when the directory or the identity provider is unavailable: on the login form (LDAP, AD) or at /login/local (OIDC). Leave it off otherwise: while it is on, anyone who can reach Superset can try local passwords. The administrator's password is generated at the first install and kept in the Secret <release>-superset-admin. Needs chart 0.12.50 or later."
         }
       ]
     },
@@ -1496,7 +1518,14 @@
     }
   ],
   "description": "Modern data exploration and visualisation platform. Build dashboards and charts directly from your data warehouse.",
-  "valueAliases": {},
+  "valueAliases": {
+    "extraEnv.SUPERSET_SECRET_KEY": "extraSecretEnv.SUPERSET_SECRET_KEY"
+  },
+  "retiredValues": {
+    "_comment": "Values an earlier version of this definition wrote, removed from the values of every deploy (wizard upgrades and redeploys without the wizard alike).",
+    "extraEnv.SUPERSET_SECRET_KEY": "The SECRET_KEY now goes to extraSecretEnv: left in extraEnv, it would still show in the pod specs.",
+    "superset-env/SUPERSET_ADMIN_PASSWORD": "The wizard no longer asks for an administrator password, which the chart never read: KDPS generates it into the Secret <release>-superset-admin."
+  },
   "externalServiceTargets": {
     "hive": {
       "label": "Platform Hive (external Kerberos keytab)",
@@ -1522,6 +1551,59 @@
     }
   },
   "requiredChartVersion": ">=0.12.29",
+  "secretChartVersions": {
+    "_comment": "Chart 0.12.49 keeps the datasource import files (extraConfigs) in a Secret and passes the security profile's bind password to the pods through secretKeyRef; an older chart puts them in a ConfigMap or a plain environment variable. A wizard deploy that carries one of them with an older chart is refused; a resync or a security refresh is warned in its operation log.",
+    "ui_trino_svc_password": { "range": ">=0.12.49", "label": "the Trino service-account password of the datasource import file" },
+    "hiveDb.ldapPassword": { "range": ">=0.12.49", "label": "the Hive LDAP service-account password of the datasource import file" },
+    "global.security.auth.ldap.bindPassword": { "range": ">=0.12.49", "label": "the security profile's LDAP bind password" },
+    "global.security.auth.ad.bindPassword": { "range": ">=0.12.49", "label": "the security profile's Active Directory bind password" }
+  },
+  "generatedSecrets": [
+    {
+      "key": "admin",
+      "comment": "The local administrator the init job creates. Never admin/admin: a random password generated once and kept in this Secret, which the release keeps after an uninstall. resetPassword is true from the deploy that generates it until a deploy succeeds, so an administrator created before (with the chart default admin/admin) gets it too, even when the first deploy fails or is refused.",
+      "secretNameTemplate": "{{releaseName}}-superset-admin",
+      "label": "the Superset administrator password",
+      "chartVersion": ">=0.12.50",
+      "keys": { "password": {} },
+      "values": {
+        "init.adminUser.existingSecret": "{{secretName}}",
+        "init.adminUser.passwordKey": "password",
+        "init.adminUser.resetPassword": "{{generated}}"
+      },
+      "notice": "Superset administrator 'admin': its password is in the Secret {{namespace}}/{{secretName}}. Read it with: {{readCommand}}. With a security profile attached, this local account signs in only while 'Break-glass local sign-in' (Administrative users/groups) is on."
+    },
+    {
+      "key": "database",
+      "comment": "The bundled PostgreSQL keeps the passwords it was initialized with: a release installed before keeps those its chart stored in <release>-postgresql, or, when an uninstall deleted that Secret, the user password the chart set for every release (superset). Superset never signs in as postgres: that password is generated when it cannot be found.",
+      "secretNameTemplate": "{{releaseName}}-superset-db",
+      "label": "the passwords of the Superset PostgreSQL database",
+      "chartVersion": ">=0.12.50",
+      "dataVolume": "data-{{releaseName}}-postgresql-0",
+      "keys": {
+        "password": {
+          "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "password" }],
+          "keptByVolume": true,
+          "formerDefault": "superset"
+        },
+        "postgres-password": { "adoptFrom": [{ "secret": "{{releaseName}}-postgresql", "key": "postgres-password" }] }
+      },
+      "values": {
+        "postgresql.auth.existingSecret": "{{secretName}}"
+      }
+    },
+    {
+      "key": "redis",
+      "secretNameTemplate": "{{releaseName}}-superset-redis",
+      "label": "the Superset Redis password",
+      "chartVersion": ">=0.12.50",
+      "keys": { "redis-password": {} },
+      "values": {
+        "redis.auth.enabled": "true",
+        "redis.auth.existingSecret": "{{secretName}}"
+      }
+    }
+  ],
   "requiresContext": [
     { "capability": "oidc", "fields": ["issuerUrl", "realm"] },
     { "capability": "kerberos", "fields": ["realm"] },
@@ -1532,6 +1614,7 @@
   ],
   "securityCoupling": {
     "requireIngress": true,
+    "unauthenticatedExposure": "Superset then signs users in with its local accounts only, starting with the administrator this deploy creates: your directory and single sign-on are not used, and that one password guards every database connection Superset holds.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view"
   }

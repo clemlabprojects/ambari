@@ -38,6 +38,7 @@ import io.fabric8.kubernetes.api.model.NodeAddress;
 import io.fabric8.kubernetes.api.model.NodeList;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
+import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.Quantity;
@@ -45,10 +46,13 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.ServiceAccount;
 import io.fabric8.kubernetes.api.model.ServiceAccountBuilder;
+import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceList;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Status;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequest;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequestBuilder;
+import io.fabric8.kubernetes.api.model.networking.v1.Ingress;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBindingBuilder;
 import io.fabric8.kubernetes.api.model.rbac.Role;
@@ -59,13 +63,13 @@ import io.fabric8.kubernetes.api.model.WatchEvent;
 import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
 import io.fabric8.kubernetes.api.model.ComponentCondition;
 import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
+import io.fabric8.kubernetes.client.dsl.PodResource;
 import io.fabric8.kubernetes.client.dsl.base.PatchContext;
 import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 
-import io.fabric8.openshift.client.OpenShiftClient;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
@@ -86,11 +90,13 @@ import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
-import org.apache.ambari.view.k8s.security.EncryptionService;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.utils.CompositeTrustManager;
+import org.apache.ambari.view.k8s.utils.KubeconfigGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 
 import org.springframework.util.FileCopyUtils;
 
@@ -114,6 +120,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -165,6 +172,9 @@ public class KubernetesService {
     private final AtomicReference<String> lastPrometheusProxyUrlLogged = new AtomicReference<>(null);
     // Cached OpenShift-vs-vanilla-k8s detection for the current client; reset on client reload.
     private final AtomicReference<Boolean> openShiftDetectionCache = new AtomicReference<>(null);
+    /** After a failed OpenShift check, when to ask again (epoch ms). */
+    private final java.util.concurrent.atomic.AtomicLong openShiftDetectionRetryAt = new java.util.concurrent.atomic.AtomicLong();
+    static final long OPENSHIFT_DETECTION_RETRY_MS = 30_000L;
     // Namespace-by-namespace fallback for accounts limited to their own projects; reads this.client on every call.
     private final NamespaceScope namespaceScope = new NamespaceScope(
             () -> this.client, this::isOpenShiftCluster, this::knownNamespaceNames,
@@ -175,22 +185,68 @@ public class KubernetesService {
     // with cluster-monitoring-view). Cached with its expiry and renewed lazily before it expires.
     private final AtomicReference<MintedToken> monitoringTokenCache = new AtomicReference<>(null);
     private final Object monitoringTokenMintLock = new Object();
+    // Incremented each time the client is rebuilt from the saved configuration: a refusal met by a call that started
+    // on an earlier client says nothing about the account configured now, so it is not remembered for it.
+    private final AtomicLong clientGeneration = new AtomicLong();
+    // Refusals remembered for REFUSAL_TTL_MS, like NamespaceScope does for listings: an account that may not list
+    // nodes, mint the monitoring token, read cluster monitoring or bind cluster roles is not asked again on every
+    // dashboard load, as each attempt is a refused call the platform's audit log records.
+    private final RememberedRefusal nodesRefusal = new RememberedRefusal();
+    private final RememberedRefusal monitoringTokenRefusal = new RememberedRefusal();
+    private final RememberedRefusal clusterMonitoringRefusal = new RememberedRefusal();
+    private final RememberedRefusal clusterRoleBindingRefusal = new RememberedRefusal();
+    // When the "Prometheus query failed" warning was last logged (epoch ms), so a refused query warns once per window.
+    private final AtomicLong prometheusWarnedAt = new AtomicLong();
     private static final String MONITORING_VIEWER_CLUSTER_ROLE = "cluster-monitoring-view";
     private static final String MONITORING_VIEWER_CRB_NAME = "ambari-monitoring-viewer";
     private static final long MONITORING_TOKEN_TTL_SECONDS = 3600L;          // request 1-hour tokens
     private static final long MONITORING_TOKEN_RENEW_BUFFER_MS = 300_000L;   // renew when < 5 min remain
 
-    /** A bearer token together with the epoch-millis instant at which it expires. */
+    /**
+     * A bearer token together with the epoch-millis instant at which it expires, and the client generation it was
+     * minted under: a token of an earlier client may belong to another cluster, so it is never sent to this one.
+     */
     private static final class MintedToken {
         final String token;
         final long expiresAtMs;
-        MintedToken(String token, long expiresAtMs) {
+        final long generation;
+        MintedToken(String token, long expiresAtMs, long generation) {
             this.token = token;
             this.expiresAtMs = expiresAtMs;
+            this.generation = generation;
+        }
+    }
+
+    /** When something was last refused, and by which client generation; a refusal met by an earlier client is ignored. */
+    private final class RememberedRefusal {
+        private record Refusal(long generation, long atMs) { }
+
+        private final AtomicReference<Refusal> last = new AtomicReference<>();
+
+        /** Whether the client in use met this refusal within the last {@link NamespaceScope#REFUSAL_TTL_MS}. */
+        boolean isRecent() {
+            Refusal r = last.get();
+            return r != null && r.generation() == clientGeneration.get()
+                    && System.currentTimeMillis() - r.atMs() <= NamespaceScope.REFUSAL_TTL_MS;
+        }
+
+        /** Remembers a refusal met by a call that started on the client of {@code generation}. */
+        void record(long generation) {
+            if (generation == clientGeneration.get()) {
+                last.set(new Refusal(generation, System.currentTimeMillis()));
+            }
+        }
+
+        void clear() {
+            last.set(null);
         }
     }
 
     private ViewConfigurationService configurationService;
+    /** View settings and monitoring state, shared by every user of the view instance; see {@link #settings()}. */
+    private volatile InstanceSettings instanceSettings;
+    /** The ServiceAccount the in-cluster mode connects with: the one of the pod Ambari runs in. Replaced by tests only. */
+    InClusterServiceAccount podServiceAccount = InClusterServiceAccount.ofThisPod();
 
     public static final String WEBHOOK_ENABLED_LABEL_KEY = "security.clemlab.com/webhooks-enabled";
 
@@ -207,15 +263,22 @@ public class KubernetesService {
     // Monitoring bootstrap defaults
     private static final String DEFAULT_MONITORING_RELEASE = "kube-prometheus-stack";
     private static final String DEFAULT_MONITORING_NAMESPACE = "monitoring";
+    private static final String PROMETHEUS_CRD = "prometheuses.monitoring.coreos.com";
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext PROMETHEUS_RDC =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup("monitoring.coreos.com")
+                    .withVersion("v1")
+                    .withKind("Prometheus")
+                    .withPlural("prometheuses")
+                    .withNamespaced(true)
+                    .build();
     private static final String DEFAULT_MONITORING_CHART = "kube-prometheus-stack";
     private static final String MONITORING_DEFAULT_REPO_FALLBACK_ID = "monitoring-default";
     private static final String MONITORING_DEFAULT_REPO_FALLBACK_NAME = "Monitoring repository";
     private static final String MONITORING_DEFAULT_REPO_AUTO_CREATE_PROP = "monitoring.defaultRepo.autoCreate";
-    private static final String SETTINGS_KEY = "view.settings.json";
     private static final String OPENSHIFT_THANOS_URL_DEFAULT = "https://thanos-querier.openshift-monitoring.svc:9091";
     private static final String KUBERNETES_SERVICE_HOST_ENV = "KUBERNETES_SERVICE_HOST";
     private static final String KUBERNETES_SERVICE_PORT_ENV = "KUBERNETES_SERVICE_PORT";
-    private static final Path KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH = Paths.get("/var/run/secrets/kubernetes.io/serviceaccount/token");
 
 
     private static final int MAX_METRICS_NODES = Integer.getInteger("k8s.view.metrics.sample.nodes", 200);
@@ -254,7 +317,8 @@ public class KubernetesService {
 
     /**
      * Returns (or creates) the singleton {@code KubernetesService} for the given view instance,
-     * and schedules a one-time async monitoring bootstrap if the service is configured.
+     * and schedules a one-time async monitoring bootstrap if the service is configured. The service is
+     * kept even when it could not connect yet, so that later requests retry under its back-off.
      *
      * @param ctx the Ambari view context identifying the view instance
      * @return the shared {@code KubernetesService} for this view instance
@@ -317,115 +381,298 @@ public class KubernetesService {
     }
 
     /**
-     * Primary constructor that fully initializes the service from the stored kubeconfig.
-     * Reads and decrypts the kubeconfig, installs the cluster CA into the JVM SSL context,
-     * and builds the Kubernetes client. Marks the service as unconfigured if no valid kubeconfig is found.
+     * Primary constructor: connects from the configuration saved for the view instance (kubeconfig file, OpenShift
+     * login or the ServiceAccount of the Ambari pod). It does not fail when it cannot connect (cluster or OAuth server
+     * unreachable, password refused, unreadable kubeconfig, no ServiceAccount token in the pod): the service then
+     * reports the view as configured but not connected, and connects on a later request, under the single attempt and
+     * back-off of {@link #connectIfConfigured()}.
      *
-     * @param viewContext the Ambari view context providing configuration properties and instance data
-     * @throws IllegalStateException if the kubeconfig file exists but cannot be read or parsed
+     * @param viewContext the Ambari view context providing configuration properties and the instance settings
      */
     public KubernetesService(ViewContext viewContext) {
-        this.configurationService = new ViewConfigurationService(viewContext);
-        String kubeconfigPath = configurationService.getKubeconfigPath();
         this.viewContext = viewContext;
+        this.configurationService = new ViewConfigurationService(viewContext, podServiceAccount);
         this.helmClient = new HelmClientDefault();
         this.repositoryService = new HelmRepositoryService(viewContext, helmClient);
         this.helmService = new HelmService(viewContext, helmClient, () -> namespaceScope);
-        
-        boolean openShiftLogin = configurationService.isOpenShiftLogin();
-        if (kubeconfigPath == null && !openShiftLogin) {
+
+        String kubeconfigPath = configurationService.getKubeconfigPath();
+        boolean uploadedKubeconfig = configurationService.usesUploadedKubeconfig();
+        if (uploadedKubeconfig && kubeconfigPath == null) {
             LOG.info("View is not configured. Kubernetes client will not be initialized.");
-            this.isConfigured = false;
-            this.client = null;
+        } else if (uploadedKubeconfig && !new File(kubeconfigPath).exists()) {
+            LOG.warn("Stale configuration detected. Kubeconfig file not found at path: {}. Resetting configuration.", kubeconfigPath);
+            configurationService.removeKubeconfigPath(); // Auto-healing: remove stale entry
         } else {
-            if (!openShiftLogin && !new File(kubeconfigPath).exists()) {
-                LOG.warn("Stale configuration detected. Kubeconfig file not found at path: {}. Resetting configuration.", kubeconfigPath);
-                configurationService.removeKubeconfigPath(); // Auto-healing: remove stale entry
-                this.isConfigured = false;
-                this.client = null;
-            } else {
-                // Initialize Kubernetes client with kubeconfig
-                try {
-                    String kubeconfigContent;
-                    if (openShiftLogin) {
-                        // Synthesized kubeconfig carrying a freshly-minted OpenShift token (username/password login).
-                        kubeconfigContent = configurationService.getKubeconfigContents();
-                        LOG.info("Initializing Kubernetes client from OpenShift username/password login.");
-                    } else {
-                        EncryptionService encryptionService = new EncryptionService();
-                        byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
-                        byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
-                        kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
-                        LOG.info("Kubeconfig file loaded successfully from: {}", kubeconfigPath);
-                    }
-                    Config baseConfiguration = buildConfigForSelectedContext(kubeconfigContent);
-                    ConfigBuilder configurationBuilder = new ConfigBuilder(baseConfiguration);
-                    LOG.info("Kubernetes client configuration loaded from kubeconfig file.\n");
+            // Failing here would leave nothing cached for the view instance (see get()), so every request of every
+            // user would build the service again: with an OpenShift login, one password login per request.
+            connectFromSavedConfiguration();
+        }
+    }
 
-                    LOG.info("Overriding view properties from ambari.properties into system properties for Kubernetes client.");
-                    loadK8sPropsAsSystemProperties(viewContext);
+    /**
+     * Thrown by the cluster calls when the view instance is configured but has no connection to the cluster: the last
+     * attempt to connect with the saved configuration failed. It is not the "not configured" error: callers answer
+     * 503, so the UI shows the view disconnected and recovers once a later attempt connects, instead of showing the
+     * first-run configuration page to every user.
+     */
+    public static final class NotConnectedException extends IllegalStateException {
+        public NotConnectedException(String message) {
+            super(message);
+        }
+    }
 
-                    // Parse kubeconfig and trust the CA of EVERY cluster it defines (not just the
-                    // current-context's), so operations against any selected context succeed.
-                    io.fabric8.kubernetes.api.model.Config kubeconfigModel = Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
-                    java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
-                    Config finalConfiguration = configurationBuilder.build();
-
-                    if (!allClusterCaData.isEmpty()) {
-                        installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
-                    } else if (viewContext.getAmbariProperty("k8s.view.ssl.truststore.path") != null) {
-                        String trustStorePath = viewContext.getAmbariProperty("k8s.view.ssl.truststore.path");
-                        String trustStorePassword = viewContext.getAmbariProperty("k8s.view.ssl.truststore.password");
-                        LOG.info("Using TrustStore defined in ambari.properties: {}", trustStorePath);
-                        configurationBuilder.withTrustStoreFile(trustStorePath);
-                        if (trustStorePassword != null) {
-                            configurationBuilder.withTrustStorePassphrase(trustStorePassword);
-                        }
-                    } else {
-                        LOG.info("No custom SSL configuration found. Using default JVM TrustStore.");
-                    }
-
-                    if (openShiftLogin) {
-                        // Dynamic token so the long-lived client always uses a fresh token (auto-renew).
-                        finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());
-                    }
-                    this.client = buildTrustingClient(finalConfiguration, allClusterCaData);
-
-                    if (false) { // Disabled OpenShift detection
-                        LOG.info("OpenShift cluster detected. Adapting the client.");
-                        this.client.adapt(OpenShiftClient.class);
-                    } else {
-                        LOG.info("Standard Kubernetes cluster detected.");
-                    }
-                    this.isConfigured = true;
-                    LOG.info("Kubernetes client initialized successfully.");
-                    applyProxySettings();
-
-                } catch (Exception e) {
-                    LOG.error("Failed to read the kubeconfig file at: {}", kubeconfigPath, e);
-                    throw new IllegalStateException("Failed to read the Kubernetes configuration file.", e);
-                }
-            }
+    /**
+     * Thrown while connecting when the saved configuration itself cannot be used, as opposed to a cluster that cannot
+     * be reached: a kubeconfig that cannot be read, or whose user only has a credential KDPS leaves out (a command, a
+     * file of the Ambari server). Trying again cannot help until a new configuration is saved, so its message, which
+     * says what to change, is what the operator is shown.
+     */
+    public static final class UnusableConfigurationException extends IllegalStateException {
+        public UnusableConfigurationException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 
     private void checkConfiguration() {
+        connectIfConfigured();
         if (!isConfigured) {
+            if (hasSavedConfiguration()) {
+                if (masterKeyMissing) {
+                    // Not a connection problem: retrying cannot help until the administrator provides the key.
+                    throw new MasterKeyUnavailableException();
+                }
+                throw new NotConnectedException(savedLoginRefused
+                        ? "KDPS is not connected to the cluster: the cluster refused the saved OpenShift username and "
+                                + "password. To avoid locking the account, KDPS does not log in with them again until "
+                                + "an administrator saves the OpenShift login again on the Cluster settings page."
+                        : unusableConfiguration != null
+                        ? "KDPS is not connected to the cluster: " + unusableConfiguration
+                        : "KDPS is not connected to the cluster: it could not connect with the saved configuration and "
+                                + "tries again " + nextAttemptIn() + ".");
+            }
             throw new IllegalStateException("The view is not configured with a kubeconfig.");
         }
     }
 
     /**
-     * Returns a paginated list of cluster nodes enriched with CPU and memory usage metrics.
+     * Whether a configuration was saved for the view instance, connected or not. A service built around a given client
+     * has none. When the saved configuration cannot be read, the view is taken as configured: it is then reported
+     * disconnected, which the UI recovers from, rather than unconfigured, which shows the first-run configuration page.
+     */
+    private boolean hasSavedConfiguration() {
+        ViewConfigurationService configuration = this.configurationService;
+        if (configuration == null || viewContext == null) {
+            return false;
+        }
+        try {
+            return configuration.isConfigured();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the saved configuration: {}", e.toString());
+            return true;
+        }
+    }
+
+    /** After a failed attempt to connect from the saved configuration, when to try again (epoch ms). */
+    private final java.util.concurrent.atomic.AtomicLong connectRetryAt = new java.util.concurrent.atomic.AtomicLong();
+    /** Failed attempts in a row since the service last connected or the configuration was saved; guarded by {@code this}. */
+    private int connectFailures;
+    /**
+     * The OAuth server refused the saved OpenShift username and password. The same password cannot succeed later and
+     * every refused login counts towards the directory's lockout, so no attempt is made until the configuration is
+     * saved again ({@link #forceReloadClient()}).
+     */
+    private volatile boolean savedLoginRefused;
+    /**
+     * The last attempt to connect failed because the saved kubeconfig or OpenShift password cannot be decrypted
+     * without the Ambari master key. Requests are then answered with what to do about the key, not with a cluster
+     * that cannot be reached.
+     */
+    private volatile boolean masterKeyMissing;
+    /**
+     * Why the saved configuration cannot be used ({@link UnusableConfigurationException}), when that is what made the
+     * last attempt to connect fail; {@code null} otherwise. Requests are then answered with what to change, not with a
+     * cluster that cannot be reached for now.
+     */
+    private volatile String unusableConfiguration;
+    /** Wait after the first failed attempt; it doubles after each further failure, up to {@link #CONNECT_RETRY_MAX_MS}. */
+    static final long CONNECT_RETRY_MS = 30_000L;
+    static final long CONNECT_RETRY_MAX_MS = 15 * 60_000L;
+    /** Clock of the connection back-off; replaced by tests only. */
+    java.util.function.LongSupplier connectClock = System::currentTimeMillis;
+
+    /**
+     * Connects from the saved configuration when this service has no client although the view instance is
+     * configured. The service is built once per view instance by whichever request comes first: after an Ambari
+     * restart that may be a request made while the cluster could not be reached, or before anyone had saved a
+     * configuration. Without this the view stayed unconfigured for every user until someone saved the configuration
+     * again. The configuration is shared by all users ({@link InstanceSettings}), so it does not matter whose
+     * request or background task gets here first.
+     *
+     * <p>Only one attempt runs at a time. With an OpenShift login every attempt is a password login, and directories
+     * lock an account after a few refused ones, so: requests that arrive during an attempt (the dashboard sends several
+     * at once) wait for it and use its outcome instead of each logging in again in turn; after a failed attempt, the
+     * first one made while building the service included, the next one waits {@link #CONNECT_RETRY_MS}, twice as long
+     * after each further failure ({@link #connectRetryDelayMs}); and once the OAuth server has refused the password,
+     * no attempt is made at all until the configuration is saved again. Waiting rather than giving up at once also
+     * means those requests get the connection when the attempt succeeds, instead of reporting the view as not
+     * connected.
+     */
+    private void connectIfConfigured() {
+        if (client != null && isConfigured) {
+            return;
+        }
+        ViewConfigurationService configuration = this.configurationService;
+        if (configuration == null || viewContext == null) {
+            return; // built around a given client
+        }
+        if (savedLoginRefused || connectClock.getAsLong() < connectRetryAt.get()) {
+            return;
+        }
+        boolean configured;
+        try {
+            configured = configuration.isConfigured();
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the saved configuration: {}", e.toString());
+            connectRetryAt.set(connectClock.getAsLong() + CONNECT_RETRY_MS);
+            return;
+        }
+        if (configured) {
+            connectFromSavedConfiguration();
+        }
+    }
+
+    /**
+     * One attempt to connect from the saved configuration, unless the attempt this call waited for has connected, or
+     * failed and its wait is not over. Its outcome is recorded by {@link #rebuildClient()}.
+     */
+    private void connectFromSavedConfiguration() {
+        // The same monitor as forceReloadClient(), so a save or a token renewal never builds a client alongside.
+        synchronized (this) {
+            if (client != null && isConfigured) {
+                return;
+            }
+            if (savedLoginRefused || connectClock.getAsLong() < connectRetryAt.get()) {
+                return;
+            }
+            LOG.info("The view instance is configured but not connected; connecting from the saved configuration.");
+            try {
+                reloadClientIfConfigured();
+            } catch (RuntimeException e) {
+                LOG.warn("Could not connect from the saved configuration: {}", e.toString());
+                recordConnectFailure();
+            }
+        }
+    }
+
+    /**
+     * Records a failed attempt to connect: stops the attempts when the OAuth server refused the saved password,
+     * otherwise sets when the next one may be made. Called holding {@code this}.
+     */
+    private void recordConnectFailure() {
+        if (savedLoginWasRefused()) {
+            savedLoginRefused = true;
+            LOG.warn("The cluster refused the saved OpenShift username and password. KDPS will not log in with them "
+                    + "again until the OpenShift login is saved again on the Cluster settings page.");
+            return;
+        }
+        connectFailures = Math.min(connectFailures + 1, 32);
+        long wait = connectRetryDelayMs(connectFailures);
+        LOG.warn("Not connected to the cluster; the next attempt is in {} s at the earliest.", wait / 1000);
+        connectRetryAt.set(connectClock.getAsLong() + wait);
+    }
+
+    /** Lets the next attempt to connect run at once; called holding {@code this}. */
+    private void resetConnectBackOff() {
+        connectFailures = 0;
+        connectRetryAt.set(0);
+        savedLoginRefused = false;
+    }
+
+    /**
+     * The wait before the next attempt to connect after {@code failures} failed attempts in a row: 30 s, then
+     * doubled after each further failure, never more than {@link #CONNECT_RETRY_MAX_MS}.
+     *
+     * @param failures failed attempts in a row, at least 1
+     * @return the wait in milliseconds
+     */
+    static long connectRetryDelayMs(int failures) {
+        long wait = CONNECT_RETRY_MS;
+        for (int i = 1; i < failures && wait < CONNECT_RETRY_MAX_MS; i++) {
+            wait *= 2;
+        }
+        return Math.min(wait, CONNECT_RETRY_MAX_MS);
+    }
+
+    /** "in N s" until the next attempt to connect, or "shortly" when it may run now. */
+    private String nextAttemptIn() {
+        long wait = connectRetryAt.get() - connectClock.getAsLong();
+        return wait > 0 ? "in " + ((wait + 999) / 1000) + " s" : "shortly";
+    }
+
+    /**
+     * Whether the OAuth server refused the saved OpenShift username and password on the last login, as opposed to a
+     * login that could not be made (server unreachable, timeout). Reads the provider of the configuration the last
+     * attempt used.
+     */
+    private boolean savedLoginWasRefused() {
+        ViewConfigurationService configuration = this.configurationService;
+        if (configuration == null) {
+            return false;
+        }
+        try {
+            if (!configuration.isOpenShiftLogin()) {
+                return false;
+            }
+            OpenShiftLoginProvider provider = configuration.getOpenShiftLoginProvider();
+            return provider != null && provider.isCredentialsRefused();
+        } catch (RuntimeException e) {
+            LOG.debug("Could not tell whether the saved OpenShift login was refused: {}", e.toString());
+            return false;
+        }
+    }
+
+    /** The settings of the view instance, shared by every user; created on first use. */
+    private InstanceSettings settings() {
+        InstanceSettings current = instanceSettings;
+        if (current == null) {
+            current = new InstanceSettings(viewContext);
+            instanceSettings = current;
+        }
+        return current;
+    }
+
+    /** One page of the cluster's nodes with the total, and whether this account may not read nodes at all. */
+    public record NodePage(List<ClusterNode> items, int total, boolean restricted) {
+        static NodePage restrictedPage() {
+            return new NodePage(List.of(), 0, true);
+        }
+    }
+
+    /**
+     * Returns a paginated list of cluster nodes enriched with CPU and memory usage metrics. An account limited to its
+     * own projects may not read nodes: that is an empty page flagged {@code restricted}, not an error, and the refusal
+     * is remembered so that opening the view again does not repeat the refused call.
      *
      * @param limit  the maximum number of nodes to return; must be at least 1
      * @param offset the zero-based starting index into the full node list
-     * @return list of {@link ClusterNode} objects for the requested page
+     * @return the requested page, with the number of nodes in the whole cluster
      */
-    public List<ClusterNode> getNodes(int limit, int offset) {
+    public NodePage getNodes(int limit, int offset) {
+        long generation = clientGeneration.get();
         checkConfiguration();
+        if (nodesRefusal.isRecent()) {
+            return NodePage.restrictedPage();
+        }
         LOG.info("Fetching node list from Kubernetes API.");
-        var items = executeWithAuthRetry("list nodes", () -> client.nodes().list().getItems());
+        List<Node> items;
+        try {
+            items = executeWithAuthRetry("list nodes", () -> client.nodes().list().getItems());
+        } catch (RuntimeException e) {
+            if (!NamespaceScope.isForbidden(e)) throw e;
+            rememberNodesRefused(generation);
+            return NodePage.restrictedPage();
+        }
         int from = Math.min(Math.max(offset, 0), items.size());
         int to = Math.min(from + Math.max(limit, 1), items.size());
         List<Node> pageNodes = items.subList(from, to);
@@ -448,7 +695,14 @@ public class KubernetesService {
                 node.setMemoryUsagePercent(m.memoryUsagePercent);
             }
         });
-        return nodes;
+        return new NodePage(nodes, items.size(), false);
+    }
+
+    /** Remembers that listing nodes was refused to a call that started on the client of {@code generation}. */
+    private void rememberNodesRefused(long generation) {
+        nodesRefusal.record(generation);
+        LOG.debug("Nodes are not readable by this account; they are not asked for again for {} minutes",
+                NamespaceScope.REFUSAL_TTL_MS / 60_000L);
     }
 
     /**
@@ -487,9 +741,8 @@ public class KubernetesService {
      * otherwise notice until the token's expiry timestamp passed.
      *
      * <p>Re-authentication is only possible in the {@code openshift-login} auth mode, where the view
-     * holds the username/password and can mint a brand-new token via
-     * {@link OpenShiftLoginProvider#refresh()} followed by {@link #forceReloadClient()} (which rebuilds
-     * the fabric8 client so the new token is actually used). For a statically uploaded kubeconfig whose
+     * holds the username/password: {@link #forceReloadClient()} rebuilds the fabric8 client with a new
+     * token provider, which logs in once for a brand-new token. For a statically uploaded kubeconfig whose
      * token cannot be renewed, the original 401 is rethrown so callers can surface a
      * "disconnected / re-login required" state rather than silently failing.
      *
@@ -520,8 +773,14 @@ public class KubernetesService {
             synchronized (authRenewLock) {
                 // Several requests refused at the same moment: the first renews, the others find a new client
                 // and just retry with it (outside the lock), instead of each minting a token and building a client.
-                if (this.client != null && this.client != clientUsed) {
+                KubernetesClient current = this.client;
+                if (current != null && current != clientUsed) {
                     LOG.info("Credentials were renewed meanwhile — retrying '{}' with the new client.", operation);
+                } else if (current == null) {
+                    // Another request's renewal failed meanwhile. Logging in again would only add a refused login
+                    // towards the account's lockout; the next attempt follows the back-off of connectIfConfigured().
+                    LOG.warn("Credentials could not be renewed for another request; not retrying '{}'.", operation);
+                    throw e;
                 } else {
                     renewCredentials(operation, e);
                 }
@@ -531,7 +790,9 @@ public class KubernetesService {
     }
 
     /**
-     * Mints a new token through the OpenShift login and rebuilds the client; called under {@code authRenewLock}.
+     * Rebuilds the client, which logs in once through the saved OpenShift login for a new token; called under
+     * {@code authRenewLock}. When the login fails, the client is dropped and the back-off of
+     * {@link #connectIfConfigured()} applies, so a refused password is not tried again on the next request.
      *
      * @param operation the refused call, for the logs
      * @param refusal   the original 401, rethrown when the renewal fails
@@ -539,7 +800,8 @@ public class KubernetesService {
     private void renewCredentials(String operation, KubernetesClientException refusal) {
         LOG.info("Auth mode is 'openshift-login' — attempting to re-authenticate and retry '{}' once.", operation);
         try {
-            configurationService.getOpenShiftLoginProvider().refresh();
+            // No separate refresh() first: the rebuilt client gets a new token provider, which logs in anyway, and
+            // a second login would double the refused logins when the password was changed.
             boolean reloaded = forceReloadClient();
             if (!reloaded) {
                 LOG.error("Client reload after re-authentication reported not-configured; cannot retry '{}'.", operation);
@@ -570,15 +832,36 @@ public class KubernetesService {
      *       a 403 still proves the token authenticated; it is merely not allowed to list namespaces.</li>
      *   <li>HTTP 401 (even after a renew attempt) → {@link ConnectionHealth#unauthenticated(String)}.</li>
      *   <li>anything else (timeout, TLS, connection refused) → {@link ConnectionHealth#unreachable(String)}.</li>
+     *   <li>view configured but not connected, because the last attempt to connect with the saved configuration
+     *       failed → {@link ConnectionHealth#notConnected(String)}, or {@link ConnectionHealth#unauthenticated(String)}
+     *       when the cluster refused the saved OpenShift password.</li>
      *   <li>view never configured → {@link ConnectionHealth#unconfigured()}.</li>
      * </ul>
      *
      * @return a {@link ConnectionHealth} describing the live state of the cluster connection
      */
     public ConnectionHealth pingCluster() {
+        connectIfConfigured();
         if (!isConfigured || client == null) {
-            LOG.debug("pingCluster: view is not configured; reporting UNCONFIGURED.");
-            return ConnectionHealth.unconfigured();
+            if (!hasSavedConfiguration()) {
+                LOG.debug("pingCluster: view is not configured; reporting UNCONFIGURED.");
+                return ConnectionHealth.unconfigured();
+            }
+            if (masterKeyMissing) {
+                LOG.debug("pingCluster: the saved configuration needs the Ambari master key; reporting UNREACHABLE.");
+                return ConnectionHealth.notConnected(MasterKeyUnavailableException.MESSAGE);
+            }
+            if (savedLoginRefused) {
+                LOG.debug("pingCluster: the saved OpenShift login was refused; reporting UNAUTHENTICATED.");
+                return ConnectionHealth.unauthenticated("KDPS does not log in with the refused password again, "
+                        + "so that the account is not locked.");
+            }
+            if (unusableConfiguration != null) {
+                LOG.debug("pingCluster: the saved configuration cannot be used; reporting UNREACHABLE.");
+                return ConnectionHealth.notConnected(unusableConfiguration);
+            }
+            LOG.debug("pingCluster: view is configured but not connected; reporting UNREACHABLE.");
+            return ConnectionHealth.notConnected("KDPS tries again " + nextAttemptIn() + ".");
         }
         try {
             // Cheapest authenticated round-trip that reliably distinguishes 401 (bad token) from
@@ -636,12 +919,27 @@ public class KubernetesService {
      * @return list of {@link ClusterEvent} objects
      */
     public List<ClusterEvent> getClusterEvents() {
+        return getClusterEvents(null);
+    }
+
+    /**
+     * Returns the 20 most-recent events of the given namespaces, sorted newest first.
+     *
+     * @param onlyNamespaces the namespaces to keep, or {@code null} for every namespace
+     * @return list of {@link ClusterEvent} objects
+     */
+    public List<ClusterEvent> getClusterEvents(Set<String> onlyNamespaces) {
         checkConfiguration();
         LOG.info("Fetching recent events from Kubernetes API.");
 
         List<Event> eventItems = namespaceScope.listAcrossNamespaces(NamespaceScope.Resource.EVENTS,
                 () -> client.v1().events().inAnyNamespace().list().getItems(),
                 ns -> client.v1().events().inNamespace(ns).list().getItems());
+        if (onlyNamespaces != null) {
+            eventItems = eventItems.stream()
+                .filter(e -> e.getMetadata() != null && onlyNamespaces.contains(e.getMetadata().getNamespace()))
+                .collect(Collectors.toList());
+        }
 
         Comparator<Event> byTimeDescending = Comparator.comparing(
             this::eventInstantSafely,
@@ -667,17 +965,23 @@ public class KubernetesService {
         if (cachedStats != null && !forceRefresh) {
             return cachedStats;
         }
+        long generation = clientGeneration.get();
         checkConfiguration();
         LOG.info("Calculating cluster stats from Kubernetes API.");
 
         NodeList nodeList;
-        try {
-            nodeList = executeWithAuthRetry("list nodes (stats)", () -> client.nodes().list());
-        } catch (RuntimeException e) {
-            if (!NamespaceScope.isForbidden(e)) throw e;
-            LOG.debug("Nodes are not readable by this account; node and capacity figures stay empty");
+        if (nodesRefusal.isRecent()) {
             nodeList = new NodeList();
             nodeList.setItems(new ArrayList<>());
+        } else {
+            try {
+                nodeList = executeWithAuthRetry("list nodes (stats)", () -> client.nodes().list());
+            } catch (RuntimeException e) {
+                if (!NamespaceScope.isForbidden(e)) throw e;
+                rememberNodesRefused(generation);
+                nodeList = new NodeList();
+                nodeList.setItems(new ArrayList<>());
+            }
         }
         List<Pod> podItems = namespaceScope.listAcrossNamespaces(NamespaceScope.Resource.PODS,
                 () -> client.pods().inAnyNamespace().list().getItems(),
@@ -721,20 +1025,32 @@ public class KubernetesService {
         // Attempt Prometheus first
         try {
             MonitoringSettings settings = loadMonitoringSettings();
-            if (settings.preferPrometheus) {
-                MonitoringInfo prom = discoverMonitoringPrometheus();
+            // Cluster monitoring is not asked again when it refused this account a moment ago: the query would only
+            // add a refused call to the platform's audit log.
+            boolean clusterMonitoringOutOfReach = settings.preferPrometheus && clusterMonitoringRefusal.isRecent();
+            if (clusterMonitoringOutOfReach) {
+                LOG.debug("Skipping the cluster-wide monitoring query: this account may not read cluster monitoring");
+            }
+            if (settings.preferPrometheus && !clusterMonitoringOutOfReach) {
                 String promUrl = null;
                 if (isOpenShift(client)) {
                     promUrl = viewContext.getAmbariProperty("openshift.thanos.url");
                     if (promUrl == null || promUrl.isBlank()) {
                         promUrl = "https://thanos-querier.openshift-monitoring.svc:9091";
                     }
-                    // Use API proxy when Ambari is outside the cluster.
-                    MonitoringInfo openShiftMonitoringInfo = new MonitoringInfo("openshift-monitoring", "openshift-monitoring", promUrl);
-                    promUrl = resolvePrometheusReachableUrl(openShiftMonitoringInfo);
-                } else if (prom != null) {
-                    // Prefer a reachable URL; out-of-cluster Ambari uses the API proxy.
-                    promUrl = resolvePrometheusReachableUrl(prom);
+                    if (isLimitedToOwnProjects(generation) && !mayReadClusterMonitoring(promUrl, generation)) {
+                        promUrl = null;
+                    } else {
+                        // Use API proxy when Ambari is outside the cluster.
+                        MonitoringInfo openShiftMonitoringInfo = new MonitoringInfo("openshift-monitoring", "openshift-monitoring", promUrl);
+                        promUrl = resolvePrometheusReachableUrl(openShiftMonitoringInfo);
+                    }
+                } else {
+                    MonitoringInfo prom = discoverMonitoringPrometheus();
+                    if (prom != null) {
+                        // Prefer a reachable URL; out-of-cluster Ambari uses the API proxy.
+                        promUrl = resolvePrometheusReachableUrl(prom);
+                    }
                 }
                 if (promUrl != null && !promUrl.isBlank()) {
                     double[] promMetrics = queryPrometheusClusterUsage(promUrl);
@@ -931,22 +1247,28 @@ public class KubernetesService {
     }
 
     /**
-     * Delete a pod (used for restart/cleanup).
+     * Delete a pod (used for restart/cleanup). The pod is given the shutdown time it declares
+     * ({@code terminationGracePeriodSeconds}) so a preStop hook or a database can stop cleanly; a grace period is
+     * sent only when one is asked for explicitly, and 0 force-deletes the pod without waiting for the kubelet.
+     *
+     * @param graceSeconds the grace period to impose, or {@code null} (or a negative value) for the pod's own
      */
     public void deletePod(String namespace, String podName, Integer graceSeconds) {
         checkConfiguration();
-        client.pods()
-            .inNamespace(namespace)
-            .withName(podName)
-            .withGracePeriod(graceSeconds != null ? graceSeconds : 0)
-            .delete();
+        PodResource pod = client.pods().inNamespace(namespace).withName(podName);
+        if (graceSeconds != null && graceSeconds >= 0) {
+            pod.withGracePeriod(graceSeconds).delete();
+        } else {
+            pod.delete();
+        }
     }
 
     /**
-     * Restart pod by deleting it and letting the controller recreate.
+     * Restart pod by deleting it and letting the controller recreate. The pod shuts down within its own grace
+     * period.
      */
     public void restartPod(String namespace, String podName) {
-        deletePod(namespace, podName, 0);
+        deletePod(namespace, podName, null);
     }
 
     /**
@@ -1005,7 +1327,7 @@ public class KubernetesService {
         return dto;
     }
 
-    private KubePod toKubePod(Pod pod) {
+    KubePod toKubePod(Pod pod) {
         KubePod dto = new KubePod();
         dto.name = pod.getMetadata() != null ? pod.getMetadata().getName() : null;
         dto.namespace = pod.getMetadata() != null ? pod.getMetadata().getNamespace() : null;
@@ -1014,6 +1336,15 @@ public class KubernetesService {
         dto.nodeName = pod.getSpec() != null ? pod.getSpec().getNodeName() : null;
         dto.labels = pod.getMetadata() != null && pod.getMetadata().getLabels() != null ? pod.getMetadata().getLabels() : Collections.emptyMap();
         dto.startTime = pod.getStatus() != null ? pod.getStatus().getStartTime() : null;
+        if (pod.getMetadata() != null) {
+            dto.deletionTimestamp = pod.getMetadata().getDeletionTimestamp();
+            if (pod.getMetadata().getOwnerReferences() != null) {
+                dto.ownerKind = pod.getMetadata().getOwnerReferences().stream()
+                        .filter(o -> Boolean.TRUE.equals(o.getController()))
+                        .map(OwnerReference::getKind)
+                        .findFirst().orElse(null);
+            }
+        }
         List<KubePodContainerStatus> containers = new ArrayList<>();
         if (pod.getStatus() != null && pod.getStatus().getContainerStatuses() != null) {
             pod.getStatus().getContainerStatuses().forEach(cs -> {
@@ -1036,7 +1367,12 @@ public class KubernetesService {
     /**
      * Value class for discovered monitoring stack info.
      */
-    public record MonitoringInfo(String namespace, String release, String url) {}
+    public record MonitoringInfo(String namespace, String release, String url,
+                                 Map<String, String> serviceMonitorLabels, String warning, boolean inCluster) {
+        public MonitoringInfo(String namespace, String release, String url) {
+            this(namespace, release, url, Map.of(), null, false);
+        }
+    }
     public static class MonitoringSettings {
         public boolean autoBootstrap = true;
         public boolean preferPrometheus = true;
@@ -1066,10 +1402,10 @@ public class KubernetesService {
 
     private MonitoringSettings loadMonitoringSettings() {
         try {
-            String json = viewContext.getInstanceData(SETTINGS_KEY);
-            if (json != null && !json.isBlank()) {
+            // With the Thanos object store credentials decrypted: they are kept apart from the settings document.
+            Map<String, Object> raw = new ViewSettingsService(settings()).read();
+            if (!raw.isEmpty()) {
                 // Some clients persisted {"monitoring": {...}}; unwrap if present
-                Map<String,Object> raw = objectMapper.readValue(json, Map.class);
                 Object candidate = raw.getOrDefault("monitoring", raw);
                 MonitoringSettings s = objectMapper.convertValue(candidate, MonitoringSettings.class);
                 if (s.prometheusIngressClass == null || s.prometheusIngressClass.isBlank()) {
@@ -1090,11 +1426,16 @@ public class KubernetesService {
         return defaults;
     }
 
+    /** Longest monitoring bootstrap message kept: the start of a Helm error says what failed. */
+    static final int MAX_BOOTSTRAP_MESSAGE_LENGTH = 1000;
+
     private void updateMonitoringBootstrapState(String state, String message) {
         try {
-            viewContext.putInstanceData("monitoring.bootstrap.state", state);
+            settings().put("monitoring.bootstrap.state", state);
             if (message != null) {
-                viewContext.putInstanceData("monitoring.bootstrap.message", message);
+                // A long failure (a whole Helm error) must not cost the state its message: keep what fits.
+                settings().put("monitoring.bootstrap.message", message.length() > MAX_BOOTSTRAP_MESSAGE_LENGTH
+                        ? message.substring(0, MAX_BOOTSTRAP_MESSAGE_LENGTH) : message);
             }
         } catch (Exception e) {
             LOG.warn("Failed to persist monitoring bootstrap state {}: {}", state, e.getMessage());
@@ -1216,13 +1557,25 @@ public class KubernetesService {
         }
         // Persisted override set by the view itself (e.g., after bootstrap enabling ingress/NodePort)
         try {
-            String persistedUrl = viewContext.getInstanceData("monitoring.prometheus.url");
+            String persistedUrl = settings().get("monitoring.prometheus.url");
             if (persistedUrl != null && !persistedUrl.isBlank()) {
                 LOG.info("Monitoring discovery: using persisted Prometheus URL {}", persistedUrl);
                 return new MonitoringInfo(ns, release, persistedUrl.trim());
             }
         } catch (Exception e) {
             LOG.warn("Monitoring discovery: failed to read persisted Prometheus URL: {}", e.getMessage());
+        }
+
+        // Any Prometheus run by the Prometheus operator, whatever namespace or release name it was installed under.
+        // Not on OpenShift: its own monitoring stack is used there (see discoverAndHealMonitoringState).
+        Optional<PrometheusDiscovery.Instance> instance = isOpenShift(client) ? Optional.empty()
+                : PrometheusDiscovery.pick(listPrometheusInstances(), ns);
+        if (instance.isPresent()) {
+            PrometheusDiscovery.Instance found = instance.get();
+            LOG.info("Monitoring discovery: found Prometheus {}/{} (url={}, ServiceMonitor labels={})",
+                    found.namespace(), found.name(), found.url(), found.serviceMonitorLabels());
+            return new MonitoringInfo(found.namespace(), found.release(), found.url(), found.serviceMonitorLabels(),
+                    found.scrapeWarning(), true);
         }
 
         String svcName = release + "-prometheus";
@@ -1237,10 +1590,52 @@ public class KubernetesService {
                     : 9090;
             String url = "http://" + svcName + "." + ns + ".svc:" + port;
             LOG.info("Monitoring discovery: found {} in namespace {} (url={})", svcName, ns, url);
-            return new MonitoringInfo(ns, release, url);
+            return new MonitoringInfo(ns, release, url, Map.of("release", release), null, true);
         } catch (Exception e) {
-            LOG.warn("Monitoring discovery failed: {}", e.getMessage());
+            logDiscoveryFailure("Monitoring discovery", e);
             return null;
+        }
+    }
+
+    /** The Services of a namespace, or none when they cannot be read (the caller then keeps its fallback). */
+    private List<Service> servicesOrEmpty(String namespace) {
+        try {
+            return client.services().inNamespace(namespace).list().getItems();
+        } catch (Exception e) {
+            logDiscoveryFailure("list services in " + namespace, e);
+            return List.of();
+        }
+    }
+
+    /**
+     * The Prometheus instances run by the Prometheus operator that this account can see, in any namespace.
+     *
+     * @return the instances; empty when the operator is not installed or nothing is readable
+     */
+    public List<PrometheusDiscovery.Instance> listPrometheusInstances() {
+        if (client == null) {
+            return List.of();
+        }
+        try {
+            if (!crdExists(PROMETHEUS_CRD)) {
+                return List.of();
+            }
+            var op = client.genericKubernetesResources(PROMETHEUS_RDC);
+            List<GenericKubernetesResource> resources = namespaceScope.listAcrossNamespaces(
+                    NamespaceScope.Resource.PROMETHEUSES,
+                    () -> op.inAnyNamespace().list().getItems(),
+                    namespace -> op.inNamespace(namespace).list().getItems());
+            Map<String, List<Service>> servicesByNamespace = new HashMap<>();
+            List<PrometheusDiscovery.Instance> instances = new ArrayList<>();
+            for (GenericKubernetesResource resource : resources) {
+                PrometheusDiscovery.fromResource(resource).ifPresent(found -> instances.add(
+                        PrometheusDiscovery.withOwnService(found, resource,
+                                servicesByNamespace.computeIfAbsent(found.namespace(), this::servicesOrEmpty))));
+            }
+            return instances;
+        } catch (Exception e) {
+            logDiscoveryFailure("listPrometheusInstances", e);
+            return List.of();
         }
     }
 
@@ -1256,7 +1651,7 @@ public class KubernetesService {
         // to COMPLETED and never surface a private-stack bootstrap failure on the dashboard.
         if (isOpenShift(client)) {
             try {
-                String storedState = viewContext.getInstanceData("monitoring.bootstrap.state");
+                String storedState = settings().get("monitoring.bootstrap.state");
                 if (!"COMPLETED".equals(storedState) && !"SKIPPED".equals(storedState)) {
                     updateMonitoringBootstrapState("COMPLETED", "Using OpenShift built-in monitoring (openshift-monitoring)");
                 }
@@ -1272,7 +1667,7 @@ public class KubernetesService {
         MonitoringInfo info = discoverMonitoringPrometheus();
         if (info != null) {
             try {
-                String storedState = viewContext.getInstanceData("monitoring.bootstrap.state");
+                String storedState = settings().get("monitoring.bootstrap.state");
                 if (!"COMPLETED".equals(storedState)) {
                     LOG.info("Monitoring service found healthy; healing bootstrap state from '{}' to COMPLETED", storedState);
                     updateMonitoringBootstrapState("COMPLETED",
@@ -1283,6 +1678,39 @@ public class KubernetesService {
             }
         }
         return info;
+    }
+
+    /**
+     * Whether OpenShift's user workload monitoring is on, i.e. whether ServiceMonitors in user projects are scraped
+     * (cluster-monitoring-config, {@code enableUserWorkload}). Most project-limited accounts may not read it.
+     *
+     * @return TRUE or FALSE; FALSE when the setting was never made; {@code null} when it cannot be read
+     */
+    public Boolean userWorkloadMonitoringEnabled() {
+        if (client == null || !isOpenShift(client)) {
+            return null;
+        }
+        try {
+            var cm = client.configMaps().inNamespace("openshift-monitoring").withName("cluster-monitoring-config").get();
+            return cm == null || cm.getData() == null ? Boolean.FALSE : userWorkloadEnabled(cm.getData().get("config.yaml"));
+        } catch (Exception e) {
+            logDiscoveryFailure("Read cluster-monitoring-config", e);
+            return null;
+        }
+    }
+
+    /** {@code enableUserWorkload} from cluster-monitoring-config's config.yaml; FALSE when absent or unreadable. */
+    static Boolean userWorkloadEnabled(String configYaml) {
+        if (configYaml == null || configYaml.isBlank()) {
+            return Boolean.FALSE;
+        }
+        try {
+            Map<?, ?> config = new com.fasterxml.jackson.databind.ObjectMapper(
+                    new com.fasterxml.jackson.dataformat.yaml.YAMLFactory()).readValue(configYaml, Map.class);
+            return config != null && Boolean.parseBoolean(String.valueOf(config.get("enableUserWorkload")));
+        } catch (Exception e) {
+            return Boolean.FALSE;
+        }
     }
 
     private MonitoringInfo discoverOpenShiftMonitoring() {
@@ -1408,7 +1836,7 @@ public class KubernetesService {
         if (repoId == null || repoId.isBlank()) {
             // Prefer persisted user choice if available
             try {
-                String persistedRepoId = viewContext.getInstanceData("monitoring.repoId");
+                String persistedRepoId = settings().get("monitoring.repoId");
                 if (persistedRepoId != null && !persistedRepoId.isBlank()) {
                     repoId = persistedRepoId;
                 }
@@ -1434,9 +1862,9 @@ public class KubernetesService {
             String promServiceName = release + "-prometheus";
             var promSvc = client.services().inNamespace(ns).withName(promServiceName).get();
             if (promSvc == null) {
-                LOG.info("Monitoring service {} not found in namespace {}. Clearing cached monitoring instance data to allow re-bootstrap.", promServiceName, ns);
-                viewContext.removeInstanceData("monitoring.prometheus.url");
-                viewContext.removeInstanceData("monitoring.repoId");
+                LOG.info("Monitoring service {} not found in namespace {}. Clearing cached monitoring settings to allow re-bootstrap.", promServiceName, ns);
+                settings().remove("monitoring.prometheus.url");
+                settings().remove("monitoring.repoId");
             }
         } catch (Exception ex) {
             LOG.warn("Failed to verify monitoring service existence, proceeding anyway: {}", ex.toString());
@@ -1459,8 +1887,8 @@ public class KubernetesService {
                 LOG.warn("Pre-uninstall for force monitoring reinstall failed (ignored): {}", uninstEx.toString());
             }
             try {
-                viewContext.removeInstanceData("monitoring.prometheus.url");
-                viewContext.removeInstanceData("monitoring.repoId");
+                settings().remove("monitoring.prometheus.url");
+                settings().remove("monitoring.repoId");
             } catch (Exception ignored) { /* best-effort */ }
         }
 
@@ -1562,9 +1990,9 @@ public class KubernetesService {
             return null;
         }
         try {
-            viewContext.putInstanceData("monitoring.repoId", repoId);
+            settings().put("monitoring.repoId", repoId);
             if (promExposure != null && promExposure.url() != null && !promExposure.url().isBlank()) {
-                viewContext.putInstanceData("monitoring.prometheus.url", promExposure.url());
+                settings().put("monitoring.prometheus.url", promExposure.url());
                 LOG.info("Persisted Prometheus URL override for future discovery: {}", promExposure.url());
             }
         } catch (Exception ex) {
@@ -1636,8 +2064,10 @@ public class KubernetesService {
     }
 
     /**
-     * Detect whether Ambari is running inside a Kubernetes pod by checking
-     * standard in-cluster environment variables and the service account token.
+     * Detect whether Ambari is running inside a Kubernetes pod by checking the standard in-cluster environment
+     * variables. The ServiceAccount token file is deliberately not consulted: Kubernetes injects the variables into
+     * every pod, while the token is absent from a pod that does not mount it, and such a pod is still inside the
+     * cluster and can reach the Prometheus service directly.
      *
      * @return {@code true} if Ambari is running inside Kubernetes
      */
@@ -1646,16 +2076,23 @@ public class KubernetesService {
         if (cachedResult != null) {
             return cachedResult;
         }
-        String serviceHost = System.getenv(KUBERNETES_SERVICE_HOST_ENV);
-        String servicePort = System.getenv(KUBERNETES_SERVICE_PORT_ENV);
-        boolean hasServiceEnvironment = serviceHost != null && !serviceHost.isBlank()
-                && servicePort != null && !servicePort.isBlank();
-        boolean hasServiceAccountToken = Files.isReadable(KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH);
-        boolean runningInsideKubernetes = hasServiceEnvironment && hasServiceAccountToken;
+        boolean runningInsideKubernetes = hasInClusterEnvironment(System::getenv);
         runningInsideKubernetesCache.compareAndSet(null, runningInsideKubernetes);
-        LOG.info("In-cluster detection: envPresent={} tokenPresent={} runningInsideKubernetes={}",
-                hasServiceEnvironment, hasServiceAccountToken, runningInsideKubernetes);
+        LOG.info("In-cluster detection: runningInsideKubernetes={}", runningInsideKubernetes);
         return runningInsideKubernetes;
+    }
+
+    /**
+     * Whether the environment carries the API server address Kubernetes injects into every pod.
+     *
+     * @param environment lookup of an environment variable by name
+     * @return {@code true} when both the service host and the service port are set
+     */
+    static boolean hasInClusterEnvironment(java.util.function.UnaryOperator<String> environment) {
+        String serviceHost = environment.apply(KUBERNETES_SERVICE_HOST_ENV);
+        String servicePort = environment.apply(KUBERNETES_SERVICE_PORT_ENV);
+        return serviceHost != null && !serviceHost.isBlank()
+                && servicePort != null && !servicePort.isBlank();
     }
 
     /**
@@ -1850,12 +2287,12 @@ public class KubernetesService {
     }
 
     /**
-     * Clears cached monitoring instance data so that a subsequent bootstrap is forced.
+     * Clears cached monitoring settings so that a subsequent bootstrap is forced.
      */
     public void resetMonitoringCache() {
         try {
-            viewContext.removeInstanceData("monitoring.prometheus.url");
-            viewContext.removeInstanceData("monitoring.repoId");
+            settings().remove("monitoring.prometheus.url");
+            settings().remove("monitoring.repoId");
             updateMonitoringBootstrapState("RESET", "Monitoring cache cleared; next install will bootstrap");
             LOG.info("Monitoring cache cleared (prometheus.url and repoId).");
         } catch (Exception ex) {
@@ -2115,60 +2552,79 @@ public class KubernetesService {
     }
 
     /**
-     * Install the view-wide outbound proxy (for internet Helm/Git repos), keeping the Kubernetes API
-     * host DIRECT so cluster traffic never goes through the corporate proxy. Safe to call repeatedly.
+     * Whether the connected account may create ClusterRoleBindings, i.e. grant cluster-wide roles such as
+     * {@code cluster-monitoring-view}. Accounts limited to their own projects may not.
      */
-    public void applyProxySettings() {
-        try {
-            String apiHost = null;
-            if (client != null && client.getConfiguration() != null && client.getConfiguration().getMasterUrl() != null) {
-                try { apiHost = java.net.URI.create(client.getConfiguration().getMasterUrl()).getHost(); }
-                catch (Exception ignored) { /* leave null */ }
-            }
-            getConfigurationService().buildProxySupport(apiHost).install();
-        } catch (Exception e) {
-            LOG.warn("Failed to apply outbound proxy settings: {}", e.toString());
-        }
+    public boolean canBindClusterRoles() {
+        return canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null);
     }
 
     /**
      * "Can I?" — run a SelfSubjectAccessReview (the API behind {@code oc auth can-i}) for the connected
      * credential. Returns true if the API server says the verb is allowed on the resource/namespace.
      * Never throws: a failure (or no client) is reported as "not allowed".
+     *
+     * @param subresource the subresource ({@code proxy} of {@code services}), or null
+     * @param name        the object the check is about, or null for any object. A grant limited to named objects
+     *                    (a Role with {@code resourceNames}, as the ClusterRole of each OpenShift SCC) is seen only
+     *                    when the name is given.
+     * @param namespace   the namespace, or null for cluster-scoped resources and cluster-wide grants
      */
-    /**
-     * Whether the connected account may create ClusterRoleBindings, i.e. grant cluster-wide roles such as
-     * {@code cluster-monitoring-view}. Accounts limited to their own projects may not.
-     */
-    public boolean canBindClusterRoles() {
-        return canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null);
-    }
-
-    public boolean canI(String verb, String group, String resource, String subresource, String namespace) {
+    public boolean canI(String verb, String group, String resource, String subresource, String name, String namespace) {
         if (client == null) return false;
         try {
-            io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReview review =
-                new io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReviewBuilder()
-                    .withNewSpec()
-                        .withNewResourceAttributes()
-                            .withVerb(verb)
-                            .withGroup(group == null ? "" : group)
-                            .withResource(resource)
-                            .withSubresource(subresource)
-                            .withNamespace(namespace)
-                        .endResourceAttributes()
-                    .endSpec()
-                    .build();
-            var result = client.authorization().v1().selfSubjectAccessReview().create(review);
-            return result != null && result.getStatus() != null && Boolean.TRUE.equals(result.getStatus().getAllowed());
+            return accessReview(verb, group, resource, subresource, name, namespace);
         } catch (Exception e) {
-            LOG.warn("can-i {} {}/{}{} in ns={} failed: {}", verb, group, resource,
-                    subresource != null ? "/" + subresource : "", namespace, e.toString());
+            LOG.warn("can-i {} {}/{}{}{} in ns={} failed: {}", verb, group, resource,
+                    subresource != null ? "/" + subresource : "", name != null ? " " + name : "", namespace,
+                    e.toString());
             return false;
         }
     }
 
+    /**
+     * The SelfSubjectAccessReview behind {@link #canI}, for callers that remember the answer: unlike canI it tells a
+     * refusal from a review that could not be made, which says nothing about the account's rights.
+     *
+     * @return what the API server answered; a review the API server refuses to run counts as "not allowed"
+     * @throws RuntimeException when the review could not be made (timeout, server error, no connection)
+     */
+    private boolean accessReview(String verb, String group, String resource, String subresource, String name,
+                                 String namespace) {
+        KubernetesClient c = this.client;
+        if (c == null) {
+            throw new IllegalStateException("Kubernetes client is not configured");
+        }
+        io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReview review =
+            new io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReviewBuilder()
+                .withNewSpec()
+                    .withNewResourceAttributes()
+                        .withVerb(verb)
+                        .withGroup(group == null ? "" : group)
+                        .withResource(resource)
+                        .withSubresource(subresource)
+                        .withName(name)
+                        .withNamespace(namespace)
+                    .endResourceAttributes()
+                .endSpec()
+                .build();
+        try {
+            var result = c.authorization().v1().selfSubjectAccessReview().create(review);
+            return result != null && result.getStatus() != null && Boolean.TRUE.equals(result.getStatus().getAllowed());
+        } catch (RuntimeException e) {
+            if (NamespaceScope.isForbidden(e)) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
     /** Public accessor: whether the connected cluster is OpenShift (API-group probe, cached). */
+    /** Tests: ends the retry window after a failed OpenShift check. */
+    void expireOpenShiftDetectionRetryForTest() {
+        openShiftDetectionRetryAt.set(0);
+    }
+
     public boolean isOpenShiftCluster() {
         return client != null && isOpenShift(client);
     }
@@ -2183,6 +2639,10 @@ public class KubernetesService {
         if (cached != null) {
             return cached;
         }
+        // A recent failure: answer "not OpenShift" again without another request until the retry window ends.
+        if (System.currentTimeMillis() < openShiftDetectionRetryAt.get()) {
+            return false;
+        }
         boolean result = false;
         try {
             io.fabric8.kubernetes.api.model.APIGroupList apiGroups = client.getApiGroups();
@@ -2196,7 +2656,13 @@ public class KubernetesService {
                 }
             }
         } catch (Exception e) {
-            LOG.warn("OpenShift detection via API groups failed (treating as vanilla k8s): {}", e.toString());
+            // Not remembered as an answer: a transient failure (expired token, network) must not make every later
+            // request treat an OpenShift cluster as plain Kubernetes. Asked again after a short window, so a cluster
+            // that keeps failing is not queried (and logged) on every request.
+            openShiftDetectionRetryAt.set(System.currentTimeMillis() + OPENSHIFT_DETECTION_RETRY_MS);
+            LOG.warn("OpenShift detection via API groups failed (treating as vanilla k8s for {} s): {}",
+                    OPENSHIFT_DETECTION_RETRY_MS / 1000, e.toString());
+            return false;
         }
         LOG.info("OpenShift detection: cluster {} OpenShift (*.openshift.io API group present={}).",
                 result ? "IS" : "is NOT", result);
@@ -2272,15 +2738,31 @@ public class KubernetesService {
      * @return double[]{cpuCoresUsed, memGiBUsed} or null on failure.
      */
     private double[] queryPrometheusClusterUsage(String promUrl) {
+        long generation = clientGeneration.get();
         try {
             HttpClient prometheusHttpClient = buildPrometheusHttpClient(promUrl);
             HttpResponse<String> cpuResponse = runMonitoringQuery(prometheusHttpClient, promUrl,
                     "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[2m]))");
-            HttpResponse<String> memoryResponse = runMonitoringQuery(prometheusHttpClient, promUrl,
-                    "sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)");
+            // A credential refused for one query is refused for the other: it is not sent a second time.
+            HttpResponse<String> memoryResponse = isRefusal(cpuResponse) ? cpuResponse
+                    : runMonitoringQuery(prometheusHttpClient, promUrl,
+                            "sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)");
+            if (isDenied(cpuResponse) || isDenied(memoryResponse)) {
+                // Even with the minted token: not asked again until the window ends or the configuration changes.
+                // A 401 is not remembered: an expired credential is renewed (token provider, OpenShift login) without
+                // the configuration changing, and the account may then read cluster monitoring at once.
+                clusterMonitoringRefusal.record(generation);
+            }
             if (cpuResponse.statusCode() >= 300 || memoryResponse.statusCode() >= 300) {
-                LOG.warn("Prometheus query failed (codes {} / {}), url {} body(cpu)={} body(mem)={}",
-                        cpuResponse.statusCode(), memoryResponse.statusCode(), promUrl, cpuResponse.body(), memoryResponse.body());
+                // The same refusal on every dashboard load would bury the log: warn once per window.
+                if (warnOncePerWindow(prometheusWarnedAt)) {
+                    LOG.warn("Prometheus query failed (codes {} / {}), url {} body(cpu)={} body(mem)={}; this is not "
+                                    + "logged again for {} minutes", cpuResponse.statusCode(), memoryResponse.statusCode(),
+                            promUrl, cpuResponse.body(), memoryResponse.body(), NamespaceScope.REFUSAL_TTL_MS / 60_000L);
+                } else {
+                    LOG.debug("Prometheus query failed (codes {} / {}), url {}", cpuResponse.statusCode(),
+                            memoryResponse.statusCode(), promUrl);
+                }
                 return null;
             }
             double cpuUsed = parsePrometheusSingleValue(cpuResponse.body());
@@ -2430,6 +2912,87 @@ public class KubernetesService {
         return prometheusClientCache.get(promUrl);
     }
 
+    /** Whether a monitoring backend refused the credential (rather than failing for another reason). */
+    private static boolean isRefusal(HttpResponse<?> response) {
+        return response.statusCode() == 401 || response.statusCode() == 403;
+    }
+
+    /** Whether a monitoring backend recognised the credential but denied it the query: the account lacks the right. */
+    private static boolean isDenied(HttpResponse<?> response) {
+        return response.statusCode() == 403;
+    }
+
+    private boolean monitoringAutoTokenEnabled() {
+        String value = viewContext.getAmbariProperty("openshift.monitoring.autoToken");
+        return value == null || value.isBlank() || Boolean.parseBoolean(value);  // default: enabled
+    }
+
+    /**
+     * Whether the account may not see the whole cluster: it may not list pods in every namespace, or may not bind
+     * cluster roles. The answer "may not bind" is remembered like a refusal, so the dashboard does not ask on every
+     * load. A check that could not be made counts as "not limited", as before these checks existed.
+     *
+     * @param generation the client generation the calling dashboard load started on
+     */
+    private boolean isLimitedToOwnProjects(long generation) {
+        if (namespaceScope.isRefused(NamespaceScope.Resource.PODS) || clusterRoleBindingRefusal.isRecent()) {
+            return true;
+        }
+        try {
+            if (accessReview("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null)) {
+                return false;
+            }
+        } catch (RuntimeException e) {
+            LOG.debug("Could not check whether this account may bind cluster roles: {}", e.toString());
+            return false;
+        }
+        clusterRoleBindingRefusal.record(generation);
+        return true;
+    }
+
+    /**
+     * For an account limited to its own projects: whether a query to OpenShift cluster monitoring at
+     * {@code thanosUrl} would be let through, asked of the API server with SelfSubjectAccessReviews (which are never
+     * refused) instead of sending the query and having the platform refuse it. Out of the cluster the query goes
+     * through the API server's service proxy, which the account must be allowed to use. Thanos then accepts a token
+     * that may get namespaces cluster-wide (as cluster-monitoring-view grants): the kubeconfig's own, or one minted for
+     * the monitoring service account. A "no" is remembered in {@link #clusterMonitoringRefusal}; a check that could
+     * not be made is not, and the next load asks again.
+     *
+     * @param thanosUrl  the Thanos URL as configured, before it is routed through the API server's proxy
+     * @param generation the client generation the calling dashboard load started on
+     */
+    private boolean mayReadClusterMonitoring(String thanosUrl, long generation) {
+        try {
+            PrometheusServiceEndpoint proxied = isRunningInsideKubernetes() ? null
+                    : extractPrometheusServiceEndpoint(thanosUrl);
+            boolean allowed = proxied == null || accessReview("get", "", "services", "proxy",
+                    proxied.scheme() + ":" + proxied.serviceName() + ":" + proxied.servicePort(), proxied.namespace());
+            if (allowed && !(kubeconfigBearerToken() != null
+                    && accessReview("get", "", "namespaces", null, null, null))) {
+                boolean autoToken = monitoringAutoTokenEnabled();
+                String minted = autoToken ? getMonitoringBearerToken() : null;
+                if (minted == null && autoToken && !monitoringTokenRefusal.isRecent()) {
+                    // The token could not be obtained for another reason than a refusal: that is no "no".
+                    LOG.debug("Could not obtain a monitoring token; the cluster-wide monitoring is not queried this time");
+                    return false;
+                }
+                allowed = minted != null;
+            }
+            if (allowed) {
+                return true;
+            }
+        } catch (RuntimeException e) {
+            LOG.debug("Could not check whether this account may read cluster monitoring; it is not queried this "
+                    + "time: {}", e.toString());
+            return false;
+        }
+        LOG.debug("This account may not read cluster monitoring; it is not queried for {} minutes",
+                NamespaceScope.REFUSAL_TTL_MS / 60_000L);
+        clusterMonitoringRefusal.record(generation);
+        return false;
+    }
+
     /**
      * Return a valid bearer token for querying OpenShift cluster monitoring (Thanos), minting a fresh
      * one via the TokenRequest API when the cache is empty or within the renewal buffer of expiry.
@@ -2437,52 +3000,94 @@ public class KubernetesService {
      *
      * @return a currently-valid bearer token, or {@code null} if one could not be obtained
      */
-    private boolean monitoringAutoTokenEnabled() {
-        String value = viewContext.getAmbariProperty("openshift.monitoring.autoToken");
-        return value == null || value.isBlank() || Boolean.parseBoolean(value);  // default: enabled
-    }
-
     private String getMonitoringBearerToken() {
+        long generation = clientGeneration.get();
         MintedToken cached = monitoringTokenCache.get();
-        long now = System.currentTimeMillis();
-        if (cached != null && cached.expiresAtMs - now > MONITORING_TOKEN_RENEW_BUFFER_MS) {
+        if (isUsable(cached, generation)) {
             return cached.token;
         }
         synchronized (monitoringTokenMintLock) {
             // Re-check under the lock: another thread may have just minted one.
             cached = monitoringTokenCache.get();
-            now = System.currentTimeMillis();
-            if (cached != null && cached.expiresAtMs - now > MONITORING_TOKEN_RENEW_BUFFER_MS) {
+            if (isUsable(cached, generation)) {
                 return cached.token;
             }
+            if (monitoringTokenRefusal.isRecent()) {
+                return null; // an account refused one a moment ago would only be refused again
+            }
+            String saRef = viewContext.getAmbariProperty("openshift.monitoring.serviceaccount");
+            if (saRef == null || saRef.isBlank()) {
+                saRef = "default/" + MONITORING_VIEWER_CRB_NAME;
+            }
+            String[] parts = saRef.split("/", 2);
+            String saNamespace = parts.length == 2 ? parts[0].trim() : "default";
+            String saName = parts.length == 2 ? parts[1].trim() : parts[0].trim();
+
+            // Not asking at all when the account may not: a refused TokenRequest for a service account outside the
+            // account's own projects reads as probing in the platform's audit log. A check that could not be made
+            // is no refusal, so it is not remembered and the next load asks again.
+            boolean mayMint;
             try {
-                MintedToken fresh = mintMonitoringToken();
+                mayMint = accessReview("create", "", "serviceaccounts", "token", saName, saNamespace);
+            } catch (Exception e) {
+                LOG.debug("Could not check whether this account may request a token for service account {}/{}: {}",
+                        saNamespace, saName, e.toString());
+                return null;
+            }
+            if (!mayMint) {
+                LOG.debug("This account may not request a token for service account {}/{}; the cluster-wide "
+                        + "monitoring is not queried (openshift.monitoring.serviceaccount can name one in its own "
+                        + "project)", saNamespace, saName);
+                monitoringTokenRefusal.record(generation);
+                return null;
+            }
+            try {
+                MintedToken fresh = mintMonitoringToken(saNamespace, saName, generation);
                 if (fresh != null && fresh.token != null && !fresh.token.isBlank()) {
+                    if (generation != clientGeneration.get()) {
+                        // The configuration changed while the token was minted: it may be another cluster's token,
+                        // so it is neither kept nor sent; the next query mints one for the client in use.
+                        LOG.debug("Discarding a monitoring token minted under the previous Kubernetes client");
+                        return null;
+                    }
                     monitoringTokenCache.set(fresh);
+                    monitoringTokenRefusal.clear();
                     return fresh.token;
                 }
+                monitoringTokenRefusal.record(generation);
             } catch (Exception e) {
-                LOG.warn("Failed to mint OpenShift monitoring token: {}", e.toString());
+                if (NamespaceScope.isForbidden(e)) {
+                    LOG.debug("The OpenShift monitoring token was refused: {}", e.getMessage());
+                    monitoringTokenRefusal.record(generation);
+                } else {
+                    LOG.warn("Failed to mint OpenShift monitoring token: {}", e.toString());
+                }
             }
             return null;
         }
     }
 
-    /**
-     * Resolve the monitoring service account (namespace/name), ensure it exists and is bound to
-     * cluster-monitoring-view, then mint a short-lived token for it via the TokenRequest API.
-     *
-     * @return the minted token plus its expiry, or {@code null} on failure
-     */
-    private MintedToken mintMonitoringToken() {
-        String saRef = viewContext.getAmbariProperty("openshift.monitoring.serviceaccount");
-        if (saRef == null || saRef.isBlank()) {
-            saRef = "default/" + MONITORING_VIEWER_CRB_NAME;
-        }
-        String[] parts = saRef.split("/", 2);
-        String saNamespace = parts.length == 2 ? parts[0].trim() : "default";
-        String saName = parts.length == 2 ? parts[1].trim() : parts[0].trim();
+    /** Whether a cached monitoring token was minted under the client of {@code generation} and is not about to expire. */
+    private boolean isUsable(MintedToken cached, long generation) {
+        return cached != null && cached.generation == generation && generation == clientGeneration.get()
+                && cached.expiresAtMs - System.currentTimeMillis() > MONITORING_TOKEN_RENEW_BUFFER_MS;
+    }
 
+    /** True for the first caller in each {@link NamespaceScope#REFUSAL_TTL_MS} window, so a repeated warning is logged once. */
+    private static boolean warnOncePerWindow(AtomicLong lastWarnedAt) {
+        long now = System.currentTimeMillis();
+        long last = lastWarnedAt.get();
+        return (last == 0 || now - last > NamespaceScope.REFUSAL_TTL_MS) && lastWarnedAt.compareAndSet(last, now);
+    }
+
+    /**
+     * Ensure the monitoring service account exists and is bound to cluster-monitoring-view, then mint a short-lived
+     * token for it via the TokenRequest API.
+     *
+     * @param generation the client generation the token is minted under
+     * @return the minted token plus its expiry, or {@code null} when the API server returned no token
+     */
+    private MintedToken mintMonitoringToken(String saNamespace, String saName, long generation) {
         ensureMonitoringServiceAccount(saNamespace, saName);
 
         TokenRequest request = new TokenRequestBuilder()
@@ -2510,13 +3115,15 @@ public class KubernetesService {
         }
         LOG.info("Minted OpenShift monitoring token for service account {}/{} (expires {}).",
                 saNamespace, saName, expTs != null ? expTs : "in " + MONITORING_TOKEN_TTL_SECONDS + "s");
-        return new MintedToken(token, expiresAtMs);
+        return new MintedToken(token, expiresAtMs, generation);
     }
 
     /**
      * Best-effort: create the monitoring service account and its cluster-monitoring-view
      * ClusterRoleBinding if they do not already exist. Requires the kubeconfig identity to have
      * permission to create these objects (cluster-admin does); logged and ignored otherwise.
+     * An account that may not bind cluster roles does not touch the ClusterRoleBinding at all: the
+     * service account is then expected to be bound by the platform team.
      */
     private void ensureMonitoringServiceAccount(String namespace, String name) {
         try {
@@ -2530,8 +3137,14 @@ public class KubernetesService {
                 LOG.info("Created monitoring service account {}/{}", namespace, name);
             }
         } catch (Exception e) {
-            LOG.warn("Could not ensure monitoring service account {}/{} (may already exist or lack RBAC): {}",
-                    namespace, name, e.toString());
+            logDiscoveryFailure("Ensure monitoring service account " + namespace + "/" + name, e);
+        }
+        // Even a read of the ClusterRoleBinding is refused to an account limited to its own projects, and every
+        // refused call shows in the platform's audit log.
+        if (!canBindClusterRoles()) {
+            LOG.debug("This account may not bind cluster roles; ClusterRoleBinding {} is left to the platform team",
+                    MONITORING_VIEWER_CRB_NAME);
+            return;
         }
         try {
             ClusterRoleBinding crb = client.rbac().clusterRoleBindings().withName(MONITORING_VIEWER_CRB_NAME).get();
@@ -2555,8 +3168,7 @@ public class KubernetesService {
                         MONITORING_VIEWER_CLUSTER_ROLE, namespace, name, MONITORING_VIEWER_CRB_NAME);
             }
         } catch (Exception e) {
-            LOG.warn("Could not ensure ClusterRoleBinding {} -> {} for {}/{} (may already exist or lack RBAC): {}",
-                    MONITORING_VIEWER_CRB_NAME, MONITORING_VIEWER_CLUSTER_ROLE, namespace, name, e.toString());
+            logDiscoveryFailure("Ensure ClusterRoleBinding " + MONITORING_VIEWER_CRB_NAME, e);
         }
     }
 
@@ -2577,14 +3189,23 @@ public class KubernetesService {
      * <p>With {@code projectScoped} the triggers use the Thanos tenancy port (see {@link KedaThanosScope}): the
      * token then needs no ClusterRoleBinding, only the namespaced Role allowing it to read the project's pods.
      *
+     * <p>What this creates carries the release labels of {@code releaseName} (see {@link KdpsReleaseObjects}), so the
+     * uninstall of the release removes it. What already exists, such as a service account an administrator created
+     * for the release, is used as it is and left unlabelled.
+     *
+     * @param releaseName the release the token is for; null labels nothing
      * @return {@code null} when the token Secret is present/created; otherwise an operator instruction.
      */
-    public String ensureKedaThanosTokenSecret(String namespace, String secretName, String saName, boolean projectScoped) {
+    public String ensureKedaThanosTokenSecret(String namespace, String secretName, String saName, boolean projectScoped,
+                                              String releaseName) {
         if (client == null) return "No cluster connection.";
         if (namespace == null || namespace.isBlank() || secretName == null || secretName.isBlank()) {
             return "Namespace and secret name are required for the KEDA/Thanos monitoring token.";
         }
         if (saName == null || saName.isBlank()) saName = secretName;
+        Map<String, String> releaseLabels = KdpsReleaseObjects.labels(releaseName);
+        Map<String, String> releaseAnnotations = releaseLabels.isEmpty()
+                ? Map.of() : KdpsReleaseObjects.annotations(namespace);
 
         // Already provisioned? A populated (or freshly-created) service-account-token Secret is enough, once the
         // tenancy Role is current: a release deployed before that Role gained the pod-metrics rule keeps failing
@@ -2595,7 +3216,7 @@ public class KubernetesService {
                 boolean hasToken = existing.getData() != null && existing.getData().containsKey("token");
                 if (hasToken || "kubernetes.io/service-account-token".equals(existing.getType())) {
                     try {
-                        ensureKedaTenancyRole(namespace, saName + "-thanos-tenancy");
+                        ensureKedaTenancyRole(namespace, saName + "-thanos-tenancy", releaseLabels, releaseAnnotations);
                     } catch (Exception e) {
                         // Without the pod-metrics rule the autoscaler's queries are refused (403): stop with what to
                         // run rather than deploy an autoscaler that never scales.
@@ -2611,11 +3232,19 @@ public class KubernetesService {
                     // allowed to create one deploys it with cluster-port triggers, add the binding.
                     try {
                         if (!projectScoped && canBindClusterRoles()) {
-                            ensureMonitoringViewBinding(namespace, saName, "kdps-monview-" + namespace + "-" + saName);
+                            ensureMonitoringViewBinding(namespace, saName, "kdps-monview-" + namespace + "-" + saName,
+                                    releaseLabels, releaseAnnotations);
                         }
                     } catch (Exception e) {
                         LOG.warn("Could not bind cluster-monitoring-view for the KEDA/Thanos token {}/{}: {}",
                                 namespace, saName, e.toString());
+                    }
+                    // Made before KDPS labelled what it creates, the objects stay unlabelled through a redeploy:
+                    // mark them, so the uninstall at least names them. The token must be for the account in question.
+                    Map<String, String> tokenAnnotations = existing.getMetadata().getAnnotations();
+                    if (!releaseLabels.isEmpty() && tokenAnnotations != null
+                            && saName.equals(tokenAnnotations.get("kubernetes.io/service-account.name"))) {
+                        markUnconfirmedKedaObjects(namespace, secretName, saName, releaseName);
                     }
                     return null;
                 }
@@ -2635,11 +3264,11 @@ public class KubernetesService {
                  + "' not found). Enable the built-in monitoring stack and user-workload monitoring, then retry.";
         }
 
-        boolean canSa  = canI("create", "", "serviceaccounts", null, namespace);
-        boolean canSec = canI("create", "", "secrets", null, namespace);
+        boolean canSa  = canI("create", "", "serviceaccounts", null, null, namespace);
+        boolean canSec = canI("create", "", "secrets", null, null, namespace);
         boolean canCrb = projectScoped || canBindClusterRoles();
-        boolean canRole = canI("create", "rbac.authorization.k8s.io", "roles", null, namespace);
-        boolean canRb  = canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace);
+        boolean canRole = canI("create", "rbac.authorization.k8s.io", "roles", null, null, namespace);
+        boolean canRb  = canI("create", "rbac.authorization.k8s.io", "rolebindings", null, null, namespace);
         String crbName = "kdps-monview-" + namespace + "-" + saName;
         String tenancyRoleName = saName + "-thanos-tenancy";
         if (!(canSa && canSec && canCrb && canRole && canRb)) {
@@ -2673,18 +3302,22 @@ public class KubernetesService {
             if (client.serviceAccounts().inNamespace(namespace).withName(saName).get() == null) {
                 client.serviceAccounts().inNamespace(namespace).resource(
                         new ServiceAccountBuilder()
-                                .withNewMetadata().withName(saName).withNamespace(namespace).endMetadata()
+                                .withNewMetadata().withName(saName).withNamespace(namespace)
+                                    .withLabels(releaseLabels).withAnnotations(releaseAnnotations)
+                                .endMetadata()
                                 .build()).create();
                 LOG.info("Created KEDA monitoring service account {}/{}", namespace, saName);
             }
             if (!projectScoped) {
-                ensureMonitoringViewBinding(namespace, saName, crbName);
+                ensureMonitoringViewBinding(namespace, saName, crbName, releaseLabels, releaseAnnotations);
             }
-            ensureKedaTenancyRole(namespace, tenancyRoleName);
+            ensureKedaTenancyRole(namespace, tenancyRoleName, releaseLabels, releaseAnnotations);
             if (client.rbac().roleBindings().inNamespace(namespace).withName(tenancyRoleName).get() == null) {
                 client.rbac().roleBindings().inNamespace(namespace).resource(
                         new RoleBindingBuilder()
-                                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
+                                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace)
+                                    .withLabels(releaseLabels).withAnnotations(releaseAnnotations)
+                                .endMetadata()
                                 .withNewRoleRef()
                                     .withApiGroup("rbac.authorization.k8s.io")
                                     .withKind("Role")
@@ -2697,12 +3330,12 @@ public class KubernetesService {
                 LOG.info("Bound {}/{} to tenancy Role {} via RoleBinding", namespace, saName, tenancyRoleName);
             }
             if (client.secrets().inNamespace(namespace).withName(secretName).get() == null) {
-                Map<String, String> ann = new LinkedHashMap<>();
+                Map<String, String> ann = new LinkedHashMap<>(releaseAnnotations);
                 ann.put("kubernetes.io/service-account.name", saName);
                 client.secrets().inNamespace(namespace).resource(
                         new SecretBuilder()
                                 .withNewMetadata().withName(secretName).withNamespace(namespace)
-                                    .withAnnotations(ann)
+                                    .withLabels(releaseLabels).withAnnotations(ann)
                                 .endMetadata()
                                 .withType("kubernetes.io/service-account-token")
                                 .build()).create();
@@ -2714,14 +3347,70 @@ public class KubernetesService {
         }
     }
 
-    /** Binds the KEDA monitoring service account to {@code cluster-monitoring-view} unless it already is. */
-    private void ensureMonitoringViewBinding(String namespace, String saName, String crbName) {
+    /**
+     * Marks the KEDA monitoring objects of a release that carry no release label as the release's, unconfirmed (see
+     * {@link KdpsReleaseObjects#ANNOTATION_ORIGIN}): an earlier version created them without labels, or an
+     * administrator did by the instructions a deploy gives, and nothing tells the two apart. The uninstall of the
+     * release then lists them with the command that deletes them, rather than deleting them or saying nothing. Best
+     * effort: the deploy goes on without the marks.
+     */
+    private void markUnconfirmedKedaObjects(String namespace, String secretName, String saName, String releaseName) {
+        String tenancyName = saName + "-thanos-tenancy";
+        java.util.function.Consumer<ObjectMeta> mark = meta -> {
+            if (meta.getLabels() == null) meta.setLabels(new LinkedHashMap<>());
+            meta.getLabels().put(KdpsReleaseObjects.LABEL_RELEASE, releaseName);
+            if (meta.getAnnotations() == null) meta.setAnnotations(new LinkedHashMap<>());
+            meta.getAnnotations().putAll(KdpsReleaseObjects.annotations(namespace));
+            meta.getAnnotations().put(KdpsReleaseObjects.ANNOTATION_ORIGIN, KdpsReleaseObjects.ORIGIN_UNCONFIRMED);
+        };
+        List<Map.Entry<String, Runnable>> marks = List.of(
+                Map.entry(KdpsReleaseObjects.ref(KdpsReleaseObjects.SECRET, secretName), () -> {
+                    var handle = client.secrets().inNamespace(namespace).withName(secretName);
+                    if (unclaimed(handle.get())) handle.edit(o -> { mark.accept(o.getMetadata()); return o; });
+                }),
+                Map.entry(KdpsReleaseObjects.ref(KdpsReleaseObjects.SERVICE_ACCOUNT, saName), () -> {
+                    var handle = client.serviceAccounts().inNamespace(namespace).withName(saName);
+                    if (unclaimed(handle.get())) handle.edit(o -> { mark.accept(o.getMetadata()); return o; });
+                }),
+                Map.entry(KdpsReleaseObjects.ref(KdpsReleaseObjects.ROLE, tenancyName), () -> {
+                    var handle = client.rbac().roles().inNamespace(namespace).withName(tenancyName);
+                    if (unclaimed(handle.get())) handle.edit(o -> { mark.accept(o.getMetadata()); return o; });
+                }),
+                Map.entry(KdpsReleaseObjects.ref(KdpsReleaseObjects.ROLE_BINDING, tenancyName), () -> {
+                    var handle = client.rbac().roleBindings().inNamespace(namespace).withName(tenancyName);
+                    if (unclaimed(handle.get())) handle.edit(o -> { mark.accept(o.getMetadata()); return o; });
+                }));
+        for (Map.Entry<String, Runnable> m : marks) {
+            try {
+                m.getValue().run();
+            } catch (RuntimeException e) {
+                LOG.debug("Could not mark {} of {} as release {}'s: {}", m.getKey(), namespace, releaseName,
+                        e.toString());
+            }
+        }
+    }
+
+    /** Whether an object exists and no release claims it (it carries no release label). */
+    private static boolean unclaimed(HasMetadata o) {
+        return o != null && (o.getMetadata().getLabels() == null
+                || !o.getMetadata().getLabels().containsKey(KdpsReleaseObjects.LABEL_RELEASE));
+    }
+
+    /**
+     * Binds the KEDA monitoring service account to {@code cluster-monitoring-view} unless it already is. The binding is
+     * cluster-scoped, so the release's namespace is in its annotations.
+     */
+    private void ensureMonitoringViewBinding(String namespace, String saName, String crbName,
+                                             Map<String, String> releaseLabels,
+                                             Map<String, String> releaseAnnotations) {
         if (client.rbac().clusterRoleBindings().withName(crbName).get() != null) {
             return;
         }
         client.rbac().clusterRoleBindings().resource(
                 new ClusterRoleBindingBuilder()
-                        .withNewMetadata().withName(crbName).endMetadata()
+                        .withNewMetadata().withName(crbName)
+                            .withLabels(releaseLabels).withAnnotations(releaseAnnotations)
+                        .endMetadata()
                         .withNewRoleRef()
                             .withApiGroup("rbac.authorization.k8s.io")
                             .withKind("ClusterRole")
@@ -2736,11 +3425,15 @@ public class KubernetesService {
 
     /**
      * Creates, or brings up to date, the Role that lets the KEDA monitoring token query the Thanos tenancy port
-     * for {@code namespace}: read pods and pod metrics.
+     * for {@code namespace}: read pods and pod metrics. A Role it creates carries the release labels given; one that
+     * exists keeps its own.
      */
-    private void ensureKedaTenancyRole(String namespace, String tenancyRoleName) {
+    private void ensureKedaTenancyRole(String namespace, String tenancyRoleName, Map<String, String> releaseLabels,
+                                       Map<String, String> releaseAnnotations) {
         Role desiredTenancyRole = new RoleBuilder()
-                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
+                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace)
+                    .withLabels(releaseLabels).withAnnotations(releaseAnnotations)
+                .endMetadata()
                 .addNewRule()
                     .withApiGroups("")
                     .withResources("pods")
@@ -2763,105 +3456,694 @@ public class KubernetesService {
         }
     }
 
+    /** Labels of the RoleBindings that grant the service accounts of one release an OpenShift SCC. */
+    static final String SCC_LABEL_MANAGED_BY = "app.kubernetes.io/managed-by";
+    static final String SCC_MANAGED_BY_KDPS = "ambari-kdps";
+    static final String SCC_LABEL_RELEASE = "ambari.clemlab.com/release";
+    static final String SCC_LABEL_SCC = "ambari.clemlab.com/scc";
+
     /**
-     * OpenShift SCC preflight (detect-else-request, mirrors {@link #ensureKedaThanosTokenSecret}).
-     * For each declared grant {@code {scc, serviceAccounts}}, bind the SCC's ClusterRole to those
-     * SPECIFIC service accounts so pods that pin a UID/GID or run as root (bundled OpenSearch,
-     * Airflow) are admitted, WITHOUT touching the SAs that must stay on {@code restricted-v2}.
+     * The SCCs the KDPS services ask for in their {@code openshiftScc}. The one-time grant that lets the account grant
+     * SCCs itself names all of them, so the next service that needs one does not stop on the same missing right.
+     */
+    public static final List<String> SERVICE_SCCS = List.of("anyuid", "nonroot-v2");
+
+    /** The ClusterRole a platform team creates so that the KDPS account may grant those SCCs in a project. */
+    static final String SCC_GRANT_ROLE = "kdps-grant-scc";
+
+    private static final String RBAC_API_GROUP = "rbac.authorization.k8s.io";
+    private static final String SCC_API_GROUP = "security.openshift.io";
+
+    /**
+     * OpenShift's PodSecurityPolicySubjectReview: create-only, and its model class has no metadata, so it is sent as a
+     * generic resource.
+     */
+    private static final io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext SCC_SUBJECT_REVIEW =
+            new io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext.Builder()
+                    .withGroup(SCC_API_GROUP)
+                    .withVersion("v1")
+                    .withKind("PodSecurityPolicySubjectReview")
+                    .withPlural("podsecuritypolicysubjectreviews")
+                    .withNamespaced(true)
+                    .build();
+
+    /**
+     * The non-root UID the probe pod of a PodSecurityPolicySubjectReview runs as. No project UID range contains it, so
+     * restricted-v2, which every service account may use, refuses the probe.
+     */
+    private static final long SCC_PROBE_UID = 1000L;
+
+    /**
+     * The security context of the probe pod for the SCCs the services ask for. The review names only the one SCC
+     * admission picks (the highest priority, then the most restrictive), so each probe is one that SCC admits and that
+     * the other built-in SCCs a service account may also hold, picked before it, refuse:
+     * <ul>
+     *   <li>anyuid: root, which nonroot-v2 and restricted-v2 refuse;</li>
+     *   <li>nonroot-v2: a non-root UID with the RuntimeDefault seccomp profile, which anyuid refuses although its
+     *       priority puts it first, as it allows no seccomp profile. JupyterHub's {@code default} service account
+     *       holds both.</li>
+     * </ul>
+     */
+    private static final Map<String, Map<String, Object>> SCC_PROBE_SECURITY_CONTEXTS = Map.of(
+            "anyuid", Map.of("runAsUser", 0L),
+            "nonroot-v2", Map.of(
+                    "runAsUser", SCC_PROBE_UID,
+                    "allowPrivilegeEscalation", false,
+                    "capabilities", Map.of("drop", List.of("ALL")),
+                    "seccompProfile", Map.of("type", "RuntimeDefault")));
+
+    /** An SCC a release needs, and the service accounts of the release that need it. */
+    record SccNeed(String scc, List<String> serviceAccounts) { }
+
+    /**
+     * A RoleBinding of the project that grants an SCC: one KDPS made for a release ({@code release} set), the shared one
+     * of earlier KDPS versions, or one made outside KDPS such as by {@code oc adm policy add-scc-to-user}.
      *
-     * <p>Deliberately PER-SERVICEACCOUNT, not a namespace-group grant. Granting {@code anyuid} to
+     * @param wholeProject whether it grants every service account of the project, through a group
+     */
+    private record SccBinding(String name, String release, String scc, Set<String> serviceAccounts,
+                              boolean wholeProject) {
+        boolean covers(String sa) {
+            return wholeProject || serviceAccounts.contains(sa);
+        }
+
+        boolean ofRelease(String releaseName) {
+            return release != null && release.equals(releaseName);
+        }
+
+        /** The shared {@code kdps-scc-<scc>} binding earlier versions made for every release of the project. */
+        boolean legacy() {
+            return release == null && name.equals(LEGACY_SCC_BINDING_PREFIX + scc);
+        }
+
+        /** Whether KDPS made it, for a release or, in earlier versions, for the whole project. */
+        boolean byKdps() {
+            return release != null || legacy();
+        }
+    }
+
+    private static final String LEGACY_SCC_BINDING_PREFIX = "kdps-scc-";
+
+    /**
+     * The SCCs a service declares ({@code openshiftScc}), merged by SCC, with {@code {{releaseName}}} expanded in the
+     * service account names.
+     *
+     * <p>Deliberately PER-SERVICEACCOUNT, never a namespace-group grant. Granting {@code anyuid} to
      * {@code system:serviceaccounts:<ns>} also makes SAs that rely on the platform injecting a
      * namespace-range UID (e.g. the OpenMetadata server, which sets {@code runAsNonRoot} with no
      * UID) prefer {@code anyuid} — which injects nothing, so the image runs as root and the pod
-     * fails "container has runAsNonRoot and image will run as root". Binding only the SAs that need
-     * it leaves the server + postgres SAs on {@code restricted-v2}. RBAC subjects need not exist
-     * yet, so we can bind the release-templated Airflow SA names before Helm creates them.
-     *
-     * <p>{@code {{releaseName}}} in a service-account name is expanded to {@code releaseName}. Each
-     * SCC's RoleBinding is reconciled (deleted + recreated) so its subject list always matches the
-     * current declaration — this also heals any legacy group-subject binding of the same name.
-     *
-     * <p>Returns {@code null} when everything is granted (or off OpenShift), or an actionable message
-     * listing the {@code oc adm policy add-scc-to-user} commands a cluster admin must run when the
-     * view's account lacks the rights.
+     * fails "container has runAsNonRoot and image will run as root". An entry without service
+     * accounts is therefore skipped.
      */
-    public String ensureSccGrants(String namespace, String releaseName, java.util.List<java.util.Map<String, Object>> sccGrants) {
+    static List<SccNeed> sccNeeds(String releaseName, List<Map<String, Object>> sccGrants) {
+        Map<String, Set<String>> bySccName = new LinkedHashMap<>();
+        String rel = releaseName == null ? "" : releaseName;
+        if (sccGrants != null) {
+            for (Map<String, Object> grant : sccGrants) {
+                if (grant == null) continue;
+                Object sccObj = grant.get("scc");
+                String scc = sccObj == null ? "" : sccObj.toString().trim();
+                if (scc.isBlank()) continue;
+                Set<String> sas = new LinkedHashSet<>();
+                if (grant.get("serviceAccounts") instanceof List<?> declared) {
+                    for (Object o : declared) {
+                        if (o == null) continue;
+                        String sa = o.toString().replace("{{releaseName}}", rel).replace("{{release}}", rel).trim();
+                        if (!sa.isBlank()) sas.add(sa);
+                    }
+                }
+                if (sas.isEmpty()) {
+                    LOG.warn("openshiftScc grant for '{}' declares no serviceAccounts; skipping (refusing a "
+                            + "namespace-wide grant)", scc);
+                    continue;
+                }
+                bySccName.computeIfAbsent(scc, k -> new LinkedHashSet<>()).addAll(sas);
+            }
+        }
+        List<SccNeed> needs = new ArrayList<>();
+        bySccName.forEach((scc, sas) -> needs.add(new SccNeed(scc, List.copyOf(sas))));
+        return needs;
+    }
+
+    /** The ClusterRole OpenShift defines for each SCC, whose only rule is {@code use} on that SCC. */
+    static String sccClusterRole(String scc) {
+        return "system:openshift:scc:" + scc;
+    }
+
+    /**
+     * Name of the RoleBinding that grants {@code scc} to the service accounts of {@code releaseName}:
+     * {@code kdps-scc-<scc>-<release>}, shortened to 63 characters with a hash of the full name when longer. One per
+     * release, so that deploying or removing one release never changes the grants of another.
+     */
+    static String sccBindingName(String scc, String releaseName) {
+        String name = "kdps-scc-" + scc + "-" + releaseName;
+        if (name.length() <= 63) return name;
+        String hash;
+        try {
+            hash = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(name.getBytes(StandardCharsets.UTF_8))).substring(0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+        String head = name.substring(0, 63 - hash.length() - 1).replaceAll("[-.]+$", "");
+        return head + "-" + hash;
+    }
+
+    /**
+     * Direct deploy, OpenShift SCC preflight: detect, then grant when this account may, else stop with what the
+     * platform team can do. Pods that pin a UID/GID or run as root (bundled OpenSearch, Airflow, the JupyterHub
+     * Kerberos sidecar) are admitted only when their service account may use the SCC they need.
+     *
+     * <ol>
+     *   <li><b>Detect.</b> Each service account that may already use its SCC needs nothing: when all of them may, no
+     *       object is written. That covers {@code oc adm policy add-scc-to-user}, so a deploy blocked once goes
+     *       through after the platform team ran the printed command.</li>
+     *   <li><b>Grant</b> only when this account may (see {@link #canGrantScc}): the release's own RoleBinding
+     *       ({@link #sccBindingName}) is created, or gets the service accounts it lacks. Nothing is ever deleted or
+     *       removed from a binding, so a write that fails leaves every existing grant in place. The shared
+     *       {@code kdps-scc-<scc>} binding of earlier versions is left untouched.</li>
+     *   <li><b>Block</b> otherwise, with both remedies: the platform team grants the SCC to the service accounts, or
+     *       lets this account grant SCCs in the project.</li>
+     * </ol>
+     *
+     * <p>A service account that may use its SCC only through a binding KDPS made for another release, or the shared
+     * binding of earlier versions, also gets this release's binding when this account may grant it, so that it does not
+     * depend on a grant made for someone else. When this account may not, the deploy goes on (its pods are admitted
+     * today) with a warning naming that binding and the platform team's command.
+     *
+     * @param sccGrants the service's {@code openshiftScc} declarations
+     * @param warnings  receives what the operator should know although the deploy may go on
+     * @return {@code null} when every service account may use its SCCs (or off OpenShift); otherwise an actionable
+     *         message
+     */
+    public String ensureSccGrants(String namespace, String releaseName, List<Map<String, Object>> sccGrants,
+                                  List<String> warnings) {
+        return reconcileSccGrants(namespace, releaseName, sccGrants, true, warnings);
+    }
+
+    /**
+     * GitOps deploy, OpenShift SCC preflight: the detection of {@link #ensureSccGrants} without the grant. What runs
+     * in the project comes from Git, so nothing is granted from here; a missing grant stops the deploy with the
+     * command for the platform team, before anything is committed.
+     *
+     * @param warnings receives what the operator should know although the deploy may go on
+     * @return {@code null} when every service account may use its SCCs (or off OpenShift); otherwise an actionable
+     *         message
+     */
+    public String checkSccGrants(String namespace, String releaseName, List<Map<String, Object>> sccGrants,
+                                 List<String> warnings) {
+        return reconcileSccGrants(namespace, releaseName, sccGrants, false, warnings);
+    }
+
+    private String reconcileSccGrants(String namespace, String releaseName, List<Map<String, Object>> sccGrants,
+                                      boolean mayGrant, List<String> warnings) {
         if (client == null) return "No cluster connection.";
         if (!isOpenShiftCluster()) return null;              // no-op on vanilla Kubernetes
-        if (namespace == null || namespace.isBlank() || sccGrants == null || sccGrants.isEmpty()) return null;
+        if (namespace == null || namespace.isBlank()) return null;
+        List<SccNeed> needs = sccNeeds(releaseName, sccGrants);
+        if (needs.isEmpty()) return null;
+        if (releaseName == null || releaseName.isBlank()) {
+            return "A release name is required to check the OpenShift security context constraints of its "
+                    + "service accounts.";
+        }
 
-        boolean canRb = canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace);
-        java.util.List<String> unresolved = new java.util.ArrayList<>();
-        String rel = releaseName == null ? "" : releaseName;
-
-        for (java.util.Map<String, Object> grant : sccGrants) {
-            if (grant == null) continue;
-            Object sccObj = grant.get("scc");
-            String scc = sccObj == null ? null : sccObj.toString().trim();
-            if (scc == null || scc.isBlank()) continue;
-
-            // Resolve + template the target service accounts. No SAs => nothing safe to grant
-            // (never fall back to a namespace-group grant — see javadoc).
-            java.util.List<String> sas = new java.util.ArrayList<>();
-            Object saObj = grant.get("serviceAccounts");
-            if (saObj instanceof java.util.List) {
-                for (Object o : (java.util.List<?>) saObj) {
-                    if (o == null) continue;
-                    String sa = o.toString().replace("{{releaseName}}", rel).replace("{{release}}", rel).trim();
-                    if (!sa.isBlank()) sas.add(sa);
+        List<SccBinding> bindings = sccBindings(namespace);
+        Map<String, List<String>> unresolved = new LinkedHashMap<>();
+        boolean unchecked = false;
+        for (SccNeed need : needs) {
+            List<String> missing = new ArrayList<>();
+            List<String> borrowed = new ArrayList<>();
+            Set<String> lenders = new LinkedHashSet<>();
+            for (String sa : need.serviceAccounts()) {
+                Boolean mayUse = serviceAccountMayUseScc(namespace, sa, need.scc());
+                if (mayUse == null) unchecked = true;
+                if (!Boolean.TRUE.equals(mayUse)) {
+                    missing.add(sa);
+                    continue;
+                }
+                // Held only through what KDPS made for someone else: gone when that release is uninstalled, or when
+                // the platform team deletes the shared binding of earlier versions.
+                List<SccBinding> grantedBy = bindings.stream()
+                        .filter(b -> b.scc().equals(need.scc()) && b.covers(sa)).collect(Collectors.toList());
+                boolean ownOrOutsideKdps = grantedBy.stream().anyMatch(b -> b.ofRelease(releaseName) || !b.byKdps());
+                if (!grantedBy.isEmpty() && !ownOrOutsideKdps) {
+                    borrowed.add(sa);
+                    grantedBy.forEach(b -> lenders.add(b.legacy()
+                            ? b.name() + " (made by an earlier KDPS version for the whole project)"
+                            : b.name() + " (made by KDPS for release " + b.release() + ")"));
                 }
             }
-            if (sas.isEmpty()) {
-                LOG.warn("openshiftScc grant for '{}' declares no serviceAccounts; skipping (refusing a namespace-wide grant)", scc);
+            if (missing.isEmpty() && borrowed.isEmpty()) {
+                LOG.info("Service accounts {} may already use SCC '{}' in {}: nothing to grant for release {}",
+                        need.serviceAccounts(), need.scc(), namespace, releaseName);
                 continue;
             }
-
-            String rbName = "kdps-scc-" + scc;
-            String clusterRole = "system:openshift:scc:" + scc;
-            if (!canRb) { unresolved.add(scc + " " + String.join(",", sas)); continue; }
-
-            RoleBindingBuilder rbb = new RoleBindingBuilder()
-                    .withNewMetadata().withName(rbName).withNamespace(namespace).endMetadata()
-                    .withNewRoleRef()
-                        .withApiGroup("rbac.authorization.k8s.io")
-                        .withKind("ClusterRole")
-                        .withName(clusterRole)
-                    .endRoleRef();
-            for (String sa : sas) {
-                rbb.addNewSubject()
-                        .withKind("ServiceAccount")
-                        .withName(sa)
-                        .withNamespace(namespace)
-                    .endSubject();
+            if (mayGrant && canGrantScc(namespace, need.scc())) {
+                try {
+                    grantScc(namespace, releaseName, need.scc(), need.serviceAccounts());
+                    continue;
+                } catch (Exception e) {
+                    // Typically RBAC escalation prevention despite the access review; nothing was removed.
+                    LOG.warn("Could not grant SCC '{}' in {}: {}", need.scc(), namespace, e.getMessage());
+                }
             }
-            try {
-                // Reconcile: delete any existing binding of this name (heals a stale group/subject set)
-                // then create with the current per-SA subjects.
-                try { client.rbac().roleBindings().inNamespace(namespace).withName(rbName).delete(); } catch (Exception ignore) { }
-                client.rbac().roleBindings().inNamespace(namespace).resource(rbb.build()).create();
-                LOG.info("Granted SCC '{}' to service accounts {} in namespace {} (RoleBinding {})", scc, sas, namespace, rbName);
-            } catch (Exception e) {
-                // Typically RBAC escalation-prevention: the view can create RoleBindings but is not
-                // itself allowed to use this SCC, so it cannot grant it. Surface the manual command.
-                LOG.warn("Could not grant SCC '{}' in {}: {}", scc, namespace, e.getMessage());
-                unresolved.add(scc + " " + String.join(",", sas));
+            if (missing.isEmpty()) {
+                // Admitted today, so not a reason to stop; but the operator should know what the grant hangs on.
+                String warning = "In project " + namespace + ", service account(s) " + String.join(", ", borrowed)
+                        + " of " + releaseName + " may use SCC " + need.scc() + " only through RoleBinding "
+                        + String.join(", ", lenders) + ", not through a grant of their own. KDPS keeps that binding "
+                        + "while " + releaseName + " needs it; for a grant of their own, ask the platform team to run: "
+                        + addSccCommand(namespace, need.scc(), borrowed);
+                LOG.warn(warning);
+                if (warnings != null) warnings.add(warning);
+                continue;
             }
+            List<String> toGrant = new ArrayList<>(need.serviceAccounts());
+            toGrant.removeIf(sa -> !missing.contains(sa) && !borrowed.contains(sa));
+            unresolved.put(need.scc(), toGrant);
         }
+        return unresolved.isEmpty() ? null : sccRemedy(namespace, releaseName, unresolved, mayGrant, unchecked);
+    }
 
-        if (unresolved.isEmpty()) return null;
-        StringBuilder sb = new StringBuilder("The view's account cannot grant the OpenShift SCC(s) required by this "
-                + "service to namespace '" + namespace + "'. Ask a cluster administrator to run, before deploying:\n");
-        for (String u : unresolved) {
-            String[] parts = u.split(" ", 2);
-            String scc = parts[0];
-            String[] sas = (parts.length > 1 ? parts[1] : "").split(",");
-            sb.append("  oc adm policy add-scc-to-user ").append(scc);
-            for (String sa : sas) {
-                if (!sa.isBlank()) sb.append(" -z ").append(sa);
-            }
-            sb.append(" -n ").append(namespace).append("\n");
+    /**
+     * Whether this account may grant {@code scc} in {@code namespace}: create the RoleBinding, and get past RBAC
+     * escalation prevention, which requires {@code bind} on the SCC's ClusterRole or {@code use} of the SCC in that
+     * namespace. A project admin has neither until the platform team grants one.
+     */
+    public boolean canGrantScc(String namespace, String scc) {
+        return canI("create", RBAC_API_GROUP, "rolebindings", null, null, namespace)
+                && (canI("bind", RBAC_API_GROUP, "clusterroles", null, sccClusterRole(scc), namespace)
+                    || canI("use", SCC_API_GROUP, "securitycontextconstraints", null, scc, namespace));
+    }
+
+    /**
+     * The commands with which a platform team lets the KDPS account grant {@code sccs} in {@code namespace}: a
+     * ClusterRole allowing {@code bind} on their ClusterRoles (created once per cluster) and a RoleBinding of it in the
+     * project.
+     */
+    public static String sccGrantRightCommands(String namespace, java.util.Collection<String> sccs, String indent) {
+        StringBuilder sb = new StringBuilder(indent).append("oc create clusterrole ").append(SCC_GRANT_ROLE)
+                .append(" --verb=bind --resource=clusterroles");
+        for (String scc : sccs) sb.append(" --resource-name=").append(sccClusterRole(scc));
+        sb.append("\n").append(indent).append("oc -n ").append(namespace).append(" create rolebinding ")
+                .append(SCC_GRANT_ROLE).append(" --clusterrole=").append(SCC_GRANT_ROLE)
+                .append(" --user=<account KDPS connects with>");
+        return sb.toString();
+    }
+
+    private static String addSccCommand(String namespace, String scc, List<String> serviceAccounts) {
+        return sccPolicyCommand("add-scc-to-user", namespace, scc, serviceAccounts);
+    }
+
+    private static String sccPolicyCommand(String verb, String namespace, String scc,
+                                           java.util.Collection<String> serviceAccounts) {
+        StringBuilder sb = new StringBuilder("oc adm policy ").append(verb).append(' ').append(scc);
+        for (String sa : serviceAccounts) sb.append(" -z ").append(sa);
+        return sb.append(" -n ").append(namespace).toString();
+    }
+
+    /** What the operator is told when service accounts lack an SCC this account does not grant. */
+    private static String sccRemedy(String namespace, String releaseName, Map<String, List<String>> unresolved,
+                                    boolean grantRightHelps, boolean unchecked) {
+        StringBuilder sb = new StringBuilder("In project ").append(namespace).append(", service accounts of ")
+                .append(releaseName).append(" may not use the SCC(s) ").append(String.join(", ", unresolved.keySet()));
+        if (grantRightHelps) {
+            sb.append(", and the account KDPS connects with may not grant them.");
+        } else {
+            sb.append(". A GitOps deploy does not grant SCCs.");
+        }
+        if (unchecked) {
+            sb.append(" This account could not check the existing grants either: it needs to create "
+                    + "LocalSubjectAccessReviews in the project, which the project admin role allows.");
+        }
+        sb.append(grantRightHelps
+                ? "\nEither:\n  1. ask the platform team to grant them; the next deploy finds the grant and changes "
+                        + "nothing:\n"
+                : "\nAsk the platform team to grant them; the next deploy finds the grant:\n");
+        String indent = grantRightHelps ? "       " : "  ";
+        unresolved.forEach((scc, sas) -> sb.append(indent).append(addSccCommand(namespace, scc, sas)).append("\n"));
+        if (grantRightHelps) {
+            Set<String> sccs = new LinkedHashSet<>(unresolved.keySet());
+            sccs.addAll(SERVICE_SCCS);
+            sb.append("  2. or let this account grant them itself, once per project (the ClusterRole once per "
+                            + "cluster):\n")
+                    .append(sccGrantRightCommands(namespace, sccs, indent));
         }
         return sb.toString().trim();
+    }
+
+    /**
+     * Whether the pods of service account {@code sa} may run under {@code scc} in {@code namespace}. RBAC answers
+     * first: a LocalSubjectAccessReview for the service account and its groups sees every RoleBinding, including the
+     * one {@code oc adm policy add-scc-to-user} writes. A PodSecurityPolicySubjectReview then also sees grants written
+     * into the SCC's own users and groups fields, which RBAC does not know about.
+     *
+     * @return the answer, or {@code null} when this account may not make the LocalSubjectAccessReview and the
+     *         PodSecurityPolicySubjectReview does not tell either
+     */
+    Boolean serviceAccountMayUseScc(String namespace, String sa, String scc) {
+        String user = "system:serviceaccount:" + namespace + ":" + sa;
+        List<String> groups = List.of("system:serviceaccounts", "system:serviceaccounts:" + namespace,
+                "system:authenticated");
+        Boolean answer = null;
+        try {
+            io.fabric8.kubernetes.api.model.authorization.v1.LocalSubjectAccessReview review =
+                new io.fabric8.kubernetes.api.model.authorization.v1.LocalSubjectAccessReviewBuilder()
+                    .withNewMetadata().withNamespace(namespace).endMetadata()
+                    .withNewSpec()
+                        .withUser(user)
+                        .withGroups(groups)
+                        .withNewResourceAttributes()
+                            .withVerb("use")
+                            .withGroup(SCC_API_GROUP)
+                            .withResource("securitycontextconstraints")
+                            .withName(scc)
+                            .withNamespace(namespace)
+                        .endResourceAttributes()
+                    .endSpec()
+                    .build();
+            var result = client.authorization().v1().localSubjectAccessReview().inNamespace(namespace).create(review);
+            if (result != null && result.getStatus() != null && Boolean.TRUE.equals(result.getStatus().getAllowed())) {
+                return true;
+            }
+            answer = false;
+        } catch (Exception e) {
+            LOG.warn("Could not ask RBAC whether {} may use SCC '{}': {}", user, scc, e.toString());
+        }
+        String admittedBy;
+        try {
+            admittedBy = sccAdmittingProbe(namespace, sa, user, groups, scc);
+        } catch (Exception e) {
+            LOG.warn("Could not ask OpenShift which SCC admits the pods of {}: {}", user, e.toString());
+            return answer;
+        }
+        if (scc.equals(admittedBy)) return true;
+        // Nothing admits a probe that this SCC admits: the service account may not use it.
+        if (admittedBy == null && SCC_PROBE_SECURITY_CONTEXTS.containsKey(scc)) return false;
+        // Admission picked another SCC the service account may use, which hides whether it may use this one as well
+        // (or this SCC has no probe of its own). Reading that as "no" would block a deploy the platform team already
+        // granted, again on every retry.
+        LOG.info("OpenShift admits the probe pod of {} under {}, which does not tell whether it may use SCC '{}'",
+                user, admittedBy == null ? "no SCC" : "SCC '" + admittedBy + "'", scc);
+        return answer;
+    }
+
+    /**
+     * The SCC OpenShift admission picks for a probe pod of service account {@code sa}, or {@code null} when none
+     * admits it. The probe is the one built for {@code scc} (see {@link #SCC_PROBE_SECURITY_CONTEXTS}), else a plain
+     * non-root UID outside every project range.
+     */
+    private String sccAdmittingProbe(String namespace, String sa, String user, List<String> groups, String scc) {
+        Map<String, Object> container = new LinkedHashMap<>();
+        container.put("name", "probe");
+        container.put("image", "probe");
+        container.put("securityContext",
+                SCC_PROBE_SECURITY_CONTEXTS.getOrDefault(scc, Map.of("runAsUser", SCC_PROBE_UID)));
+        Map<String, Object> podSpec = new LinkedHashMap<>();
+        podSpec.put("serviceAccountName", sa);
+        podSpec.put("containers", List.of(container));
+        Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("user", user);
+        spec.put("groups", groups);
+        spec.put("template", Map.of("spec", podSpec));
+        GenericKubernetesResource review = new GenericKubernetesResource();
+        review.setApiVersion(SCC_API_GROUP + "/v1");
+        review.setKind("PodSecurityPolicySubjectReview");
+        review.setMetadata(new ObjectMetaBuilder().withNamespace(namespace).build());
+        review.setAdditionalProperty("spec", spec);
+        GenericKubernetesResource result = client.genericKubernetesResources(SCC_SUBJECT_REVIEW)
+                .inNamespace(namespace).resource(review).create();
+        Object allowedBy = result == null ? null : result.get("status", "allowedBy", "name");
+        return allowedBy == null ? null : allowedBy.toString();
+    }
+
+    /**
+     * The bindings that grant an SCC (bound to its {@code system:openshift:scc:<scc>} ClusterRole) to service accounts
+     * of {@code namespace}, whoever made them: the project's RoleBindings and, when this account may list them, the
+     * ClusterRoleBindings. Best effort: what cannot be read is left out.
+     */
+    private List<SccBinding> sccBindings(String namespace) {
+        List<SccBinding> out = new ArrayList<>();
+        try {
+            for (RoleBinding rb : client.rbac().roleBindings().inNamespace(namespace).list().getItems()) {
+                String scc = sccOf(rb.getRoleRef());
+                if (scc == null) continue;
+                Map<String, String> labels = rb.getMetadata().getLabels() == null
+                        ? Map.of() : rb.getMetadata().getLabels();
+                String release = SCC_MANAGED_BY_KDPS.equals(labels.get(SCC_LABEL_MANAGED_BY))
+                        ? labels.get(SCC_LABEL_RELEASE) : null;
+                out.add(new SccBinding(rb.getMetadata().getName(), release, scc,
+                        serviceAccountSubjects(rb.getSubjects(), namespace),
+                        grantsWholeProject(rb.getSubjects(), namespace)));
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not list the SCC grants in {}: {}", namespace, e.toString());
+        }
+        try {
+            for (ClusterRoleBinding crb : client.rbac().clusterRoleBindings().list().getItems()) {
+                String scc = sccOf(crb.getRoleRef());
+                if (scc == null) continue;
+                out.add(new SccBinding("clusterrolebinding/" + crb.getMetadata().getName(), null, scc,
+                        serviceAccountSubjects(crb.getSubjects(), namespace),
+                        grantsWholeProject(crb.getSubjects(), namespace)));
+            }
+        } catch (Exception e) {
+            // A project admin may not list them; the access reviews still see their grants.
+            LOG.debug("Could not list the cluster-wide SCC grants: {}", e.toString());
+        }
+        return out;
+    }
+
+    /** The SCC a binding grants, or {@code null} when its role is not an SCC's ClusterRole. */
+    private static String sccOf(io.fabric8.kubernetes.api.model.rbac.RoleRef roleRef) {
+        String prefix = sccClusterRole("");
+        if (roleRef == null || !"ClusterRole".equals(roleRef.getKind()) || roleRef.getName() == null
+                || !roleRef.getName().startsWith(prefix)) {
+            return null;
+        }
+        return roleRef.getName().substring(prefix.length());
+    }
+
+    /** Whether the subjects of a binding include a group every service account of {@code namespace} belongs to. */
+    private static boolean grantsWholeProject(List<io.fabric8.kubernetes.api.model.rbac.Subject> subjects,
+                                              String namespace) {
+        if (subjects == null) return false;
+        Set<String> groups = Set.of("system:serviceaccounts", "system:serviceaccounts:" + namespace,
+                "system:authenticated");
+        return subjects.stream().anyMatch(s -> "Group".equals(s.getKind()) && groups.contains(s.getName()));
+    }
+
+    /** The service accounts of {@code namespace} the subjects of a binding name (a RoleBinding's may omit it). */
+    private static Set<String> serviceAccountSubjects(List<io.fabric8.kubernetes.api.model.rbac.Subject> subjects,
+                                                      String namespace) {
+        Set<String> out = new LinkedHashSet<>();
+        if (subjects == null) return out;
+        for (io.fabric8.kubernetes.api.model.rbac.Subject s : subjects) {
+            if ("ServiceAccount".equals(s.getKind()) && s.getName() != null
+                    && (s.getNamespace() == null || namespace.equals(s.getNamespace()))) {
+                out.add(s.getName());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Creates the release's RoleBinding for {@code scc}, or adds the service accounts it lacks. Never deletes and never
+     * removes a subject: a write that fails leaves every existing grant in place.
+     */
+    private void grantScc(String namespace, String releaseName, String scc, List<String> serviceAccounts) {
+        String name = sccBindingName(scc, releaseName);
+        RoleBinding existing = client.rbac().roleBindings().inNamespace(namespace).withName(name).get();
+        if (existing == null) {
+            RoleBindingBuilder rbb = new RoleBindingBuilder()
+                    .withNewMetadata()
+                        .withName(name)
+                        .withNamespace(namespace)
+                        .addToLabels(SCC_LABEL_MANAGED_BY, SCC_MANAGED_BY_KDPS)
+                        .addToLabels(SCC_LABEL_RELEASE, releaseName)
+                        .addToLabels(SCC_LABEL_SCC, scc)
+                    .endMetadata()
+                    .withNewRoleRef()
+                        .withApiGroup(RBAC_API_GROUP)
+                        .withKind("ClusterRole")
+                        .withName(sccClusterRole(scc))
+                    .endRoleRef();
+            for (String sa : serviceAccounts) {
+                rbb.addNewSubject().withKind("ServiceAccount").withName(sa).withNamespace(namespace).endSubject();
+            }
+            client.rbac().roleBindings().inNamespace(namespace).resource(rbb.build()).create();
+            LOG.info("Granted SCC '{}' to service accounts {} of release {} in {} (RoleBinding {})",
+                    scc, serviceAccounts, releaseName, namespace, name);
+            return;
+        }
+        Set<String> present = serviceAccountSubjects(existing.getSubjects(), namespace);
+        List<String> added = serviceAccounts.stream().filter(sa -> !present.contains(sa)).collect(Collectors.toList());
+        if (added.isEmpty()) return;
+        client.rbac().roleBindings().inNamespace(namespace).withName(name).edit(rb -> {
+            RoleBindingBuilder b = new RoleBindingBuilder(rb);
+            for (String sa : added) {
+                b.addNewSubject().withKind("ServiceAccount").withName(sa).withNamespace(namespace).endSubject();
+            }
+            return b.build();
+        });
+        LOG.info("Granted SCC '{}' to service accounts {} of release {} in {} (added to RoleBinding {})",
+                scc, added, releaseName, namespace, name);
+    }
+
+    /**
+     * After an uninstall: takes back the SCC grants KDPS made for the release, by deleting the RoleBindings labelled
+     * with it. Best effort, never throws; a binding already gone or one this account may not delete is skipped.
+     *
+     * <p>The other KDPS releases of the project keep what they use. When a service account another release declares
+     * holds the SCC only through one of this release's bindings, that release first gets its own binding for it, when
+     * this account may grant it; otherwise the binding stays, and the note says what the platform team grants before
+     * deleting it.
+     *
+     * <p>Grants made outside KDPS are left in place. When the release's service accounts still hold one that no other
+     * release declares, the commands that take it back are returned for the platform team; so is the deletion of the
+     * shared binding of earlier versions, once no other release depends on it.
+     *
+     * @param sccGrants     the service's {@code openshiftScc} declarations, or {@code null} when unknown (then nothing
+     *                      is listed)
+     * @param otherReleases the {@code openshiftScc} declarations of the other KDPS releases of the project, by release
+     *                      name, or {@code null} when they are not known
+     * @return what the platform team may still do, or {@code null}
+     */
+    public String removeSccGrants(String namespace, String releaseName, List<Map<String, Object>> sccGrants,
+                                  Map<String, List<Map<String, Object>>> otherReleases) {
+        if (client == null || namespace == null || namespace.isBlank()
+                || releaseName == null || releaseName.isBlank()) {
+            return null;
+        }
+        if (!isOpenShiftCluster()) return null;
+        // By SCC: the service accounts the other releases declare, with the releases that declare each.
+        Map<String, Map<String, Set<String>>> stillDeclared = new HashMap<>();
+        if (otherReleases != null) {
+            otherReleases.forEach((other, grants) -> {
+                if (other == null || other.equals(releaseName)) return;
+                for (SccNeed need : sccNeeds(other, grants)) {
+                    for (String sa : need.serviceAccounts()) {
+                        stillDeclared.computeIfAbsent(need.scc(), k -> new LinkedHashMap<>())
+                                .computeIfAbsent(sa, k -> new TreeSet<>()).add(other);
+                    }
+                }
+            });
+        }
+
+        List<SccBinding> before = sccBindings(namespace);
+        List<String> kept = new ArrayList<>();
+        StringBuilder stillUsed = new StringBuilder();
+        for (SccBinding binding : before) {
+            if (!binding.ofRelease(releaseName)) continue;
+            // The service accounts of other releases that would lose the SCC with this binding, by release.
+            Map<String, List<String>> dependents = new TreeMap<>();
+            stillDeclared.getOrDefault(binding.scc(), Map.of()).forEach((sa, releases) -> {
+                boolean grantedOtherwise = before.stream().anyMatch(b -> !b.ofRelease(releaseName)
+                        && b.scc().equals(binding.scc()) && b.covers(sa));
+                if (binding.covers(sa) && !grantedOtherwise) {
+                    releases.forEach(r -> dependents.computeIfAbsent(r, k -> new ArrayList<>()).add(sa));
+                }
+            });
+            if (!dependents.isEmpty() && !handOverScc(namespace, binding.scc(), dependents)) {
+                Set<String> sas = new LinkedHashSet<>();
+                dependents.values().forEach(sas::addAll);
+                stillUsed.append("RoleBinding ").append(binding.name()).append(" stays: it also grants SCC ")
+                        .append(binding.scc()).append(" to ")
+                        .append(dependents.entrySet().stream()
+                                .map(e -> String.join(", ", e.getValue()) + " of release " + e.getKey())
+                                .collect(Collectors.joining("; ")))
+                        .append(", and the account KDPS connects with may not grant it to them. Once the platform "
+                                + "team has granted it, the binding can be deleted:\n  ")
+                        .append(addSccCommand(namespace, binding.scc(), new ArrayList<>(sas)))
+                        .append("\n  oc -n ").append(namespace).append(" delete rolebinding ").append(binding.name())
+                        .append("\n");
+                LOG.info("Kept RoleBinding {}/{} of uninstalled release {}: releases {} still use SCC '{}' through it",
+                        namespace, binding.name(), releaseName, dependents.keySet(), binding.scc());
+                continue;
+            }
+            try {
+                client.rbac().roleBindings().inNamespace(namespace).withName(binding.name()).delete();
+                LOG.info("Removed SCC '{}' from the service accounts of release {} in {} (RoleBinding {})",
+                        binding.scc(), releaseName, namespace, binding.name());
+            } catch (Exception e) {
+                if (e instanceof KubernetesClientException kce && kce.getCode() == 404) continue;   // already gone
+                LOG.warn("Could not remove RoleBinding {}/{} granting SCC '{}' to release {}: {}",
+                        namespace, binding.name(), binding.scc(), releaseName, e.toString());
+                kept.add(binding.name());
+            }
+        }
+
+        List<SccNeed> needs = sccNeeds(releaseName, sccGrants);
+        if (needs.isEmpty() && kept.isEmpty() && stillUsed.length() == 0) return null;
+        // Not the platform team's to take back: what KDPS granted (the bindings of other releases, any of this
+        // release's that stayed, the shared binding of earlier versions while another release depends on it), and the
+        // grant of a service account another release still declares.
+        List<SccBinding> remaining = sccBindings(namespace);
+        Map<String, List<String>> outsideKdps = new LinkedHashMap<>();
+        Set<String> legacy = new LinkedHashSet<>();
+        for (SccNeed need : needs) {
+            Map<String, Set<String>> declared = stillDeclared.getOrDefault(need.scc(), Map.of());
+            for (SccBinding shared : remaining) {
+                if (!shared.legacy() || !shared.scc().equals(need.scc())
+                        || need.serviceAccounts().stream().noneMatch(shared::covers)) {
+                    continue;
+                }
+                boolean dependedOn = declared.keySet().stream().anyMatch(sa -> shared.covers(sa)
+                        && remaining.stream().noneMatch(b -> !b.name().equals(shared.name()) && !b.ofRelease(releaseName)
+                                && b.scc().equals(shared.scc()) && b.covers(sa)));
+                if (!dependedOn) legacy.add(shared.name());
+            }
+            for (String sa : need.serviceAccounts()) {
+                if (declared.containsKey(sa)) continue;
+                boolean byKdps = remaining.stream().anyMatch(b -> b.byKdps() && b.scc().equals(need.scc()) && b.covers(sa));
+                if (!byKdps && Boolean.TRUE.equals(serviceAccountMayUseScc(namespace, sa, need.scc()))) {
+                    outsideKdps.computeIfAbsent(need.scc(), k -> new ArrayList<>()).add(sa);
+                }
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (!outsideKdps.isEmpty() || !legacy.isEmpty() || !kept.isEmpty()) {
+            sb.append("The service accounts of ").append(releaseName).append(" in project ").append(namespace)
+                    .append(" still hold security context constraints (SCC) that KDPS did not remove. ")
+                    .append(otherReleases == null
+                            ? "Once no other service in the project needs them, the platform team can take them back:\n"
+                            : "No other KDPS release of the project uses them; unless a workload deployed outside KDPS "
+                                    + "does, the platform team can take them back:\n");
+            outsideKdps.forEach((scc, sas) ->
+                    sb.append("  ").append(sccPolicyCommand("remove-scc-from-user", namespace, scc, sas)).append("\n"));
+            for (String name : legacy) {
+                sb.append("  oc -n ").append(namespace).append(" delete rolebinding ").append(name)
+                        .append("   (granted by an earlier KDPS version, for every release of the project)\n");
+            }
+            for (String name : kept) {
+                sb.append("  oc -n ").append(namespace).append(" delete rolebinding ").append(name)
+                        .append("   (this account could not delete it)\n");
+            }
+        }
+        sb.append(stillUsed);
+        String note = sb.toString().trim();
+        return note.isEmpty() ? null : note;
+    }
+
+    /**
+     * Grants {@code scc} to the service accounts of other releases through their own RoleBindings, so that a binding of
+     * an uninstalled release can go without taking it from them.
+     *
+     * @param dependents the service accounts to grant, by release
+     * @return whether every grant was made; {@code false} when this account may not grant the SCC
+     */
+    private boolean handOverScc(String namespace, String scc, Map<String, List<String>> dependents) {
+        if (!canGrantScc(namespace, scc)) return false;
+        try {
+            dependents.forEach((release, sas) -> grantScc(namespace, release, scc, sas));
+            return true;
+        } catch (Exception e) {
+            // Typically RBAC escalation prevention despite the access review; nothing was removed.
+            LOG.warn("Could not grant SCC '{}' in {} to releases {}: {}", scc, namespace, dependents.keySet(),
+                    e.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -2873,11 +4155,8 @@ public class KubernetesService {
         // that already work). For a client-certificate-only kubeconfig there is no token, so on OpenShift
         // fall back to a minted, auto-renewed cluster-monitoring-view token. If a present token turns out
         // to lack monitoring RBAC, the query layer retries once with a minted token (see runMonitoringQuery).
-        String token = currentConfig.getOauthToken();
-        if (token == null || token.isBlank()) {
-            token = currentConfig.getAutoOAuthToken();
-        }
-        if (token != null && !token.isBlank()) {
+        String token = kubeconfigBearerToken();
+        if (token != null) {
             builder.header("Authorization", "Bearer " + token);
             return;
         }
@@ -2895,6 +4174,23 @@ public class KubernetesService {
                     .encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
             builder.header("Authorization", "Basic " + basicAuthValue);
         }
+    }
+
+    /**
+     * The bearer token of the kubeconfig credential, or {@code null} when it has none (client certificate, basic
+     * auth). A token provider (OpenShift login, the pod's ServiceAccount) renews the token: the one written into the
+     * kubeconfig when the client was built may have been replaced since.
+     */
+    private String kubeconfigBearerToken() {
+        Config currentConfig = client.getConfiguration();
+        String token = currentConfig.getOauthTokenProvider() != null ? currentConfig.getOauthTokenProvider().getToken() : null;
+        if (token == null || token.isBlank()) {
+            token = currentConfig.getOauthToken();
+        }
+        if (token == null || token.isBlank()) {
+            token = currentConfig.getAutoOAuthToken();
+        }
+        return token == null || token.isBlank() ? null : token;
     }
 
     /**
@@ -3004,7 +4300,16 @@ public class KubernetesService {
      * instance). Falls back to the kubeconfig's current-context when no context has been selected.
      */
     private Config buildConfigForSelectedContext(String kubeconfigContent) {
-        String selectedContext = configurationService.getSelectedContext();
+        return buildConfig(kubeconfigContent, configurationService.getContextToConnectWith());
+    }
+
+    /**
+     * The client Config for {@code selectedContext} of {@code savedKubeconfig}, built from the kubeconfig as KDPS writes
+     * it again ({@link KubeconfigGuard#canonical}): a command or a file path of its users is not part of it, since the
+     * client would run the one and read the other on the Ambari server.
+     */
+    static Config buildConfig(String savedKubeconfig, String selectedContext) {
+        String kubeconfigContent = KubeconfigGuard.canonical(savedKubeconfig);
         Config cfg;
         if (selectedContext != null && !selectedContext.isBlank()) {
             LOG.info("Building Kubernetes client for selected kubeconfig context '{}'.", selectedContext);
@@ -3033,6 +4338,46 @@ public class KubernetesService {
             LOG.warn("Could not pin CA onto the client Config: {}", e.toString());
         }
         return cfg;
+    }
+
+    /**
+     * Fails with the reason when the user of the connection context only had a credential that KDPS leaves out (a
+     * command, a file of the Ambari server): it is not in {@code config}, so the client would only meet a bare
+     * "Unauthorized" with nothing pointing at the cause. A user that also has a token, or a certificate with its key,
+     * is fine.
+     *
+     * @param model            the saved kubeconfig, as read by {@link KubeconfigGuard#parse}
+     * @param selectedContext  the context selected in KDPS, or {@code null} for the current-context
+     * @param config           the client configuration built from the kubeconfig KDPS writes again
+     * @throws UnusableConfigurationException when the connection would be left without any credential
+     */
+    static void requireCredentialOtherThanACommand(io.fabric8.kubernetes.api.model.Config model, String selectedContext,
+                                                   Config config) {
+        if (model == null || model.getContexts() == null || model.getUsers() == null) {
+            return;
+        }
+        // A client certificate without its key cannot authenticate: when the key was a file, it was left out.
+        boolean hasClientCertificate = (config.getClientCertData() != null || config.getClientCertFile() != null)
+                && (config.getClientKeyData() != null || config.getClientKeyFile() != null);
+        boolean hasCredential = config.getOauthToken() != null || config.getAutoOAuthToken() != null
+                || hasClientCertificate || config.getUsername() != null;
+        if (hasCredential) {
+            return;
+        }
+        String contextName = selectedContext != null && !selectedContext.isBlank() ? selectedContext : model.getCurrentContext();
+        String user = model.getContexts().stream()
+                .filter(c -> c.getName() != null && c.getName().equals(contextName))
+                .map(c -> c.getContext() == null ? null : c.getContext().getUser())
+                .filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        java.util.List<String> leftOut = model.getUsers().stream()
+                .filter(u -> u.getName() != null && u.getName().equals(user))
+                .map(u -> KubeconfigGuard.leftOut(u.getUser()))
+                .findFirst().orElse(java.util.List.of());
+        if (!leftOut.isEmpty()) {
+            throw new UnusableConfigurationException("The saved kubeconfig cannot be used. "
+                    + KubeconfigGuard.userFieldMessage("User '" + user + "'", leftOut.get(0)) + " Upload a new kubeconfig.",
+                    null);
+        }
     }
 
     /**
@@ -3107,7 +4452,7 @@ public class KubernetesService {
     }
 
     /** CA data of the cluster referenced by {@code contextName} (or the current-context when null). */
-    private String clusterCaForContext(io.fabric8.kubernetes.api.model.Config model, String contextName) {
+    private static String clusterCaForContext(io.fabric8.kubernetes.api.model.Config model, String contextName) {
         if (model == null) {
             return null;
         }
@@ -3362,11 +4707,13 @@ public class KubernetesService {
 
     /**
      * Rebuilds the client from the currently saved configuration, even if one already exists (new kubeconfig,
-     * another context, OpenShift login, token renewal).
+     * another context, OpenShift login, token renewal). It runs at once, whatever failed before: the configuration
+     * was just saved, so a refused password or the wait after failed attempts no longer applies.
      *
      * @return {@code true} when a client was built
      */
     public synchronized boolean forceReloadClient() {
+        resetConnectBackOff();
         return rebuildClient();
     }
 
@@ -3385,43 +4732,79 @@ public class KubernetesService {
     /**
      * Builds a client from the saved configuration and only then swaps it in, so calls made meanwhile keep using the
      * previous client instead of finding the view unconfigured. The previous client is closed after
-     * {@link #retiredClientGraceSeconds}. When no client can be built, the view becomes unconfigured: keeping the
-     * previous connection would leave it talking to an account the saved configuration no longer names (Helm reads
-     * the saved kubeconfig on every call).
+     * {@link #retiredClientGraceSeconds}. When no client can be built, the view is left without a connection: keeping
+     * the previous one would leave it talking to an account the saved configuration no longer names (Helm reads the
+     * saved kubeconfig on every call). The outcome sets the back-off of {@link #connectIfConfigured()}. Called holding
+     * {@code this}.
      */
     private boolean rebuildClient() {
         KubernetesClient previous = this.client;
         KubernetesClient fresh;
+        boolean noMasterKey = false;
+        String unusable = null;
         try {
             fresh = buildClientFromSavedConfiguration();
         } catch (Exception e) {
             LOG.warn("Failed to reinitialize Kubernetes client: {}", e.getMessage());
+            noMasterKey = causedByMissingMasterKey(e);
+            unusable = e instanceof UnusableConfigurationException ? e.getMessage() : null;
             fresh = null;
         }
+        this.masterKeyMissing = noMasterKey;
+        this.unusableConfiguration = unusable;
         if (fresh == null) {
             this.isConfigured = false;
             this.client = null;
+            this.clientGeneration.incrementAndGet();
             retire(previous);
+            recordConnectFailure();
             return false;
         }
         this.client = fresh;
         this.isConfigured = true;
-        // Cached answers about the previous cluster (a new kubeconfig or context can point elsewhere).
+        resetConnectBackOff();
+        forgetAnswersAboutPreviousClient();
+        retire(previous);
+        LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
+        return true;
+    }
+
+    /**
+     * Forgets what was cached or refused under the previous client: a new kubeconfig or context can point to another
+     * cluster or account. Called once the new client is in place, so that a call reading the new generation also
+     * reads the new client.
+     */
+    private void forgetAnswersAboutPreviousClient() {
+        this.clientGeneration.incrementAndGet();
         this.externalSecretsApiVersion = null;
         this.statsCache.invalidateAll();
         this.serviceCache.invalidateAll();
         this.prometheusClientCache.clear();
         this.openShiftDetectionCache.set(null);
+        this.openShiftDetectionRetryAt.set(0);
         this.monitoringTokenCache.set(null);
+        this.prometheusWarnedAt.set(0);
         this.namespaceScope.reset();
-        try {
-            applyProxySettings();
-        } catch (RuntimeException e) {
-            LOG.warn("Could not apply proxy settings to the new client: {}", e.toString());
+    }
+
+    /**
+     * Why the saved configuration cannot be used, when that is what made the last attempt to connect fail: a sentence
+     * for the operator that says what to change.
+     *
+     * @return the reason, or {@code null} when the last attempt connected or failed for another reason
+     */
+    public String unusableConfiguration() {
+        return unusableConfiguration;
+    }
+
+    /** Whether {@code e}, or one of its causes, is the missing Ambari master key. */
+    private static boolean causedByMissingMasterKey(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof MasterKeyUnavailableException) {
+                return true;
+            }
         }
-        retire(previous);
-        LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
-        return true;
+        return false;
     }
 
     /** Closes a replaced client once its grace period is over. */
@@ -3450,11 +4833,13 @@ public class KubernetesService {
      * @throws Exception when the saved configuration cannot be read or turned into a client
      */
     KubernetesClient buildClientFromSavedConfiguration() throws Exception {
-        this.configurationService = new ViewConfigurationService(viewContext);
+        this.configurationService = new ViewConfigurationService(viewContext, podServiceAccount);
         boolean openShiftLogin = configurationService.isOpenShiftLogin();
+        boolean inCluster = configurationService.isInClusterServiceAccount();
         String kubeconfigContent;
-        if (openShiftLogin) {
-            // Synthesized kubeconfig with a freshly-minted OpenShift token (username/password login).
+        if (openShiftLogin || inCluster) {
+            // Synthesized kubeconfig: a freshly-minted OpenShift token (username/password login), or the token, CA and
+            // API server address of the pod's ServiceAccount (fails with the reason when the pod has none).
             kubeconfigContent = configurationService.getKubeconfigContents();
         } else {
             String kubeconfigPath = configurationService.getKubeconfigPath();
@@ -3466,10 +4851,7 @@ public class KubernetesService {
                 LOG.warn("reloadClientIfConfigured: kubeconfig file missing at {}", kubeconfigPath);
                 return null;
             }
-            EncryptionService encryptionService = new EncryptionService();
-            byte[] encryptedBytes = Files.readAllBytes(Paths.get(kubeconfigPath));
-            byte[] decryptedBytes = encryptionService.decrypt(encryptedBytes);
-            kubeconfigContent = new String(decryptedBytes, StandardCharsets.UTF_8);
+            kubeconfigContent = configurationService.getRawKubeconfigContents();
         }
 
         // Mirror the constructor's CA-loading step.  Without this, the JVM default
@@ -3479,17 +4861,28 @@ public class KubernetesService {
         // same view) fails with `PKIX path building failed`.  Bug only manifested on
         // FIRST upload after server restart (when the constructor's "View is not
         // configured" path had skipped this work).  See KubernetesService(ViewContext).
-        io.fabric8.kubernetes.api.model.Config kubeconfigModel =
-            Serialization.unmarshal(kubeconfigContent, io.fabric8.kubernetes.api.model.Config.class);
+        io.fabric8.kubernetes.api.model.Config kubeconfigModel;
+        try {
+            kubeconfigModel = KubeconfigGuard.parse(kubeconfigContent);
+        } catch (IllegalArgumentException e) {
+            throw new UnusableConfigurationException(
+                    "The saved kubeconfig cannot be used. " + e.getMessage() + " Upload a new kubeconfig.", e);
+        }
         java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
         if (!allClusterCaData.isEmpty()) {
             installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
         }
 
         Config finalConfiguration = buildConfigForSelectedContext(kubeconfigContent);
+        requireCredentialOtherThanACommand(kubeconfigModel, configurationService.getContextToConnectWith(),
+                finalConfiguration);
         loadK8sPropsAsSystemProperties(viewContext);
-        if (configurationService.isOpenShiftLogin()) {
+        if (openShiftLogin) {
             finalConfiguration.setOauthTokenProvider(configurationService.getOpenShiftLoginProvider());
+        } else if (inCluster) {
+            // The token in the kubeconfig is the one of this moment; the kubelet renews it in the pod, and the provider
+            // hands the client the current one on every request.
+            finalConfiguration.setOauthTokenProvider(configurationService.getInClusterServiceAccount());
         }
         return buildTrustingClient(finalConfiguration, allClusterCaData);
     }
@@ -4112,9 +5505,9 @@ public class KubernetesService {
             LOG.info("Manifest have been applied successfully from {}", yamlPath);
 
         } catch (KubernetesClientException e) {
-            throw new RuntimeException("Echec d'application du YAML " + yamlPath + " : " + e.getMessage(), e);
+            throw new RuntimeException("Failed to apply YAML " + yamlPath + ": " + e.getMessage(), e);
         } catch (IOException e) {
-            throw new RuntimeException("Lecture YAML impossible : " + yamlPath, e);
+            throw new RuntimeException("Cannot read YAML file: " + yamlPath, e);
         }
     }
 
@@ -4196,11 +5589,13 @@ public class KubernetesService {
     }
 
     /**
-     * Returns the underlying {@link KubernetesClient} for advanced or direct API access.
+     * Returns the underlying {@link KubernetesClient} for advanced or direct API access, connecting first from the
+     * saved configuration when the view instance is configured but not connected yet.
      *
-     * @return the Kubernetes client, or {@code null} if the service is not yet configured
+     * @return the Kubernetes client, or {@code null} if the service is not configured or not connected
      */
     public KubernetesClient getClient() {
+        connectIfConfigured();
         return client;
     }
 
@@ -4599,11 +5994,13 @@ public class KubernetesService {
      * @param issuerKind   "ClusterIssuer" (default) or "Issuer"
      * @param dnsNames     SANs to put on the leaf
      * @param durationHours leaf validity in hours; cert-manager defaults to 2160 (90d)
+     * @param releaseName  the release the certificate is for: a Certificate this creates, and the Secret cert-manager
+     *                     writes from it, carry its release labels so its uninstall removes them; null labels nothing
      */
     public void applyCertManagerCertificate(String namespace, String certName, String secretName,
                                             String issuerName, String issuerKind,
                                             java.util.List<String> dnsNames, Integer durationHours,
-                                            Map<String, Object> subject) {
+                                            Map<String, Object> subject, String releaseName) {
         checkConfiguration();
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(certName, "certName");
@@ -4657,14 +6054,82 @@ public class KubernetesService {
         issuerRef.put("group", "cert-manager.io");
         spec.put("issuerRef", issuerRef);
 
+        var handle = client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(namespace).withName(certName);
+        GenericKubernetesResource existing = handle.get();
+        Map<String, String> releaseLabels = releaseLabelsForCr(existing, namespace, releaseName);
+        if (!releaseLabels.isEmpty()) {
+            // cert-manager copies these onto the Secret it writes, which holds the private key: removed with the
+            // Certificate, it is not issued again.
+            Map<String, Object> secretTemplate = new LinkedHashMap<>();
+            secretTemplate.put("labels", releaseLabels);
+            secretTemplate.put("annotations", KdpsReleaseObjects.annotations(namespace));
+            spec.put("secretTemplate", secretTemplate);
+        } else if (existingSpec(existing).get("secretTemplate") != null) {
+            // Another release's, or the administrator's: what cert-manager copies onto the Secret stays theirs.
+            spec.put("secretTemplate", existingSpec(existing).get("secretTemplate"));
+        }
         var resource = buildGenericCr("cert-manager.io/v1", "Certificate",
                 certName, namespace,
-                Map.of("managed-by", "ambari-k8s-view"),
+                null,
                 Map.of("spec", spec));
-        upsertGenericCr(
-                client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(namespace).withName(certName),
-                resource);
+        setCrMetadata(resource, existing, namespace, releaseLabels);
+        upsertGenericCr(handle, resource);
         LOG.info("cert-manager.Certificate {}/{} applied (issuer={}/{}, sans={})", namespace, certName, issuerKind, issuerName, dnsNames);
+    }
+
+    /**
+     * The release labels a Certificate or ExternalSecret KDPS writes for {@code releaseName} gets: those of the release
+     * when KDPS creates it, when it already is the release's, or when KDPS created it and no release claims it. That
+     * includes one an earlier version wrote under the release's default name ({@code <release>-ingress-tls}, with its
+     * {@code managed-by} label) before it marked what it creates, so the uninstall of a release deployed then removes
+     * it too. One someone else made, such as an administrator under a name typed in the wizard, or one another release
+     * claims, gets none, so the uninstall of the release leaves it: every write sets {@code managed-by}, so that label
+     * alone does not prove KDPS created it.
+     */
+    private static Map<String, String> releaseLabelsForCr(GenericKubernetesResource existing, String namespace,
+                                                          String releaseName) {
+        ObjectMeta meta = existing == null ? null : existing.getMetadata();
+        boolean createdByKdps = meta != null && meta.getAnnotations() != null
+                && "true".equals(meta.getAnnotations().get(KdpsReleaseObjects.ANNOTATION_CREATED));
+        boolean writtenForTheRelease = meta != null && releaseName != null
+                && (releaseName + "-ingress-tls").equals(meta.getName()) && meta.getLabels() != null
+                && "ambari-k8s-view".equals(meta.getLabels().get("managed-by"));
+        return KdpsReleaseObjects.labelsFor(meta, createdByKdps || writtenForTheRelease, namespace, releaseName);
+    }
+
+    /** The spec of a custom resource as it is on the cluster; empty when there is none. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> existingSpec(GenericKubernetesResource existing) {
+        Object spec = existing == null ? null : existing.getAdditionalProperties().get("spec");
+        return spec instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+    }
+
+    /**
+     * The metadata of a Certificate or ExternalSecret KDPS writes: the labels and annotations it already has are kept
+     * (they may be an administrator's, or another release's claim), with {@code releaseLabels} and the release's
+     * namespace added when it is the release's. One KDPS creates is marked {@link KdpsReleaseObjects#ANNOTATION_CREATED},
+     * and gets {@code managed-by}; one that was there only keeps the {@code managed-by} it had, or gets it with the
+     * release labels.
+     */
+    private static void setCrMetadata(GenericKubernetesResource resource, GenericKubernetesResource existing,
+                                      String namespace, Map<String, String> releaseLabels) {
+        ObjectMeta current = existing == null ? null : existing.getMetadata();
+        Map<String, String> labels = new LinkedHashMap<>(
+                current == null || current.getLabels() == null ? Map.of() : current.getLabels());
+        Map<String, String> annotations = new LinkedHashMap<>(
+                current == null || current.getAnnotations() == null ? Map.of() : current.getAnnotations());
+        if (current == null || !releaseLabels.isEmpty()) {
+            labels.put("managed-by", "ambari-k8s-view");
+        }
+        labels.putAll(releaseLabels);
+        if (!releaseLabels.isEmpty()) {
+            annotations.putAll(KdpsReleaseObjects.annotations(namespace));
+        }
+        if (current == null) {
+            annotations.put(KdpsReleaseObjects.ANNOTATION_CREATED, "true");
+        }
+        resource.getMetadata().setLabels(labels);
+        resource.getMetadata().setAnnotations(annotations);
     }
 
     /**
@@ -4779,10 +6244,12 @@ public class KubernetesService {
      * @param storeKind       "ClusterSecretStore" (default) or "SecretStore"
      * @param remoteKey       path/key in the upstream secret store (e.g. "pki/issue/clemlab/foo")
      * @param refreshInterval ESO refresh cadence (e.g. "1h"; "0" disables periodic refresh)
+     * @param releaseName     the release the Secret is for: an ExternalSecret this creates carries its release labels,
+     *                        so its uninstall removes it, and the Secret it owns with it; null labels nothing
      */
     public void applyExternalSecret(String namespace, String esName, String secretName,
                                     String storeName, String storeKind, String remoteKey,
-                                    String refreshInterval) {
+                                    String refreshInterval, String releaseName) {
         checkConfiguration();
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(esName, "esName");
@@ -4806,13 +6273,15 @@ public class KubernetesService {
         dataFrom.put("extract", extract);
         spec.put("dataFrom", java.util.List.of(dataFrom));
 
+        var handle = client.genericKubernetesResources(externalSecretRdc()).inNamespace(namespace).withName(esName);
+        GenericKubernetesResource existing = handle.get();
+        Map<String, String> releaseLabels = releaseLabelsForCr(existing, namespace, releaseName);
         var resource = buildGenericCr("external-secrets.io/" + esoApiVersion(), "ExternalSecret",
                 esName, namespace,
-                Map.of("managed-by", "ambari-k8s-view"),
+                null,
                 Map.of("spec", spec));
-        upsertGenericCr(
-                client.genericKubernetesResources(externalSecretRdc()).inNamespace(namespace).withName(esName),
-                resource);
+        setCrMetadata(resource, existing, namespace, releaseLabels);
+        upsertGenericCr(handle, resource);
         LOG.info("external-secrets.ExternalSecret {}/{} applied (store={}/{}, key={})", namespace, esName, storeKind, storeName, remoteKey);
     }
 
@@ -5185,6 +6654,45 @@ public class KubernetesService {
                 }
                 return sa;
             });
+        }
+    }
+
+    /**
+     * Creates or replaces a {@code kubernetes.io/dockerconfigjson} Secret holding a registry login, such as the one a
+     * Flux HelmRepository of an OCI registry pulls charts with. No service account is patched.
+     *
+     * @param registryServer the registry host the login is for (e.g. {@code registry.example.com})
+     * @param labels         labels to set, may be {@code null}
+     * @throws RuntimeException when the Secret cannot be written
+     */
+    public void createOrUpdateDockerConfigSecret(String namespace, String secretName, String registryServer,
+                                                 String username, String password, Map<String, String> labels) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(registryServer, "registryServer");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        ObjectMeta meta = new ObjectMetaBuilder()
+                .withName(secretName)
+                .withNamespace(namespace)
+                .addToAnnotations("managed-by", "ambari-k8s-view")
+                .addToAnnotations("managed-at", Instant.now().toString())
+                .build();
+        if (labels != null && !labels.isEmpty()) {
+            meta.setLabels(new HashMap<>(labels));
+        }
+        Secret desired = new SecretBuilder()
+                .withMetadata(meta)
+                .withType("kubernetes.io/dockerconfigjson")
+                .addToData(".dockerconfigjson", Base64.getEncoder().encodeToString(
+                        dockerConfigJson(registryServer, username, password).getBytes(StandardCharsets.UTF_8)))
+                .build();
+        try {
+            client.secrets().inNamespace(namespace).resource(desired).createOrReplace();
+            LOG.info("Wrote registry Secret '{}/{}' for {}", namespace, secretName, registryServer);
+        } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
+            throw new RuntimeException("Failed to create/update Secret " + namespace + "/" + secretName + ": "
+                    + e.getMessage(), e);
         }
     }
 
@@ -5620,6 +7128,26 @@ public class KubernetesService {
      * Keys are base64-encoded under the hood by Fabric8 (we pass already-encoded values).
      */
     public void createOrUpdateOpaqueSecret(String namespace, String secretName, Map<String, byte[]> binaryData) {
+        createOrUpdateOpaqueSecret(namespace, secretName, binaryData, null);
+    }
+
+    /**
+     * Create/update a Secret with multiple keys (binary) and labels. An update replaces the whole Secret, so labels an
+     * earlier write set and this one does not are dropped.
+     */
+    public void createOrUpdateOpaqueSecret(String namespace, String secretName, Map<String, byte[]> binaryData,
+                                           Map<String, String> labels) {
+        createOrUpdateOpaqueSecret(namespace, secretName, binaryData, labels, null);
+    }
+
+    /**
+     * Create/update a Secret with multiple keys (binary), labels and annotations, such as those that tell what to
+     * remove with the Secret when its release is uninstalled. An update replaces the whole Secret, so labels and
+     * annotations an earlier write set and this one does not are dropped. The view's own {@code managed-by} and
+     * {@code managed-at} annotations are always set.
+     */
+    public void createOrUpdateOpaqueSecret(String namespace, String secretName, Map<String, byte[]> binaryData,
+                                           Map<String, String> labels, Map<String, String> annotations) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(secretName, "secretName");
         Objects.requireNonNull(binaryData, "binaryData");
@@ -5638,6 +7166,15 @@ public class KubernetesService {
                     .addToAnnotations("managed-by", "ambari-k8s-view")
                     .addToAnnotations("managed-at", java.time.Instant.now().toString())
                     .build();
+            if (labels != null && !labels.isEmpty()) {
+                if (meta.getLabels() == null) meta.setLabels(new HashMap<>());
+                meta.getLabels().putAll(labels);
+            }
+            if (annotations != null && !annotations.isEmpty()) {
+                Map<String, String> merged = new LinkedHashMap<>(annotations);
+                merged.putAll(meta.getAnnotations());
+                meta.setAnnotations(merged);
+            }
 
             Secret desired = new SecretBuilder()
                     .withMetadata(meta)
@@ -5656,6 +7193,105 @@ public class KubernetesService {
 
         } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
             throw new RuntimeException("Failed to create/update Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Writes the keys of the Opaque Secret {@code namespace/secretName}: creates it, or sets these keys on the existing
+     * one, keeping its other keys, labels and annotations. The labels and annotations given are added. No Helm
+     * ownership is set, so a Helm uninstall of the release leaves the Secret in place.
+     *
+     * @param data key to value, stored as UTF-8
+     */
+    public void writeOpaqueSecretKeys(String namespace, String secretName, Map<String, String> data,
+                                      Map<String, String> labels, Map<String, String> annotations) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(data, "data");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        Map<String, String> encoded = new LinkedHashMap<>();
+        data.forEach((key, value) -> encoded.put(key,
+                Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8))));
+        try {
+            Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+            if (existing == null) {
+                Secret created = new SecretBuilder()
+                        .withNewMetadata()
+                            .withName(secretName)
+                            .withNamespace(namespace)
+                            .withLabels(labels == null ? Map.of() : labels)
+                            .withAnnotations(annotations == null ? Map.of() : annotations)
+                        .endMetadata()
+                        .withType("Opaque")
+                        .withData(encoded)
+                        .build();
+                client.secrets().inNamespace(namespace).resource(created).create();
+                LOG.info("Created Secret '{}/{}' with keys {}", namespace, secretName, data.keySet());
+                return;
+            }
+            client.secrets().inNamespace(namespace).withName(secretName).edit(secret -> {
+                Map<String, String> merged = new LinkedHashMap<>(secret.getData() == null ? Map.of() : secret.getData());
+                merged.putAll(encoded);
+                secret.setData(merged);
+                if (secret.getStringData() != null) secret.getStringData().keySet().removeAll(encoded.keySet());
+                secret.getMetadata().setLabels(withAdded(secret.getMetadata().getLabels(), labels));
+                secret.getMetadata().setAnnotations(withAdded(secret.getMetadata().getAnnotations(), annotations));
+                return secret;
+            });
+            LOG.info("Set keys {} of Secret '{}/{}'", data.keySet(), namespace, secretName);
+        } catch (KubernetesClientException e) {
+            throw new RuntimeException("Failed to write Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Removes one annotation of the Secret {@code namespace/secretName}, leaving the rest of it as it is. A Secret that
+     * does not exist, or does not carry the annotation, is left alone.
+     */
+    public void removeSecretAnnotation(String namespace, String secretName, String annotation) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        Objects.requireNonNull(annotation, "annotation");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        try {
+            Secret existing = client.secrets().inNamespace(namespace).withName(secretName).get();
+            if (existing == null || existing.getMetadata().getAnnotations() == null
+                    || !existing.getMetadata().getAnnotations().containsKey(annotation)) {
+                return;
+            }
+            client.secrets().inNamespace(namespace).withName(secretName).edit(secret -> {
+                Map<String, String> annotations = new LinkedHashMap<>(secret.getMetadata().getAnnotations());
+                annotations.remove(annotation);
+                secret.getMetadata().setAnnotations(annotations);
+                return secret;
+            });
+            LOG.info("Removed annotation {} from Secret '{}/{}'", annotation, namespace, secretName);
+        } catch (KubernetesClientException e) {
+            throw new RuntimeException("Failed to update Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static Map<String, String> withAdded(Map<String, String> current, Map<String, String> added) {
+        Map<String, String> merged = new LinkedHashMap<>(current == null ? Map.of() : current);
+        if (added != null) merged.putAll(added);
+        return merged;
+    }
+
+    /**
+     * Whether the persistent volume claim {@code namespace/name} exists, e.g. the volume of a database that keeps the
+     * passwords it was initialized with.
+     *
+     * @return {@code null} when that cannot be read (e.g. no permission to read volume claims)
+     */
+    public Boolean persistentVolumeClaimExists(String namespace, String name) {
+        checkConfiguration();
+        try {
+            return client.persistentVolumeClaims().inNamespace(namespace).withName(name).get() != null;
+        } catch (KubernetesClientException e) {
+            LOG.warn("Could not read the volume claim {}/{}: {}", namespace, name, e.getMessage());
+            return null;
         }
     }
 
@@ -5712,6 +7348,31 @@ public class KubernetesService {
         } catch (io.fabric8.kubernetes.client.KubernetesClientException e) {
             throw new RuntimeException("Failed to create/update TLS Secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Adds labels and annotations to an existing Secret, leaving its keys and its other labels and annotations as they
+     * are: how a Secret KDPS wrote before it labelled what it creates, and now keeps as it is, is given the release
+     * labels. Its data is not written again, so a key the caller does not know of is not lost.
+     */
+    public void addSecretLabels(String namespace, String secretName, Map<String, String> labels,
+                                Map<String, String> annotations) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        client.secrets().inNamespace(namespace).withName(secretName).edit(secret -> {
+            ObjectMeta meta = secret.getMetadata();
+            Map<String, String> merged = new LinkedHashMap<>(meta.getLabels() == null ? Map.of() : meta.getLabels());
+            if (labels != null) merged.putAll(labels);
+            meta.setLabels(merged);
+            Map<String, String> mergedAnnotations =
+                    new LinkedHashMap<>(meta.getAnnotations() == null ? Map.of() : meta.getAnnotations());
+            if (annotations != null) mergedAnnotations.putAll(annotations);
+            meta.setAnnotations(mergedAnnotations);
+            return secret;
+        });
+        LOG.info("Labelled Secret '{}/{}' with {}", namespace, secretName, labels);
     }
 
     /**
@@ -5966,6 +7627,131 @@ public class KubernetesService {
     }
 
     /**
+     * The Secrets of one namespace carrying a label with the given value.
+     *
+     * @param namespace  the namespace
+     * @param labelKey   the label
+     * @param labelValue its value
+     * @return the Secrets, with their data
+     */
+    public List<Secret> listSecretsWithLabel(String namespace, String labelKey, String labelValue) {
+        checkConfiguration();
+        checkNamespaceAllowed(namespace);
+        return executeWithAuthRetry("list the Secrets labelled " + labelKey + " in namespace " + namespace,
+                () -> client.secrets().inNamespace(namespace).withLabel(labelKey, labelValue).list().getItems());
+    }
+
+    /**
+     * The Secrets of a namespace the view keeps for itself, such as the truststore project, carrying a label with the
+     * given value. Unlike {@link #listSecretsWithLabel}, the namespace is not checked against
+     * {@code k8s.view.allowed.namespaces}: that list limits the projects releases are deployed to, and the view writes
+     * the Secrets of its own namespaces without it, so reading them must not depend on it either.
+     *
+     * @param namespace  the namespace
+     * @param labelKey   the label
+     * @param labelValue its value
+     * @return the Secrets, with their data
+     */
+    public List<Secret> listViewSecretsWithLabel(String namespace, String labelKey, String labelValue) {
+        checkConfiguration();
+        return executeWithAuthRetry("list the Secrets labelled " + labelKey + " in namespace " + namespace,
+                () -> client.secrets().inNamespace(namespace).withLabel(labelKey, labelValue).list().getItems());
+    }
+
+    /**
+     * The Secrets the view wrote in one namespace that do not carry a label, such as those an earlier version of the
+     * view wrote before it labelled them.
+     *
+     * @param namespace the namespace
+     * @param labelKey  the label the Secrets lack
+     * @return the Secrets annotated managed-by=ambari-k8s-view, with their data
+     */
+    public List<Secret> listViewManagedSecretsWithoutLabel(String namespace, String labelKey) {
+        checkConfiguration();
+        checkNamespaceAllowed(namespace);
+        // Helm keeps each revision of a release in a Secret labelled owner=helm, often large: left out by the server.
+        List<Secret> secrets = executeWithAuthRetry("list the Secrets without label " + labelKey + " in namespace "
+                + namespace, () -> client.secrets().inNamespace(namespace).withoutLabel(labelKey)
+                .withLabelNotIn("owner", "helm").list().getItems());
+        List<Secret> managed = new ArrayList<>();
+        for (Secret secret : secrets == null ? List.<Secret>of() : secrets) {
+            if (secret.getMetadata() == null || "helm.sh/release.v1".equals(secret.getType())
+                    || (secret.getMetadata().getLabels() != null
+                        && "helm".equals(secret.getMetadata().getLabels().get("owner")))) {
+                continue;
+            }
+            Map<String, String> annotations = secret.getMetadata().getAnnotations();
+            if (annotations != null && "ambari-k8s-view".equals(annotations.get("managed-by"))) {
+                managed.add(secret);
+            }
+        }
+        return managed;
+    }
+
+    /** The pod template annotation whose new value makes a workload roll its pods, as kubectl rollout restart does. */
+    static final String RESTARTED_AT_ANNOTATION = "kdps.clemlab.com/restartedAt";
+
+    /**
+     * Restarts the pods of a Helm release the way {@code kubectl rollout restart} does: stamps the pod template of each
+     * of its Deployments, StatefulSets and DaemonSets with the current time, and each workload then replaces its pods
+     * following its own update strategy. A Helm upgrade whose values did not change leaves the pods running, so this
+     * is how pods pick up a keytab or a client secret that changed in a Secret they read at startup.
+     *
+     * @param namespace   the release's namespace
+     * @param releaseName the Helm release, named by the meta.helm.sh/release-name annotation Helm puts on what it
+     *                    installs, or by the app.kubernetes.io/instance label
+     * @return the workloads restarted, as "Kind name"; empty when the release has none
+     */
+    public List<String> restartReleaseWorkloads(String namespace, String releaseName) {
+        checkConfiguration();
+        checkNamespaceAllowed(namespace);
+        String patch = "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"" + RESTARTED_AT_ANNOTATION
+                + "\":\"" + Instant.now() + "\"}}}}}";
+        PatchContext merge = PatchContext.of(io.fabric8.kubernetes.client.dsl.base.PatchType.JSON_MERGE);
+        return executeWithAuthRetry("restart the pods of release " + releaseName + " in namespace " + namespace, () -> {
+            List<String> restarted = new ArrayList<>();
+            var deployments = client.apps().deployments().inNamespace(namespace);
+            for (HasMetadata workload : deployments.list().getItems()) {
+                if (belongsToRelease(workload, namespace, releaseName)) {
+                    deployments.withName(workload.getMetadata().getName()).patch(merge, patch);
+                    restarted.add("Deployment " + workload.getMetadata().getName());
+                }
+            }
+            var statefulSets = client.apps().statefulSets().inNamespace(namespace);
+            for (HasMetadata workload : statefulSets.list().getItems()) {
+                if (belongsToRelease(workload, namespace, releaseName)) {
+                    statefulSets.withName(workload.getMetadata().getName()).patch(merge, patch);
+                    restarted.add("StatefulSet " + workload.getMetadata().getName());
+                }
+            }
+            var daemonSets = client.apps().daemonSets().inNamespace(namespace);
+            for (HasMetadata workload : daemonSets.list().getItems()) {
+                if (belongsToRelease(workload, namespace, releaseName)) {
+                    daemonSets.withName(workload.getMetadata().getName()).patch(merge, patch);
+                    restarted.add("DaemonSet " + workload.getMetadata().getName());
+                }
+            }
+            return restarted;
+        });
+    }
+
+    /** Whether a resource was installed by a Helm release, see {@link #restartReleaseWorkloads}. */
+    private static boolean belongsToRelease(HasMetadata resource, String namespace, String releaseName) {
+        ObjectMeta meta = resource.getMetadata();
+        if (meta == null || meta.getName() == null) {
+            return false;
+        }
+        Map<String, String> annotations = meta.getAnnotations();
+        String helmRelease = annotations == null ? null : annotations.get("meta.helm.sh/release-name");
+        if (helmRelease != null) {
+            String releaseNamespace = annotations.get("meta.helm.sh/release-namespace");
+            return helmRelease.equals(releaseName) && (releaseNamespace == null || releaseNamespace.equals(namespace));
+        }
+        Map<String, String> labels = meta.getLabels();
+        return labels != null && releaseName.equals(labels.get("app.kubernetes.io/instance"));
+    }
+
+    /**
      * Lists Kubernetes Secrets matching a label selector.
      * Used for discovering Managed Configurations.
      * Returns a list of maps {label: "Name (ns)", value: "secretName", ...metadata}
@@ -6083,11 +7869,97 @@ public class KubernetesService {
         return name != null && name.startsWith("sh.helm.release.v1");
     }
 
+    /** Label that marks a Secret as a configuration file managed from the Config Profiles page. */
+    public static final String MANAGED_CONFIG_LABEL = "ambari.clemlab.com/managed-config";
+
+    /**
+     * The configuration Secret {@code namespace/name}, provided the view manages it as a configuration file
+     * (label {@code ambari.clemlab.com/managed-config=true}). Any other Secret is reported as missing, so the
+     * configuration endpoints cannot be used to read or delete keytabs, passwords, TLS keys or Helm state, and do
+     * not even confirm that such a Secret exists.
+     *
+     * @param namespace Kubernetes namespace of the Secret
+     * @param name      Secret name
+     * @return the managed configuration Secret
+     * @throws NoSuchElementException when there is no such Secret or it is not a managed configuration
+     * @throws SecurityException      when the namespace is outside {@code k8s.view.allowed.namespaces}
+     */
+    public Secret requireManagedConfig(String namespace, String name) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(name, "name");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        Secret secret = client.secrets().inNamespace(namespace).withName(name).get();
+        if (secret == null || !isManagedConfig(secret)) {
+            throw new NoSuchElementException("No managed configuration named '" + name + "' in namespace '" + namespace + "'.");
+        }
+        return secret;
+    }
+
+    /**
+     * Refuses to write a managed configuration over a Secret the view does not manage as one. Saving rewrites the
+     * whole Secret with a single key, so replacing, say, a keytab Secret would destroy it.
+     *
+     * @param namespace Kubernetes namespace of the Secret
+     * @param name      Secret name
+     * @throws ManagedConfigConflictException when a Secret of that name exists without the managed-config label
+     * @throws SecurityException              when the namespace is outside {@code k8s.view.allowed.namespaces}
+     */
+    public void requireWritableManagedConfig(String namespace, String name) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(name, "name");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        Secret existing = client.secrets().inNamespace(namespace).withName(name).get();
+        if (existing != null && !isManagedConfig(existing)) {
+            throw new ManagedConfigConflictException("A Secret named '" + name + "' already exists in namespace '"
+                    + namespace + "' and is not a managed configuration. Choose another name.");
+        }
+    }
+
+    /** A managed configuration would replace a Secret the view does not manage as one. */
+    public static class ManagedConfigConflictException extends IllegalStateException {
+        public ManagedConfigConflictException(String message) {
+            super(message);
+        }
+    }
+
+    private static boolean isManagedConfig(Secret secret) {
+        Map<String, String> labels = secret.getMetadata() == null ? null : secret.getMetadata().getLabels();
+        return labels != null && "true".equals(labels.get(MANAGED_CONFIG_LABEL));
+    }
+
     /**
      * Reads the content of a managed configuration secret to display in the UI editor.
+     *
+     * @return the file content, or an empty string when the Secret has no such key
+     * @throws NoSuchElementException when there is no such Secret or it is not a managed configuration
      */
     public String getManagedConfigContent(String namespace, String name, String filename) {
-        return readOpaqueSecretKeyAsString(namespace, name, filename).orElse("");
+        Objects.requireNonNull(filename, "filename");
+        Secret secret = requireManagedConfig(namespace, name);
+        String b64 = secret.getData() == null ? null : secret.getData().get(filename);
+        if (b64 == null || b64.isBlank()) {
+            return "";
+        }
+        try {
+            return new String(Base64.getDecoder().decode(b64), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException ex) {
+            LOG.warn("Value for key '{}' in managed configuration '{}/{}' is not valid base64: {}",
+                    filename, namespace, name, ex.toString());
+            return "";
+        }
+    }
+
+    /**
+     * Deletes a managed configuration Secret; any other Secret is left alone.
+     *
+     * @throws NoSuchElementException when there is no such Secret or it is not a managed configuration
+     */
+    public void deleteManagedConfig(String namespace, String name) {
+        requireManagedConfig(namespace, name);
+        client.secrets().inNamespace(namespace).withName(name).delete();
+        LOG.info("Deleted managed configuration '{}/{}'", namespace, name);
     }
 
     /**
@@ -6101,6 +7973,576 @@ public class KubernetesService {
         client.secrets().inNamespace(namespace).withName(name).delete();
     }
 
+    /** One namespaced kind of object KDPS creates for a release: how to list it by labels and delete one by name. */
+    private record KdpsObjectKind(
+            String kind,
+            java.util.function.BiFunction<String, Map<String, String>, List<? extends HasMetadata>> list,
+            java.util.function.BiConsumer<String, String> delete) {
+    }
+
+    /**
+     * The namespaced kinds of objects KDPS creates for a release (see {@link KdpsReleaseObjects}), in the order the
+     * uninstall removes them: a Certificate before the Secret cert-manager writes from it, which it would otherwise
+     * issue again, and the bindings before the roles and accounts they bind.
+     */
+    private List<KdpsObjectKind> kdpsObjectKinds() {
+        return List.of(
+                new KdpsObjectKind(KdpsReleaseObjects.CERTIFICATE,
+                        (ns, sel) -> client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(ns)
+                                .withLabels(sel).list().getItems(),
+                        (ns, name) -> client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(ns)
+                                .withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.EXTERNAL_SECRET,
+                        (ns, sel) -> client.genericKubernetesResources(externalSecretRdc()).inNamespace(ns)
+                                .withLabels(sel).list().getItems(),
+                        (ns, name) -> client.genericKubernetesResources(externalSecretRdc()).inNamespace(ns)
+                                .withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.SECRET,
+                        (ns, sel) -> client.secrets().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.secrets().inNamespace(ns).withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.CONFIG_MAP,
+                        (ns, sel) -> client.configMaps().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.configMaps().inNamespace(ns).withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.ROLE_BINDING,
+                        (ns, sel) -> client.rbac().roleBindings().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.rbac().roleBindings().inNamespace(ns).withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.ROLE,
+                        (ns, sel) -> client.rbac().roles().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.rbac().roles().inNamespace(ns).withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.SERVICE_ACCOUNT,
+                        (ns, sel) -> client.serviceAccounts().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.serviceAccounts().inNamespace(ns).withName(name).delete()));
+    }
+
+    /** The HTTP status of an API failure, or 0 when it is not one. */
+    private static int apiStatus(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof KubernetesClientException kce) return kce.getCode();
+        }
+        return 0;
+    }
+
+    /**
+     * The objects KDPS created for {@code releaseName} in {@code namespace}, as {@code <Kind>/<name>}: those carrying
+     * its release labels (see {@link KdpsReleaseObjects}), the cluster-scoped ones (the autoscaler's
+     * ClusterRoleBinding) included when this account may list them. What cannot be listed, such as a kind whose
+     * operator is not installed, is left out. Recorded with the release, and shown before it is uninstalled.
+     */
+    public List<String> listKdpsObjectsForRelease(String namespace, String releaseName) {
+        checkConfiguration();
+        List<String> found = new ArrayList<>();
+        if (!KdpsReleaseObjects.labelable(releaseName)) return found;
+        Map<String, String> selector = KdpsReleaseObjects.selector(releaseName);
+        for (KdpsObjectKind kind : kdpsObjectKinds()) {
+            try {
+                for (HasMetadata o : kind.list().apply(namespace, selector)) {
+                    if (KdpsReleaseObjects.ofRelease(o.getMetadata(), namespace, releaseName)) {
+                        found.add(KdpsReleaseObjects.ref(kind.kind(), o.getMetadata().getName()));
+                    }
+                }
+            } catch (RuntimeException e) {
+                LOG.debug("Could not list the {} objects of release {}/{}: {}", kind.kind(), namespace, releaseName,
+                        e.toString());
+            }
+        }
+        try {
+            for (ClusterRoleBinding crb : client.rbac().clusterRoleBindings().withLabels(selector).list().getItems()) {
+                if (KdpsReleaseObjects.ofRelease(crb.getMetadata(), namespace, releaseName)) {
+                    found.add(KdpsReleaseObjects.ref(KdpsReleaseObjects.CLUSTER_ROLE_BINDING,
+                            crb.getMetadata().getName()));
+                }
+            }
+        } catch (RuntimeException e) {
+            // A project-limited account may not list cluster-scoped objects; it never creates any either.
+            LOG.debug("Could not list the ClusterRoleBindings of release {}/{}: {}", namespace, releaseName,
+                    e.toString());
+        }
+        return found;
+    }
+
+    /**
+     * Removes what KDPS created for a release outside its chart, once the release is uninstalled: every Secret,
+     * ConfigMap, ServiceAccount, Role, RoleBinding, cert-manager Certificate and ExternalSecret of the namespace that
+     * carries the release's labels (see {@link KdpsReleaseObjects}), and the ClusterRoleBindings the release's record
+     * says KDPS created for it. An object without those labels (one an administrator provided, or one shared by the
+     * releases of the project) is never touched, and neither is one another uninstall step removes (single sign-on,
+     * Atlas tag sync, SCC grants), which carries its own {@code managed-by} value.
+     *
+     * <p>A labelled Secret the Ingress of another release still uses (two releases given the same certificate) is kept
+     * and handed to that release (see {@link #handOver}), and so is the Certificate or ExternalSecret that keeps it.
+     * The autoscaler objects KDPS cannot prove it created ({@link KdpsReleaseObjects#ANNOTATION_ORIGIN}) are kept too,
+     * with the command that deletes them. When the Ingresses of the namespace cannot be listed, which other release
+     * uses a certificate is unknown: the release's certificate Secrets, Certificates and ExternalSecrets are then left,
+     * with the command that deletes them, rather than taken from a release that may still use them.
+     *
+     * <p>Never throws: what this account may not list or delete is reported as left, with the command that removes
+     * it, rather than failing an uninstall whose release is already gone. A Certificate or ExternalSecret it may not
+     * list is not, unless the release's record names one: the account holds no rights on those operators' kinds
+     * where it does not use them, so it made none.
+     *
+     * @param recordedObjects the objects the release's record names, as {@code <Kind>/<name>}: a ClusterRoleBinding
+     *                        is only deleted when named there (KDPS created it) and still carrying the release's
+     *                        labels
+     * @return what was removed and what is left
+     */
+    public KdpsReleaseObjects.Cleanup revokeKdpsObjectsForRelease(String namespace, String releaseName,
+                                                                  List<String> recordedObjects) {
+        List<String> removed = new ArrayList<>();
+        List<KdpsReleaseObjects.Leftover> left = new ArrayList<>();
+        if (client == null || namespace == null || namespace.isBlank() || !KdpsReleaseObjects.labelable(releaseName)) {
+            return new KdpsReleaseObjects.Cleanup(removed, left);
+        }
+        List<KdpsReleaseObjects.Leftover> kept = new ArrayList<>();
+        Map<String, String> selector = KdpsReleaseObjects.selector(releaseName);
+        // Listed once, on the first certificate object met; empty when the Ingresses could not be listed.
+        Optional<Map<String, List<Ingress>>> usedByOthers = null;
+        for (KdpsObjectKind kind : kdpsObjectKinds()) {
+            List<? extends HasMetadata> items;
+            try {
+                items = kind.list().apply(namespace, selector);
+            } catch (RuntimeException e) {
+                int status = apiStatus(e);
+                if (status == 404) {
+                    continue; // the kind is not served: its operator is not installed, so KDPS created none
+                }
+                if (status == 403 && isOperatorKind(kind.kind()) && !recordsKind(recordedObjects, kind.kind())) {
+                    // A project-limited account is refused the list of an operator's kind it holds no rights on, even
+                    // when the operator is not installed. KDPS made none for the release then: it could not have,
+                    // and its record names none.
+                    LOG.debug("Uninstall of {}/{}: may not list {} objects, and the release has none recorded",
+                            namespace, releaseName, kind.kind());
+                    continue;
+                }
+                LOG.warn("Uninstall of {}/{}: could not list its {} objects: {}", namespace, releaseName, kind.kind(),
+                        e.toString());
+                String reason = status == 403
+                        ? "this account may not list them" : "they could not be listed: " + rootMessage(e);
+                left.add(new KdpsReleaseObjects.Leftover(kind.kind() + " objects of the release", reason,
+                        KdpsReleaseObjects.deleteAllCommand(kind.kind(), releaseName, namespace)));
+                continue;
+            }
+            for (HasMetadata o : items) {
+                if (!KdpsReleaseObjects.ofRelease(o.getMetadata(), namespace, releaseName)) continue;
+                String name = o.getMetadata().getName();
+                // A Secret, or the Certificate or ExternalSecret that keeps one, whose Secret the Ingress of another
+                // release uses: deleting the operator's object would take that release's certificate away too (the
+                // External Secrets Operator's Secret is owned by its ExternalSecret, and cert-manager stops renewing).
+                String secret = KdpsReleaseObjects.SECRET.equals(kind.kind()) ? name : targetSecretOf(kind.kind(), o);
+                if (secret != null) {
+                    if (usedByOthers == null) usedByOthers = secretsUsedByOtherReleases(namespace, releaseName);
+                    if (usedByOthers.isEmpty()) {
+                        // Without the Ingresses, a certificate another release may still use cannot be told from
+                        // one no release uses: leave it rather than take a certificate away. Any other Secret (a
+                        // keytab, a truststore) is no Ingress's certificate and goes.
+                        if (!KdpsReleaseObjects.SECRET.equals(kind.kind()) || isCertificateSecret(o)) {
+                            left.add(new KdpsReleaseObjects.Leftover(KdpsReleaseObjects.ref(kind.kind(), name),
+                                    "could not check whether another release's Ingress still uses it",
+                                    KdpsReleaseObjects.deleteCommand(kind.kind(), name, namespace)));
+                            continue;
+                        }
+                    } else {
+                        List<Ingress> users = usedByOthers.get().get(secret);
+                        if (users != null && !users.isEmpty()) {
+                            kept.add(handOver(kind.kind(), namespace, name, secret, users));
+                            continue;
+                        }
+                    }
+                }
+                deleteKdpsObject(kind.kind(), namespace, name, () -> kind.delete().accept(namespace, name), removed,
+                        left);
+            }
+        }
+        kept.addAll(unconfirmedObjectsOfRelease(namespace, releaseName));
+        for (String ref : recordedObjects == null ? List.<String>of() : recordedObjects) {
+            String prefix = KdpsReleaseObjects.CLUSTER_ROLE_BINDING + "/";
+            if (ref == null || !ref.startsWith(prefix)) continue;
+            String name = ref.substring(prefix.length());
+            ClusterRoleBinding crb;
+            try {
+                crb = client.rbac().clusterRoleBindings().withName(name).get();
+            } catch (RuntimeException e) {
+                left.add(new KdpsReleaseObjects.Leftover(ref, apiStatus(e) == 403
+                        ? "this account may not read it" : "it could not be read: " + rootMessage(e),
+                        KdpsReleaseObjects.deleteCommand(KdpsReleaseObjects.CLUSTER_ROLE_BINDING, name, namespace)));
+                continue;
+            }
+            // Gone, or no longer the release's (made again by someone else): nothing of the release to remove.
+            if (crb == null || !KdpsReleaseObjects.ofRelease(crb.getMetadata(), namespace, releaseName)) continue;
+            deleteKdpsObject(KdpsReleaseObjects.CLUSTER_ROLE_BINDING, namespace, name,
+                    () -> client.rbac().clusterRoleBindings().withName(name).delete(), removed, left);
+        }
+        if (!removed.isEmpty() || !left.isEmpty() || !kept.isEmpty()) {
+            LOG.info("Uninstall of {}/{}: removed the objects KDPS created for it {}; left {}; kept {}", namespace,
+                    releaseName, removed, left, kept);
+        }
+        return new KdpsReleaseObjects.Cleanup(removed, left, kept);
+    }
+
+    /** Whether {@code kind} is served by an operator a cluster may not have (cert-manager, External Secrets). */
+    private static boolean isOperatorKind(String kind) {
+        return KdpsReleaseObjects.CERTIFICATE.equals(kind) || KdpsReleaseObjects.EXTERNAL_SECRET.equals(kind);
+    }
+
+    /** Whether the release's record names an object of {@code kind}. */
+    private static boolean recordsKind(List<String> recordedObjects, String kind) {
+        return recordedObjects != null && recordedObjects.stream().anyMatch(o -> o != null && o.startsWith(kind + "/"));
+    }
+
+    /**
+     * The Secrets of {@code namespace} the Ingresses of other releases use for their certificate, each with those
+     * Ingresses. An Ingress of the release being uninstalled does not count: it is on its way out (Flux removes it a
+     * little after the uninstall). Empty, rather than an empty map, when the Ingresses cannot be listed: the caller
+     * must then not take any certificate for unused.
+     */
+    private Optional<Map<String, List<Ingress>>> secretsUsedByOtherReleases(String namespace, String releaseName) {
+        Map<String, List<Ingress>> used = new LinkedHashMap<>();
+        try {
+            for (Ingress ingress : client.network().v1().ingresses().inNamespace(namespace).list().getItems()) {
+                if (ofHelmRelease(ingress.getMetadata(), namespace, releaseName) || ingress.getSpec() == null
+                        || ingress.getSpec().getTls() == null) {
+                    continue;
+                }
+                for (var tls : ingress.getSpec().getTls()) {
+                    if (tls.getSecretName() != null) {
+                        used.computeIfAbsent(tls.getSecretName(), k -> new ArrayList<>()).add(ingress);
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("Uninstall of {}/{}: could not list the Ingresses of the namespace to find the certificates other"
+                    + " releases use; its certificates are left: {}", namespace, releaseName, e.toString());
+            return Optional.empty();
+        }
+        return Optional.of(used);
+    }
+
+    /**
+     * Whether a Secret holds a certificate an Ingress can use: of type {@code kubernetes.io/tls}, or with a
+     * {@code tls.crt} key (an External Secrets Operator target may be Opaque).
+     */
+    private static boolean isCertificateSecret(HasMetadata o) {
+        if (!(o instanceof Secret s)) return true; // not readable as a Secret: assume the worst
+        return "kubernetes.io/tls".equals(s.getType())
+                || (s.getData() != null && s.getData().containsKey("tls.crt"))
+                || (s.getStringData() != null && s.getStringData().containsKey("tls.crt"));
+    }
+
+    /** Whether Helm made the object for {@code releaseName} of {@code namespace}. */
+    private static boolean ofHelmRelease(ObjectMeta meta, String namespace, String releaseName) {
+        if (meta == null) return false;
+        Map<String, String> annotations = meta.getAnnotations() == null ? Map.of() : meta.getAnnotations();
+        if (releaseName.equals(annotations.get(KdpsReleaseObjects.HELM_RELEASE_NAME))) {
+            String ns = annotations.get(KdpsReleaseObjects.HELM_RELEASE_NAMESPACE);
+            return ns == null || ns.equals(namespace);
+        }
+        return meta.getLabels() != null && releaseName.equals(meta.getLabels().get(KdpsReleaseObjects.LABEL_INSTANCE));
+    }
+
+    /** The release Helm made {@code ingress} for, or null when not known. */
+    private static String helmReleaseOf(Ingress ingress) {
+        Map<String, String> annotations = ingress.getMetadata().getAnnotations();
+        String release = annotations == null ? null : annotations.get(KdpsReleaseObjects.HELM_RELEASE_NAME);
+        if (release == null && ingress.getMetadata().getLabels() != null) {
+            release = ingress.getMetadata().getLabels().get(KdpsReleaseObjects.LABEL_INSTANCE);
+        }
+        return release;
+    }
+
+    /**
+     * The Secret a Certificate ({@code spec.secretName}) or an ExternalSecret ({@code spec.target.name}, by default its
+     * own name) keeps; null for any other kind, or when it names none.
+     */
+    private static String targetSecretOf(String kind, HasMetadata o) {
+        if (!(o instanceof GenericKubernetesResource cr)) return null;
+        Map<String, Object> spec = existingSpec(cr);
+        if (KdpsReleaseObjects.CERTIFICATE.equals(kind)) {
+            Object secretName = spec.get("secretName");
+            return secretName == null ? null : String.valueOf(secretName);
+        }
+        if (KdpsReleaseObjects.EXTERNAL_SECRET.equals(kind)) {
+            Object target = spec.get("target");
+            Object targetName = target instanceof Map<?, ?> t ? t.get("name") : null;
+            return targetName == null || String.valueOf(targetName).isBlank()
+                    ? cr.getMetadata().getName() : String.valueOf(targetName);
+        }
+        return null;
+    }
+
+    /**
+     * Keeps an object of the uninstalled release whose Secret the Ingresses of other releases still use (two releases
+     * given the same certificate): the Secret itself, or the Certificate or ExternalSecret that keeps it. Deleting it
+     * would take their certificate away. It goes with the release using it when there is one, so that release's
+     * uninstall removes it; with several, or one Helm did not make, it is no release's any more and stays. A
+     * Certificate's Secret template goes along, since cert-manager copies it onto the Secret.
+     */
+    private KdpsReleaseObjects.Leftover handOver(String kind, String namespace, String name, String secret,
+                                                 List<Ingress> users) {
+        java.util.Set<String> releases = new java.util.LinkedHashSet<>();
+        users.forEach(i -> releases.add(helmReleaseOf(i)));
+        String heir = releases.size() == 1 ? releases.iterator().next() : null;
+        boolean handedOver = heir != null && KdpsReleaseObjects.labelable(heir);
+        String newRelease = handedOver ? heir : null;
+        try {
+            if (KdpsReleaseObjects.SECRET.equals(kind)) {
+                client.secrets().inNamespace(namespace).withName(name).edit(s -> {
+                    s.getMetadata().setLabels(handedOverLabels(s.getMetadata().getLabels(), newRelease));
+                    return s;
+                });
+            } else {
+                var rdc = KdpsReleaseObjects.CERTIFICATE.equals(kind) ? CERT_MANAGER_CERT_RDC : externalSecretRdc();
+                client.genericKubernetesResources(rdc).inNamespace(namespace).withName(name).edit(cr -> {
+                    cr.getMetadata().setLabels(handedOverLabels(cr.getMetadata().getLabels(), newRelease));
+                    if (existingSpec(cr).get("secretTemplate") instanceof Map<?, ?> template
+                            && template.get("labels") instanceof Map<?, ?> templateLabels) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> editable = (Map<String, Object>) template;
+                        editable.put("labels", handedOverLabels(templateLabels, newRelease));
+                    }
+                    return cr;
+                });
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("Could not hand {} {}/{} over to the releases still using it: {}", kind, namespace, name,
+                    e.toString());
+        }
+        String ingresses = String.join(", ", users.stream().map(i -> i.getMetadata().getName()).toList());
+        String usedBy = (KdpsReleaseObjects.SECRET.equals(kind) ? "" : "its Secret " + secret + " is ")
+                + "still used by the Ingress " + ingresses;
+        return new KdpsReleaseObjects.Leftover(KdpsReleaseObjects.ref(kind, name),
+                usedBy + (handedOver ? " of release " + heir + ", whose uninstall removes it"
+                        : " of other releases"), null);
+    }
+
+    /**
+     * {@code labels} with the release label naming {@code release}, or, with no release, without the release selector:
+     * the object is then no release's.
+     */
+    private static Map<String, String> handedOverLabels(Map<?, ?> labels, String release) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (labels != null) labels.forEach((k, v) -> out.put(String.valueOf(k), String.valueOf(v)));
+        if (release != null) {
+            out.put(KdpsReleaseObjects.LABEL_RELEASE, release);
+        } else {
+            out.remove(KdpsReleaseObjects.LABEL_RELEASE);
+            out.remove(KdpsReleaseObjects.LABEL_MANAGED_BY);
+        }
+        return out;
+    }
+
+    /**
+     * The objects of a release KDPS cannot prove it created (see {@link KdpsReleaseObjects#ANNOTATION_ORIGIN}), with
+     * the command that deletes each: left for the operator, who knows whether an administrator made them for another
+     * use. What cannot be listed is left out.
+     */
+    private List<KdpsReleaseObjects.Leftover> unconfirmedObjectsOfRelease(String namespace, String releaseName) {
+        List<KdpsReleaseObjects.Leftover> found = new ArrayList<>();
+        Map<String, String> selector = Map.of(KdpsReleaseObjects.LABEL_RELEASE, releaseName);
+        for (KdpsObjectKind kind : kdpsObjectKinds()) {
+            if (isOperatorKind(kind.kind())) continue;
+            try {
+                for (HasMetadata o : kind.list().apply(namespace, selector)) {
+                    ObjectMeta meta = o.getMetadata();
+                    Map<String, String> annotations = meta.getAnnotations() == null ? Map.of() : meta.getAnnotations();
+                    String origin = annotations.get(KdpsReleaseObjects.ANNOTATION_ORIGIN);
+                    if (!KdpsReleaseObjects.ORIGIN_UNCONFIRMED.equals(origin)
+                            || KdpsReleaseObjects.ofRelease(meta, namespace, releaseName)
+                            || !namespace.equals(annotations.getOrDefault(KdpsReleaseObjects.ANNOTATION_NAMESPACE,
+                                    namespace))) {
+                        continue;
+                    }
+                    found.add(new KdpsReleaseObjects.Leftover(KdpsReleaseObjects.ref(kind.kind(), meta.getName()),
+                            "made for the release's autoscaler before KDPS marked what it creates, or by an"
+                                    + " administrator: delete it unless something else uses it",
+                            KdpsReleaseObjects.deleteCommand(kind.kind(), meta.getName(), namespace)));
+                }
+            } catch (RuntimeException e) {
+                LOG.debug("Could not list the unconfirmed {} objects of release {}/{}: {}", kind.kind(), namespace,
+                        releaseName, e.toString());
+            }
+        }
+        return found;
+    }
+
+    /** Deletes one object of a release, recording it as removed, or as left with why and the command to run. */
+    private static void deleteKdpsObject(String kind, String namespace, String name, Runnable delete,
+                                         List<String> removed, List<KdpsReleaseObjects.Leftover> left) {
+        String ref = KdpsReleaseObjects.ref(kind, name);
+        try {
+            delete.run();
+            removed.add(ref);
+        } catch (RuntimeException e) {
+            int status = apiStatus(e);
+            if (status == 404) return; // already gone
+            LOG.warn("Could not delete {} of {}: {}", ref, namespace, e.toString());
+            left.add(new KdpsReleaseObjects.Leftover(ref, status == 403
+                    ? "this account may not delete it" : "it could not be deleted: " + rootMessage(e),
+                    KdpsReleaseObjects.deleteCommand(kind, name, namespace)));
+        }
+    }
+
+    /** The innermost message of a failure. */
+    private static String rootMessage(Throwable e) {
+        String message = e.toString();
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t.getMessage() != null && !t.getMessage().isBlank()) message = t.getMessage();
+        }
+        return message;
+    }
+
+    /** The annotation Flux reads on an object on the cluster before it prunes it, and the value that keeps it. */
+    private static final String FLUX_PRUNE_ANNOTATION = "kustomize.toolkit.fluxcd.io/prune";
+    private static final String FLUX_PRUNE_DISABLED = "disabled";
+
+    /**
+     * The field manager of the changes KDPS makes to objects Flux applies. Flux's server-side apply removes only the
+     * fields of its own managers and of kubectl, so what this one sets stays.
+     */
+    private static final String KDPS_FIELD_MANAGER = "kdps";
+
+    /**
+     * Marks a Flux object on the cluster so that no Flux Kustomization prunes it, with the
+     * {@code kustomize.toolkit.fluxcd.io/prune: disabled} annotation. Flux reads that annotation on the object on the
+     * cluster, not in Git, when the object leaves the files a Kustomization covers: a manifest moved from a release's
+     * directory to one another Kustomization covers is only safe once the object carries it.
+     *
+     * @param context   the kind of the object (a HelmRelease, a HelmRepository)
+     * @param namespace the object's namespace
+     * @param name      the object's name
+     * @return true when the object carries the annotation, or is not on the cluster (nothing to prune); false when it
+     *         could not be read or annotated (logged)
+     */
+    public boolean keepFromFluxPrune(io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext context,
+                                     String namespace, String name) {
+        try {
+            checkNamespaceAllowed(namespace);
+            checkConfiguration();
+            var resource = client.genericKubernetesResources(context).inNamespace(namespace).withName(name);
+            GenericKubernetesResource live = resource.get();
+            if (live == null) {
+                return true;
+            }
+            Map<String, String> annotations = live.getMetadata() == null ? null : live.getMetadata().getAnnotations();
+            if (annotations != null && FLUX_PRUNE_DISABLED.equals(annotations.get(FLUX_PRUNE_ANNOTATION))) {
+                return true;
+            }
+            resource.patch(new PatchContext.Builder()
+                            .withPatchType(io.fabric8.kubernetes.client.dsl.base.PatchType.JSON_MERGE)
+                            .withFieldManager(KDPS_FIELD_MANAGER)
+                            .build(),
+                    "{\"metadata\":{\"annotations\":{\"" + FLUX_PRUNE_ANNOTATION + "\":\"" + FLUX_PRUNE_DISABLED
+                            + "\"}}}");
+            LOG.info("Marked {} {}/{} so that Flux does not prune it", context.getPlural(), namespace, name);
+            return true;
+        } catch (Exception ex) {
+            LOG.warn("Could not mark {} {}/{} so that Flux does not prune it: {}", context.getPlural(), namespace,
+                    name, ex.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Asks Flux to reconcile a HelmRelease now, with the {@code reconcile.fluxcd.io/requestedAt} annotation, so it
+     * reads again the values it takes from Secrets ({@code spec.valuesFrom}) even though nothing changed in Git.
+     *
+     * @param namespace the HelmRelease namespace
+     * @param name      the HelmRelease name
+     * @return true when the HelmRelease was annotated, false when it is not on the cluster
+     * @throws IllegalStateException when the cluster does not serve the Flux HelmRelease API
+     */
+    public boolean requestFluxReconcile(String namespace, String name) {
+        if (annotateFluxRequest(namespace, name, false) == null) {
+            return false;
+        }
+        LOG.info("Requested a Flux reconcile of HelmRelease {}/{}", namespace, name);
+        return true;
+    }
+
+    /**
+     * Asks Flux to try a HelmRelease again after it gave up on it (Stalled, retries exhausted): what
+     * {@code flux reconcile helmrelease --reset --force} does, the {@code reconcile.fluxcd.io/resetAt},
+     * {@code reconcile.fluxcd.io/forceAt} and {@code reconcile.fluxcd.io/requestedAt} annotations set to the same
+     * value. Flux does not retry such a release on its own until its spec or values change.
+     *
+     * @param namespace the HelmRelease namespace
+     * @param name      the HelmRelease name
+     * @return the value of the request, which Flux copies to {@code status.lastHandledResetAt} once it handled it;
+     *         {@code null} when the HelmRelease is not on the cluster
+     * @throws IllegalStateException when the cluster does not serve the Flux HelmRelease API
+     */
+    public String requestFluxReset(String namespace, String name) {
+        String requestedAt = annotateFluxRequest(namespace, name, true);
+        if (requestedAt != null) {
+            LOG.info("Asked Flux to try HelmRelease {}/{} again (reset {})", namespace, name, requestedAt);
+        }
+        return requestedAt;
+    }
+
+    /**
+     * Annotates a HelmRelease with a reconcile request, and a reset request when asked; null when it is not there.
+     *
+     * @throws IllegalStateException when the cluster does not serve the Flux HelmRelease API
+     */
+    private String annotateFluxRequest(String namespace, String name, boolean reset) {
+        checkConfiguration();
+        FluxApiVersions.Selection helmReleaseApi = FluxApiVersions.resolve(client, FluxApiVersions.Kind.HELM_RELEASE);
+        var helmRelease = client.genericKubernetesResources(helmReleaseApi.context()).inNamespace(namespace).withName(name);
+        if (helmRelease.get() == null) {
+            if (!helmReleaseApi.served()) {
+                throw new IllegalStateException(helmReleaseApi.problem());
+            }
+            return null;
+        }
+        String requestedAt = java.time.Instant.now().toString();
+        helmRelease.edit(hr -> {
+            Map<String, String> annotations = hr.getMetadata().getAnnotations() == null
+                    ? new HashMap<>() : new HashMap<>(hr.getMetadata().getAnnotations());
+            annotations.put("reconcile.fluxcd.io/requestedAt", requestedAt);
+            if (reset) {
+                // The reset clears the retry count; the force makes Helm upgrade a release it left failed.
+                annotations.put("reconcile.fluxcd.io/resetAt", requestedAt);
+                annotations.put("reconcile.fluxcd.io/forceAt", requestedAt);
+            }
+            hr.getMetadata().setAnnotations(annotations);
+            return hr;
+        });
+        return requestedAt;
+    }
+
+    /**
+     * The Flux HelmRelease as it is on the cluster.
+     *
+     * @param namespace the HelmRelease namespace
+     * @param name      the HelmRelease name
+     * @return the HelmRelease, or {@code null} when Flux has not applied it (yet)
+     * @throws IllegalStateException when the cluster does not serve the Flux HelmRelease API, which it answers as it
+     *                               answers for a HelmRelease that is not there
+     */
+    public GenericKubernetesResource getFluxHelmRelease(String namespace, String name) {
+        checkConfiguration();
+        FluxApiVersions.Selection helmReleaseApi = FluxApiVersions.resolve(client, FluxApiVersions.Kind.HELM_RELEASE);
+        GenericKubernetesResource helmRelease = client.genericKubernetesResources(helmReleaseApi.context())
+                .inNamespace(namespace).withName(name).get();
+        if (helmRelease == null && !helmReleaseApi.served()) {
+            throw new IllegalStateException(helmReleaseApi.problem());
+        }
+        return helmRelease;
+    }
+
+    /**
+     * The names of the Secrets in a namespace that carry every given label.
+     *
+     * @param namespace the namespace to look in
+     * @param labels    the labels a Secret must carry, with these values
+     */
+    public List<String> listSecretNames(String namespace, Map<String, String> labels) {
+        checkConfiguration();
+        return executeWithAuthRetry("list secrets in namespace " + namespace,
+                () -> client.secrets().inNamespace(namespace).withLabels(labels).list().getItems()).stream()
+                .filter(s -> s.getMetadata() != null && s.getMetadata().getName() != null)
+                .map(s -> s.getMetadata().getName())
+                .collect(java.util.stream.Collectors.toList());
+    }
+
     /**
      * Retrieves the user-supplied configuration (values.yaml) for a specific Helm release
      * by decoding the Kubernetes Secret managed by Helm.
@@ -6111,18 +8553,20 @@ public class KubernetesService {
         try {
             // 1. Find the secret for the 'deployed' release
             // Helm secrets have labels: name=<release>, owner=helm, status=deployed
-            List<Secret> secrets = client.secrets().inNamespace(namespace)
+            // Renewed on a revoked OpenShift token: a redeploy refuses to go on when it cannot read these values.
+            String operation = "read the Helm values of " + namespace + "/" + releaseName;
+            List<Secret> secrets = executeWithAuthRetry(operation, () -> client.secrets().inNamespace(namespace)
                     .withLabel("owner", "helm")
                     .withLabel("name", releaseName)
                     .withLabel("status", "deployed")
-                    .list().getItems();
+                    .list().getItems());
 
             if (secrets.isEmpty()) {
                 // Fallback: get the latest version if status is not deployed (e.g. failed)
-                secrets = client.secrets().inNamespace(namespace)
+                secrets = executeWithAuthRetry(operation, () -> client.secrets().inNamespace(namespace)
                         .withLabel("owner", "helm")
                         .withLabel("name", releaseName)
-                        .list().getItems();
+                        .list().getItems());
 
                 if (secrets.isEmpty()) {
                     LOG.warn("No Helm release secret found for {}/{}", namespace, releaseName);

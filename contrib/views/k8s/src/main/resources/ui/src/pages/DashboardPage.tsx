@@ -24,6 +24,7 @@ import { CheckCircleTwoTone, CloseCircleTwoTone, InfoCircleTwoTone, WarningTwoTo
 import { useNavigate } from 'react-router-dom';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import { installMonitoring, getMonitoringDiscovery } from '../api/client';
+import PermissionGuard from '../components/common/PermissionGuard';
 import './Page.css';
 
 const { Title, Text, Paragraph } = Typography;
@@ -133,21 +134,23 @@ const DashboardPage: React.FC = () => {
                 action={
                   <Space>
                     {monitoringState.state === 'FAILED' && (
-                      <Button
-                        size="small"
-                        onClick={async () => {
-                          try {
-                            await installMonitoring();
-                            message.success('Monitoring bootstrap requested');
-                            await getMonitoringDiscovery().catch(() => {});
-                            await refresh();
-                          } catch (e:any) {
-                            message.error(e?.message || 'Bootstrap failed');
-                          }
-                        }}
-                      >
-                        Retry bootstrap
-                      </Button>
+                      <PermissionGuard requires="canWrite">
+                        <Button
+                          size="small"
+                          onClick={async () => {
+                            try {
+                              await installMonitoring();
+                              message.success('Monitoring bootstrap requested');
+                              await getMonitoringDiscovery().catch(() => {});
+                              await refresh();
+                            } catch (e:any) {
+                              message.error(e?.message || 'Bootstrap failed');
+                            }
+                          }}
+                        >
+                          Retry bootstrap
+                        </Button>
+                      </PermissionGuard>
                     )}
                     <Button size="small" onClick={() => refresh(true)}>Refresh status</Button>
                   </Space>

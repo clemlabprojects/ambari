@@ -23,6 +23,7 @@ import { PermissionsProvider } from './context/PermissionsContext';
 import { NamespaceProvider } from './context/NamespaceContext';
 import { useClusterStatus } from './context/ClusterStatusContext';
 import AppLayout from './components/layout/AppLayout';
+import RequirePermission from './components/common/RequirePermission';
 // All pages are lazy-loaded so the initial bundle is just the shell (layout +
 // routing + contexts). This keeps heavy page deps out of the critical path —
 // notably recharts (DashboardPage) and the chart/wizard code — so the app paints
@@ -105,17 +106,19 @@ const AppRouter: React.FC = () => {
           <Route path="/catalog" element={<CatalogPage />} />
           <Route path="/nodes" element={<NodesPage />} />
           <Route path="/helm" element={<HelmReleasesPage />} />
-          <Route path="/services/:serviceName" element={<ServiceWizardPage />} />
-          <Route path="/configuration" element={<ConfigurationPage />} />
-          <Route path="/global-security" element={<GlobalSecurityPage />} />
+          {/* The deploy wizard and the configuration pages only make sense for roles allowed to use them; the
+              backend enforces the same roles on every call (keep CONFIGURE_ONLY_ROUTES in utils/permissions.ts in sync). */}
+          <Route path="/services/:serviceName" element={<RequirePermission requires="canWrite"><ServiceWizardPage /></RequirePermission>} />
+          <Route path="/configuration" element={<RequirePermission requires="canConfigure"><ConfigurationPage /></RequirePermission>} />
+          <Route path="/global-security" element={<RequirePermission requires="canConfigure"><GlobalSecurityPage /></RequirePermission>} />
           <Route path="/certificate-authorities" element={<CertificateAuthoritiesPage />} />
-          <Route path="/truststores" element={<TruststoresPage />} />
+          <Route path="/truststores" element={<RequirePermission requires="canConfigure"><TruststoresPage /></RequirePermission>} />
           <Route path="/operators" element={<OperatorsPage />} />
-          <Route path="/managed-configs" element={<GlobalConfigurationsPage />} />
+          <Route path="/managed-configs" element={<RequirePermission requires="canConfigure"><GlobalConfigurationsPage /></RequirePermission>} />
           <Route path="/workloads" element={<WorkloadsPage />} />
-          <Route path="/repositories" element={<RepositoriesPage />} />
+          <Route path="/repositories" element={<RequirePermission requires="canConfigure"><RepositoriesPage /></RequirePermission>} />
           <Route path="/git-repositories" element={<GitRepositoriesPage />} />
-          <Route path="/contexts" element={<ContextsPage />} />
+          <Route path="/contexts" element={<RequirePermission requires="canConfigure"><ContextsPage /></RequirePermission>} />
           <Route path="/trino-catalogs" element={<TrinoCatalogsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

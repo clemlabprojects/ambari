@@ -23,11 +23,14 @@ import type { ClusterService } from '../../types/ServiceTypes';
 import { getClusterServices, getDiscoveredK8sServices, getDiscoveredK8sSecrets, getDiscoveredClusterIssuers, getDiscoveredSecretStores, getMonitoringDiscovery, getKedaDiscovery } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
+import { UpgradeModeContext } from './fieldSync';
 
 const { Option } = Select;
 const { Text } = Typography;
 
-type ServiceSelectProps = { field: any; onValueSelect?: (value: any) => void; rules?: any[] };
+// `auto` is true when the choice was made by `autoSelectSingle`, not by the operator; the handler returns false to
+// decline it (the picker then stays empty).
+type ServiceSelectProps = { field: any; onValueSelect?: (value: any, auto?: boolean) => boolean | void; rules?: any[] };
 
 const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rules }) => {
   const [services, setServices] = useState<ClusterService[]>([]);
@@ -128,6 +131,19 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
     fetchServices();
   }, [field.lookupLabel, field.serviceType, field.type, connectionEpoch, targetNamespace]);
 
+  // `autoSelectSingle`: when discovery finds exactly one result and nothing is chosen yet, choose it, so what was
+  // found fills its fields (and fields only needed when nothing was found can hide).
+  // Never while upgrading: the deployed values win over what discovery finds now.
+  const upgrading = React.useContext(UpgradeModeContext);
+  useEffect(() => {
+    if (!field.autoSelectSingle || upgrading || services.length !== 1 || !form) return;
+    const name = field.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
+    const current = form.getFieldValue(name);
+    if (current != null && String(current) !== '') return;
+    if (onValueSelect && onValueSelect(services[0].value, true) === false) return;
+    form.setFieldValue(name, services[0].value);
+  }, [services, upgrading]);
+
   // Handler for "Create New" button
   const handleCreateNew = () => {
     // We navigate to the management page.
@@ -162,6 +178,9 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
         <Select
             loading={isLoading}
             allowClear
+            // `multiple`: several resources may be picked (e.g. the Secrets holding Trino catalog credentials); the
+            // value is then their list.
+            mode={field.multiple ? 'multiple' : undefined}
             placeholder={isLoading ? 'Loading...' : 'Select...'}
             onChange={(val) => {
               if (onValueSelect) {

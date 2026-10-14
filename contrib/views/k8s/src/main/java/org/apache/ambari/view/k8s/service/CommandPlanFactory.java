@@ -33,10 +33,6 @@ import org.apache.ambari.view.k8s.utils.AmbariActionClient;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
 
 import org.apache.ambari.view.k8s.utils.CommandUtils;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,9 +41,6 @@ import java.lang.reflect.Type;
 import java.net.URI;
 import java.time.Instant;
 import java.util.*;
-
-import static org.apache.ambari.view.k8s.utils.CommandUtils.AmbariConfigRef;
-import static org.apache.ambari.view.k8s.utils.CommandUtils.DYNAMIC_SOURCE_MAP;
 
 /**
  * Responsible for creating the Tree of Commands (Plans) and persisting them to DataStore.
@@ -64,6 +57,8 @@ public class CommandPlanFactory {
 
     // Injected service to access webHook logic if needed inside planning
     private final WebHookConfigurationService webHookService;
+    /** Resolves the dynamic values of the release chart and of its dependencies. */
+    private final DynamicValuesResolver dynamicValuesResolver;
 
     /**
      * Constructs a {@code CommandPlanFactory} with the services required for building command plans.
@@ -80,33 +75,7 @@ public class CommandPlanFactory {
         this.gson = gson;
         this.webHookService = webHookService;
         this.commandUtils = commandUtils;
-    }
-
-    /**
-     * Resolve a non-managed platform context's {@code <capability>.<field>} values for a deploy, so
-     * dynamic-value tokens (Kerberos realm, OIDC issuer/realm) can be sourced from the selected
-     * context rather than this cluster's Ambari config. Returns an empty map for the managed/default
-     * context (or when none is selected), which keeps the managed deploy path unchanged.
-     */
-    private Map<String, String> contextResolvedFieldsForDeploy(Object formValuesObj,
-                                                               AmbariActionClient ambari, String cluster) {
-        try {
-            if (!(formValuesObj instanceof Map)) {
-                return java.util.Collections.emptyMap();
-            }
-            Object pc = ((Map<?, ?>) formValuesObj).get("platformContextId");
-            String pcId = pc == null ? null : String.valueOf(pc);
-            if (pcId == null || pcId.isBlank() || "default".equals(pcId)) {
-                return java.util.Collections.emptyMap();
-            }
-            org.apache.ambari.view.k8s.model.ResolvedContext rc =
-                    new ContextService(ctx).resolve(pcId, ambari, cluster);
-            return (rc != null && rc.getResolvedFields() != null)
-                    ? rc.getResolvedFields() : java.util.Collections.emptyMap();
-        } catch (Exception e) {
-            LOG.warn("Context-aware dynamicValues: could not resolve platform context: {}", e.toString());
-            return java.util.Collections.emptyMap();
-        }
+        this.dynamicValuesResolver = new DynamicValuesResolver(ctx, commandUtils);
     }
 
     /**
@@ -119,7 +88,44 @@ public class CommandPlanFactory {
      * @param isDrRun
      */
     public void createRealChartInstallationCommands(CommandEntity cmd, String repoId, boolean isDrRun){
+        Map<String, Object> params = rootParamsWithDynamicOverrides(cmd);
+        String chart = (String) params.get("chart");
+        if (isDrRun) {
+            appendReleaseStep(cmd, params, CommandType.HELM_DEPLOY_DRY_RUN, "Helm: validate chart " + chart + " (dry-run)");
+        } else {
+            appendReleaseStep(cmd, params, CommandType.HELM_DEPLOY, "Helm: install chart " + chart);
+        }
+    }
 
+    /**
+     * The GitOps end of a release deploy, in place of the Helm dry run and install: the commit of the HelmRelease
+     * (with the same parameters, dynamic values included, as the Helm install would get), then the wait for Flux to
+     * apply it.
+     *
+     * @param cmd            root command
+     * @param timeoutSeconds how long the wait lasts before it fails
+     * @param pollSeconds    how often it reads the HelmRelease
+     */
+    public void createGitOpsReleaseCommands(CommandEntity cmd, int timeoutSeconds, int pollSeconds) {
+        Map<String, Object> params = rootParamsWithDynamicOverrides(cmd);
+        String releaseName = (String) params.get("releaseName");
+        String namespace = (String) params.get("namespace");
+        appendReleaseStep(cmd, params, CommandType.GITOPS_COMMIT, "GitOps: commit HelmRelease " + releaseName + " to Git");
+
+        Map<String, Object> waitParams = new LinkedHashMap<>();
+        waitParams.put("releaseName", releaseName);
+        waitParams.put("namespace", namespace);
+        waitParams.put("timeoutSeconds", timeoutSeconds);
+        waitParams.put("pollSeconds", pollSeconds);
+        appendStep(cmd, gson.toJson(waitParams), CommandType.FLUX_WAIT_READY,
+                "Flux: wait for HelmRelease " + releaseName + " to be ready");
+    }
+
+    /**
+     * The root command's parameters with the service's dynamic values (e.g. AMBARI_KERBEROS_REALM -> helm path)
+     * resolved into {@code _dynamicOverrides}.
+     */
+    private Map<String, Object> rootParamsWithDynamicOverrides(CommandEntity cmd) {
         // Replace calls to 'store(e)' with local 'store(e)' helper in this class
         Type listType = new TypeToken<Map<String, Object>>(){}.getType();
         Map<String, Object> params;
@@ -134,131 +140,52 @@ public class CommandPlanFactory {
         }
 
         // Resolve dynamic value tokens (e.g., AMBARI_KERBEROS_REALM -> helm path) for the main chart
-        Map<String, String> resolvedDynamicOverrides = null;
-        Object dynamicValuesObj = params.get("dynamicValues");
-        List<String> dynamicValues = new ArrayList<>();
-        if (dynamicValuesObj instanceof List) {
-            @SuppressWarnings("unchecked")
-            List<Object> l = (List<Object>) dynamicValuesObj;
-            for (Object o : l) {
-                if (o instanceof String s && !s.isBlank()) {
-                    dynamicValues.add(s.trim());
-                }
-            }
-        }
-        if (!dynamicValues.isEmpty()) {
-            try {
-                String baseUriStr = (String) params.get("_baseUri");
-                Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(params.get("_callerHeaders"));
-                String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
-                var ambariActionClient = new AmbariActionClient(ctx, baseUriStr, cluster, authHeaders);
-                // When a non-managed platform context is selected, source tokens from it.
-                Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(params.get("formValues"), ambariActionClient, cluster);
-
-                resolvedDynamicOverrides = new LinkedHashMap<>();
-                for (String dynamic : dynamicValues) {
-                    String[] parts = dynamic.split(":", 2);
-                    if (parts.length != 2) {
-                        LOG.warn("Invalid dynamic value token '{}', expected 'SOURCE:helm.path'", dynamic);
-                        continue;
-                    }
-                    String token = parts[0].trim();
-                    String helmPath = parts[1].trim();
-                    if (helmPath.isEmpty()) {
-                        LOG.warn("Empty helm path in token '{}', skipping", dynamic);
-                        continue;
-                    }
-                    // Optional path suffix: "TOKEN[/some/extra/path]:helm.path" appends
-                    // the suffix to the resolved value. Lets one Ambari property feed
-                    // multiple chart values (e.g. Keycloak issuer URL -> auth / token /
-                    // userinfo endpoints, each one needing a different sub-path).
-                    String suffix = "";
-                    int lbracket = token.indexOf('[');
-                    if (lbracket > 0 && token.endsWith("]")) {
-                        suffix = token.substring(lbracket + 1, token.length() - 1);
-                        token = token.substring(0, lbracket);
-                    }
-                    AmbariConfigRef ref = DYNAMIC_SOURCE_MAP.get(token);
-                    if (ref == null) {
-                        LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
-                        continue;
-                    }
-                    try {
-                        // A non-managed platform context (external/remote) takes precedence: use the
-                        // value it resolved for this token rather than the local Ambari config.
-                        String v = CommandUtils.contextValueForToken(token, ctxResolved);
-                        if (v == null || v.isBlank()) {
-                            v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
-                        }
-                        // AMBARI_OIDC_ISSUER_URL fallback (matches the sister code in
-                        // CommandService.resolveDynamicOverrides): if oidc-env.oidc_issuer_url
-                        // is blank, compose it from oidc_admin_url + "/realms/" + oidc_realm.
-                        // Without this the plan factory silently skips and the rendered chart
-                        // ends up without authorize/token/userinfo URLs, producing a
-                        // self-referential redirect loop at /hub/oauth_login.
-                        if ((v == null || v.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(token)) {
-                            v = resolveOidcIssuerUrlFallback(ambariActionClient, cluster);
-                        }
-                        if (v == null || v.isBlank()) {
-                            LOG.warn("Resolved empty value for token '{}' (type={}, key={}), skipping", token, ref.type, ref.key);
-                            continue;
-                        }
-                        // Strip any trailing slash on the issuer URL before appending,
-                        // so "https://issuer/" + "/path" doesn't double-slash.
-                        String resolved = suffix.isEmpty() ? v
-                                : (v.endsWith("/") ? v.substring(0, v.length() - 1) : v) + suffix;
-                        resolvedDynamicOverrides.put(helmPath, resolved);
-                        LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolved);
-                    } catch (Exception ex) {
-                        LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
-                    }
-                }
-            } catch (Exception ex) {
-                LOG.error("Could not resolve dynamic values for main chart: {}", ex.toString());
-            }
-        }
-        if (resolvedDynamicOverrides != null && !resolvedDynamicOverrides.isEmpty()) {
+        String baseUriStr = params.get("_baseUri") instanceof String s ? s : null;
+        Map<String, String> resolvedDynamicOverrides = dynamicValuesResolver.resolve(params.get("dynamicValues"),
+                params.get("formValues"), baseUriStr, AmbariActionClient.toAuthHeaders(params.get("_callerHeaders")),
+                "the release chart");
+        if (!resolvedDynamicOverrides.isEmpty()) {
             params.put("_dynamicOverrides", resolvedDynamicOverrides);
         }
+        return params;
+    }
 
+    /**
+     * Appends a release step that carries the root's parameters, dynamic values included, and keeps those on the root
+     * as well so later steps reuse them.
+     */
+    private void appendReleaseStep(CommandEntity cmd, Map<String, Object> params, CommandType type, String title) {
         // Serialize once after enrichment
         String enrichedParamsJson = gson.toJson(params);
+        cmd.setParamsJson(enrichedParamsJson);
+        appendStep(cmd, enrichedParamsJson, type, title);
+    }
 
-        CommandEntity dryRunChartInstall = new CommandEntity();
-        String subId = UUID.randomUUID().toString();
-        String id = cmd.getId() + "-" + subId;
+    /** Creates a pending step and appends it to the root command's plan. */
+    private void appendStep(CommandEntity cmd, String paramsJson, CommandType type, String title) {
+        String id = cmd.getId() + "-" + UUID.randomUUID();
         final String now = Instant.now().toString();
-        String chart = (String) params.get("chart");
-        String releaseName = (String) params.get("releaseName");
-        String namespace = (String) params.get("namespace");
 
-        dryRunChartInstall.setId(id);
-        if (isDrRun){
-            dryRunChartInstall.setType(CommandType.HELM_DEPLOY_DRY_RUN.name());
-            dryRunChartInstall.setTitle("Helm: validate chart " + chart + " (dry-run)");
-        }else {
-            dryRunChartInstall.setType(CommandType.HELM_DEPLOY.name());
-            dryRunChartInstall.setTitle("Helm: install chart " + chart);
-        }
-        dryRunChartInstall.setViewInstance(ctx.getInstanceName());
+        CommandEntity step = new CommandEntity();
+        step.setId(id);
+        step.setType(type.name());
+        step.setTitle(title);
+        step.setViewInstance(ctx.getInstanceName());
+        step.setParamsJson(paramsJson);
 
-        //        propagate params from root to child (with dynamic overrides)
-        dryRunChartInstall.setParamsJson(enrichedParamsJson);
+        CommandStatusEntity status = new CommandStatusEntity();
+        status.setId(id + "-status");
+        status.setAttempt(0);
+        status.setState(CommandState.PENDING.name());
+        status.setCreatedBy(ctx.getUsername());
+        status.setCreatedAt(now);
+        status.setUpdatedAt(now);
+        status.setWorkerId(null);
 
+        step.setCommandStatusId(status.getId());
 
-        CommandStatusEntity dryRunChartInstallStatus = new CommandStatusEntity();
-        dryRunChartInstallStatus.setId(id+"-status");
-        dryRunChartInstallStatus.setAttempt(0);
-        dryRunChartInstallStatus.setState(CommandState.PENDING.name());
-        dryRunChartInstallStatus.setCreatedBy(ctx.getUsername());
-        dryRunChartInstallStatus.setCreatedAt(now);
-        dryRunChartInstallStatus.setUpdatedAt(now);
-        dryRunChartInstallStatus.setWorkerId(null);
-
-        dryRunChartInstall.setCommandStatusId(dryRunChartInstallStatus.getId());
-
-        this.store(dryRunChartInstall);
-        this.store(dryRunChartInstallStatus);
+        this.store(step);
+        this.store(status);
 
         Type listTypeCmds = new TypeToken<ArrayList<String>>(){}.getType();
         List<String> childCommands;
@@ -270,20 +197,10 @@ public class CommandPlanFactory {
         } catch (Exception e) {
             childCommands = new ArrayList<>();
         }
-
-        for (String childId : childCommands) {
-            CommandEntity childCmd = findCommandById(childId);
-            if (childCmd != null) {
-                LOG.info("Found child command with id: {} for root command with id: {} ", childId, cmd.getId());
-            }
-        }
-        childCommands.add(dryRunChartInstall.getId());
+        childCommands.add(id);
         cmd.setChildListJson(gson.toJson(childCommands));
-        // Persist enriched params on the root as well so later steps reuse them
-        cmd.setParamsJson(enrichedParamsJson);
 
         this.store(cmd);
-
     }
 
     /**
@@ -459,126 +376,7 @@ public class CommandPlanFactory {
             helmChartDryRunCmd.setTitle("Helm: validate dependency " + dependencyName + " (dry-run)");
             helmChartDryRunCmd.setViewInstance(ctx.getInstanceName());
             LOG.info("Creating HelmDeployDryRun command with id: {} for dependency: {} ", id, dependencyName);
-            Map<String, Object> params = new LinkedHashMap<>();
-            HelmRepoEntity repository = repositoryDao.findById(repoId);
-            params.put("chart", chart);
-            params.put("namespace", chartNamespace);
-            params.put("chartVersion", chartVersion);
-            params.put("imageTag", imageTag);
-            params.put("imageGlobalRegistryProperty", imageGlobalRegistryProperty);
-            params.put("imageRepository", imageRepository);
-            params.put("releaseName", dependencyName);
-            params.put("images", images);
-            params.put("isWebhook", isWebhook);
-            params.put("fullnameOverride", fullnameOverride);
-
-            /**
-             * start to check if dynamic values are given and prepare parsing and fetching
-             */
-            Object dynamicValuesObj = depMap.get("dynamicValues");
-            List<String> dynamicValues = new ArrayList<>();
-            if (dynamicValuesObj instanceof List) {
-                @SuppressWarnings("unchecked")
-                List<Object> l = (List<Object>) dynamicValuesObj;
-                for (Object o : l) {
-                    if (o instanceof String s && !s.isBlank()) {
-                        dynamicValues.add(s.trim()); // each string like "SRC:helm.path"
-                    }
-                }
-            }
-            Map<String, String> resolvedDynamicOverrides = null;
-
-            if (!dynamicValues.isEmpty()) {
-                LOG.info("Fetching cluster name from Ambari Server in order to fetch properties");
-                String cluster = null;
-                try {
-                    cluster = this.commandUtils.resolveClusterName(baseUri.toString(), AmbariActionClient.toAuthHeaders(callerHeaders));
-                } catch (Exception e) {
-                    LOG.error("Could not fetch cluster name, dynamic Values will be ignored");
-                }
-                var ambariActionClient = new AmbariActionClient(ctx, baseUri.toString(), cluster, AmbariActionClient.toAuthHeaders(callerHeaders));
-                LOG.info("Dynamic Values will be set with cluster name {}", cluster);
-
-                // Dependency charts inherit the parent deploy's platform context (carried in the
-                // root command's formValues); source tokens from it when it is non-managed.
-                Object parentFormValues = null;
-                try {
-                    Map<String, Object> rootP = gson.fromJson(CommandUtils.resolveParamsPayload(cmd.getParamsJson()),
-                            new TypeToken<Map<String, Object>>(){}.getType());
-                    if (rootP != null) parentFormValues = rootP.get("formValues");
-                } catch (Exception ignore) {
-                    // no parent form values → managed/default behaviour
-                }
-                Map<String, String> ctxResolved = contextResolvedFieldsForDeploy(parentFormValues, ambariActionClient, cluster);
-
-                resolvedDynamicOverrides = new LinkedHashMap<>();
-                for (String dynamic : dynamicValues) {
-                    String[] parts = dynamic.split(":", 2); // IMPORTANT: limit=2
-                    if (parts.length != 2) {
-                        LOG.warn("Invalid dynamic value token '{}', expected 'SOURCE:helm.path'", dynamic);
-                        continue;
-                    }
-                    String token = parts[0].trim();
-                    String helmPath = parts[1].trim();
-                    if (helmPath.isEmpty()) {
-                        LOG.warn("Empty helm path in token '{}', skipping", dynamic);
-                        continue;
-                    }
-                    // Optional path suffix: "TOKEN[/some/extra/path]:helm.path" appends
-                    // the suffix to the resolved value. Lets one Ambari property feed
-                    // multiple chart values (e.g. Keycloak issuer URL -> auth / token /
-                    // userinfo endpoints, each one needing a different sub-path).
-                    String suffix = "";
-                    int lbracket = token.indexOf('[');
-                    if (lbracket > 0 && token.endsWith("]")) {
-                        suffix = token.substring(lbracket + 1, token.length() - 1);
-                        token = token.substring(0, lbracket);
-                    }
-                    AmbariConfigRef ref = DYNAMIC_SOURCE_MAP.get(token);
-                    if (ref == null) {
-                        LOG.warn("No mapping for dynamic token '{}', skipping property fetch", token);
-                        continue;
-                    }
-                    try {
-                        // Non-managed platform context takes precedence over local Ambari config.
-                        String v = CommandUtils.contextValueForToken(token, ctxResolved);
-                        if (v == null || v.isBlank()) {
-                            v = ambariActionClient.getDesiredConfigProperty(cluster, ref.type, ref.key);
-                        }
-                        // AMBARI_OIDC_ISSUER_URL fallback — mirrors the sister loop above.
-                        if ((v == null || v.isBlank()) && "AMBARI_OIDC_ISSUER_URL".equals(token)) {
-                            v = resolveOidcIssuerUrlFallback(ambariActionClient, cluster);
-                        }
-                        if (v == null || v.isBlank()) {
-                            LOG.warn("Resolved empty value for token '{}' (type={}, key={}), skipping", token, ref.type, ref.key);
-                            continue;
-                        }
-                        // Strip any trailing slash on the issuer URL before appending,
-                        // so "https://issuer/" + "/path" doesn't double-slash.
-                        String resolved = suffix.isEmpty() ? v
-                                : (v.endsWith("/") ? v.substring(0, v.length() - 1) : v) + suffix;
-                        resolvedDynamicOverrides.put(helmPath, resolved);
-                        LOG.info("Resolved dynamic '{}' -> {} = '{}'", token, helmPath, resolved);
-                    } catch (Exception ex) {
-                        LOG.warn("Failed to resolve token '{}' (type={}, key={}): {}", token, ref.type, ref.key, ex.toString());
-                    }
-                }
-            }
-
-            // Attach resolved map once; both dry-run and run commands will reuse it
-            if (resolvedDynamicOverrides != null && !resolvedDynamicOverrides.isEmpty()) {
-                params.put("_dynamicOverrides", resolvedDynamicOverrides);
-            }
-
-            if (isWebhook){
-                params.put("backend.url", commandsURL);
-            }
-            if (secretName != null){
-                params.put("secretName", secretName);
-            }
-            if (serviceAccountsObj != null){
-                params.put("serviceAccounts", serviceAccountsObj);
-            }
+            Map<String, Object> params = dependencyReleaseParams(cmd, depMap, dependencyName, commandsURL, callerHeaders, baseUri);
 
             helmChartDryRunCmd.setParamsJson(gson.toJson(params));
 
@@ -631,6 +429,79 @@ public class CommandPlanFactory {
         } else {
             LOG.warn("Dependency is not a JSON object: {}", dependency);
         }
+    }
+
+    /**
+     * The parameters of the Helm steps that install a dependency: its chart, version and namespace, its image settings,
+     * the keytab webhook's backend URL, its image pull Secret and service accounts, and its dynamic values resolved
+     * from Ambari (or the selected platform context) into {@code _dynamicOverrides}. A GitOps deploy keeps them for its
+     * commit, which writes into the dependency's HelmRelease what its Helm install would receive.
+     *
+     * @param cmd            root command, whose form values name the platform context of the deploy
+     * @param depMap         the dependency as the service definition declares it
+     * @param dependencyName the dependency's release name
+     * @param commandsURL    the view's commands URL, which the keytab webhook calls back
+     * @return the parameters of the dependency's Helm steps
+     */
+    public Map<String, Object> dependencyReleaseParams(CommandEntity cmd, Map<String, Object> depMap, String dependencyName,
+                                                       String commandsURL, MultivaluedMap<String, String> callerHeaders,
+                                                       URI baseUri) {
+        Object isWebhookObj = depMap.get("isWebhook");
+        boolean isWebhook = isWebhookObj instanceof Boolean b ? b
+                : isWebhookObj instanceof String s && Boolean.parseBoolean(s);
+        List<String> images = new ArrayList<>();
+        if (depMap.get("images") instanceof List<?> imagesList) {
+            for (Object img : imagesList) {
+                if (img instanceof String s) {
+                    images.add(s);
+                }
+            }
+        }
+        Object secretName = depMap.get("secretName");
+        Object serviceAccountsObj = depMap.get("serviceAccounts");
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("chart", depMap.get("chart"));
+        params.put("namespace", depMap.get("namespace"));
+        params.put("chartVersion", depMap.get("chartVersion"));
+        params.put("imageTag", depMap.get("imageTag"));
+        params.put("imageGlobalRegistryProperty", depMap.get("imageGlobalRegistryProperty"));
+        params.put("imageRepository", depMap.get("imageRepository"));
+        params.put("releaseName", dependencyName);
+        params.put("images", images);
+        params.put("isWebhook", isWebhook);
+        params.put("fullnameOverride", depMap.get("fullnameOverride") instanceof String s ? s : null);
+
+        // Dependency charts inherit the parent deploy's platform context (carried in the root command's formValues).
+        Object parentFormValues = null;
+        if (!DynamicValuesResolver.entriesOf(depMap.get("dynamicValues")).isEmpty()) {
+            try {
+                Map<String, Object> rootP = gson.fromJson(CommandUtils.resolveParamsPayload(cmd.getParamsJson()),
+                        new TypeToken<Map<String, Object>>(){}.getType());
+                if (rootP != null) parentFormValues = rootP.get("formValues");
+            } catch (Exception ignore) {
+                // no parent form values → managed/default behaviour
+            }
+        }
+        Map<String, String> resolvedDynamicOverrides = dynamicValuesResolver.resolve(depMap.get("dynamicValues"),
+                parentFormValues, baseUri == null ? null : baseUri.toString(),
+                AmbariActionClient.toAuthHeaders(callerHeaders), "dependency " + dependencyName);
+
+        // Attach resolved map once; both dry-run and run commands will reuse it
+        if (!resolvedDynamicOverrides.isEmpty()) {
+            params.put("_dynamicOverrides", resolvedDynamicOverrides);
+        }
+
+        if (isWebhook){
+            params.put("backend.url", commandsURL);
+        }
+        if (secretName != null){
+            params.put("secretName", secretName);
+        }
+        if (serviceAccountsObj != null){
+            params.put("serviceAccounts", serviceAccountsObj);
+        }
+        return params;
     }
 
     /**
@@ -711,12 +582,12 @@ public class CommandPlanFactory {
      * Plans one {@code OM_RANGER_TAGSYNC_REGISTER} child command per
      * {@code type: "ranger-tagsync-source"} entry in the service.json {@code ranger} block.
      *
-     * <p>The step body mints the OM ingestion-bot JWT by exec-ing into the
+     * <p>The step body reads the OM ingestion-bot JWT by exec-ing into the
      * airflow scheduler pod, then writes the source's endpoint/JWT/class into
      * Ambari's {@code ranger-tagsync-site} config and triggers a Ranger TagSync
      * component restart so the source is picked up.
      *
-     * <p><b>Plan ordering matters:</b> because the JWT-mint exec needs a Running
+     * <p><b>Plan ordering matters:</b> because the JWT exec needs a Running
      * airflow scheduler pod, callers MUST queue this AFTER
      * {@link #createRealChartInstallationCommands} (post-deploy), not before.
      * Self-managing {@code rootCommand.childListJson} (same pattern as
@@ -726,6 +597,10 @@ public class CommandPlanFactory {
      *
      * <p>Idempotency comes from the step body — re-running with the same source
      * name detects no diff and skips the config write + restart.
+     *
+     * <p>A release with Ranger TagSync turned off gets the same step as a check
+     * ({@code _tagSyncCheckOnly} in {@code params}): it only reads the cluster's
+     * {@code ranger-tagsync-site}, and its title says so.
      *
      * @param rootCommand   parent command this step hangs off
      * @param rangerRequest the service.json {@code ranger} map (key → entry spec)
@@ -761,7 +636,9 @@ public class CommandPlanFactory {
             stepParams.put("_tagSyncSpec", spec);
 
             CommandEntity tagSyncCmd = new CommandEntity();
-            tagSyncCmd.setTitle("Ranger: register TagSync source '" + entry.getKey() + "'");
+            tagSyncCmd.setTitle("true".equalsIgnoreCase(String.valueOf(params.get("_tagSyncCheckOnly")))
+                    ? "Ranger: check TagSync configuration"
+                    : "Ranger: register TagSync source '" + entry.getKey() + "'");
             tagSyncCmd.setId(id);
             tagSyncCmd.setType(CommandType.OM_RANGER_TAGSYNC_REGISTER.name());
             tagSyncCmd.setViewInstance(ctx.getInstanceName());
@@ -851,15 +728,15 @@ public class CommandPlanFactory {
     /**
      * Plans a single {@code RANGER_POLICY_GRANT_HIVE_READ} child command — grants the deploying
      * service's Kerberos principal {@code select} on the Hive Ranger service repo by delegating
-     * to the Ambari server (which holds the Ranger admin password). Used so a Superset-style Hive
-     * database connection can reflect table columns (reflection runs as the service principal, not
-     * the impersonated end-user). Reuses {@link #queueAtlasFederationStep} — a generic single-step
-     * queuer despite the Atlas-flavoured name.
+     * to the Ambari server (which holds the Ranger admin password). Only for a service that reads
+     * Hive as its own identity and cannot impersonate the end user (Trino's Hive catalog); one that
+     * impersonates needs no such grant. Reuses {@link #queueAtlasFederationStep} — a generic
+     * single-step queuer despite the Atlas-flavoured name.
      */
     public void createRangerPolicyGrantHiveRead(CommandEntity rootCommand, Map<String, Object> params) {
         queueAtlasFederationStep(rootCommand, params,
                 CommandType.RANGER_POLICY_GRANT_HIVE_READ,
-                "Ranger: grant Superset SELECT on Hive repo",
+                "Ranger: grant service identity SELECT on Hive repo",
                 "-ranger-hive-grant-");
     }
 
@@ -971,7 +848,7 @@ public class CommandPlanFactory {
      * deploy-time form values toggled {@code atlasFederation.enabled} on.
      *
      * <p>The runtime body reads the Atlas connection params from the materialised
-     * helm values, mints an Unlimited JWT via the airflow scheduler pod, and
+     * helm values, reads the bot JWT via the airflow scheduler pod, and
      * drives the four OM REST calls. The plan factory just queues the work — all
      * value lookup happens at execute time so a reapply picks up the current
      * release values rather than a snapshot of the original deploy.
@@ -1158,6 +1035,30 @@ public class CommandPlanFactory {
                                                String caMode,
                                                String caName,
                                                Integer validityDays) {
+        return appendIngressTlsSelfSignStep(cmd, releaseName, namespace, secretName, ingressHost, extraSans, caMode,
+                caName, validityDays, false, false);
+    }
+
+    /**
+     * Append an {@link CommandType#INGRESS_TLS_SELFSIGN} step, as
+     * {@link #appendIngressTlsSelfSignStep(CommandEntity, String, String, String, String, java.util.List, String, String, Integer)},
+     * saying what to do with a Secret that already exists.
+     *
+     * @param replaceExisting whether a Secret KDPS did not mint may be written over (the operator confirmed it)
+     * @param keepValidLeaf   whether a leaf KDPS minted with the same CA and names, still valid, is kept as it is
+     *                        instead of being re-minted (a deploy keeps it; "Renew TLS" does not)
+     */
+    public String appendIngressTlsSelfSignStep(CommandEntity cmd,
+                                               String releaseName,
+                                               String namespace,
+                                               String secretName,
+                                               String ingressHost,
+                                               java.util.List<String> extraSans,
+                                               String caMode,
+                                               String caName,
+                                               Integer validityDays,
+                                               boolean replaceExisting,
+                                               boolean keepValidLeaf) {
         String subId = UUID.randomUUID().toString();
         String id = cmd.getId() + "-tls-" + subId;
         final String now = Instant.now().toString();
@@ -1176,6 +1077,8 @@ public class CommandPlanFactory {
         params.put("ca", caMode);
         if (caName != null) params.put("caName", caName);
         if (validityDays != null) params.put("validityDays", validityDays);
+        if (replaceExisting) params.put("replaceExisting", true);
+        if (keepValidLeaf) params.put("keepValidLeaf", true);
         step.setParamsJson(gson.toJson(params));
 
         CommandStatusEntity status = new CommandStatusEntity();
@@ -1304,19 +1207,9 @@ public class CommandPlanFactory {
             if (e instanceof CommandEntity) {
                 CommandEntity cmd = (CommandEntity) e;
                 String rawParams = cmd.getParamsJson();
-                if (rawParams != null && !rawParams.startsWith("@@file:")) {
-                    try {
-                        ViewConfigurationService cfg = new ViewConfigurationService(ctx);
-                        String base = cfg.getConfigurationDirectoryPath();
-                        Path paramsDir = Paths.get(base, "params");
-                        Files.createDirectories(paramsDir);
-                        Path filePath = paramsDir.resolve(cmd.getId() + "-params.json");
-                        Files.writeString(filePath, rawParams, StandardCharsets.UTF_8);
-                        cmd.setParamsJson("@@file:" + filePath.toString());
-                        LOG.info("Persisting params for command {} to file {}", cmd.getId(), filePath);
-                    } catch (Exception ioEx) {
-                        LOG.warn("Could not externalize paramsJson for {}: {}", cmd.getId(), ioEx.toString());
-                    }
+                if (rawParams != null && !CommandParamsStore.isFileReference(rawParams)) {
+                    // Encrypted, owner-only, without the form's secrets no step reads (see CommandParamsStore).
+                    cmd.setParamsJson(CommandParamsStore.persist(ctx, cmd.getId(), rawParams));
                 }
                 dataStore.store(cmd);
             } else {
@@ -1370,31 +1263,5 @@ public class CommandPlanFactory {
         store(status);
         store(cmd);
         return id;
-    }
-
-    /**
-     * Fallback resolver for AMBARI_OIDC_ISSUER_URL. On many KDPS clusters the
-     * oidc-env.oidc_issuer_url config property is left blank because operators
-     * only set oidc_admin_url + oidc_realm; this composes the issuer URL the
-     * same way CommandService.resolveOidcIssuerUrl does so that downstream
-     * service.json dynamicValues directives like
-     *   "AMBARI_OIDC_ISSUER_URL[/protocol/openid-connect/auth]:..."
-     * resolve to a usable Keycloak endpoint instead of skipping silently.
-     *
-     * <p>Kept as a static helper local to CommandPlanFactory to avoid pulling
-     * a CommandService instance into the plan factory just for one lookup.
-     */
-    private static String resolveOidcIssuerUrlFallback(AmbariActionClient client, String cluster) {
-        if (client == null || cluster == null || cluster.isBlank()) return null;
-        try {
-            String adminUrl = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_admin_url");
-            String realm    = client.getDesiredConfigProperty(cluster, "oidc-env", "oidc_realm");
-            if (adminUrl != null && !adminUrl.isBlank() && realm != null && !realm.isBlank()) {
-                return adminUrl.replaceAll("/$", "") + "/realms/" + realm;
-            }
-        } catch (Exception ex) {
-            LOG.warn("Could not compose OIDC issuer URL fallback (admin_url + /realms/ + realm) on cluster {}: {}", cluster, ex.toString());
-        }
-        return null;
     }
 }

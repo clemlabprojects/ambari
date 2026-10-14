@@ -44,6 +44,19 @@ export function connectorOf(text: string | undefined): string | undefined {
 }
 
 /**
+ * What to tell the operator about a catalog that writes a credential out (saved before KDPS refused it), or undefined.
+ * It names the properties, never their values.
+ */
+export function literalCredentialsWarning(c: TrinoCatalog): string | undefined {
+  const props = c.literalCredentials || [];
+  if (!props.length) return undefined;
+  return `${props.join(", ")} ${props.length === 1 ? "is" : "are"} written out, so a release using this catalog would `
+    + "keep it in its catalog ConfigMap, which anyone allowed to read ConfigMaps can read. Edit the catalog to read it "
+    + 'with ${ENV:KEY} from a Secret selected under "Secrets with catalog credentials" on the release: until then, '
+    + "Upgrade/Config of such a release is refused.";
+}
+
+/**
  * Reusable Trino catalogs: write a catalog's .properties once, attach it to any Trino release from
  * the deploy wizard ("Custom catalogs" step). The release holds a copy taken at deploy time, so
  * editing here changes nothing until the operator re-applies it from Upgrade/Config.
@@ -59,6 +72,7 @@ export default function TrinoCatalogsPage() {
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [template, setTemplate] = useState<CatalogTemplate>(CATALOG_TEMPLATES[CATALOG_TEMPLATES.length - 1]); // generic when editing existing text
   const [preview, setPreview] = useState("");
+  const exposed = useMemo(() => catalogs.filter(c => (c.literalCredentials || []).length > 0), [catalogs]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -128,12 +142,16 @@ export default function TrinoCatalogsPage() {
   const columns: ColumnsType<TrinoCatalog> = useMemo(() => [
     {
       title: "Catalog", dataIndex: "name", key: "name",
-      render: (name: string, c) => (
-        <Space direction="vertical" size={0}>
-          <Text strong><DatabaseOutlined /> {name}</Text>
-          {c.description ? <Text type="secondary">{c.description}</Text> : null}
-        </Space>
-      ),
+      render: (name: string, c) => {
+        const warning = literalCredentialsWarning(c);
+        return (
+          <Space direction="vertical" size={0}>
+            <Text strong><DatabaseOutlined /> {name}</Text>
+            {c.description ? <Text type="secondary">{c.description}</Text> : null}
+            {warning ? <Tooltip title={warning}><Tag color="red">Credential written out</Tag></Tooltip> : null}
+          </Space>
+        );
+      },
     },
     { title: "Connector", dataIndex: "connectorName", key: "connector", width: 160, render: (v: string) => v ? <Tag>{v}</Tag> : <Text type="secondary">—</Text> },
     {
@@ -167,7 +185,9 @@ export default function TrinoCatalogsPage() {
           <Title level={3} style={{ marginBottom: 4 }}>Trino Catalogs</Title>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Define a catalog once, attach it to any Trino release from the deploy wizard. A release keeps the copy taken at
-            deploy time — edits here apply to a release when you re-run Upgrade/Config on it.
+            deploy time — edits here apply to a release when you re-run Upgrade/Config on it. Passwords and keys are not
+            stored here: write {"${ENV:KEY}"} and select the Secret holding KEY under "Secrets with catalog credentials" on
+            the release.
           </Paragraph>
         </div>
         <Space>
@@ -176,6 +196,15 @@ export default function TrinoCatalogsPage() {
         </Space>
       </div>
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {exposed.length ? (
+        <Alert
+          type="warning" showIcon style={{ marginBottom: 12 }}
+          message={`${exposed.length === 1 ? "A catalog writes" : `${exposed.length} catalogs write`} a credential out: ${exposed.map(c => c.name).join(", ")}`}
+          description={'Saved before KDPS refused credentials written out, they would land in the catalog ConfigMap of every '
+            + 'release using them. Edit them to read each credential with ${ENV:KEY} from a Secret selected under '
+            + '"Secrets with catalog credentials" on the release: until then, Upgrade/Config of such a release is refused.'}
+        />
+      ) : null}
       <Table<TrinoCatalog>
         rowKey={(c) => c.id || c.name}
         columns={columns}

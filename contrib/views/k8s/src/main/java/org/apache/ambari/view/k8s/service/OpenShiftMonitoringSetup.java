@@ -45,6 +45,7 @@ public final class OpenShiftMonitoringSetup {
     /** Whether the KEDA triggers of this deploy read the project's monitoring only (Thanos tenancy port). */
     static boolean usesProjectScope(KubernetesService kubernetesService, HelmDeployRequest request) {
         return kubernetesService.isOpenShiftCluster()
+                && KedaThanosScope.kedaEnabled(request.getValues())
                 && KedaThanosScope.triggerAuthenticationEnabled(request.getValues())
                 && !kubernetesService.canBindClusterRoles();
     }
@@ -79,13 +80,15 @@ public final class OpenShiftMonitoringSetup {
         // ServiceMonitors (how the service's metrics reach OpenShift monitoring) need the monitoring-edit role in the
         // project, which a project admin does not hold by default. Without it the install fails half-way through.
         if (KedaThanosScope.serviceMonitorsEnabled(values)
-                && !kubernetesService.canI("create", "monitoring.coreos.com", "servicemonitors", null, request.getNamespace())) {
+                && !kubernetesService.canI("create", "monitoring.coreos.com", "servicemonitors", null, null,
+                        request.getNamespace())) {
             throw new IllegalStateException("Cannot deploy " + request.getReleaseName() + ": this account may not create "
                     + "ServiceMonitors in project " + request.getNamespace() + " (needed so OpenShift monitoring collects "
                     + "the service's metrics, which autoscaling reads). Ask the platform team to grant it, per project:\n"
                     + "  oc policy add-role-to-user monitoring-edit <account KDPS connects with> -n " + request.getNamespace());
         }
-        if (!KedaThanosScope.triggerAuthenticationEnabled(values)) {
+        // Autoscaling off: no autoscaler, so no monitoring token.
+        if (!KedaThanosScope.kedaEnabled(values) || !KedaThanosScope.triggerAuthenticationEnabled(values)) {
             return;
         }
         String tokenSecretName = tokenSecretName(values);
@@ -93,8 +96,9 @@ public final class OpenShiftMonitoringSetup {
             throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
                     + " with OpenShift KEDA autoscaling: server.keda.triggerAuthentication.secretName is not set.");
         }
+        // Labelled with the release, so its uninstall removes the token and the account it reads with.
         String problem = kubernetesService.ensureKedaThanosTokenSecret(request.getNamespace(), tokenSecretName,
-                tokenSecretName, usesProjectScope(kubernetesService, request));
+                tokenSecretName, usesProjectScope(kubernetesService, request), request.getReleaseName());
         if (problem != null) {
             throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
                     + " with OpenShift KEDA autoscaling: " + problem);

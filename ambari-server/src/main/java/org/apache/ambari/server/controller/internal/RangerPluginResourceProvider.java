@@ -23,6 +23,7 @@ import static org.apache.ambari.server.controller.KerberosHelperImpl.BASE_LOG_DI
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -50,12 +51,14 @@ import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
+import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.serveraction.ranger.CreateRangerServiceServerAction;
 import org.apache.ambari.server.serveraction.ranger.UpsertRangerUserServerAction;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostServerActionEvent;
 import org.apache.commons.lang.StringUtils;
+import org.springframework.security.core.Authentication;
 
 import com.google.gson.Gson;
 import com.google.inject.Inject;
@@ -97,6 +100,10 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
     private static final String PROPERTY_USER_ONLY_NS               = "RangerPlugin/userOnly";
     private static final String PROPERTY_TAG_SERVICE                = "tagService";
     private static final String PROPERTY_TAG_SERVICE_NS             = "RangerPlugin/tagService";
+    private static final String PROPERTY_DISABLE_USER               = "disableUser";
+    private static final String PROPERTY_DISABLE_USER_NS            = "RangerPlugin/disableUser";
+    private static final String PROPERTY_USER_DESCRIPTION           = "userDescription";
+    private static final String PROPERTY_USER_DESCRIPTION_NS        = "RangerPlugin/userDescription";
 
     private static final Set<String> PROPERTY_IDS;
     private static final Map<Resource.Type, String> KEY_PROPERTY_IDS;
@@ -116,7 +123,9 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
                 PROPERTY_USER_ROLES, PROPERTY_USER_ROLES_NS,
                 PROPERTY_RESET_PASSWORD, PROPERTY_RESET_PASSWORD_NS,
                                 PROPERTY_USER_ONLY, PROPERTY_USER_ONLY_NS,
-                PROPERTY_TAG_SERVICE, PROPERTY_TAG_SERVICE_NS
+                PROPERTY_TAG_SERVICE, PROPERTY_TAG_SERVICE_NS,
+                PROPERTY_DISABLE_USER, PROPERTY_DISABLE_USER_NS,
+                PROPERTY_USER_DESCRIPTION, PROPERTY_USER_DESCRIPTION_NS
         );
         PROPERTY_IDS = Collections.unmodifiableSet(propertyIds);
 
@@ -124,6 +133,13 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
         keyPropertyIds.put(Resource.Type.Cluster, PROPERTY_CLUSTER_NAME_NS);
         KEY_PROPERTY_IDS = Collections.unmodifiableMap(keyPropertyIds);
     }
+
+    /**
+     * Creating a Ranger repository or user acts on Ranger with the administrator credentials Ambari
+     * holds for the cluster, so it is reserved to cluster administrators.
+     */
+    private static final Set<RoleAuthorization> REQUIRED_CREATE_AUTHORIZATIONS =
+            EnumSet.of(RoleAuthorization.CLUSTER_TOGGLE_KERBEROS);
 
     private static final Gson GSON = new Gson();
 
@@ -143,6 +159,7 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
         this.managementController = controller;
         this.clusters = controller.getClusters();
         this.actionManager = controller.getActionManager();
+        setRequiredCreateAuthorizations(REQUIRED_CREATE_AUTHORIZATIONS);
     }
 
     @Override
@@ -161,7 +178,13 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
     }
 
     @Override
-    public RequestStatus createResources(Request request)
+    protected boolean isAuthorizedToCreateResources(Authentication authentication, Request request) {
+        return isAuthorizedOnRequestedClusters(authentication, request,
+                RangerPluginResourceProvider::clusterNameOf, getRequiredCreateAuthorizations());
+    }
+
+    @Override
+    protected RequestStatus createResourcesAuthorized(Request request)
             throws SystemException, UnsupportedPropertyException,
             ResourceAlreadyExistsException, NoSuchParentResourceException {
 
@@ -173,9 +196,7 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
         RequestStatusResponse statusResponse = null;
 
         for (Map<String, Object> properties : items) {
-            String clusterName          = firstNonBlank(
-                    stringValue(properties.get(PROPERTY_CLUSTER_NAME)),
-                    stringValue(properties.get(PROPERTY_CLUSTER_NAME_NS)));
+            String clusterName          = clusterNameOf(properties);
             String rangerRepositoryName = firstNonBlank(
                     stringValue(properties.get(PROPERTY_REPOSITORY_NAME)),
                     stringValue(properties.get(PROPERTY_REPOSITORY_NAME_NS)));
@@ -214,6 +235,17 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
             String tagService            = firstNonBlank(
                     stringValue(properties.get(PROPERTY_TAG_SERVICE)),
                     stringValue(properties.get(PROPERTY_TAG_SERVICE_NS)));
+            // Disable mode (user-only): the user is disabled, keeps only ROLE_USER and gets a password nobody knows,
+            // so an account handed out for a while (KDPS's per-release tag-sync account) stops working once it is
+            // no longer needed. The server makes up that password: the caller sends none.
+            boolean disableUser          = "true".equalsIgnoreCase(firstNonBlank(
+                    stringValue(properties.get(PROPERTY_DISABLE_USER)),
+                    stringValue(properties.get(PROPERTY_DISABLE_USER_NS))));
+            // User-only: what the user belongs to, as its Ranger description. A created user gets it, and an existing
+            // one is reset or disabled only when it has it, so one caller's account is never taken over by another.
+            String userDescription       = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_USER_DESCRIPTION)),
+                    stringValue(properties.get(PROPERTY_USER_DESCRIPTION_NS)));
 
             if (StringUtils.isBlank(clusterName)) {
                 throw new SystemException("clusterName is required");
@@ -221,7 +253,14 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
             if (!userOnly && StringUtils.isBlank(rangerRepositoryName)) {
                 throw new SystemException("rangerRepositoryName is required");
             }
-            if (userOnly && (StringUtils.isBlank(pluginUserName) || StringUtils.isBlank(pluginUserPassword))) {
+            if (disableUser && !userOnly) {
+                throw new SystemException("disableUser applies to userOnly=true requests only");
+            }
+            if (disableUser && StringUtils.isBlank(pluginUserName)) {
+                throw new SystemException("pluginUserName is required when disableUser=true");
+            }
+            if (userOnly && !disableUser
+                    && (StringUtils.isBlank(pluginUserName) || StringUtils.isBlank(pluginUserPassword))) {
                 throw new SystemException("pluginUserName and pluginUserPassword are required when userOnly=true");
             }
 
@@ -247,6 +286,12 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
                 }
                 if (StringUtils.isNotBlank(tagService)) {
                     commandParameters.put("tagService", tagService);
+                }
+                if (disableUser) {
+                    commandParameters.put("disableUser", "true");
+                }
+                if (userOnly && StringUtils.isNotBlank(userDescription)) {
+                    commandParameters.put("userDescription", userDescription);
                 }
                 if (StringUtils.isNotBlank(serviceType)) {
                     commandParameters.put("serviceType", serviceType);
@@ -320,7 +365,7 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
                             cluster.getClusterName(),
                             new ServiceComponentHostServerActionEvent(null, System.currentTimeMillis()),
                             commandParameters,
-                            "Create or update Ranger user",
+                            disableUser ? "Disable Ranger user" : "Create or update Ranger user",
                             managementController.findConfigurationTagsWithOverrides(cluster, null, null),
                             timeoutSeconds,
                             false,
@@ -367,6 +412,16 @@ public class RangerPluginResourceProvider extends AbstractControllerResourceProv
     }
 
     // helpers, still boring
+
+    /**
+     * The cluster a request item acts on. Authorization and the operation both resolve it here so
+     * that the permission check is made on the cluster that is really touched.
+     */
+    private static String clusterNameOf(Map<String, Object> properties) {
+        return firstNonBlank(
+                stringValue(properties.get(PROPERTY_CLUSTER_NAME)),
+                stringValue(properties.get(PROPERTY_CLUSTER_NAME_NS)));
+    }
 
     private static String stringValue(Object value) {
         return value == null ? null : String.valueOf(value);

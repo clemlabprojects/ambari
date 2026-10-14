@@ -27,7 +27,7 @@ import java.util.Map;
  * <p>
  * These defaults are intentionally conservative:
  * <ul>
- *   <li>Audit enabled only for log4j (file) by default; Solr/HDFS/DB disabled.</li>
+ *   <li>Audit enabled only for log4j (file) by default; Solr/HDFS/DB disabled until the platform context's Ranger turns them on.</li>
  *   <li>Policy Manager SSL truststore path present but with placeholder password.</li>
  *   <li>Kerberos UGI keys present but off by default to avoid breaking non-Kerberos clusters.</li>
  * </ul>
@@ -35,6 +35,13 @@ import java.util.Map;
  * You can override any key after obtaining these maps (see {@link RangerOverrides}).
  */
 public final class RangerTrinoConfigDefaults {
+
+    /**
+     * Where the audit writers keep the events they could not deliver yet. It lies inside the policy cache directory,
+     * the one directory of the container the chart mounts a writable volume on; beside it the writers could not
+     * create their folders and an outage of Solr or HDFS would lose events.
+     */
+    private static final String AUDIT_SPOOL_DIR = "/opt/trino/data/ranger-trino-plugin/cache/audit";
 
     private RangerTrinoConfigDefaults() {}
 
@@ -111,22 +118,32 @@ public final class RangerTrinoConfigDefaults {
     }
 
     /**
-     * Basic audit defaults: enable log4j/file audit only.
-     * Turn on Solr/HDFS/DB here when your cluster supports it.
+     * Audit defaults of a plugin that knows no destination but the pod log: log4j on, Solr, HDFS and DB off. The
+     * Solr and HDFS destinations are switched on from the platform context's Ranger audit settings, see
+     * {@link org.apache.ambari.view.k8s.utils.RangerAuditDestinations}. Each destination is written under the key
+     * the plugin reads ({@code xasecure.audit.destination.*}) and under the older key of the same switch.
      */
     public static Map<String, String> audit() {
         Map<String, String> rangerPluginAuditProperties = new LinkedHashMap<>();
         rangerPluginAuditProperties.put("xasecure.audit.is.enabled", "true");
+        rangerPluginAuditProperties.put("xasecure.audit.destination.log4j", "true");
         rangerPluginAuditProperties.put("xasecure.audit.log4j.is.enabled", "true");
 
         // Solr off by default
+        rangerPluginAuditProperties.put("xasecure.audit.destination.solr", "false");
         rangerPluginAuditProperties.put("xasecure.audit.solr.is.enabled", "false");
+        rangerPluginAuditProperties.put("xasecure.audit.destination.solr.urls", "");
+        rangerPluginAuditProperties.put("xasecure.audit.destination.solr.zookeepers", "");
         rangerPluginAuditProperties.put("xasecure.audit.solr.zookeepers", "");
         rangerPluginAuditProperties.put("xasecure.audit.solr.collection.name", "ranger_audits"); // typical default
+        rangerPluginAuditProperties.put("xasecure.audit.destination.solr.batch.filespool.dir", AUDIT_SPOOL_DIR + "/solr");
 
         // HDFS off by default
+        rangerPluginAuditProperties.put("xasecure.audit.destination.hdfs", "false");
         rangerPluginAuditProperties.put("xasecure.audit.hdfs.is.enabled", "false");
+        rangerPluginAuditProperties.put("xasecure.audit.destination.hdfs.dir", "/ranger/audit");
         rangerPluginAuditProperties.put("xasecure.audit.hdfs.dir", "/ranger/audit");
+        rangerPluginAuditProperties.put("xasecure.audit.destination.hdfs.batch.filespool.dir", AUDIT_SPOOL_DIR + "/hdfs");
 
         // DB off by default
         rangerPluginAuditProperties.put("xasecure.audit.destination.db", "false");

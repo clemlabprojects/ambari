@@ -15,3 +15,6 @@ import { createContext } from 'react';
  * where the optional-chained call is a harmless no-op.
  */
 export const FieldSyncContext = createContext<(() => void) | undefined>(undefined);
+
+/** True while the wizard upgrades a deployed release, whose values must not be replaced by fresh discovery. */
+export const UpgradeModeContext = createContext<boolean>(false);

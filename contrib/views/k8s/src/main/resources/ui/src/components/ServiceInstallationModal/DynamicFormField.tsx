@@ -17,17 +17,27 @@
  */
 
 import React from 'react';
-import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography } from 'antd';
+import { Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography, message } from 'antd';
 import type { FormField, ExternalAuthTargetFormField } from '../../types/ServiceTypes';
 import ServiceSelect from './ServiceSelect';
 import TrinoCatalogSelect from './TrinoCatalogSelect';
 import ExternalAuthTargetField from './ExternalAuthTargetField';
 import { useIsContextLinked, useResolvedContextValue } from './ExternalAuthTargetsContext';
 import { fieldCapabilityAvailable, useCapabilities } from './capabilities';
-import { FieldSyncContext } from './fieldSync';
+import { FieldSyncContext, UpgradeModeContext } from './fieldSync';
+import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery';
+import OpenShiftMonitoringNotice from './OpenShiftMonitoringNotice';
+import { resourceCheckError } from './resourceChecks';
+import { conditionMet, requiredUnlessAnyError } from './requiredUnless';
+import { patternRules } from '../../utils/nameRules';
+import type { Rule } from 'antd/lib/form';
 import { ApiOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
+
+/** Form path of a field name; an escaped dot ("node\\.data-dir") stays inside its segment. */
+const toNameParts = (name: string): string[] =>
+  name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
 
 const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = ({ field, upgradeMode }) => {
   const form = Form.useFormInstance();
@@ -45,14 +55,17 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     message: requiredByContext
       ? `'${field.label}' is required: the selected Platform Context resolves ${reqWhen?.field} to '${reqCtx.value}'.`
       : `Field '${field.label}' is required.`,
-  }];
+  }, ...patternRules(field.pattern, field.validationHint)];
   const isLocked = upgradeMode && (field.name === 'releaseName' || field.name === 'namespace');
   const disabledProp = (field as any).disabled || isLocked;
-  const nameParts = field.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
+  const nameParts = toNameParts(field.name);
   // Cluster capabilities (cert-manager / external-secrets / OpenShift) drive the
   // adaptive filtering of select options below. We call the hook unconditionally
   // so React's rule-of-hooks holds regardless of field type.
   const caps = useCapabilities();
+  // Upgrade/Config of a deployed release: select options marked `upgradeOnly` (e.g. "Keep current certificate")
+  // only make sense there.
+  const upgrading = React.useContext(UpgradeModeContext);
   // When this field is a `requiresContext.when` trigger (e.g. atlasFederation.enabled), wrap it
   // in a subtle accent + cue so the operator sees it depends on the selected Platform Context.
   const linked = useIsContextLinked(field.name);
@@ -83,13 +96,9 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
   // gate-show only when another field has a non-blank string value — useful for
   // external-auth-target groups that should only appear when the corresponding
   // URL override has been filled in.
-  const isVisible = !condition
-      ? true
-      : condition.operator === 'non-empty'
-          ? watchedValue != null && String(watchedValue).trim().length > 0
-          : Array.isArray(condition.value)
-              ? condition.value.includes(watchedValue)
-              : watchedValue === condition.value;
+  //
+  // The deploy-time check of `requiredUnlessAny` uses the same test (conditionMet), so both skip the same fields.
+  const isVisible = conditionMet(condition, watchedValue);
   if (!isVisible) return null;
   // Field-level capability gate (mirrors the option-level `capability` on selects):
   // hide the whole field when its required cluster capability/platform is absent —
@@ -160,19 +169,16 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       return (
         <ServiceSelect
           field={field as any}
-          onValueSelect={(val) => {
-            try {
-              const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-              if (parsed?.namespace || parsed?.release) {
-                form.setFieldsValue({
-                  monitoring: {
-                    namespace: parsed.namespace,
-                    release: parsed.release,
-                  },
-                });
-              }
-            } catch (e) {
-              // ignore parse errors
+          onValueSelect={(val, auto) => {
+            const parsed = parseDiscoveryChoice(val);
+            const current = form.getFieldValue('monitoring') || {};
+            // An automatic choice never replaces an address the operator already set.
+            if (auto && current.url) return false;
+            if (parsed?.namespace || parsed?.release) {
+              form.setFieldsValue({ monitoring: monitoringFieldsFromDiscovery(parsed, current) });
+              syncFields?.();
+              // e.g. a Prometheus that only reads ServiceMonitors from its own namespace
+              if (parsed.warning) message.warning(parsed.warning, 8);
             }
           }}
         />
@@ -182,25 +188,23 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         <ServiceSelect
           field={field as any}
           onValueSelect={(val) => {
-            try {
-              const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-              // Auto-fill the KEDA namespace (and release when Helm-installed) from the detected operator
-              // so a reused install is honoured and the skip check looks in the right place.
-              if (parsed?.namespace || parsed?.release) {
-                form.setFieldsValue({
-                  keda: {
-                    ...(form.getFieldValue('keda') || {}),
-                    ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
-                    ...(parsed.release ? { release: parsed.release } : {}),
-                  },
-                });
-              }
-            } catch (e) {
-              // ignore parse errors
+            const parsed = parseDiscoveryChoice(val);
+            // Auto-fill the KEDA namespace (and release when Helm-installed) from the detected operator
+            // so a reused install is honoured and the skip check looks in the right place.
+            if (parsed?.namespace || parsed?.release) {
+              form.setFieldsValue({
+                keda: {
+                  ...(form.getFieldValue('keda') || {}),
+                  ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+                },
+              });
+              syncFields?.();
             }
           }}
         />
       );
+    case 'openshift-monitoring-notice':
+      return <OpenShiftMonitoringNotice />;
     case 'context-resolved': {
       const f = field as any;
       // No value resolved from the context. For a MANAGED context this means the capability
@@ -285,7 +289,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
               // wizard hides modes whose backing operator isn't installed. Until the
               // capabilities probe returns we render everything (fail-open) so the form
               // doesn't briefly appear empty on first paint.
-              .filter((opt: any) => capabilityAvailable(opt.capability))
+              .filter((opt: any) => capabilityAvailable(opt.capability) && (upgrading || !opt.upgradeOnly))
               .map((opt: any) => (
                 <Option key={opt.value} value={opt.value}>
                   {opt.label}
@@ -297,7 +301,8 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     case 'number':
       return (
         <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
-          <InputNumber style={{ width: '100%' }} disabled={disabledProp} />
+          <InputNumber style={{ width: '100%' }} disabled={disabledProp}
+            min={(field as any).min} max={(field as any).max} />
         </Form.Item>
       );
     case 'boolean':
@@ -330,11 +335,38 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         </Form.Item>
       );
     case 'string':
-    default:
+    default: {
+      // `resourceCheck`: compare the value with the limit in another field (e.g. a Java heap against the pod memory
+      // limit), re-checked whenever that limit changes. Its help goes under the input: antd's `help` would hide
+      // the check's error message. The same for a `pattern`, whose `validationHint` is that message.
+      const check = field.resourceCheck;
+      const limitParts = check?.limitField ? toNameParts(check.limitField) : undefined;
+      const checkRules: Rule[] = check && limitParts ? [{
+        validator: (_rule: unknown, value: unknown) => {
+          const error = resourceCheckError(check, value, form.getFieldValue(limitParts));
+          return error ? Promise.reject(new Error(error)) : Promise.resolve();
+        },
+      }] : [];
+      // `requiredUnlessAny`: mandatory while the other fields it names are all empty, re-checked when they change.
+      const unless = field.requiredUnlessAny;
+      const unlessParts = Array.isArray(unless?.fields) ? unless!.fields.map(toNameParts) : [];
+      if (unless && unlessParts.length) {
+        checkRules.push({
+          validator: (_rule: unknown, value: unknown) => {
+            const error = requiredUnlessAnyError(unless, value, unlessParts.map(p => form.getFieldValue(p)), field.label);
+            return error ? Promise.reject(new Error(error)) : Promise.resolve();
+          },
+        });
+      }
+      const dependencies = [...(limitParts ? [limitParts] : []), ...unlessParts];
+      const helpProps = dependencies.length
+        ? { extra: field.help, dependencies }
+        : field.pattern ? { extra: field.help } : { help: field.help };
       return (
-        <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
+        <Form.Item name={nameParts} label={field.label} rules={[...rules, ...checkRules]} {...helpProps}>
           <Input
             disabled={disabledProp}
+            placeholder={field.placeholder}
             onChange={(e) => {
               // For Hive override, also populate the base metastore field so bindings pick it up.
               if (field.name === 'ui_hive_metastore_uri_override') {
@@ -344,6 +376,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           />
         </Form.Item>
       );
+    }
   }
 };
 

@@ -20,6 +20,7 @@ import React, { useEffect, useState } from 'react';
 import { Modal, Alert, Collapse, Progress, Typography, Space, Button, Spin, Tree, Tag, message } from 'antd';
 import { LoadingOutlined, CheckCircleTwoTone, CloseCircleTwoTone, ClockCircleOutlined } from '@ant-design/icons';
 import { cancelCommand, resumeCommand, getCommandStatus, listCommands, listChildCommands, refreshDependencies, getCommandLogs, type CommandStatus } from '../../api/client';
+import { describeGitOps, gitOpsResult, operationNotices, waitingForMerge } from './operationOutcome';
 
 type BackgroundOperationsModalProps = {
   open: boolean;
@@ -278,7 +279,11 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
               null;
             if (watched && isTerminal(watched)) {
               setWatchCommandCompleted(true);
-              if (watched.state === 'SUCCEEDED' && onAutoClose) {
+              // A GitOps change still waiting for a merge also ends SUCCEEDED, with nothing applied yet: the modal
+              // stays open so the operator reads what it waits for. So it does for a deploy with notices (where to
+              // read a password KDPS generated for the release).
+              if (watched.state === 'SUCCEEDED' && onAutoClose && !waitingForMerge(watched)
+                  && operationNotices(watched).length === 0) {
                 onAutoClose();
               }
             }
@@ -478,8 +483,53 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     // clicking needed. The steps tree beside it is a progress display only.
     const logId = op.id;
     const logs = logState[logId];
+    // From the row the poller keeps current: the status fetched when the operation was opened may predate its end.
+    const pendingMerge = op.state === 'SUCCEEDED' ? waitingForMerge(op) : null;
+    const notices = op.state === 'SUCCEEDED' ? operationNotices(op) : [];
+    // What a GitOps deploy did in Git, from the moment its commit step ran: the commit, the branch, the pull request.
+    const gitOps = gitOpsResult(op);
+    const gitOpsSummary = gitOps ? describeGitOps(gitOps) : null;
+    const pullRequestUrl = pendingMerge?.pullRequestUrl || gitOps?.prUrl;
     return (
       <>
+        {notices.length > 0 && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Before you sign in"
+            description={(
+              <Space direction="vertical" size={4}>
+                {notices.map((notice, i) => (
+                  <span key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{notice}</span>
+                ))}
+              </Space>
+            )}
+          />
+        )}
+        {(pendingMerge || gitOpsSummary) && (
+          <Alert
+            type={pendingMerge ? 'warning' : 'info'}
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={pendingMerge ? 'Committed to Git, not applied yet' : gitOpsSummary?.title}
+            description={(
+              <Space direction="vertical" size={4}>
+                {gitOpsSummary && gitOpsSummary.lines.length > 0 && (
+                  <span style={{ wordBreak: 'break-word' }}>{gitOpsSummary.lines.join(' · ')}</span>
+                )}
+                {pendingMerge && (
+                  <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{pendingMerge.message}</span>
+                )}
+                {pullRequestUrl && (
+                  <Typography.Link href={pullRequestUrl} target="_blank" rel="noopener noreferrer">
+                    Open the pull request
+                  </Typography.Link>
+                )}
+              </Space>
+            )}
+          />
+        )}
         {status.state === 'FAILED' && status.error && (
           <Alert
             type="error"
@@ -564,13 +614,26 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
                     {op.message || op.type || op.id}
                   </Typography.Text>
                   <Tag color={stateColor(op.state)} style={{ margin: 0, flexShrink: 0 }}>{op.state}</Tag>
+                  {op.state === 'SUCCEEDED' && waitingForMerge(op) && (
+                    <Tag color="gold" style={{ margin: 0, flexShrink: 0 }}>WAITING FOR MERGE</Tag>
+                  )}
                   <Progress percent={displayPercent(op)} size="small" status={progressStatus(op.state) as any} style={{ width: 120, marginBottom: 0, flexShrink: 0 }} />
                   <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatTimestamp(op.updatedAt)}</Typography.Text>
                   {(op.state === 'RUNNING' || op.state === 'PENDING') ? (
                     <Button size="small" danger style={{ flexShrink: 0 }} onClick={async (e) => {
                       e.stopPropagation();
-                      try { await cancelCommand(op.id); message.success('Abort requested'); loadPage(true); }
-                      catch (err: any) { message.error(err?.message || 'Abort failed'); }
+                      Modal.confirm({
+                        title: `Abort "${op.message || op.type || op.id}"?`,
+                        content: 'The step that is running now will finish, the remaining steps will be skipped, and the '
+                          + 'operation cannot be resumed afterwards. To complete it, run the wizard again.',
+                        okText: 'Abort operation',
+                        okButtonProps: { danger: true },
+                        cancelText: 'Keep running',
+                        onOk: async () => {
+                          try { await cancelCommand(op.id); message.success('Abort requested'); loadPage(true); }
+                          catch (err: any) { message.error(err?.message || 'Abort failed'); }
+                        },
+                      });
                     }}>Abort</Button>
                   ) : (op.state === 'FAILED') ? (
                     // Resume from the failed step: re-runs that sub-step and continues, skipping the

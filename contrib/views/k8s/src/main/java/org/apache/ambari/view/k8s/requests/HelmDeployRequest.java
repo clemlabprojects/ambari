@@ -114,6 +114,13 @@ public class HelmDeployRequest {
     //   refreshInterval  ESO refresh cadence (default "1h")
     private Map<String, Object> ingressTlsExternalSecret;
 
+    // Whether the ingress TLS Secret named by ingressTlsUpload or ingressTlsSelfSign may be written over when it
+    // already exists and KDPS did not mint it (an uploaded corporate certificate, the operator's own Secret). Off by
+    // default, so a redeploy never replaces a production certificate by accident: the wizard sets it only after the
+    // operator confirmed the replacement. A Secret kept by cert-manager or the External Secrets Operator is never
+    // written over, whatever this says.
+    private boolean replaceExistingTls;
+
     // Snapshot of the wizard's raw form state with envelope keys stripped. Needed so the
     // server can read form fields that were declared excludeFromValues — e.g. JupyterHub's
     // jupyterHost. Those fields are stripped from request.values by the wizard before
@@ -132,6 +139,16 @@ public class HelmDeployRequest {
         private String commitMode; // DIRECT_COMMIT or PR_MODE
         private String branch;
         private String credentialAlias;
+        // Credential store alias of the access token when the SSH key holds credentialAlias: a deploy given both
+        // pushes with the key and opens its pull request with the token. Set by the view when it stores the token;
+        // the value a request sends is discarded.
+        private String authTokenAlias;
+        // The Git server's SSH host keys, as known_hosts lines: over SSH, a server presenting any other key is refused.
+        // Public keys, not secrets: kept with the deploy and recorded for the release.
+        private String sshKnownHosts;
+        // With no host key given or recorded for the release: accept the key the Git server presents to this deploy,
+        // and record it so that later operations require it.
+        private Boolean trustHostKeyOnFirstUse;
 
         public String getRepoUrl() { return repoUrl; }
         public void setRepoUrl(String repoUrl) { this.repoUrl = repoUrl; }
@@ -149,6 +166,12 @@ public class HelmDeployRequest {
         public void setBranch(String branch) { this.branch = branch; }
         public String getCredentialAlias() { return credentialAlias; }
         public void setCredentialAlias(String credentialAlias) { this.credentialAlias = credentialAlias; }
+        public String getAuthTokenAlias() { return authTokenAlias; }
+        public void setAuthTokenAlias(String authTokenAlias) { this.authTokenAlias = authTokenAlias; }
+        public String getSshKnownHosts() { return sshKnownHosts; }
+        public void setSshKnownHosts(String sshKnownHosts) { this.sshKnownHosts = sshKnownHosts; }
+        public Boolean getTrustHostKeyOnFirstUse() { return trustHostKeyOnFirstUse; }
+        public void setTrustHostKeyOnFirstUse(Boolean trustHostKeyOnFirstUse) { this.trustHostKeyOnFirstUse = trustHostKeyOnFirstUse; }
     }
 
     // Getters and Setters
@@ -518,6 +541,15 @@ public class HelmDeployRequest {
                 this.ingressTlsExternalSecret = s.isBlank() ? null : OM.readValue(s, Map.class);
             }
         } catch (Exception ignore) { this.ingressTlsExternalSecret = null; }
+    }
+
+    /** @see #replaceExistingTls */
+    public boolean isReplaceExistingTls() {
+        return replaceExistingTls;
+    }
+
+    public void setReplaceExistingTls(boolean replaceExistingTls) {
+        this.replaceExistingTls = replaceExistingTls;
     }
 
     /** @see #formValues */

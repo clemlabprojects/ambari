@@ -17,6 +17,10 @@
  */
 package org.apache.ambari.view.k8s.service;
 
+import org.apache.ambari.view.DataStore;
+import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.model.TrinoCatalogDTO;
+import org.apache.ambari.view.k8s.store.TrinoCatalogEntity;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -25,8 +29,11 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Reusable Trino catalogs: the validation rules an operator hits on the Trino Catalogs page, the
@@ -78,6 +85,65 @@ class TrinoCatalogServiceTest {
         assertTrue(e.getMessage().contains("3000"), e.getMessage());
     }
 
+    /**
+     * A reusable catalog lives in KDPS's database and is copied into the catalog ConfigMap of every release that uses
+     * it, so a credential must be read from the environment (a Secret of the release), never written out.
+     */
+    @Test
+    void rejectsCredentialsWrittenOut() {
+        for (String line : List.of("connection-password=hunter2", "s3.aws-secret-key=abc", "s3.aws-access-key=AKIA",
+                "iceberg.rest-catalog.oauth2.credential=client:secret", "iceberg.rest-catalog.oauth2.token=eyJ",
+                "kafka.ssl.truststore.password = changeit", "gcs.json-key={\"type\":\"service_account\"}")) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> TrinoCatalogService.validateCatalog("pg", PG + line + "\n"), line);
+            String key = line.substring(0, line.indexOf('=')).trim();
+            assertTrue(e.getMessage().contains(key + "=${ENV:"), e.getMessage());
+            assertTrue(e.getMessage().contains("Secrets with catalog credentials"), e.getMessage());
+            assertFalse(e.getMessage().contains(line.substring(line.indexOf('=') + 1).trim()),
+                    "the message must not repeat the credential: " + e.getMessage());
+        }
+    }
+
+    @Test
+    void acceptsCredentialsReadFromTheEnvironmentAndPropertiesThatOnlyNameThem() {
+        assertEquals("postgresql", TrinoCatalogService.validateCatalog("pg",
+                PG + "connection-user=${ENV:PG_USER}\nconnection-password=${ENV:PG_PASSWORD}\n"));
+        assertEquals("postgresql", TrinoCatalogService.validateCatalog("pg", PG + "connection-password=\n"));
+        assertEquals("bigquery", TrinoCatalogService.validateCatalog("bq",
+                "connector.name=bigquery\nbigquery.credentials-file=/etc/secrets/bq.json\n"
+                        + "# connection-password=commented-out\niceberg.rest-catalog.oauth2.token-refresh-enabled=true\n"));
+        assertEquals(List.of("connection-password", "s3.aws-secret-key"), TrinoCatalogService.literalCredentialProperties(
+                PG + "connection-password=x\ns3.aws-secret-key=y\ns3.aws-access-key=${ENV:K}\n"));
+    }
+
+    /**
+     * A catalog saved before KDPS refused credentials written out still holds one; the Trino Catalogs page shows which
+     * properties, so the operator can find it and edit it before the next Upgrade/Config of a release using it.
+     */
+    @Test
+    void theListNamesThePropertiesACatalogSavedEarlierWritesOut() throws Exception {
+        TrinoCatalogEntity legacy = new TrinoCatalogEntity();
+        legacy.setId("cat-1");
+        legacy.setName("legacy");
+        legacy.setPropertiesText(PG + "connection-password=old-literal\n");
+        TrinoCatalogEntity fromEnv = new TrinoCatalogEntity();
+        fromEnv.setId("cat-2");
+        fromEnv.setName("pg");
+        fromEnv.setPropertiesText(PG + "connection-password=${ENV:PG_PASSWORD}\n");
+        ViewContext ctx = mock(ViewContext.class);
+        DataStore ds = mock(DataStore.class);
+        when(ctx.getDataStore()).thenReturn(ds);
+        when(ds.findAll(TrinoCatalogEntity.class, null)).thenReturn(List.of(legacy, fromEnv));
+        when(ds.find(TrinoCatalogEntity.class, "cat-1")).thenReturn(legacy);
+
+        List<TrinoCatalogDTO> listed = new TrinoCatalogService(ctx).list();
+
+        assertEquals(List.of("legacy", "pg"), listed.stream().map(d -> d.name).toList());
+        assertEquals(List.of("connection-password"), listed.get(0).literalCredentials);
+        assertEquals(List.of(), listed.get(1).literalCredentials);
+        assertEquals(List.of("connection-password"), new TrinoCatalogService(ctx).get("cat-1").literalCredentials);
+    }
+
     @Test
     void refsJsonRoundTripsAndToleratesGarbage() {
         Map<String, Map<String, String>> refs = new LinkedHashMap<>();
@@ -91,6 +157,51 @@ class TrinoCatalogServiceTest {
         assertTrue(TrinoCatalogService.parseRefs(null).isEmpty());
         assertTrue(TrinoCatalogService.parseRefs("not json").isEmpty());
         assertEquals(null, TrinoCatalogService.toRefsJson(new LinkedHashMap<>()), "no refs -> null clears the column");
+    }
+
+    @Test
+    void readOnlyUsersSeeTheSettingsButNotTheCredentials() {
+        String text = "connector.name=postgresql\n"
+                + "connection-url=jdbc:postgresql://db:5432/x\n"
+                + "connection-user=app\n"
+                + "connection-password=s3cret\n"
+                + "hive.s3.aws-secret-key = AbCd/123\n"
+                + "iceberg.rest-catalog.oauth2.credential: client:pa55\n"
+                + "kafka.token s3cret-token\n"
+                + "# connection-password=old-s3cret\n"
+                + "case-insensitive-name-matching.PASSWORD=x";
+
+        assertEquals("connector.name=postgresql\n"
+                        + "connection-url=jdbc:postgresql://db:5432/x\n"
+                        + "connection-user=app\n"
+                        + "connection-password=********\n"
+                        + "hive.s3.aws-secret-key=********\n"
+                        + "iceberg.rest-catalog.oauth2.credential=********\n"
+                        + "kafka.token=********\n"
+                        + "# connection-password=********\n"
+                        + "case-insensitive-name-matching.PASSWORD=********",
+                TrinoCatalogService.withoutSecrets(text));
+    }
+
+    @Test
+    void aValueWrittenOverSeveralLinesIsMaskedWhole() {
+        assertEquals("connection-password=********\nconnection-user=app",
+                TrinoCatalogService.withoutSecrets("connection-password=part1\\\n  part2\\\n  part3\nconnection-user=app"));
+        // An escaped backslash ends the value.
+        assertEquals("connection-password=********\nconnection-user=app",
+                TrinoCatalogService.withoutSecrets("connection-password=a\\\\\nconnection-user=app"));
+    }
+
+    @Test
+    void maskingKeepsWhatHoldsNoCredential() {
+        assertEquals(PG.trim(), TrinoCatalogService.withoutSecrets(PG.trim()));
+        assertEquals("connection-password=\n# a comment\n\nconnector.name=memory",
+                TrinoCatalogService.withoutSecrets("connection-password=\n# a comment\n\nconnector.name=memory"));
+        assertEquals("connection-password=********\nconnection-user=app\r",
+                TrinoCatalogService.withoutSecrets("connection-password=s3cret\r\nconnection-user=app\r"),
+                "a Windows line end does not hide the line from the mask");
+        assertEquals(null, TrinoCatalogService.withoutSecrets(null));
+        assertEquals("", TrinoCatalogService.withoutSecrets(""));
     }
 
     @Test

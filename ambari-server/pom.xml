@@ -41,7 +41,7 @@
     <ambari-admin-dir>${basedir}/../ambari-admin</ambari-admin-dir>
     <contrib-views-dir>${basedir}/../contrib/views</contrib-views-dir>
     <!-- Must match contrib/views/k8s/pom.xml <version>; bumped together with it. -->
-    <kdps.view.version>1.0.0.8</kdps.view.version>
+    <kdps.view.version>1.0.0.10</kdps.view.version>
     <resourceManagementSrcLocation>${project.basedir}/../ambari-common/src/main/python/resource_management</resourceManagementSrcLocation>
     <customActionsRoot>src/main/resources/custom_actions</customActionsRoot>
     <ambariProperties>conf/unix/ambari.properties</ambariProperties>
@@ -228,6 +228,8 @@
                   <fileset dir="${contrib-views-dir}">
                     <include name="*/target/*jar" />
                     <exclude name="k8s/target/k8s-view-*.jar" />
+                    <!-- Not part of 2.8.2.0 (contrib/views/pom.xml): a jar left by an earlier build must not ship. -->
+                    <exclude name="sql-assistant/target/*.jar" />
                     <exclude name="**/ambari-views-utils*jar" />
                     <exclude name="**/ambari-views-commons*jar" />
                     <exclude name="**/ambari-views-package*jar" />

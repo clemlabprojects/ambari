@@ -21,14 +21,15 @@ package org.apache.ambari.view.k8s;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.google.common.annotations.VisibleForTesting;
-
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.UserPermissions;
 import org.apache.ambari.view.k8s.resources.*;
 import org.apache.ambari.view.k8s.security.AuthHelper;
+import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.TruststoreRegistryService;
+import org.apache.ambari.view.k8s.service.NamespaceScope;
+import org.apache.ambari.view.k8s.service.PkiNamespaces;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
 import org.apache.ambari.view.k8s.service.StackDefinitionService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
@@ -36,6 +37,7 @@ import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 
 import org.apache.ambari.view.k8s.utils.AmbariAliasResolver;
+import org.apache.ambari.view.k8s.utils.KubeconfigGuard;
 import org.apache.ambari.view.k8s.utils.WebHookBootstrap;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 
@@ -95,9 +97,14 @@ public class KubeService {
 
 
 
-    @VisibleForTesting
+    /** Replaces the Kubernetes service; for tests. */
     void setKubernetesService(KubernetesService kubernetesService) {
         this.kubernetesService = kubernetesService;
+    }
+
+    /** Replaces the view configuration service; for tests. */
+    void setConfigService(ViewConfigurationService configService) {
+        this.configService = configService;
     }
 
     /**
@@ -150,8 +157,8 @@ public class KubeService {
     @GET
     @Path("/users/me/permissions")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getCurrentUserPermissions() {
-        AuthHelper authHelper = new AuthHelper(viewContext);
+    public Response getCurrentUserPermissions(@Context HttpHeaders headers) {
+        AuthHelper authHelper = new AuthHelper(viewContext, headers);
         return Response.ok(authHelper.getPermissions()).build();
     }
 
@@ -160,10 +167,15 @@ public class KubeService {
     @Consumes(MediaType.APPLICATION_OCTET_STREAM)
     public Response uploadKubeconfig(@Context HttpHeaders headers,
                                      @Context UriInfo ui, InputStream fileInputStream) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
 
         try {
             ViewConfigurationService configurationService = this.getConfigService();
+            // The kubeconfig is only ever stored encrypted with the master key: without it, refuse before reading it.
+            if (!configurationService.isMasterKeyAvailable()) {
+                LOG.warn("/cluster/config: kubeconfig upload refused, the Ambari master key was not found");
+                return MasterKeyUnavailableException.response();
+            }
 
             LOG.info("/cluster/config: Received kubeconfig upload request.");
             // Check the file before it replaces the saved one: an unreadable upload must not break a working view.
@@ -177,6 +189,15 @@ public class KubeService {
                 return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
                         "This file is not a valid kubeconfig; the previous configuration is unchanged.")).build();
             }
+            // A command (exec, auth-provider) would run as the Ambari account, and a file path would make the clients read
+            // the Ambari server's disk. A field the kubeconfig model does not know is refused too: KDPS would not pass it
+            // on, so the file saved would not be the one used.
+            java.util.List<String> problems = KubeconfigGuard.problems(kubeconfig);
+            if (!problems.isEmpty()) {
+                LOG.warn("/cluster/config: kubeconfig refused: {}", problems);
+                return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                        String.join(" ", problems) + " The previous configuration is unchanged.")).build();
+            }
             java.util.List<String> contextNames = kubeconfig.getContexts() == null ? java.util.List.of()
                     : kubeconfig.getContexts().stream().map(io.fabric8.kubernetes.api.model.NamedContext::getName)
                         .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toList());
@@ -185,7 +206,7 @@ public class KubeService {
 
             LOG.info("Kubeconfig successfully saved to {}", configurationFile.getAbsolutePath());
             LOG.info("Configuring Apache Ambari View Backend CA bundle");
-            final String webhookName = "keytab-webhook"; // must match your Helm values prefix
+            final String webhookName = WebHookBootstrap.KEYTAB_WEBHOOK; // must match your Helm values prefix
 
             // A context chosen for the previous kubeconfig may not exist in this one: fall back to the new file's
             // current-context (the operator is then offered the context list) instead of failing to connect.
@@ -237,9 +258,15 @@ public class KubeService {
                 }
             } else {
                 LOG.info("/cluster/config: Kerberos injection mode {}; keytab webhook prerequisites not needed", injectionMode);
+                // An account an earlier WEBHOOK setup left behind is withdrawn while an administrator is at hand;
+                // kept, with a warning in the log, while the webhook is still installed.
+                WebHookBootstrap.retireWebhookAccess(this.viewContext, this.getKubernetesService(),
+                        headers == null ? null : headers.getRequestHeaders());
             }
             return Response.ok(Collections.singletonMap("message", "Configuration saved.")).build();
 
+        } catch (MasterKeyUnavailableException e) {
+            return e.getResponse();
         } catch (IOException e) {
             LOG.error("Error while saving uploaded kubeconfig file", e);
             return Response.serverError().entity("Error while saving the file.").build();
@@ -255,11 +282,9 @@ public class KubeService {
      */
     private static io.fabric8.kubernetes.api.model.Config parseKubeconfig(byte[] bytes) {
         try {
-            Object parsed = io.fabric8.kubernetes.client.utils.Serialization.unmarshal(
-                    new String(bytes, java.nio.charset.StandardCharsets.UTF_8), io.fabric8.kubernetes.api.model.Config.class);
-            if (!(parsed instanceof io.fabric8.kubernetes.api.model.Config c)
-                    || !"Config".equals(c.getKind())
-                    || c.getClusters() == null || c.getClusters().isEmpty()) {
+            io.fabric8.kubernetes.api.model.Config c =
+                    KubeconfigGuard.parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+            if (!"Config".equals(c.getKind()) || c.getClusters() == null || c.getClusters().isEmpty()) {
                 return null;
             }
             return c;
@@ -279,17 +304,32 @@ public class KubeService {
      *         configuration, 503 when the cluster cannot be reached or rejects the credentials
      */
     private Response reconnect(String saved) {
+        return reconnect(saved, "Check that the kubeconfig is valid (details in the Ambari server log).");
+    }
+
+    /**
+     * {@link #reconnect(String)} with what to check when no client can be built.
+     *
+     * @param saved       what was saved, to start the error message with
+     * @param whatToCheck the advice that follows when no client can be built from the configuration
+     */
+    private Response reconnect(String saved, String whatToCheck) {
         boolean built;
+        // When the saved configuration itself is the problem (a kubeconfig whose user only runs a command, for one),
+        // the operator is told what to change rather than pointed at the server log.
+        String unusable = null;
         try {
-            built = this.getKubernetesService().forceReloadClient();
+            KubernetesService service = this.getKubernetesService();
+            built = service.forceReloadClient();
+            unusable = built ? null : service.unusableConfiguration();
         } catch (Exception e) {
             LOG.warn("Kubernetes client rebuild failed: {}", e.toString());
             built = false;
         }
         if (!built) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
-                    saved + ", but KDPS could not build a connection from it. Check that the kubeconfig is valid "
-                            + "(details in the Ambari server log).")).build();
+                    saved + ", but KDPS could not build a connection from it. "
+                            + (unusable != null ? unusable : whatToCheck))).build();
         }
         org.apache.ambari.view.k8s.model.ConnectionHealth health = this.getKubernetesService().pingCluster();
         if (!health.isConnected()) {
@@ -307,8 +347,8 @@ public class KubeService {
     @GET
     @Path("/cluster/contexts")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response listKubeconfigContexts() {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response listKubeconfigContexts(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         try {
             return Response.ok(this.getKubernetesService().listAvailableContexts()).build();
         } catch (Exception e) {
@@ -325,8 +365,8 @@ public class KubeService {
     @Path("/cluster/context")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response selectKubeconfigContext(java.util.Map<String, String> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response selectKubeconfigContext(@Context HttpHeaders headers, java.util.Map<String, String> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         String context = body == null ? null : body.get("context");
         LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
         java.util.List<java.util.Map<String, Object>> available;
@@ -360,8 +400,8 @@ public class KubeService {
     @Path("/cluster/openshift-login")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response saveOpenShiftLogin(java.util.Map<String, Object> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response saveOpenShiftLogin(@Context HttpHeaders headers, java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         if (body == null) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error", "missing body")).build();
         }
@@ -374,8 +414,17 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", "apiUrl, username and password are required")).build();
         }
+        if (!this.getConfigService().isMasterKeyAvailable()) {
+            LOG.warn("/cluster/openshift-login: refused, the Ambari master key was not found to encrypt the password");
+            return MasterKeyUnavailableException.response();
+        }
         LOG.info("/cluster/openshift-login: configuring OpenShift login for user '{}' at {}", username, apiUrl);
-        this.getConfigService().saveOpenShiftLogin(apiUrl, username, password, caData, insecure);
+        try {
+            this.getConfigService().saveOpenShiftLogin(apiUrl, username, password, caData, insecure);
+        } catch (IllegalArgumentException e) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
         try {
             boolean ok = this.getKubernetesService().forceReloadClient();
             if (!ok) {
@@ -398,8 +447,8 @@ public class KubeService {
     @Path("/cluster/openshift-login/test")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response testOpenShiftLogin(java.util.Map<String, Object> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response testOpenShiftLogin(@Context HttpHeaders headers, java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         if (body == null) {
             return Response.ok(Map.of("ok", false, "error", "missing body")).build();
         }
@@ -416,8 +465,10 @@ public class KubeService {
                     new org.apache.ambari.view.k8s.service.OpenShiftLoginProvider(apiUrl, username, password, caData, insecure);
             String token = provider.refresh();
             if (token == null || token.isBlank()) {
-                return Response.ok(Map.of("ok", false, "error",
-                        "Could not obtain a token. Check the URL/credentials, and that the cluster allows password login (oc login -u -p).")).build();
+                // The provider knows why (a refused certificate comes with what to do about it).
+                String why = provider.getLastFailure();
+                return Response.ok(Map.of("ok", false, "error", why != null && !why.isBlank() ? why
+                        : "Could not obtain a token. Check the URL/credentials, and that the cluster allows password login (oc login -u -p).")).build();
             }
             return Response.ok(Map.of("ok", true, "message", "Authenticated to OpenShift as " + username + ".")).build();
         } catch (Exception e) {
@@ -429,44 +480,89 @@ public class KubeService {
      * RBAC preflight (backed by SelfSubjectAccessReview, i.e. {@code oc auth can-i}) for the connected
      * account against a target namespace: reports whether it can perform the core deploy actions and —
      * on OpenShift — the KEDA autoscaling + monitoring actions. Lets the wizard warn BEFORE deploying
-     * when the account lacks a permission (e.g. can't create KEDA ScaledObjects or read platform monitoring).
+     * when the account lacks a permission (e.g. can't create KEDA ScaledObjects or the objects of their monitoring token).
      */
     @GET
     @Path("/cluster/preflight")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response preflight(@QueryParam("namespace") @DefaultValue("default") String namespace) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response preflight(@Context HttpHeaders headers,
+                              @QueryParam("namespace") @DefaultValue("default") String namespace) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         KubernetesService k = getKubernetesService();
         boolean ocp = k.isOpenShiftCluster();
         List<Map<String, Object>> checks = new java.util.ArrayList<>();
+        // Every deploy keeps its parameters encrypted with the Ambari master key.
+        Map<String, Object> masterKey = preflightCheck("Encrypt the credentials KDPS keeps (Ambari master key)", "KDPS",
+                this.getConfigService().isMasterKeyAvailable());
+        if (!Boolean.TRUE.equals(masterKey.get("allowed"))) {
+            masterKey.put("remediation", MasterKeyUnavailableException.MESSAGE);
+        }
+        checks.add(masterKey);
         // Core deploy
-        checks.add(preflightCheck("Create Deployments", "Core", k.canI("create", "apps", "deployments", null, namespace)));
-        checks.add(preflightCheck("Create Services", "Core", k.canI("create", "", "services", null, namespace)));
-        checks.add(preflightCheck("Create Secrets", "Core", k.canI("create", "", "secrets", null, namespace)));
-        checks.add(preflightCheck("Create ConfigMaps", "Core", k.canI("create", "", "configmaps", null, namespace)));
+        checks.add(preflightCheck("Create Deployments", "Core", k.canI("create", "apps", "deployments", null, null, namespace)));
+        checks.add(preflightCheck("Create Services", "Core", k.canI("create", "", "services", null, null, namespace)));
+        checks.add(preflightCheck("Create Secrets", "Core", k.canI("create", "", "secrets", null, null, namespace)));
+        checks.add(preflightCheck("Create ConfigMaps", "Core", k.canI("create", "", "configmaps", null, null, namespace)));
+        // Cluster-wide RBAC (advisory): an account limited to its own projects cannot create these, and the KDPS
+        // services do not need them with their defaults. A chart that renders them anyway fails at install with
+        // "forbidden ... at the cluster scope".
+        boolean clusterRbac = k.canI("create", "rbac.authorization.k8s.io", "clusterroles", null, null, null)
+                && k.canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null);
+        Map<String, Object> clusterRbacCheck = preflightCheck("Create ClusterRoles/ClusterRoleBindings",
+                "Cluster-wide RBAC", clusterRbac);
+        clusterRbacCheck.put("advisory", true);
+        clusterRbacCheck.put("remediation", "With their default settings, the KDPS services do not need it. If a chart"
+                + " you configured does, a cluster administrator lets this account create ClusterRoles and"
+                + " ClusterRoleBindings.");
+        clusterRbacCheck.put("note", "Charts that grant cluster-wide permissions create these objects at install."
+                + " Without the right, such an install is refused by the cluster and leaves a failed release.");
+        checks.add(clusterRbacCheck);
         // KEDA autoscaling
-        checks.add(preflightCheck("Create KEDA ScaledObjects", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "scaledobjects", null, namespace)));
-        checks.add(preflightCheck("Create KEDA TriggerAuthentications", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "triggerauthentications", null, namespace)));
+        checks.add(preflightCheck("Create KEDA ScaledObjects", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "scaledobjects", null, null, namespace)));
+        checks.add(preflightCheck("Create KEDA TriggerAuthentications", "Autoscaling (KEDA)", k.canI("create", "keda.sh", "triggerauthentications", null, null, namespace)));
         // Monitoring (ServiceMonitor so Prometheus scrapes the workload)
-        checks.add(preflightCheck("Create ServiceMonitors", "Monitoring", k.canI("create", "monitoring.coreos.com", "servicemonitors", null, namespace)));
+        checks.add(preflightCheck("Create ServiceMonitors", "Monitoring", k.canI("create", "monitoring.coreos.com", "servicemonitors", null, null, namespace)));
         if (ocp) {
-            // KEDA must read metrics from OpenShift's built-in (user-workload) monitoring via the Thanos proxy.
-            boolean thanos = k.canI("get", "", "services", "proxy", "openshift-user-workload-monitoring")
-                    || k.canI("get", "", "services", "proxy", "openshift-monitoring");
-            checks.add(preflightCheck("Query platform monitoring (Thanos)", "Monitoring", thanos));
+            // KEDA reads the platform's monitoring with a token KDPS sets up in the project: the service account,
+            // its Role and RoleBinding, and the Secret checked above. It does not go through the API server's proxy
+            // of the monitoring services, so no right in openshift-monitoring is asked for.
+            checks.add(preflightCheck("Create ServiceAccounts", "Autoscaling (KEDA)",
+                    k.canI("create", "", "serviceaccounts", null, null, namespace)));
+            checks.add(preflightCheck("Create Roles", "Autoscaling (KEDA)",
+                    k.canI("create", "rbac.authorization.k8s.io", "roles", null, null, namespace)));
+            checks.add(preflightCheck("Create RoleBindings", "Autoscaling (KEDA)",
+                    k.canI("create", "rbac.authorization.k8s.io", "rolebindings", null, null, namespace)));
+            if (k.canBindClusterRoles()) {
+                // With it, autoscaling may read the monitoring of the whole cluster (Thanos port 9091).
+                checks.add(preflightCheck("Create ClusterRoleBindings", "Autoscaling (KEDA)", true));
+            } else {
+                Map<String, Object> projectPort = preflightCheck("Autoscaling reads the monitoring of the project",
+                        "Autoscaling (KEDA)", false);
+                projectPort.put("advisory", true);
+                projectPort.put("note", "This account may not create ClusterRoleBindings, so autoscaling reads the "
+                        + "metrics of the project only, through the per-project Thanos port (9092). Nothing to do: "
+                        + "autoscaling on the metrics of the project works without any right on the cluster.");
+                checks.add(projectPort);
+            }
 
-            // SCC (advisory): a chart that needs non-default UIDs (runAsUser:0, fsGroup, seccomp) won't
-            // run under the default restricted-v2 SCC. The view NEVER grants SCCs itself (they are
-            // cluster-wide privilege grants) — this only tells the operator whether they can, and prints
-            // the exact command. Advisory: it does not fail the overall preflight.
-            boolean canGrantScc = k.canI("create", "rbac.authorization.k8s.io", "rolebindings", null, namespace)
-                    && k.canI("use", "security.openshift.io", "securitycontextconstraints", "anyuid", null);
-            Map<String, Object> sccCheck = preflightCheck(
-                    "Grant a non-default SCC (anyuid) — only if a chart requires it", "Security (SCC)", canGrantScc);
+            // SCC (advisory): some services (OpenMetadata) run pods that the default restricted-v2 SCC
+            // refuses. Their deploy grants the SCCs to the release's own service accounts when this account may in
+            // this project (bind on the SCC's ClusterRole, or use of the SCC); otherwise it stops with the commands
+            // for the platform team, and finds their grant on the next attempt. Advisory: it does not fail the
+            // overall preflight.
+            List<String> sccs = KubernetesService.SERVICE_SCCS;
+            boolean canGrantScc = sccs.stream().allMatch(scc -> k.canGrantScc(namespace, scc));
+            Map<String, Object> sccCheck = preflightCheck("Grant the " + String.join(" and ", sccs)
+                    + " SCCs to the service accounts of a release (OpenMetadata)", "Security (SCC)",
+                    canGrantScc);
             sccCheck.put("advisory", true);
-            sccCheck.put("remediation", "oc adm policy add-scc-to-user anyuid -z <serviceaccount> -n " + namespace);
-            sccCheck.put("note", "SCCs are cluster-wide grants; a cluster admin runs this only when a chart "
-                    + "needs anyuid/privileged. The view does not grant SCCs.");
+            sccCheck.put("remediation", "Once per project, the platform team lets this account grant them:\n"
+                    + KubernetesService.sccGrantRightCommands(namespace, sccs, "  ")
+                    + "\nOr it grants them to each release's service accounts, as the deploy prints:\n"
+                    + "  oc adm policy add-scc-to-user <scc> -z <serviceaccount> -n " + namespace);
+            sccCheck.put("note", "Only the services that need them ask for these SCCs, and only for the "
+                    + "service accounts that need them. A deploy without the right stops with both commands; "
+                    + "nothing is granted to the whole project.");
             checks.add(sccCheck);
         }
         // Advisory checks (e.g. SCC) don't count against the overall readiness gate.
@@ -493,8 +589,8 @@ public class KubeService {
     @GET
     @Path("/cluster/proxy")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getProxySettings() {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response getProxySettings(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         ViewConfigurationService cfg = getConfigService();
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("enabled", cfg.isProxyEnabled());
@@ -506,16 +602,16 @@ public class KubeService {
     }
 
     /**
-     * Save the view-wide outbound proxy (for reaching internet Helm/Git repos from behind a corporate
-     * proxy) and apply it immediately. The Kubernetes API always stays direct. Body:
+     * Save the view-wide outbound proxy (for reaching internet Git repos from behind a corporate
+     * proxy); the next Git connection uses it. The Kubernetes API always stays direct. Body:
      * {enabled, url, username?, password?, noProxy?}.
      */
     @POST
     @Path("/cluster/proxy")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response saveProxySettings(java.util.Map<String, Object> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response saveProxySettings(@Context HttpHeaders headers, java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         if (body == null) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error", "missing body")).build();
         }
@@ -528,26 +624,133 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", "Proxy URL is required when the proxy is enabled")).build();
         }
-        this.getConfigService().saveProxySettings(enabled, url, username, password, noProxy);
-        try { this.getKubernetesService().applyProxySettings(); } catch (Exception e) {
-            LOG.warn("/cluster/proxy: failed to apply proxy: {}", e.toString());
+        if (password != null && !password.isEmpty() && !this.getConfigService().isMasterKeyAvailable()) {
+            LOG.warn("/cluster/proxy: refused, the Ambari master key was not found to encrypt the proxy password");
+            return MasterKeyUnavailableException.response();
+        }
+        // Saved only: the Git clients read the proxy when they connect, nothing JVM-wide is installed.
+        try {
+            this.getConfigService().saveProxySettings(enabled, url, username, password, noProxy);
+        } catch (IllegalArgumentException e) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Collections.singletonMap("error", e.getMessage())).build();
         }
         return Response.ok(Collections.singletonMap("message", enabled ? "Outbound proxy enabled" : "Outbound proxy disabled")).build();
     }
 
-    /** Switch the auth mode (e.g. "kubeconfig" to go back to a previously-uploaded kubeconfig). */
+    /**
+     * Whether KDPS can connect with the ServiceAccount of the pod Ambari runs in, as whom, and whether it does now.
+     * Answers {@code available} (and {@code reason} when not), {@code active}, {@code authMode}, {@code username}
+     * ({@code system:serviceaccount:<namespace>:<name>}), {@code serviceAccount}, {@code namespace} and
+     * {@code apiServer}; never the token.
+     */
+    @GET
+    @Path("/cluster/in-cluster")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getInClusterServiceAccount(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        ViewConfigurationService configuration = this.getConfigService();
+        org.apache.ambari.view.k8s.service.InClusterServiceAccount pod = configuration.getInClusterServiceAccount();
+        String reason = pod.unavailableReason();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("available", reason == null);
+        out.put("reason", reason);
+        out.put("active", configuration.isConfigured() && configuration.isInClusterServiceAccount());
+        out.put("authMode", configuration.getAuthMode());
+        if (reason == null) {
+            org.apache.ambari.view.k8s.service.InClusterServiceAccount.Identity identity = pod.identity();
+            out.put("username", identity.username());
+            out.put("serviceAccount", identity.name());
+            out.put("namespace", identity.namespace());
+            out.put("apiServer", pod.apiServerUrl());
+        }
+        return Response.ok(out).build();
+    }
+
+    /**
+     * Connect with the ServiceAccount of the pod Ambari runs in (the ambari chart with
+     * {@code inClusterServiceAccount.enabled=true}): no kubeconfig to upload and no password to keep, for clusters whose
+     * console only signs in through SSO. The mode is saved for every user of the view instance, the client is rebuilt
+     * and checked against the cluster, as for the other modes. Refused, with the previous configuration unchanged,
+     * when the pod has no ServiceAccount token or Ambari does not run in a pod.
+     */
+    @POST
+    @Path("/cluster/in-cluster")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response useInClusterServiceAccount(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return connectWithPodServiceAccount();
+    }
+
+    /** {@link #useInClusterServiceAccount}, once the caller's role was checked. */
+    private Response connectWithPodServiceAccount() {
+        ViewConfigurationService configuration = this.getConfigService();
+        org.apache.ambari.view.k8s.service.InClusterServiceAccount pod = configuration.getInClusterServiceAccount();
+        String unavailable = pod.unavailableReason();
+        if (unavailable != null) {
+            LOG.warn("/cluster/in-cluster: refused, the pod's ServiceAccount cannot be used: {}", unavailable);
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    unavailable + " The previous configuration is unchanged.")).build();
+        }
+        String username = pod.identity().username();
+        String account = username == null ? "the ServiceAccount of the Ambari pod" : "the ServiceAccount " + username;
+        LOG.info("/cluster/in-cluster: connecting with {}", account);
+        configuration.saveInClusterServiceAccount();
+        Response notConnected = reconnect("The connection with " + account + " was saved",
+                "Check the ServiceAccount token and CA certificate mounted in the Ambari pod (details in the Ambari "
+                        + "server log).");
+        if (notConnected != null) {
+            return notConnected;
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("message", "KDPS now connects with " + account + ".");
+        out.put("username", username);
+        out.put("note", "Grant it the rights to deploy in each project KDPS deploys to (on OpenShift, the admin and "
+                + "monitoring-edit roles); Cluster prerequisites checks them.");
+        return Response.ok(out).build();
+    }
+
+    /**
+     * Switch the auth mode (e.g. "kubeconfig" to go back to a previously-uploaded kubeconfig). "in-cluster" connects
+     * with the pod's ServiceAccount, checked as {@link #useInClusterServiceAccount} does.
+     */
     @POST
     @Path("/cluster/auth-mode")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response setAuthMode(java.util.Map<String, String> body) {
-        new AuthHelper(viewContext).checkConfigurationPermission();
+    public Response setAuthMode(@Context HttpHeaders headers, java.util.Map<String, String> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         String mode = body == null ? null : body.get("mode");
+        if (ViewConfigurationService.AUTH_MODE_IN_CLUSTER.equals(mode)) {
+            return connectWithPodServiceAccount();
+        }
         this.getConfigService().setAuthMode(mode);
         try { this.getKubernetesService().forceReloadClient(); } catch (Exception e) {
             LOG.warn("/cluster/auth-mode: reload failed: {}", e.toString());
         }
         return Response.ok(Collections.singletonMap("message", "Auth mode set to " + this.getConfigService().getAuthMode())).build();
+    }
+
+    /**
+     * Whether KDPS found the Ambari master key it encrypts the kubeconfig and every credential with. The Configuration
+     * page asks first, so that an administrator learns what to do before uploading anything.
+     *
+     * @return 200 with {@code available}, and when it is {@code false} the {@code message} and {@code code} of the
+     *         412 that saving a credential would get
+     */
+    @GET
+    @Path("/cluster/master-key")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getMasterKeyStatus(@Context HttpHeaders headers) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        boolean available = this.getConfigService().isMasterKeyAvailable();
+        out.put("available", available);
+        if (!available) {
+            out.put("message", MasterKeyUnavailableException.MESSAGE);
+            out.put("code", MasterKeyUnavailableException.CODE);
+        }
+        return Response.ok(out).build();
     }
 
     @GET
@@ -608,10 +811,15 @@ public class KubeService {
                              @QueryParam("offset") @DefaultValue("0") int offset) {
         try {
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            var ks = getKubernetesService();
-            var nodes = ks.getNodes(limit, offset);
-            int total = ks.countNodes();
-            return Response.ok(mapper.writeValueAsString(Map.of("items", nodes, "total", total))).build();
+            var page = getKubernetesService().getNodes(limit, offset);
+            // An account limited to its own projects may not read nodes: an empty list the page can explain, not an error.
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("items", page.items());
+            body.put("total", page.total());
+            if (page.restricted()) {
+                body.put("restricted", true);
+            }
+            return Response.ok(mapper.writeValueAsString(body)).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -631,10 +839,21 @@ public class KubeService {
     @GET
     @Path("/cluster/events")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getClusterEvents() {
+    public Response getClusterEvents(@Context HttpHeaders headers) {
         try {
+            // Read-only users only see the events of the namespaces of releases deployed from KDPS, as on the
+            // Workloads page.
+            java.util.Set<String> onlyNamespaces = null;
+            if (!new AuthHelper(viewContext, headers).canWrite()) {
+                onlyNamespaces = new java.util.HashSet<>();
+                for (var release : new org.apache.ambari.view.k8s.service.ReleaseMetadataService(viewContext).findAll()) {
+                    if (release != null && release.getNamespace() != null) {
+                        onlyNamespaces.add(release.getNamespace());
+                    }
+                }
+            }
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            return Response.ok(mapper.writeValueAsString(getKubernetesService().getClusterEvents())).build();
+            return Response.ok(mapper.writeValueAsString(getKubernetesService().getClusterEvents(onlyNamespaces))).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -655,8 +874,8 @@ public class KubeService {
      * Workloads sub-resource: namespaces/pods/services/logs.
      */
     @Path("/workloads")
-    public WorkloadsResource getWorkloads() {
-        return new WorkloadsResource(viewContext);
+    public WorkloadsResource getWorkloads(@Context HttpHeaders headers) {
+        return new WorkloadsResource(viewContext, headers);
     }
 
     /**
@@ -666,11 +885,20 @@ public class KubeService {
     @Path("/helm/repos")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public HelmRepoResource helmRepos() {
-        return new HelmRepoResource(viewContext);
+    public HelmRepoResource helmRepos(@Context HttpHeaders headers) {
+        return new HelmRepoResource(viewContext, headers);
     }
 
     private Response handleError(Exception e) {
+        if (e instanceof MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
+        }
+        // Configured but not connected (the last attempt to connect failed): not the 412 "unconfigured", which makes
+        // the UI show the first-run configuration page and stop probing the connection.
+        if (e instanceof org.apache.ambari.view.k8s.service.KubernetesService.NotConnectedException) {
+            LOG.warn("Cluster call while not connected: {}", e.getMessage());
+            return Response.status(Response.Status.SERVICE_UNAVAILABLE).entity(e.getMessage()).build();
+        }
         if (e instanceof IllegalStateException) {
             LOG.warn("Attempt to access resource without configuration: {}", e.getMessage());
             return Response.status(Response.Status.PRECONDITION_FAILED).entity(e.getMessage()).build();
@@ -688,20 +916,27 @@ public class KubeService {
                         .entity("K8S_UNAUTHORIZED: " + kce.getMessage()).build();
             }
         }
+        // Authenticated but not allowed: the account's limit, not a server fault. One line, no stack trace.
+        // The marker tells the UI this 403 comes from the cluster: the refusal text often mentions a token or
+        // authentication, which the UI would otherwise take for an expired Ambari session.
+        if (NamespaceScope.isForbidden(e)) {
+            LOG.warn("Kubernetes API refused the request for lack of rights: {}", e.getMessage());
+            return Response.status(Response.Status.FORBIDDEN).entity("K8S_FORBIDDEN: " + e.getMessage()).build();
+        }
         LOG.error("Unexpected Kubernetes API error", e);
         return Response.serverError().entity(e.getMessage()).build();
     }
     
     /** Sub-resource for /helm/* under /resources/api */
     @Path("/helm")
-    public HelmResource helm() {
+    public HelmResource helm(@Context HttpHeaders headers) {
         // Pass the ViewContext so HelmResource can access DataStore, properties, etc.
-        return new HelmResource(viewContext);
+        return new HelmResource(viewContext, headers);
     }
 
     @Path("commands")
-    public CommandResource commands() {
-        return new CommandResource(viewContext, this.getAmbariAliasResolver());
+    public CommandResource commands(@Context HttpHeaders headers) {
+        return new CommandResource(viewContext, this.getAmbariAliasResolver(), headers);
     }
 
 
@@ -710,9 +945,9 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/discovery
      */
     @Path("/discovery")
-    public DiscoveryResource discovery() {
+    public DiscoveryResource discovery(@Context HttpHeaders headers) {
         // Pass dependencies
-        return new DiscoveryResource(viewContext, getKubernetesService());
+        return new DiscoveryResource(viewContext, getKubernetesService(), headers);
     }
 
     /**
@@ -729,9 +964,9 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/configurations
      */
     @Path("/configurations")
-    public ConfigurationResource configuration() {
+    public ConfigurationResource configuration(@Context HttpHeaders headers) {
         // Pass dependencies
-        return new ConfigurationResource(viewContext, getKubernetesService());
+        return new ConfigurationResource(viewContext, getKubernetesService(), headers);
     }
 
     /**
@@ -741,8 +976,8 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/pki/cas
      */
     @Path("/pki/cas")
-    public org.apache.ambari.view.k8s.resources.CaRegistryResource caRegistry() {
-        return new org.apache.ambari.view.k8s.resources.CaRegistryResource(viewContext, getKubernetesService());
+    public org.apache.ambari.view.k8s.resources.CaRegistryResource caRegistry(@Context HttpHeaders headers) {
+        return new org.apache.ambari.view.k8s.resources.CaRegistryResource(viewContext, getKubernetesService(), headers);
     }
 
     /**
@@ -752,8 +987,8 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/contexts
      */
     @Path("/contexts")
-    public org.apache.ambari.view.k8s.resources.ContextResource contexts() {
-        return new org.apache.ambari.view.k8s.resources.ContextResource(viewContext);
+    public org.apache.ambari.view.k8s.resources.ContextResource contexts(@Context HttpHeaders headers) {
+        return new org.apache.ambari.view.k8s.resources.ContextResource(viewContext, headers);
     }
     /**
      * Reusable Trino catalogs: catalog .properties the operator defines once and attaches to
@@ -761,8 +996,8 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/trino-catalogs
      */
     @Path("/trino-catalogs")
-    public org.apache.ambari.view.k8s.resources.TrinoCatalogResource trinoCatalogs() {
-        return new org.apache.ambari.view.k8s.resources.TrinoCatalogResource(viewContext);
+    public org.apache.ambari.view.k8s.resources.TrinoCatalogResource trinoCatalogs(@Context HttpHeaders headers) {
+        return new org.apache.ambari.view.k8s.resources.TrinoCatalogResource(viewContext, headers);
     }
 
     /**
@@ -836,14 +1071,16 @@ public class KubeService {
 
     /**
      * Lists Secrets matching the {@code *-truststore} convention with parsed
-     * {@code ca.crt} summaries. {@code namespace} is optional; null = cluster-wide.
+     * {@code ca.crt} summaries. {@code namespace} is optional; null = cluster-wide. Only those of the truststore
+     * project are managed (selectable in the wizard, default for every release).
      */
     @GET
     @Path("/truststores")
     @Produces(MediaType.APPLICATION_JSON)
     public Response listTruststores(@javax.ws.rs.QueryParam("namespace") String namespace) {
         try {
-            return Response.ok(getKubernetesService().listTruststores(namespace)).build();
+            return Response.ok(truststoreRegistry().markManaged(getKubernetesService().listTruststores(namespace)))
+                    .build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -853,12 +1090,47 @@ public class KubeService {
         return new TruststoreRegistryService(viewContext, getKubernetesService());
     }
 
+    /**
+     * Where truststores created in the Truststores tab are written, and whether KDPS may write Secrets there: the page
+     * warns before the operator tries. Body: {namespace, canWrite, message?}.
+     */
+    @GET
+    @Path("/truststores/registry")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response truststoreRegistryStatus() {
+        try {
+            String namespace = truststoreRegistry().managementNamespace();
+            boolean canWrite = getKubernetesService().canI("create", "", "secrets", null, null, namespace);
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            out.put("namespace", namespace);
+            out.put("canWrite", canWrite);
+            if (!canWrite) {
+                out.put("message", PkiNamespaces.forbiddenMessage(namespace));
+            }
+            return Response.ok(out).build();
+        } catch (Exception e) {
+            return handleError(e);
+        }
+    }
+
+    /**
+     * A truststore change refused because KDPS may not write Secrets in the namespace: 403 with what to do. An expected
+     * situation for an account limited to its own projects, so a warning, not an unexpected error.
+     */
+    private Response truststoreRefused(String namespace, Exception e) {
+        String message = PkiNamespaces.forbiddenMessage(namespace);
+        LOG.warn("{} ({})", message, e.getMessage());
+        return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", message)).build();
+    }
+
     /** Create a truststore from a public certificate PEM. Body: {name, caCertPem, default?, description?}. */
     @POST
     @Path("/truststores")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response createTruststore(Map<String, Object> body) {
+    public Response createTruststore(@Context HttpHeaders headers, Map<String, Object> body) {
+        // Default truststores are trusted by every deploy, so adding or changing one is a configuration task.
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         try {
             if (body == null) {
                 return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "request body is required")).build();
@@ -871,6 +1143,9 @@ public class KubeService {
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
+            if (NamespaceScope.isForbidden(e)) {
+                return truststoreRefused(truststoreRegistry().managementNamespace(), e);
+            }
             return handleError(e);
         }
     }
@@ -880,9 +1155,11 @@ public class KubeService {
     @Path("/truststores/{namespace}/{name}/default")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response setTruststoreDefault(@PathParam("namespace") String namespace,
+    public Response setTruststoreDefault(@Context HttpHeaders headers,
+                                         @PathParam("namespace") String namespace,
                                          @PathParam("name") String name,
                                          Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         try {
             boolean value = body == null || !body.containsKey("default")
                     ? true : Boolean.parseBoolean(String.valueOf(body.get("default")));
@@ -890,6 +1167,9 @@ public class KubeService {
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
+            if (NamespaceScope.isForbidden(e)) {
+                return truststoreRefused(namespace, e);
+            }
             return handleError(e);
         }
     }
@@ -898,14 +1178,19 @@ public class KubeService {
     @DELETE
     @Path("/truststores/{namespace}/{name}")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response deleteTruststore(@PathParam("namespace") String namespace,
+    public Response deleteTruststore(@Context HttpHeaders headers,
+                                     @PathParam("namespace") String namespace,
                                      @PathParam("name") String name) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
         try {
             truststoreRegistry().delete(namespace, name);
             return Response.ok(Map.of("deleted", true, "namespace", namespace, "name", name)).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
+            if (NamespaceScope.isForbidden(e)) {
+                return truststoreRefused(namespace, e);
+            }
             return handleError(e);
         }
     }

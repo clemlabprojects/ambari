@@ -39,6 +39,12 @@ App.OidcEnableWizardStep2Controller = Em.Controller.extend({
   verifyTls: Em.computed.alias('wizardController.content.verifyTls'),
 
   /**
+   * Whether the admin credential will survive Ambari restarts; drives the hint shown under it.
+   * @type {boolean}
+   */
+  isCredentialStorePersisted: Em.computed.alias('App.isCredentialStorePersistent'),
+
+  /**
    * Test connection status: null | 'testing' | 'success' | 'error'
    * @type {string|null}
    */

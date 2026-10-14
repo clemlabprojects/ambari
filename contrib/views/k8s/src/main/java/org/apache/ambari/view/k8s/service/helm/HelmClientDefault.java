@@ -25,6 +25,7 @@ import com.marcnuri.helm.Helm;
 import com.marcnuri.helm.SearchCommand;
 import com.marcnuri.helm.SearchResult;
 
+import org.apache.ambari.view.k8s.utils.KubeconfigGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,7 +72,7 @@ public class HelmClientDefault implements HelmClient {
         LOG.debug("Listing releases in namespace: '{}'", namespace);
         var command = Helm.list()
             .withNamespace(namespace)
-            .withKubeConfigContents(kubeconfigContents);
+            .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents));
         
         if (namespace != null) {
             command = command.withNamespace(namespace);
@@ -93,7 +94,7 @@ public class HelmClientDefault implements HelmClient {
                 .withName(releaseName)
                 .withNamespace(namespace)
                 .withTimeout(timeoutSeconds)
-                .withKubeConfigContents(kubeconfigContents)
+                .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
                 .withValuesFile(valuesFile);
 
             if (createNamespace) installCommand = installCommand.createNamespace();
@@ -130,7 +131,7 @@ public class HelmClientDefault implements HelmClient {
                 .withName(releaseName)
                 .withNamespace(namespace)
                 .withTimeout(timeoutSeconds)
-                .withKubeConfigContents(kubeconfigContents)
+                .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
                 .withValuesFile(valuesFile);
 
             if (atomic) upgradeCommand = upgradeCommand.atomic();
@@ -156,7 +157,7 @@ public class HelmClientDefault implements HelmClient {
     public void uninstall(String releaseName, String namespace, String kubeconfigContents) {
         Helm.uninstall(releaseName)
             .withNamespace(namespace)
-            .withKubeConfigContents(kubeconfigContents)
+            .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
             .call();
     }
 
@@ -240,7 +241,7 @@ public class HelmClientDefault implements HelmClient {
     @Override
     public String showValues(String chartRef, String versionOpt, Path repoConfigPath) {
         try {
-            // For 0.0.15:
+            // With helm-java:
             // - Use Helm.show(String chartRef) for repo/OCI references
             // - Then .values() to target "helm show values"
             ShowCommand showCommand = Helm.show(chartRef);
@@ -345,13 +346,17 @@ public class HelmClientDefault implements HelmClient {
         return "helm";
     }
 
-    private static Path writeKubeconfigToTempFile(String contents) {
+    // package-private so tests can read back what the helm CLI is given
+    static Path writeKubeconfigToTempFile(String contents) {
         if (contents == null || contents.isBlank()) {
             throw new IllegalArgumentException("kubeconfig contents are required for helm CLI invocation");
         }
+        // The helm binary runs an exec credential plugin or auth provider command as the Ambari account: it only ever
+        // reads the kubeconfig as KDPS writes it again. Done before the file exists, so an unreadable one leaves nothing.
+        String safeContents = KubeconfigGuard.canonical(contents);
         try {
             Path tempFile = Files.createTempFile("kubeconfig-", ".yaml");
-            Files.writeString(tempFile, contents, java.nio.charset.StandardCharsets.UTF_8);
+            Files.writeString(tempFile, safeContents, java.nio.charset.StandardCharsets.UTF_8);
             try {
                 Files.setPosixFilePermissions(tempFile,
                         java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
@@ -365,13 +370,14 @@ public class HelmClientDefault implements HelmClient {
         }
     }
 
-    private static String runHelmCli(List<String> command, boolean allowFailure) {
+    // package-private so tests can run it on a plain command
+    static String runHelmCli(List<String> command, boolean allowFailure) {
         try {
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             String out = new String(p.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            int code = p.waitFor();
+            int code = waitForExit(p);
             if (code != 0 && !allowFailure) {
                 throw new RuntimeException("helm command failed (" + code + "): "
                         + String.join(" ", command) + " output=" + out);
@@ -381,6 +387,29 @@ public class HelmClientDefault implements HelmClient {
             throw re;
         } catch (Exception e) {
             throw new RuntimeException("Failed to run helm command: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Waits for the helm process to exit and returns its exit code. Canceling the operation interrupts this thread
+     * but not the process, which goes on and finishes its work (a rollback, say): waiting for its real exit code
+     * keeps a command that succeeded from being reported as failed. The interrupt is restored afterwards, so the
+     * caller still sees the cancel and starts nothing more.
+     */
+    private static int waitForExit(Process p) {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    return p.waitFor();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

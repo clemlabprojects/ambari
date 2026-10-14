@@ -28,12 +28,10 @@ import static org.apache.ambari.server.configuration.AmbariServerConfigurationKe
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CALLBACK_URL;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_ID;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_CLIENT_SECRET;
-import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_ENABLED_SERVICES;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_GROUPS_AUTO_CREATE;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_GROUPS_CASE_CONVERSION;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_GROUPS_CLAIM;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_GROUPS_SYNC_ON_LOGIN;
-import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_MANAGE_SERVICES;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_PROVIDER_CERTIFICATE;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_PROVIDER_URL;
 import static org.apache.ambari.server.configuration.AmbariServerConfigurationKey.SSO_OIDC_USER_AUTO_CREATE;
@@ -114,12 +112,6 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
    * only {@code clientId}/{@code clientSecret} without the explicit flag.
    */
   private String oidcAuthenticationEnabledFlag = "";
-
-  /** Whether Ambari should push OIDC-based SSO configuration to cluster services. */
-  private boolean oidcManageServices = false;
-
-  /** Services to configure with OIDC SSO; comma-delimited, {@code *} = all.  {@code null} means none. */
-  private String oidcEnabledServices = null;
 
   // --- JIT (Just-In-Time) provisioning of users / groups from OIDC JWT claims ---
 
@@ -203,8 +195,6 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
     setOidcProviderUrl(getValue(SSO_OIDC_PROVIDER_URL, configurationMap));
     setOidcPublicKey(getValue(SSO_OIDC_PROVIDER_CERTIFICATE, configurationMap));
     setOidcAuthenticationEnabledFlag(getValue(SSO_OIDC_AUTHENTICATION_ENABLED, configurationMap));
-    setOidcManageServices(Boolean.parseBoolean(getValue(SSO_OIDC_MANAGE_SERVICES, configurationMap)));
-    setOidcEnabledServices(getValue(SSO_OIDC_ENABLED_SERVICES, configurationMap));
 
     // JIT provisioning settings.  Defaults preserve the pre-existing "reject if unknown user" behavior.
     setOidcUserAutoCreate(Boolean.parseBoolean(getValue(SSO_OIDC_USER_AUTO_CREATE, configurationMap)));
@@ -384,23 +374,6 @@ public class JwtAuthenticationProperties extends AmbariServerConfiguration {
 
   public void setOidcAuthenticationEnabledFlag(String flag) {
     this.oidcAuthenticationEnabledFlag = (flag == null) ? "" : flag.trim();
-  }
-
-  public boolean isOidcManageServices() {
-    return oidcManageServices;
-  }
-
-  public void setOidcManageServices(boolean oidcManageServices) {
-    this.oidcManageServices = oidcManageServices;
-  }
-
-  public String getOidcEnabledServices() {
-    return oidcEnabledServices;
-  }
-
-  public void setOidcEnabledServices(String oidcEnabledServices) {
-    this.oidcEnabledServices = (oidcEnabledServices == null || oidcEnabledServices.trim().isEmpty())
-        ? null : oidcEnabledServices.trim();
   }
 
   /**

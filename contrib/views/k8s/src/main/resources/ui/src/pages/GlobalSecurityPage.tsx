@@ -21,7 +21,7 @@ import { Alert, Button, Form, Input, Modal, Select, Space, Switch, Typography, m
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import { getSecurityConfig, getSecurityProfileUsage, getSecuritySchema, saveSecurityConfig, deleteSecurityProfile } from '../api/client';
 import type { SecurityConfig, SecurityProfiles } from '../api/client';
-import { buildProfileFields } from './globalSecurityFields';
+import { buildProfileFields, isSecretSet, SECRET_SET_PLACEHOLDER, withSecretFlags } from './globalSecurityFields';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -34,6 +34,9 @@ const GlobalSecurityPage: React.FC = () => {
   const [currentProfile, setCurrentProfile] = useState<string | undefined>('default');
   const [isNewProfile, setIsNewProfile] = useState(false);
   const [schema, setSchema] = useState<any>();
+  // Until the profiles load, the page does not know what is stored: saving then would write over profiles it never
+  // showed, so saving and deleting wait for a load that succeeds.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const defaultMode =
     schema?.properties?.find((p: any) => p.name === 'mode')?.default ||
@@ -142,7 +145,9 @@ const GlobalSecurityPage: React.FC = () => {
     if (isBoolean) {
       input = <Switch />;
     } else if (isPassword) {
-      input = <Input.Password />;
+      // The server never sends a stored secret back: the field starts blank and says whether one is stored.
+      const stored = isSecretSet(currentProfile ? profiles[currentProfile] : undefined, String(prop?.name || ''));
+      input = <Input.Password placeholder={stored ? SECRET_SET_PLACEHOLDER : undefined} autoComplete="new-password" />;
     } else if (isSelect) {
       input = (
         <Select>
@@ -214,7 +219,9 @@ const GlobalSecurityPage: React.FC = () => {
       const selected = initial || 'default';
       setCurrentProfile(selected);
       applyProfileToForm(cfg.profiles?.[selected], schemaDefaultMode);
+      setLoadFailed(false);
     } catch (e: any) {
+      setLoadFailed(true);
       message.error(e?.message || 'Failed to load security config');
     } finally {
       setLoading(false);
@@ -226,6 +233,10 @@ const GlobalSecurityPage: React.FC = () => {
   }, []);
 
   const handleSave = async () => {
+    if (loadFailed) {
+      message.warning('The security profiles have not loaded. Refresh the page before saving.');
+      return;
+    }
     try {
       const values: any = await form.validateFields();
       const profileName = currentProfile || 'default';
@@ -236,13 +247,18 @@ const GlobalSecurityPage: React.FC = () => {
           extraProperties[row.key] = row.value ?? '';
         }
       });
-      const nextProfiles = { ...profiles, [profileName]: { ...rest, extraProperties } };
+      const sent = { ...rest, extraProperties };
+      const nextProfiles = { ...profiles, [profileName]: sent };
       const payload: SecurityProfiles = {
         defaultProfile,
         profiles: nextProfiles,
+        // Only the profiles this page has shown can be removed by leaving them out: one created elsewhere since
+        // it loaded (a profile derived from a platform context, say) is kept.
+        loadedProfiles: Object.keys(profiles),
       };
       await saveSecurityConfig(payload);
-      setProfiles(nextProfiles);
+      const secretFields = schemaProperties.filter((p: any) => p?.type === 'password').map((p: any) => String(p.name));
+      setProfiles({ ...profiles, [profileName]: withSecretFlags(sent, profiles[profileName], secretFields) });
       message.success('Security configuration saved');
     } catch (e: any) {
       if (e?.errorFields) return;
@@ -302,7 +318,7 @@ const GlobalSecurityPage: React.FC = () => {
     setUsageProfileLabel('');
   };
 
-  const canDeleteProfile = Boolean(currentProfile && !isNewProfile && profiles[currentProfile]);
+  const canDeleteProfile = Boolean(!loadFailed && currentProfile && !isNewProfile && profiles[currentProfile]);
   const usageModalTitle = usageProfileLabel ? `Profile "${usageProfileLabel}" is in use` : 'Profile in use';
 
   return (
@@ -311,7 +327,9 @@ const GlobalSecurityPage: React.FC = () => {
         <Title level={3}>Global Security</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
-          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={loading}>Save</Button>
+          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={loading} disabled={loadFailed}>
+            Save
+          </Button>
           <Button
             icon={<DeleteOutlined />}
             danger
@@ -330,6 +348,16 @@ const GlobalSecurityPage: React.FC = () => {
         style={{ marginBottom: 16 }}
         message="These settings apply to all Helm installs that support global security wiring (LDAP/AD/OIDC, truststore)."
       />
+
+      {loadFailed && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="The security profiles could not be loaded."
+          description="Saving and deleting are turned off until they load, so that no profile is overwritten or removed by mistake. Use Refresh to try again."
+        />
+      )}
 
       <Form form={form} layout="vertical">
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
@@ -408,8 +436,9 @@ const GlobalSecurityPage: React.FC = () => {
               <Title level={4} style={{ marginBottom: 8 }}>{modeLabel || 'OIDC'}</Title>
               {modeFields('oidc', mode)
                 .filter((prop: any) => {
-                  // Hide clientId/clientSecret for internal source (Ambari auto-registers)
-                  const isExternalOnly = prop.name === 'oidc.clientId' || prop.name === 'oidc.clientSecret';
+                  // Hide clientId/clientSecret/audience for internal source (Ambari auto-registers, and sets the audience)
+                  const isExternalOnly = prop.name === 'oidc.clientId' || prop.name === 'oidc.clientSecret'
+                    || prop.name === 'oidc.audience';
                   if (isExternalOnly) return (oidcSource ?? 'internal') === 'external';
                   return true;
                 })

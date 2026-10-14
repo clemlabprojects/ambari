@@ -1,0 +1,27 @@
+{
+  "label": "ZZ Test Kubernetes-only service (test only, NOT in catalog.json)",
+  "description": "Test fixture: a chart that cannot run on OpenShift, mounts the release truststore Secret itself and needs a long Flux timeout.",
+  "platforms": ["kubernetes"],
+  "unsupportedPlatformMessage": "ZZ Test Kubernetes-only service is not supported on OpenShift in this release.",
+  "chart": "zz-test-kubeonly",
+  "version": "1.0.0",
+  "defaultRepo": "charts",
+  "gitops": {
+    "timeout": "20m"
+  },
+  "bindings": [
+    {
+      "name": "trusted-ca-customcas",
+      "targets": [
+        {
+          "path": "global.certificates.customCAs[0].secret",
+          "from": {
+            "type": "template",
+            "template": "${releaseName}-truststore"
+          }
+        }
+      ]
+    }
+  ],
+  "form": []
+}

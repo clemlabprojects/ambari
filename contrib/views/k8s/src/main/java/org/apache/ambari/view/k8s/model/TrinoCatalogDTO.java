@@ -34,6 +34,12 @@ public class TrinoCatalogDTO {
     public String updatedAt;
     /** Releases ("namespace/release") currently holding a snapshot of this catalog. Response only. */
     public List<String> usedBy = new ArrayList<>();
+    /**
+     * Properties that write a credential out instead of reading it with ${ENV:KEY}: a catalog saved before KDPS
+     * refused them. The operator must edit it, or a release deployed with it keeps the credential in its catalog
+     * ConfigMap. Response only.
+     */
+    public List<String> literalCredentials = new ArrayList<>();
 
     public static TrinoCatalogDTO fromEntity(TrinoCatalogEntity e) {
         TrinoCatalogDTO d = new TrinoCatalogDTO();

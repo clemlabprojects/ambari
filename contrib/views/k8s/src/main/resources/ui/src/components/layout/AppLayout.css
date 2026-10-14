@@ -404,7 +404,7 @@
      Apache License" footer that overlays the bottom ~40px of the view's
      viewport. Without this padding, content tucks under the footer and the
      operator has to scroll an extra screen to see it. Tuned with the Ambari
-     2.8 host shell on master21. */
+     2.8 host shell. */
   padding-bottom: 56px;
 }
 

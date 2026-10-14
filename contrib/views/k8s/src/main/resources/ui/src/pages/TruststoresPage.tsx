@@ -19,8 +19,9 @@
 import React from 'react';
 import { Alert, Button, Card, Checkbox, Empty, Form, Input, Modal, Popconfirm, Space, Spin, Switch, Table, Tag, Tooltip, Typography, Upload, message } from 'antd';
 import { DatabaseOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons';
-import { listTruststores, createTruststore, setTruststoreDefault, deleteTruststore, type TruststoreCert, type TruststoreSummary } from '../api/client';
+import { listTruststores, createTruststore, setTruststoreDefault, deleteTruststore, getTruststoreRegistry, type TruststoreCert, type TruststoreRegistryStatus, type TruststoreSummary } from '../api/client';
 import { useNamespace, ALL_NAMESPACES } from '../context/NamespaceContext';
+import { serverMessage } from '../utils/serverMessage';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -37,13 +38,16 @@ const TruststoresPage: React.FC = () => {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState('');
+  // Where new truststores go, and whether KDPS may write there: an account limited to its own projects may not.
+  const [registry, setRegistry] = React.useState<TruststoreRegistryStatus | null>(null);
 
   const load = React.useCallback(() => {
     setLoading(true); setError(null);
     listTruststores(namespace === ALL_NAMESPACES ? undefined : namespace)
       .then(setItems)
-      .catch(e => setError(e?.message || String(e)))
+      .catch(e => setError(serverMessage(e, 'Could not load the truststores.')))
       .finally(() => setLoading(false));
+    getTruststoreRegistry().then(setRegistry).catch(() => setRegistry(null));
   }, [namespace]);
 
   React.useEffect(() => { load(); }, [load]);
@@ -64,7 +68,7 @@ const TruststoresPage: React.FC = () => {
       load();
     } catch (e: any) {
       if (e?.errorFields) return; // form validation error, already shown inline
-      message.error(e?.message || String(e));
+      message.error(serverMessage(e));
     } finally {
       setSaving(false);
     }
@@ -78,7 +82,7 @@ const TruststoresPage: React.FC = () => {
       message.success(`"${row.name}" ${value ? 'set as default' : 'removed from defaults'}`);
       load();
     } catch (e: any) {
-      message.error(e?.message || String(e));
+      message.error(serverMessage(e));
     } finally {
       setBusyRow(null);
     }
@@ -92,7 +96,7 @@ const TruststoresPage: React.FC = () => {
       message.success(`Truststore "${row.name}" deleted`);
       load();
     } catch (e: any) {
-      message.error(e?.message || String(e));
+      message.error(serverMessage(e));
     } finally {
       setBusyRow(null);
     }
@@ -181,6 +185,11 @@ const TruststoresPage: React.FC = () => {
         }
         styles={{ body: { padding: 0 } }}
       >
+        {registry && !registry.canWrite && (
+          <Alert type="warning" showIcon style={{ margin: 12 }}
+            message="Truststores cannot be created or changed"
+            description={registry.message} />
+        )}
         {error && (
           <Alert type="error" showIcon message={error} style={{ margin: 12 }} />
         )}
@@ -235,7 +244,7 @@ const TruststoresPage: React.FC = () => {
                 key: 'default',
                 width: 90,
                 render: (_v: any, row: TruststoreSummary) => (
-                  <Tooltip title={row.managed ? 'Trust this in every release' : 'Only managed truststores can be marked default'}>
+                  <Tooltip title={row.managed ? 'Trust this in every release' : 'Only truststores of the truststore project set in Cluster Settings can be marked default'}>
                     <Switch
                       size="small"
                       checked={!!row.isDefault}
@@ -281,6 +290,7 @@ const TruststoresPage: React.FC = () => {
           Paste (or upload) a company's <Text strong>public</Text> certificate in PEM format — a trust
           anchor, no private key. Mark it default to trust it in every release, or select it per
           release in the install wizard (step 3).
+          {registry && <> It is stored in project <Text code>{registry.namespace}</Text> (set in Cluster Settings).</>}
         </Paragraph>
         <Form form={form} layout="vertical" initialValues={{ makeDefault: false }}>
           <Form.Item

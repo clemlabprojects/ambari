@@ -23,6 +23,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -49,9 +50,15 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.inject.Inject;
 
+/**
+ * Creates or updates an internal Ranger user with the Ranger administrator credentials Ambari holds for the cluster, or,
+ * with {@code disableUser=true}, disables one (see {@link #disableRangerUser}).
+ */
 public class UpsertRangerUserServerAction extends AbstractServerAction {
 
     private static final Logger LOG = LoggerFactory.getLogger(UpsertRangerUserServerAction.class);
+
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     @Inject
     private AmbariManagementController managementController;
@@ -77,6 +84,11 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
         // user gets its password + roles reset to the supplied ones (default: leave it untouched).
         List<String> userRoles = splitCsv(commandParameters.get("userRoles"));
         boolean resetPassword = "true".equalsIgnoreCase(trimToNull(commandParameters.get("resetPassword")));
+        // Disabling takes no password from the caller: the account gets one nobody knows.
+        boolean disableUser = "true".equalsIgnoreCase(trimToNull(commandParameters.get("disableUser")));
+        // What the user belongs to, as its description: a created user gets it, and an existing one is reset or
+        // disabled only when it has it.
+        String userDescription = trimToNull(commandParameters.get("userDescription"));
 
         LOG.info("UpsertRangerUserServerAction called with parameters: clusterName='{}', pluginUserName='{}', repositoryDescription='{}'",
                 clusterName, pluginUserName, repositoryDescription);
@@ -97,7 +109,7 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
             LOG.error(message);
             return createCommandReport(0, HostRoleStatus.FAILED, "{}", actionLog.getStdOut(), message);
         }
-        if (isBlank(pluginUserPassword)) {
+        if (!disableUser && isBlank(pluginUserPassword)) {
             String message = "Required parameter 'pluginUserPassword' is missing or empty";
             actionLog.writeStdErr(message);
             LOG.error(message);
@@ -164,6 +176,11 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
 
             actionLog.writeStdOut("Using Ranger at " + policymgrExternalUrl +
                     " with admin user " + rangerAdminUserName);
+
+            if (disableUser) {
+                return disable(clusterName, policymgrExternalUrl, rangerAdminUserName, rangerAdminPassword,
+                        pluginUserName, userDescription);
+            }
             LOG.info("Upserting Ranger user '{}' via '{}'", pluginUserName, policymgrExternalUrl);
 
             upsertRangerUser(
@@ -173,7 +190,8 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
                     pluginUserName,
                     pluginUserPassword,
                     userRoles,
-                    resetPassword
+                    resetPassword,
+                    userDescription
             );
 
             Map<String, Object> structuredOutMap = new HashMap<>();
@@ -197,6 +215,127 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
         }
     }
 
+    /**
+     * The {@code disableUser} mode: disables the user and reports, in the structured output, whether Ranger had it
+     * ({@code found}). A user Ranger does not have is not a failure: there is nothing left to disable. Ambari's own
+     * Ranger administrator is never disabled, since Ambari would then lose its access to Ranger.
+     *
+     * @param userDescription the description the user must have, or null to disable it whatever its description
+     */
+    private CommandReport disable(String clusterName, String baseUrl, String adminUserName, String adminPassword,
+                                  String userName, String userDescription) {
+        if (userName.trim().equalsIgnoreCase(adminUserName)) {
+            String message = "Refusing to disable '" + userName + "': it is the Ranger administrator Ambari uses"
+                    + " (ranger-env/ranger_admin_username)";
+            actionLog.writeStdErr(message);
+            LOG.error(message);
+            return createCommandReport(0, HostRoleStatus.FAILED, "{}", actionLog.getStdOut(), message);
+        }
+        try {
+            LOG.info("Disabling Ranger user '{}' via '{}'", userName, baseUrl);
+            boolean found = disableRangerUser(baseUrl, buildBasicAuth(adminUserName, adminPassword), userName,
+                    userDescription);
+
+            Map<String, Object> structuredOutMap = new HashMap<>();
+            structuredOutMap.put("clusterName", clusterName);
+            structuredOutMap.put("pluginUserName", userName);
+            structuredOutMap.put("found", found);
+            structuredOutMap.put("disabled", found);
+            String stdoutMessage = found
+                    ? "Ranger user '" + userName + "' disabled"
+                    : "Ranger has no user '" + userName + "'; nothing to disable";
+            actionLog.writeStdOut(stdoutMessage);
+            LOG.info(stdoutMessage);
+            return createCommandReport(0, HostRoleStatus.COMPLETED,
+                    toJson(structuredOutMap), stdoutMessage, actionLog.getStdErr());
+        } catch (Exception exception) {
+            String error = "Failed to disable Ranger user '" + userName + "': " + exception.getMessage();
+            LOG.error(error, exception);
+            actionLog.writeStdErr(error);
+            return createCommandReport(0, HostRoleStatus.FAILED,
+                    "{}", actionLog.getStdOut(), actionLog.getStdErr());
+        }
+    }
+
+    /**
+     * Disables an internal Ranger user: status 0, only {@code ROLE_USER} and a random password nobody is told, so a
+     * copy of the old password, wherever it was kept, no longer logs in, and the account would hold no administrator
+     * role should someone enable it again. Ranger keeps the user, so its audit trail still names it. External
+     * (synced) users are refused: their password lives in the directory, and Ambari did not create them. So is a user
+     * whose description is not {@code userDescription}, when one is given: it belongs to something else.
+     *
+     * @return false when Ranger has no user of that name
+     */
+    private boolean disableRangerUser(String baseUrl, String authHeader, String userName, String userDescription)
+            throws Exception {
+        JsonObject user = fetchRangerUser(baseUrl, authHeader, userName, true);
+        if (user == null) {
+            return false;
+        }
+        int userSource = user.has("userSource") && !user.get("userSource").isJsonNull() ? user.get("userSource").getAsInt() : 0;
+        if (userSource != 0) {
+            throw new IllegalStateException("Ranger user '" + userName + "' is an EXTERNAL (synced) user, which Ambari"
+                    + " did not create; disable it in its directory instead");
+        }
+        refuseOtherOwner(user, userName, userDescription);
+        user.addProperty("password", randomPassword());
+        JsonArray roleList = new JsonArray();
+        roleList.add("ROLE_USER");
+        user.add("userRoleList", roleList);
+        user.addProperty("status", 0);
+        long id = user.get("id").getAsLong();
+        String url = baseUrl + "/service/xusers/secure/users/" + id;
+        actionLog.writeStdOut("Disabling Ranger user '" + userName + "' (id=" + id + ") via " + url);
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(url).openConnection();
+            connection.setRequestMethod("PUT");
+            connection.setConnectTimeout(20000);
+            connection.setReadTimeout(20000);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Authorization", authHeader);
+            connection.getOutputStream().write(user.toString().getBytes(StandardCharsets.UTF_8));
+            connection.getOutputStream().flush();
+            int status = connection.getResponseCode();
+            if (status / 100 != 2) {
+                InputStream is = connection.getErrorStream();
+                String body = is == null ? null : new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                throw new IllegalStateException("Ranger answered HTTP " + status + (body != null ? ", body: " + body : ""));
+            }
+            return true;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /** Refuses a user whose description is not {@code userDescription}, when one is given. */
+    private static void refuseOtherOwner(JsonObject user, String userName, String userDescription) {
+        if (userDescription == null) {
+            return;
+        }
+        String description = user.has("description") && user.get("description").isJsonPrimitive()
+                ? user.get("description").getAsString() : "";
+        if (!userDescription.equals(description)) {
+            throw new IllegalStateException("Ranger user '" + userName + "' is not the one this request is about: its"
+                    + " description is '" + description + "', not '" + userDescription + "'. It was left unchanged.");
+        }
+    }
+
+    /** A password Ranger accepts (letters and digits, at least one of each) that nobody is ever given. */
+    static String randomPassword() {
+        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+        StringBuilder sb = new StringBuilder(34);
+        for (int i = 0; i < 32; i++) {
+            sb.append(alphabet.charAt(RANDOM.nextInt(alphabet.length())));
+        }
+        sb.append((char) ('a' + RANDOM.nextInt(26))).append((char) ('2' + RANDOM.nextInt(8)));
+        return sb.toString();
+    }
+
     private void upsertRangerUser(
             String baseUrl,
             String adminUserName,
@@ -204,7 +343,8 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
             String pluginUserName,
             String pluginUserPassword,
             List<String> userRoles,
-            boolean resetPassword) throws Exception {
+            boolean resetPassword,
+            String userDescription) throws Exception {
         String authorizationHeader = buildBasicAuth(adminUserName, adminPassword);
         List<String> roles = (userRoles == null || userRoles.isEmpty())
                 ? new ArrayList<>(java.util.Collections.singletonList("ROLE_USER")) : userRoles;
@@ -217,7 +357,7 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
         LOG.info(lookupMsg);
 
         if (exists && resetPassword) {
-            resetRangerUser(baseUrl, authorizationHeader, pluginUserName, pluginUserPassword, roles);
+            resetRangerUser(baseUrl, authorizationHeader, pluginUserName, pluginUserPassword, roles, userDescription);
             return;
         }
         if (exists) {
@@ -258,8 +398,8 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
         json.append("\"lastName\":\"").append(safeUser).append("\",");
         json.append("\"emailAddress\":\"").append(email).append("\",");
         json.append("\"password\":\"").append(safePassword).append("\",");
-        json.append("\"description\":\"").append(safeUser)
-                .append(" user needed for repository creation\"");
+        json.append("\"description\":\"").append(userDescription != null ? escape(userDescription)
+                : safeUser + " user needed for repository creation").append('"');
         json.append('}');
 
         String jsonBody = json.toString();
@@ -443,11 +583,12 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
     /**
      * Reset an EXISTING internal Ranger user's password and roles (PUT /service/xusers/secure/users/{id}
      * with the full user object; Ranger only re-hashes the password when it is not the masked
-     * placeholder, and refuses to change EXTERNAL users' passwords — those are reported as a failure).
+     * placeholder, and refuses to change EXTERNAL users' passwords — those are reported as a failure). A user whose
+     * description is not {@code userDescription}, when one is given, is refused as well: it belongs to something else.
      */
     private void resetRangerUser(String baseUrl, String authHeader, String userName, String password,
-                                 List<String> roles) throws Exception {
-        JsonObject user = fetchRangerUser(baseUrl, authHeader, userName);
+                                 List<String> roles, String userDescription) throws Exception {
+        JsonObject user = fetchRangerUser(baseUrl, authHeader, userName, false);
         if (user == null) {
             throw new IllegalStateException("Ranger user '" + userName + "' exists but could not be fetched for reset");
         }
@@ -456,6 +597,7 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
             throw new IllegalStateException("Ranger user '" + userName + "' is an EXTERNAL (synced) user; its password"
                     + " cannot be reset by Ambari — pick a dedicated internal user name");
         }
+        refuseOtherOwner(user, userName, userDescription);
         user.addProperty("password", password);
         JsonArray roleList = new JsonArray();
         for (String r : roles) {
@@ -500,8 +642,13 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
         }
     }
 
-    /** The full VXUser object of an existing user (first exact-name match), or null. */
-    private JsonObject fetchRangerUser(String baseUrl, String authHeader, String userName) throws Exception {
+    /**
+     * The full VXUser object of an existing user (first exact-name match), or null.
+     *
+     * @param failOnError whether a lookup Ranger answers with an error throws, rather than reading as no such user
+     */
+    private JsonObject fetchRangerUser(String baseUrl, String authHeader, String userName, boolean failOnError)
+            throws Exception {
         String queryUrl = baseUrl + "/service/xusers/users?name=" + urlEncode(userName);
         HttpURLConnection connection = null;
         try {
@@ -513,6 +660,10 @@ public class UpsertRangerUserServerAction extends AbstractServerAction {
             connection.setRequestProperty("Authorization", authHeader);
             int status = connection.getResponseCode();
             if (status != 200) {
+                if (failOnError) {
+                    throw new IllegalStateException("Ranger answered HTTP " + status + " to the lookup of user '"
+                            + userName + "'");
+                }
                 return null;
             }
             String body = new String(connection.getInputStream().readAllBytes(), StandardCharsets.UTF_8);

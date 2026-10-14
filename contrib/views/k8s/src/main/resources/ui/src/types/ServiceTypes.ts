@@ -9,6 +9,40 @@ export interface FormFieldBase {
    * external keytab Secret once a CDP/EXTERNAL context's Hive resolves to Kerberos.
    */
   requiredWhenContext?: { field: string; equals: string };
+  /** Compares the value with the limit in another field before the deploy (see resourceChecks.ts). */
+  resourceCheck?: ResourceCheck;
+  /** Makes the field mandatory while every one of the other fields it names is empty (see requiredUnless.ts). */
+  requiredUnlessAny?: RequiredUnlessAny;
+  /** Left blank, the key is left out of the chart values so the chart's own default applies. */
+  omitWhenBlank?: boolean;
+  /** Hint shown in an empty text field. */
+  placeholder?: string;
+  /** Regular expression the whole value must match, such as Helm's rule for a release name. */
+  pattern?: string;
+  /** Shown under the field while its value does not match {@link pattern}. */
+  validationHint?: string;
+}
+/**
+ * A field that must be filled in unless one of `fields` (other form fields) is: JupyterHub's allowed groups may stay
+ * empty only when administrators are named. `message` is the error shown on the field.
+ */
+export interface RequiredUnlessAny {
+  fields: string[];
+  message?: string;
+}
+/**
+ * A value that must stay under a limit held by another field (`limitField`):
+ * - `javaHeap`: a Java heap size that must stay well below the pod memory limit (blank is allowed);
+ * - `memoryRequest` / `cpuRequest`: a Kubernetes request that cannot be higher than its limit.
+ */
+export interface ResourceCheck {
+  kind: 'javaHeap' | 'memoryRequest' | 'cpuRequest';
+  limitField: string;
+  /**
+   * `javaHeap` only: the first chart version that sizes a blank heap from the memory limit itself. Deploying an
+   * older chart, the wizard sends 75% of the limit for a blank heap instead (see blankValues.ts).
+   */
+  blankSizedByChartFrom?: string;
 }
 export interface StandardFormField extends FormFieldBase {
   type: 'string' | 'number' | 'boolean' | 'select';

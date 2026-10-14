@@ -33,6 +33,7 @@ import {
   type PlatformContext, type ResolvedContext, type ContextCapabilitySchema,
   type RemoteProbeResult,
 } from "../api/client";
+import { storageKey, storedValue } from "../utils/contextFieldKeys";
 import "./Page.css";
 
 const { Title, Text, Paragraph } = Typography;
@@ -116,7 +117,7 @@ export default function ContextsPage() {
         cmUrl: v.cmUrl,
         cmUsername: v.cmUsername,
         cmPassword: v.cmPassword,
-        verifySsl: v.verifySsl === true,
+        verifySsl: v.verifySsl !== false,
       });
       setProbeResult(res);
       if (res.ok) {
@@ -136,7 +137,8 @@ export default function ContextsPage() {
 
   useEffect(() => { getContextSchema().then(setSchema).catch(() => setSchema([])); }, []);
 
-  // Form field name for a capability field — flattened "<capability>.<name>".
+  // Form item name for a capability field — "<capability>__<name>", unique on screen. The context config
+  // stores the value under storageKey(field) instead.
   const fieldKey = (cap: string, name: string) => `${cap}__${name}`;
 
   const fetchContexts = async () => {
@@ -261,25 +263,26 @@ export default function ContextsPage() {
       vals.verifySsl = ctx.config?.verifySsl !== false; // default true
       // Optional capability overrides (e.g. hive service principal) stored on the context.
       capabilityFieldsForKind("REMOTE").forEach(({ cap, f }) => {
-        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
+        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = storedValue(ctx.config, "REMOTE", f) ?? f.default;
       });
       // password intentionally not prefilled — write-only, shown as "(unchanged)"
     } else if (ctx.kind === "CDP") {
       vals.cmUrl = ctx.config?.cmUrl;
       vals.cmUsername = ctx.config?.cmUsername;
-      vals.verifySsl = ctx.config?.verifySsl === true; // default false (CM self-signed)
+      vals.verifySsl = ctx.config?.verifySsl !== false; // default true
       vals.rangerAdminUsername = ctx.config?.rangerAdminUsername;
       vals.rangerHiveService = ctx.config?.rangerHiveService;
       vals.federationUser = ctx.config?.federationUser;
       vals.autoConfigureRemote = ctx.config?.autoConfigureRemote !== false; // default true
       // Manual capability fields (Kerberos/OIDC) stored on the CDP context — prefill the non-secret ones.
       cdpCapabilityFields().forEach(({ cap, f }) => {
-        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
+        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = storedValue(ctx.config, "CDP", f) ?? f.default;
       });
       // cm/ranger/atlas passwords + capability secrets not prefilled — write-only, shown as "(unchanged)"
     } else {
+      vals.verifySsl = ctx.config?.verifySsl !== false; // default true
       externalFields().forEach(({ cap, f }) => {
-        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = ctx.config?.[f.name] ?? f.default;
+        if (!f.secret) vals[fieldKey(cap.capability, f.name)] = storedValue(ctx.config, "EXTERNAL", f) ?? f.default;
       });
     }
     form.setFieldsValue(vals);
@@ -309,8 +312,8 @@ export default function ContextsPage() {
         capabilityFieldsForKind("REMOTE").forEach(({ cap, f }) => {
           const v = values[fieldKey(cap.capability, f.name)];
           if (v === undefined || v === null || v === "") return;
-          if (f.secret) payload.secrets![f.name] = v;
-          else payload.config![f.name] = v;
+          if (f.secret) payload.secrets![storageKey(f)] = v;
+          else payload.config![storageKey(f)] = v;
         });
       } else if (values.kind === "CDP") {
         // CDP / Cloudera Manager: KDPS discovers Hive/Ranger/Atlas from CM. CM connection creds +
@@ -322,7 +325,7 @@ export default function ContextsPage() {
             cmUrl: values.cmUrl,
             cmUsername: values.cmUsername,
             clusterName: values.clusterName,
-            verifySsl: values.verifySsl === true, // default false; CM is self-signed on 7183
+            verifySsl: values.verifySsl !== false, // default true; false = accept any certificate
             autoConfigureRemote: values.autoConfigureRemote !== false, // default true
           },
           secrets: {},
@@ -338,20 +341,21 @@ export default function ContextsPage() {
         cdpCapabilityFields().forEach(({ cap, f }) => {
           const v = values[fieldKey(cap.capability, f.name)];
           if (v === undefined || v === null || v === "") return;
-          if (f.secret) payload.secrets![f.name] = v;   // only sent when typed → no clobber on edit
-          else payload.config![f.name] = v;
+          if (f.secret) payload.secrets![storageKey(f)] = v;   // only sent when typed → no clobber on edit
+          else payload.config![storageKey(f)] = v;
         });
       } else {
         payload = {
           id: values.id, name: values.name, kind: "EXTERNAL",
           clusterName: values.clusterName, description: values.description,
-          config: {}, secrets: {},
+          // default true; false = accept any certificate from this context's Ranger and Atlas
+          config: { verifySsl: values.verifySsl !== false }, secrets: {},
         };
         externalFields().forEach(({ cap, f }) => {
           const v = values[fieldKey(cap.capability, f.name)];
           if (v === undefined || v === null || v === "") return;
-          if (f.secret) payload.secrets![f.name] = v;     // only sent when typed → no clobber on edit
-          else payload.config![f.name] = v;
+          if (f.secret) payload.secrets![storageKey(f)] = v;     // only sent when typed → no clobber on edit
+          else payload.config![storageKey(f)] = v;
         });
       }
       await saveContext(payload);
@@ -380,6 +384,11 @@ export default function ContextsPage() {
         <Space direction="vertical" size={0}>
           <Text strong>{n}</Text>
           {c.clusterName && <Text type="secondary" style={{ fontSize: 12 }}>{c.clusterName}</Text>}
+          {(resolved[c.id]?.notices?.length ?? 0) > 0 && (
+            <Tooltip title={resolved[c.id]!.notices!.join(" ")}>
+              <Tag color="warning" style={{ marginTop: 4 }}>Settings to review</Tag>
+            </Tooltip>
+          )}
         </Space>
       ) },
     {
@@ -500,6 +509,9 @@ export default function ContextsPage() {
         onCancel={() => setDetail(null)}
         width={620}
       >
+        {(detail?.r?.notices ?? []).map((n) => (
+          <Alert key={n} type="warning" showIcon style={{ marginBottom: 12 }} message={n} />
+        ))}
         {detail && (() => {
           const r = detail.r;
           const managed = detail.ctx.kind === "MANAGED";
@@ -545,7 +557,7 @@ export default function ContextsPage() {
                     <Text copyable>{detail.ctx.config?.cmUrl || "—"}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       discovered live from CM
-                      {detail.ctx.config?.verifySsl !== true ? " · ⚠ SSL verification off" : ""}
+                      {detail.ctx.config?.verifySsl === false ? " · ⚠ SSL verification off" : ""}
                       {detail.ctx.config?.autoConfigureRemote === false ? " · manual (preflight only)" : ""}
                     </Text>
                   </Space>
@@ -570,6 +582,7 @@ export default function ContextsPage() {
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         admin user: {r?.rangerAdminUsername || detail.ctx.config?.rangerAdminUsername || "admin"}
                         {detail.ctx.secretKeys?.includes("rangerAdminPassword") ? " · password set" : " · no password set"}
+                        {detail.ctx.config?.verifySsl === false ? " · ⚠ certificate verification off" : ""}
                       </Text>
                     </Space>}
               </Descriptions.Item>
@@ -593,6 +606,9 @@ export default function ContextsPage() {
         width={640}
         destroyOnClose
       >
+        {editing && (resolved[editing.id]?.notices ?? []).map((n) => (
+          <Alert key={n} type="warning" showIcon style={{ marginBottom: 12 }} message={n} />
+        ))}
         <Form form={form} layout="vertical" onFinish={onFinish}>
           <Form.Item name="id" label="ID"
             rules={[{ required: true, message: "id is required" },
@@ -632,7 +648,7 @@ export default function ContextsPage() {
               </Form.Item>
               <Form.Item name="verifySsl" label="Verify TLS certificate" valuePropName="checked"
                 initialValue={true}
-                tooltip="Turn OFF to accept a self-signed / untrusted certificate on the remote Ambari (trust-all). Leave ON for a CA-signed certificate.">
+                tooltip="Turn OFF to accept a self-signed / untrusted certificate on the remote Ambari, Ranger and Atlas (trust-all). Leave ON for a CA-signed certificate.">
                 <Switch checkedChildren="Verify" unCheckedChildren="Ignore SSL" />
               </Form.Item>
 
@@ -695,8 +711,8 @@ export default function ContextsPage() {
                 <Input.Password placeholder={editing ? "(unchanged)" : ""} autoComplete="new-password" />
               </Form.Item>
               <Form.Item name="verifySsl" label="Verify TLS certificate" valuePropName="checked"
-                initialValue={false}
-                tooltip="Turn OFF to accept a self-signed / untrusted CM certificate (trust-all). CM defaults to a self-signed cert on 7183, so this is usually OFF.">
+                initialValue={true}
+                tooltip="Checks the certificates of Cloudera Manager, Ranger and Atlas against the Ambari truststore and the Ranger CA certificate of this context. Turn OFF only to accept a self-signed or untrusted certificate (for example the default Cloudera Manager certificate on 7183): KDPS then sends the credentials to whatever server answers.">
                 <Switch checkedChildren="Verify" unCheckedChildren="Ignore SSL" />
               </Form.Item>
 
@@ -779,7 +795,16 @@ export default function ContextsPage() {
           {/* EXTERNAL: fields rendered from the per-capability context schema
               (KDPS/contexts/capabilities/*.json). A company adds a capability by dropping a
               fragment file — this form picks it up. Grouping (Security/Auth, Hive, Atlas, Ranger)
-              is purely presentational; the stored config key stays fieldKey(capability, name). */}
+              is purely presentational. The form item is fieldKey(capability, name), but the value is
+              stored in the context config under storageKey(field): the field's configKey, else its
+              name, so the Kerberos, OIDC and Polaris realms keep separate values. */}
+          {watchedKind === "EXTERNAL" && (
+            <Form.Item name="verifySsl" label="Verify TLS certificates" valuePropName="checked"
+              initialValue={true}
+              tooltip="Checks the certificates of this context's Ranger and Atlas against the Ambari truststore and the Ranger CA certificate below. Turn OFF only to accept a self-signed or untrusted certificate: KDPS then sends the administrator credentials to whatever server answers.">
+              <Switch checkedChildren="Verify" unCheckedChildren="Ignore SSL" />
+            </Form.Item>
+          )}
           {watchedKind === "EXTERNAL" && renderCapabilityGroups(
             schema.flatMap((cap) =>
               (cap.fields || [])

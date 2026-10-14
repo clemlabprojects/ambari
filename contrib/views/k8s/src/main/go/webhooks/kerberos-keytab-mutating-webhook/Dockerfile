@@ -50,7 +50,13 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod tidy
 
-# 4) build (static)
+# 4) unit tests, on the build platform before cross-compiling, so an image is never published from
+#    code whose calls to the Ambari backend no longer pass its checks
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go test ./...
+
+# 5) build (static)
 ENV CGO_ENABLED=0 \
     GOOS=$TARGETOS \
     GOARCH=$TARGETARCH

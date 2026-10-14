@@ -31,7 +31,7 @@
           {
             "property": "jdbc.url",
             "type": "template",
-            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=NONE",
+            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=FULL",
             "properties": {
               "host": {
                 "source": "template",
@@ -40,7 +40,7 @@
               },
               "port": {
                 "source": "helm",
-                "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}server.config.https.port{% endif %}" ,
+                "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}service.port{% endif %}" ,
                 "type": "integer"
               },
               "ssl": {
@@ -115,8 +115,8 @@
         "fullnameOverride": "keytab-webhook",
         "secretName": "regcred",
         "chart": "kerberos-keytab-mutating-webhook",
-        "chartVersion": "0.1.0",
-        "imageTag": "1.0.0.1",
+        "chartVersion": "0.2.0",
+        "imageTag": "1.0.0.10",
         "imageRepository": "registry.clemlab.com/clemlabprojects",
         "namespace": "ambari-mutating-webhooks",
         "imageGlobalRegistryProperty": "global.imageRegistry",

@@ -1,0 +1,196 @@
+name: kdps-view-test
+
+# The KDPS view (contrib/views/k8s) has its own Java and UI test suites. The build workflow packages it with
+# -DskipTests and the test workflow only runs ambari-server's tests, so this workflow is what runs them, on the
+# release branches as well as on master.
+on:
+  push:
+    branches: ["master", "release/**", "kdps-release-*"]
+  pull_request:
+    branches: ["master", "release/**", "kdps-release-*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MAVEN_OPTS: "-Djava.awt.headless=true -Xmx4g"
+  NEXUS_RELEASES_URL: "https://nexus.clemlab.com/repository/maven-releases/"
+  NEXUS_CENTRAL_URL: "https://nexus.clemlab.com/repository/maven-central/"
+  # contrib/views is only in the reactor with -Dviews. The helm-java native library must match the runner (x86_64).
+  MVN_VIEW_FLAGS: "-B -Dviews -Drat.skip=true -Dambari.grafana.arch=amd64"
+
+jobs:
+  unit:
+    name: KDPS view unit tests (Java and UI)
+    runs-on: ubuntu-latest
+
+    container:
+      image: rockylinux:9
+
+    steps:
+      # maven-openjdk17 makes Maven run on Java 17, which the view needs (plain "maven" may pull in Java 11).
+      - name: Install test deps (Java 17, Maven)
+        run: |
+          dnf -y install --nobest git which tar gzip findutils java-17-openjdk-devel maven maven-openjdk17
+          java -version
+          mvn -version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Maven (add public Nexus repository)
+        run: |
+          mkdir -p /root/.m2
+          cat > /root/.m2/settings.xml <<EOF
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+            <profiles>
+              <profile>
+                <id>public-nexus</id>
+                <repositories>
+                  <repository>
+                    <id>clemlab-central</id>
+                    <url>${NEXUS_CENTRAL_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository>
+                  <repository>
+                    <id>clemlab-releases</id>
+                    <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository>
+                </repositories>
+                <pluginRepositories>
+                  <pluginRepository>
+                    <id>clemlab-plugins</id>
+                    <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </pluginRepository>
+                </pluginRepositories>
+              </profile>
+            </profiles>
+            <activeProfiles>
+              <activeProfile>public-nexus</activeProfile>
+            </activeProfiles>
+          </settings>
+          EOF
+
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: /root/.m2/repository
+          key: ${{ runner.os }}-m2-kdps-view-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-kdps-view-
+            ${{ runner.os }}-m2-
+
+      # The modules the view depends on, without running their tests: only the view's own tests matter here.
+      - name: Build the modules the view depends on
+        run: mvn ${MVN_VIEW_FLAGS} -pl contrib/views/k8s -am install -DskipTests
+
+      # Java tests (surefire) and the UI's jest suite (yarn test:ci, bound to the test phase); either one fails the job.
+      # This container has no Docker, so the tests that need it are reported as skipped here: the live-cluster job,
+      # which has Docker, runs them again and fails when they are skipped.
+      - name: Run the KDPS view tests
+        run: mvn ${MVN_VIEW_FLAGS} -pl contrib/views/k8s test
+
+  live-cluster:
+    name: KDPS view live-cluster test (restricted account on k3s)
+    needs: unit
+    # A host runner, not a container: the test starts k3s in Docker.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configure Maven (add public Nexus repository)
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<EOF
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+            <profiles>
+              <profile>
+                <id>public-nexus</id>
+                <repositories>
+                  <repository>
+                    <id>clemlab-central</id>
+                    <url>${NEXUS_CENTRAL_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository>
+                  <repository>
+                    <id>clemlab-releases</id>
+                    <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository>
+                </repositories>
+                <pluginRepositories>
+                  <pluginRepository>
+                    <id>clemlab-plugins</id>
+                    <url>${NEXUS_RELEASES_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </pluginRepository>
+                </pluginRepositories>
+              </profile>
+            </profiles>
+            <activeProfiles>
+              <activeProfile>public-nexus</activeProfile>
+            </activeProfiles>
+          </settings>
+          EOF
+
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-kdps-view-it-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-kdps-view-it-
+            ${{ runner.os }}-m2-
+
+      - name: Build the modules the view depends on
+        run: mvn ${MVN_VIEW_FLAGS} -pl contrib/views/k8s -am install -DskipTests
+
+      # The unit job already ran the Java tests that do not need Docker. -Dtest limits surefire to the ones that do (the
+      # SSH host-key checks of GitOps deploys, against an SSH server in a container); failsafe then runs the
+      # live-cluster test.
+      - name: Run the live-cluster test and the unit tests that need Docker
+        run: |
+          mvn ${MVN_VIEW_FLAGS} -pl contrib/views/k8s -Pintegration verify \
+            -Dtest='GitClientOpenSshServerTest,FluxGitOpsBackendSshHostKeyTest'
+
+      # Without Docker these tests are reported as skipped, and a skipped test must not pass for a green run.
+      - name: Check the unit tests that need Docker ran
+        run: |
+          for t in GitClientOpenSshServerTest FluxGitOpsBackendSshHostKeyTest; do
+            report=$(ls contrib/views/k8s/target/surefire-reports/*."$t".txt)
+            cat "$report"
+            grep -q 'Tests run: [1-9][0-9]*, Failures: 0, Errors: 0, Skipped: 0,' "$report"
+          done
+
+      # A skipped test (no Docker) must not pass for a green run.
+      - name: Check the live-cluster test ran
+        run: |
+          summary=contrib/views/k8s/target/failsafe-reports/failsafe-summary.xml
+          cat "$summary"
+          grep -q '<completed>[1-9]' "$summary"
+          grep -q '<skipped>0</skipped>' "$summary"

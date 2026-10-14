@@ -193,6 +193,17 @@ public class StackDefinitionService {
     }
 
     /**
+     * Whether the release ships a definition for the service, as opposed to one that cannot be read.
+     * @param serviceName logical service key (e.g. SUPERSET)
+     * @return true when KDPS/services/{serviceName}/service.json exists
+     */
+    public boolean hasServiceDefinition(String serviceName) {
+        if (serviceName == null || serviceName.isBlank()) return false;
+        return getClass().getClassLoader().getResource(
+                BASE_PATH + "/" + serviceName.toUpperCase(Locale.ROOT) + "/service.json") != null;
+    }
+
+    /**
      * Reads definition: KDPS/services/{serviceName}/service.json
      * This replaces your old charts.json lookup for specific services.
      * @param serviceName logical service key (e.g. SUPERSET)

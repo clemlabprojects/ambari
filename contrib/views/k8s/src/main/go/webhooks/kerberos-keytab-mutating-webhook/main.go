@@ -18,10 +18,14 @@ package main
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +34,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -38,8 +43,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 //
@@ -57,10 +60,11 @@ type WebhookConfig struct {
 	BackendRetryCount                int           // e.g. 2
 	AdmissionRequestTimeout          time.Duration // e.g. 5s
 	LogAdmissionFailures             bool
-	BackendAuthMode                  string // "none" | "serviceaccount-jwt" | "basic" | "mtls" | combos with mtls (e.g. "mtls,basic")
+	BackendAuthMode                  string // "none" | "serviceaccount-jwt" | "basic" | "webhook-account" | "mtls" | combos with mtls (e.g. "mtls,webhook-account")
 	BackendAuthServiceAccountJwtPath string
 	BackendBasicUserPath             string // ambari mutating webhook username
 	BackendBasicPassPath             string // ambari mutating webhook password
+	BackendAccountUsername           string // Ambari account of "webhook-account" mode; its password comes from the client key
 
 	// Genericization knobs
 	NeedsKeytabLabelKey string // label key to force keytab, default: security.clemlab.com/needs-keytab
@@ -93,11 +97,6 @@ type WebhookConfig struct {
 	HeadlessHostTemplate string // NEW: e.g. "{service}-{namespace}.k8s"
 	MaxIpaHostnameChars int    // default 64 (IPA host-add cap)
 	ClusterTag string
-
-	CorrelationConfigMap string // name of ConfigMap holding <release>.commandId (default: k8s-view-metadata)
-
-	parentCommandId string // derived per request
-	releaseName     string // derived per request
 }
 
 func loadWebhookConfig() WebhookConfig {
@@ -114,6 +113,7 @@ func loadWebhookConfig() WebhookConfig {
 		BackendAuthServiceAccountJwtPath: getEnvOrDefault("BACKEND_AUTH_SA_JWT_PATH", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
 		BackendBasicUserPath:             getEnvOrDefault("BACKEND_BASIC_USER_PATH", "/ambari-auth/username"),
 		BackendBasicPassPath:             getEnvOrDefault("BACKEND_BASIC_PASS_PATH", "/ambari-auth/password"),
+		BackendAccountUsername:           getEnvOrDefault("BACKEND_ACCOUNT_USERNAME", "webhook-user"),
 
 		NeedsKeytabLabelKey: getEnvOrDefault("NEEDS_KEYTAB_LABEL_KEY", "security.clemlab.com/needs-keytab"),
 		ServiceLabelKey:     getEnvOrDefault("SERVICE_LABEL_KEY", "security.clemlab.com/service"),
@@ -138,8 +138,6 @@ func loadWebhookConfig() WebhookConfig {
 		MaxIpaHostnameChars: getEnvInt("IPA_HOSTNAME_MAX", 64),
 		// Accept either CLUSTER_TAG or CLUSTER_NAME; first non-empty wins.
     ClusterTag:          getEnvFirstNonEmpty("CLUSTER_TAG", "CLUSTER_NAME"),
-
-		CorrelationConfigMap: getEnvOrDefault("CORRELATION_CONFIGMAP", "k8s-view-metadata"),
 	}
 }
 
@@ -193,10 +191,28 @@ func getEnvBool(key string, defaultValue bool) bool {
 
 var (
 	globalConfig     WebhookConfig
-	kubeClient       *kubernetes.Clientset
 	httpClient       *http.Client
 	backendBasicUser string
 	backendBasicPass string
+)
+
+// Header that Ambari's CSRF protection requires on POST, PUT and DELETE calls. Ambari accepts any
+// value; "ambari" is the one its own clients send.
+const (
+	csrfHeaderName  = "X-Requested-By"
+	csrfHeaderValue = "ambari"
+)
+
+// Proof that a keytab request comes from this webhook. Ambari's HTTPS port does not ask for client
+// certificates, so the view cannot see the client certificate in the TLS handshake: each request
+// carries the certificate and a signature made with its private key instead (the view checks both,
+// see KeytabWebhookAuthenticator in the KDPS view). Both sides must build the signed text alike.
+const (
+	certificateHeader         = "X-KDPS-Webhook-Certificate"
+	timestampHeader           = "X-KDPS-Webhook-Timestamp"
+	signatureHeader           = "X-KDPS-Webhook-Signature"
+	keytabRequestSignatureTag = "kdps-keytab-request"
+	accountPasswordContext    = "kdps-keytab-webhook-ambari-login\n"
 )
 
 //
@@ -210,13 +226,27 @@ func validateBackendAuthMode(mode string) error {
 	if m == "" || m == "none" {
 		return nil
 	}
-	hasBasic := strings.Contains(m, "basic")
-	hasJWT := strings.Contains(m, "serviceaccount-jwt")
-	if hasBasic && hasJWT {
-		return fmt.Errorf("BACKEND_AUTH_MODE cannot combine 'basic' and 'serviceaccount-jwt'")
+	schemes := 0
+	for _, scheme := range []string{"basic", "webhook-account", "serviceaccount-jwt"} {
+		if hasAuthMode(m, scheme) {
+			schemes++
+		}
 	}
-	// 'mtls' can be combined with either header scheme.
+	if schemes > 1 {
+		return fmt.Errorf("BACKEND_AUTH_MODE can name only one of 'basic', 'webhook-account' and 'serviceaccount-jwt'")
+	}
+	// 'mtls' can be combined with any header scheme.
 	return nil
+}
+
+// hasAuthMode tells whether the comma-separated BACKEND_AUTH_MODE names a scheme.
+func hasAuthMode(mode, scheme string) bool {
+	for _, part := range strings.Split(strings.ToLower(mode), ",") {
+		if strings.TrimSpace(part) == scheme {
+			return true
+		}
+	}
+	return false
 }
 
 //
@@ -233,21 +263,13 @@ func main() {
 		log.Fatalf("invalid BACKEND_AUTH_MODE: %v", err)
 	}
 
-	inClusterConfig, err := rest.InClusterConfig()
-	if err != nil {
-		log.Fatalf("cannot load in-cluster Kubernetes config: %v", err)
-	}
-	kubeClient, err = kubernetes.NewForConfig(inClusterConfig)
-	log.Printf("Kubernetes client configured for host %s", inClusterConfig.Host)
-	if err != nil {
-		log.Fatalf("cannot create Kubernetes client: %v", err)
-	}
-
+	// The webhook needs no access to the Kubernetes API: the pod comes in the AdmissionReview, and
+	// the view writes the keytab Secret with its own account.
 	httpClient = &http.Client{Timeout: globalConfig.BackendRequestTimeout}
 	log.Printf("HTTP client for backend configured with timeout %s", globalConfig.BackendRequestTimeout)
 
 	// Enable mTLS transport when BackendAuthMode contains "mtls"
-	if strings.Contains(strings.ToLower(globalConfig.BackendAuthMode), "mtls") {
+	if hasAuthMode(globalConfig.BackendAuthMode, "mtls") {
 		log.Printf("setting up mTLS HTTP client for backend communication")
 		if c, err := buildMtlsHTTPClient(globalConfig); err != nil {
 			log.Fatalf("failed to set up mTLS HTTP client for backend: %v", err)
@@ -259,7 +281,7 @@ func main() {
 	}
 
 	// Preload BASIC creds if requested
-	if strings.Contains(strings.ToLower(globalConfig.BackendAuthMode), "basic") {
+	if hasAuthMode(globalConfig.BackendAuthMode, "basic") {
 		u, uErr := os.ReadFile(globalConfig.BackendBasicUserPath)
 		p, pErr := os.ReadFile(globalConfig.BackendBasicPassPath)
 		if uErr != nil || pErr != nil {
@@ -341,17 +363,9 @@ func handleAdmissionMutate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Derive release name from common Helm labels and try to fetch parent command id from ConfigMap
+	// The view only issues keytabs for the releases it deployed, so the request names the release.
 	namespace := firstNonEmpty(incomingPod.Namespace, request.Namespace)
-	globalConfig.releaseName = firstNonEmpty(incomingPod.Labels["app.kubernetes.io/instance"], incomingPod.Labels["helm.sh/release"])
-	globalConfig.parentCommandId = ""
-	if globalConfig.releaseName != "" {
-		if cmdId, err := lookupCommandCorrelation(r.Context(), namespace, globalConfig.releaseName); err == nil {
-			globalConfig.parentCommandId = cmdId
-		} else {
-			log.Printf("Could not find correlation for release %s in namespace %s: %v", globalConfig.releaseName, namespace, err)
-		}
-	}
+	releaseName := podReleaseName(&incomingPod)
 
 	podName := incomingPod.Name
 	log.Printf("Accepted incoming pod name %s", podName)
@@ -371,7 +385,7 @@ func handleAdmissionMutate(w http.ResponseWriter, r *http.Request) {
 	secretName := deriveSecretName(&incomingPod, request.UID, globalConfig.SecretPrefix)
 	log.Printf("secretName as been derived as %s", secretName)
 	
-	if err := enqueueKeytabCreation(r.Context(), principal, namespace, podName, secretName, globalConfig.SecretDataKey); err != nil {
+	if err := enqueueKeytabCreation(r.Context(), principal, namespace, podName, secretName, globalConfig.SecretDataKey, releaseName); err != nil {
 		writeAdmissionError(w, &admissionReview, fmt.Errorf("cannot enqueue keytab creation: %w", err))
 		return
 	}
@@ -387,6 +401,14 @@ func handleAdmissionMutate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Patch to be applied: %s", string(patchBytes))
 	log.Printf("PatchType: %v", patchType)
 	writeAdmissionAllow(w, &admissionReview, &patchType, patchBytes)
+}
+
+// podReleaseName is the Helm release of the pod, from the labels charts commonly set on their
+// pods: the recommended app.kubernetes.io/instance first, then the older helm.sh/release and
+// release labels. Some charts (Superset's, for one) only set the last.
+func podReleaseName(pod *corev1.Pod) string {
+	labels := pod.GetLabels()
+	return firstNonEmpty(labels["app.kubernetes.io/instance"], labels["helm.sh/release"], labels["release"])
 }
 
 //
@@ -442,50 +464,51 @@ func buildPrincipal(service, fqdn, realm string) string {
 	return out
 }
 
-// lookupCommandCorrelation reads a ConfigMap (default k8s-view-metadata) in the namespace
-// and returns the commandId stored under "<releaseName>.commandId".
-func lookupCommandCorrelation(ctx context.Context, namespace, releaseName string) (string, error) {
-	cmName := firstNonEmpty(globalConfig.CorrelationConfigMap, "k8s-view-metadata")
-	cm, err := kubeClient.CoreV1().ConfigMaps(namespace).Get(ctx, cmName, meta.GetOptions{})
-	if err != nil {
-		return "", err
-	}
-	key := fmt.Sprintf("%s.commandId", releaseName)
-	if v, ok := cm.Data[key]; ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v), nil
-	}
-	return "", fmt.Errorf("key %s not found in ConfigMap %s", key, cmName)
-}
-
 //
 // ---------------------------
 // Backend and Secret helpers
 // ---------------------------
 //
 
-func enqueueKeytabCreation(ctx context.Context, principal, namespace, podName, secretName, keyNameInSecret string) error {
+// keytabRequest is the body of a keytab request to the view.
+type keytabRequest struct {
+	Principal       string `json:"principal"`
+	Namespace       string `json:"namespace"`
+	PodName         string `json:"podName"`
+	SecretName      string `json:"secretName"`
+	KeyNameInSecret string `json:"keyNameInSecret"`
+	ReleaseName     string `json:"releaseName,omitempty"`
+}
+
+func enqueueKeytabCreation(ctx context.Context, principal, namespace, podName, secretName, keyNameInSecret, releaseName string) error {
 	url := strings.TrimRight(globalConfig.BackendBaseUrl, "/") + "/kerberos/keytab"
 
-	payload := map[string]string{
-		"principal":       principal,
-		"namespace":       namespace,
-		"podName":         podName,
-		"secretName":      secretName,
-		"keyNameInSecret": keyNameInSecret,
-	}
-	// Optional correlation to a Helm deploy root command so the backend can nest steps properly.
-	if globalConfig.parentCommandId != "" {
-		payload["parentCommandId"] = globalConfig.parentCommandId
-	}
-	if globalConfig.releaseName != "" {
-		payload["releaseName"] = globalConfig.releaseName
+	payload := keytabRequest{
+		Principal:       principal,
+		Namespace:       namespace,
+		PodName:         podName,
+		SecretName:      secretName,
+		KeyNameInSecret: keyNameInSecret,
+		ReleaseName:     releaseName,
 	}
 	body, _ := json.Marshal(payload)
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
+	req, err := newBackendRequest(ctx, http.MethodPost, url, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	if err := attachBackendAuth(req); err != nil {
 		return err
+	}
+	if hasAuthMode(globalConfig.BackendAuthMode, "mtls") {
+		identity, err := loadClientIdentity(globalConfig)
+		if err != nil {
+			return err
+		}
+		if err := signKeytabRequest(req, identity, payload, time.Now()); err != nil {
+			return err
+		}
 	}
 
 	resp, err := httpClient.Do(req)
@@ -503,7 +526,10 @@ func enqueueKeytabCreation(ctx context.Context, principal, namespace, podName, s
 func requestKeytabFromBackend(ctx context.Context, principal string) ([]byte, error) {
 	var lastError error
 	for attempt := 0; attempt <= globalConfig.BackendRetryCount; attempt++ {
-		httpRequest, _ := http.NewRequestWithContext(ctx, http.MethodPost, globalConfig.BackendBaseUrl+"/keytab", nil)
+		httpRequest, err := newBackendRequest(ctx, http.MethodPost, globalConfig.BackendBaseUrl+"/keytab", nil)
+		if err != nil {
+			return nil, err
+		}
 		query := httpRequest.URL.Query()
 		query.Add("principal", principal)
 		httpRequest.URL.RawQuery = query.Encode()
@@ -529,6 +555,18 @@ func requestKeytabFromBackend(ctx context.Context, principal string) ([]byte, er
 	return nil, lastError
 }
 
+// newBackendRequest builds a request to the Ambari backend. The backend is the KDPS view, served
+// under Ambari's REST API, which refuses state-changing calls without an X-Requested-By header (its
+// CSRF protection). Every backend call goes through here so that none of them can miss the header.
+func newBackendRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(csrfHeaderName, csrfHeaderValue)
+	return req, nil
+}
+
 func attachBackendAuth(req *http.Request) error {
 	mode := strings.ToLower(strings.TrimSpace(globalConfig.BackendAuthMode))
 	if mode == "" || mode == "none" {
@@ -536,7 +574,19 @@ func attachBackendAuth(req *http.Request) error {
 	}
 
 	// mTLS is transport-level; no header needed here (handled in httpClient)
-	if strings.Contains(mode, "basic") {
+	if hasAuthMode(mode, "webhook-account") {
+		// The view's Ambari account for this webhook: its password is derived from the client key,
+		// read on each call so that a renewed certificate is picked up without a restart.
+		identity, err := loadClientIdentity(globalConfig)
+		if err != nil {
+			return err
+		}
+		creds := globalConfig.BackendAccountUsername + ":" + webhookAccountPassword(identity.keyDER)
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(creds)))
+		return nil
+	}
+
+	if hasAuthMode(mode, "basic") {
 		if backendBasicUser == "" || backendBasicPass == "" {
 			return fmt.Errorf("basic auth requested but credentials are empty")
 		}
@@ -546,7 +596,7 @@ func attachBackendAuth(req *http.Request) error {
 		return nil
 	}
 
-	if strings.Contains(mode, "serviceaccount-jwt") {
+	if hasAuthMode(mode, "serviceaccount-jwt") {
 		tokenBytes, err := os.ReadFile(globalConfig.BackendAuthServiceAccountJwtPath)
 		if err != nil {
 			return fmt.Errorf("cannot read service account JWT: %w", err)
@@ -556,7 +606,7 @@ func attachBackendAuth(req *http.Request) error {
 		return nil
 	}
 
-	if strings.Contains(mode, "mtls") {
+	if hasAuthMode(mode, "mtls") {
 		// headerless; already configured on the client transport
 		return nil
 	}
@@ -564,31 +614,73 @@ func attachBackendAuth(req *http.Request) error {
 	return fmt.Errorf("unknown BACKEND_AUTH_MODE: %s", globalConfig.BackendAuthMode)
 }
 
-func createSecretOwnedByPod(ctx context.Context, namespace, podName string, podUid types.UID, secretName string, keytabBytes []byte) error {
-	secret := &corev1.Secret{
-		ObjectMeta: meta.ObjectMeta{
-			Name:      secretName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"managed-by": "clemlab-keytab-webhook",
-				"pod-name":   podName,
-			},
-			OwnerReferences: []meta.OwnerReference{{
-				APIVersion: "v1",
-				Kind:       "Pod",
-				Name:       podName,
-				UID:        podUid,
-			}},
-		},
-		Immutable: ptr(true),
-		Type:      corev1.SecretTypeOpaque,
-		Data:      map[string][]byte{globalConfig.SecretDataKey: keytabBytes},
+// clientIdentity is the client certificate the view issued to the webhook, and its private key.
+type clientIdentity struct {
+	certDER []byte
+	keyDER  []byte
+	signer  crypto.Signer
+}
+
+// loadClientIdentity reads the client certificate and key the view issued (mounted from its Secret).
+func loadClientIdentity(cfg WebhookConfig) (*clientIdentity, error) {
+	certPEM, err := os.ReadFile(cfg.BackendClientCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("read client certificate: %w", err)
 	}
-	_, err := kubeClient.CoreV1().Secrets(namespace).Create(ctx, secret, meta.CreateOptions{})
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
-		return err
+	keyPEM, err := os.ReadFile(cfg.BackendClientKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("read client key: %w", err)
 	}
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil {
+		return nil, fmt.Errorf("client certificate %s is not PEM", cfg.BackendClientCertPath)
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		return nil, fmt.Errorf("client key %s is not PEM", cfg.BackendClientKeyPath)
+	}
+	key, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse client key: %w", err)
+	}
+	signer, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, fmt.Errorf("client key cannot sign")
+	}
+	return &clientIdentity{certDER: certBlock.Bytes, keyDER: keyBlock.Bytes, signer: signer}, nil
+}
+
+// keytabRequestSigningInput is the text the webhook signs: a tag, the timestamp and each field of
+// the request, one per line, in a fixed order.
+func keytabRequestSigningInput(timestamp string, p keytabRequest) []byte {
+	return []byte(strings.Join([]string{
+		keytabRequestSignatureTag, timestamp,
+		p.Principal, p.Namespace, p.PodName, p.SecretName, p.KeyNameInSecret, p.ReleaseName,
+	}, "\n"))
+}
+
+// signKeytabRequest adds the client certificate, the time and the signature of the request.
+func signKeytabRequest(req *http.Request, identity *clientIdentity, p keytabRequest, now time.Time) error {
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	digest := sha256.Sum256(keytabRequestSigningInput(timestamp, p))
+	signature, err := identity.signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	if err != nil {
+		return fmt.Errorf("sign keytab request: %w", err)
+	}
+	req.Header.Set(certificateHeader, base64.StdEncoding.EncodeToString(identity.certDER))
+	req.Header.Set(timestampHeader, timestamp)
+	req.Header.Set(signatureHeader, base64.StdEncoding.EncodeToString(signature))
 	return nil
+}
+
+// webhookAccountPassword derives the password of the webhook's Ambari account from its client key,
+// as the view does when it creates the account: nothing but the key is needed, so no password is
+// stored in Kubernetes.
+func webhookAccountPassword(keyDER []byte) string {
+	h := sha256.New()
+	h.Write([]byte(accountPasswordContext))
+	h.Write(keyDER)
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 }
 
 //

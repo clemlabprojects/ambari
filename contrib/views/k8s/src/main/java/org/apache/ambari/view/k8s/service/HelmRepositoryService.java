@@ -27,6 +27,7 @@ import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 
 import java.net.URI;
 import java.nio.file.Path;
@@ -45,16 +46,20 @@ public class HelmRepositoryService {
 
     private static final String SECRET_PREFIX = "helm.repo.secret.";
 
+    /** Secret reference of a repository with no stored secret; empty, because the DataStore never writes a null. */
+    private static final String NO_SECRET = "";
+
     private final ViewContext viewContext;
     private final HelmRepoRepo repositoryDao;
     private final HelmClient helmClient;
-    private final EncryptionService encryptionService = new EncryptionService();
+    /** Holds the repository credentials, shared by every user of the view instance. */
+    private final InstanceSettings settings;
     private final PathConfig pathConfig;
 
     /**
      * Constructs a {@code HelmRepositoryService} using the default {@link HelmClientDefault}.
      *
-     * @param ctx the Ambari view context providing configuration and instance data
+     * @param ctx the Ambari view context providing configuration and the instance settings
      */
     public HelmRepositoryService(ViewContext ctx) {
         this(ctx, new HelmClientDefault());
@@ -63,12 +68,25 @@ public class HelmRepositoryService {
     /**
      * Constructs a {@code HelmRepositoryService} with an explicit Helm client.
      *
-     * @param ctx  the Ambari view context providing configuration and instance data
+     * @param ctx  the Ambari view context providing configuration and the instance settings
      * @param helm the Helm client to use for repository operations
      */
     public HelmRepositoryService(ViewContext ctx, HelmClient helm) {
+        this(ctx, helm, null);
+    }
+
+    /**
+     * Constructs a {@code HelmRepositoryService} whose repository credentials are encrypted with the given service
+     * rather than with the master key of this Ambari server.
+     *
+     * @param ctx        the Ambari view context providing configuration and the instance settings
+     * @param helm       the Helm client to use for repository operations
+     * @param encryption encrypts the repository credentials; {@code null} for the master key of this Ambari server
+     */
+    public HelmRepositoryService(ViewContext ctx, HelmClient helm, EncryptionService encryption) {
         this.viewContext = ctx;
         this.repositoryDao = new HelmRepoRepo(ctx.getDataStore());
+        this.settings = new InstanceSettings(ctx, encryption);
         this.helmClient = helm;
         this.pathConfig = new PathConfig(ctx);
         this.pathConfig.ensureDirs();
@@ -98,6 +116,11 @@ public class HelmRepositoryService {
     /**
      * Persists (creates or updates) a repository entity, encrypting and storing the credential secret.
      *
+     * <p>The secret is only ever kept under this repository's own key ({@link #secretKey}), whatever secret reference
+     * the request carries. A stored secret is dropped, and the repository marked as needing its credentials again,
+     * when the registry it would be sent to changes without a new secret: its URL, registry host, type or user name.
+     * Otherwise a credential entered for one registry would be sent to another.</p>
+     *
      * @param entity      the repository entity to save; must not be {@code null}
      * @param plainSecret the plaintext password/token to encrypt and store; may be {@code null} if no credentials
      * @return the persisted entity after upsert
@@ -106,22 +129,52 @@ public class HelmRepositoryService {
         Objects.requireNonNull(entity, "repo must not be null");
         validate(entity);
 
-        if (plainSecret != null && !plainSecret.isBlank()) {
-            String secretReference = SECRET_PREFIX + entity.getId();
-            String encryptedBase64 = Base64.getEncoder().encodeToString(
-                encryptionService.encrypt(plainSecret.getBytes()));
-            viewContext.putInstanceData(secretReference, encryptedBase64);
-            entity.setSecretRef(secretReference);
+        HelmRepoEntity existing = repositoryDao.findById(entity.getId());
+        String secretKey = secretKey(entity.getId());
 
+        if (plainSecret != null && !plainSecret.isBlank()) {
+            settings.putSecret(secretKey, plainSecret);
+            entity.setSecretRef(secretKey);
+            entity.setAuthInvalid(false);
+        } else if (settings.get(secretKey) != null && (existing == null || registryChanged(existing, entity))) {
+            settings.remove(secretKey);
+            entity.setSecretRef(NO_SECRET);
+            entity.setAuthInvalid(true);
+            LOG.warn("The stored credentials of repository {} were dropped: they were entered for another registry "
+                    + "and must be entered again", entity.getId());
+        } else {
+            entity.setSecretRef(existing != null && secretKey.equals(existing.getSecretRef()) ? secretKey : NO_SECRET);
+            entity.setAuthInvalid(false);
         }
 
-        entity.setAuthInvalid(false);
         // timestamps handled by BaseRepo via When, but ensure updatedAt now if not present
         if (entity.getUpdatedAt() == null) {
             entity.setUpdatedAt(Instant.now().toString());
         }
         LOG.debug("Saving entity with id: {}, imgaeProject: {}, url: {}, effectiveImageRegistry: {}, name: {}", entity.getId(), entity.getImageProject(), entity.getUrl(), entity.getEffectiveImageRegistry(), entity.getName());
         return repositoryDao.upsert(entity);
+    }
+
+    /**
+     * Whether saving {@code incoming} over {@code existing} sends the repository's credentials somewhere else: another
+     * URL, registry host, type or user name. A property the request leaves out keeps its stored value, as the
+     * DataStore does when it updates the row.
+     */
+    static boolean registryChanged(HelmRepoEntity existing, HelmRepoEntity incoming) {
+        HelmRepoEntity after = new HelmRepoEntity();
+        after.setType(incoming.getType() != null ? incoming.getType() : existing.getType());
+        after.setUrl(incoming.getUrl() != null ? incoming.getUrl() : existing.getUrl());
+        after.setImageRegistryHostOverride(incoming.getImageRegistryHostOverride() != null
+                ? incoming.getImageRegistryHostOverride() : existing.getImageRegistryHostOverride());
+        String username = incoming.getUsername() != null ? incoming.getUsername() : existing.getUsername();
+        return !Objects.equals(trimmed(existing.getUrl()), trimmed(after.getUrl()))
+                || !trimmed(existing.getType()).equalsIgnoreCase(trimmed(after.getType()))
+                || !Objects.equals(trimmed(existing.getUsername()), trimmed(username))
+                || !trimmed(existing.getEffectiveRegistryHost()).equalsIgnoreCase(trimmed(after.getEffectiveRegistryHost()));
+    }
+
+    private static String trimmed(String value) {
+        return value == null ? "" : value.trim();
     }
 
     /**
@@ -145,11 +198,37 @@ public class HelmRepositoryService {
         } catch (Exception e) {
             LOG.warn("Failed to verify repo usage before delete: {}", e.toString());
         }
-        HelmRepoEntity entity = repositoryDao.findById(id);
-        if (entity != null && entity.getSecretRef() != null) {
-            viewContext.removeInstanceData(entity.getSecretRef());
-        }
+        // Only this repository's own key: a secret reference stored by an earlier version may name another setting.
+        settings.remove(secretKey(id));
         repositoryDao.deleteById(id);
+    }
+
+    /**
+     * Clears a secret reference earlier versions could keep in a repository row naming another view setting than the
+     * repository's own key (that of the OpenShift password, for one). Run when the view starts; a row already clean is
+     * left untouched.
+     *
+     * <p>The registry secret earlier versions kept in a column of the row is not handled here. This version's rows sit
+     * in tables created without that column, the data migration copies no value into it, and it blanks it in the
+     * previous view version's rows. Rows are only ever updated in place: removing one and storing it again would lose
+     * the repository if the second write failed.</p>
+     *
+     * @return the number of repositories cleaned
+     */
+    public int clearForeignSecretRefs() {
+        int cleaned = 0;
+        for (HelmRepoEntity repo : repositoryDao.findAll()) {
+            String ref = repo.getSecretRef();
+            if (ref == null || ref.isEmpty() || ref.equals(secretKey(repo.getId()))) {
+                continue;
+            }
+            repo.setSecretRef(NO_SECRET);
+            LOG.warn("Repository {} referred to the view setting '{}' for its credentials, which belongs to "
+                    + "something else; the reference was cleared", repo.getId(), ref);
+            repositoryDao.update(repo);
+            cleaned++;
+        }
+        return cleaned;
     }
 
     private void validate(HelmRepoEntity entity) {
@@ -163,23 +242,49 @@ public class HelmRepositoryService {
             throw new IllegalArgumentException("url is required");
         if (entity.getAuthMode() == null || entity.getAuthMode().isBlank())
             entity.setAuthMode("anonymous");
+        checkSecretName("GitOps credentials Secret", entity.getFluxSecretName());
+        checkSecretName("GitOps CA Secret", entity.getFluxCertSecretName());
+    }
+
+    /** A Kubernetes object name (DNS subdomain), as a Secret name must be. */
+    private static final java.util.regex.Pattern SECRET_NAME = java.util.regex.Pattern.compile(
+            "[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*");
+
+    /**
+     * Refuses a Secret name Kubernetes would not accept; a blank one names no Secret.
+     *
+     * @throws IllegalArgumentException naming the field
+     */
+    public static void checkSecretName(String what, String name) {
+        if (name == null || name.isBlank()) {
+            return;
+        }
+        String trimmed = name.trim();
+        if (trimmed.length() > 253 || !SECRET_NAME.matcher(trimmed).matches()) {
+            throw new IllegalArgumentException(what + " '" + trimmed.replaceAll("\\p{Cntrl}", "?") + "' is not a"
+                    + " valid Secret name: lowercase letters, digits, '-' and '.', starting and ending with a letter or"
+                    + " digit.");
+        }
     }
 
     // Secret Management
 
     /**
-     * Decrypts and returns the plaintext credential associated with the given secret reference.
+     * Decrypts and returns the credential stored for a repository. Only the repository's own key is read, never the
+     * secret reference stored with it: that way no repository can be made to send another repository's secret, or
+     * any other secret of the view, to its registry.
      *
-     * @param secretRef the instance-data key under which the encrypted secret is stored; may be {@code null}
-     * @return the decrypted plaintext credential, or {@code null} if the reference is blank or not found
+     * @param entity the repository; may be {@code null}
+     * @return the decrypted plaintext credential, or {@code null} if none is stored
      */
-    public String readPlainSecret(String secretRef) {
-        if (secretRef == null || secretRef.isBlank()) return null;
-        String base64Data = viewContext.getInstanceData(secretRef);
-        if (base64Data == null) return null;
-        byte[] cipherData = Base64.getDecoder().decode(base64Data);
-        byte[] plainData = encryptionService.decrypt(cipherData);
-        return new String(plainData);
+    public String readPlainSecret(HelmRepoEntity entity) {
+        if (entity == null || entity.getId() == null || entity.getId().isBlank()) return null;
+        return settings.getSecret(secretKey(entity.getId()));
+    }
+
+    /** The view setting a repository's secret is stored under. */
+    static String secretKey(String repoId) {
+        return SECRET_PREFIX + repoId;
     }
 
     // Helm Operations
@@ -216,7 +321,7 @@ public class HelmRepositoryService {
         if (!"HTTP".equalsIgnoreCase(entity.getType())) {
             throw new IllegalArgumentException("Repository " + repoId + " is not HTTP");
         }
-        String password = readPlainSecret(entity.getSecretRef());
+        String password = readPlainSecret(entity);
         Path configPath = pathConfig.repositoriesConfig();
         helmClient.ensureHttpRepo(configPath, entity.getName(), URI.create(entity.getUrl()), 
                                  entity.getUsername(), password);
@@ -239,7 +344,7 @@ public class HelmRepositoryService {
         }
         if (!(entity.getAuthMode() != null && entity.getAuthMode().equalsIgnoreCase("anonymous"))) {
             LOG.info("Performing OCI login for repository id: {}", repoId);
-            String password = readPlainSecret(entity.getSecretRef());
+            String password = readPlainSecret(entity);
             LOG.info("Logging in to OCI registry at URL: {}", entity.getUrl());
             LOG.info("Using username: {}", entity.getUsername() != null ? entity.getUsername() : "(none)");
             LOG.info("Using password: {}", password != null ? "************" : "(none)");

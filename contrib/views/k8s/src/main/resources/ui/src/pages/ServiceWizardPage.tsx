@@ -23,13 +23,25 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import yaml from 'yaml';
 
-import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
+import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getReleaseTlsState, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
 import ReviewStep from '../components/wizard/ReviewStep';
-import { applyBindingTargets, buildVarContext, deleteAtStr, deepMerge } from '../components/ServiceInstallationModal/bindings';
+import { deepMerge } from '../components/ServiceInstallationModal/bindings';
+import { seedFieldsFromRelease } from '../components/ServiceInstallationModal/seedFromRelease';
+import { gitOptionsToSubmit } from '../utils/gitOpsBranches';
+import { deploySubmittedMessage } from '../components/common/operationOutcome';
 import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
+import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
+import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
+import { requiredUnlessAnyErrors } from '../components/ServiceInstallationModal/requiredUnless';
+import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPayload';
+import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecretReplacement, describeIngressTlsChange, ingressTlsChange, ingressTlsNotice, keptCertificateHostProblem, KEEP_CURRENT_TLS, offersKeepCurrentTls, securityProfileIngress, seedKeepCurrentTls, unconfirmedTlsReplacement, upgradeChartFormValues, type CurrentIngressTls } from '../components/ServiceInstallationModal/ingressTls';
+import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
+import { deployFormValues } from './deployFormValues';
+import { normalizeTruststoreRefs, truststoreRef } from './truststoreRefs';
+import { federationManualGrantNotice, federationMayTurnOnFileAuth, federationRefusalNotice, federationWritesAtlasUserStore } from './atlasFederationAuth';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 
@@ -95,6 +107,15 @@ const ServiceWizardPage: React.FC = () => {
 
   const upgradeState = (location.state as any)?.mode === 'upgrade' ? (location.state as any) : undefined;
   const isUpgrade = !!upgradeState;
+  // Fields an upgrade seeds from the deployed release (service.json `seedFromValue`), filled or left at
+  // the default the chart runs when the release has no value. They show what runs, so the auto-enable
+  // defaults below must not switch them.
+  const seededFromReleaseRef = useRef<Set<string>>(new Set());
+  // Upgrade/Config: the certificate the release's Ingress serves now (from its TLS state), which the wizard keeps
+  // unless the operator chooses another TLS mode.
+  const [currentIngressTls, setCurrentIngressTls] = useState<CurrentIngressTls | null>(null);
+  // Services whose ingress certificate the operator picks in the wizard (a TLS mode field offering to keep it).
+  const upgradesIngressTls = isUpgrade && offersKeepCurrentTls(def?.form);
 
   useEffect(() => {
     if (!serviceName) return;
@@ -154,6 +175,9 @@ const ServiceWizardPage: React.FC = () => {
               if (upgradeState.securityProfile) {
                 initial.securityProfile = upgradeState.securityProfile;
               }
+              if (Array.isArray(upgradeState.truststoreRefs)) {
+                initial.truststoreRefs = upgradeState.truststoreRefs;
+              }
               // Re-select the KDPS context the release was deployed against so context bindings resolve
               // against the right target on upgrade, instead of the ambari-managed default seeded above.
               // Guard on existence: if that context was since deleted, keep the default rather than
@@ -166,22 +190,7 @@ const ServiceWizardPage: React.FC = () => {
                   'no longer exists; leaving the default selected.');
               }
             }
-            const applyDefaults = (fields: any[], target: any) => {
-              fields.forEach(f => {
-                if (f.type === 'group' && Array.isArray((f as any).fields)) {
-                  applyDefaults((f as any).fields, target);
-                } else if ((f as any).defaultValue !== undefined) {
-                  const parts = f.name.replace(/\\\./g, '__DOT__').split('.').map((p: string) => p.replace(/__DOT__/g, '.'));
-                  let cur = target;
-                  for (let i = 0; i < parts.length - 1; i++) {
-                    cur[parts[i]] = cur[parts[i]] || {};
-                    cur = cur[parts[i]];
-                  }
-                  cur[parts[parts.length - 1]] = (f as any).defaultValue;
-                }
-              });
-            };
-            if (Array.isArray(svcDef?.form)) applyDefaults(svcDef.form, initial);
+            if (Array.isArray(svcDef?.form)) applyFormDefaults(svcDef.form, initial);
             // Seed mount defaults from service definition (if any).
             // These defaults mirror the mounts section in service.json so the user sees a prefilled volume editor.
             if (Array.isArray((svcDef as any)?.mounts) && (svcDef as any).mounts.length > 0) {
@@ -280,12 +289,28 @@ const ServiceWizardPage: React.FC = () => {
                 const deployed = await getReleaseValues(initial.namespace, initial.releaseName);
                 if (deployed && typeof deployed === 'object' && Object.keys(deployed).length > 0) {
                   deepMerge(initial, deployed); // deployed values win over defaults
+                  // Fields kept out of the values (the Superset SECRET_KEY) come back from where the release keeps them.
+                  if (Array.isArray(svcDef?.form)) seedFieldsFromValues(svcDef.form, initial);
                   // The Hostname (DNS) form field is scalar `ingress.host`, but charts store the host
                   // under the `ingress.hosts[]` array — back-map so the field reflects the deployed host.
                   const deployedHost = initial?.ingress?.hosts?.[0]?.host;
                   if (deployedHost && !initial?.ingress?.host) {
                     initial.ingress = initial.ingress || {};
                     initial.ingress.host = deployedHost;
+                  }
+                  // Form-only fields standing for a chart value (e.g. 'Enable Ranger TagSync') start
+                  // from the deployed value, not their default. After the host back-map: a seed may
+                  // compare against the address derived from it.
+                  seededFromReleaseRef.current = new Set(seedFieldsFromRelease(svcDef?.form, initial));
+                  // The TLS mode is not in the values, so the field would show its default ("Sign with Ambari
+                  // Internal CA") and the upgrade would replace the release's certificate with a testing one.
+                  // Start on "Keep current certificate" instead, and say which certificate that is (an Ingress
+                  // serving plain HTTP starts on "None": there is no certificate to keep).
+                  if (seedKeepCurrentTls(svcDef?.form, initial, deployed)) {
+                    const deployedTlsSecret = deployed?.ingress?.tlsSecret ? String(deployed.ingress.tlsSecret) : undefined;
+                    getReleaseTlsState(initial.namespace, initial.releaseName)
+                      .then((entries) => setCurrentIngressTls(describeCurrentIngressTls(entries, deployedTlsSecret)))
+                      .catch(() => setCurrentIngressTls(null));
                   }
                 } else {
                   throw new Error('empty values');
@@ -414,25 +439,15 @@ const ServiceWizardPage: React.FC = () => {
   //
   // requireIngress is independent: it controls only the ingress.enabled auto-flip.
   // Backward compat: legacy `requireTls: false` is still honoured for one cycle.
+  // On Upgrade/Config, "Keep current certificate" of a release serving plain HTTP keeps
+  // no certificate, so it counts as "None" here (see securityProfileIngress).
   useEffect(() => {
     if (!installValues) return;
-    const profileName = (installValues as any)?.securityProfile;
-    if (!profileName) return;
-    const coupling = (def as any)?.securityCoupling || {};
-    const requireIngress = coupling.requireIngress !== false;
-    const tlsProvisioning = String(coupling.tlsProvisioning
-      ?? (coupling.requireTls === false ? 'chart-managed' : 'k8s-view'));
-    const viewOwnsTls = tlsProvisioning === 'k8s-view';
-    const minTlsMode = coupling.minTlsMode || 'signedByAmbariCA';
-    const ingress = (installValues as any)?.ingress || {};
-    const needsEnable = requireIngress && ingress.enabled !== true;
-    const needsTls = viewOwnsTls && (!ingress.tlsMode || ingress.tlsMode === 'none');
-    if (!needsEnable && !needsTls) return;
+    const required = securityProfileIngress((def as any)?.securityCoupling, installValues);
+    if (!required) return;
     setInstallValues((prev: any) => {
       const next = { ...(prev || {}) };
-      next.ingress = { ...(next.ingress || {}) };
-      if (needsEnable) next.ingress.enabled = true;
-      if (needsTls) next.ingress.tlsMode = minTlsMode;
+      next.ingress = { ...(next.ingress || {}), ...required };
       return next;
     });
   }, [def, (installValues as any)?.securityProfile, (installValues as any)?.ingress?.enabled, (installValues as any)?.ingress?.tlsMode]);
@@ -447,41 +462,32 @@ const ServiceWizardPage: React.FC = () => {
   // an install with different inputs: the form drives the payload, and the editor overrides it only
   // when the operator actually edits it.
 
-  // --- helpers ---
-  const getExcludedPaths = (fields: any[]): string[] => {
-    let paths: string[] = [];
-    fields.forEach(f => {
-      if ((f as any).excludeFromValues) paths.push(f.name);
-      if (f.type === 'group' && (f as any).fields) {
-        paths = [...paths, ...getExcludedPaths((f as any).fields)];
-      }
-    });
-    return paths;
-  };
+  // The chart version the deploy asks for. Version precedence: the "Version (override)" field wins over the
+  // service.json catalog default. In upgrade mode it is pre-filled with the deployed version (so a config-only
+  // upgrade keeps the running chart version); type e.g. 0.12.39 to bump the chart in place.
+  const targetChartVersion = (): string =>
+    (installValues?.version && String(installValues.version).trim())
+      || ((def as any)?.version ? String((def as any).version) : '');
+
+  // The chart values built from the wizard (see buildChartValues), with the YAML editor merged over them when
+  // `editorValues` is given.
+  const chartValues = (editorValues: Record<string, any> | null) => buildChartValues({
+    form: Array.isArray(def?.form) ? def.form : undefined,
+    bindings: (def as any)?.bindings,
+    variables: (def as any)?.variables,
+    // On an upgrade that replaces the ingress certificate, the deployed ingress.tls wiring starts over.
+    formValues: upgradeChartFormValues(installValues, isUpgrade),
+    resolvedFields: resolvedSel?.resolvedFields,
+    platform,
+    editorValues,
+    chartVersion: targetChartVersion(),
+    retiredValues: (def as any)?.retiredValues,
+  });
 
   const previewYaml = useMemo(() => {
     if (!def) return '';
     try {
-      const merged = JSON.parse(JSON.stringify(installValues || {}));
-
-      // Apply bindings same way as the modal. resolvedSel.resolvedFields feeds `context` variables.
-      const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {}, platform);
-      applyBindingTargets(merged, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
-
-      // Drop fields that should not end up in values.yaml
-      if (Array.isArray(def.form)) {
-        getExcludedPaths(def.form).forEach(p => deleteAtStr(merged, p));
-      }
-      // Mirror buildFinalValues' envelope-key strip so the preview shows what
-      // the chart will actually receive (otherwise users see top-level
-      // releaseName/namespace/etc that wouldn't actually be sent).
-      ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-       'releaseName','namespace','securityProfile','deploymentMode','git',
-       'kerberos','tls','oidc'].forEach(k => {
-         delete (merged as any)[k];
-       });
-
-      return yaml.stringify(merged, { aliasDuplicateObjects: false });
+      return yaml.stringify(chartValues(null), { aliasDuplicateObjects: false });
     } catch (e) {
       return '# (preview unavailable)';
     }
@@ -508,80 +514,10 @@ const ServiceWizardPage: React.FC = () => {
     }
   };
 
-  /**
-   * TLS SANs for the keystore KDPS generates, resolved at SUBMIT time from the service definition's
-   * `tls[].dnsTemplates`. It cannot be done when the definition loads: `{{ingress.host}}` is only
-   * known once the operator has filled in step 3. Without this the backend falls back to a single
-   * `<release>.<namespace>.svc` SAN, which matches neither the coordinator Service DNS nor the
-   * Route host, and every client that verifies the certificate fails the handshake.
-   */
-  const buildTlsPayload = () => {
-    const specs = (def as any)?.tls;
-    if (!Array.isArray(specs) || !specs.length) return (installValues as any)?.tls || undefined;
-    const render = (tpl: string | undefined) =>
-      (tpl || '').replace(/{{\s*([^}]+)\s*}}/g, (_m: string, raw: string) => {
-        const path = String(raw || '').trim().split('.').filter(Boolean);
-        let cur: any = installValues;
-        for (const part of path) { if (cur == null) return ''; cur = cur[part]; }
-        return cur == null ? '' : String(cur);
-      });
-    const out: any = { ...((installValues as any)?.tls || {}) };
-    for (const spec of specs) {
-      const key = spec?.key;
-      if (!key) continue;
-      const entry = { ...(out[key] || {}) };
-      const names: string[] = [];
-      for (const tpl of (Array.isArray(spec.dnsTemplates) ? spec.dnsTemplates : [])) {
-        const rendered = render(tpl);
-        if (rendered && !names.includes(rendered)) names.push(rendered);
-      }
-      for (const extra of (Array.isArray(entry.extraDns) ? entry.extraDns : [])) {
-        if (extra && !names.includes(String(extra))) names.push(String(extra));
-      }
-      if (names.length) entry.dnsNames = names;
-      out[key] = entry;
-    }
-    return out;
-  };
-
-  const buildFinalValues = () => {
-    // Start from form values
-    const base = JSON.parse(JSON.stringify(installValues || {}));
-
-    // Apply bindings same way as preview. resolvedSel.resolvedFields feeds `context` variables.
-    const varCtx = buildVarContext((def as any)?.variables, installValues, installValues?.mounts || {}, resolvedSel?.resolvedFields || {}, platform);
-    applyBindingTargets(base, (def as any)?.bindings || [], installValues?.mounts || {}, installValues, installValues?.releaseName || '', varCtx);
-
-    // Drop fields that should not end up in values.yaml
-    if (Array.isArray(def?.form)) {
-      getExcludedPaths(def.form).forEach(p => deleteAtStr(base, p));
-    }
-
-    // Drop wizard envelope keys — these are wizard state / request meta and
-    // get sent as top-level fields on the submitHelmDeploy payload. Strict
-    // chart schemas (Z2JH/JupyterHub, future) reject any additionalProperties
-    // at the root of values.yaml, so anything left here would fail the
-    // helm dry-run with errors like "Additional property releaseName is not allowed".
-    // kerberos/tls/oidc are seeded into installValues by the def-load effect
-    // (see line ~189) so they can be passed back as their own top-level request
-    // fields (request.kerberos / request.tls / request.oidc). They are NOT chart
-    // values — Z2JH/JupyterHub's strict schema rejects them at the root with
-    // "Additional property kerberos is not allowed". Strip them along with the
-    // other wizard envelope keys.
-    ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-     'releaseName','namespace','securityProfile','deploymentMode','git',
-     'kerberos','tls','oidc'].forEach(k => {
-       delete (base as any)[k];
-     });
-
-    // Hand-written YAML wins, but only once the operator has actually typed in the editor
-    // (isDirtyRef) — merely opening it must not freeze a stale snapshot over the form. Merge deeply:
-    // a shallow spread would let an edit to one key of a block drop every sibling the form produced.
-    if (editMode && isDirtyRef.current && parsedRef.current && !parseError) {
-      deepMerge(base, parsedRef.current);
-    }
-    return base;
-  };
+  // Hand-written YAML wins, but only once the operator has actually typed in the editor (isDirtyRef): merely opening
+  // it must not freeze a stale snapshot over the form.
+  const buildFinalValues = () =>
+    chartValues(editMode && isDirtyRef.current && parsedRef.current && !parseError ? parsedRef.current : null);
 
   /**
    * Pre-submit validation: catch mode-specific missing fields BEFORE the deploy fires.
@@ -595,6 +531,10 @@ const ServiceWizardPage: React.FC = () => {
     const tlsMode: string | undefined = (installValues as any)?.ingress?.tlsMode;
     const ingressEnabled = (installValues as any)?.ingress?.enabled;
     if (!ingressEnabled) return null;
+    // Keeping the certificate while the hostname changes: the certificate must be valid for the new hostname too.
+    const hostProblem = upgradesIngressTls ? keptCertificateHostProblem(installValues, currentIngressTls) : null;
+    if (hostProblem) return hostProblem;
+    if (tlsMode === KEEP_CURRENT_TLS) return null;
     if (tlsMode === 'signedByClusterIssuer') {
       const issuerName = (installValues as any)?.ingress?.certManager?.issuerName;
       if (!issuerName) {
@@ -615,7 +555,9 @@ const ServiceWizardPage: React.FC = () => {
     }
     if (tlsMode === 'uploadLeaf') {
       const up = (installValues as any)?.ingress?.tlsUpload || {};
-      if (!up.cert || !up.key) {
+      // On an upgrade, nothing pasted keeps the certificate uploaded earlier.
+      const keepsUploaded = isUpgrade && !up.cert && !up.key;
+      if ((!up.cert || !up.key) && !keepsUploaded) {
         return 'TLS mode "Upload cert + key" needs both PEM cert and PEM key.';
       }
     }
@@ -750,7 +692,8 @@ const ServiceWizardPage: React.FC = () => {
     };
     const ctxId = selectedCtxId || 'default';
     const toEnable = collect((def as any).form || [])
-      .filter((f) => provides(f.autoEnableWhenContext) && !autoEnabledRef.current.has(`${ctxId}:${f.name}`));
+      .filter((f) => provides(f.autoEnableWhenContext) && !autoEnabledRef.current.has(`${ctxId}:${f.name}`)
+        && !seededFromReleaseRef.current.has(f.name));
     if (!toEnable.length) return;
     setInstallValues((prev: any) => {
       const next = { ...prev };
@@ -785,7 +728,8 @@ const ServiceWizardPage: React.FC = () => {
       return out;
     };
     const allFields = collect((def as any).form || []);
-    const toEnable = allFields.filter((f) => provides(f.autoEnableWhenCapability) && !capAutoEnabledRef.current.has(f.name));
+    const toEnable = allFields.filter((f) => provides(f.autoEnableWhenCapability) && !capAutoEnabledRef.current.has(f.name)
+      && !seededFromReleaseRef.current.has(f.name));
     if (!toEnable.length) return;
     const classFields = ['ingress.ingressClassName', 'ingress.className'];
     const declared = new Set<string>();
@@ -814,7 +758,21 @@ const ServiceWizardPage: React.FC = () => {
   // pre-deploy restart-confirmation modal (true = let KDPS restart Atlas to activate the OM
   // federation user; false = skip the restart, operator restarts manually). It is threaded to the
   // backend via formValues._atlasRestartAuthorized and only affects the Atlas-federation path.
-  const doDeploy = async (atlasRestartAuthorized: boolean = true) => {
+  //
+  // `replaceExistingTls` is set once the operator confirmed that the deploy replaces the ingress certificate Secret:
+  // only then may the server overwrite a Secret it did not mint (an uploaded or brought certificate). Upgrade/Config
+  // asks before it submits; an install asks when the server refuses for an existing Secret.
+  // The form's own rules only show once a field is touched, and the steps do not validate the form: a field that must
+  // be filled in unless another one is (JupyterHub's allowed groups, without which nobody can sign in) is checked
+  // here, on what the wizard holds. True when the deploy may go ahead; otherwise each error is shown.
+  const formRulesPass = (): boolean => {
+    const errors = requiredUnlessAnyErrors(Array.isArray(def?.form) ? def.form : undefined, installValues, platform);
+    errors.forEach(error => message.error(error, 10));
+    return errors.length === 0;
+  };
+
+  const doDeploy = async (atlasRestartAuthorized: boolean = true, replaceExistingTls: boolean = false) => {
+      if (!formRulesPass()) return;
       const validationError = validateTlsPayload();
       if (validationError) {
         message.error(validationError);
@@ -823,20 +781,26 @@ const ServiceWizardPage: React.FC = () => {
       setSubmitting(true);
       try {
           const finalValues = buildFinalValues();
+          // Checked on what is about to be sent, YAML editor included: a request above its limit is refused by
+          // Kubernetes, and a Java heap too close to the memory limit gets the pods killed once they are busy.
+          const resourceErrors = resourceCheckErrors(def?.form, finalValues, targetChartVersion());
+          if (resourceErrors.length) {
+            resourceErrors.forEach(error => message.error(error, 10));
+            return;
+          }
           const chartRef = (installValues.chartOverride && String(installValues.chartOverride).trim()) || def.chart;
           const params = new URLSearchParams();
           if (installValues.repoId) params.set('repoId', installValues.repoId as string);
-          // Version precedence: the "Version (override)" field wins over the service.json catalog
-          // default. In upgrade mode this is pre-filled with the deployed version (so a config-only
-          // upgrade keeps the running chart version); type e.g. 0.12.39 to bump the chart in place.
-          const versionOverride = (installValues.version && String(installValues.version).trim())
-            || ((def as any)?.version ? String((def as any).version) : '');
+          const versionOverride = targetChartVersion();
           if (versionOverride) params.set('version', versionOverride);
 
-          const { id } = await submitHelmDeploy({
+          const accepted = await submitHelmDeploy({
               chart: chartRef,
               releaseName: installValues.releaseName,
               namespace: installValues.namespace,
+              // In the body as well as the query: the GitOps backend writes them into the HelmRelease.
+              repoId: (installValues.repoId as string) || undefined,
+              version: versionOverride || undefined,
               values: finalValues, 
               // Send Step 3 data to backend
               stackConfigOverrides: configOverrides,
@@ -871,115 +835,55 @@ const ServiceWizardPage: React.FC = () => {
               requiredConfigMaps: selectedCtxId === 'none'
                 ? null : ((def as any)?.requiredConfigMaps || null),
               dynamicValues: (def as any)?.dynamicValues || null,
-              tls: buildTlsPayload(),
+              tls: buildTlsPayload((def as any)?.tls, installValues),
               kerberos: (installValues as any)?.kerberos || undefined,
-              // Translate ingress.tlsMode (form select) into the wire payload the backend
-              // expects. Mirrors ServiceInstallationModal/index.tsx so the wizard and the
-              // modal share one truth:
-              //   uploadLeaf                  → ingressTlsUpload   { secretName, certPem, keyPem }
-              //   signedByAmbariCA            → ingressTlsSelfSign  { mode: ambariInternal, ... }
-              //   signedByCompanyCA           → ingressTlsSelfSign  { mode: companyUploaded, caName, ... }
-              //   signedByClusterIssuer       → ingressTlsCertManager { issuerName, durationHours, ... }
-              //   sourcedFromExternalSecret   → ingressTlsExternalSecret { secretStoreName, remoteKey, ... }
-              //   bringYourOwn                → nothing (values already carry ingress.tlsSecret)
-              ...((): { ingressTlsUpload?: any; ingressTlsSelfSign?: any; ingressTlsCertManager?: any; ingressTlsExternalSecret?: any } => {
-                const tlsMode: string | undefined = (installValues as any)?.ingress?.tlsMode;
-                if (tlsMode === 'uploadLeaf') {
-                  const up = (installValues as any)?.ingress?.tlsUpload || {};
-                  if (!up.cert || !up.key) return {};
-                  return {
-                    ingressTlsUpload: {
-                      secretName: up.secretName || `${installValues.releaseName}-ingress-tls`,
-                      certPem: up.cert,
-                      keyPem: up.key,
-                    },
-                  };
-                }
-                if (tlsMode === 'signedByAmbariCA' || tlsMode === 'signedByCompanyCA') {
-                  const selfSign = (installValues as any)?.ingress?.tlsSelfSign || {};
-                  const validityDays = parseInt(selfSign.validityDays, 10);
-                  return {
-                    ingressTlsSelfSign: {
-                      mode: tlsMode === 'signedByAmbariCA' ? 'ambariInternal' : 'companyUploaded',
-                      secretName: `${installValues.releaseName}-ingress-tls`,
-                      ingressHost: (installValues as any)?.ingress?.host,
-                      validityDays: Number.isFinite(validityDays) ? validityDays : 90,
-                      ...(tlsMode === 'signedByCompanyCA' ? { caName: selfSign.caName } : {}),
-                    },
-                  };
-                }
-                if (tlsMode === 'signedByClusterIssuer') {
-                  const cm = (installValues as any)?.ingress?.certManager || {};
-                  const validityDays = parseInt(cm.validityDays, 10);
-                  const trim = (v: any) => (v && String(v).trim() ? String(v).trim() : undefined);
-                  // O and OU accept multiple comma-separated values → emitted as repeated DN elements
-                  // (e.g. OU=dept,OU=team). This covers CAs that require an extra OU like "Team" using
-                  // only standard cert-manager subject fields — no LiteralCertificateSubject gate needed.
-                  const csv = (v: any) => {
-                    const parts = String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
-                    return parts.length ? parts : undefined;
-                  };
-                  return {
-                    ingressTlsCertManager: {
-                      issuerName: cm.issuerName,
-                      issuerKind: cm.issuerKind || 'ClusterIssuer',
-                      secretName: `${installValues.releaseName}-ingress-tls`,
-                      ingressHost: (installValues as any)?.ingress?.host,
-                      durationHours: (Number.isFinite(validityDays) ? validityDays : 90) * 24,
-                      commonName: trim(cm.commonName),
-                      organizations: csv(cm.organization),
-                      organizationalUnits: csv(cm.organizationalUnit),
-                      literalSubject: trim(cm.literalSubject),
-                    },
-                  };
-                }
-                if (tlsMode === 'sourcedFromExternalSecret') {
-                  const es = (installValues as any)?.ingress?.externalSecret || {};
-                  return {
-                    ingressTlsExternalSecret: {
-                      secretStoreName: es.secretStoreName,
-                      secretStoreKind: es.secretStoreKind || 'ClusterSecretStore',
-                      remoteKey: es.remoteKey,
-                      refreshInterval: es.refreshInterval || '1h',
-                      secretName: `${installValues.releaseName}-ingress-tls`,
-                      ingressHost: (installValues as any)?.ingress?.host,
-                    },
-                  };
-                }
-                return {};
-              })(),
+              // The ingress certificate (see buildIngressTlsPayload): nothing for "Keep current certificate",
+              // so the deployed ingress.tls stays as it is.
+              ...buildIngressTlsPayload(installValues),
+              ...(replaceExistingTls ? { replaceExistingTls: true } : {}),
               // Only send securityProfile if user explicitly picked one.
               securityProfile: (installValues as any)?.securityProfile || undefined,
               // Managed truststores selected to trust in this release (defaults are always merged
-              // server-side). Names come from the Truststores tab.
-              truststoreRefs: ((installValues as any)?.truststoreRefs && (installValues as any).truststoreRefs.length)
-                ? (installValues as any).truststoreRefs : undefined,
+              // server-side), as <namespace>/<name> of the Truststores tab listing, so the server reads
+              // the one picked. Always sent, empty included: the backend records the choice and reuses it
+              // when the release is redeployed without one. A deploy stops when one cannot be read.
+              truststoreRefs: Array.isArray((installValues as any)?.truststoreRefs)
+                ? normalizeTruststoreRefs((installValues as any).truststoreRefs, managedTruststores) : [],
               deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
-              git: (installValues as any)?.git || undefined,
+              // A working branch left in the form names nothing for a direct commit, which the server refuses.
+              git: gitOptionsToSubmit((installValues as any)?.git) || undefined,
               // Snapshot of raw form state (envelope keys stripped) so backend can read
               // excludeFromValues form fields when rendering OIDC redirectUriTemplate etc.
               // Without this, JupyterHub's "{{jupyterHost}}" renders empty server-side and
               // Keycloak rejects the client registration with HTTP 400 invalid_input.
-              formValues: ((): Record<string, any> => {
-                const snap = JSON.parse(JSON.stringify(installValues || {}));
-                // Strip wizard envelope/meta keys + the def-seeded blocks that
-                // are passed in their own request fields. formValues is for
-                // server-side template rendering of form-field values; nested
-                // def-seeded objects (kerberos/tls/oidc) aren't form input.
-                ['installMode','chartDirect','chartOverride','repoId','version','svcKey',
-                 'deploymentMode','git',
-                 'kerberos','tls','oidc'].forEach(k => { delete snap[k]; });
-                // ② Operator's Atlas-restart authorization from the pre-deploy confirmation modal.
-                // The ATLAS_USER_PROVISION_OM step reads this; "false" makes it write the federation
-                // user but skip the Atlas restart (the operator restarts manually). Default authorized.
-                snap._atlasRestartAuthorized = String(atlasRestartAuthorized);
-                return snap;
-              })(),
+              formValues: deployFormValues(installValues, atlasRestartAuthorized),
           }, params);
-      message.success('Deployment request submitted');
-      setLastCommandId(id);
+      // A GitOps deploy says where its change goes in Git; the operations window then shows the commit and pull request.
+      message.success(deploySubmittedMessage('Deployment', accepted), accepted?.mode === 'FLUX_GITOPS' ? 8 : undefined);
+      setLastCommandId(accepted.id);
       setShowOpsModal(true);
   } catch(e: any) {
+      // The ingress certificate would replace an existing Secret KDPS did not issue: on a first install, mostly the
+      // one an earlier install of the release left behind. Say which, and deploy again once the operator confirms.
+      const existingSecret = replaceExistingTls ? null : unconfirmedTlsReplacement(e);
+      if (existingSecret) {
+        Modal.confirm({
+          title: `Replace the existing Secret ${existingSecret.secretName}?`,
+          icon: <SafetyCertificateOutlined />,
+          content: (
+            <div>
+              {describeExistingSecretReplacement(existingSecret, installValues).map((line, i) => (
+                <p key={i} style={{ marginBottom: 8 }}>{line}</p>
+              ))}
+            </div>
+          ),
+          okText: 'Replace the certificate',
+          okButtonProps: { danger: true },
+          cancelText: 'Cancel',
+          onOk: () => { void doDeploy(atlasRestartAuthorized, true); },
+        });
+        return;
+      }
       message.error("Deploy failed: " + e.message);
       } finally {
           setSubmitting(false);
@@ -992,21 +896,167 @@ const ServiceWizardPage: React.FC = () => {
   // Non-federation deploys and upgrades are unaffected — they deploy immediately, default authorized.
   const [atlasRestartModalOpen, setAtlasRestartModalOpen] = React.useState(false);
   const atlasFederationOn = !!((installValues as any)?.atlasFederation?.enabled);
+  // On an Atlas that signs users in against LDAP, with a service account Secret, Atlas is not changed: no restart.
+  const atlasFederationRestarts = atlasFederationOn
+    && federationWritesAtlasUserStore(installValues as any, resolvedSel);
+  // Turning Atlas file authentication on is confirmed on its own, on installs and upgrades alike.
+  const atlasFileAuthMayTurnOn = federationMayTurnOnFileAuth(installValues as any, resolvedSel);
+  // Federation is switched on by default on a context with Atlas, but a Kerberos-only Atlas, or an LDAP Atlas without
+  // a service account Secret, refuses it unless the operator allows file authentication: say so before the deploy.
+  const atlasFederationRefusal = useMemo(
+    () => federationRefusalNotice(installValues as any, resolvedSel),
+    [installValues, resolvedSel]);
+  // An LDAP service account on Atlas's simple authorizer is left for the operator to grant: say so before the deploy.
+  const atlasFederationManualGrant = useMemo(
+    () => federationManualGrantNotice(installValues as any, resolvedSel),
+    [installValues, resolvedSel]);
+
+  // A service whose Ingress publishes it without sign-in (no security profile with an authentication mode): shown on
+  // the Chart Settings step, and the deploy goes ahead only once the operator confirmed it.
+  const exposure = useMemo(
+    () => unauthenticatedExposure(def, installValues, securityProfiles.profiles, resolvedSel),
+    [def, installValues, securityProfiles, resolvedSel]);
   const handleDeploy = () => {
-      if (atlasFederationOn && !isUpgrade) { setAtlasRestartModalOpen(true); return; }
+      // Before any confirmation: the operator should not confirm a deploy that is then refused.
+      if (!formRulesPass()) return;
+      if (atlasFederationRefusal) {
+        Modal.confirm({
+          title: atlasFederationRefusal.title,
+          icon: <WarningOutlined />,
+          width: 560,
+          content: (
+            <div>
+              {atlasFederationRefusal.lines.map((line, i) => (
+                <p key={i} style={{ marginBottom: 8 }}>{line}</p>
+              ))}
+            </div>
+          ),
+          okText: 'Turn off Atlas federation',
+          cancelText: 'Back',
+          onOk: () => {
+            setInstallValues((prev: any) => ({ ...prev, atlasFederation: { ...(prev?.atlasFederation || {}), enabled: false } }));
+            message.info('Atlas federation is turned off. Click Deploy again to continue.');
+          },
+        });
+        return;
+      }
+      if (!exposure) { proceedDeploy(); return; }
+      const validationError = validateTlsPayload();
+      if (validationError) { message.error(validationError); return; }
+      Modal.confirm({
+        title: exposure.title,
+        icon: <WarningOutlined />,
+        width: 560,
+        content: (
+          <div>
+            {exposure.lines.map((line, i) => (
+              <p key={i} style={{ marginBottom: 8 }}>{line}</p>
+            ))}
+          </div>
+        ),
+        okText: 'Deploy without sign-in',
+        okButtonProps: { danger: true },
+        cancelText: 'Cancel',
+        onOk: () => { proceedDeploy(); },
+      });
+  };
+  const proceedDeploy = (fileAuthConfirmed = false) => {
+      if (atlasFileAuthMayTurnOn && !fileAuthConfirmed) {
+        Modal.confirm({
+          title: 'Turn on Atlas file authentication?',
+          icon: <WarningOutlined />,
+          width: 560,
+          content: (
+            <div>
+              <p style={{ marginBottom: 8 }}>
+                You allowed KDPS to turn on Atlas file authentication if it is off, so that OpenMetadata can sign in to
+                Atlas with a dedicated non-administrator user.
+              </p>
+              <p style={{ marginBottom: 8 }}>
+                With file authentication on, the Atlas scripts also add a local administrator account to Atlas: a
+                password-based way in next to Kerberos or LDAP. Review that account once the deployment is done.
+              </p>
+              <p style={{ marginBottom: 0 }}>
+                To keep Atlas as it is, cancel and untick "Allow Atlas file authentication".
+              </p>
+            </div>
+          ),
+          okText: 'Turn on file authentication',
+          okButtonProps: { danger: true },
+          cancelText: 'Cancel',
+          onOk: () => { proceedDeploy(true); },
+        });
+        return;
+      }
+      if (atlasFederationRestarts && !isUpgrade) { setAtlasRestartModalOpen(true); return; }
+      // An upgrade that replaces the release's ingress certificate says which Secret goes, and goes ahead only once
+      // the operator confirmed it.
+      const tlsChange = upgradesIngressTls ? ingressTlsChange(installValues, currentIngressTls) : null;
+      if (tlsChange) {
+        const validationError = validateTlsPayload();
+        if (validationError) { message.error(validationError); return; }
+        if (tlsChange.refusal) { message.error(tlsChange.refusal, 10); return; }
+        Modal.confirm({
+          title: `Replace the ingress certificate of ${installValues.releaseName}?`,
+          icon: <SafetyCertificateOutlined />,
+          content: (
+            <div>
+              {describeIngressTlsChange(tlsChange, installValues, currentIngressTls).map((line, i) => (
+                <p key={i} style={{ marginBottom: 8 }}>{line}</p>
+              ))}
+            </div>
+          ),
+          okText: 'Replace the certificate',
+          okButtonProps: { danger: true },
+          cancelText: 'Cancel',
+          onOk: () => { void doDeploy(true, true); },
+        });
+        return;
+      }
       void doDeploy(true);
   };
+
+  // Upgrade/Config: which ingress certificate the release keeps, or what the chosen TLS mode replaces.
+  const ingressTlsInfo = ingressTlsNotice(installValues, currentIngressTls, upgradesIngressTls);
+  const ingressTlsAlert = ingressTlsInfo ? (
+    <Alert style={{ marginBottom: 12 }} type={ingressTlsInfo.type} showIcon icon={<SafetyCertificateOutlined />}
+      message={ingressTlsInfo.title}
+      description={ingressTlsInfo.lines.map((line, i) => <div key={i}>{line}</div>)} />
+  ) : null;
+  const atlasFederationRefusalAlert = atlasFederationRefusal ? (
+    <Alert style={{ marginBottom: 12 }} type="warning" showIcon icon={<WarningOutlined />}
+      message={atlasFederationRefusal.title}
+      description={atlasFederationRefusal.lines.map((line, i) => <div key={i}>{line}</div>)} />
+  ) : null;
+  const atlasFederationManualGrantAlert = atlasFederationManualGrant ? (
+    <Alert style={{ marginBottom: 12 }} type="warning" showIcon icon={<WarningOutlined />}
+      message={atlasFederationManualGrant.title}
+      description={atlasFederationManualGrant.lines.map((line, i) => <div key={i}>{line}</div>)} />
+  ) : null;
+  const exposureAlert = exposure ? (
+    <Alert style={{ marginBottom: 12 }} type="warning" showIcon icon={<WarningOutlined />}
+      message={exposure.title}
+      description={exposure.lines.map((line, i) => <div key={i}>{line}</div>)} />
+  ) : null;
 
   const steps = React.useMemo(() => {
     if (!def) return [];
     return [
-      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} /> },
+      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} upgrade={!!isUpgrade} deployedMode={upgradeState?.deploymentMode} /> },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
-      { title: 'Chart Settings', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} /> },
+      { title: 'Chart Settings', content: (
+        <>
+          {exposureAlert}
+          {atlasFederationRefusalAlert}
+          {atlasFederationManualGrantAlert}
+          {ingressTlsAlert}
+          <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} upgrade={!!isUpgrade} />
+        </>
+      ) },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
       { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} contextLabel={resolvedSel ? `${resolvedSel.name}${resolvedSel.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` : undefined} /> },
     ];
-  }, [def, installValues, repos, configs, configOverrides]);
+  }, [def, installValues, repos, configs, configOverrides, isUpgrade, currentIngressTls, exposure, atlasFederationRefusal, atlasFederationManualGrant]);
 
   // Disable Next if any password field reports invalid (empty, unconfirmed, or
   // mismatched). PropertyRenderer pushes the boolean validity here via its
@@ -1122,11 +1172,11 @@ const ServiceWizardPage: React.FC = () => {
               allowClear
               style={{ width: '100%' }}
               placeholder="Select truststore(s) to trust in this release"
-              value={(installValues as any)?.truststoreRefs || []}
+              value={normalizeTruststoreRefs((installValues as any)?.truststoreRefs, managedTruststores)}
               onChange={(v) => setInstallValues((prev: any) => ({ ...prev, truststoreRefs: v }))}
               options={managedTruststores.map((t) => ({
-                value: t.name,
-                label: `${t.name}${t.isDefault ? ' (default)' : ''} · ${t.caCount} CA${t.caCount === 1 ? '' : 's'}`,
+                value: truststoreRef(t),
+                label: `${t.name} (${t.namespace})${t.isDefault ? ' (default)' : ''} · ${t.caCount} CA${t.caCount === 1 ? '' : 's'}`,
               }))}
               notFoundContent={<span style={{ fontSize: 12 }}>No managed truststores — create one in the Truststores tab</span>}
               dropdownRender={(menu) => (

@@ -35,6 +35,12 @@ public class FormField {
     public Object defaultValue;
     public String help;
     public boolean excludeFromValues;
+    /**
+     * Marks a text field that holds a secret although it is not typed as a password, e.g. an S3 access key or
+     * free-text properties that may carry a connection password. Like a password or pasted content, its value is kept
+     * out of the logs and out of what the view keeps of a deploy (see {@code SensitiveFields}).
+     */
+    public boolean sensitive;
     public String serviceType; // for service-select / discovery backed fields
     public String discoveryType; // e.g. monitoring-discovery
     /**
@@ -74,8 +80,96 @@ public class FormField {
     public Integer maxLength;
     public String validationHint;
 
+    /**
+     * Regular expression the whole value must match, such as Helm's rule for a release name; the wizard shows
+     * {@link #validationHint} under the field while it does not, so a name Helm or Kubernetes would refuse is caught
+     * as it is typed. Read by the UI only, declared here for the same reason as {@link #resourceCheck}. The server
+     * checks the release, namespace and chart names on its own.
+     */
+    public String pattern;
+
     // Simple condition support: { field, value }
     public Map<String, Object> condition;
+
+    /**
+     * Wizard-side check of a resource value against the limit it must stay under:
+     * {@code { "kind": "javaHeap" | "memoryRequest" | "cpuRequest", "limitField": "<form field>" }}.
+     * The wizard refuses, for example, a Java heap too close to the pod memory limit, or a request
+     * above its limit, before anything is deployed. Read by the UI only; it must be declared here
+     * because properties this class does not declare never reach the UI.
+     */
+    public Map<String, Object> resourceCheck;
+
+    /**
+     * Makes the field mandatory while every one of the other form fields it names is empty:
+     * {@code { "fields": ["<form field>", ...], "message": "<error shown on the field>" }}. JupyterHub's
+     * allowed groups, for one, may stay empty only when administrators are named, or nobody could sign in.
+     * Read by the UI only, declared here for the same reason as {@link #resourceCheck}.
+     */
+    public Map<String, Object> requiredUnlessAny;
+
+    /**
+     * When true and the field is left blank, the wizard leaves the key out of the chart values so
+     * the chart's own default applies, instead of sending an empty string an older chart might not
+     * understand. Read by the UI only, declared here for the same reason as {@link #resourceCheck}.
+     */
+    public boolean omitWhenBlank;
+
+    /**
+     * Platform or cluster capability a field, or a whole group, needs to be shown: {@code "kubernetes"} (anything but
+     * a confirmed OpenShift cluster) or {@code "openshift"}, e.g. the nginx Ingress settings or the kube-prometheus
+     * monitoring group, which mean nothing on the other platform. The wizard hides such a field and leaves its value
+     * out of the chart values (see {@link #keepWhenHidden}), so a hidden default never reaches the chart. Read by the
+     * UI only, declared here for the same reason as {@link #resourceCheck}.
+     */
+    public String capability;
+
+    /**
+     * When true, the wizard still sends the value of this field on a platform where {@link #capability} hides it: for
+     * a field the wizard fills in by itself, such as the ingress class it detects on the cluster, or a value the chart
+     * uses on both platforms. Read by the UI only.
+     */
+    public boolean keepWhenHidden;
+
+    /**
+     * For a field kept out of the chart values ({@code excludeFromValues}) whose effect is a chart
+     * value: the values path that holds it (e.g. {@code ranger.tagSync.enabled}). On an upgrade the
+     * wizard fills the field from the deployed release's value at that path, so the form shows what
+     * runs instead of the field's default and re-submitting it changes nothing.
+     */
+    public String seedFromValue;
+
+    /**
+     * With {@link #seedFromValue}: a {@code ${path}} template of the value the chart gets when the
+     * field is left blank (e.g. {@code https://${ingress.host}/api}). When the deployed value equals
+     * it, the field stays blank, so the derived value keeps following its inputs.
+     */
+    public String seedUnlessEquals;
+
+    /**
+     * With {@link #seedFromValue}: translates the deployed value, as text, into the field's value, for a
+     * choice whose options are not the chart value itself (JupyterHub's "Who can sign in" is {@code all}
+     * when the release runs with {@code allow_all: true}). A deployed value it does not name leaves the
+     * field at its default. Read by the UI only.
+     */
+    public Map<String, String> seedValueMap;
+
+    /**
+     * Value paths an upgrade fills a blank field from, first non-blank wins: the place the release's values keep what
+     * the field set, for a field kept out of the values ({@link #excludeFromValues}), e.g. the Superset SECRET_KEY,
+     * kept in {@code extraSecretEnv.SUPERSET_SECRET_KEY}. Read by the UI only.
+     */
+    public List<String> seedFromValues;
+
+    /**
+     * Value path of a configuration snippet holding the list a comma-separated field wrote (JupyterHub's admin users,
+     * {@code hub.extraConfig.20-clemlab-admins}): an upgrade fills the blank field back from it, so an upgrade nobody
+     * edited does not empty the list. Read by the UI only.
+     */
+    public String seedFromSnippet;
+
+    /** For {@code secret-discovery} fields: several Secrets may be picked, and the value is their list. Read by the UI only. */
+    public boolean multiple;
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Option {
@@ -88,5 +182,11 @@ public class FormField {
          * Backend ignores this field (Jackson tolerates it via @JsonIgnoreProperties).
          */
         public String capability;
+        /**
+         * Offered on Upgrade/Config of a deployed release only, e.g. the "Keep current certificate" TLS mode, which
+         * has nothing to keep on a first install. Read by the UI only; declared here because properties this class
+         * does not declare never reach the UI.
+         */
+        public boolean upgradeOnly;
     }
 }

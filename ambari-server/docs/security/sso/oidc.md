@@ -24,6 +24,7 @@ Ambari OIDC Single Sign-on
 > Keycloak (or any standards-compliant OIDC provider) directly, without Knox.
 
 * [Overview](#overview)
+* [Keycloak prerequisites](#keycloak-prerequisites)
 * [Architecture & request flow](#architecture--request-flow)
 * [Configuration reference](#configuration-reference)
 * [How a login actually authenticates](#how-a-login-actually-authenticates)
@@ -48,6 +49,66 @@ Two filters cooperate:
 |---|---|---|
 | `OidcCallbackFilter` | `/oidc/*` and any unauthenticated browser GET | Issues `302` to the IdP; handles the `/oidc/callback` leg; exchanges `code` for tokens; mints + writes the Ambari session cookie. |
 | `AmbariJwtAuthenticationFilter` | every request | Reads the cookie, verifies the JWT (RS256 for Knox SSO / upstream IdP tokens; **HS256** for our session tokens), passes the username on to `AmbariJwtAuthenticationProvider`. |
+
+<a id="keycloak-prerequisites"></a>
+## Keycloak prerequisites
+
+Ambari (Enable OIDC, Enable Kerberos with OIDC, and every later service install) and the
+Kubernetes view (KDPS deploys) register OIDC clients in Keycloak through its admin REST API.
+They read the Keycloak settings from the `oidc-env` configuration of the OIDC service.  Set up
+the following before you enable OIDC.
+
+**Network and TLS**
+
+* Keycloak is reachable at `oidc_admin_url` from the Ambari server host, and from wherever the
+  Kubernetes view runs (the Ambari server, or the Ambari pod when Ambari runs on Kubernetes).
+* With `oidc_verify_tls=true` (the default), the Keycloak TLS certificate must be trusted by
+  Ambari's truststore (`ambari-server setup-security`, *Setup truststore*).  Only set
+  `oidc_verify_tls=false` on test clusters: it turns certificate checks off for the admin calls.
+* The pods of SSO-enabled KDPS releases must reach the issuer URL (`oidc_issuer_url`, by default
+  `{oidc_admin_url}/realms/{oidc_realm}`) to download the realm signing keys (JWKS), and must
+  trust the CA that signed the Keycloak certificate.
+
+**Realm**
+
+* The service realm (`oidc_realm`, default `odp`) must exist before OIDC is enabled.  Ambari and
+  the Kubernetes view create clients in it; they never create the realm.
+
+**Admin principal and permissions**
+
+* An admin user in `oidc_admin_realm` (default `master`), used through the client
+  `oidc_admin_client_id` (default `admin-cli`) with the password grant.  The client must allow
+  direct access grants (`admin-cli` does by default).  If that client is confidential, set its
+  secret in `oidc_admin_client_secret`; it is sent along with the user credential.
+* The Kubernetes view can also use a confidential client with a service account
+  (client-credentials grant, `oidc_admin_client_id` + `oidc_admin_client_secret`) when no admin
+  user credential is stored.  Ambari's own provisioning (Enable OIDC and service installs)
+  always needs the admin user credential.
+* The admin principal needs, on the service realm, the `manage-clients` and `view-clients`
+  roles: from the `master` realm, the roles of the client `<oidc_realm>-realm`; from the
+  service realm itself, the roles of the client `realm-management`.  Ambari and the Kubernetes
+  view list, create and update clients, read client secrets, add protocol mappers, and delete
+  clients when a service is removed.
+
+**Credential storage**
+
+* The admin credential is stored as `oidc.admin.credential` in Ambari's credential store
+  (the Enable OIDC wizard, or Admin > OIDC > Manage OIDC Credentials).
+* Set up a **persistent** credential store first: run `ambari-server setup-security`, choose
+  *Encrypt passwords stored in ambari.properties file* and persist the master key.  Without
+  it the credential is only kept in memory (90 minutes by default) and is lost when Ambari
+  restarts; services installed later then cannot register their OIDC clients, and the
+  Kubernetes view, which reads only the persistent store, cannot either unless
+  `oidc_admin_client_secret` is set for the client-credentials grant.
+
+**Order**
+
+1. Keycloak, the service realm and the admin principal with its roles.
+2. Ambari's persistent credential store and truststore.
+3. Enable OIDC (or Enable Kerberos with OIDC).
+4. Service installs and KDPS deploys.
+
+See [Troubleshooting](#troubleshooting) for the errors a missing prerequisite produces.
 
 <a id="architecture--request-flow"></a>
 ## Architecture & request flow
@@ -141,12 +202,18 @@ or the REST API at `/api/v1/services/AMBARI/components/AMBARI_SERVER/configurati
 | `ambari.sso.session.token.lifespan.seconds` | `28800` (8 h) | Lifespan of the Ambari-signed session JWT (and the `hadoop-jwt` cookie's `Max-Age`). Independent of the Keycloak access-token TTL. |
 | `ambari.sso.session.signing.key` | empty | Optional explicit HMAC-SHA256 signing key (≥32 chars).  When empty, derived from `ambari.sso.oidc.clientSecret` via HKDF-SHA256.  Set explicitly for multi-node Ambari (all nodes MUST share the key) or to decouple session invalidation from `clientSecret` rotation. |
 
-### Service-management toggles
+### Single sign-on for cluster services
 
-| Property | Default | Description |
-|---|---|---|
-| `ambari.sso.oidc.manage_services` | `false` | When `true`, Ambari pushes OIDC SSO config to listed cluster services. |
-| `ambari.sso.oidc.enabled_services` | empty | Comma-delimited list (or `*`).  Services not listed fall back to Knox SSO config. |
+Ambari does not push OIDC single sign-on settings to cluster services in this release.
+`ambari.sso.oidc.manage_services` and `ambari.sso.oidc.enabled_services` are reserved and have
+no effect: `ambari-server setup-sso-oidc` no longer asks for them and stores them as `false`
+and empty.  The `--sso-oidc-manage-services` and `--sso-oidc-enabled-services` options are still
+accepted, but only print a warning.
+
+Single sign-on for Ranger Admin and the other SSO-capable cluster services goes through Knox
+SSO, set up with `ambari-server setup-sso` (`--sso-manage-services` /
+`--sso-enabled-services`, see [`index.md`](./index.md)).  Knox SSO can federate to Keycloak, so
+users still sign in with their Keycloak account.
 
 <a id="how-a-login-actually-authenticates"></a>
 ## How a login actually authenticates
@@ -325,6 +392,52 @@ Either rotate `oidc.clientSecret` in Keycloak + Ambari (HKDF rederives) OR set
 `ambari.sso.session.signing.key` to a fresh random 64-char secret.  All outstanding
 sessions become invalid immediately; users must re-login.  No Ambari restart required.
 
+<a id="rotate-a-service-oidc-client-secret"></a>
+### Rotate the client secret of a service's OIDC client
+
+Ambari cannot regenerate the secret of an OIDC client it provisioned: provisioning
+only reads the client's current secret from the identity provider.  Regenerate it in
+the identity provider, then let Ambari and KDPS read it back.
+
+**Cluster services (Admin > OIDC).**
+
+1. In Keycloak, open the service's client (Clients > *client*), then
+   Credentials > Regenerate Secret.  From this moment the service can no longer
+   sign users in with OIDC until the last step is done.
+2. In Ambari, open Admin > OIDC and click **Run OIDC Provisioning**.  The provisioning
+   reads the new secret into the Ambari credential store and into every configuration
+   property that uses `${client_secret}`.  The Keycloak admin credential must still be
+   stored (Manage OIDC Credentials).
+
+   Admin > OIDC shows **Run OIDC Provisioning** only on a Kerberized cluster.  On a
+   cluster without Kerberos, run the same provisioning through the REST API instead:
+
+   ```bash
+   curl -k -u admin:admin -H 'X-Requested-By: ambari' -X PUT \
+     -d '{"Clusters":{"security_type":"NONE"}}' \
+     'https://AMBARI:8442/api/v1/clusters/CLUSTER?configure_oidc_only=true'
+   ```
+
+   Keep `"security_type":"KERBEROS"` if you use this call on a Kerberized cluster.
+   Follow the request in Background Operations until it completes.
+3. Restart the affected services: tick **Restart affected services after provisioning
+   completes** in step 2 (Kerberized clusters only), or restart the services Ambari
+   marks as Restart Required.  OIDC sign-in to a service works again once it has
+   restarted.
+
+**KDPS releases (Kubernetes view).**
+
+1. In Keycloak, regenerate the secret of the release's client as above.
+2. In the Kubernetes view, redeploy the release (Upgrade/Config, no change needed).  The
+   redeploy reads the new secret into the release's Kubernetes Secret.  Do not use the
+   release's **Re-register OIDC client** action for this: it does not yet use the release's
+   platform context and deployed values, so it can fail or read the wrong client.
+3. Restart the release's pods if the redeploy did not, so they read the new Secret.
+
+With a security profile whose OIDC client you register yourself (External source),
+KDPS does not read the secret from the identity provider: put the new secret in the
+security profile, then redeploy the release.
+
 ### Extend session lifespan (e.g. from 8 h to 24 h)
 
 ```bash
@@ -374,6 +487,36 @@ CERT=$(curl -sk -H "Authorization: Bearer $KC_TOKEN" \
 <a id="troubleshooting"></a>
 ## Troubleshooting
 
+### OIDC provisioning fails: realm not found
+
+The task log shows `Failed to query Keycloak client … (status 404)` (Ambari) or
+`Keycloak POST /clients returned HTTP 404` (Kubernetes view), usually with
+`Realm not found`.  The service realm `oidc_realm` does not exist, or its name differs in case
+or spelling.  `Failed to obtain Keycloak admin token (status 404)` or
+`Keycloak token endpoint returned HTTP 404` points to `oidc_admin_realm` instead.  Create the
+realm or fix the name in `oidc-env`, then run the provisioning again.  See
+[Keycloak prerequisites](#keycloak-prerequisites).
+
+### OIDC provisioning fails with 401 or 403 from Keycloak
+
+* `401` on the token endpoint (`Failed to obtain Keycloak admin token (status 401)`): the stored
+  admin username or password, `oidc_admin_client_id` or `oidc_admin_client_secret` is wrong.
+  Save the credential again with Manage OIDC Credentials.
+* `400` with `unauthorized_client`: the admin client does not allow direct access grants
+  (password grant) or, for a client-credentials setup, has no service account.
+* `403` on an `/admin/realms/…` call (querying, creating or updating a client, reading its
+  secret): the admin principal lacks `manage-clients` / `view-clients` on the service realm.
+  Grant the roles listed in [Keycloak prerequisites](#keycloak-prerequisites).
+
+### `Missing OIDC administrator credentials` after an Ambari restart
+
+Ambari reports `Missing OIDC administrator credentials` when installing a service, and the
+Kubernetes view reports `no admin credential available`.  The admin credential was kept in the
+temporary credential store, which expires and is cleared when Ambari restarts.  Set up a
+persistent credential store (`ambari-server setup-security`, *Encrypt passwords stored in
+ambari.properties file*, persist the master key), then save the credential again with
+Admin > OIDC > Manage OIDC Credentials.
+
 ### `502 Token exchange failed`
 
 Server-side DNS / network from the Ambari host to Keycloak is broken.  Check `/etc/hosts` and firewall rules; verify with `curl -k https://<keycloak>:<port>/realms/<realm>` from the Ambari server.  Common cause: a parallel Ansible playbook (e.g. `ansible-role-kubernetes`) replaced an `/etc/hosts` line that previously aliased Keycloak's hostname.
@@ -419,3 +562,5 @@ Almost certainly a property got wiped — the POST API replaces the whole proper
 | AMBARI-431 / AMBARI-430 | (Unrelated — Impala / KAFKA service definitions.) | |
 | AMBARI-432 | Views redirect-loop fix | `OidcCallbackFilter` now uses `getRequestURI()` for the `/views/` exclusion so view requests inside their own WebAppContext are correctly skipped. |
 | AMBARI-433 | Server-issued HS256 session JWT | Decouples the Ambari UI session from the upstream OIDC access-token TTL. Adds `session.token.lifespan.seconds`, `session.signing.key`. Refactors `mint()` to forward operator-relevant claims (`groups`, custom username claim). |
+| AMBARI-767 | "Rotate Secrets" button removed from Admin > OIDC | It re-ran provisioning, which leaves every client secret unchanged. See [Rotate the client secret of a service's OIDC client](#rotate-a-service-oidc-client-secret) for the supported procedure. |
+| AMBARI-771 | OIDC single sign-on for cluster services withdrawn from `setup-sso-oidc` | It was never applied to any service. `ambari.sso.oidc.manage_services` / `enabled_services` are reserved; Ranger SSO goes through Knox SSO. Keycloak prerequisites documented. |

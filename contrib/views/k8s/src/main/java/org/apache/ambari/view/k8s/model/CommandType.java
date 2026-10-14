@@ -53,6 +53,21 @@ public enum CommandType {
     /** Installs a new Helm release into a namespace. */
     HELM_DEPLOY,
 
+    /**
+     * The GitOps counterpart of {@link #HELM_DEPLOY}: writes the release's Flux HelmRelease to the Git repository Flux
+     * reconciles, with every value the Helm install would have received. Passwords and secrets go to the release's
+     * values Secret, never to Git. Runs after the same preparation steps as a direct deploy, so nothing is committed
+     * when one of them fails, and commits nothing when Git already holds the release as planned.
+     */
+    GITOPS_COMMIT,
+
+    /**
+     * Waits until Flux has applied the HelmRelease written by {@link #GITOPS_COMMIT} and reports it Ready, so the
+     * post-deploy steps that need running pods start only then. Fails with Flux's own message when Flux gives up on
+     * the release or it is not ready in time.
+     */
+    FLUX_WAIT_READY,
+
     /** Upgrades an existing Helm release to a new chart version or values set. */
     HELM_UPGRADE,
 
@@ -106,13 +121,13 @@ public enum CommandType {
 
     /**
      * Registers OpenMetadata as a tag source in the ODP Ranger TagSync component.
-     * Mints an Unlimited-TTL JWT for the OM ingestion-bot (via the OmBotJwtClient
-     * exec-in-pod helper), writes the JWT + source endpoint + source class into
-     * Ambari's {@code ranger-tagsync-site} stack config, then triggers a Ranger
-     * TagSync component restart so the new source is picked up.
+     * Reads the OM ingestion-bot's current JWT (via the OmBotJwtClient exec-in-pod
+     * helper), writes the JWT (as a password property) + source endpoint + source
+     * class into Ambari's {@code ranger-tagsync-site} stack config, then triggers a
+     * Ranger TagSync component restart when that config changed.
      *
-     * <p>This step is OM-specific because the JWT-minting path uses OM's
-     * Fernet-encrypted user_entity table + OM REST. Future TagSync source types
+     * <p>This step is OM-specific because the JWT path uses OM's
+     * Fernet-encrypted user_entity table. Future TagSync source types
      * (Atlas-as-source, Hive metastore tags, etc.) would need their own
      * service-specific enums.
      *
@@ -135,7 +150,7 @@ public enum CommandType {
      * Replaces the helm post-install hook Job previously shipped in the OM
      * chart. The step:
      * <ol>
-     *   <li>Mints an Unlimited-TTL JWT for the OM ingestion-bot via
+     *   <li>Reads the OM ingestion-bot's current JWT via
      *       {@code OmBotJwtClient}</li>
      *   <li>PUTs {@code /api/v1/services/metadataServices} on OM REST with
      *       the Atlas connection (URL + credentials Secret + database service
@@ -268,12 +283,13 @@ public enum CommandType {
     /**
      * Grants a service's Kerberos principal {@code select} on the Hive Ranger service repo by
      * <em>delegating to the Ambari server</em> (POST {@code /clusters/{c}/ranger_policy}), which
-     * holds the Ranger admin password. Queued post-deploy for services that build a Superset-style
-     * Hive database connection (declared via platformOp {@code ranger.hiveGrant}, gated on
-     * {@code hiveDb.enabled}). Without it, schema/column reflection — which Superset runs as the
-     * service principal, not the impersonated end-user — is denied by Ranger ("does not have
-     * [SELECT] privilege"), so tables list but show no columns. The server-side action is
-     * idempotent (append-to-existing-or-create + user pre-registration).
+     * holds the Ranger admin password. Queued post-deploy for a service that reads Hive data as its
+     * own identity and cannot act as the end user (declared via platformOp {@code ranger.hiveGrant},
+     * gated on the op's own toggle; Trino's Hive catalog is the one that uses it). A service that can
+     * impersonate the end user declares no such op, so Ranger authorizes the user instead and the
+     * service identity holds no data access. The OpenMetadata ingestion identity is granted by its
+     * own base-ingestion step, not by this one. The server-side action is idempotent
+     * (append-to-existing-or-create + user pre-registration).
      */
     RANGER_POLICY_GRANT_HIVE_READ,
 
