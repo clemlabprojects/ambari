@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ambari.view.k8s.model.TrinoCatalogDTO;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.store.PerUserViewContext;
+import org.apache.ambari.view.k8s.store.ProvisioningLedger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -222,5 +223,67 @@ class ReleaseMetadataServiceRoundTripTest {
 
         metadata().recordKdpsObjects(NS, "trino", null);
         assertEquals(3, metadata().find(NS, "trino").getKdpsObjects().size(), "null changes nothing");
+    }
+    private static final ProvisioningLedger.OidcClient CLIENT = new ProvisioningLedger.OidcClient("trino-analytics", "odp", null);
+
+    @Test
+    void whatADeployRegisteredOutsideKubernetesIsReadBackAndSurvivesAnUpgrade() {
+        recordGitOpsInstall();
+        metadata().recordProvisioning(NS, "trino", ledger -> ledger.addOidcClient(CLIENT));
+        metadata().recordProvisioning(NS, "trino", ledger -> ledger.addVaultPath("secret/data/oidc/trino"));
+
+        metadata().recordInstallOrUpgrade(NS, "trino", null, null, null, null, "1.44.0", null, "op-upgrade", null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+        ProvisioningLedger read = metadata().provisioningOf(NS, "trino");
+        assertEquals(List.of(CLIENT), read.oidcClients());
+        assertEquals(List.of("secret/data/oidc/trino"), read.vaultPaths());
+        assertEquals("kdps/trino", metadata().find(NS, "trino").getGitBranch(), "the Git metadata is untouched");
+    }
+
+    @Test
+    void whatWasRegisteredBeforeTheReleaseWasRecordedComesWithItsRecord() {
+        // A GitOps release is recorded by its commit, after the steps that register it in Keycloak.
+        metadata().recordProvisioning(NS, "trino", ledger -> ledger.addOidcClient(CLIENT));
+        assertNull(metadata().find(NS, "trino"));
+        assertEquals(List.of(CLIENT), metadata().provisioningOf(NS, "trino").oidcClients());
+
+        recordGitOpsInstall();
+
+        assertEquals(List.of(CLIENT), metadata().find(NS, "trino").provisioningLedger().oidcClients());
+        metadata().delete(NS, "trino");
+        assertTrue(metadata().provisioningOf(NS, "trino").isEmpty(), "nothing is left once the release is deleted");
+    }
+
+    @Test
+    void theOtherReleasesLedgersLeaveOutTheReleaseItself() {
+        recordGitOpsInstall();
+        metadata().recordInstallOrUpgrade(NS, "om", "OPENMETADATA", null, "om", null, "1.0", null, null, null,
+                null, null, null, "DIRECT_HELM", null, null, null, null, null, null, null, null, null);
+        metadata().recordProvisioning(NS, "trino", ledger -> ledger.addOidcClient(CLIENT));
+        metadata().recordProvisioning(NS, "om", ledger -> ledger.addPrincipal(
+                new ProvisioningLedger.Principal("oma-ing-analytics@EXAMPLE.COM", "om-keytab")));
+
+        Map<String, ProvisioningLedger> others = metadata().otherReleasesProvisioning(NS, "trino");
+
+        assertEquals(List.of(NS + "/om"), List.copyOf(others.keySet()));
+    }
+
+    @Test
+    void aReleaseDeployedBeforeLedgersIsListedAsUnrecorded() throws Exception {
+        recordGitOpsInstall();
+        K8sReleaseEntity earlier = new K8sReleaseEntity();
+        earlier.setId(K8sReleaseEntity.idOf(NS, "om-old"));
+        earlier.setNamespace(NS);
+        earlier.setReleaseName("om-old");
+        view.dataStore.store(earlier);
+        metadata().recordInstallOrUpgrade(NS, "superset", "SUPERSET", null, "superset", null, "1.0", null, null, null,
+                null, null, null, "DIRECT_HELM", null, null, null, null, null, null, null, null, null);
+
+        Map<String, ProvisioningLedger> others = metadata().otherReleasesProvisioning(NS, "trino");
+
+        assertEquals(List.of(NS + "/om-old"), List.copyOf(others.keySet()),
+                "a release recorded since ledgers exist that registered nothing is not listed");
+        assertTrue(others.get(NS + "/om-old").isUnrecorded());
     }
 }

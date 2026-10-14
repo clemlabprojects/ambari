@@ -44,7 +44,8 @@ import java.beans.SimpleBeanInfo;
  * metadata and the entity keeps all nine getters/setters, backed by that JSON, so no call
  * site changed. That freed 8 slots, leaving room for `platformContextId` while KEEPING
  * `deploymentId` (the only queryable release -> deployment trace).
- * Current count: 14 String properties = 42000, i.e. 7 slots of headroom.
+ * Then catalogRefsJson and provisioningJson (what KDPS registered outside Kubernetes) were added.
+ * Current count: 16 String properties = 48000, i.e. 5 slots of headroom.
  */
 public class K8sReleaseEntityBeanInfo extends SimpleBeanInfo {
 
@@ -67,6 +68,7 @@ public class K8sReleaseEntityBeanInfo extends SimpleBeanInfo {
                     new PropertyDescriptor("securityProfileHash", K8sReleaseEntity.class, "getSecurityProfileHash", "setSecurityProfileHash"),
                     new PropertyDescriptor("gitMetaJson", K8sReleaseEntity.class, "getGitMetaJson", "setGitMetaJson"),
                     new PropertyDescriptor("catalogRefsJson", K8sReleaseEntity.class, "getCatalogRefsJson", "setCatalogRefsJson"),
+                    new PropertyDescriptor("provisioningJson", K8sReleaseEntity.class, "getProvisioningJson", "setProvisioningJson"),
                     new PropertyDescriptor("managedByUi", K8sReleaseEntity.class, "isManagedByUi", "setManagedByUi")
             };
         } catch (IntrospectionException e) {

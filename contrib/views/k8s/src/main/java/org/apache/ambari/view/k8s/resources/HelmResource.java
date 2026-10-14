@@ -36,6 +36,7 @@ import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.store.ProvisioningLedger;
 import org.apache.ambari.view.k8s.service.PathConfig;
 import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver;
@@ -1608,7 +1609,10 @@ public class HelmResource {
      * release synced Atlas tags with, if any, is then disabled and its Secret deleted, and so is what the release signed
      * in through OIDC with: the Secrets holding its client secret and the client KDPS registered for it in Keycloak
      * ({@link CommandService#revokeOidcForRelease}). Last, the other objects KDPS created for the release outside its
-     * chart, which carry its labels, are deleted ({@link CommandService#revokeKdpsObjectsForRelease}).
+     * chart, which carry its labels, are deleted ({@link CommandService#revokeKdpsObjectsForRelease}), and what KDPS
+     * registered for it outside Kubernetes is taken back, as the release's record lists it
+     * ({@link CommandService#revokeExternalForRelease}): Ranger access, the Atlas federation user, the OpenMetadata
+     * source of Ranger TagSync, Ambari view instances and Vault copies. Kerberos principals are listed for the operator.
      *
      * <p>A GitOps release is removed from the repository, base branch and path its metadata records, with the Git
      * credential KDPS saved for it ({@link FluxGitOpsBackend#destroy(String, String)}): a request naming another
@@ -1626,14 +1630,22 @@ public class HelmResource {
      *                     untouched. The object-store bucket is never deleted.
      * @param oidcCleanup  {@code none} leaves the release's OIDC client and its Secrets in place; anything else, or
      *                     nothing, removes them
+     * @param externalCleanup how far to go outside Kubernetes: {@code credentials} (the default) takes back everything
+     *                     that gives access and keeps the Ranger repositories of the release, with the policies an
+     *                     operator may have added; {@code all} also deletes those repositories; {@code none} leaves
+     *                     everything, the release's OIDC client and its Secrets included, and lists it. The Ranger
+     *                     account of Atlas tag sync, which holds the Ranger administrator role, is disabled whatever
+     *                     the value
      * @return HTTP 200 on success, with {@code polarisCleanup}, {@code oidcCleanup}, {@code sccCleanup} and
      *         {@code tagSyncCleanup} notes saying what was taken back and what is left for an administrator to do, and
      *         {@code kdpsObjectsCleanup} ({@code removed}, {@code left}, {@code note}) for the objects KDPS created for
-     *         the release outside its chart; 202 when the removal of a GitOps release waits
+     *         the release outside its chart, and {@code externalCleanup} ({@code removed}, {@code left}, {@code kept},
+     *         {@code note}) for what it registered outside Kubernetes; 202 when the removal of a GitOps release waits
      *         for the merge of its pull request, with {@code pendingDelete}, {@code pullRequestUrl} and a
      *         {@code message}, and nothing else done; 400, with nothing removed, when the request names a Git
      *         repository, branch or credential, or for a GitOps release whose recorded Git directory is not its own
-     *         or holds another release's HelmRelease; 409, with nothing removed, while another Helm operation or
+     *         or holds another release's HelmRelease, or for an unknown {@code externalCleanup}; 409, with nothing
+     *         removed, while another Helm operation or
      *         GitOps operation on the release is running or when the Git credential recorded for a GitOps release
      *         cannot be used to remove it from Git; 502, with {@code error}, {@code release} and {@code namespace},
      *         when Git refused or could not take the removal of a GitOps release, or Helm could not uninstall a
@@ -1647,6 +1659,7 @@ public class HelmResource {
                              @PathParam("name") String releaseName,
                              @QueryParam("polarisCleanup") String polarisCleanup,
                              @QueryParam("oidcCleanup") String oidcCleanup,
+                             @QueryParam("externalCleanup") String externalCleanup,
                              @Context UriInfo uriInfo,
                              @Context HttpHeaders requestHeaders) {
         authHelper.checkWritePermission();
@@ -1656,6 +1669,12 @@ public class HelmResource {
                     + gitOverride + "'. A GitOps release is removed from the Git repository, branch and path recorded"
                     + " for it, with the Git credential KDPS saved for it; they cannot be given with the request."))
                     .build();
+        }
+        ExternalCleanup.Mode externalMode;
+        try {
+            externalMode = ExternalCleanup.Mode.of(externalCleanup);
+        } catch (IllegalArgumentException unknown) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", unknown.getMessage())).build();
         }
         K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
         String polarisCleanupNote = null;
@@ -1762,6 +1781,15 @@ public class HelmResource {
         } catch (Exception ex) {
             LOG.warn("Polaris cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
         }
+        // What KDPS registered outside Kubernetes, read before the record goes with it.
+        ProvisioningLedger ledger;
+        try {
+            ledger = releaseMetadataService.provisioningOf(meta, namespace, releaseName);
+        } catch (Exception ex) {
+            LOG.warn("Could not read what KDPS registered for {}/{}: {}", namespace, releaseName, ex.toString());
+            ledger = new ProvisioningLedger();
+            ledger.markTruncated();
+        }
         // Only once the release is gone: a failed or refused removal keeps the record the uninstall is retried from.
         try {
             if (meta != null) {
@@ -1795,7 +1823,8 @@ public class HelmResource {
         // in Keycloak, which would otherwise keep accepting that secret and be silently reused by a release deployed
         // again under the same name. Never fails the uninstall.
         String oidcCleanupNote = null;
-        if (oidcCleanup == null || !"none".equalsIgnoreCase(oidcCleanup.trim())) {
+        boolean keepSignIn = oidcCleanup != null && "none".equalsIgnoreCase(oidcCleanup.trim());
+        if (!keepSignIn && externalMode != ExternalCleanup.Mode.NONE) {
             try {
                 oidcCleanupNote = commandService.revokeOidcForRelease(namespace, releaseName,
                         meta != null ? meta.getPlatformContextId() : null,
@@ -1817,13 +1846,58 @@ public class HelmResource {
         } catch (Exception ex) {
             LOG.warn("Cleanup of the objects KDPS created for {}/{} failed: {}", namespace, releaseName, ex.toString());
         }
+        // Then what KDPS registered for the release outside Kubernetes. Never fails the uninstall either: what could
+        // not be taken back is listed with what to do.
+        Map<String, Object> externalCleanupReport = null;
+        try {
+            externalCleanupReport = commandService.revokeExternalForRelease(namespace, releaseName, ledger,
+                    externalMode.name(), keepSignIn || oidcCleanupNote != null,
+                    requestHeaders != null ? requestHeaders.getRequestHeaders() : null);
+        } catch (Exception ex) {
+            LOG.warn("Cleanup of what KDPS registered for {}/{} outside Kubernetes failed: {}", namespace, releaseName,
+                    ex.toString());
+        }
         Map<String, Object> notes = new LinkedHashMap<>();
         if (polarisCleanupNote != null) notes.put("polarisCleanup", polarisCleanupNote);
         if (oidcCleanupNote != null) notes.put("oidcCleanup", oidcCleanupNote);
         if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
         if (tagSyncCleanupNote != null) notes.put("tagSyncCleanup", tagSyncCleanupNote);
         if (kdpsObjectsCleanup != null) notes.put("kdpsObjectsCleanup", kdpsObjectsCleanup);
+        if (externalCleanupReport != null) notes.put("externalCleanup", externalCleanupReport);
         return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
+    }
+
+    /**
+     * What the uninstall of a release would do with what KDPS registered for it outside Kubernetes (see
+     * {@link CommandService#revokeExternalForRelease}), for the uninstall confirmation to list.
+     *
+     * @param mode the {@code externalCleanup} the uninstall would be given: {@code credentials} (the default),
+     *             {@code all} or {@code none}
+     * @return 200 with {@code removed}, {@code left}, {@code kept}, {@code note} and {@code recorded} (false when KDPS
+     *         recorded nothing for the release); 400 for an unknown mode
+     */
+    @GET
+    @Path("/release/{namespace}/{name}/external-registrations")
+    public Response externalRegistrationsOfRelease(@PathParam("namespace") String namespace,
+                                                   @PathParam("name") String releaseName,
+                                                   @QueryParam("mode") String mode) {
+        authHelper.checkWritePermission();
+        try {
+            ExternalCleanup.Mode.of(mode);
+        } catch (IllegalArgumentException unknown) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", unknown.getMessage())).build();
+        }
+        try {
+            return Response.ok(commandService.externalRegistrationsOfRelease(namespace, releaseName, mode)).build();
+        } catch (Exception ex) {
+            LOG.warn("Could not list what KDPS registered for {}/{}: {}", namespace, releaseName, ex.toString());
+            Map<String, Object> answer = new LinkedHashMap<>();
+            answer.put("removed", List.of());
+            answer.put("left", List.of());
+            answer.put("kept", List.of());
+            answer.put("recorded", false);
+            return Response.ok(answer).build();
+        }
     }
 
     /**

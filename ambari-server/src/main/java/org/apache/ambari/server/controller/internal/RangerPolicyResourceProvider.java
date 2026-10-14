@@ -71,7 +71,8 @@ import com.google.inject.Inject;
  * k8s view) provision Ranger policies without ever handling the Ranger admin password.
  *
  * <p>With {@code revoke} set to {@code true} the same request takes the access back instead of
- * granting it (see {@link EnsureRangerPolicyServerAction}).
+ * granting it (see {@link EnsureRangerPolicyServerAction}); {@code ownedPolicyOnly} limits that revoke to the
+ * policy named {@code policyNameHint}.
  *
  * <p>Because the grant is made with those administrator credentials, only cluster administrators
  * of the cluster named in the request may ask for it.
@@ -118,6 +119,8 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
     private static final String PROPERTY_GROUPS_NS             = "RangerPolicy/groups";
     private static final String PROPERTY_REVOKE                = "revoke";
     private static final String PROPERTY_REVOKE_NS             = "RangerPolicy/revoke";
+    private static final String PROPERTY_OWNED_POLICY_ONLY     = "ownedPolicyOnly";
+    private static final String PROPERTY_OWNED_POLICY_ONLY_NS  = "RangerPolicy/ownedPolicyOnly";
 
     private static final String PROPERTY_CONTEXT               = "context";
     private static final String PROPERTY_CONTEXT_NS            = "RequestInfo/context";
@@ -143,7 +146,8 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 PROPERTY_MASK_VALUE, PROPERTY_MASK_VALUE_NS,
                 PROPERTY_ROW_FILTER, PROPERTY_ROW_FILTER_NS,
                 PROPERTY_GROUPS, PROPERTY_GROUPS_NS,
-                PROPERTY_REVOKE, PROPERTY_REVOKE_NS
+                PROPERTY_REVOKE, PROPERTY_REVOKE_NS,
+                PROPERTY_OWNED_POLICY_ONLY, PROPERTY_OWNED_POLICY_ONLY_NS
         );
         PROPERTY_IDS = Collections.unmodifiableSet(propertyIds);
 
@@ -264,6 +268,9 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             boolean revoke           = Boolean.parseBoolean(firstNonBlank(
                     stringValue(properties.get(PROPERTY_REVOKE)),
                     stringValue(properties.get(PROPERTY_REVOKE_NS))));
+            boolean ownedPolicyOnly  = Boolean.parseBoolean(firstNonBlank(
+                    stringValue(properties.get(PROPERTY_OWNED_POLICY_ONLY)),
+                    stringValue(properties.get(PROPERTY_OWNED_POLICY_ONLY_NS))));
             if (StringUtils.isBlank(accessTypes) && policyType != 0) {
                 accessTypes = "select";
             }
@@ -288,6 +295,9 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             }
             if (revoke && policyType != 0) {
                 throw new SystemException("revoke applies to access policies only (policyType=0)");
+            }
+            if (ownedPolicyOnly && !revoke) {
+                throw new SystemException("ownedPolicyOnly applies to a revoke only");
             }
             if (StringUtils.isBlank(accessTypes)) {
                 throw new SystemException("accessTypes is required");
@@ -329,6 +339,9 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 }
                 if (revoke) {
                     commandParameters.put("revoke", "true");
+                }
+                if (ownedPolicyOnly) {
+                    commandParameters.put("ownedPolicyOnly", "true");
                 }
                 commandParameters.put("resourcesJson", resourcesJson);
                 commandParameters.put("policyNameHint", policyNameHint);

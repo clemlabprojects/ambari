@@ -18,10 +18,10 @@
 
 // ui/src/pages/HelmReleasesPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
+import { Alert, Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress, Radio } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getReleaseKdpsObjects, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
-import { UNINSTALL_POLARIS_REVOCATION, uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getReleaseKdpsObjects, getReleaseExternalRegistrations, type ExternalCleanupMode, type ExternalCleanupReport, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { EXTERNAL_CLEANUP_CHOICES, UNINSTALL_POLARIS_REVOCATION, uninstallExternalRemovals, uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
 import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import { getPods, listDeployments, type DeploymentRow } from '../api/client';
@@ -51,6 +51,31 @@ import './Page.css';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
+
+/**
+ * The uninstall confirmation's choice of how far KDPS goes outside Kubernetes (Keycloak, Ranger, Atlas, Ranger TagSync,
+ * Ambari views, Vault), with what the chosen way removes and keeps.
+ */
+const ExternalCleanupChoice: React.FC<{
+  previews: Partial<Record<ExternalCleanupMode, ExternalCleanupReport | null>>;
+  onChange: (mode: ExternalCleanupMode) => void;
+}> = ({ previews, onChange }) => {
+  const [mode, setMode] = useState<ExternalCleanupMode>('credentials');
+  const lines = uninstallExternalRemovals(previews[mode]);
+  return (
+    <Space direction="vertical">
+      <Radio.Group
+        value={mode}
+        onChange={(e) => { setMode(e.target.value); onChange(e.target.value); }}
+      >
+        <Space direction="vertical">
+          {EXTERNAL_CLEANUP_CHOICES.map((c) => <Radio key={c.value} value={c.value}>{c.label}</Radio>)}
+        </Space>
+      </Radio.Group>
+      {(lines || []).map((line) => <span key={line}>{line}</span>)}
+    </Space>
+  );
+};
 
 const HelmReleasesPage: React.FC = () => {
   const { status, refresh, nodes, events } = useClusterStatus();
@@ -881,6 +906,17 @@ const HelmReleasesPage: React.FC = () => {
               // Not listed: the uninstall still removes them, and its result says which.
             }
             const objectRemovals = uninstallKdpsObjectRemovals(kdpsObjects);
+            // What KDPS registered outside Kubernetes, as each choice of the confirmation would leave it.
+            const modes: ExternalCleanupMode[] = ['credentials', 'all', 'none'];
+            const previewOf = async (m: ExternalCleanupMode) => {
+              try {
+                return await getReleaseExternalRegistrations(record.name, record.namespace, m);
+              } catch {
+                return null; // Not listed: the uninstall still does it, and its result says what was done.
+              }
+            };
+            const previews = Object.fromEntries(await Promise.all(modes.map(async (m) => [m, await previewOf(m)] as const)));
+            const choice: { mode: ExternalCleanupMode } = { mode: 'credentials' };
             Modal.confirm({
               title: `Uninstall ${record.name}?`,
               content: (
@@ -889,8 +925,10 @@ const HelmReleasesPage: React.FC = () => {
                   <span>{UNINSTALL_POLARIS_REVOCATION}</span>
                   {signInRemovals ? <span>{signInRemovals}</span> : null}
                   {objectRemovals ? <span>{objectRemovals}</span> : null}
+                  <ExternalCleanupChoice previews={previews} onChange={(m) => { choice.mode = m; }} />
                 </Space>
               ),
+              width: 640,
               okText: 'Uninstall',
               okButtonProps: { danger: true },
               cancelText: 'Cancel',
@@ -899,6 +937,7 @@ const HelmReleasesPage: React.FC = () => {
                   const params = new URLSearchParams();
                   if (record.repoId) params.set('repoId', record.repoId);
                   if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
+                  params.set('externalCleanup', choice.mode);
                   const notes = await uninstallHelm(record.name, record.namespace, params);
                   if (notes?.pendingDelete) {
                     // A GitOps release removed through a pull request keeps running until it is merged.

@@ -28,6 +28,7 @@ jest.mock('../../api/client', () => ({
   getReleaseStatus: jest.fn(),
   uninstallHelm: jest.fn(),
   getReleaseKdpsObjects: jest.fn(),
+  getReleaseExternalRegistrations: jest.fn(),
   getReleaseActionRefusals: jest.fn(),
   getReleaseHistory: jest.fn(),
   rollbackReleaseToRevision: jest.fn(),
@@ -39,7 +40,8 @@ jest.mock('../../context/ClusterStatusContext', () => ({
 
 import {
   getAvailableServices, getClusterCapabilities, getHelmReleases, getReleaseActionRefusals, getReleaseHistory,
-  getReleaseKdpsObjects, getReleaseStatus, getReleaseTlsState, rollbackReleaseToRevision, uninstallHelm,
+  getReleaseExternalRegistrations, getReleaseKdpsObjects, getReleaseStatus, getReleaseTlsState,
+  rollbackReleaseToRevision, uninstallHelm,
 } from '../../api/client';
 import { invalidateCapabilities } from '../../components/ServiceInstallationModal/capabilities';
 import { PermissionsContext } from '../../context/PermissionsContext';
@@ -235,6 +237,29 @@ describe('HelmReleasesPage uninstall outcome', () => {
     await waitFor(() => expect((getHelmReleases as jest.Mock).mock.calls.length).toBeGreaterThan(loads));
     expect(screen.getAllByText('trino').length).toBeGreaterThan(0);
     expect(screen.queryByText('Release trino uninstalled successfully.')).toBeNull();
+  });
+
+  it('lists what KDPS takes back outside Kubernetes and passes the chosen way to the uninstall', async () => {
+    (getHelmReleases as jest.Mock).mockResolvedValue({ items: [trino], total: 1 });
+    (getReleaseExternalRegistrations as jest.Mock).mockImplementation(async (_n: string, _ns: string, mode: string) => ({
+      removed: ["Keycloak client 'trino-analytics'", ...(mode === 'all' ? ["Ranger repository 'trino-analytics'"] : [])],
+      left: [],
+      kept: mode === 'all' ? [] : [{ object: "Ranger repository 'trino-analytics'", reason: 'kept with the policies in it' }],
+      recorded: true,
+    }));
+    (uninstallHelm as jest.Mock).mockResolvedValue({});
+
+    const confirm = await openConfirm();
+
+    expect(within(confirm).getByText(/KDPS also removes: Keycloak client 'trino-analytics'\./)).toBeTruthy();
+    expect(within(confirm).getByText(/It keeps: Ranger repository 'trino-analytics'/)).toBeTruthy();
+    await user.click(within(confirm).getByText(/Remove everything, the Ranger repositories of the release included/));
+    expect(await within(confirm).findByText(/also removes: .*Ranger repository 'trino-analytics'\./)).toBeTruthy();
+    await user.click(within(confirm).getByRole('button', { name: 'Uninstall' }));
+
+    await waitFor(() => expect(uninstallHelm).toHaveBeenCalled());
+    const params = (uninstallHelm as jest.Mock).mock.calls[0][2] as URLSearchParams;
+    expect(params.get('externalCleanup')).toBe('all');
   });
 
   it('shows what became of the Polaris access and reloads the list', async () => {

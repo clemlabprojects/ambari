@@ -149,6 +149,39 @@ public class RangerPolicyResourceProviderTest {
   }
 
   @Test
+  public void testOwnedPolicyOnlyIsPassedWithTheRevoke() throws Exception {
+    // Without it, the server action would also strip the access from every other policy over the same resources.
+    Capture<Map<String, String>> commandParams = expectServerAction();
+    fixture.expectOneRequestScheduled();
+    fixture.replayAndInject(RangerPolicyResourceProvider.class, null);
+    SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator());
+
+    Map<String, Object> properties = policy(CLUSTER_NAME);
+    properties.put("RangerPolicy/revoke", "true");
+    properties.put("RangerPolicy/ownedPolicyOnly", "true");
+    new RangerPolicyResourceProvider(fixture.controller).createResources(createRequest(properties));
+
+    assertEquals("true", commandParams.getValue().get("ownedPolicyOnly"));
+    fixture.verifyScheduling();
+  }
+
+  @Test
+  public void testOwnedPolicyOnlyWithoutRevokeIsRefusedWithoutScheduling() throws Exception {
+    fixture.replayAndInject(RangerPolicyResourceProvider.class, null);
+    SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator());
+    Map<String, Object> properties = policy(CLUSTER_NAME);
+    properties.put("RangerPolicy/ownedPolicyOnly", "true");
+
+    try {
+      new RangerPolicyResourceProvider(fixture.controller).createResources(createRequest(properties));
+      fail("Expected ownedPolicyOnly without a revoke to be refused");
+    } catch (SystemException expected) {
+      assertEquals("ownedPolicyOnly applies to a revoke only", expected.getMessage());
+    }
+    fixture.verifyScheduling();
+  }
+
+  @Test
   public void testAGrantCarriesNoRevoke() throws Exception {
     Capture<Map<String, String>> commandParams = expectServerAction();
     fixture.expectOneRequestScheduled();

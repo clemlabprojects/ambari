@@ -129,6 +129,15 @@ public class K8sReleaseEntity extends BaseModel {
     @Column(length = 3000)
     private String catalogRefsJson;
 
+    // What KDPS registered for the release outside Kubernetes (Keycloak clients, Ranger access, Kerberos principals,
+    // Atlas, Ranger TagSync, view instances, Vault copies), which its uninstall takes back: see ProvisioningLedger.
+    // A column of its own rather than a key of gitMetaJson, which is already close to full for a GitOps release.
+    @Column(length = 3000)
+    private String provisioningJson;
+
+    /** What a release recorded since ledgers exist holds when KDPS registered nothing for it. */
+    static final String EMPTY_LEDGER = "{}";
+
     /** Parsed view of {@link #gitMetaJson}; rebuilt lazily and invalidated whenever the JSON is set. */
     @Transient
     private Map<String, String> gitMetaCache;
@@ -297,6 +306,33 @@ public class K8sReleaseEntity extends BaseModel {
 
     public String getCatalogRefsJson() { return catalogRefsJson; }
     public void setCatalogRefsJson(String catalogRefsJson) { this.catalogRefsJson = catalogRefsJson; }
+
+    /** The only ledger property the DataStore persists (see {@link #provisioningLedger}). */
+    public String getProvisioningJson() { return provisioningJson; }
+    public void setProvisioningJson(String provisioningJson) { this.provisioningJson = provisioningJson; }
+
+    /** What KDPS registered for the release outside Kubernetes; empty when nothing is recorded. */
+    public ProvisioningLedger provisioningLedger() {
+        return ProvisioningLedger.parse(provisioningJson);
+    }
+
+    /**
+     * Records the ledger. One that would no longer fit the column keeps what was recorded before, marked as missing
+     * something ({@link ProvisioningLedger#fitting}): the DataStore would refuse the whole release record otherwise.
+     */
+    public void recordProvisioningLedger(ProvisioningLedger ledger) {
+        ProvisioningLedger fitting = ProvisioningLedger.fitting(provisioningLedger(),
+                ledger == null ? new ProvisioningLedger() : ledger, InstanceSettings.MAX_VALUE_LENGTH);
+        String json = fitting.toJson();
+        // Even an empty ledger is stored, so that a release recorded since ledgers exist is told apart from one
+        // deployed earlier, whose ledger is unknown (see hasProvisioningLedger).
+        this.provisioningJson = json == null ? EMPTY_LEDGER : json;
+    }
+
+    /** Whether the release has a ledger, which a release deployed before KDPS kept ledgers does not. */
+    public boolean hasProvisioningLedger() {
+        return provisioningJson != null && !provisioningJson.isBlank();
+    }
 
     // ---------- Git metadata (folded into the single gitMetaJson column) ----------
 

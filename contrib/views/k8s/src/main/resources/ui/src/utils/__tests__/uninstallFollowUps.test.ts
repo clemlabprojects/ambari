@@ -1,4 +1,4 @@
-import { uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../uninstallFollowUps';
+import { EXTERNAL_CLEANUP_CHOICES, uninstallExternalRemovals, uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../uninstallFollowUps';
 
 /** The Releases page shows what an uninstall took back and what it leaves to an administrator, and nothing when there is nothing to say. */
 describe('uninstallFollowUps', () => {
@@ -122,5 +122,55 @@ describe('uninstallKdpsObjectRemovals', () => {
   it('says nothing when KDPS created nothing outside the chart', () => {
     expect(uninstallKdpsObjectRemovals([])).toBeNull();
     expect(uninstallKdpsObjectRemovals(undefined)).toBeNull();
+  });
+});
+
+/** What KDPS registered for the release outside Kubernetes: listed before the uninstall, reported after it. */
+describe('outside Kubernetes', () => {
+  it('reports what the uninstall did outside Kubernetes, last', () => {
+    const note = "Removed what KDPS registered for the release outside Kubernetes:\n  Keycloak client 'om-data'";
+    const followUps = uninstallFollowUps({
+      externalCleanup: { removed: ["Keycloak client 'om-data'"], left: [], kept: [], note },
+      kdpsObjectsCleanup: { removed: ['Secret/om-keytab'], left: [] },
+    });
+
+    expect(followUps.map((f) => f.title)).toEqual(['Objects KDPS created for the release', 'Outside Kubernetes']);
+    expect(followUps[1].text).toBe(note);
+  });
+
+  it('builds the report text when the server sent no note', () => {
+    const [followUp] = uninstallFollowUps({ externalCleanup: {
+      removed: ["Ranger access 'select' of oma-ing-data on service 'c1_hive'"],
+      left: [{ object: 'Atlas restart', reason: 'Atlas keeps the federation user until it restarts',
+        command: 'restart Atlas from Ambari' }],
+    } });
+
+    expect(followUp.text).toBe('Removed what KDPS registered for the release outside Kubernetes:\n'
+      + "  Ranger access 'select' of oma-ing-data on service 'c1_hive'\n"
+      + 'Left Atlas restart (Atlas keeps the federation user until it restarts): restart Atlas from Ambari');
+    expect(uninstallFollowUps({ externalCleanup: { removed: [], left: [], kept: [] } })).toEqual([]);
+  });
+
+  it('lists what the chosen way removes and keeps', () => {
+    expect(uninstallExternalRemovals({
+      removed: ["Keycloak client 'om-data'", 'Atlas federation user'],
+      left: [],
+      kept: [{ object: "Ranger repository 'om-data'", reason: 'kept with the policies in it' }],
+      recorded: true,
+    })).toEqual([
+      "Outside Kubernetes, KDPS also removes: Keycloak client 'om-data'; Atlas federation user.",
+      "It keeps: Ranger repository 'om-data' (kept with the policies in it).",
+    ]);
+  });
+
+  it('says when nothing is recorded for a release an earlier version deployed', () => {
+    expect(uninstallExternalRemovals({ removed: [], left: [], kept: [], recorded: false })?.[0])
+      .toContain('no record');
+    expect(uninstallExternalRemovals({ removed: [], left: [], kept: [], recorded: true })).toBeNull();
+    expect(uninstallExternalRemovals(null)).toBeNull();
+  });
+
+  it('offers the three ways, the recommended one first', () => {
+    expect(EXTERNAL_CLEANUP_CHOICES.map((c) => c.value)).toEqual(['credentials', 'all', 'none']);
   });
 });

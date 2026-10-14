@@ -18,7 +18,7 @@ limitations under the License.
 <view>
     <name>K8S-VIEW</name>
     <label>Ambari K8S View</label>
-    <version>1.0.0.9</version>
+    <version>1.0.0.10</version>
     <build>${env.BUILD_NUMBER}</build>
     <min-ambari-version>2.5.0</min-ambari-version>
     <!--
@@ -28,7 +28,7 @@ limitations under the License.
       Ambari falls back to a generic copy that loses BeanInfo-hidden fields (release Git metadata).
       Keep data-version equal to the last number of <version>; ViewXmlMigrationContractTest enforces it.
     -->
-    <data-version>9</data-version>
+    <data-version>10</data-version>
     <data-migrator-class>org.apache.ambari.view.k8s.migration.KdpsDataMigrator</data-migrator-class>
 
     <description>An Ambari view to interact with a Kubernetes cluster.</description>

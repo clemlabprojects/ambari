@@ -31,8 +31,10 @@ import io.fabric8.kubernetes.api.model.networking.v1.HTTPIngressRuleValue;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.ReleaseEndpointDTO;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.store.K8sReleaseRepo;
+import org.apache.ambari.view.k8s.store.ProvisioningLedger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -96,6 +98,136 @@ public class ReleaseMetadataService {
      */
     public void delete(String namespace, String name) {
         releaseRepository.deleteById(K8sReleaseEntity.idOf(namespace, name));
+        forgetPendingProvisioning(namespace, name);
+    }
+
+    // ---------- What KDPS registered outside Kubernetes (see ProvisioningLedger) ----------
+
+    /** Prefix of the view settings keeping the ledger of a release that has no record yet. */
+    static final String PENDING_PROVISIONING_PREFIX = "release.provisioning.";
+
+    /** Serialises the read-modify-write of the ledgers: steps of different releases run on several threads. */
+    private static final Object PROVISIONING_LOCK = new Object();
+
+    /**
+     * Records what a deploy step registered for a release outside Kubernetes. A release that has no record yet (a
+     * GitOps release is recorded by its commit, after the steps that register it) keeps its ledger in the view
+     * settings until its record is created, which then takes it over. Never throws: a ledger that cannot be written is
+     * logged, and the deploy goes on.
+     *
+     * @param change what to add to the ledger
+     */
+    public void recordProvisioning(String namespace, String releaseName,
+                                   java.util.function.Consumer<ProvisioningLedger> change) {
+        if (namespace == null || namespace.isBlank() || releaseName == null || releaseName.isBlank() || change == null) {
+            return;
+        }
+        synchronized (PROVISIONING_LOCK) {
+            try {
+                K8sReleaseEntity e = find(namespace, releaseName);
+                if (e != null) {
+                    ProvisioningLedger ledger = e.provisioningLedger();
+                    change.accept(ledger);
+                    String before = e.getProvisioningJson();
+                    e.recordProvisioningLedger(ledger);
+                    if (!java.util.Objects.equals(before, e.getProvisioningJson())) {
+                        releaseRepository.update(e);
+                    }
+                    return;
+                }
+                InstanceSettings settings = new InstanceSettings(viewContext);
+                String key = pendingProvisioningKey(namespace, releaseName);
+                ProvisioningLedger current = ProvisioningLedger.parse(settings.get(key));
+                ProvisioningLedger updated = current.copy();
+                change.accept(updated);
+                settings.put(key, ProvisioningLedger.fitting(current, updated, InstanceSettings.MAX_VALUE_LENGTH).toJson());
+            } catch (RuntimeException ex) {
+                LOG.warn("Could not record what KDPS registered for {}/{} outside Kubernetes: {}", namespace,
+                        releaseName, ex.toString());
+            }
+        }
+    }
+
+    /**
+     * What KDPS registered for a release outside Kubernetes: what its record holds, with what was recorded while it
+     * had none. Empty when nothing is recorded; truncated when it cannot be read.
+     */
+    public ProvisioningLedger provisioningOf(String namespace, String releaseName) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        return provisioningOf(e, namespace, releaseName);
+    }
+
+    /** {@link #provisioningOf(String, String)} for a record already read ({@code null} when there is none). */
+    public ProvisioningLedger provisioningOf(K8sReleaseEntity record, String namespace, String releaseName) {
+        ProvisioningLedger ledger = record != null ? record.provisioningLedger() : new ProvisioningLedger();
+        try {
+            ledger.merge(ProvisioningLedger.parse(
+                    new InstanceSettings(viewContext).get(pendingProvisioningKey(namespace, releaseName))));
+        } catch (RuntimeException ex) {
+            LOG.warn("Could not read what KDPS registered for {}/{} before its record existed: {}", namespace,
+                    releaseName, ex.toString());
+        }
+        return ledger;
+    }
+
+    /**
+     * The ledgers of the other releases KDPS knows, by {@code namespace/release}: what the uninstall of a release
+     * checks before taking back something another release may share with it (a Ranger account, a principal, the Atlas
+     * federation user, a view instance, a Vault path). A release deployed before KDPS kept ledgers is listed with {@link ProvisioningLedger#unrecorded}.
+     * Null when they cannot be read, which the caller takes as "may be shared".
+     */
+    public Map<String, ProvisioningLedger> otherReleasesProvisioning(String namespace, String releaseName) {
+        try {
+            Map<String, ProvisioningLedger> others = new java.util.LinkedHashMap<>();
+            for (K8sReleaseEntity other : findAll()) {
+                if (other == null || (namespace.equals(other.getNamespace()) && releaseName.equals(other.getReleaseName()))) {
+                    continue;
+                }
+                String key = other.getNamespace() + "/" + other.getReleaseName();
+                if (!other.hasProvisioningLedger()) {
+                    others.put(key, ProvisioningLedger.unrecorded());
+                    continue;
+                }
+                ProvisioningLedger ledger = other.provisioningLedger();
+                if (!ledger.isEmpty()) others.put(key, ledger);
+            }
+            return others;
+        } catch (RuntimeException ex) {
+            LOG.warn("Could not read the other releases' ledgers: {}", ex.toString());
+            return null;
+        }
+    }
+
+    private static String pendingProvisioningKey(String namespace, String releaseName) {
+        return PENDING_PROVISIONING_PREFIX + K8sReleaseEntity.idOf(namespace, releaseName);
+    }
+
+    /**
+     * Moves the ledger kept while a release had no record into the record just created. The record gets a ledger even
+     * when nothing was kept, which tells it apart from a release deployed before KDPS kept ledgers.
+     */
+    private void adoptPendingProvisioning(K8sReleaseEntity entity) {
+        entity.recordProvisioningLedger(entity.provisioningLedger());
+        try {
+            InstanceSettings settings = new InstanceSettings(viewContext);
+            String key = pendingProvisioningKey(entity.getNamespace(), entity.getReleaseName());
+            ProvisioningLedger pending = ProvisioningLedger.parse(settings.get(key));
+            if (pending.isEmpty()) return;
+            ProvisioningLedger ledger = entity.provisioningLedger();
+            ledger.merge(pending);
+            entity.recordProvisioningLedger(ledger);
+        } catch (RuntimeException ex) {
+            LOG.warn("Could not move what KDPS registered for {}/{} into its record: {}", entity.getNamespace(),
+                    entity.getReleaseName(), ex.toString());
+        }
+    }
+
+    private void forgetPendingProvisioning(String namespace, String releaseName) {
+        try {
+            new InstanceSettings(viewContext).delete(pendingProvisioningKey(namespace, releaseName));
+        } catch (RuntimeException ex) {
+            LOG.warn("Could not forget the ledger kept for {}/{}: {}", namespace, releaseName, ex.toString());
+        }
     }
 
     /**
@@ -532,7 +664,12 @@ public class ReleaseMetadataService {
         entity.setUpdatedAt(Instant.now().toString());
 
         if (isNewEntity) {
-            releaseRepository.create(entity);
+            // What the deploy registered before the record existed comes with it.
+            synchronized (PROVISIONING_LOCK) {
+                adoptPendingProvisioning(entity);
+                releaseRepository.create(entity);
+                forgetPendingProvisioning(namespace, releaseName);
+            }
         } else {
             releaseRepository.update(entity);
         }

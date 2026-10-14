@@ -185,6 +185,58 @@ public class EnsureRangerPolicyServerActionRevokeTest {
         grantees(ranger.policies.get(defaultId), "impersonate"));
   }
 
+  @Test
+  public void anOwnedPolicyOnlyRevokeKeepsTheSameAccessInOtherPolicies() throws Exception {
+    // A service user listed in the repository's default policy keeps that access: whether it came from the
+    // release being removed cannot be told. Only the policy named after the release is trimmed or deleted.
+    long defaultId = ranger.add(REPO, "all - trinouser", EVERY_USER,
+        item(List.of("trino"), "impersonate"), item(List.of("superset-svc"), "impersonate"));
+    ranger.add(REPO, "kdps-bi-trino-impersonate", EVERY_USER, item(List.of("superset-svc"), "impersonate"));
+    Map<String, String> params = revoke();
+    params.put("userName", "superset-svc");
+    params.put("policyNameHint", "kdps-bi-trino-impersonate");
+    params.put("ownedPolicyOnly", "true");
+
+    CommandReport report = run(params);
+
+    assertEquals("COMPLETED", report.getStatus());
+    assertEquals(1, JsonParser.parseString(report.getStructuredOut()).getAsJsonObject()
+        .get("changedPolicies").getAsInt());
+    assertNull(ranger.byName(REPO, "kdps-bi-trino-impersonate"));
+    assertEquals(List.of(List.of("trino"), List.of("superset-svc")),
+        grantees(ranger.policies.get(defaultId), "impersonate"));
+  }
+
+  @Test
+  public void anOwnedPolicyOnlyRevokeWithoutThatPolicyChangesNothing() throws Exception {
+    long defaultId = ranger.add(REPO, "all - trinouser", EVERY_USER, item(List.of("superset-svc"), "impersonate"));
+    String before = ranger.policies.get(defaultId).toString();
+    Map<String, String> params = revoke();
+    params.put("userName", "superset-svc");
+    params.put("policyNameHint", "kdps-bi-trino-impersonate");
+    params.put("ownedPolicyOnly", "true");
+
+    CommandReport report = run(params);
+
+    assertEquals("COMPLETED", report.getStatus());
+    assertEquals(0, JsonParser.parseString(report.getStructuredOut()).getAsJsonObject()
+        .get("changedPolicies").getAsInt());
+    assertEquals(before, ranger.policies.get(defaultId).toString());
+    assertEquals(0, ranger.writes());
+  }
+
+  @Test
+  public void ownedPolicyOnlyIsRefusedForAGrant() throws Exception {
+    Map<String, String> params = revoke();
+    params.remove("revoke");
+    params.put("ownedPolicyOnly", "true");
+
+    CommandReport report = run(params);
+
+    assertEquals("FAILED", report.getStatus());
+    assertEquals(0, ranger.requests.size());
+  }
+
   private Map<String, String> revoke() {
     Map<String, String> params = new HashMap<>();
     params.put("clusterName", "c1");

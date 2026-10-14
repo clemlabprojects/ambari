@@ -15,7 +15,7 @@ const IS_DEV: boolean = (() => { try { return typeof process !== 'undefined' && 
  */
 const resolveApiBase = (): string => {
   // Keep the version equal to view.xml's <version>: ViewXmlMigrationContractTest checks it.
-  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.9/instances/K8S_VIEW_INSTANCE/resources/api`;
+  const fallback = `/api/v1/views/K8S-VIEW/versions/1.0.0.10/instances/K8S_VIEW_INSTANCE/resources/api`;
   if (typeof window === 'undefined') return fallback;
   try {
     // Examples of pathname we might see:
@@ -1621,6 +1621,25 @@ export interface UninstallNotes {
   tagSyncCleanup?: string;
   /** What became of the objects KDPS created for the release outside its chart (keytab, truststore, autoscaler account...). */
   kdpsObjectsCleanup?: KdpsObjectsCleanup;
+  /** What became of what KDPS registered for the release outside Kubernetes (Ranger access, Atlas, Ranger TagSync, ...). */
+  externalCleanup?: ExternalCleanupReport;
+}
+
+/** How far the uninstall of a release goes outside Kubernetes. */
+export type ExternalCleanupMode = 'credentials' | 'all' | 'none';
+
+/**
+ * What the uninstall of a release removes, could not remove (`left`, with what to do) and leaves on purpose (`kept`) of
+ * what KDPS registered for it outside Kubernetes: Keycloak clients, Ranger access and repositories, Kerberos principals,
+ * the Atlas federation user, the OpenMetadata source of Ranger TagSync, Ambari view instances and Vault copies.
+ */
+export interface ExternalCleanupReport {
+  removed: string[];
+  left: KdpsObjectLeftover[];
+  kept?: KdpsObjectLeftover[];
+  note?: string;
+  /** In a preview: false when KDPS recorded nothing for the release (one deployed by an earlier version). */
+  recorded?: boolean;
 }
 
 /** An object KDPS created for a release that its uninstall could not remove, why, and the command that removes it. */
@@ -1651,6 +1670,30 @@ export async function getReleaseKdpsObjects(name: string, namespace: string): Pr
   if (!response.ok) return [];
   const body: any = await response.json().catch(() => ({}));
   return Array.isArray(body?.objects) ? body.objects.map(String) : [];
+}
+
+/**
+ * What the uninstall of a release would do outside Kubernetes with the given mode, for its confirmation to list. Null
+ * when it cannot be read: the uninstall still does it, and its result says what was done.
+ */
+export async function getReleaseExternalRegistrations(
+  name: string,
+  namespace: string,
+  mode: ExternalCleanupMode,
+): Promise<ExternalCleanupReport | null> {
+  const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`
+    + `/external-registrations?mode=${encodeURIComponent(mode)}`;
+  const response = await apiFetch(url, { method: 'GET' });
+  if (!response.ok) return null;
+  const body: any = await response.json().catch(() => null);
+  if (!body || typeof body !== 'object') return null;
+  return {
+    removed: Array.isArray(body.removed) ? body.removed.map(String) : [],
+    left: Array.isArray(body.left) ? body.left : [],
+    kept: Array.isArray(body.kept) ? body.kept : [],
+    note: typeof body.note === 'string' ? body.note : undefined,
+    recorded: body.recorded === true,
+  };
 }
 
 /**

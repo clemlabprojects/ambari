@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-import type { UninstallNotes } from '../api/client';
+import type { ExternalCleanupMode, ExternalCleanupReport, UninstallNotes } from '../api/client';
 
 /** One thing an uninstall took back or leaves to an administrator, as the Releases page shows it. */
 export interface UninstallFollowUp {
@@ -47,7 +47,57 @@ export function uninstallFollowUps(notes: UninstallNotes | undefined): Uninstall
     || (objects.kept || []).length > 0)) {
     out.push({ title: 'Objects KDPS created for the release', text: objects.note || kdpsObjectsText(objects) });
   }
+  const external = notes?.externalCleanup;
+  if (external && ((external.removed || []).length > 0 || (external.left || []).length > 0
+    || (external.kept || []).length > 0)) {
+    out.push({ title: 'Outside Kubernetes', text: external.note || externalText(external) });
+  }
   return out;
+}
+
+/** What the uninstall did outside Kubernetes, for a server that sent no note. */
+function externalText(report: ExternalCleanupReport): string {
+  const lines: string[] = [];
+  if ((report.removed || []).length > 0) {
+    lines.push('Removed what KDPS registered for the release outside Kubernetes:');
+    report.removed.forEach((r) => lines.push(`  ${r}`));
+  }
+  for (const l of report.left || []) {
+    lines.push(`Left ${l.object} (${l.reason})${l.command ? `: ${l.command}` : ''}`);
+  }
+  for (const l of report.kept || []) {
+    lines.push(`Kept ${l.object} (${l.reason})${l.command ? `: ${l.command}` : ''}`);
+  }
+  return lines.join('\n');
+}
+
+/** The choices the uninstall confirmation offers for what KDPS registered outside Kubernetes. */
+export const EXTERNAL_CLEANUP_CHOICES: { value: ExternalCleanupMode; label: string }[] = [
+  { value: 'credentials', label: 'Remove access and credentials, keep the Ranger repositories (recommended)' },
+  { value: 'all', label: 'Remove everything, the Ranger repositories of the release included' },
+  { value: 'none', label: 'Keep everything outside Kubernetes, the single sign-on client included' },
+];
+
+/**
+ * What the uninstall confirmation says of what KDPS registered for the release outside Kubernetes, from the preview of
+ * the chosen mode: what is removed, then what is kept. Null when nothing is recorded for the release.
+ *
+ * @param preview what the uninstall would do (see getReleaseExternalRegistrations); null when it could not be read
+ */
+export function uninstallExternalRemovals(preview: ExternalCleanupReport | null | undefined): string[] | null {
+  if (!preview) return null;
+  const removed = preview.removed || [];
+  const kept = [...(preview.kept || []), ...(preview.left || [])];
+  if (removed.length === 0 && kept.length === 0) {
+    return preview.recorded === false
+      ? ['KDPS has no record of what it registered for this release outside Kubernetes (deployed by an earlier'
+        + ' version): check Keycloak, Ranger and Atlas for what is named after it once it is uninstalled.']
+      : null;
+  }
+  const lines: string[] = [];
+  if (removed.length > 0) lines.push(`Outside Kubernetes, KDPS also removes: ${removed.join('; ')}.`);
+  if (kept.length > 0) lines.push(`It keeps: ${kept.map((k) => `${k.object} (${k.reason})`).join('; ')}.`);
+  return lines;
 }
 
 /** What the uninstall did with the objects KDPS created for the release, for a server that sent no note. */

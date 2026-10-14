@@ -1048,16 +1048,66 @@ public final class OmAtlasProvisioning {
     private static int revokeAccessOnScope(TlsPolicy tls, String rangerAdminUrl, String basic, String serviceName,
                                            Map<String, List<String>> scope, String user, String accessType,
                                            String ownedPolicyName) throws Exception {
+        return revokeAccessOnScope(tls, rangerAdminUrl, basic, serviceName, scope, user, Set.of(accessType),
+                ownedPolicyName, false);
+    }
+
+    /**
+     * Takes back access KDPS granted in Ranger for a release that is uninstalled: {@code accessTypes} of
+     * {@code user} over exactly {@code scope}. With {@code ownedPolicyOnly}, only the policy named
+     * {@code ownedPolicyName} is changed, for an account that holds access of its own over the same
+     * resources (a service user of the platform); otherwise every access policy over that scope is,
+     * since the grant may have been added to a policy Ranger already had there. The named policy is
+     * deleted once it grants nothing; a policy of another name is kept, even empty.
+     *
+     * @return the number of policies changed; 0 when the access was already gone
+     */
+    public static int revokeGrant(TlsPolicy tls, String rangerAdminUrl, String rangerUser, String rangerPassword,
+                                  String serviceName, Map<String, List<String>> scope, String user,
+                                  Set<String> accessTypes, String ownedPolicyName, boolean ownedPolicyOnly)
+            throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        return revokeAccessOnScope(tls, rangerAdminUrl, basic, serviceName, scope, user, accessTypes, ownedPolicyName,
+                ownedPolicyOnly);
+    }
+
+    /**
+     * Deletes a Ranger service (repository) and the policies it holds.
+     *
+     * @return false when Ranger has no service of that name
+     */
+    public static boolean deleteService(TlsPolicy tls, String rangerAdminUrl, String rangerUser, String rangerPassword,
+                                        String serviceName) throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        Long id = lookupServiceByName(tls, rangerAdminUrl, basic, serviceName);
+        if (id == null) return false;
+        RangerAnswer deleted = rangerCall(tls, "DELETE", rangerAdminUrl + "/service/public/v2/api/service/" + id, basic, null);
+        if (deleted.code() == 404) return false;
+        if (deleted.code() < 200 || deleted.code() >= 300) {
+            throw new IllegalStateException("Ranger service delete '" + serviceName + "' (id=" + id + ") failed: HTTP "
+                    + deleted.code() + " — " + deleted.body());
+        }
+        LOG.info("OmAtlasProvisioning: deleted Ranger service '{}' (id={})", serviceName, id);
+        return true;
+    }
+
+    private static int revokeAccessOnScope(TlsPolicy tls, String rangerAdminUrl, String basic, String serviceName,
+                                           Map<String, List<String>> scope, String user, Set<String> accessTypes,
+                                           String ownedPolicyName, boolean ownedPolicyOnly) throws Exception {
         int changed = 0;
+        String accessType = String.join(",", accessTypes);
         for (JsonObject policy : listServicePolicies(tls, rangerAdminUrl, basic, serviceName)) {
             if (!isAccessPolicy(policy) || !coversExactly(policy, scope)) continue;
+            String policyName = policy.has("name") ? policy.get("name").getAsString() : "";
+            if (ownedPolicyOnly && !policyName.equals(ownedPolicyName)) continue;
             JsonArray items = policy.has("policyItems") && policy.get("policyItems").isJsonArray()
                     ? policy.getAsJsonArray("policyItems") : new JsonArray();
-            JsonArray kept = withoutAccess(items, user, Set.of(accessType));
+            JsonArray kept = withoutAccess(items, user, accessTypes);
             if (kept == null) continue;
             policy.add("policyItems", kept);
             long policyId = policy.get("id").getAsLong();
-            String policyName = policy.has("name") ? policy.get("name").getAsString() : "";
             String url = rangerAdminUrl + "/service/public/v2/api/policy/" + policyId;
             if (policyName.equals(ownedPolicyName) && grantsNothing(policy)) {
                 RangerAnswer deleted = rangerCall(tls, "DELETE", url, basic, null);
@@ -1412,6 +1462,14 @@ public final class OmAtlasProvisioning {
         if (code == 404) return null;
         throw new IllegalStateException("Ranger policy lookup-by-name returned HTTP " + code
                 + ": " + readBody(conn, true));
+    }
+
+    /** Whether Ranger has a service (repository) of that name. */
+    public static boolean serviceExists(TlsPolicy tls, String rangerAdminUrl, String rangerUser, String rangerPassword,
+                                        String serviceName) throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        return lookupServiceByName(tls, rangerAdminUrl, basic, serviceName) != null;
     }
 
     /**

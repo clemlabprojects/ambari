@@ -247,6 +247,40 @@ After the upgrade:
 - The full procedure is in the Ambari OIDC guide,
   [Rotate the client secret of a service's OIDC client](../../../../ambari-server/docs/security/sso/oidc.md#rotate-a-service-oidc-client-secret).
 
+### Uninstalling a release takes back what KDPS registered for it outside Kubernetes
+
+- KDPS now records with each release what it registers for it outside Kubernetes: its Keycloak clients, the Ranger
+  access it grants (and the Ranger repository it creates), the Kerberos principals it has issued, the OpenMetadata
+  federation user in Atlas, the OpenMetadata source of Ranger TagSync, the SQL Assistant view instance and the Vault
+  copy of the client credentials.
+- The uninstall confirmation lists what will be removed and what will be kept, and offers three choices:
+  - **Remove access and credentials** (the default): the Keycloak client, the Ranger access KDPS granted, the Atlas
+    federation user (and Atlas file
+    authentication when KDPS turned it on), the OpenMetadata source of Ranger TagSync (Ranger TagSync is restarted),
+    the view instance and the Vault copy. The Ranger repository of the release is kept with the policies operators
+    added to it.
+  - **Remove everything**: the same, and the Ranger repository of the release when KDPS created it (a repository
+    Ranger already had, or one named by the operator, is never deleted). A repository of the cluster's own
+    Ranger (managed context) is listed for deletion in Ranger, since KDPS does not hold that Ranger's administrator.
+  - **Keep everything outside Kubernetes**, the single sign-on client included.
+- The Ranger access of an account KDPS minted for its releases (such as the OpenMetadata ingestion account of a
+  namespace) is taken back from every policy over the resources it was granted, since KDPS may have added it to an
+  existing one. The access of an account the operator named (an LDAP or OIDC service user, an external keytab, the
+  account of an operator's Secret) is taken back only from the policy KDPS created for the release, so the access the
+  account holds elsewhere stays.
+- Something another release still uses (the same Ranger account, principal, Atlas federation user, view instance or
+  Vault path) is kept. While a release deployed with an earlier build may use the same minted account, only the policy
+  KDPS created for the uninstalled release is changed, and the access left elsewhere is listed; such a release also
+  keeps view instances and Vault copies in place. A view instance that existed before the release was deployed is
+  never deleted. Kerberos
+  principals are listed with the command that deletes them: KDPS cannot delete them. Atlas is not restarted: restart it
+  from Ambari to drop the federation user. Whatever cannot be removed is shown after the uninstall with what to do.
+- The Ranger account of a release's Atlas tag sync, which holds the Ranger administrator role, is disabled on every
+  uninstall, whatever the choice.
+- Releases deployed with an earlier build have no such record until they are deployed again: their uninstall says so.
+  The Ranger revoke of a managed context needs this Ambari server version (`ownedPolicyOnly`); an older server refuses
+  it, and the access is listed for removal by hand.
+
 ### Keycloak prerequisites
 
 - KDPS registers the OIDC clients of its releases through the Keycloak admin API, with the settings of the cluster's

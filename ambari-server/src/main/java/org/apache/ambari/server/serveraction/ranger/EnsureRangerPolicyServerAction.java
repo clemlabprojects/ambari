@@ -88,6 +88,8 @@ import com.google.inject.Inject;
  *   <li>{@code timeoutSeconds} (optional, default 45) — propagation-poll budget</li>
  *   <li>{@code revoke} (optional, default {@code false}) — take the access back instead of
  *       granting it, see below</li>
+ *   <li>{@code ownedPolicyOnly} (optional, default {@code false}, revoke only) — take the access back
+ *       from the policy named {@code policyNameHint} only</li>
  * </ul>
  *
  * <p>Revoke mode removes the access types from the user (and groups) in every allow policy of the
@@ -95,6 +97,11 @@ import com.google.inject.Inject;
  * what it had. A policy named {@code policyNameHint} that grants nothing afterwards is deleted, so
  * that a later grant under that name starts from the resources it asks for rather than appending to
  * the old, wider ones. No user or group is created in this mode.
+ *
+ * <p>With {@code ownedPolicyOnly} the revoke leaves every other policy alone. It is for an account that
+ * also holds access of its own over the same resources, such as a service user listed in the
+ * repository's default policies: whether a grant there came from the caller cannot be told, so it
+ * is kept.
  */
 public class EnsureRangerPolicyServerAction extends AbstractServerAction {
 
@@ -146,6 +153,7 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
             accessTypes = "select";
         }
         boolean revoke = Boolean.parseBoolean(trimToNull(commandParameters.get("revoke")));
+        boolean ownedPolicyOnly = Boolean.parseBoolean(trimToNull(commandParameters.get("ownedPolicyOnly")));
 
         LOG.info("EnsureRangerPolicyServerAction called: clusterName='{}', rangerServiceName='{}', "
                         + "userName='{}', accessTypes='{}', policyNameHint='{}'",
@@ -161,7 +169,7 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
                 + (spec.maskType != null ? " maskType=" + spec.maskType : "")
                 + (spec.rowFilterExpr != null ? " rowFilterExpr=" + spec.rowFilterExpr : "")
                 + (spec.groups.isEmpty() ? "" : " groups=" + spec.groups));
-        actionLog.writeStdOut("  revoke            = " + revoke);
+        actionLog.writeStdOut("  revoke            = " + revoke + (ownedPolicyOnly ? " (owned policy only)" : ""));
 
         String missing = firstMissing(
                 "clusterName", clusterName,
@@ -189,6 +197,9 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
         }
         if (revoke && spec.policyType != 0) {
             return fail("A revoke applies to access policies only (policyType=0), not policyType " + spec.policyType);
+        }
+        if (ownedPolicyOnly && !revoke) {
+            return fail("ownedPolicyOnly applies to a revoke only");
         }
 
         try {
@@ -228,7 +239,7 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
 
             if (revoke) {
                 int changed = revokeGrant(policymgrExternalUrl, auth, rangerServiceName, userName, spec.groups,
-                        accessTypes, resourcesJson, policyNameHint);
+                        accessTypes, resourcesJson, policyNameHint, ownedPolicyOnly);
                 Map<String, Object> revokedOut = new HashMap<>();
                 revokedOut.put("clusterName", clusterName);
                 revokedOut.put("rangerServiceName", rangerServiceName);
@@ -490,15 +501,20 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
      * Removes {@code accessTypes} from the user and groups in every allow policy of the service whose
      * resources are exactly {@code resourcesJson}, and returns how many policies changed. A policy
      * named {@code ownedPolicyName} that grants nothing afterwards is deleted rather than left empty.
-     * Idempotent: once nothing is left to take back, no policy is written.
+     * With {@code ownedPolicyOnly}, that policy is the only one looked at. Idempotent: once nothing is
+     * left to take back, no policy is written.
      */
     private int revokeGrant(String baseUrl, String auth, String serviceName, String userName, List<String> groups,
-                            String accessTypes, String resourcesJson, String ownedPolicyName) throws Exception {
+                            String accessTypes, String resourcesJson, String ownedPolicyName,
+                            boolean ownedPolicyOnly) throws Exception {
         JsonObject scope = JsonParser.parseString(resourcesJson).getAsJsonObject();
         Set<String> revoked = new HashSet<>(splitCsv(accessTypes));
         int changed = 0;
         for (JsonObject policy : listPolicies(baseUrl, auth, serviceName)) {
             if (!isAccessPolicy(policy) || !coversExactly(policy, scope)) {
+                continue;
+            }
+            if (ownedPolicyOnly && !ownedPolicyName.equals(policy.has("name") ? policy.get("name").getAsString() : "")) {
                 continue;
             }
             JsonArray items = policy.has("policyItems") && policy.get("policyItems").isJsonArray()

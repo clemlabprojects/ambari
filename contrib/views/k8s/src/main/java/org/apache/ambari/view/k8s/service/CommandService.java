@@ -46,6 +46,7 @@ import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.store.ProvisioningLedger;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.service.deployment.DeployRequestValidator;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentBackend;
@@ -855,6 +856,20 @@ public class CommandService {
         String rendered = renderKerberosPrincipalTemplate(principalTemplate, serviceName, request.getNamespace(),
                 request.getReleaseName(), kerberosRealm == null ? "" : kerberosRealm, tokens);
         return principalShortName(normalizeKerberosPrincipalLength(rendered));
+    }
+
+    /**
+     * Whether the principal KDPS issues for the service is named after the release's namespace (its template holds
+     * {@code {{namespace}}}), so that releases of other namespaces never get the same one.
+     */
+    static boolean issuedPrincipalNamesNamespace(StackServiceDef serviceDef) {
+        String principalTemplate = "{{service}}-{{namespace}}@{{realm}}";
+        if (serviceDef != null && serviceDef.kerberos != null && !serviceDef.kerberos.isEmpty()) {
+            Object template = serviceDef.kerberos.get(0).get("principalTemplate");
+            if (template != null && !String.valueOf(template).isBlank()) principalTemplate = String.valueOf(template);
+        }
+        int at = principalTemplate.indexOf('@');
+        return (at >= 0 ? principalTemplate.substring(0, at) : principalTemplate).contains("{{namespace}}");
     }
 
     /** {@code trino-ns@REALM} -> {@code trino-ns}; {@code trino/host@REALM} -> {@code trino}. */
@@ -9674,13 +9689,17 @@ public class CommandService {
                             // name for long namespaces): HIVE_METASTORE_ERROR "Permission denied" on every
                             // table read from a fresh install.
                             String principal = issuedPrincipalShortName(serviceDef, request, kerberosRealm);
+                            boolean principalMinted = true;
                             // With an operator-supplied keytab the identity Hive sees is that keytab's
                             // principal (short name), not the one KDPS would have minted.
                             Map<String, Object> fvGrant = request.getFormValues() != null ? request.getFormValues() : Collections.emptyMap();
                             if (deployUsesExternalKeytab(fvGrant)) {
                                 String ext = stringValue(ConfigResolutionService.getByDottedPath(fvGrant, "hive.externalKeytabPrincipal"));
                                 if (ext.isBlank()) ext = stringValue(ConfigResolutionService.getByDottedPath(fvGrant, "hiveDb.externalKeytabPrincipal"));
-                                if (!ext.isBlank()) principal = ext.replaceAll("[/@].*$", "");
+                                if (!ext.isBlank()) {
+                                    principal = ext.replaceAll("[/@].*$", "");
+                                    principalMinted = false;
+                                }
                             }
 
                             Map<String, Object> grantParams = new LinkedHashMap<>();
@@ -9688,6 +9707,10 @@ public class CommandService {
                             grantParams.put("namespace", request.getNamespace());
                             grantParams.put("serviceKey", request.getServiceKey());
                             grantParams.put("_principal", principal);
+                            if (principalMinted) grantParams.put(PRINCIPAL_MINTED_BY_KDPS, "true");
+                            if (principalMinted && issuedPrincipalNamesNamespace(serviceDef)) {
+                                grantParams.put(PRINCIPAL_PER_NAMESPACE, "true");
+                            }
                             // Hive Ranger service name is resolved at execute time from the platform
                             // context (managed → <cluster>_hive, external → its hive.rangerServiceName),
                             // so the context id is threaded rather than a hardcoded local name.
@@ -9720,6 +9743,7 @@ public class CommandService {
                         String trinoAuthMode = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_auth_mode"))
                                 .toLowerCase(Locale.ROOT);
                         String trinoPrincipal = null;
+                        boolean trinoPrincipalMinted = false;
                         if (!trinoHost.isBlank()) {
                             if ("ldap".equals(trinoAuthMode)) {
                                 trinoPrincipal = stringValue(ConfigResolutionService.getByDottedPath(fv, "ui_trino_svc_user"));
@@ -9732,6 +9756,7 @@ public class CommandService {
                                             serviceDef.kerberos.get(0).get("serviceName"), kerbServiceName);
                                 }
                                 trinoPrincipal = kerbServiceName + "-" + request.getNamespace();
+                                trinoPrincipalMinted = true;
                             } else if ("oidc".equals(trinoAuthMode)) {
                                 // The principal Trino derives from Superset's service JWT depends on
                                 // the Keycloak claim mapping, so it is operator-supplied (optional).
@@ -9744,6 +9769,12 @@ public class CommandService {
                             grantParams.put("namespace", request.getNamespace());
                             grantParams.put("serviceKey", request.getServiceKey());
                             grantParams.put("_principal", trinoPrincipal);
+                            // The ldap and oidc accounts are the operator's, and may hold access of their own.
+                            if (trinoPrincipalMinted) {
+                                grantParams.put(PRINCIPAL_MINTED_BY_KDPS, "true");
+                                // <kerberos serviceName>-<namespace>: an account of this namespace only.
+                                grantParams.put(PRINCIPAL_PER_NAMESPACE, "true");
+                            }
                             // Which Ranger repo to grant in: the operator's override, else the repo the
                             // target Trino release actually registered (<release>-<namespace>). Without
                             // this the grant falls back to <cluster>_trino, which does not exist for a
@@ -11273,9 +11304,8 @@ public class CommandService {
                         directConfigs.putIfAbsent("username",
                                 (pluginUserName != null && !pluginUserName.isBlank()) ? pluginUserName : repoRc.getRangerAdminUsername());
                         if (pluginUserPassword != null && !pluginUserPassword.isBlank()) directConfigs.putIfAbsent("password", pluginUserPassword);
-                        long svcId = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindService(tlsOf(repoRc, "Ranger"),
-                                repoRc.getRangerUrl(), repoRc.getRangerAdminUsername(), repoRc.getRangerAdminPassword(),
-                                rangerRepositoryName, serviceType, directConfigs);
+                        long svcId = ensureRangerRepositoryInContext(childParams, repoRc, rangerRepositoryName,
+                                serviceType, directConfigs);
                         LOG.info("Ranger plugin repository '{}' (type={}) ensured via context Ranger (direct REST, service id={})",
                                 rangerRepositoryName, serviceType, svcId);
                         TrinoImpersonationRules impersonation = null;
@@ -11325,6 +11355,7 @@ public class CommandService {
 
                     LOG.info("Ranger plugin repository '{}' configured successfully via Ambari request {}",
                             rangerRepositoryName, reqId);
+                    recordReleaseRangerRepository(childParams, rangerRepositoryName);
 
                     // optional: store a tiny result payload
                     Map<String,Object> res = new LinkedHashMap<>();
@@ -12042,6 +12073,18 @@ public class CommandService {
                             + " → " + serviceUrl);
 
                     var ambariClient = new AmbariActionClient(ctx, ambariApiBase, authHeaders);
+                    // The instance is named after the release alone, so a release of the same name in another
+                    // namespace, or an operator, may already have it: only one this deploy creates is the
+                    // release's to delete at uninstall. When Ambari cannot say, it is taken as not the release's.
+                    boolean existed;
+                    try {
+                        existed = ambariClient.viewInstanceExists(viewName, viewVersion, instanceName);
+                    } catch (Exception e) {
+                        LOG.warn("AMBARI_VIEW_PROVISION: could not tell whether instance '{}' exists: {}",
+                                instanceName, e.toString());
+                        existed = true;
+                    }
+                    boolean createdByDeploy = !existed;
                     ambariClient.createOrUpdateViewInstance(
                             viewName,
                             viewVersion,
@@ -12052,6 +12095,8 @@ public class CommandService {
                                     ? Map.of("sql.assistant.semantic.service.url", serviceUrl)
                                     : Map.of()
                     );
+                    recordProvisioning(childParams, ledger -> ledger.addViewInstance(
+                            new ProvisioningLedger.ViewInstance(viewName, viewVersion, instanceName, createdByDeploy)));
                     appendCommandLog(id, "View instance '" + instanceName + "' provisioned successfully.");
                     LOG.info("AMBARI_VIEW_PROVISION completed for instance '{}'", instanceName);
                 }
@@ -12588,6 +12633,9 @@ public class CommandService {
 
                     var registered = registerOidcClient(child.getId(), childParams);
                     recordOidcRegistration(child.getId(), childSt, registered);
+                    String oidcContext = stringValue(childParams.get("_platformContextId"));
+                    recordProvisioning(childParams, ledger -> ledger.addOidcClient(new ProvisioningLedger.OidcClient(
+                            registered.clientId(), registered.realm(), oidcContext.isBlank() ? null : oidcContext)));
                     CommandStatusEntity rootNow = findCommandStatusById(root.getCommandStatusId());
                     if (rootNow != null && CommandState.CANCELED.name().equals(rootNow.getState())) {
                         // Canceled while Keycloak answered: no step of the operation will write the secret.
@@ -12724,6 +12772,7 @@ public class CommandService {
                             if (vaultAddr != null && !vaultAddr.isBlank()
                                     && vaultToken != null && !vaultToken.isBlank()) {
                                 writeOidcToVault(vaultAddr, vaultToken, vaultPath, clientId, clientSecret, issuerUrl);
+                                recordProvisioning(childParams, ledger -> ledger.addVaultPath(vaultPath));
                                 appendCommandLog(child.getId(), "Vault path '" + vaultPath + "' updated");
                                 LOG.info("OIDC_CREATE_SECRET: Vault path '{}' updated for client '{}'", vaultPath, clientId);
                             } else {
@@ -12751,6 +12800,15 @@ public class CommandService {
             }
 
             // Success path for the child
+            if (CommandType.KEYTAB_ISSUE_PRINCIPAL.name().equals(child.getType())) {
+                // The principal stays in the KDC after the release is gone: its uninstall reports it.
+                String issuedPrincipal = stringValue(childParams.get("principalFqdn"));
+                String keytabSecret = stringValue(childParams.get("secretName"));
+                if (!issuedPrincipal.isBlank()) {
+                    recordProvisioning(childParams, ledger -> ledger.addPrincipal(new ProvisioningLedger.Principal(issuedPrincipal,
+                            keytabSecret.isBlank() ? null : keytabSecret)));
+                }
+            }
             childSt.setState(CommandState.SUCCEEDED.name());
             childSt.setMessage(stepDoneMessage != null ? stepDoneMessage
                     : "Done: " + (child.getTitle() != null ? child.getTitle() : child.getType()));
@@ -15124,6 +15182,7 @@ public class CommandService {
         Integer restartReqId;
         try {
             wrote = writeTagSyncSite(ambari, cluster, effectiveSpec, entryKey, omEndpoint, jwt, tagSuffix);
+            recordTagSyncSource(childParams, effectiveSpec, entryKey, omEndpoint, jwt);
             restartReqId = restartTagSyncIfNeeded(ambari, cluster, entryKey, wrote, tagSuffix, warnings,
                     java.time.Duration.ofSeconds(600));
         } catch (IllegalStateException e) {
@@ -15821,11 +15880,15 @@ public class CommandService {
                         java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
                 LOG.info("OM_HIVE_BASE_INGESTION: context Ranger Hive '{}' policy id={} for '{}' on '{}' (direct REST)",
                         OM_HIVE_INGESTION_ACCESS, pid, principal, hiveService);
+                recordRangerGrant(childParams, hiveService, principal, OM_HIVE_INGESTION_ACCESS, HIVE_ALL_RESOURCES,
+                        policyName, true, true);
             } else if (rc != null && rc.isRangerManaged() && !cluster.isBlank() && !baseUriStr.isBlank()) {
                 Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
                 AmbariActionClient ambari = new AmbariActionClient(ctx,
                         java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
                 grantOmIngestionHiveAccessViaAmbari(ambari, hiveService, principal, policyName);
+                recordRangerGrant(childParams, hiveService, principal, OM_HIVE_INGESTION_ACCESS, HIVE_ALL_RESOURCES,
+                        policyName, true, true);
             } else {
                 LOG.warn("OM_HIVE_BASE_INGESTION: Ranger is not part of the platform context — grant Hive "
                         + "access to '{}' manually (Ranger service '{}', database/table/column=* with '{}'), "
@@ -16019,12 +16082,15 @@ public class CommandService {
                             principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
                     LOG.info("OM_TRINO_BASE_INGESTION: Ranger policy '{}' id={} for '{}' on '{}' (direct REST)",
                             policyName, pid, principal, trinoService);
+                    recordRangerGrant(childParams, trinoService, principal, g[2], g[1], policyName, false);
                 } else {
                     Map<String, String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
                     AmbariActionClient ambari = new AmbariActionClient(ctx,
                             java.net.URI.create(baseUriStr).resolve("/api/v1").toString(), cluster, authHeaders);
                     int req = ambari.submitRangerPolicyGrant(trinoService, principal, g[2], g[1], policyName,
                             description, 60, "KDPS OpenMetadata Trino ingestion: grant " + g[2] + " (" + g[0] + ") to " + principal);
+                    // The Trino service user holds access of its own: only the policy named for this release goes.
+                    recordRangerGrant(childParams, trinoService, principal, g[2], g[1], policyName, false);
                     if (ambari.waitUntilComplete(req, 90, java.util.concurrent.TimeUnit.SECONDS)) {
                         LOG.info("OM_TRINO_BASE_INGESTION: granted '{}' ({}) to '{}' on '{}' via Ambari (req {})",
                                 g[2], g[0], principal, trinoService, req);
@@ -17133,6 +17199,8 @@ public class CommandService {
         // so a no-op causes no new config version.
         boolean envChanged = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.writeAtlasEnvConfig(
                 ambari, cluster, creds.username, creds.passwordSha256Hex, role);
+        recordProvisioning(childParams, ledger -> ledger.setAtlasFederation(
+                new ProvisioningLedger.AtlasFederation(creds.username, fileAuthChanged)));
 
         // 3. Decide if Atlas needs a restart. Atlas loads its file user store only at startup, so the
         //    federation user is active only after a restart. The DECISIVE signal is a live auth-probe:
@@ -17341,6 +17409,7 @@ public class CommandService {
                 tlsOf(resolvePlatformContextForStep(childParams), "Ranger"),
                 rangerUrl, rangerUser, rangerPass, atlasService, policyName, principal, isKerberos,
                 java.util.concurrent.TimeUnit.SECONDS.toMillis(45));
+        recordAtlasReadGrants(childParams, atlasService, principal, policyName);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("policyId", policyId);
@@ -17417,6 +17486,7 @@ public class CommandService {
 
         LOG.info("RANGER_POLICY_GRANT_VIA_AMBARI: granted entity-read+type-read to '{}' on '{}' "
                 + "(Ambari requests {} + {})", principal, atlasService, entitiesReq, typesReq);
+        recordAtlasReadGrants(childParams, atlasService, principal, base);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("atlasServiceName", atlasService);
@@ -17467,6 +17537,8 @@ public class CommandService {
                     java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
             LOG.info("RANGER_POLICY_GRANT_HIVE_READ: granted select to '{}' on '{}' via context Ranger (direct REST, policy id={})",
                     principal, hiveService, pid);
+            recordRangerGrant(childParams, hiveService, principal, HIVE_SERVICE_DATA_ACCESS, HIVE_ALL_RESOURCES,
+                    policyName, principalMintedByKdps(childParams), principalPerNamespace(childParams));
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("hiveServiceName", hiveService);
             result.put("principal", principal);
@@ -17497,6 +17569,8 @@ public class CommandService {
 
         LOG.info("RANGER_POLICY_GRANT_HIVE_READ: granted select to '{}' on '{}' (Ambari request {})",
                 principal, hiveService, req);
+        recordRangerGrant(childParams, hiveService, principal, HIVE_SERVICE_DATA_ACCESS, HIVE_ALL_RESOURCES,
+                policyName, principalMintedByKdps(childParams), principalPerNamespace(childParams));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("hiveServiceName", hiveService);
@@ -18339,6 +18413,352 @@ public class CommandService {
                 platformContextId, tagSyncRangersFor(callerHeaders)).note();
     }
 
+    // ---------- What KDPS registered for a release outside Kubernetes (see ProvisioningLedger) ----------
+
+    /**
+     * Records what a deploy step registered for its release outside Kubernetes, which the release's uninstall takes
+     * back (see {@link #revokeExternalForRelease}). Never fails the step.
+     *
+     * @param stepParams the step's parameters, which name the release
+     * @param change     what to add to the release's ledger
+     */
+    void recordProvisioning(Map<String, Object> stepParams,
+                            java.util.function.Consumer<ProvisioningLedger> change) {
+        if (stepParams == null) return;
+        try {
+            new ReleaseMetadataService(ctx).recordProvisioning(stringValue(stepParams.get("namespace")),
+                    stringValue(stepParams.get("releaseName")), change);
+        } catch (RuntimeException e) {
+            LOG.warn("Could not record what KDPS registered for {}/{}: {}", stepParams.get("namespace"),
+                    stepParams.get("releaseName"), e.toString());
+        }
+    }
+
+    /** Records a Ranger grant a step made (see {@link ProvisioningLedger.RangerGrant}). */
+    void recordRangerGrant(Map<String, Object> stepParams, String service, String user, String access,
+                           String resourcesJson, String policy, boolean exclusive) {
+        recordRangerGrant(stepParams, service, user, access, resourcesJson, policy, exclusive, false);
+    }
+
+    /**
+     * Records a Ranger grant a step made; {@code perNamespace} says the account is one KDPS mints for the release's
+     * namespace (see {@link ProvisioningLedger.RangerGrant#perNamespace}).
+     */
+    void recordRangerGrant(Map<String, Object> stepParams, String service, String user, String access,
+                           String resourcesJson, String policy, boolean exclusive, boolean perNamespace) {
+        String contextId = stepParams == null ? "" : stringValue(stepParams.get("_platformContextId"));
+        recordProvisioning(stepParams, ledger -> ledger.addRangerGrant(
+                new ProvisioningLedger.RangerGrant(contextId.isBlank() ? null : contextId, service, user, access,
+                        resourcesJson, policy, exclusive, perNamespace)));
+    }
+
+    /**
+     * Records the two Atlas read grants of the OpenMetadata federation principal (entities and types). The account of
+     * an operator's Secret is the operator's, and may hold access of its own; the one KDPS names is KDPS's.
+     */
+    private void recordAtlasReadGrants(Map<String, Object> stepParams, String atlasService, String principal,
+                                       String policyBase) {
+        boolean minted = stringValue(stepParams.get("_omPrincipalSecret")).isBlank();
+        recordRangerGrant(stepParams, atlasService, principal, "entity-read",
+                "{\"entity-type\":[\"*\"],\"entity-classification\":[\"*\"],\"entity\":[\"*\"]}",
+                policyBase + "-entities", minted);
+        recordRangerGrant(stepParams, atlasService, principal, "type-read",
+                "{\"type-category\":[\"*\"],\"type\":[\"*\"]}", policyBase + "-types", minted);
+    }
+
+    /**
+     * Step parameter set when the account a Ranger grant names is one KDPS minted for its releases, which no operator
+     * input can name: only such an account's access is taken back from every policy at uninstall (see
+     * {@link ProvisioningLedger.RangerGrant#exclusive}). A step planned without it takes back only its own policy.
+     */
+    static final String PRINCIPAL_MINTED_BY_KDPS = "_principalMintedByKdps";
+
+    static boolean principalMintedByKdps(Map<String, Object> stepParams) {
+        return stepParams != null && "true".equalsIgnoreCase(stringValue(stepParams.get(PRINCIPAL_MINTED_BY_KDPS)));
+    }
+
+    /**
+     * Step parameter set, with {@link #PRINCIPAL_MINTED_BY_KDPS}, when the account KDPS minted is named after the
+     * release's namespace, so that only releases of that namespace can share it (see
+     * {@link ProvisioningLedger.RangerGrant#perNamespace}). A step planned without it is taken as shared by the
+     * releases of every namespace.
+     */
+    static final String PRINCIPAL_PER_NAMESPACE = "_principalPerNamespace";
+
+    static boolean principalPerNamespace(Map<String, Object> stepParams) {
+        return principalMintedByKdps(stepParams)
+                && "true".equalsIgnoreCase(stringValue(stepParams.get(PRINCIPAL_PER_NAMESPACE)));
+    }
+
+    /**
+     * Records the Ranger repository of a release, when it is the release's own: it has the name KDPS gives the
+     * repository of a release, {@code <release>-<namespace>}. A name the operator chose may be that of a repository
+     * other workloads use, and is never the release's to delete; the caller also leaves out a repository Ranger
+     * already had.
+     */
+    void recordReleaseRangerRepository(Map<String, Object> stepParams, String repositoryName) {
+        if (!isReleaseOwnRangerRepository(stepParams, repositoryName)) return;
+        String contextId = stringValue(stepParams.get("_platformContextId"));
+        recordProvisioning(stepParams, ledger -> ledger.addRangerRepository(new ProvisioningLedger.RangerRepository(
+                contextId.isBlank() ? null : contextId, repositoryName)));
+    }
+
+    /**
+     * Creates the Ranger repository of a release in the Ranger of its platform context, or finds the one Ranger
+     * already has, and records it with the release only when KDPS created it: a repository it adopted holds policies
+     * that are not the release's, and is never the release's to delete.
+     *
+     * @return the Ranger service id
+     */
+    long ensureRangerRepositoryInContext(Map<String, Object> stepParams,
+                                         org.apache.ambari.view.k8s.model.ResolvedContext rc, String repositoryName,
+                                         String serviceType, Map<String, String> configs) throws Exception {
+        boolean existed = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.serviceExists(tlsOf(rc, "Ranger"),
+                rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(), repositoryName);
+        long id = org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.createOrFindService(tlsOf(rc, "Ranger"),
+                rc.getRangerUrl(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(), repositoryName,
+                serviceType, configs);
+        if (!existed) recordReleaseRangerRepository(stepParams, repositoryName);
+        return id;
+    }
+
+    /** Whether {@code repositoryName} is the name KDPS gives the Ranger repository of the step's release. */
+    static boolean isReleaseOwnRangerRepository(Map<String, Object> stepParams, String repositoryName) {
+        String releaseName = stepParams == null ? "" : stringValue(stepParams.get("releaseName"));
+        String namespace = stepParams == null ? "" : stringValue(stepParams.get("namespace"));
+        return repositoryName != null && !releaseName.isBlank() && !namespace.isBlank()
+                && repositoryName.trim().equals(releaseName + "-" + namespace);
+    }
+
+    /** Records the OpenMetadata source a release added to Ranger TagSync, with the mapper key it wrote, if any. */
+    private void recordTagSyncSource(Map<String, Object> stepParams, Map<String, Object> spec, String entryKey,
+                                     String omEndpoint, String jwt) {
+        String mapperKey = null;
+        try {
+            mapperKey = buildTagSyncRangerSiteOverrides(spec, entryKey, omEndpoint, jwt, null).keySet().stream()
+                    .filter(k -> k.startsWith("ranger.tagsync.openmetadata.")).findFirst().orElse(null);
+        } catch (RuntimeException ignore) {
+            // Written already by then, so this cannot fail; the source is recorded without its mapper key otherwise.
+        }
+        String mapper = mapperKey;
+        recordProvisioning(stepParams, ledger -> ledger.setTagSyncSource(new ProvisioningLedger.TagSyncSource(
+                tagSyncSourceKey(spec), omEndpoint, mapper)));
+    }
+
+    /**
+     * What the uninstall of a release would do outside Kubernetes (see {@link #revokeExternalForRelease}), for its
+     * confirmation to list.
+     *
+     * @param mode {@code credentials}, {@code all} or {@code none}
+     * @return the report of {@link ExternalCleanup#preview}, as the uninstall answers it, with {@code recorded} false
+     *         when nothing is recorded for the release (one deployed by an earlier version)
+     */
+    public Map<String, Object> externalRegistrationsOfRelease(String namespace, String releaseName, String mode) {
+        ReleaseMetadataService metadata = new ReleaseMetadataService(ctx);
+        ProvisioningLedger ledger = metadata.provisioningOf(namespace, releaseName);
+        Map<String, Object> answer = new LinkedHashMap<>(ExternalCleanup.preview(namespace, ledger, ExternalCleanup.Mode.of(mode),
+                metadata.otherReleasesProvisioning(namespace, releaseName)).toMap());
+        answer.put("recorded", !ledger.isEmpty());
+        return answer;
+    }
+
+    /**
+     * Takes back what KDPS registered for a release outside Kubernetes, once the release is uninstalled, as its ledger
+     * records it (see {@link ExternalCleanup}): Ranger access, the Atlas federation user and the OpenMetadata source of
+     * Ranger TagSync, Ambari view instances, Vault copies and, when the release's sign-in Secrets were already gone,
+     * its Keycloak clients. The client secrets kept for the release's registration steps are forgotten whatever the
+     * mode. Failures are reported, never thrown.
+     *
+     * @param ledger            the release's ledger, read before its record was deleted
+     * @param mode              {@code credentials} (the default), {@code all} or {@code none}
+     * @param signInSecretsSeen whether the release's sign-in is already dealt with: its Secrets were found and their
+     *                          cleanup ran, or the uninstall asked to keep it; its Keycloak clients are then left to
+     *                          that cleanup
+     * @param callerHeaders     the uninstalling user's request headers, through which the Ambari server is reached
+     * @return the report ({@code removed}, {@code left}, {@code kept}, {@code note}), or null when nothing is recorded
+     */
+    public Map<String, Object> revokeExternalForRelease(String namespace, String releaseName,
+                                                        ProvisioningLedger ledger,
+                                                        String mode, boolean signInSecretsSeen,
+                                                        MultivaluedMap<String, String> callerHeaders) {
+        forgetOidcClientSecretsOfRelease(namespace, releaseName);
+        if (ledger == null || ledger.isEmpty()) return null;
+        ExternalCleanup.Mode cleanupMode;
+        try {
+            cleanupMode = ExternalCleanup.Mode.of(mode);
+        } catch (IllegalArgumentException e) {
+            cleanupMode = ExternalCleanup.Mode.CREDENTIALS;
+        }
+        ExternalCleanup.Report report = ExternalCleanup.run(namespace, releaseName, ledger, cleanupMode,
+                signInSecretsSeen, new ReleaseMetadataService(ctx).otherReleasesProvisioning(namespace, releaseName),
+                new ReleasePlatform(namespace, releaseName, callerHeaders));
+        LOG.info("External cleanup of {}/{}: {}", namespace, releaseName, report.note());
+        return report.isEmpty() ? null : report.toMap();
+    }
+
+    /**
+     * Forgets the client secrets kept for the OIDC registration steps of a release, and clears one an earlier version
+     * kept in a step result: a deploy that failed between registering the client and writing its Secret left them in
+     * the view, and the operation history outlives the release.
+     */
+    void forgetOidcClientSecretsOfRelease(String namespace, String releaseName) {
+        try {
+            Collection<CommandEntity> all = dataStore.findAll(CommandEntity.class, null);
+            if (all == null) return;
+            for (CommandEntity step : all) {
+                if (step == null || !CommandType.OIDC_REGISTER_CLIENT.name().equals(step.getType())) continue;
+                Map<String, Object> params;
+                try {
+                    params = gson.fromJson(resolveParamsJson(step), new TypeToken<LinkedHashMap<String, Object>>() {}.getType());
+                } catch (RuntimeException unreadable) {
+                    continue;
+                }
+                if (params == null || !namespace.equals(stringValue(params.get("namespace")))
+                        || !releaseName.equals(stringValue(params.get("releaseName")))) {
+                    continue;
+                }
+                oidcClientSecrets().forget(step.getId());
+                CommandStatusEntity status = findCommandStatusById(step.getCommandStatusId());
+                String cleared = status == null ? null : OidcClientSecrets.withoutClientSecret(status.getResultJson());
+                if (cleared != null) {
+                    status.setResultJson(cleared);
+                    store(status);
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not forget the OIDC client secrets kept for {}/{}: {}", namespace, releaseName, e.toString());
+        }
+    }
+
+    /** Where the external cleanup of a release acts: the Ranger, Keycloak and Ambari of its platform contexts. */
+    private final class ReleasePlatform implements ExternalCleanup.Platform {
+        private final String namespace;
+        private final String releaseName;
+        private final MultivaluedMap<String, String> callerHeaders;
+        private Map<String, Object> ambariAccess;
+
+        ReleasePlatform(String namespace, String releaseName, MultivaluedMap<String, String> callerHeaders) {
+            this.namespace = namespace;
+            this.releaseName = releaseName;
+            this.callerHeaders = callerHeaders;
+        }
+
+        private Map<String, Object> ambariAccess() {
+            if (ambariAccess == null) ambariAccess = ambariAccessOf(callerHeaders);
+            return ambariAccess;
+        }
+
+        /** The Ambari server of the managed cluster, with the uninstalling user's session. */
+        private AmbariActionClient ambari() {
+            Map<String, Object> access = ambariAccess();
+            String cluster = stringValue(access.get("_cluster"));
+            String baseUri = stringValue(access.get("_baseUri"));
+            if (cluster.isBlank() || baseUri.isBlank()) {
+                throw new IllegalStateException("KDPS has no access to the Ambari server of the managed cluster");
+            }
+            return new AmbariActionClient(ctx, URI.create(baseUri).resolve("/api/v1").toString(), cluster,
+                    AmbariActionClient.toAuthHeaders(access.get("_callerHeaders")));
+        }
+
+        private String cluster() {
+            return stringValue(ambariAccess().get("_cluster"));
+        }
+
+        /** The platform context a ledger entry names, refused when KDPS no longer has it. */
+        private org.apache.ambari.view.k8s.model.ResolvedContext context(String contextId) {
+            if (contextId != null && !contextId.isBlank() && !ContextService.DEFAULT_CONTEXT_ID.equals(contextId)
+                    && !ContextService.NO_CONTEXT_ID.equals(contextId) && new ContextService(ctx).get(contextId) == null) {
+                throw new IllegalStateException("the platform context '" + contextId + "' no longer exists in KDPS");
+            }
+            Map<String, Object> params = new LinkedHashMap<>(ambariAccess());
+            if (contextId != null && !contextId.isBlank()) params.put("_platformContextId", contextId);
+            return resolvePlatformContextForStep(params);
+        }
+
+        @Override
+        public int revokeRangerGrant(ProvisioningLedger.RangerGrant grant)
+                throws Exception {
+            org.apache.ambari.view.k8s.model.ResolvedContext rc = context(grant.contextId());
+            Set<String> access = new LinkedHashSet<>();
+            for (String a : stringValue(grant.access()).split(",")) {
+                if (!a.isBlank()) access.add(a.trim());
+            }
+            if (rc != null && rc.hasDirectRangerCreds()) {
+                Map<String, List<String>> scope = gson.fromJson(grant.resources(),
+                        new TypeToken<LinkedHashMap<String, List<String>>>() {}.getType());
+                return org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.revokeGrant(tlsOf(rc, "Ranger"),
+                        rc.getRangerUrl().trim(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                        grant.service(), scope == null ? Map.of() : scope, grant.user(), access, grant.policy(),
+                        !grant.exclusive());
+            }
+            if (rc != null && !rc.isRangerManaged()) {
+                throw new IllegalStateException("KDPS holds no Ranger administrator for that platform context");
+            }
+            AmbariActionClient ambari = ambari();
+            int req = ambari.submitRangerPolicyRevoke(grant.service(), grant.user(), String.join(",", access),
+                    grant.resources(), grant.policy(), !grant.exclusive(), 60,
+                    "KDPS: take back the Ranger access of " + grant.user() + " (uninstall of " + releaseName + ")");
+            if (!ambari.waitUntilComplete(req, 120, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(requestDidNotComplete(ambari, req));
+            }
+            return ambari.taskStructuredOut(req)
+                    .filter(out -> out.has("changedPolicies") && out.get("changedPolicies").isJsonPrimitive())
+                    .map(out -> out.get("changedPolicies").getAsInt())
+                    .orElse(1);
+        }
+
+        @Override
+        public boolean deleteRangerRepository(
+                ProvisioningLedger.RangerRepository repository) throws Exception {
+            org.apache.ambari.view.k8s.model.ResolvedContext rc = context(repository.contextId());
+            if (rc != null && rc.hasDirectRangerCreds()) {
+                return org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.deleteService(tlsOf(rc, "Ranger"),
+                        rc.getRangerUrl().trim(), rc.getRangerAdminUsername(), rc.getRangerAdminPassword(),
+                        repository.name());
+            }
+            // The Ambari server deletes no Ranger repository, and KDPS never holds the managed Ranger's administrator.
+            throw new IllegalStateException("KDPS cannot delete a repository of the managed cluster's Ranger");
+        }
+
+        @Override
+        public String deleteKeycloakClient(ProvisioningLedger.OidcClient client) {
+            return deleteKeycloakClientOfRelease(namespace, releaseName,
+                    new OidcClientRef(client.clientId(), client.realm(), client.contextId()), callerHeaders);
+        }
+
+        @Override
+        public Map<String, String> managedConfig(String type) throws Exception {
+            return ambari().getDesiredConfigProperties(cluster(), type);
+        }
+
+        @Override
+        public void updateManagedConfig(String type, Map<String, String> properties, String tagSuffix) throws Exception {
+            ambari().updateClusterConfig(cluster(), type, properties, tagSuffix);
+        }
+
+        @Override
+        public Integer restartManagedComponent(String service, String component, String context) throws Exception {
+            return ambari().submitComponentRestart(cluster(), service, component, context);
+        }
+
+        @Override
+        public boolean deleteViewInstance(ProvisioningLedger.ViewInstance instance)
+                throws Exception {
+            return ambari().deleteViewInstance(instance.view(), instance.version(), instance.instance());
+        }
+
+        @Override
+        public boolean deleteVaultPath(String path) throws Exception {
+            String vaultAddr = ctx.getProperties() == null ? null : ctx.getProperties().get("k8s.view.vault.address");
+            String vaultToken = ctx.getProperties() == null ? null : ctx.getProperties().get("k8s.view.vault.token");
+            if (vaultAddr == null || vaultAddr.isBlank() || vaultToken == null || vaultToken.isBlank()) {
+                return false;
+            }
+            deleteFromVault(vaultAddr, vaultToken, path);
+            return true;
+        }
+    }
+
     /** Labels of the Secrets holding the OIDC client of a release, and GitLab's OmniAuth provider built from it. */
     static final String OIDC_LABEL_MANAGED_BY = "app.kubernetes.io/managed-by";
     static final String OIDC_MANAGED_BY_KDPS = "kdps";
@@ -18809,6 +19229,9 @@ public class CommandService {
 
         int timeoutSeconds = 60;
         boolean direct = rc != null && rc.hasDirectRangerCreds();
+        // The principal is named after the release and its namespace, unless the name had to be cut short.
+        boolean principalPerNamespace = principal.equals(PolarisProvisioningService.deterministicName(releaseName,
+                stringValue(childParams.get("namespace")), Integer.MAX_VALUE));
         AmbariActionClient ambari = null;
         if (!direct) {
             if (cluster == null || baseUriStr == null) {
@@ -18843,6 +19266,8 @@ public class CommandService {
                         java.util.List.of(level[2].split(",")), principal,
                         java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
                 levels.put(levelName, Map.of("policyId", pid, "via", "context-ranger-rest"));
+                recordRangerGrant(childParams, polarisService, principal, level[2], gson.toJson(resources), policyName,
+                        true, principalPerNamespace);
             } else {
                 int req = ambari.submitRangerPolicyGrant(
                         polarisService, principal, level[2], gson.toJson(resources),
@@ -18853,6 +19278,8 @@ public class CommandService {
                             + " (polaris " + levelName + ") did not complete successfully");
                 }
                 levels.put(levelName, Map.of("requestId", req, "via", "ambari-server-action"));
+                recordRangerGrant(childParams, polarisService, principal, level[2], gson.toJson(resources), policyName,
+                        true, principalPerNamespace);
             }
         }
 
@@ -19111,6 +19538,8 @@ public class CommandService {
                     trinoService, policyName, principal, java.util.concurrent.TimeUnit.SECONDS.toMillis(timeoutSeconds));
             LOG.info("RANGER_POLICY_GRANT_TRINO_IMPERSONATE: granted impersonate to '{}' on '{}' via context Ranger (direct REST, policy id={})",
                     principal, trinoService, pid);
+            recordRangerGrant(childParams, trinoService, principal, "impersonate", TRINO_EVERY_USER_SCOPE, policyName,
+                principalMintedByKdps(childParams), principalPerNamespace(childParams));
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("trinoServiceName", trinoService);
             result.put("principal", principal);
@@ -19141,6 +19570,8 @@ public class CommandService {
 
         LOG.info("RANGER_POLICY_GRANT_TRINO_IMPERSONATE: granted impersonate to '{}' on '{}' (Ambari request {})",
                 principal, trinoService, req);
+        recordRangerGrant(childParams, trinoService, principal, "impersonate", TRINO_EVERY_USER_SCOPE, policyName,
+                principalMintedByKdps(childParams), principalPerNamespace(childParams));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("trinoServiceName", trinoService);
@@ -20168,6 +20599,33 @@ public class CommandService {
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new IllegalStateException("Vault write to '" + vaultPath
                     + "' returned HTTP " + resp.statusCode());
+        }
+    }
+
+    /**
+     * Deletes what {@link #writeOidcToVault} wrote, every version of it: a KV v2 path {@code <mount>/data/<key>} is
+     * deleted through its {@code <mount>/metadata/<key>} path; any other path is deleted as given.
+     */
+    static String vaultDeleteUrl(String vaultAddr, String vaultPath) {
+        String path = vaultPath.trim().replaceAll("^/+", "");
+        int data = path.indexOf("/data/");
+        if (data > 0) path = path.substring(0, data) + "/metadata/" + path.substring(data + "/data/".length());
+        return vaultAddr.replaceAll("/$", "") + "/v1/" + path;
+    }
+
+    private void deleteFromVault(String vaultAddr, String vaultToken, String vaultPath) throws Exception {
+        var req = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create(vaultDeleteUrl(vaultAddr, vaultPath)))
+                .timeout(java.time.Duration.ofSeconds(15))
+                .header("X-Vault-Token", vaultToken)
+                .DELETE()
+                .build();
+        var httpClient = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(15))
+                .build();
+        var resp = httpClient.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+        if ((resp.statusCode() < 200 || resp.statusCode() >= 300) && resp.statusCode() != 404) {
+            throw new IllegalStateException("Vault delete of '" + vaultPath + "' returned HTTP " + resp.statusCode());
         }
     }
 

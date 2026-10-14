@@ -99,7 +99,7 @@ class HelmResourceUninstallGitOpsTest {
     @Test
     void aRequestNamingAGitRepositoryBranchOrCredentialIsRefusedWithNothingRemoved() throws Exception {
         for (String parameter : HelmResource.GIT_OVERRIDE_PARAMETERS) {
-            Response response = resource.uninstall("analytics", "trino-uninstall-test", null, null,
+            Response response = resource.uninstall("analytics", "trino-uninstall-test", null, null, null,
                     query(parameter, "https://attacker.example/x.git"), null);
 
             assertEquals(400, response.getStatus(), parameter);
@@ -110,7 +110,7 @@ class HelmResourceUninstallGitOpsTest {
 
     @Test
     void aGitOpsReleaseIsRemovedWithWhatItsMetadataRecords() throws Exception {
-        Response response = resource.uninstall("analytics", "trino-uninstall-test", null, null,
+        Response response = resource.uninstall("analytics", "trino-uninstall-test", null, null, null,
                 query("repoId", "charts", "deploymentMode", "FLUX_GITOPS"), null);
 
         assertEquals(200, response.getStatus());
@@ -125,7 +125,7 @@ class HelmResourceUninstallGitOpsTest {
         doThrow(new IllegalStateException("KDPS cannot remove analytics/trino-uninstall-test from Git"))
                 .when(flux).checkRemovable(trino);
 
-        Response response = resource.uninstall("analytics", "trino-uninstall-test", null, null, query(), null);
+        Response response = resource.uninstall("analytics", "trino-uninstall-test", null, null, null, query(), null);
 
         assertEquals(409, response.getStatus());
         assertEquals("KDPS cannot remove analytics/trino-uninstall-test from Git",
@@ -144,7 +144,7 @@ class HelmResourceUninstallGitOpsTest {
         // As earlier versions accepted it: an alias of Ambari's credential store an administrator named.
         trino.setGitCredentialAlias("corp-git-token");
 
-        Response response = resource.uninstall("analytics", "trino-uninstall-test", null, null, query(), null);
+        Response response = resource.uninstall("analytics", "trino-uninstall-test", null, null, null, query(), null);
 
         assertEquals(409, response.getStatus());
         String error = String.valueOf(((Map<?, ?>) response.getEntity()).get("error"));

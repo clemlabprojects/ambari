@@ -224,6 +224,19 @@ public final class FakeRangerAdmin implements AutoCloseable {
             answer(ex, 200, "{\"id\":" + id + ",\"name\":\"" + service + "\"}");
             return;
         }
+        if (path.startsWith(servicePrefix) && "DELETE".equals(method) && !path.contains("/policy")) {
+            long id = Long.parseLong(path.substring(servicePrefix.length()));
+            String service = services.entrySet().stream().filter(e -> e.getValue() == id).map(Map.Entry::getKey)
+                    .findFirst().orElse(null);
+            if (service == null) {
+                answer(ex, 404, "{\"msgDesc\":\"no service\"}");
+                return;
+            }
+            services.remove(service);
+            policies.values().removeIf(p -> service.equals(p.get("service").getAsString()));
+            answer(ex, 204, null);
+            return;
+        }
         if (path.startsWith(servicePrefix) && path.contains("/policy")) {
             String rest = path.substring(servicePrefix.length());
             String service = rest.substring(0, rest.indexOf("/policy"));

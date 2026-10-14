@@ -118,6 +118,8 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
+        verify(commandService, never()).revokeExternalForRelease(anyString(), anyString(), any(), any(),
+                org.mockito.ArgumentMatchers.anyBoolean(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -127,13 +129,15 @@ class HelmResourceUninstallTest {
         verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(commandService).revokeOidcForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(commandService).revokeKdpsObjectsForRelease(eq(NS), eq(RELEASE), any());
+        verify(commandService).revokeExternalForRelease(eq(NS), eq(RELEASE), any(), any(),
+                org.mockito.ArgumentMatchers.anyBoolean(), any());
         verify(releaseMetadata).delete(NS, RELEASE);
     }
 
     private Response uninstall() {
         // No Git parameter: the release is removed from Git with what its record names (see
         // HelmResourceUninstallGitOpsTest).
-        return resource.uninstall(NS, RELEASE, null, null, null, null);
+        return resource.uninstall(NS, RELEASE, null, null, null, null, null);
     }
 
     @Test
@@ -379,7 +383,7 @@ class HelmResourceUninstallTest {
 
     @Test
     void anUninstallAskingToKeepTheSignInLeavesIt() throws Exception {
-        Response response = resource.uninstall(NS, RELEASE, null, " None ", null, null);
+        Response response = resource.uninstall(NS, RELEASE, null, " None ", null, null, null);
 
         assertEquals(200, response.getStatus());
         verify(commandService).destroyViaBackend(eq(NS), eq(RELEASE), any());
@@ -562,5 +566,83 @@ class HelmResourceUninstallTest {
 
         assertEquals(200, response.getStatus());
         assertEquals(Map.of("objects", java.util.List.of()), response.getEntity());
+    }
+    @Test
+    void whatKdpsRegisteredOutsideKubernetesIsReadBeforeTheRecordGoesAndTakenBackAfter() throws Exception {
+        K8sReleaseEntity meta = recordedDirect();
+        org.apache.ambari.view.k8s.store.ProvisioningLedger ledger = new org.apache.ambari.view.k8s.store.ProvisioningLedger();
+        ledger.addRangerGrant(new org.apache.ambari.view.k8s.store.ProvisioningLedger.RangerGrant(null, "c1_hive",
+                "oma-ing-team-a", "select", "{}", "kdps-openmetadata-trino-hive-read", true));
+        when(releaseMetadata.provisioningOf(meta, NS, RELEASE)).thenReturn(ledger);
+        Map<String, Object> report = Map.of("removed", java.util.List.of("Ranger access"), "note", "Removed");
+        when(commandService.revokeOidcForRelease(eq(NS), eq(RELEASE), any(), any())).thenReturn("Removed the client.");
+        when(commandService.revokeExternalForRelease(eq(NS), eq(RELEASE), eq(ledger), eq("CREDENTIALS"), eq(true), any()))
+                .thenReturn(report);
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        assertEquals(report, ((Map<?, ?>) response.getEntity()).get("externalCleanup"));
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(commandService, releaseMetadata);
+        order.verify(commandService).destroyViaBackend(eq(NS), eq(RELEASE), any());
+        order.verify(releaseMetadata).provisioningOf(meta, NS, RELEASE);
+        order.verify(releaseMetadata).delete(NS, RELEASE);
+        order.verify(commandService).revokeExternalForRelease(eq(NS), eq(RELEASE), eq(ledger), eq("CREDENTIALS"),
+                eq(true), any());
+    }
+
+    @Test
+    void anUninstallKeepingWhatIsOutsideKubernetesKeepsTheSignInToo() throws Exception {
+        recordedDirect();
+
+        Response response = resource.uninstall(NS, RELEASE, null, null, " none ", null, null);
+
+        assertEquals(200, response.getStatus());
+        verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService).revokeExternalForRelease(eq(NS), eq(RELEASE), any(), eq("NONE"), eq(false), any());
+        // The tag sync account holds the Ranger administrator role: it is disabled whatever the uninstall asks.
+        verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
+    }
+
+    @Test
+    void anUninstallKeepingTheSignInKeepsTheClientTheReleaseRecordNamesToo() throws Exception {
+        recordedDirect();
+
+        resource.uninstall(NS, RELEASE, null, "none", null, null, null);
+
+        verify(commandService).revokeExternalForRelease(eq(NS), eq(RELEASE), any(), eq("CREDENTIALS"), eq(true), any());
+    }
+
+    @Test
+    void anUnknownExternalCleanupRemovesNothing() throws Exception {
+        recordedDirect();
+
+        Response response = resource.uninstall(NS, RELEASE, null, null, "everything", null, null);
+
+        assertEquals(400, response.getStatus());
+        verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
+        assertNothingTakenBack();
+    }
+
+    @Test
+    void anExternalCleanupThatThrowsDoesNotFailTheUninstall() throws Exception {
+        recordedDirect();
+        when(commandService.revokeExternalForRelease(anyString(), anyString(), any(), any(),
+                org.mockito.ArgumentMatchers.anyBoolean(), any())).thenThrow(new IllegalStateException("unexpected"));
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        verify(releaseMetadata).delete(NS, RELEASE);
+    }
+
+    @Test
+    void theConfirmationListsWhatIsTakenBackOutsideKubernetes() throws Exception {
+        Map<String, Object> preview = Map.of("removed", java.util.List.of("Keycloak client 'trino-team-a'"),
+                "recorded", true);
+        when(commandService.externalRegistrationsOfRelease(NS, RELEASE, "all")).thenReturn(preview);
+
+        assertEquals(preview, resource.externalRegistrationsOfRelease(NS, RELEASE, "all").getEntity());
+        assertEquals(400, resource.externalRegistrationsOfRelease(NS, RELEASE, "some").getStatus());
     }
 }

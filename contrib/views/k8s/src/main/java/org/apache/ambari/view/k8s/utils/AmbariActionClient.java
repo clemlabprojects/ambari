@@ -1399,6 +1399,27 @@ public class AmbariActionClient {
             Integer timeoutSeconds,
             String context
     ) throws Exception {
+        return submitRangerPolicyRevoke(rangerServiceName, userName, accessTypes, resourcesJson, ownedPolicyName,
+                false, timeoutSeconds, context);
+    }
+
+    /**
+     * {@link #submitRangerPolicyRevoke(String, String, String, String, String, Integer, String)} that, with
+     * {@code ownedPolicyOnly}, changes only the policy named {@code ownedPolicyName}: for an account that also holds
+     * access of its own over the same resources, such as a service user listed in a repository's default policies.
+     * An Ambari server that does not know {@code ownedPolicyOnly} refuses the whole request, so it never takes back
+     * more than asked.
+     */
+    public int submitRangerPolicyRevoke(
+            String rangerServiceName,
+            String userName,
+            String accessTypes,
+            String resourcesJson,
+            String ownedPolicyName,
+            boolean ownedPolicyOnly,
+            Integer timeoutSeconds,
+            String context
+    ) throws Exception {
         Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger policy revoke");
         Objects.requireNonNull(rangerServiceName, "rangerServiceName");
         if (userName == null || userName.isBlank()) {
@@ -1417,6 +1438,9 @@ public class AmbariActionClient {
         rangerPolicy.addProperty("resourcesJson", resourcesJson);
         rangerPolicy.addProperty("policyNameHint", ownedPolicyName);
         rangerPolicy.addProperty("revoke", true);
+        if (ownedPolicyOnly) {
+            rangerPolicy.addProperty("ownedPolicyOnly", true);
+        }
         if (timeoutSeconds != null) {
             rangerPolicy.addProperty("timeoutSeconds", timeoutSeconds);
         }
@@ -2096,6 +2120,60 @@ public class AmbariActionClient {
             String resp = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             LOG.info("View instance provisioned ({}): status response length={}", instanceName, resp.length());
         }
+    }
+
+    /**
+     * Whether Ambari has the view instance ({@code GET /views/{view}/versions/{version}/instances/{instance}}).
+     *
+     * @throws Exception when Ambari cannot be asked or refuses to say
+     */
+    public boolean viewInstanceExists(String viewName, String viewVersion, String instanceName) throws Exception {
+        String url = ambariApiBase
+                + "/views/" + encodePathSegment(viewName)
+                + "/versions/" + encodePathSegment(viewVersion)
+                + "/instances/" + encodePathSegment(instanceName);
+        try (InputStream is = stream.readFrom(url, "GET", (String) null, withStdHeaders(null))) {
+            String body = is == null ? "" : new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            if (body.isBlank()) {
+                throw new IOException("Empty answer from " + url);
+            }
+            return answer(body, url).has("ViewInstanceInfo");
+        } catch (Exception e) {
+            // The stream provider may throw on an error status instead of handing back its body.
+            if (e.getMessage() != null && (e.getMessage().startsWith("HTTP 404") || e.getMessage().contains(" 404"))) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Deletes an Ambari view instance ({@code DELETE /views/{view}/versions/{version}/instances/{instance}}).
+     *
+     * @return false when Ambari has no such instance
+     * @throws Exception when Ambari refuses the deletion
+     */
+    public boolean deleteViewInstance(String viewName, String viewVersion, String instanceName) throws Exception {
+        String url = ambariApiBase
+                + "/views/" + encodePathSegment(viewName)
+                + "/versions/" + encodePathSegment(viewVersion)
+                + "/instances/" + encodePathSegment(instanceName);
+        try {
+            send(url, "DELETE", null);
+        } catch (IOException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("HTTP 404")) {
+                return false;
+            }
+            throw e;
+        } catch (Exception e) {
+            // The stream provider may throw on an error status instead of handing back its body.
+            if (e.getMessage() != null && e.getMessage().contains("404")) {
+                return false;
+            }
+            throw e;
+        }
+        LOG.info("Deleted Ambari view instance {}/{}/{}", viewName, viewVersion, instanceName);
+        return true;
     }
 
     private void initializeMainConfigurations(){
