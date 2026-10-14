@@ -51,15 +51,12 @@ public class SecurityMappingService {
     }
 
     /**
-     * Load merged mapping (defaults + overrides) for all modes.
+     * Load merged mapping (defaults + overrides) for all modes. Every deploy with a security profile reads it, so it
+     * writes nothing once the mapping row exists, and a store it cannot read or write only costs the overrides: the
+     * defaults always come from the classpath.
      */
     public Map<String, Map<String, String>> loadMergedMapping() {
-        SecurityMappingEntity entity;
-        try {
-            entity = ensureSeeded();
-        } catch (PersistenceException ex) {
-            throw new RuntimeException("Failed to load security mapping", ex);
-        }
+        SecurityMappingEntity entity = ensureSeeded();
         Map<String, Map<String, String>> defaults = buildDefaultsFromSecurityConfig();
         Map<String, Map<String, String>> overrides = readJson(entity != null ? entity.getOverridesJson() : null);
         if (defaults == null) defaults = Collections.emptyMap();
@@ -147,28 +144,32 @@ public class SecurityMappingService {
         return mapping;
     }
 
-    private SecurityMappingEntity ensureSeeded() throws PersistenceException {
-        SecurityMappingEntity entity = null;
+    /**
+     * The mapping row, stored once when there is none yet. The defaults are not stored with it: they are rebuilt from
+     * the classpath on every read, and their copy grew with security.json towards the DataStore's 3000-character
+     * limit, past which every read failed.
+     *
+     * @return the row; {@code null} when it cannot be read
+     */
+    private SecurityMappingEntity ensureSeeded() {
+        SecurityMappingEntity entity;
         try {
             entity = viewContext.getDataStore().find(SecurityMappingEntity.class, SecurityMappingEntity.SINGLETON_ID);
         } catch (PersistenceException ex) {
-            LOG.warn("Failed to check security mapping seed: {}", ex.toString());
+            LOG.warn("Failed to read the security mapping overrides, using the defaults only: {}", ex.toString());
+            return null;
         }
-
-        if (entity == null) {
-            entity = new SecurityMappingEntity();
-            entity.setId(SecurityMappingEntity.SINGLETON_ID);
-            entity.setCreatedAt(Instant.now().toString());
-            entity.setUpdatedAt(entity.getCreatedAt());
+        if (entity != null) {
+            return entity;
         }
-
-        // Persist defaults snapshot; fail fast if datastore is not writable
+        entity = new SecurityMappingEntity();
+        entity.setId(SecurityMappingEntity.SINGLETON_ID);
+        entity.setCreatedAt(Instant.now().toString());
+        entity.setUpdatedAt(entity.getCreatedAt());
         try {
-            entity.setDefaultJson(objectMapper.writeValueAsString(buildDefaultsFromSecurityConfig()));
-            entity.setUpdatedAt(Instant.now().toString());
             viewContext.getDataStore().store(entity);
         } catch (Exception ex) {
-            throw new PersistenceException("Failed to seed security mapping", ex);
+            LOG.warn("Failed to create the security mapping row; it is created on a later read: {}", ex.toString());
         }
         return entity;
     }

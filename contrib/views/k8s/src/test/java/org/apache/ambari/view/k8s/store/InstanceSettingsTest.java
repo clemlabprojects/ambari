@@ -210,11 +210,74 @@ class InstanceSettingsTest {
 
         String stored = settings.get("context.secret.ext.rangerAdminPassword");
         assertNotEquals(legacy, stored);
-        EncryptionService.Decrypted now = masterKey.decryptStored(Base64.getDecoder().decode(stored));
+        // Saved again in this version's form: salt:iv:ciphertext as it is, without an outer Base64.
+        EncryptionService.Decrypted now = masterKey.decryptStored(stored.getBytes(StandardCharsets.UTF_8));
         assertEquals("ranger-admin-pw", new String(now.plain(), StandardCharsets.UTF_8));
         assertFalse(now.reencrypt());
         assertThrows(IllegalStateException.class, () -> TestMasterKeys.encryptionWith("another-master-key")
-                .decrypt(Base64.getDecoder().decode(stored)), "no longer readable with the built-in passphrase");
+                .decrypt(stored.getBytes(StandardCharsets.UTF_8)), "no longer readable with the built-in passphrase");
+    }
+
+    // ----- secret size -----
+
+    @Test
+    void aSecretIsStoredInTheEncryptedFormItselfAndOneSavedBase64WrappedIsStillRead() {
+        EncryptionService masterKey = TestMasterKeys.encryptionWith("a-master-key");
+        InstanceSettings settings = new InstanceSettings(new InMemoryDataStore(), masterKey);
+
+        settings.putSecret("helm.repo.secret.harbor", "registry-token");
+        String stored = settings.get("helm.repo.secret.harbor");
+        assertEquals(3, stored.split(":").length, "salt:iv:ciphertext: " + stored);
+        assertEquals("registry-token", settings.getSecret("helm.repo.secret.harbor"));
+
+        String wrapped = Base64.getEncoder().encodeToString(masterKey.encrypt("older-token".getBytes(StandardCharsets.UTF_8)));
+        settings.put("helm.repo.secret.quay", wrapped);
+        assertEquals("older-token", settings.getSecret("helm.repo.secret.quay"));
+        assertEquals(wrapped, settings.get("helm.repo.secret.quay"), "read as it is, not saved again");
+    }
+
+    @Test
+    void aRegistryTokenTooLongForOneSettingIsKeptInPartsAndReadBackWhole() {
+        InMemoryDataStore store = new InMemoryDataStore();
+        InstanceSettings settings = new InstanceSettings(store, TestMasterKeys.encryptionWith("a-master-key"));
+        String token = "eyJ" + "a".repeat(2997);
+
+        settings.putSecret("helm.repo.secret.ecr", token);
+
+        assertEquals(token, settings.getSecret("helm.repo.secret.ecr"));
+        assertTrue(store.findAll(KdpsSettingEntity.class, null).stream()
+                .allMatch(row -> row.getValue() == null || row.getValue().length() <= InstanceSettings.MAX_VALUE_LENGTH),
+                "every row fits the DataStore");
+        assertTrue(store.findAll(KdpsSettingEntity.class, null).size() > 2, "kept in parts");
+        assertFalse(store.findAll(KdpsSettingEntity.class, null).stream()
+                .anyMatch(row -> row.getValue() != null && row.getValue().contains("aaaaaaaa")), "encrypted");
+
+        settings.putSecret("helm.repo.secret.ecr", "short");
+        assertEquals("short", settings.getSecret("helm.repo.secret.ecr"));
+        assertEquals(1, store.findAll(KdpsSettingEntity.class, null).size(), "the parts of the long one are gone");
+
+        settings.putSecret("helm.repo.secret.ecr", token);
+        settings.remove("helm.repo.secret.ecr");
+        assertNull(settings.getSecret("helm.repo.secret.ecr"));
+        assertEquals(1, store.findAll(KdpsSettingEntity.class, null).size(), "only the removed setting's empty row");
+
+        settings.putSecret("helm.repo.secret.ecr", token);
+        settings.delete("helm.repo.secret.ecr");
+        assertTrue(store.findAll(KdpsSettingEntity.class, null).isEmpty());
+    }
+
+    @Test
+    void aSecretLongerThanTheLimitIsRefusedWithoutEchoingItAndNothingIsSaved() {
+        InMemoryDataStore store = new InMemoryDataStore();
+        InstanceSettings settings = new InstanceSettings(store, TestMasterKeys.encryptionWith("a-master-key"));
+        String tooLong = "t".repeat(InstanceSettings.MAX_SECRET_LENGTH + 1);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> settings.putSecret("helm.repo.secret.ecr", tooLong));
+
+        assertTrue(e.getMessage().contains("too long"), e.getMessage());
+        assertFalse(e.getMessage().contains(tooLong));
+        assertTrue(store.findAll(KdpsSettingEntity.class, null).isEmpty());
     }
 
     @Test

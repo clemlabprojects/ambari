@@ -87,8 +87,10 @@ public class KdpsContextEntity extends BaseModel {
     /**
      * JSON object of non-secret connection settings, e.g.
      * {@code {"atlasUrl":"https://...","atlasAuthMode":"basic","rangerUrl":"https://...",
-     * "rangerAdminUsername":"admin"}}. Stored as a plain String column (Ambari caps it at 3000
-     * chars — far beyond any realistic context config; {@code ContextService} guards the length).
+     * "rangerAdminUsername":"admin"}}. Stored as a plain String column, which Ambari caps at 3000
+     * chars ({@code ContextService} guards the length). The files pasted into a context (site XML,
+     * krb5.conf, CA chain) are longer, so they are kept apart in {@link KdpsContextBlobEntity} parts;
+     * {@code ContextService} reads a context with them added back.
      */
     private String configJson;
 

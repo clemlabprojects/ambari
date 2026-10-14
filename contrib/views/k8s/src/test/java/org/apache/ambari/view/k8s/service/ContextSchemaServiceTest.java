@@ -66,6 +66,13 @@ class ContextSchemaServiceTest {
     }
 
     @Test
+    void thePastedFilesAreTheFieldsKeptApartFromTheContextRow() {
+        assertEquals(List.of("krb5Conf", "coreSiteXml", "hdfsSiteXml", "hiveSiteXml", "caCert").stream().sorted().toList(),
+                new ContextSchemaService().largeTextFields().keySet().stream().sorted().toList());
+        assertEquals("hdfs-site.xml", new ContextSchemaService().largeTextFields().get("hdfsSiteXml"));
+    }
+
+    @Test
     void aFieldReusingAnotherFieldsStorageKeyIsDropped() {
         ContextCapabilitySchema kerberos = capability("kerberos", def("realm", null), def("kdcHost", null));
         ContextCapabilitySchema sso = capability("sso", def("realm", null), def("issuer", null));

@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import org.apache.ambari.view.PersistenceException;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.dto.security.OidcConfig;
 import org.apache.ambari.view.k8s.dto.security.SecurityConfigDTO;
@@ -34,6 +35,7 @@ import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.security.EncryptionService;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
+import org.apache.ambari.view.k8s.store.KdpsContextBlobEntity;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
 import org.apache.ambari.view.k8s.store.KdpsContextRepo;
 import org.apache.ambari.view.k8s.utils.AmbariActionClient;
@@ -45,6 +47,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
 /**
@@ -95,20 +98,33 @@ public class ContextService {
     static final String SHARED_REALM_NOTICE = "This context was saved before the Kerberos, single sign-on (OIDC) and"
             + " Polaris realms were stored separately, and only one realm was kept for all three. It is now used as"
             + " the Kerberos realm. Review the OIDC realm and the Polaris realm, then save the context again.";
-    private static final Gson GSON = new Gson();
+    /**
+     * Writes {@code <}, {@code >}, {@code =}, {@code &} and {@code '} as they are: escaped, each took six characters,
+     * which made pasted XML half as long again. Configs stored escaped by earlier versions read the same.
+     */
+    private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
     /** Reads security profiles as {@link SecurityProfileService} stores them. */
     private static final ObjectMapper PROFILE_MAPPER = new ObjectMapper();
 
     /**
      * Max serialized length of {@code configJson}. Matches Ambari view persistence's per-String
-     * column cap ({@code DataStoreImpl.MAX_ENTITY_STRING_FIELD_LENGTH}); a context config is a
-     * handful of URLs/usernames, so this is never reached in practice.
+     * column cap ({@code DataStoreImpl.MAX_ENTITY_STRING_FIELD_LENGTH}). The pasted files (site XML,
+     * krb5.conf, CA chain) are kept apart in {@link KdpsContextBlobEntity} parts, so what is left is a
+     * handful of URLs and names.
      */
     private static final int MAX_CONFIG_JSON_LENGTH = 3000;
+
+    /**
+     * Longest pasted file a context keeps (site XML, krb5.conf, CA chain): the hdfs-site.xml of a large
+     * cluster is a few tens of kilobytes.
+     */
+    static final int MAX_LARGE_TEXT_LENGTH = 128 * 1024;
 
     private final ViewContext viewContext;
     private final KdpsContextRepo repo;
     private final InstanceSettings settings;
+    /** Storage keys of the pasted files, from the capability schema; read once per service. */
+    private Map<String, String> largeTextLabels;
 
     public ContextService(ViewContext ctx) {
         this.viewContext = ctx;
@@ -130,7 +146,7 @@ public class ContextService {
         try {
             for (KdpsContextEntity e : repo.findAll()) {
                 if (!DEFAULT_CONTEXT_ID.equals(e.getId())) {
-                    out.add(e);
+                    out.add(withLargeTexts(e));
                 }
             }
         } catch (Exception ex) {
@@ -146,7 +162,144 @@ public class ContextService {
         if (id == null || id.isBlank() || DEFAULT_CONTEXT_ID.equals(id)) {
             return managedDefault(null);
         }
-        return repo.findById(id);
+        return findWithConfig(id);
+    }
+
+    /**
+     * A stored context with its whole config: {@code configJson} then holds the pasted files kept apart in
+     * {@link KdpsContextBlobEntity} parts as well, so whoever reads the config (the edit form, the Hadoop client
+     * configuration, the krb5.conf and the Ranger CA of a deploy) finds every field in one place. The entity
+     * returned is never stored as it is: {@link #save} keeps the pasted files apart again.
+     *
+     * @param id the context id
+     * @return the context, or {@code null} when there is none
+     */
+    KdpsContextEntity findWithConfig(String id) {
+        return withLargeTexts(repo.findById(id));
+    }
+
+    /** {@link #findWithConfig} for a context already read: adds its pasted files to its {@code configJson}. */
+    private KdpsContextEntity withLargeTexts(KdpsContextEntity entity) {
+        if (entity == null || entity.getId() == null) {
+            return entity;
+        }
+        Map<String, Object> config = parseConfig(entity.getConfigJson());
+        boolean added = false;
+        for (String key : largeTextLabels().keySet()) {
+            String text;
+            try {
+                text = readLargeText(entity.getId(), key);
+            } catch (RuntimeException e) {
+                LOG.warn("ContextService: could not read '{}' of context {}: {}", key, entity.getId(), e.toString());
+                continue;
+            }
+            if (text != null) {
+                // Contexts saved by earlier versions kept the file in configJson; the part store wins once it holds one.
+                config.put(key, text);
+                added = true;
+            }
+        }
+        if (added) {
+            entity.setConfigJson(GSON.toJson(config));
+        }
+        return entity;
+    }
+
+    /** The storage keys of the pasted-file fields, with the label the form shows them under. */
+    private Map<String, String> largeTextLabels() {
+        if (largeTextLabels == null) {
+            largeTextLabels = new ContextSchemaService().largeTextFields();
+        }
+        return largeTextLabels;
+    }
+
+    /**
+     * Reads a pasted file of a context from its parts.
+     *
+     * @return the file, or {@code null} when none is kept apart (or a part is missing: half a file is worse than none)
+     */
+    private String readLargeText(String contextId, String key) {
+        KdpsContextBlobEntity first = findBlob(KdpsContextBlobEntity.idOf(contextId, key, 0));
+        if (first == null) {
+            return null;
+        }
+        int parts = first.getParts() == null ? 1 : first.getParts();
+        StringBuilder text = new StringBuilder(first.getValue() == null ? "" : first.getValue());
+        for (int i = 1; i < parts; i++) {
+            KdpsContextBlobEntity part = findBlob(KdpsContextBlobEntity.idOf(contextId, key, i));
+            if (part == null || part.getValue() == null) {
+                LOG.warn("ContextService: '{}' of context {} is missing part {} of {}; it is ignored", key, contextId,
+                        i, parts);
+                return null;
+            }
+            text.append(part.getValue());
+        }
+        return text.toString();
+    }
+
+    /**
+     * Keeps a pasted file of a context in parts of at most {@link KdpsContextBlobEntity#PART_LENGTH} characters, and
+     * removes the parts a longer earlier value left.
+     *
+     * @param text the file; {@code null} removes it
+     */
+    private void writeLargeText(String contextId, String key, String text) {
+        KdpsContextBlobEntity first;
+        try {
+            first = findBlob(KdpsContextBlobEntity.idOf(contextId, key, 0));
+        } catch (IllegalStateException e) {
+            if (text == null) {
+                // A store that cannot hold pasted files (the view instance was registered by an earlier build of
+                // this version) holds none to remove, so contexts without one still save and delete.
+                LOG.debug("ContextService: no stored '{}' of context {} to remove: {}", key, contextId, e.toString());
+                return;
+            }
+            throw new IllegalStateException("Could not save the " + largeTextLabels().getOrDefault(key, key)
+                    + " of this platform context: this Ambari Server cannot store pasted files for the view yet."
+                    + " Reinstall the view on Ambari Server, then save again.", e);
+        }
+        int before = first == null ? 0 : (first.getParts() == null ? 1 : first.getParts());
+        int parts = 0;
+        if (text != null) {
+            int size = KdpsContextBlobEntity.PART_LENGTH;
+            parts = Math.max(1, (text.length() + size - 1) / size);
+            // The other parts first, then part 0 with the count, so the count never names a part not written yet.
+            for (int i = parts - 1; i >= 0; i--) {
+                String value = text.substring(i * size, Math.min(text.length(), (i + 1) * size));
+                storeBlob(new KdpsContextBlobEntity(KdpsContextBlobEntity.idOf(contextId, key, i), value,
+                        i == 0 ? parts : null));
+            }
+        }
+        for (int i = parts; i < before; i++) {
+            removeBlob(KdpsContextBlobEntity.idOf(contextId, key, i));
+        }
+    }
+
+    private KdpsContextBlobEntity findBlob(String id) {
+        try {
+            return viewContext.getDataStore().find(KdpsContextBlobEntity.class, id);
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("Could not read the platform context value " + id, e);
+        }
+    }
+
+    private void storeBlob(KdpsContextBlobEntity blob) {
+        try {
+            viewContext.getDataStore().store(blob);
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("Could not save the platform context value " + blob.getId(), e);
+        }
+    }
+
+    private void removeBlob(String id) {
+        try {
+            KdpsContextBlobEntity blob = viewContext.getDataStore().find(KdpsContextBlobEntity.class, id);
+            if (blob != null) {
+                viewContext.getDataStore().remove(blob);
+            }
+        } catch (PersistenceException e) {
+            throw new IllegalStateException("Could not remove the platform context value " + id, e);
+        }
     }
 
     /**
@@ -213,9 +366,7 @@ public class ContextService {
         entity.setClusterName(request.clusterName);
         entity.setDescription(request.description);
 
-        // Serialize non-secret config. Ambari stores String columns up to 3000 chars; guard with a
-        // clear error rather than letting the persistence layer throw an opaque one.
-                Map<String, Object> config = request.config != null ? new LinkedHashMap<>(request.config) : new LinkedHashMap<>();
+        Map<String, Object> config = request.config != null ? new LinkedHashMap<>(request.config) : new LinkedHashMap<>();
         // Defence in depth: a secret typed into `config` (the wizard sends secrets separately, an API
         // caller may not) must never be persisted in clear nor echoed by GET. Move every schema-secret
         // key out of config into the encrypted secrets.
@@ -238,12 +389,32 @@ public class ContextService {
             config.put(POLARIS_REALM_KEY, config.remove(LEGACY_REALM_KEY));
         }
         config.put(SEPARATE_REALMS_KEY, Boolean.TRUE);
+        // The pasted files are kept apart, in parts; everything is checked before anything is written.
+        Map<String, String> largeTexts = new LinkedHashMap<>();
+        for (Map.Entry<String, String> field : largeTextLabels().entrySet()) {
+            String text = str(config.remove(field.getKey()));
+            if (isBlank(text)) {
+                continue;
+            }
+            if (text.length() > MAX_LARGE_TEXT_LENGTH) {
+                throw new IllegalArgumentException("The field '" + field.getValue() + "' is too long to be saved ("
+                        + text.length() + " characters, at most " + MAX_LARGE_TEXT_LENGTH + ").");
+            }
+            largeTexts.put(field.getKey(), text);
+        }
+        // Ambari stores String columns up to 3000 chars; guard with a clear error naming the
+        // longest fields rather than letting the persistence layer throw an opaque one.
         String configJson = GSON.toJson(config);
         if (configJson.length() > MAX_CONFIG_JSON_LENGTH) {
-            throw new IllegalArgumentException("Context configuration is too large ("
-                    + configJson.length() + " chars; max " + MAX_CONFIG_JSON_LENGTH + ").");
+            throw new IllegalArgumentException("The context configuration is too large to be saved ("
+                    + configJson.length() + " characters, at most " + MAX_CONFIG_JSON_LENGTH + "). Longest fields: "
+                    + longestFields(config) + ".");
         }
         entity.setConfigJson(configJson);
+
+        for (Map.Entry<String, String> e : secrets.entrySet()) {
+            InstanceSettings.checkSecretLength("value of '" + e.getKey() + "'", e.getValue());
+        }
 
         // Encrypt + store provided secrets; track key names. Merge with existing keys so a
         // partial update (only some secrets re-entered) does not drop previously stored ones.
@@ -272,7 +443,12 @@ public class ContextService {
         String now = Instant.now().toString();
         entity.setCreatedAt(prior != null && prior.getCreatedAt() != null ? prior.getCreatedAt() : now);
         entity.setUpdatedAt(now);
+        for (String key : largeTextLabels().keySet()) {
+            // A field left empty removes the file saved before, as it does for every other field.
+            writeLargeText(request.id, key, largeTexts.get(key));
+        }
         KdpsContextEntity saved = repo.upsert(entity);
+        saved = withLargeTexts(saved);
         // Deterministic security-profile derivation: (re)derive this context's OIDC profile now — on
         // create/update only, never lazily — so the Step-1 picker is stable and reproducible. EXTERNAL/
         // REMOTE resolve without a local Ambari (REMOTE builds its own remote client).
@@ -293,7 +469,28 @@ public class ContextService {
             }
         }
         repo.deleteById(id);
+        for (String key : largeTextLabels().keySet()) {
+            try {
+                writeLargeText(id, key, null);
+            } catch (RuntimeException e) {
+                LOG.warn("ContextService.delete: could not remove '{}' of context {}: {}", key, id, e.toString());
+            }
+        }
         pruneDerivedOidcProfile(id);
+    }
+
+    /** The three longest values of a context config, by key and length, for the message refusing it. */
+    private static String longestFields(Map<String, Object> config) {
+        List<Map.Entry<String, Integer>> sizes = new ArrayList<>();
+        for (Map.Entry<String, Object> e : config.entrySet()) {
+            sizes.add(Map.entry(e.getKey(), GSON.toJson(e.getValue()).length()));
+        }
+        sizes.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<String, Integer> e : sizes.subList(0, Math.min(3, sizes.size()))) {
+            out.add(e.getKey() + " (" + e.getValue() + " characters)");
+        }
+        return String.join(", ", out);
     }
 
     // ----- Derived OIDC security profiles (one per OIDC-bearing context, deterministic on CRUD) -----
@@ -611,7 +808,7 @@ public class ContextService {
         }
         KdpsContextEntity entity = (contextId == null || contextId.isBlank())
                 ? null
-                : repo.findById(contextId);
+                : findWithConfig(contextId);
 
         // REMOTE behaves like MANAGED but discovers against a remote cluster's Ambari, reached
         // with stored credentials. We build a client pointed at that Ambari and run the same
@@ -657,7 +854,7 @@ public class ContextService {
                             rc.setStackVersion(info.get("stackVersion"));
                             String now = Instant.now().toString();
                             rc.setLastContactAt(now);
-                            persistRemoteInfo(entity, info, now);
+                            persistRemoteInfo(entity.getId(), info, now);
                         }
                     } catch (Exception e) {
                         LOG.debug("ContextService.resolve: remote info fetch failed for {}: {}",
@@ -1483,8 +1680,11 @@ public class ContextService {
      * {@code configJson} so the list/detail views can show it without another live call. Best-effort:
      * any failure (oversized config, persistence hiccup) is swallowed — it must never break resolve.
      */
-    private void persistRemoteInfo(KdpsContextEntity entity, Map<String, String> info, String now) {
+    private void persistRemoteInfo(String contextId, Map<String, String> info, String now) {
         try {
+            // The stored row, not the one resolve reads: that one holds the pasted files too, which stay apart.
+            KdpsContextEntity entity = repo.findById(contextId);
+            if (entity == null) return;
             Map<String, Object> cfg = parseConfig(entity.getConfigJson());
             if (info.get("ambariVersion") != null) cfg.put("ambariVersion", info.get("ambariVersion"));
             if (info.get("stackName") != null) cfg.put("stackName", info.get("stackName"));
@@ -1496,7 +1696,7 @@ public class ContextService {
                 repo.upsert(entity);
             }
         } catch (Exception e) {
-            LOG.debug("ContextService.persistRemoteInfo failed for {}: {}", entity.getId(), e.toString());
+            LOG.debug("ContextService.persistRemoteInfo failed for {}: {}", contextId, e.toString());
         }
     }
 
@@ -1541,7 +1741,7 @@ public class ContextService {
                 || wantedFiles == null || wantedFiles.isEmpty()) {
             return out;
         }
-        KdpsContextEntity entity = repo.findById(contextId);
+        KdpsContextEntity entity = findWithConfig(contextId);
         if (entity == null) {
             return out;
         }

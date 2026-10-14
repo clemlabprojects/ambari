@@ -28,6 +28,7 @@ import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -82,6 +83,28 @@ public class ContextSchemaService {
                 .thenComparing(s -> s.capability == null ? "" : s.capability));
         rejectDuplicateStorageKeys(out);
         return out;
+    }
+
+    /**
+     * The storage keys of the non-secret fields an operator pastes a whole file into ({@code "type": "textarea"}):
+     * site XML files, a krb5.conf, a CA certificate chain. They are far longer than the other fields, so a context
+     * keeps them apart from the rest of its config.
+     *
+     * @return storage key to the label the form shows the field under (the key when it has no label)
+     */
+    public Map<String, String> largeTextFields() {
+        Map<String, String> fields = new LinkedHashMap<>();
+        for (ContextCapabilitySchema cap : loadSchema()) {
+            if (cap.fields == null) {
+                continue;
+            }
+            for (ContextFieldDef f : cap.fields) {
+                if (f != null && !f.secret && "textarea".equals(f.type)) {
+                    fields.put(f.storageKey(), f.label == null || f.label.isBlank() ? f.storageKey() : f.label);
+                }
+            }
+        }
+        return fields;
     }
 
     /**

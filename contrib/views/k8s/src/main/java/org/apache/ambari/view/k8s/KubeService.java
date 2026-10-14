@@ -419,7 +419,12 @@ public class KubeService {
             return MasterKeyUnavailableException.response();
         }
         LOG.info("/cluster/openshift-login: configuring OpenShift login for user '{}' at {}", username, apiUrl);
-        this.getConfigService().saveOpenShiftLogin(apiUrl, username, password, caData, insecure);
+        try {
+            this.getConfigService().saveOpenShiftLogin(apiUrl, username, password, caData, insecure);
+        } catch (IllegalArgumentException e) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
         try {
             boolean ok = this.getKubernetesService().forceReloadClient();
             if (!ok) {
@@ -625,7 +630,12 @@ public class KubeService {
             return MasterKeyUnavailableException.response();
         }
         // Saved only: the Git clients read the proxy when they connect, nothing JVM-wide is installed.
-        this.getConfigService().saveProxySettings(enabled, url, username, password, noProxy);
+        try {
+            this.getConfigService().saveProxySettings(enabled, url, username, password, noProxy);
+        } catch (IllegalArgumentException e) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
         return Response.ok(Collections.singletonMap("message", enabled ? "Outbound proxy enabled" : "Outbound proxy disabled")).build();
     }
 

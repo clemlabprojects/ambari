@@ -84,9 +84,12 @@ class LegacyEncryptionMigrationTest {
                 + Base64.getEncoder().encodeToString(TestMasterKeys.legacyCiphertext(plain)) + "\"}";
     }
 
-    /** Decrypts a stored secret with the master key alone: the built-in passphrase would say it must be redone. */
+    /**
+     * Decrypts a stored secret with the master key alone: the built-in passphrase would say it must be redone. A secret
+     * encrypted again is saved in the encrypted form itself (salt:iv:ciphertext), without an outer Base64.
+     */
     private String withMasterKeyOnly(String stored) {
-        EncryptionService.Decrypted decrypted = masterKey.decryptStored(Base64.getDecoder().decode(stored));
+        EncryptionService.Decrypted decrypted = masterKey.decryptStored(stored.getBytes(StandardCharsets.UTF_8));
         assertFalse(decrypted.reencrypt(), "encrypted with the master key");
         return new String(decrypted.plain(), StandardCharsets.UTF_8);
     }

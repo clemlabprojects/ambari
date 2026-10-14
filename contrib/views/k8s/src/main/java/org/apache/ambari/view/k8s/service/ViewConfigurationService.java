@@ -359,9 +359,11 @@ public class ViewConfigurationService {
      * for the kubeconfig file. Switches the view to openshift-login mode and marks it configured.
      *
      * @throws MasterKeyUnavailableException when the Ambari master key was not found; nothing is saved
+     * @throws IllegalArgumentException      when the password is too long to be saved; nothing is saved
      */
     public void saveOpenShiftLogin(String apiUrl, String username, String password, String caData, boolean insecure) {
         requireMasterKey();
+        InstanceSettings.checkSecretLength("OpenShift password", password);
         try {
             settings.put(OS_API_URL_KEY, apiUrl);
             settings.put(OS_USERNAME_KEY, username);
@@ -411,11 +413,13 @@ public class ViewConfigurationService {
      *
      * @throws MasterKeyUnavailableException when a password is given and the Ambari master key was not found; nothing
      *                                       is saved
+     * @throws IllegalArgumentException      when the password is too long to be saved; nothing is saved
      */
     public void saveProxySettings(boolean enabled, String url, String username, String password, String noProxy) {
         if (password != null && !password.isEmpty()) {
             requireMasterKey();
         }
+        InstanceSettings.checkSecretLength("proxy password", password);
         try {
             settings.put(PROXY_ENABLED_KEY, Boolean.toString(enabled));
             settings.put(PROXY_URL_KEY, url == null ? "" : url);

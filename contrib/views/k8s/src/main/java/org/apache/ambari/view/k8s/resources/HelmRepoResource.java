@@ -30,6 +30,7 @@ import javax.ws.rs.*;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -71,18 +72,24 @@ public class HelmRepoResource {
 
   /**
    * Creates or updates a repository. The registry secret comes in the body, apart from the repository, and is stored
-   * encrypted, never with it.
+   * encrypted, never with it. A repository or secret the view cannot keep (a missing field, a token too long) is
+   * refused with 400 and the reason.
    */
   @POST
-  public HelmRepoDTO save(HelmRepoRequest request) {
+  public Response save(HelmRepoRequest request) {
     // Repositories decide which charts every deploy pulls, so changing one is a configuration task.
     new AuthHelper(viewContext, callerHeaders).checkConfigurationPermission();
-    if (request == null) {
-      throw new IllegalArgumentException("A repository is required");
+    try {
+      if (request == null) {
+        throw new IllegalArgumentException("A repository is required");
+      }
+      var svc = new HelmRepositoryService(viewContext);
+      HelmRepoEntity out = svc.save(request.toEntity(), request.plainSecret);
+      return Response.ok(HelmRepoDTO.fromEntity(out)).build();
+    } catch (IllegalArgumentException e) {
+      return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", String.valueOf(e.getMessage())))
+          .build();
     }
-    var svc = new HelmRepositoryService(viewContext);
-    HelmRepoEntity out = svc.save(request.toEntity(), request.plainSecret);
-    return HelmRepoDTO.fromEntity(out);
   }
 
   @POST

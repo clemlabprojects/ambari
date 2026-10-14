@@ -409,8 +409,9 @@ class CommandServiceOidcClientSecretTest {
 
         String stored = upgraded.dataStore.find(KdpsSettingEntity.class, key).getValue();
         assertNotEquals(legacy, stored);
+        // Saved again in the encrypted form itself (salt:iv:ciphertext), without an outer Base64.
         EncryptionService.Decrypted decrypted = EncryptionService.forServer(upgraded.context)
-                .decryptStored(java.util.Base64.getDecoder().decode(stored));
+                .decryptStored(stored.getBytes(StandardCharsets.UTF_8));
         assertEquals(SECRET, new String(decrypted.plain(), StandardCharsets.UTF_8));
         assertFalse(decrypted.reencrypt(), "encrypted with the Ambari master key");
     }

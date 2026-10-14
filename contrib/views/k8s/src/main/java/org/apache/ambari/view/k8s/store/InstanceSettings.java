@@ -57,6 +57,23 @@ public class InstanceSettings {
     public static final int MAX_VALUE_LENGTH = 3000;
 
     /**
+     * Longest secret {@link #putSecret} saves. Registry tokens of some cloud registries and service-account tokens
+     * run to a few thousand characters, more than one row holds once encrypted, so a long secret is kept in parts.
+     */
+    public static final int MAX_SECRET_LENGTH = 16 * 1024;
+
+    /** Longest part of an encrypted secret kept in parts, safely under {@link #MAX_VALUE_LENGTH}. */
+    static final int SECRET_PART_LENGTH = 2900;
+
+    /**
+     * Value of the setting of a secret kept in parts: followed by the number of parts, each under the key
+     * {@code <key>}{@value #SECRET_PART_SUFFIX}{@code <n>}, n counting from 1. Neither Base64 nor the encrypted form
+     * starts with '@', so it is never taken for a secret.
+     */
+    static final String SECRET_PARTS_MARKER = "@parts:";
+    static final String SECRET_PART_SUFFIX = "@part";
+
+    /**
      * Set to {@code "true"} once a kubeconfig, an OpenShift login or the in-cluster ServiceAccount connection was saved:
      * the view is configured.
      */
@@ -163,6 +180,7 @@ public class InstanceSettings {
             if (row != null && row.getValue() == null) {
                 return;
             }
+            removeSecretParts(key, 1, secretParts(row));
             if (row != null) {
                 // The DataStore skips null values when it updates a row, so the row is replaced instead.
                 try {
@@ -188,6 +206,7 @@ public class InstanceSettings {
             if (row == null) {
                 return;
             }
+            removeSecretParts(key, 1, secretParts(row));
             try {
                 dataStore().remove(row);
             } catch (PersistenceException e) {
@@ -208,7 +227,15 @@ public class InstanceSettings {
         if (encrypted == null || encrypted.isBlank()) {
             return null;
         }
-        EncryptionService.Decrypted decrypted = encryption().decryptStored(Base64.getDecoder().decode(encrypted));
+        if (encrypted.startsWith(SECRET_PARTS_MARKER)) {
+            encrypted = joinSecretParts(key, encrypted);
+        }
+        // Saved by this version: salt:iv:ciphertext as it is. Earlier versions wrapped that, or before them the
+        // secret itself, in Base64, which never has a ':'.
+        byte[] stored = encrypted.indexOf(':') >= 0
+                ? encrypted.getBytes(StandardCharsets.UTF_8)
+                : Base64.getDecoder().decode(encrypted);
+        EncryptionService.Decrypted decrypted = encryption().decryptStored(stored);
         String plain = new String(decrypted.plain(), StandardCharsets.UTF_8);
         if (decrypted.reencrypt()) {
             // Stored by an earlier version without the master key: from now on it is encrypted with it.
@@ -224,14 +251,94 @@ public class InstanceSettings {
     /**
      * Encrypts a secret and saves it for every user of the view instance.
      *
+     * <p>The encrypted form ({@code salt:iv:ciphertext}, already text) is stored as it is; a secret too long for one
+     * setting once encrypted is kept in parts.
+     *
      * @param key         the setting key
      * @param plainSecret the secret
+     * @throws IllegalArgumentException when the secret is longer than {@link #MAX_SECRET_LENGTH}; nothing is saved
      * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException when there is no master key; nothing
      *                                                                           is saved
      */
     public void putSecret(String key, String plainSecret) {
         Objects.requireNonNull(plainSecret, "plainSecret");
-        put(key, Base64.getEncoder().encodeToString(encryption().encrypt(plainSecret.getBytes(StandardCharsets.UTF_8))));
+        checkSecretLength("secret '" + key + "'", plainSecret);
+        String encrypted = new String(encryption().encrypt(plainSecret.getBytes(StandardCharsets.UTF_8)),
+                StandardCharsets.UTF_8);
+        synchronized (WRITE_LOCK) {
+            int before = secretParts(find(key));
+            int parts = 0;
+            if (encrypted.length() <= MAX_VALUE_LENGTH) {
+                put(key, encrypted);
+            } else {
+                parts = (encrypted.length() + SECRET_PART_LENGTH - 1) / SECRET_PART_LENGTH;
+                for (int i = 1; i <= parts; i++) {
+                    String part = encrypted.substring((i - 1) * SECRET_PART_LENGTH,
+                            Math.min(encrypted.length(), i * SECRET_PART_LENGTH));
+                    store(new KdpsSettingEntity(key + SECRET_PART_SUFFIX + i, part));
+                }
+                // Written last, so it never names a part that is not written yet.
+                put(key, SECRET_PARTS_MARKER + parts);
+            }
+            removeSecretParts(key, parts + 1, before);
+        }
+    }
+
+    /**
+     * Checks that {@link #putSecret} can save a secret, so that a caller saving several values together refuses the
+     * request before writing any of them.
+     *
+     * @param what   what the secret is, for the message, e.g. {@code "registry password"}
+     * @param secret the secret; {@code null} passes
+     * @throws IllegalArgumentException when it is longer than {@link #MAX_SECRET_LENGTH}; the secret is not echoed
+     */
+    public static void checkSecretLength(String what, String secret) {
+        if (secret != null && secret.length() > MAX_SECRET_LENGTH) {
+            throw new IllegalArgumentException("The " + what + " is too long to be saved (" + secret.length()
+                    + " characters, at most " + MAX_SECRET_LENGTH + ").");
+        }
+    }
+
+    /** How many parts the secret a setting row holds is kept in; 0 when it is not kept in parts. */
+    private static int secretParts(KdpsSettingEntity row) {
+        String value = row == null ? null : row.getValue();
+        if (value == null || !value.startsWith(SECRET_PARTS_MARKER)) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(value.substring(SECRET_PARTS_MARKER.length()).trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** The encrypted form of a secret kept in parts, from its parts. */
+    private String joinSecretParts(String key, String marker) {
+        int parts = secretParts(new KdpsSettingEntity(key, marker));
+        StringBuilder encrypted = new StringBuilder();
+        for (int i = 1; i <= parts; i++) {
+            KdpsSettingEntity part = find(key + SECRET_PART_SUFFIX + i);
+            if (part == null || part.getValue() == null) {
+                throw new IllegalStateException("A stored credential is incomplete (the view setting '" + key
+                        + "' misses part " + i + " of " + parts + "). Enter it again.");
+            }
+            encrypted.append(part.getValue());
+        }
+        return encrypted.toString();
+    }
+
+    /** Deletes the parts {@code from} to {@code to} of a secret kept in parts. Callers hold {@link #WRITE_LOCK}. */
+    private void removeSecretParts(String key, int from, int to) {
+        for (int i = from; i <= to; i++) {
+            KdpsSettingEntity part = find(key + SECRET_PART_SUFFIX + i);
+            if (part != null) {
+                try {
+                    dataStore().remove(part);
+                } catch (PersistenceException e) {
+                    throw new IllegalStateException("Could not remove the view setting '" + part.getId() + "'", e);
+                }
+            }
+        }
     }
 
     /**

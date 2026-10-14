@@ -255,7 +255,8 @@ class ViewConfigurationServiceTest {
 
     String stored = settings().get("proxy.password.enc");
     assertNotEquals(legacy, stored);
-    assertFalse(MASTER_KEY.decryptStored(Base64.getDecoder().decode(stored)).reencrypt());
+    // Saved again in the encrypted form itself (salt:iv:ciphertext), without an outer Base64.
+    assertFalse(MASTER_KEY.decryptStored(stored.getBytes(StandardCharsets.UTF_8)).reencrypt());
     assertEquals("proxy-pw", settings().getSecret("proxy.password.enc"));
   }
 

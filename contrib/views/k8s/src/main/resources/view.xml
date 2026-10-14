@@ -147,6 +147,11 @@ limitations under the License.
             <class>org.apache.ambari.view.k8s.store.KdpsContextEntity</class>
             <id-property>id</id-property>
         </entity>
+        <!-- Long text values of a platform context (site XML, krb5.conf, CA chain), in parts. -->
+        <entity>
+            <class>org.apache.ambari.view.k8s.store.KdpsContextBlobEntity</class>
+            <id-property>id</id-property>
+        </entity>
         <entity>
             <class>org.apache.ambari.view.k8s.store.TrinoCatalogEntity</class>
             <id-property>id</id-property>

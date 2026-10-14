@@ -1427,13 +1427,16 @@ public class KubernetesService {
         return defaults;
     }
 
+    /** Longest monitoring bootstrap message kept: the start of a Helm error says what failed. */
+    static final int MAX_BOOTSTRAP_MESSAGE_LENGTH = 1000;
+
     private void updateMonitoringBootstrapState(String state, String message) {
         try {
             settings().put("monitoring.bootstrap.state", state);
             if (message != null) {
                 // A long failure (a whole Helm error) must not cost the state its message: keep what fits.
-                settings().put("monitoring.bootstrap.message", message.length() > InstanceSettings.MAX_VALUE_LENGTH
-                        ? message.substring(0, InstanceSettings.MAX_VALUE_LENGTH) : message);
+                settings().put("monitoring.bootstrap.message", message.length() > MAX_BOOTSTRAP_MESSAGE_LENGTH
+                        ? message.substring(0, MAX_BOOTSTRAP_MESSAGE_LENGTH) : message);
             }
         } catch (Exception e) {
             LOG.warn("Failed to persist monitoring bootstrap state {}: {}", state, e.getMessage());

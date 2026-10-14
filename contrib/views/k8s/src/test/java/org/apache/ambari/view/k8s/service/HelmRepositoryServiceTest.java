@@ -125,6 +125,25 @@ class HelmRepositoryServiceTest {
   }
 
   @Test
+  void save_with_a_3000_character_registry_token_stores_it_and_reads_it_back() throws PersistenceException {
+    var svc = new HelmRepositoryService(ctx, helm, MASTER_KEY);
+    HelmRepoEntity e = new HelmRepoEntity();
+    e.setId("ecr");
+    e.setType("OCI");
+    e.setName("ecr");
+    e.setUrl("123456789012.dkr.ecr.eu-west-1.amazonaws.com/charts");
+    e.setAuthMode("token");
+    e.setUsername("AWS");
+    String token = "eyJwYXlsb2FkIjoi" + "x".repeat(2984);
+
+    svc.save(e, token);
+
+    assertEquals(token, svc.readPlainSecret(table.get("ecr")));
+    // Every row stays within what the DataStore keeps in a String column.
+    assertTrue(settings.values().stream().allMatch(row -> row.getValue().length() <= 3000));
+  }
+
+  @Test
   void save_keeps_the_gitops_secrets_and_truststores_and_refuses_a_name_kubernetes_would_not_accept() {
     var svc = new HelmRepositoryService(ctx, helm);
     HelmRepoEntity e = new HelmRepoEntity();
