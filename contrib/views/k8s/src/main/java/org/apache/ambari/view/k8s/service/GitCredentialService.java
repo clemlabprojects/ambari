@@ -187,6 +187,28 @@ public class GitCredentialService {
     }
 
     /**
+     * Whether a Git repository URL carries a password in its user part (scheme://user:password@host/...), or any user
+     * part at all over HTTP(S), where it can only be a credential. The SSH forms (git@host:path, ssh://git@host/...)
+     * name a user without a password and are accepted.
+     */
+    static boolean carriesPassword(String repoUrl) {
+        if (repoUrl == null) return false;
+        String url = repoUrl.trim();
+        int scheme = url.indexOf("://");
+        if (scheme <= 0) return false;
+        String authority = url.substring(scheme + 3);
+        for (char end : new char[] {'/', '?', '#'}) {
+            int cut = authority.indexOf(end);
+            if (cut >= 0) authority = authority.substring(0, cut);
+        }
+        int at = authority.lastIndexOf('@');
+        if (at < 0) return false;
+        String userInfo = authority.substring(0, at);
+        String protocol = url.substring(0, scheme).toLowerCase(Locale.ROOT);
+        return userInfo.contains(":") || protocol.equals("http") || protocol.equals("https");
+    }
+
+    /**
      * Refuses a Git repository URL that does not name one host ({@link #hostOf}): a Git credential sent through it
      * could reach another server than the one it shows.
      *
@@ -194,6 +216,12 @@ public class GitCredentialService {
      * @throws IllegalArgumentException when the URL does not name one host
      */
     public static void checkRepoUrl(String repoUrl) {
+        if (carriesPassword(repoUrl)) {
+            // The URL itself is not repeated: it holds a password.
+            throw new IllegalArgumentException("The Git repository URL cannot carry a user name and password (as in"
+                    + " https://user:password@git.example.org/...): it would be stored and logged in clear. Give the URL"
+                    + " without them and enter the token or SSH key in the Git credential fields.");
+        }
         if (repoUrl != null && !repoUrl.isBlank() && hostOf(repoUrl) == null) {
             // The URL itself is not repeated: it may hold a user and password.
             throw new IllegalArgumentException("The Git repository URL cannot be used: it must name one Git server, as"

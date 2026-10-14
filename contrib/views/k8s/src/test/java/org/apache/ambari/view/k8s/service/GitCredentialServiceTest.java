@@ -91,6 +91,21 @@ class GitCredentialServiceTest {
     }
 
     @Test
+    void aRepositoryUrlCarryingAPasswordIsRefusedWithoutRepeatingIt() {
+        for (String url : new String[] {"https://user:s3cret@git.example.org/org/repo.git",
+                "https://oauth2-token@git.example.org/org/repo.git", "ssh://git:s3cret@git.example.org/org/repo.git"}) {
+            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                    () -> GitCredentialService.checkRepoUrl(url), url);
+            assertFalse(refused.getMessage().contains("s3cret") || refused.getMessage().contains("oauth2-token"),
+                    refused.getMessage());
+        }
+        for (String url : new String[] {"https://git.example.org/org/repo.git", "git@git.example.org:org/repo.git",
+                "ssh://git@git.example.org:2222/org/repo.git"}) {
+            assertDoesNotThrow(() -> GitCredentialService.checkRepoUrl(url), url);
+        }
+    }
+
+    @Test
     void aReleaseKeepsOneEntryThatEachNewSecretReplaces() throws Exception {
         String alias = GitCredentialService.releaseAlias("kdps", "analytics", "trino");
         assertEquals("kdps.gitops.kdps.analytics.trino", alias);
