@@ -440,8 +440,9 @@ describe('a deploy refused for an existing Secret KDPS did not issue', () => {
 });
 
 describe('services whose chart manages its own TLS', () => {
-  it.each(['GITLAB'])('%s gets no ingress certificate handling on Upgrade/Config', (svc) => {
-    const def = load(svc);
+  it('a definition without the ingress certificate field gets no certificate handling on Upgrade/Config', () => {
+    // A chart-managed definition leaves the wizard's TLS dropdown out of its form.
+    const def = { form: [{ name: 'releaseName', type: 'string' }] };
     expect(offersKeepCurrentTls(def.form)).toBe(false);
     const form: any = { ingress: { enabled: true } };
     expect(seedKeepCurrentTls(def.form, form, { ingress: { enabled: true, tls: [{ secretName: 'x' }] } })).toBe(false);
@@ -450,7 +451,7 @@ describe('services whose chart manages its own TLS', () => {
 
   it('a new hostname leaves their ingress.tls to them', () => {
     const form = { ingress: { enabled: true, host: 'git-new.example.org',
-      tls: [{ secretName: 'gitlab-tls', hosts: ['git.example.org'] }] } };
+      tls: [{ secretName: 'chart-tls', hosts: ['git.example.org'] }] } };
     expect(upgradeChartFormValues(form, true)).toBe(form);
   });
 });

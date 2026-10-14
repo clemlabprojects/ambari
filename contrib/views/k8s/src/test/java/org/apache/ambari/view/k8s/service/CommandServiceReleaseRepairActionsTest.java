@@ -262,9 +262,9 @@ class CommandServiceReleaseRepairActionsTest {
     }
 
     @Test
-    void gitLabGetsItsOmniauthProviderSecretAndACompleteCallback() {
+    void aServiceWithAProviderSecretGetsItAndACompleteCallback() {
         externalContext(true, false);
-        release("gitlab", "GITLAB", CONTEXT, null);
+        release("gitlab", "ZZTESTOMNIAUTH", CONTEXT, null);
         deployedValues.put("gitlab", values("gitlab", Map.of("global", Map.of(
                 "hosts", Map.of("domain", "example.com"),
                 "appConfig", Map.of("omniauth", Map.of("enabled", "true"))))));
@@ -274,7 +274,7 @@ class CommandServiceReleaseRepairActionsTest {
         Map<String, Object> register = paramsOf(step(id, CommandType.OIDC_REGISTER_CLIENT));
         assertEquals("true", register.get("oidcGitlabOmniauth"));
         assertEquals("gitlab-omniauth-provider", register.get("oidcProviderSecretName"));
-        assertEquals("https://gitlab.example.com/users/auth/openid_connect/callback", register.get("oidcRedirectUri"));
+        assertEquals("https://app.example.com/users/auth/openid_connect/callback", register.get("oidcRedirectUri"));
         assertEquals(register.get("oidcRedirectUri"), register.get("oidcGitlabCallbackUrl"));
         assertFalse(String.valueOf(register.get("oidcRedirectUri")).contains("{{"));
     }

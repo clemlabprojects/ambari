@@ -1,7 +1,7 @@
 # Ingress TLS — design + operations guide
 
 How the K8s view provisions TLS leaf certificates for every service it deploys
-(Superset, OpenMetadata, Trino, GitLab, …), with the four-mode operator UI on
+(Superset, OpenMetadata, Trino, …), with the four-mode operator UI on
 top of three independent provisioning engines.
 
 ## The three layers (mental model)
@@ -176,7 +176,7 @@ Click **Renew** to dispatch the right action per source:
 ```
 
 - `tlsProvisioning: "k8s-view"` — service participates in the four-mode pipeline (default; SUPERSET / OPENMETADATA / TRINO).
-- `tlsProvisioning: "chart-managed"` — chart owns its TLS (GITLAB uses `gitlab.global.hosts.https` + cert-manager). Wizard skips the TLS dropdown, OIDC pre-flight skips the `ingress.tls[]` check.
+- `tlsProvisioning: "chart-managed"` — chart owns its TLS (for example through its own `hosts.https` value and cert-manager). Wizard skips the TLS dropdown, OIDC pre-flight skips the `ingress.tls[]` check.
 
 ## Renew flow per source
 

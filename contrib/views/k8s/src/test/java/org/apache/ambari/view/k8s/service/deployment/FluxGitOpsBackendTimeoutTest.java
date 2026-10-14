@@ -59,15 +59,15 @@ public class FluxGitOpsBackendTimeoutTest {
     }
 
     @Test
-    public void gitlabAsksForTwentyMinutes() {
-        StackServiceDef gitlab = new StackDefinitionService().getServiceDefinition("GITLAB");
+    public void aServiceCanAskForTwentyMinutes() {
+        StackServiceDef slow = new StackDefinitionService().getServiceDefinition("ZZTESTKUBEONLY");
 
-        assertEquals("20m", FluxGitOpsBackend.helmTimeout(gitlab));
+        assertEquals("20m", FluxGitOpsBackend.helmTimeout(slow));
     }
 
     @Test
     public void everyShippedServiceGetsATimeoutFluxAccepts() {
-        for (String key : new String[] {"GITLAB", "OPENMETADATA", "SUPERSET", "TRINO"}) {
+        for (String key : new String[] {"OPENMETADATA", "SUPERSET", "TRINO"}) {
             String timeout = FluxGitOpsBackend.helmTimeout(new StackDefinitionService().getServiceDefinition(key));
             assertTrue(key + ": " + timeout, timeout.matches("([0-9]+(\\.[0-9]+)?(ms|s|m|h))+"));
         }
@@ -88,9 +88,9 @@ public class FluxGitOpsBackendTimeoutTest {
     }
 
     @Test
-    public void gitlabWaitsLongerThanItsOwnTimeout() {
-        StackServiceDef gitlab = new StackDefinitionService().getServiceDefinition("GITLAB");
+    public void aServiceWaitsLongerThanItsOwnTimeout() {
+        StackServiceDef slow = new StackDefinitionService().getServiceDefinition("ZZTESTKUBEONLY");
 
-        assertTrue(FluxGitOpsBackend.readyTimeoutSeconds(gitlab, 1200) > 20 * 60 * 4);
+        assertTrue(FluxGitOpsBackend.readyTimeoutSeconds(slow, 1200) > 20 * 60 * 4);
     }
 }

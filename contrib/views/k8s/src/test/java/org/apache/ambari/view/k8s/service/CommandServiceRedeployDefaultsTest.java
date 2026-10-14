@@ -517,12 +517,12 @@ class CommandServiceRedeployDefaultsTest {
 
     @Test
     void aServiceWithoutAnOperatorKeytabIsNotRefused() throws Exception {
-        // GitLab has no Kerberos keytab field to restore or select, whatever its values say.
-        recordRelease("GITLAB", "gitlab", "cdp-prod", "8.11.2");
+        // A service without a Kerberos keytab field to restore or select, whatever its values say.
+        recordRelease("ZZTESTKUBEONLY", "gitlab", "cdp-prod", "1.0.0");
         Map<String, Object> values = kerberizedValues(null);
         HelmDeployRequest request = resyncRequest(values);
         request.setChart("gitlab");
-        request.setServiceKey("GITLAB");
+        request.setServiceKey("ZZTESTKUBEONLY");
         when(k8s.getHelmReleaseValues(NS, RELEASE)).thenReturn(values);
 
         submit(request, null, null);

@@ -78,19 +78,26 @@ class StackDefinitionServiceTest {
     Map<String, StackServiceDef> defs = svc.listServiceDefinitions();
     assertFalse(defs.containsKey("SQL-ASSISTANT"), defs.keySet().toString());
     assertFalse(defs.containsKey("DBT"), defs.keySet().toString());
-    assertTrue(defs.containsKey("GITLAB"), "GitLab is still offered, on plain Kubernetes: " + defs.keySet());
   }
 
-  /** The catalog hides GitLab on OpenShift from the platforms its definition lists, so they must reach the UI. */
+  /** GitLab left the catalog with this release: neither its key nor its definition is served any more. */
   @Test
-  void gitLabPlatformsReachTheCatalog() throws Exception {
+  void gitLabIsNotOffered() {
+    assertFalse(svc.discoverServiceKeys().contains("GITLAB"), svc.discoverServiceKeys().toString());
+    assertFalse(svc.listServiceDefinitions().containsKey("GITLAB"));
+    assertFalse(svc.hasServiceDefinition("GITLAB"));
+    assertTrue(svc.hasServiceDefinition("TRINO"));
+  }
+
+  /** The catalog hides a Kubernetes-only service on OpenShift from the platforms its definition lists, so they must reach the UI. */
+  @Test
+  void thePlatformsOfAServiceReachTheCatalog() throws Exception {
     com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-    Map<String, Object> served = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("GITLAB")),
+    Map<String, Object> served = mapper.readValue(mapper.writeValueAsString(svc.getServiceDefinition("ZZTESTKUBEONLY")),
         new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
 
     assertEquals(List.of("kubernetes"), served.get("platforms"));
-    assertEquals("GitLab is not supported on OpenShift in this release; register your existing Git server under Git"
-        + " Repositories.", served.get("unsupportedPlatformMessage"));
+    assertEquals("ZZ Test Kubernetes-only service is not supported on OpenShift in this release.", served.get("unsupportedPlatformMessage"));
   }
 
   @Test

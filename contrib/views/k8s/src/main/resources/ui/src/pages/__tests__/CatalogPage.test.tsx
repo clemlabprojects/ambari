@@ -29,10 +29,10 @@ jest.mock('../../assets/services', () => ({ serviceIcon: () => '' }));
 import { getAvailableServices, getClusterCapabilities, getCatalogAppVersions } from '../../api/client';
 import CatalogPage from '../CatalogPage';
 
-/** The service catalog leaves out a service that cannot run on the cluster's platform (GitLab on OpenShift). */
+/** The service catalog leaves out a service that cannot run on the cluster's platform (a Kubernetes-only chart on OpenShift). */
 describe('CatalogPage', () => {
   const services = {
-    GITLAB: { label: 'GitLab CE', chart: 'gitlab', platforms: ['kubernetes'] },
+    KUBEONLY: { label: 'Kubernetes-only service', chart: 'kubeonly', platforms: ['kubernetes'] },
     TRINO: { label: 'Trino', chart: 'trinodb/trino' },
   };
   const capabilities = (platform?: 'kubernetes' | 'openshift') => platform && ({
@@ -56,18 +56,18 @@ describe('CatalogPage', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
-  it('does not offer GitLab on OpenShift', async () => {
+  it('does not offer a Kubernetes-only service on OpenShift', async () => {
     await renderOn('openshift');
-    expect(screen.queryByText('GitLab CE')).toBeNull();
+    expect(screen.queryByText('Kubernetes-only service')).toBeNull();
   });
 
   it('offers GitLab on plain Kubernetes', async () => {
     await renderOn('kubernetes');
-    expect(screen.getByText('GitLab CE')).toBeTruthy();
+    expect(screen.getByText('Kubernetes-only service')).toBeTruthy();
   });
 
   it('hides nothing when the platform could not be detected', async () => {
     await renderOn(undefined);
-    expect(screen.getByText('GitLab CE')).toBeTruthy();
+    expect(screen.getByText('Kubernetes-only service')).toBeTruthy();
   });
 });

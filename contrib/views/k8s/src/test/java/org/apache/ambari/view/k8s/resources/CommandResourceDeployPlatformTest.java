@@ -52,7 +52,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** A GitLab deploy sent straight to the API of a view connected to OpenShift is refused with a 400 that says why. */
+/** A deploy of a Kubernetes-only service sent straight to the API of a view connected to OpenShift is refused with a 400 that says why. */
 class CommandResourceDeployPlatformTest {
 
   private static final String INSTANCE = "deploy-platform-test";
@@ -81,14 +81,14 @@ class CommandResourceDeployPlatformTest {
   }
 
   @Test
-  void gitLabOnOpenShiftIsABadRequest() throws Exception {
+  void kubernetesOnlyServiceOnOpenShiftIsABadRequest() throws Exception {
     when(k8s.isOpenShiftCluster()).thenReturn(true);
 
-    Response refused = resource().submitDeploy(gitLab(), null, null, null, headers(), uriInfo());
+    Response refused = resource().submitDeploy(kubeOnly(), null, null, null, headers(), uriInfo());
 
     assertEquals(400, refused.getStatus());
-    assertEquals(Map.of("error", "GitLab is not supported on OpenShift in this release; register your existing Git"
-        + " server under Git Repositories."), refused.getEntity());
+    assertEquals(Map.of("error", "ZZ Test Kubernetes-only service is not supported on OpenShift in this"
+        + " release."), refused.getEntity());
     verify(k8s, never()).createNamespace(anyString());
     verify(direct, never()).apply(any(), any());
   }
@@ -113,12 +113,12 @@ class CommandResourceDeployPlatformTest {
     return new CommandResource(ctx, null, null);
   }
 
-  private static HelmDeployRequest gitLab() {
+  private static HelmDeployRequest kubeOnly() {
     HelmDeployRequest request = new HelmDeployRequest();
-    request.setChart("gitlab");
-    request.setReleaseName("gitlab");
-    request.setNamespace("gitlab");
-    request.setServiceKey("GITLAB");
+    request.setChart("zz-test-kubeonly");
+    request.setReleaseName("kubeonly");
+    request.setNamespace("kubeonly");
+    request.setServiceKey("ZZTESTKUBEONLY");
     request.setRepoId("charts");
     request.setValues(new LinkedHashMap<>());
     return request;

@@ -49,12 +49,12 @@ import HelmReleasesPage from '../HelmReleasesPage';
 
 /**
  * The Releases page's "Install Service" picker is a second service catalog: like the Catalog page, it leaves out a
- * service that cannot run on the cluster's platform (GitLab on OpenShift).
+ * service that cannot run on the cluster's platform (a Kubernetes-only chart on OpenShift).
  */
 describe('HelmReleasesPage install picker', () => {
   const user = userEvent.setup();
   const services = {
-    GITLAB: { label: 'GitLab CE', chart: 'gitlab', platforms: ['kubernetes'] },
+    KUBEONLY: { label: 'Kubernetes-only service', chart: 'kubeonly', platforms: ['kubernetes'] },
     TRINO: { label: 'Trino', chart: 'trinodb/trino' },
   };
 
@@ -87,20 +87,20 @@ describe('HelmReleasesPage install picker', () => {
     invalidateCapabilities();
   });
 
-  it('does not offer GitLab on OpenShift', async () => {
+  it('does not offer a Kubernetes-only service on OpenShift', async () => {
     const dialog = await openPicker('openshift');
-    await waitFor(() => expect(within(dialog).queryByText('GitLab CE')).toBeNull());
+    await waitFor(() => expect(within(dialog).queryByText('Kubernetes-only service')).toBeNull());
     expect(within(dialog).queryByText('No services available.')).toBeNull();
   });
 
   it('offers GitLab on plain Kubernetes', async () => {
     const dialog = await openPicker('kubernetes');
-    expect(within(dialog).getByText('GitLab CE')).toBeTruthy();
+    expect(within(dialog).getByText('Kubernetes-only service')).toBeTruthy();
   });
 
   it('hides nothing when the platform could not be detected', async () => {
     const dialog = await openPicker(undefined);
-    expect(within(dialog).getByText('GitLab CE')).toBeTruthy();
+    expect(within(dialog).getByText('Kubernetes-only service')).toBeTruthy();
   });
 });
 

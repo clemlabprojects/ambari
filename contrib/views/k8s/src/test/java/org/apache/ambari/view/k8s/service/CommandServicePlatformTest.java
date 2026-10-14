@@ -48,13 +48,13 @@ import static org.mockito.Mockito.when;
 
 /**
  * A service whose definition lists the platforms it supports is refused on any other platform, whatever the deploy
- * mode, before anything is prepared for it: GitLab on OpenShift, whose pods the platform's default security policy
- * would never admit.
+ * mode, before anything is prepared for it: a Kubernetes-only chart on OpenShift, whose pods the platform's default
+ * security policy would never admit.
  */
 class CommandServicePlatformTest {
 
-    private static final String GITLAB_REFUSED = "GitLab is not supported on OpenShift in this release; register your"
-            + " existing Git server under Git Repositories.";
+    private static final String KUBE_ONLY_REFUSED = "ZZ Test Kubernetes-only service is not supported on OpenShift in"
+            + " this release.";
 
     @TempDir
     Path tmp;
@@ -98,12 +98,12 @@ class CommandServicePlatformTest {
         f.set(service, value);
     }
 
-    private static HelmDeployRequest gitLab(String deploymentMode) {
+    private static HelmDeployRequest kubeOnly(String deploymentMode) {
         HelmDeployRequest request = new HelmDeployRequest();
-        request.setChart("gitlab");
-        request.setReleaseName("gitlab");
-        request.setNamespace("gitlab");
-        request.setServiceKey("GITLAB");
+        request.setChart("zz-test-kubeonly");
+        request.setReleaseName("kubeonly");
+        request.setNamespace("kubeonly");
+        request.setServiceKey("ZZTESTKUBEONLY");
         request.setRepoId("charts");
         request.setValues(new LinkedHashMap<>());
         request.setDeploymentMode(deploymentMode);
@@ -115,32 +115,32 @@ class CommandServicePlatformTest {
     }
 
     @Test
-    void gitLabIsRefusedOnOpenShift() throws Exception {
+    void aKubernetesOnlyServiceIsRefusedOnOpenShift() throws Exception {
         when(k8s.isOpenShiftCluster()).thenReturn(true);
 
-        IllegalStateException refused = assertThrows(IllegalStateException.class, () -> submit(gitLab("DIRECT_HELM")));
+        IllegalStateException refused = assertThrows(IllegalStateException.class, () -> submit(kubeOnly("DIRECT_HELM")));
 
-        assertEquals(GITLAB_REFUSED, refused.getMessage());
+        assertEquals(KUBE_ONLY_REFUSED, refused.getMessage());
         // Nothing was prepared for it: no namespace, no deploy plan.
         verify(k8s, never()).createNamespace(anyString());
         verify(direct, never()).apply(any(), any());
     }
 
     @Test
-    void aGitOpsDeployOfGitLabIsRefusedOnOpenShiftToo() throws Exception {
+    void aGitOpsDeployOfAKubernetesOnlyServiceIsRefusedOnOpenShiftToo() throws Exception {
         when(k8s.isOpenShiftCluster()).thenReturn(true);
 
-        IllegalStateException refused = assertThrows(IllegalStateException.class, () -> submit(gitLab("FLUX_GITOPS")));
+        IllegalStateException refused = assertThrows(IllegalStateException.class, () -> submit(kubeOnly("FLUX_GITOPS")));
 
-        assertEquals(GITLAB_REFUSED, refused.getMessage());
+        assertEquals(KUBE_ONLY_REFUSED, refused.getMessage());
         verify(gitOps, never()).apply(any(), any());
     }
 
     @Test
-    void gitLabIsDeployedOnPlainKubernetes() throws Exception {
+    void aKubernetesOnlyServiceIsDeployedOnPlainKubernetes() throws Exception {
         when(k8s.isOpenShiftCluster()).thenReturn(false);
 
-        assertEquals("command-1", submit(gitLab("DIRECT_HELM")));
+        assertEquals("command-1", submit(kubeOnly("DIRECT_HELM")));
 
         verify(direct).apply(any(), any());
     }
@@ -174,13 +174,13 @@ class CommandServicePlatformTest {
 
     @Test
     void aServiceTheReleaseNoLongerShipsIsRefused() throws Exception {
-        HelmDeployRequest request = gitLab("DIRECT_HELM");
-        request.setServiceKey("JUPYTERHUB");
-        request.setReleaseName("jupyterhub");
+        HelmDeployRequest request = kubeOnly("DIRECT_HELM");
+        request.setServiceKey("GITLAB");
+        request.setReleaseName("gitlab");
 
         IllegalStateException refused = assertThrows(IllegalStateException.class, () -> submit(request));
 
-        assertEquals("JUPYTERHUB is not part of this release; a release of it deployed by an earlier build can only"
+        assertEquals("GITLAB is not part of this release; a release of it deployed by an earlier build can only"
                 + " be uninstalled.", refused.getMessage());
         verify(k8s, never()).createNamespace(anyString());
         verify(direct, never()).apply(any(), any());

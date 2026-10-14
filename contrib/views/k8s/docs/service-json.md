@@ -45,7 +45,7 @@ This document describes how to author a KDPS `service.json` so the Ambari K8S vi
   `"kubernetes"` (plain Kubernetes) and `"openshift"`. Absent or empty means both. Once the cluster is known to be a
   platform the list leaves out, the catalog hides the service and the server refuses its deploy (HTTP 400), whether it
   comes from the wizard, straight from the API or in GitOps mode, before anything is created for it. Use it for a chart
-  that cannot run on a platform at all: GitLab declares `["kubernetes"]`, because its upstream chart pins user IDs that
+  that cannot run on a platform at all: such a service declares `["kubernetes"]` when its upstream chart pins user IDs that
   OpenShift's default SCC rejects. `unsupportedPlatformMessage` (optional) is the refusal: why, and what to do
   instead; the default names the service and the platform.
 - `generatedSecrets` (optional): Secrets of credentials KDPS creates for the release before Helm installs it (an

@@ -1,0 +1,35 @@
+{
+  "label": "ZZ Test provider-secret sign-in (test only, NOT in catalog.json)",
+  "description": "Test fixture: a service whose sign-in is configured through a provider Secret built from the OIDC client instead of the shared auth values.",
+  "chart": "zz-test-omniauth",
+  "version": "1.0.0",
+  "defaultRepo": "charts",
+  "oidc": [
+    {
+      "key": "app",
+      "clientIdTemplate": "{{releaseName}}-{{namespace}}",
+      "secretNameTemplate": "{{releaseName}}-oidc-client",
+      "redirectUriTemplate": "https://app.{{appDomain}}/users/auth/openid_connect/callback",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "gitlabOmniauth": true,
+      "enabled": true
+    }
+  ],
+  "variables": [
+    {
+      "name": "appDomain",
+      "from": {
+        "type": "form",
+        "field": "gitlab.global.hosts.domain"
+      }
+    }
+  ],
+  "requiresContext": [
+    {
+      "capability": "oidc",
+      "fields": ["issuerUrl", "realm"]
+    }
+  ],
+  "form": []
+}

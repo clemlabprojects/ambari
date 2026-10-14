@@ -82,14 +82,11 @@ These services were offered by pre-release builds and are no longer in the servi
   Releases page. A JupyterHub release deployed by a pre-release build stays in the Releases list and can be
   uninstalled, but it can no longer be deployed again or upgraded from KDPS. The container images that pre-release
   builds published for it have been withdrawn: do not run them.
-
-### Services with limits
-
-- **GitLab CE** is offered on plain Kubernetes only, for development clusters. On OpenShift it is not in the
-  catalog, and a deploy sent to the API is refused with "GitLab is not supported on OpenShift in this release; register
-  your existing Git server under Git Repositories." The GitLab chart runs its pods under fixed user IDs that
-  OpenShift's default security policy (the `restricted-v2` SCC) rejects, so the install could never finish there.
-  GitOps deployments work with your existing Git server once it is registered under Git Repositories.
+- **GitLab**: not part of this release. It is no longer offered in the catalog or in the install list of the
+  Releases page. A GitLab release deployed by a pre-release build stays in the Releases list and can be
+  uninstalled, but it can no longer be deployed again or upgraded from KDPS. A running GitLab keeps running from its
+  own images until it is uninstalled. GitOps deployments still work with your existing Git
+  server once it is registered under Git Repositories.
 
 ### GitOps deployments
 

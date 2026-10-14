@@ -3,8 +3,8 @@ import * as path from 'path';
 import { offeredOnPlatform } from '../catalogPlatforms';
 
 // The catalog hides a service whose definition leaves out the cluster's platform, once the capability probe has said
-// which platform that is. GitLab is the one today: OpenShift's default security policy rejects the pods of its chart,
-// so the install could only time out there.
+// which platform that is. No shipped service needs it today, but a definition may declare it for a chart whose pods
+// OpenShift's default security policy would reject.
 const SERVICES = path.join(__dirname, '../../../../KDPS/services');
 const definition = (key: string) => JSON.parse(fs.readFileSync(path.join(SERVICES, key, 'service.json'), 'utf8'));
 const catalog: string[] = JSON.parse(fs.readFileSync(path.join(SERVICES, 'catalog.json'), 'utf8'));
@@ -44,17 +44,15 @@ describe('the shipped catalog', () => {
     expect(fs.existsSync(path.join(SERVICES, 'DBT'))).toBe(false);
   });
 
-  it('offers GitLab on plain Kubernetes only', () => {
-    const gitlab = definition('GITLAB');
-    expect(gitlab.platforms).toEqual(['kubernetes']);
-    expect(offeredOnPlatform(gitlab, 'openshift')).toBe(false);
-    expect(offeredOnPlatform(gitlab, 'kubernetes')).toBe(true);
-    expect(gitlab.unsupportedPlatformMessage).toBe(
-      'GitLab is not supported on OpenShift in this release; register your existing Git server under Git Repositories.');
+  it('ships TRINO, SUPERSET and OPENMETADATA only', () => {
+    expect([...catalog].sort()).toEqual(['OPENMETADATA', 'SUPERSET', 'TRINO']);
+    // GitLab left the release: neither its catalog entry nor its definition directory may remain.
+    expect(catalog).not.toContain('GITLAB');
+    expect(fs.existsSync(path.join(SERVICES, 'GITLAB'))).toBe(false);
   });
 
-  it('offers every other catalog service on both platforms', () => {
-    for (const key of catalog.filter(k => k !== 'GITLAB')) {
+  it('offers every catalog service on both platforms', () => {
+    for (const key of catalog) {
       const service = definition(key);
       expect([key, offeredOnPlatform(service, 'openshift')]).toEqual([key, true]);
       expect([key, offeredOnPlatform(service, 'kubernetes')]).toEqual([key, true]);

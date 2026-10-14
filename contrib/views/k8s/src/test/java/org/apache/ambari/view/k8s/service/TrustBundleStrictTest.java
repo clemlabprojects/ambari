@@ -187,12 +187,12 @@ class TrustBundleStrictTest {
     @Test
     void aServiceThatMountsTheTruststoreSecretCannotDoWithoutIt() {
         doThrow(new KubernetesClientException("connection reset", 0, null))
-                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("gitlab-truststore"), anyMap(), anyMap(), anyMap());
+                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("mounting-truststore"), anyMap(), anyMap(), anyMap());
 
         IllegalStateException stopped = assertThrows(IllegalStateException.class,
-                () -> trustBundle.provisionForDeploy(NS, "gitlab", "GITLAB", null));
+                () -> trustBundle.provisionForDeploy(NS, "mounting", "ZZTESTKUBEONLY", null));
 
-        assertTrue(stopped.getMessage().startsWith("Could not write truststore Secret analytics/gitlab-truststore: "),
+        assertTrue(stopped.getMessage().startsWith("Could not write truststore Secret analytics/mounting-truststore: "),
                 stopped.getMessage());
     }
 
@@ -202,9 +202,9 @@ class TrustBundleStrictTest {
         when(k8s.listViewSecretsWithLabel(anyString(), anyString(), anyString())).thenReturn(List.of());
 
         IllegalStateException stopped = assertThrows(IllegalStateException.class,
-                () -> trustBundle.provisionForDeploy(NS, "gitlab", "GITLAB", List.of()));
+                () -> trustBundle.provisionForDeploy(NS, "mounting", "ZZTESTKUBEONLY", List.of()));
 
-        assertTrue(stopped.getMessage().startsWith("Could not write truststore Secret analytics/gitlab-truststore: no CA "
+        assertTrue(stopped.getMessage().startsWith("Could not write truststore Secret analytics/mounting-truststore: no CA "
                 + "certificate could be assembled"), stopped.getMessage());
         assertTrue(stopped.getMessage().contains("CA store unreadable"), stopped.getMessage());
     }
@@ -263,9 +263,9 @@ class TrustBundleStrictTest {
     }
 
     @Test
-    void gitLabMountsTheReleaseTruststoreSecret() {
+    void aServiceBindingTheReleaseTruststoreSecretMountsIt() {
         StackDefinitionService definitions = new StackDefinitionService();
-        assertTrue(TrustBundleService.bindsReleaseTruststore(definitions.getServiceDefinition("GITLAB")));
+        assertTrue(TrustBundleService.bindsReleaseTruststore(definitions.getServiceDefinition("ZZTESTKUBEONLY")));
         assertFalse(TrustBundleService.bindsReleaseTruststore(definitions.getServiceDefinition("TRINO")));
         assertFalse(TrustBundleService.bindsReleaseTruststore(null));
     }
