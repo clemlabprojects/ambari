@@ -1,7 +1,6 @@
 {
   "label": "Superset",
   "chart": "apache/superset",
-  "pattern": "superset-.*",
   "secretName": "registry-credentials",
   "version": "0.12.50",
   "dependencies": {
@@ -59,10 +58,15 @@
       "type": "template",
       "template": "http://{{host}}:{{port}}/",
       "properties": {
+        "fullname": {
+          "source": "chartFullname",
+          "type": "string",
+          "chartName": "superset"
+        },
         "host": {
           "source": "template",
           "type": "string",
-          "template": "{{releaseName}}-superset.{{namespace}}.svc.cluster.local"
+          "template": "{{fullname}}.{{namespace}}.svc.cluster.local"
         },
         "port": {
           "source": "helm",

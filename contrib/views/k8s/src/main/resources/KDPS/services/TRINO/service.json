@@ -1,7 +1,6 @@
 {
   "label": "Trino",
   "chart": "trinodb/trino",
-  "pattern": "trino-.*",
   "secretName": "registry-credentials",
   "version": "1.43.17",
   "dynamicValues": [

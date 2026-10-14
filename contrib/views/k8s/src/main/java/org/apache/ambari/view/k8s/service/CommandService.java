@@ -6096,7 +6096,7 @@ public class CommandService {
         // This upgrade goes through neither the wizard nor submitDeploy, so the values get the current definition's
         // aliases and retired values here: an earlier definition may have put a secret where anyone allowed to read
         // Deployments can see it (the Superset SECRET_KEY in a plain environment variable of every pod).
-        applyDefinitionValueRewrites(ctx, releaseMetadata.getServiceKey(), deployedValues);
+        applyDefinitionValueRewrites(ctx, releaseMetadata.getServiceKey(), releaseName, deployedValues);
         // Nor are its secrets checked anywhere else: warn in the operation log about those the release still leaves
         // readable outside a Kubernetes Secret (its values, its security profile, the target chart).
         HelmDeployRequest sent = new HelmDeployRequest();
@@ -7481,7 +7481,41 @@ public class CommandService {
         }
 
         // ----- value path rewrites and retired values
-        applyDefinitionValueRewrites(def, request.getServiceKey(), request.getValues());
+        if (def.releaseNameValues != null && !def.releaseNameValues.isEmpty()) {
+            // A request without values (sent straight to the API) must still get the release-name pins.
+            if (request.getValues() == null) request.setValues(new LinkedHashMap<>());
+            addIfPresent(warnings, renamedByReleaseNamePin(def, request));
+        }
+        applyDefinitionValueRewrites(def, request.getServiceKey(), request.getReleaseName(), request.getValues());
+    }
+
+    /**
+     * What the operator must know when pinning the chart's fullname to the release name renames a release an earlier
+     * version deployed under {@code <release>-<chart>}: its Service, Deployment and Route get new names, and anything
+     * that kept the old address (ingestion pipelines already pushed to Airflow, hand-made clients) must be updated.
+     *
+     * @return the warning, or null when nothing is renamed (a first install, or a name that already matches)
+     */
+    String renamedByReleaseNamePin(StackServiceDef def, HelmDeployRequest request) {
+        String release = request.getReleaseName();
+        if (release == null || release.isBlank() || !def.releaseNameValues.contains("fullnameOverride")) return null;
+        Map<String, Object> deployed;
+        try {
+            deployed = this.kubernetesService.getHelmReleaseValues(request.getNamespace(), release);
+        } catch (Exception e) {
+            LOG.debug("Could not read the deployed values of {}/{}: {}", request.getNamespace(), release, e.toString());
+            return null;
+        }
+        if (deployed == null || deployed.isEmpty()) return null;
+        String chart = def.chart == null ? null : def.chart.substring(def.chart.lastIndexOf('/') + 1);
+        String previous = ConfigResolutionService.chartFullname(chart, release, deployed);
+        if (previous == null || previous.equals(release)) return null;
+        String warning = "The resources of release " + release + " are renamed from '" + previous + "' to '" + release
+                + "' (Service, Deployment, Route): its address becomes " + release + "." + request.getNamespace()
+                + ".svc. Update anything that still calls " + previous + "." + request.getNamespace()
+                + ".svc, and redeploy the ingestion pipelines created before this change.";
+        LOG.warn(warning);
+        return warning;
     }
 
     /** The Trino chart value behind 'Let KDPS manage catalogs'. */
@@ -7539,15 +7573,18 @@ public class CommandService {
 
     /**
      * Brings chart values in line with the service definition KDPS runs now, in place: moves each of its
-     * {@code valueAliases}, then removes its {@code retiredValues} (see {@link #removeRetiredValues}). Every path that
+     * {@code valueAliases}, removes its {@code retiredValues} (see {@link #removeRetiredValues}), then sets its
+     * {@code releaseNameValues} to the release's name. Every path that
      * sends a release's values back to Helm goes through it (a deploy, "Upgrade chart" on the Releases page, a catalog
      * saved on the Trino Catalogs page): those values may hold what an earlier definition wrote and this one no longer
      * does, such as a secret a binding used to copy somewhere anyone allowed to read ConfigMaps or Deployments can see.
      * When the definition cannot be loaded, the values are left as they are.
      *
-     * @param serviceKey the release's service, e.g. SUPERSET; nothing is done without one
+     * @param serviceKey  the release's service, e.g. SUPERSET; nothing is done without one
+     * @param releaseName the release's name, which the definition's {@code releaseNameValues} are set to
      */
-    public static void applyDefinitionValueRewrites(ViewContext ctx, String serviceKey, Map<String, Object> values) {
+    public static void applyDefinitionValueRewrites(ViewContext ctx, String serviceKey, String releaseName,
+                                                    Map<String, Object> values) {
         if (serviceKey == null || serviceKey.isBlank() || values == null) return;
         StackServiceDef def;
         try {
@@ -7557,10 +7594,11 @@ public class CommandService {
                     serviceKey, ex.toString());
             return;
         }
-        applyDefinitionValueRewrites(def, serviceKey, values);
+        applyDefinitionValueRewrites(def, serviceKey, releaseName, values);
     }
 
-    private static void applyDefinitionValueRewrites(StackServiceDef def, String serviceKey, Map<String, Object> values) {
+    static void applyDefinitionValueRewrites(StackServiceDef def, String serviceKey, String releaseName,
+                                             Map<String, Object> values) {
         if (def == null || values == null) return;
         if (def.valueAliases != null) {
             for (Map.Entry<String, String> e : def.valueAliases.entrySet()) {
@@ -7573,6 +7611,28 @@ public class CommandService {
         }
         // After the aliases, which move a value that only changed place (the Superset SECRET_KEY).
         removeRetiredValues(values, def.retiredValues);
+        applyReleaseNameValues(values, def.releaseNameValues, releaseName);
+    }
+
+    /**
+     * Sets each path of a definition's {@code releaseNameValues} to the release's name, replacing what the values
+     * carry there: a different name would put the Service where the post-install steps do not look for it.
+     * Nothing is set without a release name.
+     *
+     * @return the paths that were set, in declaration order
+     */
+    static List<String> applyReleaseNameValues(Map<String, Object> values, List<String> paths, String releaseName) {
+        List<String> applied = new ArrayList<>();
+        if (values == null || paths == null || releaseName == null || releaseName.isBlank()) return applied;
+        for (String path : paths) {
+            if (path == null || path.isBlank()) continue;
+            if (!releaseName.equals(ConfigResolutionService.getByDottedPath(values, path))) {
+                LOG.info("Set {} to the release name '{}'", path, releaseName);
+            }
+            putDotted(values, path, releaseName);
+            applied.add(path);
+        }
+        return applied;
     }
 
     /**

@@ -160,7 +160,7 @@ public final class OmAtlasFederationClient {
             "set -eu\n" +
             "python3 - <<'PY'\n" +
             "import os, json, sys, urllib.request\n" +
-            "OM = 'http://' + os.environ.get('OM_SVC_HOST', os.environ['OM_RELEASE']) + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ.get('OM_PORT', '8585')\n" +
+            "OM = 'http://' + os.environ['OM_SVC_HOST'] + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ.get('OM_PORT', '8585')\n" +
             "HDR = {'Authorization': 'Bearer ' + os.environ['OM_JWT'], 'Content-Type': 'application/json'}\n" +
             "def om(method, path, body=None):\n" +
             "    req = urllib.request.Request(OM + '/api/v1' + path,\n" +
@@ -262,9 +262,7 @@ public final class OmAtlasFederationClient {
         // The Atlas password is the only secret on the env list. Bash interpolation
         // here is safe because we always shell-quote (single-quote escape) below.
         String envExports =
-                "OM_RELEASE=" + OmBotJwtClient.shellQuote(release)
-              + " OM_NAMESPACE=" + OmBotJwtClient.shellQuote(namespace)
-              + " OM_JWT=" + OmBotJwtClient.shellQuote(jwt)
+                OmBotJwtClient.connectionEnv(release, namespace, jwt)
               + " ATLAS_HOST_PORT=" + OmBotJwtClient.shellQuote(atlasHostPort)
               + " ATLAS_USER=" + OmBotJwtClient.shellQuote(atlasUsername)
               + " ATLAS_PASSWORD=" + OmBotJwtClient.shellQuote(atlasPassword)

@@ -5,7 +5,6 @@
   "version": "4.3.5",
   "defaultRepo": "clemlab",
   "secretName": "registry-credentials",
-  "pattern": "jupyter-.*",
   "dynamicValues": [
     "AMBARI_OIDC_ISSUER_URL[/protocol/openid-connect/auth]:hub.config.GenericOAuthenticator.authorize_url",
     "AMBARI_OIDC_ISSUER_URL[/protocol/openid-connect/token]:hub.config.GenericOAuthenticator.token_url",

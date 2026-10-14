@@ -307,7 +307,6 @@ export const getChartsJSON = (): any => {
   "clemlab-trino": {
     "label": "Trino",
     "chart": "trinodb/trino",
-    "pattern": "trino-.*",
     "secretName": "registry-credentials",
     "version": "1.41.0",
     "dynamicValues": [
@@ -959,7 +958,6 @@ export const getChartsJSON = (): any => {
   "superset": {
     "label": "Superset",
     "chart": "apache/superset",
-    "pattern": "superset-.*",
     "secretName": "registry-credentials",
     "version": "0.12.13",
     "dependencies": {},

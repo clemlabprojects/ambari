@@ -322,6 +322,28 @@ public final class OmBotJwtClient {
         return null;
     }
 
+    /**
+     * The host name of the release's OpenMetadata Service inside its namespace. The OPENMETADATA
+     * service definition pins the chart's {@code fullnameOverride} to the release name, so the Service
+     * carries the release name whatever the release is called (without the pin the chart names it
+     * {@code <release>-openmetadata} unless the release name already contains "openmetadata").
+     */
+    public static String serviceHost(String release) {
+        return release;
+    }
+
+    /**
+     * The environment assignments the exec scripts that call OpenMetadata's REST API start with: the
+     * release, the Service host to reach it at (passed explicitly, so no script guesses it from the
+     * release), the namespace and the bot's token. Every value is shell-quoted.
+     */
+    static String connectionEnv(String release, String namespace, String jwt) {
+        return "OM_RELEASE=" + shellQuote(release)
+                + " OM_SVC_HOST=" + shellQuote(serviceHost(release))
+                + " OM_NAMESPACE=" + shellQuote(namespace)
+                + " OM_JWT=" + shellQuote(jwt);
+    }
+
     /** Single-quote a string for safe interpolation inside {@code bash -c '...'}. */
     static String shellQuote(String s) {
         return "'" + s.replace("'", "'\\''") + "'";

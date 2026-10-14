@@ -121,4 +121,21 @@ class OmBotJwtClientTest {
         OmBotJwtClient.BotToken token = new OmBotJwtClient.BotToken("eyJ.secret.part", null);
         assertFalse(token.toString().contains("secret"), token.toString());
     }
+
+    @Test
+    void theServiceHostIsTheReleaseNameWhateverItIsCalled() {
+        for (String release : new String[] {"openmetadata", "datacatalog", "om-prod"}) {
+            assertEquals(release, OmBotJwtClient.serviceHost(release));
+            String env = OmBotJwtClient.connectionEnv(release, "data", "eyJ.x.y");
+            assertTrue(env.contains(" OM_SVC_HOST='" + release + "' "), env);
+            assertTrue(env.startsWith("OM_RELEASE='" + release + "' "), env);
+            assertTrue(env.contains(" OM_NAMESPACE='data' OM_JWT='eyJ.x.y'"), env);
+        }
+    }
+
+    @Test
+    void theConnectionEnvironmentIsShellQuoted() {
+        String env = OmBotJwtClient.connectionEnv("a'b", "ns", "tok");
+        assertTrue(env.contains("OM_SVC_HOST='a'\\''b'"), env);
+    }
 }

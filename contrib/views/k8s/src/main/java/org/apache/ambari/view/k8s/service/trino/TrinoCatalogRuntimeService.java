@@ -768,7 +768,8 @@ public class TrinoCatalogRuntimeService {
         Map<String, Object> catalogs = values.get("catalogs") instanceof Map ? new LinkedHashMap<>((Map<String, Object>) values.get("catalogs")) : new LinkedHashMap<>();
         if (text == null) catalogs.remove(name); else catalogs.put(name, text);
         values.put("catalogs", catalogs);
-        CommandService.applyDefinitionValueRewrites(ctx, t.metadata == null ? null : t.metadata.getServiceKey(), values);
+        CommandService.applyDefinitionValueRewrites(ctx, t.metadata == null ? null : t.metadata.getServiceKey(),
+                t.release, values);
         return values;
     }
 }

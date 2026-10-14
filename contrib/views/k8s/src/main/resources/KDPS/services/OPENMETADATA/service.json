@@ -1,7 +1,6 @@
 {
   "label": "OpenMetadata",
   "chart": "openmetadata",
-  "pattern": "openmetadata-.*",
   "secretName": "registry-credentials",
   "version": "1.13.35",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
@@ -68,8 +67,8 @@
       "autoGenerate": true,
       "validityDays": 365,
       "dnsTemplates": [
-        "{{releaseName}}-openmetadata.{{namespace}}.svc",
-        "{{releaseName}}-openmetadata.{{namespace}}.svc.cluster.local",
+        "{{releaseName}}.{{namespace}}.svc",
+        "{{releaseName}}.{{namespace}}.svc.cluster.local",
         "{{ingress.host}}"
       ],
       "defaults": {
@@ -130,7 +129,7 @@
         "host": {
           "source": "template",
           "type": "string",
-          "template": "{{releaseName}}-openmetadata.{{namespace}}.svc.cluster.local"
+          "template": "{{releaseName}}.{{namespace}}.svc.cluster.local"
         },
         "port": {
           "source": "helm",
@@ -534,6 +533,13 @@
     }
   ],
   "bindings": [
+    {
+      "name": "om-fullname-pin",
+      "_description": "Names the chart's Service, Deployment and ServiceAccount exactly like the release. Without it the chart names them '<release>-openmetadata' unless the release name already contains 'openmetadata', and KDPS's post-install steps (base ingestion, Atlas federation, Ranger TagSync) and the endpoint it shows address the Service by the release name. The server sets the same value (releaseNameValues) for the deploys that do not go through the wizard.",
+      "targets": [
+        { "path": "fullnameOverride", "from": { "type": "var", "name": "releaseName" } }
+      ]
+    },
     {
       "name": "openshift-run-as-user",
       "targets": [
@@ -2507,6 +2513,7 @@
   "valueAliases": {
     "ingress.ingressClassName": "ingress.className"
   },
+  "releaseNameValues": ["fullnameOverride"],
   "requiredChartVersion": ">=1.13.31",
   "generatedSecrets": [
     {

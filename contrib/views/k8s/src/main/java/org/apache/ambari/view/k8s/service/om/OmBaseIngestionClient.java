@@ -216,7 +216,7 @@ public final class OmBaseIngestionClient {
             "set -eu\n" +
             "python3 - <<'PY'\n" +
             "import os, json, sys, urllib.request, urllib.error\n" +
-            "OM = 'http://' + os.environ.get('OM_SVC_HOST', os.environ['OM_RELEASE']) + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ.get('OM_PORT', '8585')\n" +
+            "OM = 'http://' + os.environ['OM_SVC_HOST'] + '.' + os.environ['OM_NAMESPACE'] + ':' + os.environ.get('OM_PORT', '8585')\n" +
             "HDR = {'Authorization': 'Bearer ' + os.environ['OM_JWT'], 'Content-Type': 'application/json'}\n" +
             "def om(method, path, body=None):\n" +
             "    req = urllib.request.Request(OM + '/api/v1' + path,\n" +
@@ -303,9 +303,7 @@ public final class OmBaseIngestionClient {
 
         // Secrets (DB_PASS) only ever travel as shell-quoted env values.
         String envExports =
-                "OM_RELEASE=" + OmBotJwtClient.shellQuote(release)
-              + " OM_NAMESPACE=" + OmBotJwtClient.shellQuote(namespace)
-              + " OM_JWT=" + OmBotJwtClient.shellQuote(jwt)
+                OmBotJwtClient.connectionEnv(release, namespace, jwt)
               + " SVC_NAME=" + OmBotJwtClient.shellQuote(serviceName)
               + " SVC_TYPE=" + OmBotJwtClient.shellQuote(serviceType)
               + " SCHEME=" + OmBotJwtClient.shellQuote(scheme)

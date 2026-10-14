@@ -39,7 +39,6 @@ public class StackServiceDef {
     public List<FormField> form; // Reuses your existing dynamic form definitions
 
     // Additional fields used by bindings/variables/etc.
-    public String pattern;
     public String secretName;
     public Map<String, Object> dependencies;
     /**
@@ -157,6 +156,17 @@ public class StackServiceDef {
      * after the {@link #valueAliases}; keys starting with "_" are comments.
      */
     public Map<String, Object> retiredValues;
+
+    /**
+     * Chart values that always carry the release's name, as dotted paths, e.g. {@code ["fullnameOverride"]} for
+     * OpenMetadata. The chart names its Service after the release only when the release name contains
+     * "openmetadata", so KDPS pins the name: the post-install steps (ingestion, Atlas federation, Ranger TagSync)
+     * and the endpoint shown for the release all address the Service by the release name. The wizard sets the same
+     * values through a binding; the server sets them on every set of release values it sends to Helm, so a request
+     * sent straight to the API, a GitOps deploy and a chart upgrade end up with the same Service name
+     * ({@code CommandService.applyDefinitionValueRewrites}). An operator's own value for such a path is replaced.
+     */
+    public List<String> releaseNameValues;
 
     /**
      * Declarative rule for how the wizard couples auth profile selection with ingress
