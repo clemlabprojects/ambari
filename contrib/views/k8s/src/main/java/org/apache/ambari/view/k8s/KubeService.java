@@ -475,7 +475,7 @@ public class KubeService {
      * RBAC preflight (backed by SelfSubjectAccessReview, i.e. {@code oc auth can-i}) for the connected
      * account against a target namespace: reports whether it can perform the core deploy actions and —
      * on OpenShift — the KEDA autoscaling + monitoring actions. Lets the wizard warn BEFORE deploying
-     * when the account lacks a permission (e.g. can't create KEDA ScaledObjects or read platform monitoring).
+     * when the account lacks a permission (e.g. can't create KEDA ScaledObjects or the objects of their monitoring token).
      */
     @GET
     @Path("/cluster/preflight")
@@ -519,10 +519,27 @@ public class KubeService {
         // Monitoring (ServiceMonitor so Prometheus scrapes the workload)
         checks.add(preflightCheck("Create ServiceMonitors", "Monitoring", k.canI("create", "monitoring.coreos.com", "servicemonitors", null, null, namespace)));
         if (ocp) {
-            // KEDA must read metrics from OpenShift's built-in (user-workload) monitoring via the Thanos proxy.
-            boolean thanos = k.canI("get", "", "services", "proxy", null, "openshift-user-workload-monitoring")
-                    || k.canI("get", "", "services", "proxy", null, "openshift-monitoring");
-            checks.add(preflightCheck("Query platform monitoring (Thanos)", "Monitoring", thanos));
+            // KEDA reads the platform's monitoring with a token KDPS sets up in the project: the service account,
+            // its Role and RoleBinding, and the Secret checked above. It does not go through the API server's proxy
+            // of the monitoring services, so no right in openshift-monitoring is asked for.
+            checks.add(preflightCheck("Create ServiceAccounts", "Autoscaling (KEDA)",
+                    k.canI("create", "", "serviceaccounts", null, null, namespace)));
+            checks.add(preflightCheck("Create Roles", "Autoscaling (KEDA)",
+                    k.canI("create", "rbac.authorization.k8s.io", "roles", null, null, namespace)));
+            checks.add(preflightCheck("Create RoleBindings", "Autoscaling (KEDA)",
+                    k.canI("create", "rbac.authorization.k8s.io", "rolebindings", null, null, namespace)));
+            if (k.canBindClusterRoles()) {
+                // With it, autoscaling may read the monitoring of the whole cluster (Thanos port 9091).
+                checks.add(preflightCheck("Create ClusterRoleBindings", "Autoscaling (KEDA)", true));
+            } else {
+                Map<String, Object> projectPort = preflightCheck("Autoscaling reads the monitoring of the project",
+                        "Autoscaling (KEDA)", false);
+                projectPort.put("advisory", true);
+                projectPort.put("note", "This account may not create ClusterRoleBindings, so autoscaling reads the "
+                        + "metrics of the project only, through the per-project Thanos port (9092). Nothing to do: "
+                        + "autoscaling on the metrics of the project works without any right on the cluster.");
+                checks.add(projectPort);
+            }
 
             // SCC (advisory): some services (OpenMetadata, JupyterHub) run pods that the default restricted-v2 SCC
             // refuses. Their deploy grants the SCCs to the release's own service accounts when this account may in
@@ -785,10 +802,15 @@ public class KubeService {
                              @QueryParam("offset") @DefaultValue("0") int offset) {
         try {
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            var ks = getKubernetesService();
-            var nodes = ks.getNodes(limit, offset);
-            int total = ks.countNodes();
-            return Response.ok(mapper.writeValueAsString(Map.of("items", nodes, "total", total))).build();
+            var page = getKubernetesService().getNodes(limit, offset);
+            // An account limited to its own projects may not read nodes: an empty list the page can explain, not an error.
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("items", page.items());
+            body.put("total", page.total());
+            if (page.restricted()) {
+                body.put("restricted", true);
+            }
+            return Response.ok(mapper.writeValueAsString(body)).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -884,6 +906,13 @@ public class KubeService {
                 return Response.status(Response.Status.UNAUTHORIZED)
                         .entity("K8S_UNAUTHORIZED: " + kce.getMessage()).build();
             }
+        }
+        // Authenticated but not allowed: the account's limit, not a server fault. One line, no stack trace.
+        // The marker tells the UI this 403 comes from the cluster: the refusal text often mentions a token or
+        // authentication, which the UI would otherwise take for an expired Ambari session.
+        if (NamespaceScope.isForbidden(e)) {
+            LOG.warn("Kubernetes API refused the request for lack of rights: {}", e.getMessage());
+            return Response.status(Response.Status.FORBIDDEN).entity("K8S_FORBIDDEN: " + e.getMessage()).build();
         }
         LOG.error("Unexpected Kubernetes API error", e);
         return Response.serverError().entity(e.getMessage()).build();

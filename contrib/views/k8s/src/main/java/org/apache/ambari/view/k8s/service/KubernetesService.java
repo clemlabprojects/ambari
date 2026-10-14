@@ -119,6 +119,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -183,18 +184,60 @@ public class KubernetesService {
     // with cluster-monitoring-view). Cached with its expiry and renewed lazily before it expires.
     private final AtomicReference<MintedToken> monitoringTokenCache = new AtomicReference<>(null);
     private final Object monitoringTokenMintLock = new Object();
+    // Incremented each time the client is rebuilt from the saved configuration: a refusal met by a call that started
+    // on an earlier client says nothing about the account configured now, so it is not remembered for it.
+    private final AtomicLong clientGeneration = new AtomicLong();
+    // Refusals remembered for REFUSAL_TTL_MS, like NamespaceScope does for listings: an account that may not list
+    // nodes, mint the monitoring token, read cluster monitoring or bind cluster roles is not asked again on every
+    // dashboard load, as each attempt is a refused call the platform's audit log records.
+    private final RememberedRefusal nodesRefusal = new RememberedRefusal();
+    private final RememberedRefusal monitoringTokenRefusal = new RememberedRefusal();
+    private final RememberedRefusal clusterMonitoringRefusal = new RememberedRefusal();
+    private final RememberedRefusal clusterRoleBindingRefusal = new RememberedRefusal();
+    // When the "Prometheus query failed" warning was last logged (epoch ms), so a refused query warns once per window.
+    private final AtomicLong prometheusWarnedAt = new AtomicLong();
     private static final String MONITORING_VIEWER_CLUSTER_ROLE = "cluster-monitoring-view";
     private static final String MONITORING_VIEWER_CRB_NAME = "ambari-monitoring-viewer";
     private static final long MONITORING_TOKEN_TTL_SECONDS = 3600L;          // request 1-hour tokens
     private static final long MONITORING_TOKEN_RENEW_BUFFER_MS = 300_000L;   // renew when < 5 min remain
 
-    /** A bearer token together with the epoch-millis instant at which it expires. */
+    /**
+     * A bearer token together with the epoch-millis instant at which it expires, and the client generation it was
+     * minted under: a token of an earlier client may belong to another cluster, so it is never sent to this one.
+     */
     private static final class MintedToken {
         final String token;
         final long expiresAtMs;
-        MintedToken(String token, long expiresAtMs) {
+        final long generation;
+        MintedToken(String token, long expiresAtMs, long generation) {
             this.token = token;
             this.expiresAtMs = expiresAtMs;
+            this.generation = generation;
+        }
+    }
+
+    /** When something was last refused, and by which client generation; a refusal met by an earlier client is ignored. */
+    private final class RememberedRefusal {
+        private record Refusal(long generation, long atMs) { }
+
+        private final AtomicReference<Refusal> last = new AtomicReference<>();
+
+        /** Whether the client in use met this refusal within the last {@link NamespaceScope#REFUSAL_TTL_MS}. */
+        boolean isRecent() {
+            Refusal r = last.get();
+            return r != null && r.generation() == clientGeneration.get()
+                    && System.currentTimeMillis() - r.atMs() <= NamespaceScope.REFUSAL_TTL_MS;
+        }
+
+        /** Remembers a refusal met by a call that started on the client of {@code generation}. */
+        void record(long generation) {
+            if (generation == clientGeneration.get()) {
+                last.set(new Refusal(generation, System.currentTimeMillis()));
+            }
+        }
+
+        void clear() {
+            last.set(null);
         }
     }
 
@@ -599,17 +642,37 @@ public class KubernetesService {
         return current;
     }
 
+    /** One page of the cluster's nodes with the total, and whether this account may not read nodes at all. */
+    public record NodePage(List<ClusterNode> items, int total, boolean restricted) {
+        static NodePage restrictedPage() {
+            return new NodePage(List.of(), 0, true);
+        }
+    }
+
     /**
-     * Returns a paginated list of cluster nodes enriched with CPU and memory usage metrics.
+     * Returns a paginated list of cluster nodes enriched with CPU and memory usage metrics. An account limited to its
+     * own projects may not read nodes: that is an empty page flagged {@code restricted}, not an error, and the refusal
+     * is remembered so that opening the view again does not repeat the refused call.
      *
      * @param limit  the maximum number of nodes to return; must be at least 1
      * @param offset the zero-based starting index into the full node list
-     * @return list of {@link ClusterNode} objects for the requested page
+     * @return the requested page, with the number of nodes in the whole cluster
      */
-    public List<ClusterNode> getNodes(int limit, int offset) {
+    public NodePage getNodes(int limit, int offset) {
+        long generation = clientGeneration.get();
         checkConfiguration();
+        if (nodesRefusal.isRecent()) {
+            return NodePage.restrictedPage();
+        }
         LOG.info("Fetching node list from Kubernetes API.");
-        var items = executeWithAuthRetry("list nodes", () -> client.nodes().list().getItems());
+        List<Node> items;
+        try {
+            items = executeWithAuthRetry("list nodes", () -> client.nodes().list().getItems());
+        } catch (RuntimeException e) {
+            if (!NamespaceScope.isForbidden(e)) throw e;
+            rememberNodesRefused(generation);
+            return NodePage.restrictedPage();
+        }
         int from = Math.min(Math.max(offset, 0), items.size());
         int to = Math.min(from + Math.max(limit, 1), items.size());
         List<Node> pageNodes = items.subList(from, to);
@@ -632,7 +695,14 @@ public class KubernetesService {
                 node.setMemoryUsagePercent(m.memoryUsagePercent);
             }
         });
-        return nodes;
+        return new NodePage(nodes, items.size(), false);
+    }
+
+    /** Remembers that listing nodes was refused to a call that started on the client of {@code generation}. */
+    private void rememberNodesRefused(long generation) {
+        nodesRefusal.record(generation);
+        LOG.debug("Nodes are not readable by this account; they are not asked for again for {} minutes",
+                NamespaceScope.REFUSAL_TTL_MS / 60_000L);
     }
 
     /**
@@ -895,17 +965,23 @@ public class KubernetesService {
         if (cachedStats != null && !forceRefresh) {
             return cachedStats;
         }
+        long generation = clientGeneration.get();
         checkConfiguration();
         LOG.info("Calculating cluster stats from Kubernetes API.");
 
         NodeList nodeList;
-        try {
-            nodeList = executeWithAuthRetry("list nodes (stats)", () -> client.nodes().list());
-        } catch (RuntimeException e) {
-            if (!NamespaceScope.isForbidden(e)) throw e;
-            LOG.debug("Nodes are not readable by this account; node and capacity figures stay empty");
+        if (nodesRefusal.isRecent()) {
             nodeList = new NodeList();
             nodeList.setItems(new ArrayList<>());
+        } else {
+            try {
+                nodeList = executeWithAuthRetry("list nodes (stats)", () -> client.nodes().list());
+            } catch (RuntimeException e) {
+                if (!NamespaceScope.isForbidden(e)) throw e;
+                rememberNodesRefused(generation);
+                nodeList = new NodeList();
+                nodeList.setItems(new ArrayList<>());
+            }
         }
         List<Pod> podItems = namespaceScope.listAcrossNamespaces(NamespaceScope.Resource.PODS,
                 () -> client.pods().inAnyNamespace().list().getItems(),
@@ -949,20 +1025,32 @@ public class KubernetesService {
         // Attempt Prometheus first
         try {
             MonitoringSettings settings = loadMonitoringSettings();
-            if (settings.preferPrometheus) {
-                MonitoringInfo prom = discoverMonitoringPrometheus();
+            // Cluster monitoring is not asked again when it refused this account a moment ago: the query would only
+            // add a refused call to the platform's audit log.
+            boolean clusterMonitoringOutOfReach = settings.preferPrometheus && clusterMonitoringRefusal.isRecent();
+            if (clusterMonitoringOutOfReach) {
+                LOG.debug("Skipping the cluster-wide monitoring query: this account may not read cluster monitoring");
+            }
+            if (settings.preferPrometheus && !clusterMonitoringOutOfReach) {
                 String promUrl = null;
                 if (isOpenShift(client)) {
                     promUrl = viewContext.getAmbariProperty("openshift.thanos.url");
                     if (promUrl == null || promUrl.isBlank()) {
                         promUrl = "https://thanos-querier.openshift-monitoring.svc:9091";
                     }
-                    // Use API proxy when Ambari is outside the cluster.
-                    MonitoringInfo openShiftMonitoringInfo = new MonitoringInfo("openshift-monitoring", "openshift-monitoring", promUrl);
-                    promUrl = resolvePrometheusReachableUrl(openShiftMonitoringInfo);
-                } else if (prom != null) {
-                    // Prefer a reachable URL; out-of-cluster Ambari uses the API proxy.
-                    promUrl = resolvePrometheusReachableUrl(prom);
+                    if (isLimitedToOwnProjects(generation) && !mayReadClusterMonitoring(promUrl, generation)) {
+                        promUrl = null;
+                    } else {
+                        // Use API proxy when Ambari is outside the cluster.
+                        MonitoringInfo openShiftMonitoringInfo = new MonitoringInfo("openshift-monitoring", "openshift-monitoring", promUrl);
+                        promUrl = resolvePrometheusReachableUrl(openShiftMonitoringInfo);
+                    }
+                } else {
+                    MonitoringInfo prom = discoverMonitoringPrometheus();
+                    if (prom != null) {
+                        // Prefer a reachable URL; out-of-cluster Ambari uses the API proxy.
+                        promUrl = resolvePrometheusReachableUrl(prom);
+                    }
                 }
                 if (promUrl != null && !promUrl.isBlank()) {
                     double[] promMetrics = queryPrometheusClusterUsage(promUrl);
@@ -2473,26 +2561,49 @@ public class KubernetesService {
     public boolean canI(String verb, String group, String resource, String subresource, String name, String namespace) {
         if (client == null) return false;
         try {
-            io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReview review =
-                new io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReviewBuilder()
-                    .withNewSpec()
-                        .withNewResourceAttributes()
-                            .withVerb(verb)
-                            .withGroup(group == null ? "" : group)
-                            .withResource(resource)
-                            .withSubresource(subresource)
-                            .withName(name)
-                            .withNamespace(namespace)
-                        .endResourceAttributes()
-                    .endSpec()
-                    .build();
-            var result = client.authorization().v1().selfSubjectAccessReview().create(review);
-            return result != null && result.getStatus() != null && Boolean.TRUE.equals(result.getStatus().getAllowed());
+            return accessReview(verb, group, resource, subresource, name, namespace);
         } catch (Exception e) {
             LOG.warn("can-i {} {}/{}{}{} in ns={} failed: {}", verb, group, resource,
                     subresource != null ? "/" + subresource : "", name != null ? " " + name : "", namespace,
                     e.toString());
             return false;
+        }
+    }
+
+    /**
+     * The SelfSubjectAccessReview behind {@link #canI}, for callers that remember the answer: unlike canI it tells a
+     * refusal from a review that could not be made, which says nothing about the account's rights.
+     *
+     * @return what the API server answered; a review the API server refuses to run counts as "not allowed"
+     * @throws RuntimeException when the review could not be made (timeout, server error, no connection)
+     */
+    private boolean accessReview(String verb, String group, String resource, String subresource, String name,
+                                 String namespace) {
+        KubernetesClient c = this.client;
+        if (c == null) {
+            throw new IllegalStateException("Kubernetes client is not configured");
+        }
+        io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReview review =
+            new io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReviewBuilder()
+                .withNewSpec()
+                    .withNewResourceAttributes()
+                        .withVerb(verb)
+                        .withGroup(group == null ? "" : group)
+                        .withResource(resource)
+                        .withSubresource(subresource)
+                        .withName(name)
+                        .withNamespace(namespace)
+                    .endResourceAttributes()
+                .endSpec()
+                .build();
+        try {
+            var result = c.authorization().v1().selfSubjectAccessReview().create(review);
+            return result != null && result.getStatus() != null && Boolean.TRUE.equals(result.getStatus().getAllowed());
+        } catch (RuntimeException e) {
+            if (NamespaceScope.isForbidden(e)) {
+                return false;
+            }
+            throw e;
         }
     }
 
@@ -2615,15 +2726,31 @@ public class KubernetesService {
      * @return double[]{cpuCoresUsed, memGiBUsed} or null on failure.
      */
     private double[] queryPrometheusClusterUsage(String promUrl) {
+        long generation = clientGeneration.get();
         try {
             HttpClient prometheusHttpClient = buildPrometheusHttpClient(promUrl);
             HttpResponse<String> cpuResponse = runMonitoringQuery(prometheusHttpClient, promUrl,
                     "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[2m]))");
-            HttpResponse<String> memoryResponse = runMonitoringQuery(prometheusHttpClient, promUrl,
-                    "sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)");
+            // A credential refused for one query is refused for the other: it is not sent a second time.
+            HttpResponse<String> memoryResponse = isRefusal(cpuResponse) ? cpuResponse
+                    : runMonitoringQuery(prometheusHttpClient, promUrl,
+                            "sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)");
+            if (isDenied(cpuResponse) || isDenied(memoryResponse)) {
+                // Even with the minted token: not asked again until the window ends or the configuration changes.
+                // A 401 is not remembered: an expired credential is renewed (token provider, OpenShift login) without
+                // the configuration changing, and the account may then read cluster monitoring at once.
+                clusterMonitoringRefusal.record(generation);
+            }
             if (cpuResponse.statusCode() >= 300 || memoryResponse.statusCode() >= 300) {
-                LOG.warn("Prometheus query failed (codes {} / {}), url {} body(cpu)={} body(mem)={}",
-                        cpuResponse.statusCode(), memoryResponse.statusCode(), promUrl, cpuResponse.body(), memoryResponse.body());
+                // The same refusal on every dashboard load would bury the log: warn once per window.
+                if (warnOncePerWindow(prometheusWarnedAt)) {
+                    LOG.warn("Prometheus query failed (codes {} / {}), url {} body(cpu)={} body(mem)={}; this is not "
+                                    + "logged again for {} minutes", cpuResponse.statusCode(), memoryResponse.statusCode(),
+                            promUrl, cpuResponse.body(), memoryResponse.body(), NamespaceScope.REFUSAL_TTL_MS / 60_000L);
+                } else {
+                    LOG.debug("Prometheus query failed (codes {} / {}), url {}", cpuResponse.statusCode(),
+                            memoryResponse.statusCode(), promUrl);
+                }
                 return null;
             }
             double cpuUsed = parsePrometheusSingleValue(cpuResponse.body());
@@ -2773,6 +2900,87 @@ public class KubernetesService {
         return prometheusClientCache.get(promUrl);
     }
 
+    /** Whether a monitoring backend refused the credential (rather than failing for another reason). */
+    private static boolean isRefusal(HttpResponse<?> response) {
+        return response.statusCode() == 401 || response.statusCode() == 403;
+    }
+
+    /** Whether a monitoring backend recognised the credential but denied it the query: the account lacks the right. */
+    private static boolean isDenied(HttpResponse<?> response) {
+        return response.statusCode() == 403;
+    }
+
+    private boolean monitoringAutoTokenEnabled() {
+        String value = viewContext.getAmbariProperty("openshift.monitoring.autoToken");
+        return value == null || value.isBlank() || Boolean.parseBoolean(value);  // default: enabled
+    }
+
+    /**
+     * Whether the account may not see the whole cluster: it may not list pods in every namespace, or may not bind
+     * cluster roles. The answer "may not bind" is remembered like a refusal, so the dashboard does not ask on every
+     * load. A check that could not be made counts as "not limited", as before these checks existed.
+     *
+     * @param generation the client generation the calling dashboard load started on
+     */
+    private boolean isLimitedToOwnProjects(long generation) {
+        if (namespaceScope.isRefused(NamespaceScope.Resource.PODS) || clusterRoleBindingRefusal.isRecent()) {
+            return true;
+        }
+        try {
+            if (accessReview("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null)) {
+                return false;
+            }
+        } catch (RuntimeException e) {
+            LOG.debug("Could not check whether this account may bind cluster roles: {}", e.toString());
+            return false;
+        }
+        clusterRoleBindingRefusal.record(generation);
+        return true;
+    }
+
+    /**
+     * For an account limited to its own projects: whether a query to OpenShift cluster monitoring at
+     * {@code thanosUrl} would be let through, asked of the API server with SelfSubjectAccessReviews (which are never
+     * refused) instead of sending the query and having the platform refuse it. Out of the cluster the query goes
+     * through the API server's service proxy, which the account must be allowed to use. Thanos then accepts a token
+     * that may get namespaces cluster-wide (as cluster-monitoring-view grants): the kubeconfig's own, or one minted for
+     * the monitoring service account. A "no" is remembered in {@link #clusterMonitoringRefusal}; a check that could
+     * not be made is not, and the next load asks again.
+     *
+     * @param thanosUrl  the Thanos URL as configured, before it is routed through the API server's proxy
+     * @param generation the client generation the calling dashboard load started on
+     */
+    private boolean mayReadClusterMonitoring(String thanosUrl, long generation) {
+        try {
+            PrometheusServiceEndpoint proxied = isRunningInsideKubernetes() ? null
+                    : extractPrometheusServiceEndpoint(thanosUrl);
+            boolean allowed = proxied == null || accessReview("get", "", "services", "proxy",
+                    proxied.scheme() + ":" + proxied.serviceName() + ":" + proxied.servicePort(), proxied.namespace());
+            if (allowed && !(kubeconfigBearerToken() != null
+                    && accessReview("get", "", "namespaces", null, null, null))) {
+                boolean autoToken = monitoringAutoTokenEnabled();
+                String minted = autoToken ? getMonitoringBearerToken() : null;
+                if (minted == null && autoToken && !monitoringTokenRefusal.isRecent()) {
+                    // The token could not be obtained for another reason than a refusal: that is no "no".
+                    LOG.debug("Could not obtain a monitoring token; the cluster-wide monitoring is not queried this time");
+                    return false;
+                }
+                allowed = minted != null;
+            }
+            if (allowed) {
+                return true;
+            }
+        } catch (RuntimeException e) {
+            LOG.debug("Could not check whether this account may read cluster monitoring; it is not queried this "
+                    + "time: {}", e.toString());
+            return false;
+        }
+        LOG.debug("This account may not read cluster monitoring; it is not queried for {} minutes",
+                NamespaceScope.REFUSAL_TTL_MS / 60_000L);
+        clusterMonitoringRefusal.record(generation);
+        return false;
+    }
+
     /**
      * Return a valid bearer token for querying OpenShift cluster monitoring (Thanos), minting a fresh
      * one via the TokenRequest API when the cache is empty or within the renewal buffer of expiry.
@@ -2780,52 +2988,94 @@ public class KubernetesService {
      *
      * @return a currently-valid bearer token, or {@code null} if one could not be obtained
      */
-    private boolean monitoringAutoTokenEnabled() {
-        String value = viewContext.getAmbariProperty("openshift.monitoring.autoToken");
-        return value == null || value.isBlank() || Boolean.parseBoolean(value);  // default: enabled
-    }
-
     private String getMonitoringBearerToken() {
+        long generation = clientGeneration.get();
         MintedToken cached = monitoringTokenCache.get();
-        long now = System.currentTimeMillis();
-        if (cached != null && cached.expiresAtMs - now > MONITORING_TOKEN_RENEW_BUFFER_MS) {
+        if (isUsable(cached, generation)) {
             return cached.token;
         }
         synchronized (monitoringTokenMintLock) {
             // Re-check under the lock: another thread may have just minted one.
             cached = monitoringTokenCache.get();
-            now = System.currentTimeMillis();
-            if (cached != null && cached.expiresAtMs - now > MONITORING_TOKEN_RENEW_BUFFER_MS) {
+            if (isUsable(cached, generation)) {
                 return cached.token;
             }
+            if (monitoringTokenRefusal.isRecent()) {
+                return null; // an account refused one a moment ago would only be refused again
+            }
+            String saRef = viewContext.getAmbariProperty("openshift.monitoring.serviceaccount");
+            if (saRef == null || saRef.isBlank()) {
+                saRef = "default/" + MONITORING_VIEWER_CRB_NAME;
+            }
+            String[] parts = saRef.split("/", 2);
+            String saNamespace = parts.length == 2 ? parts[0].trim() : "default";
+            String saName = parts.length == 2 ? parts[1].trim() : parts[0].trim();
+
+            // Not asking at all when the account may not: a refused TokenRequest for a service account outside the
+            // account's own projects reads as probing in the platform's audit log. A check that could not be made
+            // is no refusal, so it is not remembered and the next load asks again.
+            boolean mayMint;
             try {
-                MintedToken fresh = mintMonitoringToken();
+                mayMint = accessReview("create", "", "serviceaccounts", "token", saName, saNamespace);
+            } catch (Exception e) {
+                LOG.debug("Could not check whether this account may request a token for service account {}/{}: {}",
+                        saNamespace, saName, e.toString());
+                return null;
+            }
+            if (!mayMint) {
+                LOG.debug("This account may not request a token for service account {}/{}; the cluster-wide "
+                        + "monitoring is not queried (openshift.monitoring.serviceaccount can name one in its own "
+                        + "project)", saNamespace, saName);
+                monitoringTokenRefusal.record(generation);
+                return null;
+            }
+            try {
+                MintedToken fresh = mintMonitoringToken(saNamespace, saName, generation);
                 if (fresh != null && fresh.token != null && !fresh.token.isBlank()) {
+                    if (generation != clientGeneration.get()) {
+                        // The configuration changed while the token was minted: it may be another cluster's token,
+                        // so it is neither kept nor sent; the next query mints one for the client in use.
+                        LOG.debug("Discarding a monitoring token minted under the previous Kubernetes client");
+                        return null;
+                    }
                     monitoringTokenCache.set(fresh);
+                    monitoringTokenRefusal.clear();
                     return fresh.token;
                 }
+                monitoringTokenRefusal.record(generation);
             } catch (Exception e) {
-                LOG.warn("Failed to mint OpenShift monitoring token: {}", e.toString());
+                if (NamespaceScope.isForbidden(e)) {
+                    LOG.debug("The OpenShift monitoring token was refused: {}", e.getMessage());
+                    monitoringTokenRefusal.record(generation);
+                } else {
+                    LOG.warn("Failed to mint OpenShift monitoring token: {}", e.toString());
+                }
             }
             return null;
         }
     }
 
-    /**
-     * Resolve the monitoring service account (namespace/name), ensure it exists and is bound to
-     * cluster-monitoring-view, then mint a short-lived token for it via the TokenRequest API.
-     *
-     * @return the minted token plus its expiry, or {@code null} on failure
-     */
-    private MintedToken mintMonitoringToken() {
-        String saRef = viewContext.getAmbariProperty("openshift.monitoring.serviceaccount");
-        if (saRef == null || saRef.isBlank()) {
-            saRef = "default/" + MONITORING_VIEWER_CRB_NAME;
-        }
-        String[] parts = saRef.split("/", 2);
-        String saNamespace = parts.length == 2 ? parts[0].trim() : "default";
-        String saName = parts.length == 2 ? parts[1].trim() : parts[0].trim();
+    /** Whether a cached monitoring token was minted under the client of {@code generation} and is not about to expire. */
+    private boolean isUsable(MintedToken cached, long generation) {
+        return cached != null && cached.generation == generation && generation == clientGeneration.get()
+                && cached.expiresAtMs - System.currentTimeMillis() > MONITORING_TOKEN_RENEW_BUFFER_MS;
+    }
 
+    /** True for the first caller in each {@link NamespaceScope#REFUSAL_TTL_MS} window, so a repeated warning is logged once. */
+    private static boolean warnOncePerWindow(AtomicLong lastWarnedAt) {
+        long now = System.currentTimeMillis();
+        long last = lastWarnedAt.get();
+        return (last == 0 || now - last > NamespaceScope.REFUSAL_TTL_MS) && lastWarnedAt.compareAndSet(last, now);
+    }
+
+    /**
+     * Ensure the monitoring service account exists and is bound to cluster-monitoring-view, then mint a short-lived
+     * token for it via the TokenRequest API.
+     *
+     * @param generation the client generation the token is minted under
+     * @return the minted token plus its expiry, or {@code null} when the API server returned no token
+     */
+    private MintedToken mintMonitoringToken(String saNamespace, String saName, long generation) {
         ensureMonitoringServiceAccount(saNamespace, saName);
 
         TokenRequest request = new TokenRequestBuilder()
@@ -2853,13 +3103,15 @@ public class KubernetesService {
         }
         LOG.info("Minted OpenShift monitoring token for service account {}/{} (expires {}).",
                 saNamespace, saName, expTs != null ? expTs : "in " + MONITORING_TOKEN_TTL_SECONDS + "s");
-        return new MintedToken(token, expiresAtMs);
+        return new MintedToken(token, expiresAtMs, generation);
     }
 
     /**
      * Best-effort: create the monitoring service account and its cluster-monitoring-view
      * ClusterRoleBinding if they do not already exist. Requires the kubeconfig identity to have
      * permission to create these objects (cluster-admin does); logged and ignored otherwise.
+     * An account that may not bind cluster roles does not touch the ClusterRoleBinding at all: the
+     * service account is then expected to be bound by the platform team.
      */
     private void ensureMonitoringServiceAccount(String namespace, String name) {
         try {
@@ -2873,8 +3125,14 @@ public class KubernetesService {
                 LOG.info("Created monitoring service account {}/{}", namespace, name);
             }
         } catch (Exception e) {
-            LOG.warn("Could not ensure monitoring service account {}/{} (may already exist or lack RBAC): {}",
-                    namespace, name, e.toString());
+            logDiscoveryFailure("Ensure monitoring service account " + namespace + "/" + name, e);
+        }
+        // Even a read of the ClusterRoleBinding is refused to an account limited to its own projects, and every
+        // refused call shows in the platform's audit log.
+        if (!canBindClusterRoles()) {
+            LOG.debug("This account may not bind cluster roles; ClusterRoleBinding {} is left to the platform team",
+                    MONITORING_VIEWER_CRB_NAME);
+            return;
         }
         try {
             ClusterRoleBinding crb = client.rbac().clusterRoleBindings().withName(MONITORING_VIEWER_CRB_NAME).get();
@@ -2898,8 +3156,7 @@ public class KubernetesService {
                         MONITORING_VIEWER_CLUSTER_ROLE, namespace, name, MONITORING_VIEWER_CRB_NAME);
             }
         } catch (Exception e) {
-            LOG.warn("Could not ensure ClusterRoleBinding {} -> {} for {}/{} (may already exist or lack RBAC): {}",
-                    MONITORING_VIEWER_CRB_NAME, MONITORING_VIEWER_CLUSTER_ROLE, namespace, name, e.toString());
+            logDiscoveryFailure("Ensure ClusterRoleBinding " + MONITORING_VIEWER_CRB_NAME, e);
         }
     }
 
@@ -3805,16 +4062,8 @@ public class KubernetesService {
         // that already work). For a client-certificate-only kubeconfig there is no token, so on OpenShift
         // fall back to a minted, auto-renewed cluster-monitoring-view token. If a present token turns out
         // to lack monitoring RBAC, the query layer retries once with a minted token (see runMonitoringQuery).
-        // A token provider (OpenShift login, the pod's ServiceAccount) renews the token: the one written into the
-        // kubeconfig when the client was built may have been replaced since.
-        String token = currentConfig.getOauthTokenProvider() != null ? currentConfig.getOauthTokenProvider().getToken() : null;
-        if (token == null || token.isBlank()) {
-            token = currentConfig.getOauthToken();
-        }
-        if (token == null || token.isBlank()) {
-            token = currentConfig.getAutoOAuthToken();
-        }
-        if (token != null && !token.isBlank()) {
+        String token = kubeconfigBearerToken();
+        if (token != null) {
             builder.header("Authorization", "Bearer " + token);
             return;
         }
@@ -3832,6 +4081,23 @@ public class KubernetesService {
                     .encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
             builder.header("Authorization", "Basic " + basicAuthValue);
         }
+    }
+
+    /**
+     * The bearer token of the kubeconfig credential, or {@code null} when it has none (client certificate, basic
+     * auth). A token provider (OpenShift login, the pod's ServiceAccount) renews the token: the one written into the
+     * kubeconfig when the client was built may have been replaced since.
+     */
+    private String kubeconfigBearerToken() {
+        Config currentConfig = client.getConfiguration();
+        String token = currentConfig.getOauthTokenProvider() != null ? currentConfig.getOauthTokenProvider().getToken() : null;
+        if (token == null || token.isBlank()) {
+            token = currentConfig.getOauthToken();
+        }
+        if (token == null || token.isBlank()) {
+            token = currentConfig.getAutoOAuthToken();
+        }
+        return token == null || token.isBlank() ? null : token;
     }
 
     /**
@@ -4396,6 +4662,7 @@ public class KubernetesService {
         if (fresh == null) {
             this.isConfigured = false;
             this.client = null;
+            this.clientGeneration.incrementAndGet();
             retire(previous);
             recordConnectFailure();
             return false;
@@ -4403,7 +4670,19 @@ public class KubernetesService {
         this.client = fresh;
         this.isConfigured = true;
         resetConnectBackOff();
-        // Cached answers about the previous cluster (a new kubeconfig or context can point elsewhere).
+        forgetAnswersAboutPreviousClient();
+        retire(previous);
+        LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
+        return true;
+    }
+
+    /**
+     * Forgets what was cached or refused under the previous client: a new kubeconfig or context can point to another
+     * cluster or account. Called once the new client is in place, so that a call reading the new generation also
+     * reads the new client.
+     */
+    private void forgetAnswersAboutPreviousClient() {
+        this.clientGeneration.incrementAndGet();
         this.externalSecretsApiVersion = null;
         this.statsCache.invalidateAll();
         this.serviceCache.invalidateAll();
@@ -4411,10 +4690,8 @@ public class KubernetesService {
         this.openShiftDetectionCache.set(null);
         this.openShiftDetectionRetryAt.set(0);
         this.monitoringTokenCache.set(null);
+        this.prometheusWarnedAt.set(0);
         this.namespaceScope.reset();
-        retire(previous);
-        LOG.info("reloadClientIfConfigured: Kubernetes client reinitialized successfully");
-        return true;
     }
 
     /**

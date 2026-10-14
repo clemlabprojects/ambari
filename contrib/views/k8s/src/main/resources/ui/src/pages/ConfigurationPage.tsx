@@ -19,7 +19,7 @@
 // ui/src/pages/ConfigurationPage.tsx
 import React from 'react';
 import { Typography, Card, Upload, Button, Alert, Collapse, Space, Layout, message, Form, Input, InputNumber, Switch, Select, Tag, Modal, Row, Col, Steps, Dropdown, Divider } from 'antd';
-import { UploadOutlined, ApiOutlined, ReloadOutlined, PlayCircleOutlined, PlusOutlined, CheckCircleTwoTone, DisconnectOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined, WarningOutlined, MinusCircleOutlined, ExclamationCircleOutlined, DownOutlined } from '@ant-design/icons';
+import { UploadOutlined, ApiOutlined, ReloadOutlined, PlayCircleOutlined, PlusOutlined, CheckCircleTwoTone, DisconnectOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined, WarningOutlined, MinusCircleOutlined, ExclamationCircleOutlined, InfoCircleOutlined, DownOutlined } from '@ant-design/icons';
 import { usePermissions } from '../hooks/usePermissions';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useNavigate } from 'react-router-dom';
@@ -882,7 +882,7 @@ const ConfigurationPage: React.FC = () => {
                             <Paragraph type="secondary" style={{ marginBottom: 12 }}>
                                 Check that the connected account can perform the actions a deployment needs in a target
                                 namespace (equivalent to <code>oc auth can-i</code>). On OpenShift this also covers KEDA
-                                autoscaling and reading the platform monitoring — so a missing right is caught before you deploy.
+                                autoscaling and the objects of its monitoring token — so a missing right is caught before you deploy.
                             </Paragraph>
                             <Space style={{ marginBottom: 12 }}>
                                 <Input addonBefore="Namespace" value={preflightNs} onChange={(e) => setPreflightNs(e.target.value)} style={{ width: 320 }} />
@@ -894,17 +894,30 @@ const ConfigurationPage: React.FC = () => {
                                     {Array.from(new Set(preflightChecks.map(c => c.group))).map(group => (
                                         <div key={group} style={{ marginBottom: 8 }}>
                                             <Text strong style={{ fontSize: 12 }}>{group}</Text>
-                                            {preflightChecks.filter(c => c.group === group).map(c => (
-                                                <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
-                                                    {c.allowed
-                                                        ? <CheckCircleTwoTone twoToneColor="#52c41a" />
-                                                        : <ExclamationCircleOutlined style={{ color: '#faad14' }} />}
-                                                    <Text type={c.allowed ? undefined : 'warning'}>{c.name}</Text>
-                                                    {!c.allowed && c.group === 'KDPS' && c.remediation && (
-                                                        <Text type="secondary" style={{ fontSize: 12 }}>{c.remediation}</Text>
-                                                    )}
-                                                </div>
-                                            ))}
+                                            {preflightChecks.filter(c => c.group === group).map(c => {
+                                                // An advisory right that is missing is information, not a failed prerequisite.
+                                                const info = !c.allowed && !!c.advisory;
+                                                return (
+                                                    <div key={c.name} style={{ padding: '2px 0' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                            {c.allowed
+                                                                ? <CheckCircleTwoTone twoToneColor="#52c41a" />
+                                                                : info
+                                                                    ? <InfoCircleOutlined style={{ color: '#1677ff' }} />
+                                                                    : <ExclamationCircleOutlined style={{ color: '#faad14' }} />}
+                                                            <Text type={c.allowed || info ? undefined : 'warning'}>{c.name}</Text>
+                                                        </div>
+                                                        {!c.allowed && (c.note || c.remediation) && (
+                                                            <div style={{ marginLeft: 24 }}>
+                                                                {c.note && <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>{c.note}</Text>}
+                                                                {c.remediation && (
+                                                                    <Text type="secondary" style={{ fontSize: 12, display: 'block', whiteSpace: 'pre-wrap' }}>{c.remediation}</Text>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     ))}
                                 </div>

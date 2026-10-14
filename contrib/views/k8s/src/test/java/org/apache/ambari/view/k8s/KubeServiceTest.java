@@ -675,6 +675,98 @@ class KubeServiceTest {
     verify(k8s).canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null);
   }
 
+  /** Checks of the preflight on OpenShift for a project admin: everything in its own project, nothing cluster-wide. */
+  @SuppressWarnings("unchecked")
+  private java.util.List<Map<String, Object>> openShiftProjectPreflight(KubeService api, boolean canBindClusterRoles) {
+    when(k8s.isOpenShiftCluster()).thenReturn(true);
+    when(k8s.canI(eq("create"), anyString(), anyString(), isNull(), isNull(), eq("data"))).thenReturn(true);
+    when(k8s.canBindClusterRoles()).thenReturn(canBindClusterRoles);
+    Map<String, Object> out = (Map<String, Object>) api.preflight(null, "data").getEntity();
+    assertEquals(true, out.get("allOk"), "a project-limited account that has what OPERATIONS needs passes: " + out);
+    return (java.util.List<Map<String, Object>>) out.get("checks");
+  }
+
+  @Test
+  void preflightOfAProjectLimitedOpenShiftAccountAsksForTheObjectsOfTheMonitoringTokenNotForTheMonitoringProxy(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    java.util.List<Map<String, Object>> checks = openShiftProjectPreflight(apiAsViewAdmin(workDir), false);
+
+    java.util.List<Object> names = checks.stream().map(c -> c.get("name")).collect(java.util.stream.Collectors.toList());
+    assertTrue(names.containsAll(java.util.List.of("Create ServiceAccounts", "Create Roles", "Create RoleBindings")), names.toString());
+    assertTrue(names.stream().noneMatch(n -> String.valueOf(n).contains("Thanos")), names.toString());
+    verify(k8s, never()).canI(anyString(), anyString(), eq("services"), eq("proxy"), any(), anyString());
+    Map<String, Object> port = checks.stream().filter(c -> "Autoscaling reads the monitoring of the project".equals(c.get("name")))
+        .findFirst().orElseThrow();
+    assertEquals(true, port.get("advisory"));
+    assertTrue(String.valueOf(port.get("note")).contains("9092"), String.valueOf(port.get("note")));
+    assertTrue(names.stream().noneMatch(n -> "Create ClusterRoleBindings".equals(n)), "only asked for with the right: " + names);
+  }
+
+  @Test
+  void preflightAsksForClusterRoleBindingsOnlyWhenTheAccountMayCreateThem(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    java.util.List<Map<String, Object>> checks = openShiftProjectPreflight(apiAsViewAdmin(workDir), true);
+
+    Map<String, Object> crb = checks.stream().filter(c -> "Create ClusterRoleBindings".equals(c.get("name")))
+        .findFirst().orElseThrow();
+    assertEquals(true, crb.get("allowed"));
+    assertTrue(checks.stream().noneMatch(c -> "Autoscaling reads the monitoring of the project".equals(c.get("name"))));
+  }
+
+  @Test
+  void preflightFailsWhenTheAccountCannotCreateTheServiceAccountOfTheMonitoringToken(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.isOpenShiftCluster()).thenReturn(true);
+    when(k8s.canI(eq("create"), anyString(), anyString(), isNull(), isNull(), eq("data"))).thenReturn(true);
+    when(k8s.canI("create", "", "serviceaccounts", null, null, "data")).thenReturn(false);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> out = (Map<String, Object>) api.preflight(null, "data").getEntity();
+
+    assertEquals(false, out.get("allOk"));
+  }
+
+  @Test
+  void theNodesOfAProjectLimitedAccountAreAnEmptyRestrictedListNotAnError(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.getNodes(200, 0)).thenReturn(new KubernetesService.NodePage(java.util.List.of(), 0, true));
+
+    Response r = api.getNodes(200, 0);
+
+    assertEquals(200, r.getStatus());
+    com.fasterxml.jackson.databind.JsonNode body = new com.fasterxml.jackson.databind.ObjectMapper().readTree((String) r.getEntity());
+    assertEquals(0, body.get("items").size());
+    assertEquals(0, body.get("total").asInt());
+    assertTrue(body.get("restricted").asBoolean());
+  }
+
+  @Test
+  void theNodesOfAnAccountThatMayListThemCarryNoRestrictedFlag(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.getNodes(200, 0)).thenReturn(new KubernetesService.NodePage(java.util.List.of(), 3, false));
+
+    com.fasterxml.jackson.databind.JsonNode body = new com.fasterxml.jackson.databind.ObjectMapper()
+        .readTree((String) api.getNodes(200, 0).getEntity());
+
+    assertEquals(3, body.get("total").asInt());
+    assertFalse(body.has("restricted"));
+  }
+
+  @Test
+  void aRefusalForLackOfRightsIsAForbiddenAnswerNotAServerError(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.getComponentStatuses()).thenThrow(forbidden());
+
+    Response refused = api.getComponentStatuses();
+    assertEquals(403, refused.getStatus());
+    // Marked as coming from the cluster, so the UI does not take a refusal that mentions a token for a lapsed login.
+    assertTrue(String.valueOf(refused.getEntity()).startsWith("K8S_FORBIDDEN: "));
+  }
+
   /** A refusal of the Kubernetes API for lack of rights, as an account limited to its own projects receives it. */
   private static io.fabric8.kubernetes.client.KubernetesClientException forbidden() {
     return new io.fabric8.kubernetes.client.KubernetesClientException(

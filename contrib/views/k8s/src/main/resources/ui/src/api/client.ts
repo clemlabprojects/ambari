@@ -93,6 +93,9 @@ export function handleAuthExpiry(status: number, body?: string): boolean {
   // Ambari. Never bounce them to the Ambari login for that — it is surfaced as a "disconnected" cluster
   // badge and (for openshift-login) auto-healed server-side instead.
   if (b.includes('k8s_unauthorized')) return false;
+  // Likewise a refusal of the cluster for lack of rights ("K8S_FORBIDDEN"): its text often names a token or
+  // authentication (serviceaccounts/token, authentication.k8s.io) without the Ambari session being at fault.
+  if (b.includes('k8s_forbidden')) return false;
   const isAuthExpiry =
     status === 401 ||
     (status === 403 && (b.includes('authentication') || b.includes('token') || b.includes('not authenticated') || b.includes('csrf')));

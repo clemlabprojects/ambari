@@ -32,6 +32,8 @@ interface ClusterStatusContextType {
   stats: ClusterStats | null;
   components: ComponentStatus[] | null;
   nodes: ClusterNode[] | null; // Addition
+  /** True when this account may not read nodes (limited to its own projects): there is nothing to show on the Nodes page. */
+  nodesRestricted: boolean;
   helmReleases: HelmReleasePage | null; // Addition
   events: ClusterEvent[] | null;
   error: string | null;
@@ -63,6 +65,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
   const [components, setComponents] = useState<ComponentStatus[] | null>(null);
   const [events, setEvents] = useState<ClusterEvent[] | null>(null);
   const [nodes, setNodes] = useState<ClusterNode[] | null>(null);
+  const [nodesRestricted, setNodesRestricted] = useState<boolean>(false);
   const [helmReleases, setHelmReleases] = useState<HelmReleasePage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mainLoaderActive, setMainLoaderActive] = useState<boolean>(true);
@@ -125,6 +128,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
       if (nodesRes.status === 'fulfilled') {
         const nodesData = nodesRes.value as any;
         setNodes(nodesData?.items || nodesData || null);
+        setNodesRestricted(nodesData?.restricted === true);
       }
       if (helmRes.status === 'fulfilled') setHelmReleases(helmRes.value);
 
@@ -258,6 +262,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
       components,
       events,
       nodes,
+      nodesRestricted,
       helmReleases,
       error,
       monitoringState,

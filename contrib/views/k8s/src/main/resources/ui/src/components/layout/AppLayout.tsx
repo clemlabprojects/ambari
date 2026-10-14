@@ -98,7 +98,7 @@ const ROUTE_SECTIONS: Record<string, string> = {
 
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
-  const { status, error, fetchData, checkLiveness, connectionMessage } = useClusterStatus();
+  const { status, error, fetchData, checkLiveness, connectionMessage, nodesRestricted } = useClusterStatus();
   const { permissions } = usePermissions();
   const canConfigure = !!permissions?.canConfigure;
   const { mode, toggle: toggleTheme } = useThemeMode();
@@ -213,7 +213,11 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     .map((item: any) => (item.children && !canConfigure
       ? { ...item, children: item.children.filter((child: any) => !CONFIGURE_ONLY_ROUTES.includes(child.key)) }
       : item))
-  ), [canConfigure]);
+    // An account limited to its own projects cannot read nodes: no entry for a page that could only say so.
+    .map((item: any) => (item.children && nodesRestricted
+      ? { ...item, children: item.children.filter((child: any) => child.key !== '/nodes') }
+      : item))
+  ), [canConfigure, nodesRestricted]);
 
   const breadcrumbItems = React.useMemo(() => {
     const currentPath = location.pathname;
