@@ -26,13 +26,17 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 import org.apache.ambari.view.k8s.model.ContextCapabilitySchema;
+import org.apache.ambari.view.k8s.model.ContextCapabilitySchema.ContextFieldDef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,7 +57,10 @@ public class ContextSchemaService {
     private static final String DIR = "KDPS/contexts/capabilities";
     private static final Gson GSON = new Gson();
 
-    /** Returns the merged capability schemas, ordered by their {@code order} then capability name. */
+    /**
+     * Returns the merged capability schemas, ordered by their {@code order} then capability name, without
+     * any field whose storage key another field already uses (see {@link #rejectDuplicateStorageKeys}).
+     */
     public List<ContextCapabilitySchema> loadSchema() {
         List<ContextCapabilitySchema> out = new ArrayList<>();
         for (String fragment : listFragments()) {
@@ -73,7 +80,39 @@ public class ContextSchemaService {
         }
         out.sort(Comparator.<ContextCapabilitySchema>comparingInt(s -> s.order)
                 .thenComparing(s -> s.capability == null ? "" : s.capability));
+        rejectDuplicateStorageKeys(out);
         return out;
+    }
+
+    /**
+     * Drops every field whose storage key ({@link ContextFieldDef#storageKey()}) an earlier field already
+     * uses. A context keeps all its values in one flat config map, so two fields sharing a key would
+     * silently overwrite each other on save; the first field in schema order keeps the key, and the
+     * fragment author is told to give the other one a {@code configKey}.
+     */
+    static void rejectDuplicateStorageKeys(List<ContextCapabilitySchema> schema) {
+        Map<String, String> owners = new HashMap<>();
+        for (ContextCapabilitySchema cap : schema) {
+            if (cap.fields == null) {
+                continue;
+            }
+            Iterator<ContextFieldDef> it = cap.fields.iterator();
+            while (it.hasNext()) {
+                ContextFieldDef f = it.next();
+                String key = f == null ? null : f.storageKey();
+                if (key == null || key.isBlank()) {
+                    continue;
+                }
+                String field = cap.capability + "." + f.name;
+                String owner = owners.putIfAbsent(key, field);
+                if (owner != null) {
+                    LOG.error("ContextSchemaService: field '{}' is ignored: it would be stored under the config key '{}',"
+                            + " which '{}' already uses. Give it a distinct \"configKey\" in its capability fragment.",
+                            field, key, owner);
+                    it.remove();
+                }
+            }
+        }
     }
 
     /** Enumerate the {@code *.json} fragment filenames under {@link #DIR} (file: and jar: aware). */

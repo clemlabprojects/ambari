@@ -80,6 +80,21 @@ public class ContextService {
     public static final String KIND_CDP      = "CDP";
 
     private static final String SECRET_PREFIX = "context.";
+
+    /**
+     * Config key every context saved by this version carries: its Kerberos, OIDC and Polaris realms are
+     * stored under their own keys. Older versions stored all three under the one key {@code realm}, so
+     * the last one entered replaced the others, and those values cannot be told apart any more.
+     */
+    static final String SEPARATE_REALMS_KEY = "separateRealms";
+    /** Config key of the Kerberos realm, which older versions also used for the OIDC and Polaris realms. */
+    static final String LEGACY_REALM_KEY = "realm";
+    /** Config key of the Polaris realm (the polaris capability's {@code configKey}). */
+    static final String POLARIS_REALM_KEY = "polarisRealm";
+    /** Notice on an older context whose single stored realm is now read as its Kerberos realm only. */
+    static final String SHARED_REALM_NOTICE = "This context was saved before the Kerberos, single sign-on (OIDC) and"
+            + " Polaris realms were stored separately, and only one realm was kept for all three. It is now used as"
+            + " the Kerberos realm. Review the OIDC realm and the Polaris realm, then save the context again.";
     private static final Gson GSON = new Gson();
     /** Reads security profiles as {@link SecurityProfileService} stores them. */
     private static final ObjectMapper PROFILE_MAPPER = new ObjectMapper();
@@ -207,14 +222,22 @@ public class ContextService {
         Map<String, String> secrets = request.secrets != null ? new LinkedHashMap<>(request.secrets) : new LinkedHashMap<>();
         for (org.apache.ambari.view.k8s.model.ContextCapabilitySchema cap : new ContextSchemaService().loadSchema()) {
             for (org.apache.ambari.view.k8s.model.ContextCapabilitySchema.ContextFieldDef f : cap.fields) {
-                if (f.secret && config.containsKey(f.name)) {
-                    Object v = config.remove(f.name);
-                    if (v != null && !String.valueOf(v).isBlank() && !secrets.containsKey(f.name)) {
-                        secrets.put(f.name, String.valueOf(v));
+                String key = f.storageKey();
+                if (f.secret && config.containsKey(key)) {
+                    Object v = config.remove(key);
+                    if (v != null && !String.valueOf(v).isBlank() && !secrets.containsKey(key)) {
+                        secrets.put(key, String.valueOf(v));
                     }
                 }
             }
         }
+        // On a REMOTE context the only realm an operator could enter was the Polaris one, so a bare
+        // "realm" from an older client is that realm, kept under its own key from now on.
+        if (KIND_REMOTE.equals(request.kind) && config.containsKey(LEGACY_REALM_KEY)
+                && isBlank(str(config.get(POLARIS_REALM_KEY)))) {
+            config.put(POLARIS_REALM_KEY, config.remove(LEGACY_REALM_KEY));
+        }
+        config.put(SEPARATE_REALMS_KEY, Boolean.TRUE);
         String configJson = GSON.toJson(config);
         if (configJson.length() > MAX_CONFIG_JSON_LENGTH) {
             throw new IllegalArgumentException("Context configuration is too large ("
@@ -647,6 +670,7 @@ public class ContextService {
         }
         // Schema-driven generic field view (what the UI renders) on top of the typed accessors.
         populateResolvedFields(rc, entity, effectiveAmbari, effectiveCluster, discover);
+        noteSharedRealm(rc, entity);
         alignRealmWithContextKrb5Conf(rc);
         markKerberosEnabled(rc, effectiveAmbari, effectiveCluster);
 
@@ -732,7 +756,7 @@ public class ContextService {
      * rather than failing. The password is read from the encrypted secret store only to build the
      * request's Basic header; it is never logged nor placed on the {@link ResolvedContext}.
      */
-    private AmbariActionClient buildRemoteClient(KdpsContextEntity entity) {
+    AmbariActionClient buildRemoteClient(KdpsContextEntity entity) {
         try {
             Map<String, Object> cfg = parseConfig(entity.getConfigJson());
             String url = str(cfg.get("remoteAmbariUrl"));
@@ -867,7 +891,7 @@ public class ContextService {
                 String key = cap.capability + "." + f.name;
                 if (f.secret) {
                     boolean set = !managed && entity != null && entity.getSecretKeys() != null
-                            && java.util.Arrays.asList(entity.getSecretKeys().split(",")).contains(f.name);
+                            && java.util.Arrays.asList(entity.getSecretKeys().split(",")).contains(f.storageKey());
                     if (set) rc.getSecretFieldsSet().add(key);
                     // A secret never travels on a resolved context: this object is serialised
                     // straight to the browser. That is right, but it means a secret field's
@@ -888,7 +912,9 @@ public class ContextService {
                     // An explicit operator-entered value in the context config OVERRIDES the live
                     // resolver, so an auto-resolved field (e.g. the Hive metastore service principal on a
                     // MANAGED/REMOTE context) can be overridden per context. Blank/absent → resolve live.
-                    String override = str(config.get(f.name));
+                    // Only for a field the operator can enter on this kind of context: a stray key must
+                    // not replace a live value, such as the remote cluster's Kerberos realm.
+                    String override = overridable(f, rc.getKind()) ? storedValue(config, rc.getKind(), f) : null;
                     if (override != null && !override.isBlank()) {
                         value = override;
                     } else if (f.managedResolver != null && resolver != null) {
@@ -898,12 +924,65 @@ public class ContextService {
                         }
                     }
                 } else {
-                    value = str(config.get(f.name));
+                    value = storedValue(config, rc.getKind(), f);
                 }
                 if (value != null && !value.isBlank()) {
                     rc.getResolvedFields().put(key, value);
                 }
             }
+        }
+    }
+
+    /**
+     * The value a context stores for a field, under the field's storage key. A REMOTE context saved by an
+     * older version kept its Polaris realm under the bare {@code realm} key, the only realm it offered.
+     */
+    static String storedValue(Map<String, Object> config,
+                              String kind,
+                              org.apache.ambari.view.k8s.model.ContextCapabilitySchema.ContextFieldDef f) {
+        String value = str(config.get(f.storageKey()));
+        if (isBlank(value) && KIND_REMOTE.equals(kind) && POLARIS_REALM_KEY.equals(f.storageKey())) {
+            value = str(config.get(LEGACY_REALM_KEY));
+        }
+        return value;
+    }
+
+    /**
+     * Whether a stored value may replace the live value of a field on a context of this kind: when the
+     * field's {@code appliesTo} names the kind. A field without {@code appliesTo} applies to every kind,
+     * which keeps the Ranger administrator settings a REMOTE context may carry.
+     */
+    static boolean overridable(org.apache.ambari.view.k8s.model.ContextCapabilitySchema.ContextFieldDef f,
+                               String kind) {
+        if (f.appliesTo == null || f.appliesTo.isBlank()) return true;
+        if (kind == null) return false;
+        for (String k : f.appliesTo.split(",")) {
+            if (k.trim().equalsIgnoreCase(kind)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Adds {@link #SHARED_REALM_NOTICE} to an EXTERNAL or CDP context saved by an older version that kept one realm
+     * for Kerberos, OIDC and Polaris while it also configures OIDC or Polaris: that realm is read as the Kerberos
+     * realm, and the OIDC or Polaris realm it may have replaced is lost.
+     */
+    private static void noteSharedRealm(ResolvedContext rc, KdpsContextEntity entity) {
+        if (entity == null || !(KIND_EXTERNAL.equals(entity.getKind()) || KIND_CDP.equals(entity.getKind()))) return;
+        Map<String, Object> config = parseConfig(entity.getConfigJson());
+        if (Boolean.parseBoolean(String.valueOf(config.get(SEPARATE_REALMS_KEY)))
+                || isBlank(str(config.get(LEGACY_REALM_KEY)))) {
+            return;
+        }
+        boolean oidcOrPolaris = false;
+        for (String key : rc.getResolvedFields().keySet()) {
+            oidcOrPolaris |= key.startsWith("oidc.") || key.startsWith("polaris.");
+        }
+        for (String key : rc.getSecretFieldsSet()) {
+            oidcOrPolaris |= key.startsWith("oidc.") || key.startsWith("polaris.");
+        }
+        if (oidcOrPolaris) {
+            rc.getNotices().add(SHARED_REALM_NOTICE);
         }
     }
 

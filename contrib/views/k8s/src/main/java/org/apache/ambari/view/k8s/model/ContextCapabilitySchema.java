@@ -40,6 +40,13 @@ public class ContextCapabilitySchema {
     /** A single declared field a context provides for this capability. */
     public static class ContextFieldDef {
         public String name;            // field id within the capability ("<capability>.<name>")
+        /**
+         * Key the value is stored under in the context config and the secret store; null means
+         * {@link #name}. Field names only need to be unique within a capability, but a context keeps
+         * one flat config map, so two capabilities with a field of the same name (the Kerberos, OIDC
+         * and Polaris realms) need distinct keys or each would overwrite the other's value.
+         */
+        public String configKey;
         public String label;
         public String type = "string"; // string | password | enum | boolean
         public boolean secret = false; // encrypted in the instance settings, never returned by the API
@@ -55,6 +62,11 @@ public class ContextCapabilitySchema {
         public String group;           // UI grouping bucket (e.g. "Security & Authentication",
                                        // "Hive", "Atlas", "Ranger"); falls back to the capability
                                        // label when unset. Purely presentational — the stored
-                                       // config key stays "<capability>.<name>".
+                                       // config key is storageKey().
+
+        /** The key this field's value is stored under in the context config: {@link #configKey}, else {@link #name}. */
+        public String storageKey() {
+            return configKey != null && !configKey.isBlank() ? configKey : name;
+        }
     }
 }

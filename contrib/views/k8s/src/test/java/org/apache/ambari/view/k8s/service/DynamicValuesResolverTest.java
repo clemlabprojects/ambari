@@ -158,10 +158,10 @@ class DynamicValuesResolverTest {
     @Test
     void anAmbariWithoutClusterStillAppliesTheValuesOfASelectedContext() throws Exception {
         when(view.context.getCluster()).thenReturn(null);
-        storeExternalContext("corp", "{\"realm\":\"CORP.EXAMPLE\"}");
+        storeExternalContext("corp", "{\"realm\":\"CORP.EXAMPLE\",\"oidcRealm\":\"corp\"}");
 
         assertEquals(Map.of("global.security.kerberos.realm", "CORP.EXAMPLE", "global.security.auth.oidc.realm",
-                "CORP.EXAMPLE"), resolve(OIDC_TOKENS, Map.of("platformContextId", "corp")));
+                "corp"), resolve(OIDC_TOKENS, Map.of("platformContextId", "corp")));
         assertEquals(Map.of(), resolve(OIDC_TOKENS, null), "nothing to read on the managed side");
     }
 

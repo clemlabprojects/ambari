@@ -112,12 +112,13 @@ class DynamicValuesCallSitesParityTest {
         context.setId("corp");
         context.setName("corp");
         context.setKind(ContextService.KIND_EXTERNAL);
-        context.setConfigJson("{\"realm\":\"CORP.EXAMPLE\",\"issuerUrl\":\"https://login.corp.example/realms/corp\"}");
+        context.setConfigJson("{\"realm\":\"CORP.EXAMPLE\",\"oidcRealm\":\"corp\","
+                + "\"issuerUrl\":\"https://login.corp.example/realms/corp\"}");
         view.dataStore.store(context);
 
         Map<String, String> expected = new LinkedHashMap<>();
         expected.put("global.security.kerberos.realm", "CORP.EXAMPLE");
-        expected.put("global.security.auth.oidc.realm", "CORP.EXAMPLE");
+        expected.put("global.security.auth.oidc.realm", "corp");
         expected.put("global.security.auth.oidc.issuerUrl", "https://login.corp.example/realms/corp");
         expected.put("auth.tokenUrl", "https://login.corp.example/realms/corp/protocol/openid-connect/token");
         assertSameEverywhere(expected, Map.of("platformContextId", "corp"));

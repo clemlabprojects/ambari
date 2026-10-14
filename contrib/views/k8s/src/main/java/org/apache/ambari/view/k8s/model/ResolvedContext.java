@@ -105,6 +105,9 @@ public class ResolvedContext {
      */
     private java.util.List<String> unreadFields = new java.util.ArrayList<>();
 
+    /** Messages for the operator about how this context is stored, shown with the context (e.g. a value to review). */
+    private java.util.List<String> notices = new java.util.ArrayList<>();
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -233,6 +236,9 @@ public class ResolvedContext {
     public java.util.List<String> getUnreadFields() { return unreadFields; }
     public void setUnreadFields(java.util.List<String> unreadFields) { this.unreadFields = unreadFields; }
 
+    public java.util.List<String> getNotices() { return notices; }
+    public void setNotices(java.util.List<String> notices) { this.notices = notices; }
+
     /**
      * The context as GET /contexts/{id}/resolved returns it, to every user of the view: everything but the credentials
      * it holds (the Ranger admin password, the Atlas federation password, the Keycloak admin client secret). Whether
@@ -275,6 +281,7 @@ public class ResolvedContext {
         v.resolvedFields = resolvedFields == null ? new java.util.LinkedHashMap<>()
                 : new java.util.LinkedHashMap<>(resolvedFields);
         v.unreadFields = unreadFields == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(unreadFields);
+        v.notices = notices == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(notices);
         // The credentials a REMOTE context reads from its Ambari, or a context resolves from its own Ambari, are not
         // among the context's stored secrets: their presence is added here.
         java.util.Set<String> set = new java.util.LinkedHashSet<>(
@@ -329,5 +336,6 @@ public class ResolvedContext {
         /** Names ({@code <capability>.<field>}) of the credentials that have a value, never the values. */
         public java.util.List<String> secretFieldsSet;
         public java.util.List<String> unreadFields;
+        public java.util.List<String> notices;
     }
 }

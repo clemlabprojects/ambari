@@ -710,7 +710,7 @@ class CommandServiceReleaseRepairActionsTest {
         context.config = new LinkedHashMap<>();
         context.secrets = new LinkedHashMap<>();
         context.config.put("issuerUrl", keycloak.url() + "/realms/odp");
-        context.config.put("realm", "odp");
+        context.config.put("oidcRealm", "odp");
         if (keycloakAdmin) {
             context.config.put("adminClientId", "kdps-admin");
             context.secrets.put("adminClientSecret", "Keycloak-Admin-Secret");

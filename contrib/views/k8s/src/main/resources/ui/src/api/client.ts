@@ -542,6 +542,8 @@ export interface ResolvedContext {
   resolvedFields?: Record<string, string>;
   /** Names (<capability>.<field>) of secret fields that have a value set. */
   secretFieldsSet?: string[];
+  /** Messages for the operator about how the context is stored, such as a value to review. */
+  notices?: string[];
 }
 
 /** Result of a live "test connection & list clusters" probe against a remote Ambari. */
@@ -556,6 +558,8 @@ export interface RemoteProbeResult {
 
 export interface ContextFieldDef {
   name: string;
+  /** Key the value is stored under in the context config; defaults to name (see utils/contextFieldKeys). */
+  configKey?: string;
   label?: string;
   type?: string;        // string | password | enum | boolean
   secret?: boolean;
