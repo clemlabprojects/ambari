@@ -51,6 +51,9 @@ limitations under the License.
         <mockito.version>4.5.1</mockito.version>
         <okhttp.version>4.12.0</okhttp.version>
 
+        <!-- Integration tests (*IT.java) run only with -Pintegration: they need Docker, or a cluster to test against. -->
+        <kdps.it.skip>true</kdps.it.skip>
+
         <!-- Frontend build -->
         <node.version>v22.12.0</node.version>
         <yarn.version>v1.22.22</yarn.version>
@@ -675,6 +678,21 @@ limitations under the License.
                             <arguments>build</arguments>
                         </configuration>
                     </execution>
+                    <execution>
+                        <!-- The UI's jest suite, so that any "mvn test" covers the UI as well as the Java code and a
+                             failing UI test fails the build. In the test phase the plugin already honours
+                             -DskipTests, which packaging builds pass; skip also follows -Dmaven.test.skip, which the
+                             plugin does not look at by itself. -->
+                        <id>yarn-test</id>
+                        <goals>
+                            <goal>yarn</goal>
+                        </goals>
+                        <phase>test</phase>
+                        <configuration>
+                            <arguments>test:ci</arguments>
+                            <skip>${maven.test.skip}</skip>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 
@@ -683,6 +701,18 @@ limitations under the License.
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <!-- Only the integration profile runs them: they start a Kubernetes cluster in Docker. -->
+                    <skipITs>${kdps.it.skip}</skipITs>
+                    <!-- Same class path and master key as the unit tests (see the surefire configuration). -->
+                    <classpathDependencyExcludes>
+                        <classpathDependencyExclude>com.sun.jersey:jersey-core</classpathDependencyExclude>
+                        <classpathDependencyExclude>javax.ws.rs:jsr311-api</classpathDependencyExclude>
+                    </classpathDependencyExcludes>
+                    <environmentVariables>
+                        <AMBARI_SECURITY_MASTER_KEY>kdps-unit-test-master-key</AMBARI_SECURITY_MASTER_KEY>
+                    </environmentVariables>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
@@ -1195,6 +1225,11 @@ chmod +x "${OUT_DIR}/load.sh"
         <profile>
             <id>integration</id>
             <activation><activeByDefault>false</activeByDefault></activation>
+            <!-- mvn -Pintegration verify: the live-cluster tests, against a k3s cluster started in Docker (or the
+                 cluster named by KDPS_IT_KUBECONFIG). Without Docker they are reported as skipped. -->
+            <properties>
+                <kdps.it.skip>false</kdps.it.skip>
+            </properties>
             <build>
                 <plugins>
                     <plugin>
