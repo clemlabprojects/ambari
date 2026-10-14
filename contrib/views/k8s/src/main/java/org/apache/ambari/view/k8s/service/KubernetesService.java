@@ -5412,9 +5412,9 @@ public class KubernetesService {
             LOG.info("Manifest have been applied successfully from {}", yamlPath);
 
         } catch (KubernetesClientException e) {
-            throw new RuntimeException("Echec d'application du YAML " + yamlPath + " : " + e.getMessage(), e);
+            throw new RuntimeException("Failed to apply YAML " + yamlPath + ": " + e.getMessage(), e);
         } catch (IOException e) {
-            throw new RuntimeException("Lecture YAML impossible : " + yamlPath, e);
+            throw new RuntimeException("Cannot read YAML file: " + yamlPath, e);
         }
     }
 

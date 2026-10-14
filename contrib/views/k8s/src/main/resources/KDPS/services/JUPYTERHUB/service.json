@@ -58,7 +58,7 @@
       "type": "string",
       "required": true,
       "excludeFromValues": true,
-      "placeholder": "jupyter.dev21.hadoop.clemlab.com",
+      "placeholder": "jupyter.apps.example.com",
       "help": "Fully-qualified hostname exposed on the Ingress. JupyterHub will be reachable at https://<this-host>. Must resolve to the ingress controller's external IP."
     },
     {
@@ -435,7 +435,7 @@
     },
     {
       "name": "ingress",
-      "_description": "Enable the chart's Ingress, set the host from the form, and wire cert-manager via the ClusterIssuer annotation when the user picked one. The chart's templates fill spec.tls[] automatically when both ingress.tls and the cert-manager annotation are set. service-upstream tells nginx-ingress to use the proxy-public Service ClusterIP as its upstream instead of dialing pod IPs directly — needed on clusters where the CNI's pod-to-pod overlay is flaky between specific source/target pairs (e.g. weave-net on master21), which would otherwise produce 504s only for the in-cluster nginx controller path.",
+      "_description": "Enable the chart's Ingress, set the host from the form, and wire cert-manager via the ClusterIssuer annotation when the user picked one. The chart's templates fill spec.tls[] automatically when both ingress.tls and the cert-manager annotation are set. service-upstream tells nginx-ingress to use the proxy-public Service ClusterIP as its upstream instead of dialing pod IPs directly — needed on clusters where the CNI's pod-to-pod overlay is flaky between specific source/target pairs (e.g. a flaky overlay network between some nodes), which would otherwise produce 504s only for the in-cluster nginx controller path.",
       "targets": [
         { "path": "ingress.enabled",                                                                            "from": { "type": "template", "template": "true" } },
         { "path": "ingress.ingressClassName",                                                                   "from": { "type": "template", "template": "nginx" } },

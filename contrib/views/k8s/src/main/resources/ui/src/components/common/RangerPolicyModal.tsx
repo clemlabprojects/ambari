@@ -121,7 +121,7 @@ export default function RangerPolicyModal({ release, onClose }: { release: HelmR
               <Input placeholder="Sensitive" />
             </Form.Item>
             <Form.Item name="tagServiceName" label="Tag service (optional)" extra="Blank = the tag service this release's repo is linked to (Ambari clusters: <cluster>_tag).">
-              <Input placeholder="clemlabtest_tag" />
+              <Input placeholder="<cluster>_tag" />
             </Form.Item>
           </>
         ) : (

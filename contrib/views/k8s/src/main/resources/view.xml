@@ -31,11 +31,11 @@ limitations under the License.
     <data-version>9</data-version>
     <data-migrator-class>org.apache.ambari.view.k8s.migration.KdpsDataMigrator</data-migrator-class>
 
-    <description>Une vue Ambari pour interagir avec un cluster Kubernetes.</description>
+    <description>An Ambari view to interact with a Kubernetes cluster.</description>
     
     <!--
-      Déclaration de notre service REST. Le nom 'api' sera utilisé dans l'URL.
-      Exemple: /api/v1/views/K8S_VIEW/versions/1.0.0.0/instances/K8S_VIEW_INSTANCE/resources/api/cluster/stats
+      Declaration of our REST service. The name 'api' is used in the URL.
+      Example: /api/v1/views/K8S_VIEW/versions/1.0.0.0/instances/K8S_VIEW_INSTANCE/resources/api/cluster/stats
     -->
     <resource>
         <name>api</name>
@@ -56,16 +56,15 @@ limitations under the License.
     <parameter>
         <name>k8s.view.working.dir</name>
         <description>
-          Répertoire sur le serveur Ambari où la vue stocke ses fichiers de configuration
-          (kubeconfig, repos Helm, registre OCI). NE PAS définir explicitement sauf besoin
-          d'override — laisser ce paramètre vide pour que le service utilise
-          /var/lib/ambari-server/resources/views/k8s-view-data/&lt;instanceName&gt;, chemin
-          persistant qui survit aux redéploiements de la vue (AMBARI-426). Une valeur
-          explicite pointant vers /var/lib/ambari-server/resources/views/work/...
-          serait perdue à chaque redéploiement du JAR — voir
-          ViewConfigurationService.defaultWorkDir().
+          Directory on the Ambari server where the view stores its configuration files
+          (kubeconfig, Helm repositories, OCI registry). Do NOT set it explicitly unless you
+          need to override the default: leave it empty so the service uses
+          /var/lib/ambari-server/resources/views/k8s-view-data/&lt;instanceName&gt;, a
+          persistent path that survives view redeployments. An explicit value pointing to
+          /var/lib/ambari-server/resources/views/work/... would be lost on every JAR
+          redeployment (see ViewConfigurationService.defaultWorkDir()).
         </description>
-        <label>Répertoire de Travail (optionnel)</label>
+        <label>Working Directory (optional)</label>
         <required>false</required>
     </parameter>
     <parameter>
@@ -161,15 +160,15 @@ limitations under the License.
         <!-- <entity class="org.apache.ambari.view.k8s.store.OtherEntity"/> -->
     </persistence>
     <!--
-      Définition d'une instance par défaut.
-      Contrairement à la vue Capacity Scheduler, nous n'utilisons pas <auto-instance>
-      car notre vue ne dépend pas d'un service géré par Ambari (comme YARN).
-      Une création manuelle est plus appropriée.
+      Definition of a default instance.
+      Unlike the Capacity Scheduler view, we do not use <auto-instance> because this view
+      does not depend on an Ambari-managed service (such as YARN). Manual creation is more
+      appropriate.
     -->
     <instance>
         <name>K8S_VIEW_INSTANCE</name>
         <label>Kubernetes Cluster Manager</label>
-        <description>Instance par défaut pour la vue Kubernetes</description>
+        <description>Default instance for the Kubernetes view</description>
         <visible>true</visible>
         <public>false</public>
         <!--

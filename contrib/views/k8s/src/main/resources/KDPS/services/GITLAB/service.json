@@ -51,7 +51,7 @@
       "label": "Ingress Domain",
       "type": "string",
       "required": true,
-      "placeholder": "dev21.hadoop.clemlab.com",
+      "placeholder": "apps.example.com",
       "help": "Base domain for GitLab ingress. GitLab will be reachable at gitlab.<domain>. All sub-services (registry, pages) derive their hostnames from this value."
     },
     {
