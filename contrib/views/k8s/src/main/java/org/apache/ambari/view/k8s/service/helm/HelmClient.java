@@ -69,7 +69,7 @@ public interface HelmClient {
     void uninstall(String releaseName, String namespace, String kubeconfigContents);
 
     /**
-     * Roll back a release to the specified revision. helm-java 0.0.15 does not expose
+     * Roll back a release to the specified revision. helm-java does not expose
      * rollback so implementations typically shell out to the {@code helm} CLI.
      */
     default void rollback(String releaseName, String namespace, int revision, String kubeconfigContents) {

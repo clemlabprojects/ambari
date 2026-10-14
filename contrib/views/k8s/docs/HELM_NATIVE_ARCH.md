@@ -7,7 +7,7 @@ classifier jars: `linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`.
 
 ## The bug we hit
 
-`com.marcnuri.helm-java:helm-java:0.0.15` is an **umbrella artifact** that
+`com.marcnuri.helm-java:helm-java` (version `${helm-java.version}` in `pom.xml`) is an **umbrella artifact** that
 transitively depends on *every* platform-specific jar:
 
 ```
@@ -40,7 +40,7 @@ dependency below it becomes the single source of truth:
 <dependency>
     <groupId>com.marcnuri.helm-java</groupId>
     <artifactId>helm-java</artifactId>
-    <version>0.0.15</version>
+    <version>${helm-java.version}</version>
     <exclusions>
         <exclusion>
             <groupId>com.marcnuri.helm-java</groupId>
@@ -63,7 +63,7 @@ dependency below it becomes the single source of truth:
 <dependency>
     <groupId>com.marcnuri.helm-java</groupId>
     <artifactId>linux-${ambari.grafana.arch}</artifactId>
-    <version>0.0.15</version>
+    <version>${helm-java.version}</version>
 </dependency>
 ```
 
@@ -103,7 +103,7 @@ every Kubernetes page, then fails each Helm action (deploy, upgrade, uninstall,
 release list). Two checks stop that from reaching a host:
 
 - **Build.** The `enforce-single-helm-native-arch` step in `pom.xml` fails the
-  build when `linux-${ambari.grafana.arch}-0.0.15.jar` is not among the
+  build when `linux-${ambari.grafana.arch}-${helm-java.version}.jar` is not among the
   libraries to package, and when anything other than that one native jar is left
   after the clean-up. An unknown value of the property already fails earlier,
   because no such artifact exists.
@@ -118,7 +118,7 @@ release list). Two checks stop that from reaching a host:
   Ubuntu 22/24) before publishing it.
 
 Before a release, confirm that the published x86_64 `ambari-server` package
-holds `WEB-INF/lib/linux-amd64-0.0.15.jar` in its `k8s-view-*.jar`, and that on
+holds `WEB-INF/lib/linux-amd64-<helm-java version>.jar` in its `k8s-view-*.jar`, and that on
 the amd64 image `GET .../api/helm/releases` answers 200: the namespaces call
 alone passes even with the wrong library, because it does not use Helm.
 

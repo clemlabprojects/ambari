@@ -241,7 +241,7 @@ public class HelmClientDefault implements HelmClient {
     @Override
     public String showValues(String chartRef, String versionOpt, Path repoConfigPath) {
         try {
-            // For 0.0.15:
+            // With helm-java:
             // - Use Helm.show(String chartRef) for repo/OCI references
             // - Then .values() to target "helm show values"
             ShowCommand showCommand = Helm.show(chartRef);

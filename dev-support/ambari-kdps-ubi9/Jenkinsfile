@@ -38,7 +38,13 @@ pipeline {
         string(name: 'ARCHIVE_BUCKET', defaultValue: 's3://clemlabs',
                description: 'Same tree over S3. Used only to enumerate builds: the HTTP endpoint serves files but denies listing.')
         string(name: 'UBI_VERSION', defaultValue: '9.6', description: 'ubi9/ubi base image tag')
-        string(name: 'HELM_VERSION', defaultValue: '3.16.3', description: 'helm shipped in the image')
+        string(name: 'HELM_VERSION', defaultValue: '3.22.0', description: 'helm shipped in the image')
+        // Taken from the Helm release page, never from the server the tarball is downloaded from. A new
+        // HELM_VERSION needs both replaced, or the image build fails on the checksum.
+        string(name: 'HELM_SHA256_AMD64', defaultValue: '1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb',
+               description: 'sha256 of the official helm-v<HELM_VERSION>-linux-amd64.tar.gz')
+        string(name: 'HELM_SHA256_ARM64', defaultValue: 'f14e804dfee240f55525b667488fe9adca349e63e00c9af634c0beb1421ac310',
+               description: 'sha256 of the official helm-v<HELM_VERSION>-linux-arm64.tar.gz')
         string(name: 'HARBOR', defaultValue: 'registry.clemlab.com', description: 'Target registry')
         string(name: 'PROJECT', defaultValue: 'clemlabprojects', description: 'Target registry project')
         booleanParam(name: 'BUILD_AMD64', defaultValue: true, description: 'Build the amd64 image')
@@ -160,6 +166,7 @@ pipeline {
                     cp dev-support/ambari-kdps-ubi9/Dockerfile dev-support/ambari-kdps-ubi9/entrypoint.sh \\
                        dev-support/ambari-kdps-ubi9/openshift-nonroot.py dev-support/ambari-kdps-ubi9/build-image.sh \\
                        dev-support/ambari-kdps-ubi9/test-image.sh dev-support/ambari-kdps-ubi9/test-image-postgres.sh \\
+                       dev-support/ambari-kdps-ubi9/RPM-GPG-KEY-clemlab \\
                        dev-support/ambari-kdps-ubi9/README.md "\$ctx/"
                     cat > "\$ctx/BUILD-INFO" <<EOF
 AMBARI_VERSION=${env.AMBARI_VERSION}
@@ -169,6 +176,8 @@ AMBARI_REPO_URL_AARCH64=${params.ARCHIVE_BASE}/centos9-aarch64/ambari-release/${
 BASE_IMAGE=registry.access.redhat.com/ubi9/ubi
 UBI_VERSION=${params.UBI_VERSION}
 HELM_VERSION=${params.HELM_VERSION}
+HELM_SHA256_AMD64=${params.HELM_SHA256_AMD64}
+HELM_SHA256_ARM64=${params.HELM_SHA256_ARM64}
 IMAGE=${params.HARBOR}/${params.PROJECT}/ambari-kdps:${env.AMBARI_VERSION}
 SOURCE_COMMIT=\$(git rev-parse HEAD)
 EOF
@@ -216,6 +225,8 @@ void buildAmbariImage(String osDist, String osArch) {
         export AMBARI_VERSION='${env.AMBARI_VERSION}'
         export UBI_VERSION='${params.UBI_VERSION}'
         export HELM_VERSION='${params.HELM_VERSION}'
+        export HELM_SHA256_AMD64='${params.HELM_SHA256_AMD64}'
+        export HELM_SHA256_ARM64='${params.HELM_SHA256_ARM64}'
         export AMBARI_REPO_URL='${params.ARCHIVE_BASE}/${osDist}/ambari-release/${env.AMBARI_BUILD_DIR}/rpms/'
         export OS_ARCH='${osArch}'
         ./dev-support/ambari-kdps-ubi9/build-image.sh

@@ -34,7 +34,11 @@ IMAGE_NAME="${IMAGE_NAME:-ambari-kdps}"
 
 AMBARI_VERSION="${AMBARI_VERSION:-2.8.2.0-137}"
 UBI_VERSION="${UBI_VERSION:-9.6}"
-HELM_VERSION="${HELM_VERSION:-3.16.3}"
+HELM_VERSION="${HELM_VERSION:-3.22.0}"
+# sha256 of the official Helm tarballs. Unset = the values the Dockerfile pins for its own HELM_VERSION;
+# a different HELM_VERSION needs the matching value for the architecture being built, or the build fails.
+HELM_SHA256_AMD64="${HELM_SHA256_AMD64:-}"
+HELM_SHA256_ARM64="${HELM_SHA256_ARM64:-}"
 
 # Where the ambari-server RPM lives. There is no public mirror, so this has to be given: the
 # release pipeline publishes per-OS repositories under the build host's ambari-release tree.
@@ -63,6 +67,8 @@ BUILD_ARGS="--build-arg UBI_VERSION=${UBI_VERSION}
 # Optional mirror-friendly overrides (unset = Dockerfile defaults).
 [ -n "${BASE_IMAGE:-}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg BASE_IMAGE=${BASE_IMAGE}"
 [ -n "${HELM_URL:-}" ]   && BUILD_ARGS="${BUILD_ARGS} --build-arg HELM_URL=${HELM_URL}"
+[ -n "${HELM_SHA256_AMD64}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg HELM_SHA256_AMD64=${HELM_SHA256_AMD64}"
+[ -n "${HELM_SHA256_ARM64}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg HELM_SHA256_ARM64=${HELM_SHA256_ARM64}"
 [ -n "${DROP_VIEWS+x}" ] && BUILD_ARGS="${BUILD_ARGS} --build-arg DROP_VIEWS=${DROP_VIEWS}"
 
 case "$PLATFORMS" in

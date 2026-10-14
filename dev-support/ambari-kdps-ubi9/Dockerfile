@@ -24,8 +24,11 @@
 # The data platforms it manages are reached as KDPS platform contexts: a remote Ambari, a Cloudera
 # Manager, or a manually described Hadoop cluster. That is what makes a cluster-less Ambari useful
 # rather than odd.
-# Base image and Helm source are build arguments so the image can be rebuilt from mirrors in an
-# air-gapped site (see README.md, "Rebuilding the image at a customer site").
+# Base image, Ambari repository and Helm source are build arguments so the image can be rebuilt from
+# mirrors in an air-gapped site (see README.md, "Rebuilding the image at a customer site"). What comes
+# from a mirror is checked against values in this directory, not values the mirror serves: the Helm
+# tarball against the pinned sha256 below, the Ambari packages against the Clemlab RPM signing key.
+# Everything else comes from the base image's own repositories, under Red Hat's signature.
 ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi
 ARG UBI_VERSION=9.6
 
@@ -37,9 +40,14 @@ ARG AMBARI_VERSION=2.8.2.0-137
 # Yum repository holding the ambari-server RPM: the published Clemlab repository for the build, or a
 # customer mirror of it (reposync).
 ARG AMBARI_REPO_URL
-ARG HELM_VERSION=3.16.3
+ARG HELM_VERSION=3.22.0
 # Full URL of the Helm tarball; empty = https://get.helm.sh/helm-v<HELM_VERSION>-linux-<arch>.tar.gz
 ARG HELM_URL=
+# sha256 of the official helm-v<HELM_VERSION>-linux-<arch>.tar.gz, from the Helm release page (and its
+# .sha256sum files on get.helm.sh). They are pinned here rather than fetched next to the tarball, so a
+# tampered mirror cannot serve a matching checksum. A new HELM_VERSION needs both values replaced.
+ARG HELM_SHA256_AMD64=1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb
+ARG HELM_SHA256_ARM64=f14e804dfee240f55525b667488fe9adca349e63e00c9af634c0beb1421ac310
 # Java runtime Ambari runs on (17 is what the server is built and tested with).
 ARG JAVA_PACKAGE=java-17-openjdk-headless
 # View jars removed from the image: this Ambari only hosts KDPS (+ the admin view). Dropping the
@@ -55,22 +63,28 @@ LABEL org.opencontainers.image.title="Ambari (standalone) with the KDPS view" \
 # procps-ng: ambari-server stop, status, restart and the setup-* commands find the running server with
 # ps. The RPM does not require it and UBI does not ship it; without it those commands fail with
 # "No such file or directory: 'ps'" whenever the server is running.
+# python3-distro: the server's Python imports it and the RPM requires it. It comes from UBI AppStream like
+# the rest, so the build needs no Python package index.
 RUN dnf install -y --setopt=install_weak_deps=False \
         ${JAVA_PACKAGE} \
-        python3 python3-pip \
+        python3 python3-distro \
         postgresql \
         openssl ca-certificates \
         tar gzip git \
         procps-ng \
-    && dnf clean all && rm -rf /var/cache/dnf \
-    && pip3 install --no-cache-dir distro
+    && dnf clean all && rm -rf /var/cache/dnf
 
-# Helm CLI for the view's chart operations.
+# Helm CLI. The view runs install, upgrade, uninstall and the repository operations on the Helm library
+# it embeds; it calls this binary for release rollback and history only.
 RUN set -eux; \
     arch="$(uname -m)"; \
     case "$arch" in aarch64) helm_arch=arm64 ;; x86_64) helm_arch=amd64 ;; *) echo "unsupported arch $arch" >&2; exit 1 ;; esac; \
+    case "$helm_arch" in amd64) sha="${HELM_SHA256_AMD64}" ;; arm64) sha="${HELM_SHA256_ARM64}" ;; esac; \
+    test -n "$sha" || { echo "HELM_SHA256_$(echo "$helm_arch" | tr a-z A-Z) build-arg is required: the sha256 of the official helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz" >&2; exit 1; }; \
     url="${HELM_URL:-https://get.helm.sh/helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz}"; \
     curl -fsSL "$url" -o /tmp/helm.tgz; \
+    echo "${sha}  /tmp/helm.tgz" | sha256sum -c - \
+        || { echo "$url is not the official helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz (sha256 differs from HELM_SHA256_$(echo "$helm_arch" | tr a-z A-Z))" >&2; exit 1; }; \
     tar -xzf /tmp/helm.tgz -C /tmp; \
     install -m 0755 "/tmp/linux-${helm_arch}/helm" /usr/local/bin/helm; \
     rm -rf /tmp/helm.tgz "/tmp/linux-${helm_arch}"; \
@@ -79,6 +93,9 @@ RUN set -eux; \
 ENV AMBARI_JAVA_HOME=/usr/lib/jvm/ambari-java
 
 COPY openshift-nonroot.py /tmp/openshift-nonroot.py
+# Public key the Clemlab release pipeline signs the Ambari RPMs with. Shipped here rather than downloaded
+# so that a mirrored repository is checked against Clemlab's key, not against one the mirror serves.
+COPY RPM-GPG-KEY-clemlab /etc/pki/rpm-gpg/RPM-GPG-KEY-clemlab
 
 # Everything that writes under the Ambari directories happens in ONE layer. Each step below rewrites
 # the ~1 GB of files the RPM installs (setup's ownership pass, the resource-files keeper, the
@@ -91,7 +108,9 @@ COPY openshift-nonroot.py /tmp/openshift-nonroot.py
 # build refuses it.
 RUN set -eux; \
     test -n "${AMBARI_REPO_URL}" || { echo "AMBARI_REPO_URL build-arg is required" >&2; exit 1; }; \
-    printf '[ambari]\nname=Ambari\nbaseurl=%s\nenabled=1\ngpgcheck=0\n' "${AMBARI_REPO_URL}" > /etc/yum.repos.d/ambari.repo; \
+    rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-clemlab; \
+    printf '[ambari]\nname=Ambari\nbaseurl=%s\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-clemlab\n' \
+        "${AMBARI_REPO_URL}" > /etc/yum.repos.d/ambari.repo; \
     dnf install -y --setopt=install_weak_deps=False "ambari-server-${AMBARI_VERSION}"; \
     dnf clean all; rm -rf /var/cache/dnf; \
     \

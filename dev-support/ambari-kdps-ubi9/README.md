@@ -22,12 +22,12 @@ useful rather than odd.
 |---|---|
 | `registry.access.redhat.com/ubi9/ubi` | Base, as required for the customer's OpenShift platform |
 | `java-17-openjdk-headless` | Runs the server |
-| `python3` + `distro` | The server RPM requires both; `python3-distro` is not in the UBI repositories, so pip supplies it |
+| `python3` + `python3-distro` | The server RPM requires both; both come from the UBI repositories |
 | `postgresql` (client) | Schema load, schema version check, and the check for the default administrator password, in the entrypoint |
-| `helm` | KDPS shells out to the binary rather than embedding a Helm library |
+| `helm` | Release rollback and history. Everything else KDPS does with Helm (install, upgrade, uninstall, chart repositories and registries, `show`) runs on the Helm library embedded in the view (helm-java), not on this binary |
 | `git` | The GitOps deployment mode |
 | `procps-ng` | `ps`, which `ambari-server stop`, `status`, `restart` and the `setup-*` commands use to find the running server |
-| `ambari-server` | From the repository the release build published, with only the admin and KDPS views kept |
+| `ambari-server` | From the repository the release build published, with only the admin and KDPS views kept. Installed with `gpgcheck=1` against the Clemlab RPM signing key shipped here as `RPM-GPG-KEY-clemlab` |
 
 No agent, no stack RPMs, no `ambari-server setup` prompts: setup runs silently at build time, and the
 database is configured at run time because its address is not known when the image is built.
@@ -46,7 +46,7 @@ be told where the release pipeline published it. The architecture of the reposit
 architecture of the image.
 
 ```sh
-export AMBARI_REPO_URL=http://<build-host>/ambari-release/dist/centos9-aarch64/1.x/BUILDS/2.8.2.0-137/rpms
+export AMBARI_REPO_URL=https://<build-host>/ambari-release/dist/centos9-aarch64/1.x/BUILDS/2.8.2.0-137/rpms
 export AMBARI_VERSION=2.8.2.0-137
 ./build-image.sh
 ```
@@ -57,6 +57,15 @@ The build fails when the KDPS view in the installed package does not carry the H
 image's architecture (checked in the Dockerfile right after the package install). That happens when the repository holds the other
 architecture's package, and without the check the image would serve Kubernetes pages but fail every Helm
 deploy, upgrade and release list.
+
+The build also fails when a download is not what it should be:
+
+- the Helm tarball's sha256 differs from `HELM_SHA256_AMD64` / `HELM_SHA256_ARM64` (pinned in the
+  Dockerfile for its `HELM_VERSION`, taken from the Helm release page). Building another
+  `HELM_VERSION` means passing the official sha256 of that version for the architecture built;
+  the build refuses an empty one;
+- an Ambari package is not signed with the key in `RPM-GPG-KEY-clemlab`, which is the key the
+  release pipeline signs with (fingerprint `4E19 B96C 695E C9DA F015 0B55 3E00 E57A D4D1 82C0`).
 
 Per-architecture native builds are the default, the same convention the ODP images follow: each agent
 builds only its own architecture, so nothing runs under emulation. Once both have pushed,
@@ -72,19 +81,22 @@ Each image build publishes its build context next to the image:
 https://archive.clemlab.com/ambari-kdps-image/<release>-<build>/ambari-kdps-image-context-<version>.tar.gz
 ```
 
-It holds this directory (Dockerfile, entrypoint, OpenShift patch, build script, image tests) and a
-`BUILD-INFO` file with the exact arguments Clemlab used. Everything the build downloads is a build
-argument, so the image can be rebuilt from the customer's own mirrors without reaching the Internet:
+It holds this directory (Dockerfile, entrypoint, OpenShift patch, build script, image tests and the
+Clemlab RPM signing key) and a `BUILD-INFO` file with the exact arguments Clemlab used, including the
+Helm checksums. The table lists every network input of the build; each one can come from the
+customer's own mirrors, so the image can be rebuilt without reaching the Internet:
 
-| Argument | Default | Customer mirror |
-|---|---|---|
-| `AMBARI_REPO_URL` | Clemlab yum repository of the build | a `reposync` copy of it |
-| `BASE_IMAGE` + `UBI_VERSION` | `registry.access.redhat.com/ubi9/ubi:9.6` | the customer registry's UBI copy |
-| `HELM_URL` | `https://get.helm.sh/helm-v<HELM_VERSION>-linux-<arch>.tar.gz` | any HTTP copy of that tarball |
-| `DROP_VIEWS` | Files, Capacity Scheduler, Tez, SQL Assistant | empty string to keep them all |
+| Network input | Build argument | Default | Customer mirror | Checked against |
+|---|---|---|---|---|
+| Base image | `BASE_IMAGE` + `UBI_VERSION` | `registry.access.redhat.com/ubi9/ubi:9.6` | the customer registry's UBI copy | the registry |
+| UBI packages (Java 17, Python and `python3-distro`, the PostgreSQL client, git, procps-ng) | — | the base image's own repositories | a mirror of the UBI 9 repositories, configured in the base image or the build host | the Red Hat key in the base image |
+| `ambari-server` RPM | `AMBARI_REPO_URL` | Clemlab yum repository of the build | a `reposync` copy of it (keeps the signatures) | `RPM-GPG-KEY-clemlab`, shipped in the context |
+| Helm CLI | `HELM_URL` | `https://get.helm.sh/helm-v<HELM_VERSION>-linux-<arch>.tar.gz` | any HTTP copy of that tarball | `HELM_SHA256_AMD64` / `HELM_SHA256_ARM64`, pinned in the Dockerfile and recorded in `BUILD-INFO` |
 
-The UBI package installs (Java 17, Python, the PostgreSQL client) come from the base image's own
-repositories, so a mirrored UBI with its repositories configured is enough.
+`DROP_VIEWS` (default: Files, Capacity Scheduler, Tez, SQL Assistant; an empty string keeps them all)
+downloads nothing. Nothing else is fetched: no Python package index, no script piped from a URL.
+`ambari-server setup` does try to download the JCE policy files, which Java 17 does not need, from a
+host that no longer answers: it logs an error about them and the build carries on.
 
 ```sh
 tar -xzf ambari-kdps-image-context-2.8.2.0-154.tar.gz && cd ambari-kdps-image-context
@@ -92,7 +104,7 @@ docker build \
   --build-arg AMBARI_VERSION=2.8.2.0-154 \
   --build-arg AMBARI_REPO_URL=https://mirror.client.local/ambari/centos9/2.8.2.0.0-154/rpms/ \
   --build-arg BASE_IMAGE=registry.client.local/ubi9/ubi \
-  --build-arg HELM_URL=https://mirror.client.local/helm/helm-v3.16.3-linux-amd64.tar.gz \
+  --build-arg HELM_URL=https://mirror.client.local/helm/helm-v3.22.0-linux-amd64.tar.gz \
   -t registry.client.local/kdps/ambari-kdps:2.8.2.0-154 .
 ```
 
@@ -104,8 +116,10 @@ path `dev-support/ambari-kdps-ubi9/Jenkinsfile`.
 
 It is deliberately **not** a stage in the release `Jenkinsfile` at the repository root. That one
 builds the RPMs; this one consumes them, and needs to be re-runnable on its own when only the image
-changes — a UBI CVE refresh, a newer helm, an updated view jar. Both agents are expected to be logged
-in to Harbor already, which is how the ODP image stages work.
+changes — a UBI CVE refresh, a newer helm, an updated view jar. A newer helm is a change of
+`HELM_VERSION` together with `HELM_SHA256_AMD64` and `HELM_SHA256_ARM64`, all three parameters of the
+job (and defaults of the Dockerfile). Both agents are expected to be logged in to Harbor already,
+which is how the ODP image stages work.
 
 Before pushing, `build-image.sh` runs `test-image.sh` on the image it has just built: it checks that
 `ambari-server status` and `stop` work, that the entrypoint stops the server cleanly on SIGTERM (and
