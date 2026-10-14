@@ -265,6 +265,56 @@ class CommandServiceCatalogCredentialsTest {
         assertNull(service.checkLiteralCatalogCredentials(request(values(), Map.of("text", "")), null));
     }
 
+    /**
+     * Upgrade/Config starts from the deployed values, the reusable catalogs of the release included: one the operator
+     * deselects is taken out of them, or Trino would keep serving it. The catalogs still selected, those defined
+     * inline and those KDPS builds stay.
+     */
+    @Test
+    void aDeselectedReusableCatalogIsRemovedFromTheValues() throws Exception {
+        K8sReleaseEntity recorded = new K8sReleaseEntity();
+        recorded.setCatalogRefsJson("{\"pg_finance\":{\"id\":\"cat-1\",\"hash\":\"abc\"},"
+                + "\"events\":{\"id\":\"cat-2\",\"hash\":\"def\"},\"moved\":{\"id\":\"cat-3\",\"hash\":\"012\"}}");
+        when(ds.find(K8sReleaseEntity.class, K8sReleaseEntity.idOf(NS, "trino"))).thenReturn(recorded);
+        TrinoCatalogEntity events = new TrinoCatalogEntity();
+        events.setId("cat-2");
+        events.setName("events");
+        events.setPropertiesText("connector.name=kafka\nkafka.nodes=broker:9092\n");
+        when(ds.find(TrinoCatalogEntity.class, "cat-2")).thenReturn(events);
+        HelmDeployRequest request = request(valuesWithCatalogs(Map.of(
+                "pg_finance", "connector.name=postgresql\nconnection-url=jdbc:postgresql://db:5432/finance\n",
+                "events", "connector.name=kafka\nkafka.nodes=broker:9092\n",
+                "moved", "connector.name=tpch\n")), Map.of("refs", List.of("cat-2"), "text", "[moved]\nconnector.name=tpch\n"));
+
+        service.applyCustomCatalogs(request);
+
+        Map<?, ?> catalogs = (Map<?, ?>) request.getValues().get("catalogs");
+        assertEquals(java.util.Set.of("hive", "events", "moved"), catalogs.keySet());
+        assertEquals("{\"events\":{\"id\":\"cat-2\",\"hash\":\"" + TrinoCatalogService.contentHash(events.getPropertiesText())
+                + "\"}}", request.getFormValues().get("_catalogRefsJson"));
+    }
+
+    @Test
+    void deselectingEveryReusableCatalogRemovesThemAll() throws Exception {
+        K8sReleaseEntity recorded = new K8sReleaseEntity();
+        recorded.setCatalogRefsJson("{\"pg_finance\":{\"id\":\"cat-1\",\"hash\":\"abc\"}}");
+        when(ds.find(K8sReleaseEntity.class, K8sReleaseEntity.idOf(NS, "trino"))).thenReturn(recorded);
+        HelmDeployRequest request = request(valuesWithCatalogs(Map.of(
+                "pg_finance", "connector.name=postgresql\nconnection-url=jdbc:postgresql://db:5432/finance\n")),
+                Map.of("refs", List.of(), "text", ""));
+
+        assertTrue(service.applyCustomCatalogs(request).isEmpty());
+
+        assertEquals(List.of("hive"), new ArrayList<>(((Map<?, ?>) request.getValues().get("catalogs")).keySet()));
+        assertNull(request.getFormValues().get("_catalogRefsJson"), "recorded as no references");
+
+        // A redeploy without the wizard changes nothing.
+        HelmDeployRequest resync = request(valuesWithCatalogs(Map.of(
+                "pg_finance", "connector.name=postgresql\nconnection-url=jdbc:postgresql://db:5432/finance\n")), null);
+        service.applyCustomCatalogs(resync);
+        assertTrue(((Map<?, ?>) resync.getValues().get("catalogs")).containsKey("pg_finance"));
+    }
+
     @Test
     void aListValuedFeatureIsOnWhenItHasEntries() {
         assertTrue(CommandService.featureOn(List.of("pg-credentials")));

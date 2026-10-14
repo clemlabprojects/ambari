@@ -17,12 +17,19 @@
  */
 package org.apache.ambari.view.k8s.service.trino;
 
+import org.apache.ambari.view.k8s.model.TrinoCatalogDTO;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
+import org.apache.ambari.view.k8s.service.TrinoCatalogService;
 import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
+import org.apache.ambari.view.k8s.store.PerUserViewContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -344,6 +351,51 @@ class TrinoCatalogRuntimeServiceTest {
         assertEquals(Map.of("name", "scratch", "live", false), out);
         verify(trino).execute("DROP CATALOG scratch", "alice");
         assertTrue(redeploy.submitted.isEmpty(), "nothing to remove from Git");
+    }
+
+    /**
+     * A reusable catalog dropped and forgotten on the release's Catalogs action is taken out of its values and is no
+     * longer attached to it once the operation has committed that to Git: the Trino Catalogs page can then delete it.
+     * Until then (the commit may still fail, a pull request may be closed) the release still holds it.
+     */
+    @Test
+    void aReusableCatalogDroppedAndForgottenIsDetachedOnceGitHoldsTheChange(@TempDir Path workDir) {
+        PerUserViewContext view = new PerUserViewContext("catalogs", workDir).as("admin");
+        TrinoCatalogDTO pg = new TrinoCatalogDTO();
+        pg.name = "pg_finance";
+        pg.propertiesText = "connector.name=postgresql\nconnection-url=jdbc:postgresql://db:5432/finance\n";
+        String id = new TrinoCatalogService(view.context).save(pg).id;
+        ReleaseMetadataService metadata = new ReleaseMetadataService(view.context);
+        metadata.recordInstallOrUpgrade("trino", "trino-flux", "TRINO", null, "clemlab-trino", "charts", "1.43.15",
+                null, "op-install", null, null, null, null, "FLUX_GITOPS", null, null, null, null, null, null, null,
+                null, null);
+        String refs = "{\"pg_finance\":{\"id\":\"" + id + "\",\"hash\":\"abc\"},\"events\":{\"id\":\"cat-2\",\"hash\":\"def\"}}";
+        metadata.recordCatalogRefs("trino", "trino-flux", refs);
+        TrinoCatalogRuntimeService.Target t = gitOpsTarget();
+        t.metadata.setCatalogRefsJson(refs);
+        t.values.put("catalogs", new LinkedHashMap<>(Map.of("pg_finance", pg.propertiesText, "events", "connector.name=kafka")));
+        TrinoStatementClient trino = mock(TrinoStatementClient.class);
+        when(trino.execute(anyString(), anyString())).thenReturn(new TrinoStatementClient.Result());
+        RecordingRedeploy redeploy = new RecordingRedeploy();
+        TrinoCatalogRuntimeService service = spy(new TrinoCatalogRuntimeService(view.context, fluxApplied(), redeploy));
+        doReturn(t).when(service).resolve(t.namespace, t.release);
+        doReturn(trino).when(service).clientFor(org.mockito.ArgumentMatchers.any());
+        assertThrows(IllegalStateException.class, () -> new TrinoCatalogService(view.context).delete(id));
+
+        service.drop("trino", "trino-flux", "pg_finance", true, "alice");
+
+        HelmDeployRequest submitted = redeploy.submitted.get(0);
+        assertEquals(Map.of("events", "connector.name=kafka"), submitted.getValues().get("catalogs"));
+        assertEquals("ctx-prod", submitted.getFormValues().get("platformContextId"));
+        Object pruned = submitted.getFormValues().get("_catalogRefsJson");
+        assertEquals(java.util.Set.of("events"), TrinoCatalogService.parseRefs((String) pruned).keySet());
+        // Submitted, not committed yet: still attached.
+        assertEquals(refs, metadata.find("trino", "trino-flux").getCatalogRefsJson());
+        assertThrows(IllegalStateException.class, () -> new TrinoCatalogService(view.context).delete(id));
+
+        // What the operation records once its commit is in Git.
+        metadata.recordCatalogRefs("trino", "trino-flux", (String) pruned);
+        assertDoesNotThrow(() -> new TrinoCatalogService(view.context).delete(id));
     }
 
     @Test

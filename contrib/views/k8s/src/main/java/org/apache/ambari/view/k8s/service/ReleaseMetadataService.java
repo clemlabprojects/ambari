@@ -60,6 +60,9 @@ import java.util.stream.Collectors;
 public class ReleaseMetadataService {
     private static final Logger LOG = LoggerFactory.getLogger(ReleaseMetadataService.class);
 
+    /** The reusable-catalog references of a release that has none, see {@link #recordCatalogRefs}. */
+    static final String NO_CATALOG_REFS = "{}";
+
     private final ViewContext viewContext;
     private final K8sReleaseRepo releaseRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -270,14 +273,33 @@ public class ReleaseMetadataService {
      * Persist (or clear, with null/blank) the reusable-catalog references of a release. Separate
      * from {@link #recordInstallOrUpgrade} on purpose: only Trino deploys set it and the metadata
      * record call already carries twenty positional parameters.
+     * <p>
+     * No references are stored as {@code {}}, never as null: the DataStore leaves a column alone when
+     * it is given null, so a null would keep the catalogs of the previous deploy attached.
      */
     public void recordCatalogRefs(String namespace, String releaseName, String catalogRefsJson) {
         K8sReleaseEntity e = find(namespace, releaseName);
         if (e == null) return;
-        String v = catalogRefsJson == null || catalogRefsJson.isBlank() ? null : catalogRefsJson;
-        if (java.util.Objects.equals(v, e.getCatalogRefsJson())) return;
+        String v = catalogRefsJson == null || catalogRefsJson.isBlank() ? NO_CATALOG_REFS : catalogRefsJson;
+        String current = e.getCatalogRefsJson() == null || e.getCatalogRefsJson().isBlank()
+                ? NO_CATALOG_REFS : e.getCatalogRefsJson();
+        if (v.equals(current)) return;
         e.setCatalogRefsJson(v);
         releaseRepository.update(e);
+    }
+
+    /**
+     * Detaches one reusable catalog from a release, for a catalog removed from the release outside the wizard
+     * (dropped and forgotten on the Trino Catalogs page), so the release no longer holds it from deletion.
+     *
+     * @param catalogName the catalog's name in the release
+     */
+    public void forgetCatalogRef(String namespace, String releaseName, String catalogName) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || catalogName == null) return;
+        java.util.Map<String, java.util.Map<String, String>> refs = TrinoCatalogService.parseRefs(e.getCatalogRefsJson());
+        if (refs.remove(catalogName) == null) return;
+        recordCatalogRefs(namespace, releaseName, TrinoCatalogService.toRefsJson(refs));
     }
 
     /**

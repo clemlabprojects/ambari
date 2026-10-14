@@ -20,6 +20,7 @@ package org.apache.ambari.view.k8s.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.ambari.view.k8s.model.TrinoCatalogDTO;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.store.PerUserViewContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -148,6 +149,49 @@ class ReleaseMetadataServiceRoundTripTest {
         metadata().recordTruststoreRefs(NS, "trino", List.of());
         assertEquals(List.of(), metadata().truststoreRefs(NS, "trino"), "the default truststores only: a choice too");
         assertEquals("0a1b2c3", metadata().find(NS, "trino").getGitCommitSha(), "kept beside the Git metadata");
+    }
+
+    /**
+     * The DataStore leaves a column alone when it is given null: an Upgrade/Config that deselects every reusable
+     * catalog must still detach them, so the catalog can be deleted and is not selected again at the next upgrade.
+     */
+    @Test
+    void deselectingEveryReusableCatalogDetachesThemAndLetsThemBeDeleted() {
+        recordGitOpsInstall();
+        TrinoCatalogDTO pg = new TrinoCatalogDTO();
+        pg.name = "pg_finance";
+        pg.propertiesText = "connector.name=postgresql\nconnection-url=jdbc:postgresql://db:5432/finance\n";
+        String id = new TrinoCatalogService(view.context).save(pg).id;
+        metadata().recordCatalogRefs(NS, "trino",
+                TrinoCatalogService.toRefsJson(Map.of("pg_finance", Map.of("id", id, "hash", "abc"))));
+        IllegalStateException attached = assertThrows(IllegalStateException.class,
+                () -> new TrinoCatalogService(view.context).delete(id));
+        assertTrue(attached.getMessage().contains("analytics/trino"), attached.getMessage());
+
+        // What the deploy records once the wizard selects none: the refs of an empty selection, as a string.
+        metadata().recordCatalogRefs(NS, "trino", TrinoCatalogService.toRefsJson(Map.of()));
+        assertEquals("{}", metadata().find(NS, "trino").getCatalogRefsJson());
+        metadata().recordCatalogRefs(NS, "trino", "");
+        assertEquals("{}", metadata().find(NS, "trino").getCatalogRefsJson());
+
+        assertDoesNotThrow(() -> new TrinoCatalogService(view.context).delete(id));
+        assertNull(new TrinoCatalogService(view.context).findEntity(id));
+    }
+
+    @Test
+    void aCatalogForgottenOnTheReleaseIsDetachedAndTheOthersStay() {
+        recordGitOpsInstall();
+        metadata().recordCatalogRefs(NS, "trino", TrinoCatalogService.toRefsJson(new java.util.LinkedHashMap<>(Map.of(
+                "pg_finance", Map.of("id", "cat-1", "hash", "abc"), "events", Map.of("id", "cat-2", "hash", "def")))));
+
+        metadata().forgetCatalogRef(NS, "trino", "pg_finance");
+        assertEquals(java.util.Set.of("events"),
+                TrinoCatalogService.parseRefs(metadata().find(NS, "trino").getCatalogRefsJson()).keySet());
+
+        metadata().forgetCatalogRef(NS, "trino", "events");
+        assertEquals("{}", metadata().find(NS, "trino").getCatalogRefsJson());
+        assertDoesNotThrow(() -> metadata().forgetCatalogRef(NS, "trino", "unknown"));
+        assertDoesNotThrow(() -> metadata().forgetCatalogRef(NS, "gone", "events"));
     }
 
     @Test

@@ -7153,8 +7153,17 @@ public class CommandService {
                 trinoHost, ref[0], ref[1], omTrinoService, trinoRangerRepo);
     }
 
+    /** The names of the reusable catalogs the release records from its previous deploy, empty for a new release. */
+    private Set<String> previousCatalogRefs(HelmDeployRequest request) {
+        if (request.getNamespace() == null || request.getReleaseName() == null) return Collections.emptySet();
+        K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(request.getNamespace(), request.getReleaseName());
+        return recorded == null ? Collections.emptySet()
+                : TrinoCatalogService.parseRefs(recorded.getCatalogRefsJson()).keySet();
+    }
+
     /**
-     * Adds the reusable catalogs selected in the wizard and its inline catalogs to the chart values.
+     * Adds the reusable catalogs selected in the wizard and its inline catalogs to the chart values, and takes out
+     * those the release had and the wizard no longer selects.
      *
      * @return the catalogs added (name to properties), empty when the deploy carries none
      */
@@ -7201,13 +7210,24 @@ public class CommandService {
 
         Map<String, String> merged = new LinkedHashMap<>(fromRefs);
         merged.putAll(parsed);
-        if (merged.isEmpty()) return merged;
 
         Map<String, Object> values = request.getValues();
         if (values == null) return merged;
         Object existing = values.get("catalogs");
         Map<String, Object> catalogs = (existing instanceof Map)
-                ? (Map<String, Object>) existing : new LinkedHashMap<>();
+                ? new LinkedHashMap<>((Map<String, Object>) existing) : new LinkedHashMap<>();
+        // The wizard carries the deployed values over, catalogs included: a reusable catalog the release had and the
+        // operator deselected must be taken out here, or Trino keeps serving it.
+        Set<String> deselected = new LinkedHashSet<>(previousCatalogRefs(request));
+        deselected.removeAll(merged.keySet());
+        deselected.retainAll(catalogs.keySet());
+        if (!deselected.isEmpty()) {
+            catalogs.keySet().removeAll(deselected);
+            values.put("catalogs", catalogs);
+            LOG.info("Reusable catalogs detached from the release: {}", deselected);
+        }
+        if (merged.isEmpty()) return merged;
+
         catalogs.putAll(merged);
         values.put("catalogs", catalogs);
         LOG.info("Trino catalogs wired into the release: reusable={} inline={}", fromRefs.keySet(), parsed.keySet());

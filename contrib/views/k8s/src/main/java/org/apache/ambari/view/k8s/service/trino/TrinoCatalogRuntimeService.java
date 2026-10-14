@@ -401,6 +401,9 @@ public class TrinoCatalogRuntimeService {
                             + " fixed.", notSaved);
                 }
                 out.put("persisted", false);
+            } else if (forget) {
+                // Not in the values (removed by hand, or never rolled out), but maybe still recorded as attached.
+                forgetCatalogRef(t, name);
             }
             return out;
         });
@@ -740,7 +743,15 @@ public class TrinoCatalogRuntimeService {
         checkPersistable(t);
         Map<String, Object> values = valuesWithCatalog(ctx, t, name, text);
         if (heldInGit(t)) {
-            String commandId = gitOpsRedeploy.submit(CommandService.releaseRedeployRequest(t.metadata, values));
+            HelmDeployRequest redeploy = CommandService.releaseRedeployRequest(t.metadata, values);
+            Map<String, Map<String, String>> refs = refsOf(t.metadata);
+            if (text == null && refs.remove(name) != null) {
+                // The operation records the references once its commit is in Git, the way a wizard deploy does: a
+                // push that fails leaves the catalog attached, as it still is in the values.
+                if (redeploy.getFormValues() == null) redeploy.setFormValues(new LinkedHashMap<>());
+                redeploy.getFormValues().put("_catalogRefsJson", TrinoCatalogService.toRefsJson(refs));
+            }
+            String commandId = gitOpsRedeploy.submit(redeploy);
             LOG.info("Catalog '{}' {} release {}/{} through Git (operation {})", name,
                     text == null ? "removed from" : "committed to", t.namespace, t.release, commandId);
             Map<String, Object> out = new LinkedHashMap<>();
@@ -754,7 +765,19 @@ public class TrinoCatalogRuntimeService {
                 kubernetesService.getConfigurationService().getKubeconfigContents(),
                 t.metadata.getRepoId(), t.metadata.getVersion(), 600, true, false, false);
         LOG.info("Catalog '{}' {} in release {}/{} values", name, text == null ? "removed from" : "persisted into", t.namespace, t.release);
+        if (text == null) forgetCatalogRef(t, name);
         return Collections.emptyMap();
+    }
+
+    /**
+     * A catalog removed from the release values is no longer attached to it: a reusable catalog of that name can then
+     * be deleted, and the next Upgrade/Config does not select it again.
+     */
+    private void forgetCatalogRef(Target t, String name) {
+        Map<String, Map<String, String>> refs = refsOf(t.metadata);
+        if (refs.remove(name) == null) return;
+        new ReleaseMetadataService(ctx).forgetCatalogRef(t.namespace, t.release, name);
+        t.metadata.setCatalogRefsJson(TrinoCatalogService.toRefsJson(refs));
     }
 
     /**
