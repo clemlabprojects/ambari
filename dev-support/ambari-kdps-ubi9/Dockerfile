@@ -17,9 +17,10 @@
 #
 # This image manages no cluster: no agents, no host registration, no stack deployment. It exists so
 # KDPS can run *inside* the Kubernetes or OpenShift cluster it deploys to, which is the only way to
-# work when the kube API is not reachable from outside. In the cluster, the view authenticates with
-# its ServiceAccount token — the fabric8 client picks that up on its own — so no kubeconfig is
-# shipped and no API endpoint is exposed.
+# work when the kube API is not reachable from outside. No kubeconfig is shipped and no API endpoint
+# is exposed: the view connects with a kubeconfig an administrator uploads, with an OpenShift API URL
+# and account login, or with the pod's own ServiceAccount when the chart turns that mode on. RBAC
+# belongs to that account in the target projects; the pod's ServiceAccount needs none otherwise.
 #
 # The data platforms it manages are reached as KDPS platform contexts: a remote Ambari, a Cloudera
 # Manager, or a manually described Hadoop cluster. That is what makes a cluster-less Ambari useful
@@ -36,7 +37,7 @@ FROM ${BASE_IMAGE}:${UBI_VERSION}
 
 ARG BASE_IMAGE
 ARG UBI_VERSION
-ARG AMBARI_VERSION=2.8.2.0-137
+ARG AMBARI_VERSION=2.8.2.0-160
 # Yum repository holding the ambari-server RPM: the published Clemlab repository for the build, or a
 # customer mirror of it (reposync).
 ARG AMBARI_REPO_URL

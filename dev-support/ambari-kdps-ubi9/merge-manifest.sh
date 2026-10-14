@@ -23,7 +23,7 @@ set -euo pipefail
 HARBOR="${HARBOR:-registry.clemlab.com}"
 PROJECT="${PROJECT:-clemlabprojects}"
 IMAGE_NAME="${IMAGE_NAME:-ambari-kdps}"
-AMBARI_VERSION="${AMBARI_VERSION:-2.8.2.0-137}"
+AMBARI_VERSION="${AMBARI_VERSION:-2.8.2.0-160}"
 
 ref="${HARBOR}/${PROJECT}/${IMAGE_NAME}"
 tag="${AMBARI_VERSION}"

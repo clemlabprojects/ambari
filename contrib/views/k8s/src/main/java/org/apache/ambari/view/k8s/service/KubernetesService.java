@@ -279,7 +279,6 @@ public class KubernetesService {
     private static final String OPENSHIFT_THANOS_URL_DEFAULT = "https://thanos-querier.openshift-monitoring.svc:9091";
     private static final String KUBERNETES_SERVICE_HOST_ENV = "KUBERNETES_SERVICE_HOST";
     private static final String KUBERNETES_SERVICE_PORT_ENV = "KUBERNETES_SERVICE_PORT";
-    private static final Path KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH = Paths.get("/var/run/secrets/kubernetes.io/serviceaccount/token");
 
 
     private static final int MAX_METRICS_NODES = Integer.getInteger("k8s.view.metrics.sample.nodes", 200);
@@ -2065,8 +2064,10 @@ public class KubernetesService {
     }
 
     /**
-     * Detect whether Ambari is running inside a Kubernetes pod by checking
-     * standard in-cluster environment variables and the service account token.
+     * Detect whether Ambari is running inside a Kubernetes pod by checking the standard in-cluster environment
+     * variables. The ServiceAccount token file is deliberately not consulted: Kubernetes injects the variables into
+     * every pod, while the token is absent from a pod that does not mount it, and such a pod is still inside the
+     * cluster and can reach the Prometheus service directly.
      *
      * @return {@code true} if Ambari is running inside Kubernetes
      */
@@ -2075,16 +2076,23 @@ public class KubernetesService {
         if (cachedResult != null) {
             return cachedResult;
         }
-        String serviceHost = System.getenv(KUBERNETES_SERVICE_HOST_ENV);
-        String servicePort = System.getenv(KUBERNETES_SERVICE_PORT_ENV);
-        boolean hasServiceEnvironment = serviceHost != null && !serviceHost.isBlank()
-                && servicePort != null && !servicePort.isBlank();
-        boolean hasServiceAccountToken = Files.isReadable(KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH);
-        boolean runningInsideKubernetes = hasServiceEnvironment && hasServiceAccountToken;
+        boolean runningInsideKubernetes = hasInClusterEnvironment(System::getenv);
         runningInsideKubernetesCache.compareAndSet(null, runningInsideKubernetes);
-        LOG.info("In-cluster detection: envPresent={} tokenPresent={} runningInsideKubernetes={}",
-                hasServiceEnvironment, hasServiceAccountToken, runningInsideKubernetes);
+        LOG.info("In-cluster detection: runningInsideKubernetes={}", runningInsideKubernetes);
         return runningInsideKubernetes;
+    }
+
+    /**
+     * Whether the environment carries the API server address Kubernetes injects into every pod.
+     *
+     * @param environment lookup of an environment variable by name
+     * @return {@code true} when both the service host and the service port are set
+     */
+    static boolean hasInClusterEnvironment(java.util.function.UnaryOperator<String> environment) {
+        String serviceHost = environment.apply(KUBERNETES_SERVICE_HOST_ENV);
+        String servicePort = environment.apply(KUBERNETES_SERVICE_PORT_ENV);
+        return serviceHost != null && !serviceHost.isBlank()
+                && servicePort != null && !servicePort.isBlank();
     }
 
     /**

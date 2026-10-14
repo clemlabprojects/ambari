@@ -5,16 +5,26 @@ Kubernetes Data Platform Services view.
 
 It exists for one situation: the Kubernetes or OpenShift API is not reachable from outside the
 cluster, so KDPS cannot deploy into it from an Ambari server sitting on a VM. Running Ambari *inside*
-the cluster removes the problem — the view talks to the API over the pod network, and authenticates
-with its own ServiceAccount token, which the fabric8 client picks up on its own. No kubeconfig is
-shipped and no API endpoint has to be exposed.
+the cluster removes the problem — the view talks to the API over the pod network, so no API endpoint has
+to be exposed.
+
+The view connects to the cluster in one of three ways, chosen by an administrator under KDPS >
+Configuration, and no kubeconfig is shipped in the image:
+
+* an **uploaded kubeconfig**, typically one holding the token of a ServiceAccount made for KDPS, one
+  per project or one project holding the account;
+* an **OpenShift API URL plus an account login**;
+* the **pod's own ServiceAccount**, with the `ambari` chart's `inClusterServiceAccount.enabled=true`
+  (KDPS > Configuration > *Connect with this ServiceAccount*). Nothing to upload, nothing that expires,
+  and the way in when the OpenShift console only signs in through SSO.
+
+Whichever was saved last is used. The production choice is a ServiceAccount: a kubeconfig holding a
+ServiceAccount token per project, or the pod's own ServiceAccount. A kubeconfig copied from
+`oc login` expires within a day.
 
 The data platforms this Ambari manages are reached as KDPS **platform contexts**: a remote Ambari, a
 Cloudera Manager, or a manually described Hadoop cluster. That is what makes a cluster-less Ambari
 useful rather than odd.
-
-> Status: the files here are complete but have not yet been built or run end to end. Treat the first
-> build as a bring-up, not a regression run.
 
 ## What is in the image
 
@@ -46,12 +56,12 @@ be told where the release pipeline published it. The architecture of the reposit
 architecture of the image.
 
 ```sh
-export AMBARI_REPO_URL=https://<build-host>/ambari-release/dist/centos9-aarch64/1.x/BUILDS/2.8.2.0-137/rpms
-export AMBARI_VERSION=2.8.2.0-137
+export AMBARI_REPO_URL=https://<build-host>/ambari-release/dist/centos9-aarch64/1.x/BUILDS/2.8.2.0-160/rpms
+export AMBARI_VERSION=2.8.2.0-160
 ./build-image.sh
 ```
 
-That produces `registry.clemlab.com/clemlabprojects/ambari-kdps:2.8.2.0-137-arm64`.
+That produces `registry.clemlab.com/clemlabprojects/ambari-kdps:2.8.2.0-160-arm64`.
 
 The build fails when the KDPS view in the installed package does not carry the Helm native library of the
 image's architecture (checked in the Dockerfile right after the package install). That happens when the repository holds the other
@@ -99,13 +109,13 @@ downloads nothing. Nothing else is fetched: no Python package index, no script p
 host that no longer answers: it logs an error about them and the build carries on.
 
 ```sh
-tar -xzf ambari-kdps-image-context-2.8.2.0-154.tar.gz && cd ambari-kdps-image-context
+tar -xzf ambari-kdps-image-context-2.8.2.0-160.tar.gz && cd ambari-kdps-image-context
 docker build \
-  --build-arg AMBARI_VERSION=2.8.2.0-154 \
-  --build-arg AMBARI_REPO_URL=https://mirror.client.local/ambari/centos9/2.8.2.0.0-154/rpms/ \
+  --build-arg AMBARI_VERSION=2.8.2.0-160 \
+  --build-arg AMBARI_REPO_URL=https://mirror.client.local/ambari/centos9/2.8.2.0.0-160/rpms/ \
   --build-arg BASE_IMAGE=registry.client.local/ubi9/ubi \
   --build-arg HELM_URL=https://mirror.client.local/helm/helm-v3.22.0-linux-amd64.tar.gz \
-  -t registry.client.local/kdps/ambari-kdps:2.8.2.0-154 .
+  -t registry.client.local/kdps/ambari-kdps:2.8.2.0-160 .
 ```
 
 ### In CI
@@ -291,21 +301,28 @@ What the deployment needs around it:
 
 - **Postgres** — external, or a small in-cluster instance. It holds all Ambari state; the pod is
   disposable.
-- **A PVC for `/var/lib/ambari-server/resources/views`** if you want view work directories to survive
-  a restart. Not strictly required — the view re-extracts — but it makes restarts much faster.
+- **A PVC for `/var/lib/ambari-server/resources/views/k8s-view-data` only**, mounted as a `subPath`
+  of the claim, as the `ambari` chart does. It holds what the view must keep: the KDPS internal CA,
+  operation files and the uploaded kubeconfig. Never mount a volume over
+  `/var/lib/ambari-server/resources/views`: an empty claim there hides the view jars the package
+  installed, KDPS included, and the entrypoint only copies the jars found in `/opt/ambari-views`.
 - **A Route or Ingress** to port 8080 (or 8443 once TLS is configured), behind a readiness check
   that requires `/tmp/admin-bootstrapped` (see above).
-- **RBAC for the ServiceAccount.** This is the part that is easy to under-scope: KDPS installs Helm
-  releases, so its ServiceAccount needs create/update/delete on everything those charts contain, in
-  every namespace it deploys to. In practice that means a Role (or ClusterRole) covering workloads,
-  services, configmaps, secrets, PVCs, service accounts, RBAC objects and the CRDs the charts use.
-  Start namespace-scoped and widen deliberately; do not reach for `cluster-admin` because it is
-  quicker.
+- **RBAC for the account KDPS connects as, not for the pod.** KDPS installs Helm releases with the
+  credential it was given (the kubeconfig, the OpenShift login or, in the in-cluster mode, the pod's
+  ServiceAccount), so that account needs create/update/delete on everything the charts contain,
+  in each project KDPS deploys to: workloads, services, configmaps, secrets, PVCs, service accounts,
+  RBAC objects and the CRDs the charts use. On OpenShift the `admin` role in each project, plus
+  `monitoring-edit` for ServiceMonitors, covers it. Grant it project by project; do not reach for
+  `cluster-admin` because it is quicker. The pod's ServiceAccount needs no Kubernetes RBAC unless it
+  is the account KDPS connects as. The one other exception is a Vault role binding when Vault CSI is
+  enabled. The chart's `serviceAccount.automountToken` (default off) keeps the token out of a pod that
+  does not connect with it.
 
 ### Known gaps to close during bring-up
 
-- TLS is not configured; the server listens on 8080. Terminate at the Route, or run
-  `ambari-server setup-security` and mount a keystore.
+- The server listens on 8080 unless TLS is set up. Terminate at the Route, turn on the chart's
+  `api.tls`, or run `ambari-server setup-security` and mount a keystore.
 - Two replicas would both try to load the schema and both try to serve; run one.
 
 ## Pushing to git for GitOps

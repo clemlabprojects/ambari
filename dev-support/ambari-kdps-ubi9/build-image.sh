@@ -32,7 +32,7 @@ HARBOR="${HARBOR:-registry.clemlab.com}"
 PROJECT="${PROJECT:-clemlabprojects}"
 IMAGE_NAME="${IMAGE_NAME:-ambari-kdps}"
 
-AMBARI_VERSION="${AMBARI_VERSION:-2.8.2.0-137}"
+AMBARI_VERSION="${AMBARI_VERSION:-2.8.2.0-160}"
 UBI_VERSION="${UBI_VERSION:-9.6}"
 HELM_VERSION="${HELM_VERSION:-3.22.0}"
 # sha256 of the official Helm tarballs. Unset = the values the Dockerfile pins for its own HELM_VERSION;
