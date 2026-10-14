@@ -157,6 +157,10 @@ public class K8sReleaseEntity extends BaseModel {
     @Transient
     private static final String SSH_KNOWN_HOSTS = "sshKnownHosts";
 
+    /** Metadata key of the objects KDPS created for the release ({@link #getKdpsObjects}). */
+    @Transient
+    private static final String KDPS_OBJECTS = "kdpsObjects";
+
     // Basic columns
     public String getNamespace() {
         return namespace;
@@ -378,6 +382,47 @@ public class K8sReleaseEntity extends BaseModel {
     public void setTruststoreRefs(java.util.List<String> refs) {
         try {
             putGitMeta("truststoreRefs", refs == null ? null : MAPPER.writeValueAsString(refs));
+        } catch (Exception e) {
+            // A list of strings always serialises; keep the previous value otherwise.
+        }
+    }
+
+    /**
+     * The objects KDPS created for the release outside its chart, as {@code <Kind>/<name>}: what its uninstall removes,
+     * a cluster-scoped object only when named here. Empty when a deploy found none; null when no deploy ever recorded
+     * them (one by an earlier version, which did not label them either). Kept in the metadata JSON like the
+     * truststores, for the same reason.
+     */
+    public java.util.List<String> getKdpsObjects() {
+        String json = gitMeta().get(KDPS_OBJECTS);
+        if (json == null) {
+            return null;
+        }
+        try {
+            java.util.List<String> objects = new java.util.ArrayList<>();
+            MAPPER.readTree(json).forEach(n -> objects.add(n.asText()));
+            return objects;
+        } catch (Exception malformed) {
+            return null;
+        }
+    }
+
+    /**
+     * Records the objects KDPS created for the release, an empty list included (a deploy that labels what it creates
+     * found none). When they would not fit the column with the rest of the metadata, only the cluster-scoped ones are
+     * kept, which the uninstall cannot find by their labels alone; the namespaced ones it finds by their labels.
+     */
+    public void setKdpsObjects(java.util.List<String> objects) {
+        try {
+            putGitMeta(KDPS_OBJECTS, objects == null ? null : MAPPER.writeValueAsString(objects));
+            if (objects != null && gitMetaJson != null && gitMetaJson.length() > InstanceSettings.MAX_VALUE_LENGTH) {
+                java.util.List<String> clusterScoped = objects.stream()
+                        .filter(o -> o != null && o.startsWith("ClusterRoleBinding/")).toList();
+                putGitMeta(KDPS_OBJECTS, MAPPER.writeValueAsString(clusterScoped));
+                if (gitMetaJson != null && gitMetaJson.length() > InstanceSettings.MAX_VALUE_LENGTH) {
+                    putGitMeta(KDPS_OBJECTS, null);
+                }
+            }
         } catch (Exception e) {
             // A list of strings always serialises; keep the previous value otherwise.
         }

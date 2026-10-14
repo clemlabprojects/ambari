@@ -18,6 +18,8 @@
 
 package org.apache.ambari.view.k8s.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
 import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
@@ -148,7 +150,7 @@ class KedaThanosScopeTest {
     KubernetesService svc = service();
 
     assertFalse(svc.canBindClusterRoles());
-    assertNull(svc.ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true));
+    assertNull(svc.ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true, "trino"));
 
     List<String> calls = requests();
     assertTrue(calls.contains("POST /api/v1/namespaces/team-a/serviceaccounts"), calls::toString);
@@ -173,7 +175,7 @@ class KedaThanosScopeTest {
     server.expect().patch().withPath(rolePath).andReturn(200, updated).always();
     server.expect().put().withPath(rolePath).andReturn(200, updated).always();
 
-    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true));
+    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true, "trino"));
 
     List<String> calls = requests();
     String update = bodies.entrySet().stream()
@@ -190,7 +192,7 @@ class KedaThanosScopeTest {
     server.expect().get().withPath("/apis/rbac.authorization.k8s.io/v1/clusterroles/cluster-monitoring-view")
         .andReturn(200, "{\"kind\":\"ClusterRole\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"metadata\":{\"name\":\"cluster-monitoring-view\"}}").always();
 
-    String problem = svc.ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", false);
+    String problem = svc.ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", false, "trino");
     assertNotNull(problem);
     assertTrue(problem.contains("oc create clusterrolebinding"), problem);
   }
@@ -200,7 +202,7 @@ class KedaThanosScopeTest {
     // Nothing allowed at all: the instructions must still only list namespaced objects.
     server.expect().post().withPath("/apis/authorization.k8s.io/v1/selfsubjectaccessreviews")
         .andReply(201, req -> answered(req.getBody().clone().readUtf8(), false)).always();
-    String problem = service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true);
+    String problem = service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true, "trino");
     assertNotNull(problem);
     assertFalse(problem.contains("clusterrolebinding"), problem);
     assertTrue(problem.contains("create role"), problem);
@@ -220,7 +222,7 @@ class KedaThanosScopeTest {
     server.expect().patch().withPath(rolePath).andReturn(200, updated).always();
     server.expect().put().withPath(rolePath).andReturn(200, updated).always();
 
-    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true));
+    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true, "trino"));
 
     List<String> calls = requests();
     String update = bodies.entrySet().stream()
@@ -228,6 +230,67 @@ class KedaThanosScopeTest {
         .map(Map.Entry::getValue).findFirst().orElse(null);
     assertNotNull(update, "the Role of an existing release is brought up to date: " + calls);
     assertTrue(update.contains("metrics.k8s.io"), update);
+  }
+
+  /** The metadata of the object a request created, by its "POST <path>". */
+  private JsonNode created(String request) throws Exception {
+    String body = bodies.get(request);
+    assertNotNull(body, "no " + request + " in " + bodies.keySet());
+    return new ObjectMapper().readTree(body).path("metadata");
+  }
+
+  private static void assertOfRelease(JsonNode metadata, String what) {
+    assertEquals("ambari-k8s-view", metadata.path("labels").path("app.kubernetes.io/managed-by").asText(), what);
+    assertEquals("trino", metadata.path("labels").path("ambari.clemlab.com/release").asText(), what);
+    assertEquals("team-a", metadata.path("annotations").path("ambari.clemlab.com/release-namespace").asText(), what);
+  }
+
+  @Test
+  void whatTheTokenNeedsIsLabelledAsTheReleasesSoItsUninstallRemovesIt() throws Exception {
+    projectLimitedAccount();
+    namespacedObjectsCanBeCreated();
+
+    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true, "trino"));
+
+    requests();
+    for (String path : List.of("/api/v1/namespaces/team-a/serviceaccounts",
+        "/apis/rbac.authorization.k8s.io/v1/namespaces/team-a/roles",
+        "/apis/rbac.authorization.k8s.io/v1/namespaces/team-a/rolebindings", "/api/v1/namespaces/team-a/secrets")) {
+      assertOfRelease(created("POST " + path), path);
+    }
+    assertEquals("trino-thanos-token", created("POST /api/v1/namespaces/team-a/secrets")
+        .path("annotations").path("kubernetes.io/service-account.name").asText(), "the token still names its account");
+  }
+
+  @Test
+  void theClusterBindingKdpsCreatesNamesTheReleaseAndItsNamespace() throws Exception {
+    server.expect().post().withPath("/apis/authorization.k8s.io/v1/selfsubjectaccessreviews")
+        .andReply(201, req -> answered(req.getBody().clone().readUtf8(), true)).always();
+    namespacedObjectsCanBeCreated();
+    server.expect().get().withPath("/apis/rbac.authorization.k8s.io/v1/clusterroles/cluster-monitoring-view")
+        .andReturn(200, "{\"kind\":\"ClusterRole\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"metadata\":{\"name\":\"cluster-monitoring-view\"}}").always();
+
+    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", false, "trino"));
+
+    requests();
+    JsonNode binding = created("POST /apis/rbac.authorization.k8s.io/v1/clusterrolebindings");
+    assertEquals("kdps-monview-team-a-trino-thanos-token", binding.path("name").asText());
+    assertOfRelease(binding, "a cluster-scoped binding names the release's namespace in its annotation");
+  }
+
+  @Test
+  void aServiceAccountAnAdministratorMadeIsUsedAsItIs() throws Exception {
+    projectLimitedAccount();
+    namespacedObjectsCanBeCreated();
+    server.expect().get().withPath("/api/v1/namespaces/team-a/serviceaccounts/trino-thanos-token").andReturn(200,
+        "{\"kind\":\"ServiceAccount\",\"apiVersion\":\"v1\",\"metadata\":{\"name\":\"trino-thanos-token\",\"namespace\":\"team-a\"}}").always();
+
+    assertNull(service().ensureKedaThanosTokenSecret("team-a", "trino-thanos-token", "trino-thanos-token", true, "trino"));
+
+    List<String> calls = requests();
+    assertFalse(calls.contains("POST /api/v1/namespaces/team-a/serviceaccounts"), calls::toString);
+    assertTrue(calls.stream().noneMatch(c -> c.startsWith("PATCH /api/v1/namespaces/team-a/serviceaccounts")
+        || c.startsWith("PUT /api/v1/namespaces/team-a/serviceaccounts")), "never labelled as the release's: " + calls);
   }
 
   @Test

@@ -1,4 +1,4 @@
-import { uninstallHelm } from '../client';
+import { getReleaseKdpsObjects, uninstallHelm } from '../client';
 
 /**
  * An uninstall answers with what it could not take back itself, such as OpenShift security context
@@ -75,5 +75,43 @@ describe('uninstallHelm', () => {
 
     expect(notes.oidcCleanup).toBe(note);
     expect(notes.polarisCleanup).toBe("Removed the Polaris principal 'trino'.");
+  });
+
+  it('returns the report on the objects KDPS created for the release', async () => {
+    const report = {
+      removed: ['Secret/trino-keytab'],
+      left: [{ object: 'Secret/trino-truststore', reason: 'this account may not delete it',
+        command: 'oc delete secret trino-truststore -n data' }],
+      note: 'Removed what KDPS created for the release outside its chart: Secret/trino-keytab.',
+    };
+    answer(JSON.stringify({ kdpsObjectsCleanup: report }));
+
+    const notes = await uninstallHelm('trino', 'data');
+
+    expect(notes.kdpsObjectsCleanup).toEqual(report);
+  });
+});
+
+/** The uninstall confirmation lists what KDPS created for the release outside its chart, as the server finds it. */
+describe('getReleaseKdpsObjects', () => {
+  const originalFetch = (globalThis as any).fetch;
+
+  afterEach(() => {
+    (globalThis as any).fetch = originalFetch;
+  });
+
+  it('returns the objects of the release', async () => {
+    (globalThis as any).fetch = jest.fn(() => Promise.resolve({
+      ok: true, status: 200, json: async () => ({ objects: ['Secret/trino-keytab', 'ConfigMap/trino-krb5-conf'] }),
+    }));
+
+    await expect(getReleaseKdpsObjects('trino', 'data')).resolves.toEqual(['Secret/trino-keytab', 'ConfigMap/trino-krb5-conf']);
+    expect(String((globalThis as any).fetch.mock.calls[0][0])).toContain('/helm/release/data/trino/kdps-objects');
+  });
+
+  it('returns none when they cannot be listed', async () => {
+    (globalThis as any).fetch = jest.fn(() => Promise.resolve({ ok: false, status: 403, json: async () => ({}) }));
+
+    await expect(getReleaseKdpsObjects('trino', 'data')).resolves.toEqual([]);
   });
 });

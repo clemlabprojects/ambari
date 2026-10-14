@@ -392,8 +392,10 @@ class CommandServiceOidcCleanupTest {
         ArgumentCaptor<Map<String, String>> annotations = ArgumentCaptor.forClass(Map.class);
         verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("gitlab-oidc-client"), anyMap(), labels.capture(),
                 annotations.capture());
+        // The release label lists them with the release's other objects; their managed-by value leaves them to this
+        // cleanup rather than to the sweep of those objects.
         assertEquals(Map.of("app.kubernetes.io/managed-by", "kdps", "app.kubernetes.io/instance", "gitlab",
-                "ambari.clemlab.com/type", "oidc-client"), labels.getValue());
+                "ambari.clemlab.com/type", "oidc-client", "ambari.clemlab.com/release", "gitlab"), labels.getValue());
         assertEquals(Map.of("kdps.clemlab.com/oidc-client-id", "gitlab-analytics",
                 "kdps.clemlab.com/oidc-realm", "corp",
                 "kdps.clemlab.com/oidc-context", "ext",

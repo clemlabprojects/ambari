@@ -1,4 +1,4 @@
-import { uninstallFollowUps, uninstallSignInRemovals } from '../uninstallFollowUps';
+import { uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../uninstallFollowUps';
 
 /** The Releases page shows what an uninstall took back and what it leaves to an administrator, and nothing when there is nothing to say. */
 describe('uninstallFollowUps', () => {
@@ -18,6 +18,49 @@ describe('uninstallFollowUps', () => {
   it('is empty when there is nothing to say', () => {
     expect(uninstallFollowUps(undefined)).toEqual([]);
     expect(uninstallFollowUps({})).toEqual([]);
+  });
+
+  it('shows what became of the objects KDPS created for the release, last', () => {
+    const note = 'Removed what KDPS created for the release outside its chart: Secret/trino-keytab.\n'
+      + 'Could not remove this object KDPS created for the release; delete it by hand:\n'
+      + '  ServiceAccount/trino-thanos-token (this account may not delete it): oc delete serviceaccount'
+      + ' trino-thanos-token -n data';
+    const followUps = uninstallFollowUps({
+      kdpsObjectsCleanup: {
+        removed: ['Secret/trino-keytab'],
+        left: [{ object: 'ServiceAccount/trino-thanos-token', reason: 'this account may not delete it',
+          command: 'oc delete serviceaccount trino-thanos-token -n data' }],
+        note,
+      },
+      polarisCleanup: "Removed the Polaris principal 'trino'.",
+    });
+
+    expect(followUps.map((f) => f.title)).toEqual(['Polaris catalog access', 'Objects KDPS created for the release']);
+    expect(followUps[1].text).toBe(note);
+  });
+
+  it('builds the text of the objects report when the server sent no note', () => {
+    const [followUp] = uninstallFollowUps({ kdpsObjectsCleanup: {
+      removed: ['ConfigMap/trino-krb5-conf'],
+      left: [{ object: 'ClusterRoleBinding/kdps-monview-data-x', reason: 'this account may not delete it',
+        command: 'oc delete clusterrolebinding kdps-monview-data-x' }],
+    } });
+
+    expect(followUp.text).toBe('Removed what KDPS created for the release outside its chart: ConfigMap/trino-krb5-conf.\n'
+      + 'Left ClusterRoleBinding/kdps-monview-data-x (this account may not delete it): oc delete clusterrolebinding'
+      + ' kdps-monview-data-x');
+    expect(uninstallFollowUps({ kdpsObjectsCleanup: { removed: [], left: [] } })).toEqual([]);
+  });
+
+  it('reports what the uninstall kept on purpose, even when it removed nothing', () => {
+    const [followUp] = uninstallFollowUps({ kdpsObjectsCleanup: {
+      removed: [],
+      left: [],
+      kept: [{ object: 'Secret/wildcard-tls', reason: 'still used by the Ingress superset of release superset' }],
+    } });
+
+    expect(followUp.title).toBe('Objects KDPS created for the release');
+    expect(followUp.text).toBe('Kept Secret/wildcard-tls (still used by the Ingress superset of release superset)');
   });
 
   it('shows what became of the Polaris access and of the single sign-on client, first', () => {
@@ -64,5 +107,20 @@ describe('uninstallSignInRemovals', () => {
     expect(uninstallSignInRemovals(release, undefined)).toBeNull();
     expect(uninstallSignInRemovals(release, [])).toBeNull();
     expect(uninstallSignInRemovals(release, [{ enabled: 'false' }])).toBeNull();
+  });
+});
+
+/** The uninstall confirmation lists the objects KDPS created for the release outside its chart, which go with it. */
+describe('uninstallKdpsObjectRemovals', () => {
+  it('names each object, and says what is kept', () => {
+    expect(uninstallKdpsObjectRemovals(['Secret/trino-keytab', 'ConfigMap/trino-krb5-conf'])).toBe(
+      'KDPS also deletes what it created for this release outside its chart: Secret/trino-keytab,'
+      + ' ConfigMap/trino-krb5-conf. Objects an administrator provided, or shared with other releases of the project,'
+      + ' are kept.');
+  });
+
+  it('says nothing when KDPS created nothing outside the chart', () => {
+    expect(uninstallKdpsObjectRemovals([])).toBeNull();
+    expect(uninstallKdpsObjectRemovals(undefined)).toBeNull();
   });
 });

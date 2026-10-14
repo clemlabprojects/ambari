@@ -170,6 +170,9 @@ class TagSyncRangerAccountTest {
         assertEquals(new TagSyncRangerAccount.Recorded(ACCOUNT, "cdp-prod", OWNER), records.find(NS, RELEASE),
                 "the view records the account and where it is");
         assertEquals(RELEASE, secret.labels().get("app.kubernetes.io/instance"));
+        // Listed with the release's other objects, but left to revoke, which disables the account first.
+        assertEquals(RELEASE, secret.labels().get(KdpsReleaseObjects.LABEL_RELEASE));
+        assertEquals("kdps", secret.labels().get(KdpsReleaseObjects.LABEL_MANAGED_BY));
         assertEquals("admin-pw", ranger.users.get("admin").get("password").getAsString(), "the administrator is untouched");
     }
 

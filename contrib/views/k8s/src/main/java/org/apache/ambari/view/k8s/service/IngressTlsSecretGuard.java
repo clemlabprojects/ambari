@@ -55,7 +55,7 @@ public final class IngressTlsSecretGuard {
      * A deploy refused because its ingress certificate would replace an existing Secret KDPS did not mint, and the
      * caller did not confirm the replacement. Unlike a Secret cert-manager or the External Secrets Operator keeps,
      * confirming lets it through, so the wizard asks the operator and deploys again: on a first install the Secret is
-     * mostly the one an earlier install of the release left behind (uninstalling keeps it).
+     * mostly the one an earlier install of the release left behind (an uninstall by an earlier KDPS version kept it).
      */
     public static final class ReplacementNotConfirmedException extends IllegalStateException {
         /** The code the deploy endpoint answers this refusal with (409), which the wizard recognises. */

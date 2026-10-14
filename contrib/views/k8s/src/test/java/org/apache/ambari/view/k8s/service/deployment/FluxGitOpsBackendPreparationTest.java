@@ -150,7 +150,7 @@ class FluxGitOpsBackendPreparationTest {
         inject(backend, "securityProfileService", profiles);
         CommandUtils commandUtils = mock(CommandUtils.class);
         when(commandUtils.prepareKrb5ConfConfigMap(anyString(), anyString(), any())).thenCallRealMethod();
-        when(commandUtils.ensureKrb5ConfConfigMap(anyString(), anyString(), any())).thenReturn(found);
+        when(commandUtils.ensureKrb5ConfConfigMap(anyString(), anyString(), any(), any())).thenReturn(found);
         inject(backend, "commandUtils", commandUtils);
         return backend;
     }

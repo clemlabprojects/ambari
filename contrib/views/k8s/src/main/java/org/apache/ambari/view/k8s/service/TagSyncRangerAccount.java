@@ -484,9 +484,12 @@ final class TagSyncRangerAccount {
         Map<String, byte[]> data = new LinkedHashMap<>();
         data.put("user", user.getBytes(StandardCharsets.UTF_8));
         data.put("password", password.getBytes(StandardCharsets.UTF_8));
+        // The release label lists it with the release's other objects; its own managed-by value leaves it to
+        // revoke, which disables the account before the Secret goes.
         Map<String, String> labels = new LinkedHashMap<>();
         labels.put("app.kubernetes.io/managed-by", "kdps");
         labels.put("app.kubernetes.io/instance", release);
+        labels = KdpsReleaseObjects.withReleaseLabel(labels, release);
         try {
             k8s.createOrUpdateOpaqueSecret(namespace, secretName, data, labels);
         } catch (RuntimeException e) {

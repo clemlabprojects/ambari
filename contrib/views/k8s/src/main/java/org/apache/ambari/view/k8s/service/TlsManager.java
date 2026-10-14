@@ -128,8 +128,10 @@ public class TlsManager {
             if (autoGenerate) {
                 ensureNamespaceExists(request.getNamespace());
                 // Generate and persist a keystore or PEM Secret signed by Ambari's internal CA.
-                generateKeystoreSecret(request.getNamespace(), secretName, keystoreKey, passwordKey, keystoreType, password, dnsNames, validityDays);
-                generatePasswordSecret(request.getNamespace(), passwordSecretName, passwordKey, password);
+                generateKeystoreSecret(request.getNamespace(), secretName, keystoreKey, passwordKey, keystoreType, password, dnsNames, validityDays,
+                        request.getReleaseName());
+                generatePasswordSecret(request.getNamespace(), passwordSecretName, passwordKey, password,
+                        request.getReleaseName());
                 LOG.info("TLS entry '{}' secrets prepared: keystoreSecret={}, passwordSecret={}, dnsSans={}",
                         tlsKey,
                         secretName,
@@ -138,7 +140,8 @@ public class TlsManager {
             } else {
                 LOG.info("Auto-generation disabled for TLS entry '{}'; expecting Secret {} to exist", tlsKey, secretName);
                 if (typedPassword != null) {
-                    ensurePasswordSecret(request.getNamespace(), passwordSecretName, passwordKey, typedPassword);
+                    ensurePasswordSecret(request.getNamespace(), passwordSecretName, passwordKey, typedPassword,
+                            request.getReleaseName());
                 }
             }
 
@@ -163,6 +166,10 @@ public class TlsManager {
         }
     }
 
+    /**
+     * Writes the keystore or PEM Secret KDPS generated for the release, which holds the server's private key: it
+     * carries the release labels (see {@link #releaseLabels}), so the uninstall of the release removes it.
+     */
     private void generateKeystoreSecret(String namespace,
                                         String secretName,
                                         String keystoreKey,
@@ -170,7 +177,8 @@ public class TlsManager {
                                         String keystoreType,
                                         String password,
                                         List<String> dnsNames,
-                                        int validityDays) {
+                                        int validityDays,
+                                        String releaseName) {
         try {
             String format = keystoreType == null ? "PKCS12" : keystoreType.trim().toUpperCase(Locale.ROOT);
             ServerKeystoreMaterial material = webHookConfigurationService.issueServerKeystore(dnsNames, format, password.toCharArray(), validityDays);
@@ -188,21 +196,23 @@ public class TlsManager {
                 data.put("tls.key", material.privateKeyPem().getBytes());
             }
 
-            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, data);
+            writeSecret(namespace, secretName, data, releaseName);
             LOG.info("Provisioned TLS keystore Secret {}/{} with dnsSans={}", namespace, secretName, String.join(",", dnsNames));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to generate TLS keystore secret " + namespace + "/" + secretName + ": " + e.getMessage(), e);
         }
     }
 
+    /** Writes the keystore password Secret of the release, with the release labels like the keystore's. */
     private void generatePasswordSecret(String namespace,
                                         String passwordSecretName,
                                         String passwordKey,
-                                        String password) {
+                                        String password,
+                                        String releaseName) {
         try {
             Map<String, byte[]> data = new LinkedHashMap<>();
             data.put(passwordKey, password.getBytes());
-            kubernetesService.createOrUpdateOpaqueSecret(namespace, passwordSecretName, data);
+            writeSecret(namespace, passwordSecretName, data, releaseName);
             LOG.info("Provisioned TLS password Secret {}/{} (key={})", namespace, passwordSecretName, passwordKey);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to generate TLS password secret " + namespace + "/" + passwordSecretName + ": " + e.getMessage(), e);
@@ -227,7 +237,8 @@ public class TlsManager {
     private void ensurePasswordSecret(String namespace,
                                       String passwordSecretName,
                                       String passwordKey,
-                                      String typedPassword) {
+                                      String typedPassword,
+                                      String releaseName) {
         Secret existing;
         try {
             existing = kubernetesService.getSecret(namespace, passwordSecretName);
@@ -237,7 +248,7 @@ public class TlsManager {
         }
         if (existing == null) {
             ensureNamespaceExists(namespace);
-            generatePasswordSecret(namespace, passwordSecretName, passwordKey, typedPassword);
+            generatePasswordSecret(namespace, passwordSecretName, passwordKey, typedPassword, releaseName);
             return;
         }
         String encoded = existing.getData() == null ? null : existing.getData().get(passwordKey);
@@ -246,7 +257,7 @@ public class TlsManager {
             return;
         }
         if (writtenByThisView(existing)) {
-            generatePasswordSecret(namespace, passwordSecretName, passwordKey, typedPassword);
+            generatePasswordSecret(namespace, passwordSecretName, passwordKey, typedPassword, releaseName);
             return;
         }
         String problem = encoded == null
@@ -261,6 +272,30 @@ public class TlsManager {
                         + " Secret (or delete the Secret: it is then created from the typed password).";
         throw new IllegalArgumentException("Secret '" + passwordSecretName + "' in namespace '" + namespace + "' "
                 + problem + ". " + remedy);
+    }
+
+    /**
+     * Writes a Secret KDPS generates for a release. It carries the release labels unless another release claims the
+     * Secret already there (two releases given the same Secret name), so the uninstall of the release removes what
+     * it generated and nothing another release uses. A Secret the operator provided is never written here: with
+     * their own keystore, only the password Secret is, and only one this view wrote or that is missing.
+     */
+    private void writeSecret(String namespace, String secretName, Map<String, byte[]> data, String releaseName) {
+        Map<String, String> labels = releaseLabels(namespace, secretName, releaseName);
+        kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, data, labels,
+                labels.isEmpty() ? null : KdpsReleaseObjects.annotations(namespace));
+    }
+
+    /** The release labels a Secret KDPS writes for {@code releaseName} gets (see {@link #writeSecret}). */
+    private Map<String, String> releaseLabels(String namespace, String secretName, String releaseName) {
+        Secret existing;
+        try {
+            existing = kubernetesService.getSecret(namespace, secretName);
+        } catch (Exception e) {
+            existing = null;
+        }
+        return KdpsReleaseObjects.labelsFor(existing == null ? null : existing.getMetadata(), true, namespace,
+                releaseName);
     }
 
     /** Whether this view wrote the Secret (it marks every Secret it writes), rather than the operator. */

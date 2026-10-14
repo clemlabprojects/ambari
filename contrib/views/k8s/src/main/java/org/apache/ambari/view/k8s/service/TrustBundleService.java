@@ -318,7 +318,9 @@ public class TrustBundleService {
         data.put("truststore.jks", material.jks());
         data.put("truststore.password", new String(material.jksPassword()).getBytes(StandardCharsets.UTF_8));
         data.put("ca.crt", material.caPem().getBytes(StandardCharsets.UTF_8));
-        kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, data);
+        // The release's own Secret: its uninstall removes it.
+        kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, data,
+                KdpsReleaseObjects.labels(releaseName), KdpsReleaseObjects.annotations(namespace));
 
         Map<String, String> overrides = new LinkedHashMap<>();
         overrides.put("global.security.tls.enabled", "true");

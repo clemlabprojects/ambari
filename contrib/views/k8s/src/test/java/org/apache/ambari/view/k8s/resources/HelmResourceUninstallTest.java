@@ -117,6 +117,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -125,6 +126,7 @@ class HelmResourceUninstallTest {
         verify(commandService).removeSccGrantsForRelease(eq(NS), eq(RELEASE), any());
         verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(commandService).revokeOidcForRelease(eq(NS), eq(RELEASE), any(), any());
+        verify(commandService).revokeKdpsObjectsForRelease(eq(NS), eq(RELEASE), any());
         verify(releaseMetadata).delete(NS, RELEASE);
     }
 
@@ -153,6 +155,7 @@ class HelmResourceUninstallTest {
             verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
             verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
             verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+            verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
             verify(releaseMetadata, never()).delete(anyString(), anyString());
         }
     }
@@ -171,6 +174,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -195,6 +199,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -211,6 +216,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -227,6 +233,7 @@ class HelmResourceUninstallTest {
         verify(commandService).removeSccGrantsForRelease(eq(NS), eq(RELEASE), any());
         verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
         verify(commandService).revokeOidcForRelease(eq(NS), eq(RELEASE), any(), any());
+        verify(commandService).revokeKdpsObjectsForRelease(eq(NS), eq(RELEASE), any());
         verify(releaseMetadata).delete(NS, RELEASE);
     }
 
@@ -290,6 +297,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
         verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
     }
@@ -313,6 +321,7 @@ class HelmResourceUninstallTest {
         verify(commandService, never()).removeSccGrantsForRelease(anyString(), anyString(), any());
         verify(commandService, never()).revokeTagSyncRangerAccountForRelease(anyString(), anyString(), any(), any());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
 
@@ -340,6 +349,7 @@ class HelmResourceUninstallTest {
         verify(commandService, times(1)).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), eq("cdp-prod"),
                 any());
         verify(commandService, times(1)).revokeOidcForRelease(eq(NS), eq(RELEASE), eq("cdp-prod"), any());
+        verify(commandService, times(1)).revokeKdpsObjectsForRelease(eq(NS), eq(RELEASE), any());
         verify(releaseMetadata, times(1)).delete(NS, RELEASE);
         verify(commandService, never()).destroyViaBackend(anyString(), anyString(), any());
     }
@@ -374,6 +384,8 @@ class HelmResourceUninstallTest {
         assertEquals(200, response.getStatus());
         verify(commandService).destroyViaBackend(eq(NS), eq(RELEASE), any());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        // The release's other objects still go; its sign-in Secrets are not among them (their own managed-by value).
+        verify(commandService).revokeKdpsObjectsForRelease(eq(NS), eq(RELEASE), any());
     }
 
     @Test
@@ -396,6 +408,7 @@ class HelmResourceUninstallTest {
 
         assertEquals(409, response.getStatus());
         verify(commandService, never()).revokeOidcForRelease(anyString(), anyString(), any(), any());
+        verify(commandService, never()).revokeKdpsObjectsForRelease(anyString(), anyString(), any());
         verify(commandService, never()).revokePolarisForRelease(anyString(), anyString(), any(), any());
         verify(releaseMetadata, never()).delete(anyString(), anyString());
     }
@@ -479,5 +492,75 @@ class HelmResourceUninstallTest {
 
         assertEquals(200, response.getStatus());
         assertEverythingTakenBack();
+    }
+    @Test
+    void theObjectsKdpsCreatedForTheReleaseAreRemovedLastAndReported() throws Exception {
+        K8sReleaseEntity meta = recordedDirect();
+        meta.setKdpsObjects(java.util.List.of("Secret/trino-keytab",
+                "ClusterRoleBinding/kdps-monview-team-a-trino-thanos-token"));
+        Map<String, Object> report = Map.of("removed", java.util.List.of("Secret/trino-keytab"), "left",
+                java.util.List.of(), "note", "Removed what KDPS created for the release outside its chart: "
+                        + "Secret/trino-keytab.");
+        when(commandService.revokeKdpsObjectsForRelease(NS, RELEASE, meta.getKdpsObjects())).thenReturn(report);
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        assertEquals(report, ((Map<?, ?>) response.getEntity()).get("kdpsObjectsCleanup"));
+        // Once the release is gone, and after the steps that read their own Secrets before removing them.
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(commandService);
+        order.verify(commandService).destroyViaBackend(eq(NS), eq(RELEASE), any());
+        order.verify(commandService).revokeTagSyncRangerAccountForRelease(eq(NS), eq(RELEASE), any(), any());
+        order.verify(commandService).revokeOidcForRelease(eq(NS), eq(RELEASE), any(), any());
+        order.verify(commandService).revokeKdpsObjectsForRelease(NS, RELEASE, meta.getKdpsObjects());
+    }
+
+    @Test
+    void aGitOpsReleaseHasItsObjectsRemovedToo() throws Exception {
+        // Flux only removes what is in Git: KDPS created these objects outside it.
+        recorded("clusters/default/team-a/trino");
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        verify(flux).destroy(NS, RELEASE);
+        verify(commandService).revokeKdpsObjectsForRelease(eq(NS), eq(RELEASE), any());
+    }
+
+    @Test
+    void anObjectsCleanupThatThrowsDoesNotFailTheUninstall() throws Exception {
+        recordedDirect();
+        when(commandService.revokeKdpsObjectsForRelease(anyString(), anyString(), any()))
+                .thenThrow(new IllegalStateException("unexpected"));
+
+        Response response = uninstall();
+
+        assertEquals(200, response.getStatus());
+        verify(releaseMetadata).delete(NS, RELEASE);
+    }
+
+    @Test
+    void theConfirmationListsTheObjectsTheUninstallRemoves() throws Exception {
+        K8sReleaseEntity meta = recordedDirect();
+        meta.setKdpsObjects(java.util.List.of("ClusterRoleBinding/kdps-monview-team-a-trino-thanos-token"));
+        when(commandService.kdpsObjectsOfRelease(NS, RELEASE, meta.getKdpsObjects()))
+                .thenReturn(java.util.List.of("Secret/trino-keytab", "ConfigMap/trino-krb5-conf"));
+
+        Response response = resource.kdpsObjectsOfRelease(NS, RELEASE);
+
+        assertEquals(200, response.getStatus());
+        assertEquals(Map.of("objects", java.util.List.of("Secret/trino-keytab", "ConfigMap/trino-krb5-conf")),
+                response.getEntity());
+    }
+
+    @Test
+    void aConfirmationThatCannotListTheObjectsListsNone() throws Exception {
+        when(commandService.kdpsObjectsOfRelease(anyString(), anyString(), any()))
+                .thenThrow(new IllegalStateException("cluster unreachable"));
+
+        Response response = resource.kdpsObjectsOfRelease(NS, RELEASE);
+
+        assertEquals(200, response.getStatus());
+        assertEquals(Map.of("objects", java.util.List.of()), response.getEntity());
     }
 }

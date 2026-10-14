@@ -93,7 +93,8 @@ class TrustBundleStrictTest {
     @SuppressWarnings("unchecked")
     private String writtenCaBundle() {
         ArgumentCaptor<Map<String, byte[]>> data = ArgumentCaptor.forClass(Map.class);
-        verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(RELEASE + "-truststore"), data.capture());
+        verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(RELEASE + "-truststore"), data.capture(), anyMap(),
+                anyMap());
         return new String(data.getValue().get("ca.crt"), StandardCharsets.UTF_8);
     }
 
@@ -111,7 +112,7 @@ class TrustBundleStrictTest {
         assertTrue(message.contains("'team-a/partner-ca-truststore' (Truststore team-a/partner-ca-truststore is not in the "
                 + "truststore project ambari-pki"), message);
         assertFalse(message.contains("'ambari-pki/corp-ca-truststore'"), "the readable one is not named: " + message);
-        verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap());
+        verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), any(), any());
     }
 
     @Test
@@ -125,7 +126,7 @@ class TrustBundleStrictTest {
                 () -> trustBundle.provisionForDeploy(NS, RELEASE, null, List.of("ambari-pki/trino-truststore")));
 
         assertTrue(stopped.getMessage().contains("is not a truststore created in the Truststores tab"), stopped.getMessage());
-        verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap());
+        verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), any(), any());
     }
 
     @Test
@@ -154,7 +155,7 @@ class TrustBundleStrictTest {
 
         assertTrue(stopped.getMessage().contains("is not in the truststore project ambari-pki"), stopped.getMessage());
         verify(k8s, never()).getSecret(eq("team-a"), anyString());
-        verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap());
+        verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), any(), any());
     }
 
     @Test
@@ -173,7 +174,7 @@ class TrustBundleStrictTest {
         when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
                 .thenReturn(truststore("ambari-pki", "corp-ca-truststore", corporateCaPem, false));
         doThrow(new KubernetesClientException("secrets \"superset-truststore\" is forbidden", 403, null))
-                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("superset-truststore"), anyMap());
+                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("superset-truststore"), anyMap(), anyMap(), anyMap());
 
         IllegalStateException stopped = assertThrows(IllegalStateException.class,
                 () -> trustBundle.provisionForDeploy(NS, RELEASE, "SUPERSET", List.of("corp-ca")));
@@ -186,7 +187,7 @@ class TrustBundleStrictTest {
     @Test
     void aServiceThatMountsTheTruststoreSecretCannotDoWithoutIt() {
         doThrow(new KubernetesClientException("connection reset", 0, null))
-                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("gitlab-truststore"), anyMap());
+                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("gitlab-truststore"), anyMap(), anyMap(), anyMap());
 
         IllegalStateException stopped = assertThrows(IllegalStateException.class,
                 () -> trustBundle.provisionForDeploy(NS, "gitlab", "GITLAB", null));
@@ -211,7 +212,7 @@ class TrustBundleStrictTest {
     @Test
     void withoutASelectionAndForAServiceThatDoesNotMountItAWriteFailureIsAWarning() {
         doThrow(new KubernetesClientException("connection reset", 0, null))
-                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("trino-truststore"), anyMap());
+                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("trino-truststore"), anyMap(), anyMap(), anyMap());
 
         TrustBundleService.ProvisionResult result = trustBundle.provisionForDeploy(NS, "trino", "TRINO", List.of());
 

@@ -20,8 +20,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
-import { UNINSTALL_POLARIS_REVOCATION, uninstallFollowUps, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getReleaseKdpsObjects, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { UNINSTALL_POLARIS_REVOCATION, uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
 import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import { getPods, listDeployments, type DeploymentRow } from '../api/client';
@@ -856,9 +856,17 @@ const HelmReleasesPage: React.FC = () => {
           icon: <DeleteOutlined />,
           danger: true,
           label: 'Uninstall',
-          onClick: () => {
-            // Names what goes with the release: its single sign-on client and the Secrets holding its client secret.
+          onClick: async () => {
+            // Names what goes with the release: its single sign-on client and the Secrets holding its client secret,
+            // and the other objects KDPS created for it outside its chart, as they are on the cluster now.
             const signInRemovals = uninstallSignInRemovals(record, serviceDefinition?.oidc);
+            let kdpsObjects: string[] = [];
+            try {
+              kdpsObjects = await getReleaseKdpsObjects(record.name, record.namespace);
+            } catch {
+              // Not listed: the uninstall still removes them, and its result says which.
+            }
+            const objectRemovals = uninstallKdpsObjectRemovals(kdpsObjects);
             Modal.confirm({
               title: `Uninstall ${record.name}?`,
               content: (
@@ -866,6 +874,7 @@ const HelmReleasesPage: React.FC = () => {
                   <span>This action will remove the release in namespace {record.namespace}.</span>
                   <span>{UNINSTALL_POLARIS_REVOCATION}</span>
                   {signInRemovals ? <span>{signInRemovals}</span> : null}
+                  {objectRemovals ? <span>{objectRemovals}</span> : null}
                 </Space>
               ),
               okText: 'Uninstall',
@@ -895,9 +904,10 @@ const HelmReleasesPage: React.FC = () => {
                     return;
                   }
                   message.success(`Release ${record.name} uninstalled successfully.`);
-                  // What KDPS took back (the Polaris principal, the single sign-on client and its Secrets) and what it
-                  // did not (an SCC grant made by an administrator or still used by another release, a Ranger account
-                  // or a client it could not remove): what to do, and the commands that do it.
+                  // What KDPS took back (the Polaris principal, the single sign-on client and its Secrets, the objects
+                  // it created for the release) and what it did not (an SCC grant made by an administrator or still
+                  // used by another release, a Ranger account, a client or an object it could not remove): what to do,
+                  // and the commands that do it.
                   const followUps = uninstallFollowUps(notes);
                   if (followUps.length > 0) {
                     Modal.info({

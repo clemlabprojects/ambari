@@ -52,6 +52,7 @@ import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Status;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequest;
 import io.fabric8.kubernetes.api.model.authentication.TokenRequestBuilder;
+import io.fabric8.kubernetes.api.model.networking.v1.Ingress;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBindingBuilder;
 import io.fabric8.kubernetes.api.model.rbac.Role;
@@ -3177,14 +3178,23 @@ public class KubernetesService {
      * <p>With {@code projectScoped} the triggers use the Thanos tenancy port (see {@link KedaThanosScope}): the
      * token then needs no ClusterRoleBinding, only the namespaced Role allowing it to read the project's pods.
      *
+     * <p>What this creates carries the release labels of {@code releaseName} (see {@link KdpsReleaseObjects}), so the
+     * uninstall of the release removes it. What already exists, such as a service account an administrator created
+     * for the release, is used as it is and left unlabelled.
+     *
+     * @param releaseName the release the token is for; null labels nothing
      * @return {@code null} when the token Secret is present/created; otherwise an operator instruction.
      */
-    public String ensureKedaThanosTokenSecret(String namespace, String secretName, String saName, boolean projectScoped) {
+    public String ensureKedaThanosTokenSecret(String namespace, String secretName, String saName, boolean projectScoped,
+                                              String releaseName) {
         if (client == null) return "No cluster connection.";
         if (namespace == null || namespace.isBlank() || secretName == null || secretName.isBlank()) {
             return "Namespace and secret name are required for the KEDA/Thanos monitoring token.";
         }
         if (saName == null || saName.isBlank()) saName = secretName;
+        Map<String, String> releaseLabels = KdpsReleaseObjects.labels(releaseName);
+        Map<String, String> releaseAnnotations = releaseLabels.isEmpty()
+                ? Map.of() : KdpsReleaseObjects.annotations(namespace);
 
         // Already provisioned? A populated (or freshly-created) service-account-token Secret is enough, once the
         // tenancy Role is current: a release deployed before that Role gained the pod-metrics rule keeps failing
@@ -3195,7 +3205,7 @@ public class KubernetesService {
                 boolean hasToken = existing.getData() != null && existing.getData().containsKey("token");
                 if (hasToken || "kubernetes.io/service-account-token".equals(existing.getType())) {
                     try {
-                        ensureKedaTenancyRole(namespace, saName + "-thanos-tenancy");
+                        ensureKedaTenancyRole(namespace, saName + "-thanos-tenancy", releaseLabels, releaseAnnotations);
                     } catch (Exception e) {
                         // Without the pod-metrics rule the autoscaler's queries are refused (403): stop with what to
                         // run rather than deploy an autoscaler that never scales.
@@ -3211,11 +3221,19 @@ public class KubernetesService {
                     // allowed to create one deploys it with cluster-port triggers, add the binding.
                     try {
                         if (!projectScoped && canBindClusterRoles()) {
-                            ensureMonitoringViewBinding(namespace, saName, "kdps-monview-" + namespace + "-" + saName);
+                            ensureMonitoringViewBinding(namespace, saName, "kdps-monview-" + namespace + "-" + saName,
+                                    releaseLabels, releaseAnnotations);
                         }
                     } catch (Exception e) {
                         LOG.warn("Could not bind cluster-monitoring-view for the KEDA/Thanos token {}/{}: {}",
                                 namespace, saName, e.toString());
+                    }
+                    // Made before KDPS labelled what it creates, the objects stay unlabelled through a redeploy:
+                    // mark them, so the uninstall at least names them. The token must be for the account in question.
+                    Map<String, String> tokenAnnotations = existing.getMetadata().getAnnotations();
+                    if (!releaseLabels.isEmpty() && tokenAnnotations != null
+                            && saName.equals(tokenAnnotations.get("kubernetes.io/service-account.name"))) {
+                        markUnconfirmedKedaObjects(namespace, secretName, saName, releaseName);
                     }
                     return null;
                 }
@@ -3273,18 +3291,22 @@ public class KubernetesService {
             if (client.serviceAccounts().inNamespace(namespace).withName(saName).get() == null) {
                 client.serviceAccounts().inNamespace(namespace).resource(
                         new ServiceAccountBuilder()
-                                .withNewMetadata().withName(saName).withNamespace(namespace).endMetadata()
+                                .withNewMetadata().withName(saName).withNamespace(namespace)
+                                    .withLabels(releaseLabels).withAnnotations(releaseAnnotations)
+                                .endMetadata()
                                 .build()).create();
                 LOG.info("Created KEDA monitoring service account {}/{}", namespace, saName);
             }
             if (!projectScoped) {
-                ensureMonitoringViewBinding(namespace, saName, crbName);
+                ensureMonitoringViewBinding(namespace, saName, crbName, releaseLabels, releaseAnnotations);
             }
-            ensureKedaTenancyRole(namespace, tenancyRoleName);
+            ensureKedaTenancyRole(namespace, tenancyRoleName, releaseLabels, releaseAnnotations);
             if (client.rbac().roleBindings().inNamespace(namespace).withName(tenancyRoleName).get() == null) {
                 client.rbac().roleBindings().inNamespace(namespace).resource(
                         new RoleBindingBuilder()
-                                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
+                                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace)
+                                    .withLabels(releaseLabels).withAnnotations(releaseAnnotations)
+                                .endMetadata()
                                 .withNewRoleRef()
                                     .withApiGroup("rbac.authorization.k8s.io")
                                     .withKind("Role")
@@ -3297,12 +3319,12 @@ public class KubernetesService {
                 LOG.info("Bound {}/{} to tenancy Role {} via RoleBinding", namespace, saName, tenancyRoleName);
             }
             if (client.secrets().inNamespace(namespace).withName(secretName).get() == null) {
-                Map<String, String> ann = new LinkedHashMap<>();
+                Map<String, String> ann = new LinkedHashMap<>(releaseAnnotations);
                 ann.put("kubernetes.io/service-account.name", saName);
                 client.secrets().inNamespace(namespace).resource(
                         new SecretBuilder()
                                 .withNewMetadata().withName(secretName).withNamespace(namespace)
-                                    .withAnnotations(ann)
+                                    .withLabels(releaseLabels).withAnnotations(ann)
                                 .endMetadata()
                                 .withType("kubernetes.io/service-account-token")
                                 .build()).create();
@@ -3314,14 +3336,70 @@ public class KubernetesService {
         }
     }
 
-    /** Binds the KEDA monitoring service account to {@code cluster-monitoring-view} unless it already is. */
-    private void ensureMonitoringViewBinding(String namespace, String saName, String crbName) {
+    /**
+     * Marks the KEDA monitoring objects of a release that carry no release label as the release's, unconfirmed (see
+     * {@link KdpsReleaseObjects#ANNOTATION_ORIGIN}): an earlier version created them without labels, or an
+     * administrator did by the instructions a deploy gives, and nothing tells the two apart. The uninstall of the
+     * release then lists them with the command that deletes them, rather than deleting them or saying nothing. Best
+     * effort: the deploy goes on without the marks.
+     */
+    private void markUnconfirmedKedaObjects(String namespace, String secretName, String saName, String releaseName) {
+        String tenancyName = saName + "-thanos-tenancy";
+        java.util.function.Consumer<ObjectMeta> mark = meta -> {
+            if (meta.getLabels() == null) meta.setLabels(new LinkedHashMap<>());
+            meta.getLabels().put(KdpsReleaseObjects.LABEL_RELEASE, releaseName);
+            if (meta.getAnnotations() == null) meta.setAnnotations(new LinkedHashMap<>());
+            meta.getAnnotations().putAll(KdpsReleaseObjects.annotations(namespace));
+            meta.getAnnotations().put(KdpsReleaseObjects.ANNOTATION_ORIGIN, KdpsReleaseObjects.ORIGIN_UNCONFIRMED);
+        };
+        List<Map.Entry<String, Runnable>> marks = List.of(
+                Map.entry(KdpsReleaseObjects.ref(KdpsReleaseObjects.SECRET, secretName), () -> {
+                    var handle = client.secrets().inNamespace(namespace).withName(secretName);
+                    if (unclaimed(handle.get())) handle.edit(o -> { mark.accept(o.getMetadata()); return o; });
+                }),
+                Map.entry(KdpsReleaseObjects.ref(KdpsReleaseObjects.SERVICE_ACCOUNT, saName), () -> {
+                    var handle = client.serviceAccounts().inNamespace(namespace).withName(saName);
+                    if (unclaimed(handle.get())) handle.edit(o -> { mark.accept(o.getMetadata()); return o; });
+                }),
+                Map.entry(KdpsReleaseObjects.ref(KdpsReleaseObjects.ROLE, tenancyName), () -> {
+                    var handle = client.rbac().roles().inNamespace(namespace).withName(tenancyName);
+                    if (unclaimed(handle.get())) handle.edit(o -> { mark.accept(o.getMetadata()); return o; });
+                }),
+                Map.entry(KdpsReleaseObjects.ref(KdpsReleaseObjects.ROLE_BINDING, tenancyName), () -> {
+                    var handle = client.rbac().roleBindings().inNamespace(namespace).withName(tenancyName);
+                    if (unclaimed(handle.get())) handle.edit(o -> { mark.accept(o.getMetadata()); return o; });
+                }));
+        for (Map.Entry<String, Runnable> m : marks) {
+            try {
+                m.getValue().run();
+            } catch (RuntimeException e) {
+                LOG.debug("Could not mark {} of {} as release {}'s: {}", m.getKey(), namespace, releaseName,
+                        e.toString());
+            }
+        }
+    }
+
+    /** Whether an object exists and no release claims it (it carries no release label). */
+    private static boolean unclaimed(HasMetadata o) {
+        return o != null && (o.getMetadata().getLabels() == null
+                || !o.getMetadata().getLabels().containsKey(KdpsReleaseObjects.LABEL_RELEASE));
+    }
+
+    /**
+     * Binds the KEDA monitoring service account to {@code cluster-monitoring-view} unless it already is. The binding is
+     * cluster-scoped, so the release's namespace is in its annotations.
+     */
+    private void ensureMonitoringViewBinding(String namespace, String saName, String crbName,
+                                             Map<String, String> releaseLabels,
+                                             Map<String, String> releaseAnnotations) {
         if (client.rbac().clusterRoleBindings().withName(crbName).get() != null) {
             return;
         }
         client.rbac().clusterRoleBindings().resource(
                 new ClusterRoleBindingBuilder()
-                        .withNewMetadata().withName(crbName).endMetadata()
+                        .withNewMetadata().withName(crbName)
+                            .withLabels(releaseLabels).withAnnotations(releaseAnnotations)
+                        .endMetadata()
                         .withNewRoleRef()
                             .withApiGroup("rbac.authorization.k8s.io")
                             .withKind("ClusterRole")
@@ -3336,11 +3414,15 @@ public class KubernetesService {
 
     /**
      * Creates, or brings up to date, the Role that lets the KEDA monitoring token query the Thanos tenancy port
-     * for {@code namespace}: read pods and pod metrics.
+     * for {@code namespace}: read pods and pod metrics. A Role it creates carries the release labels given; one that
+     * exists keeps its own.
      */
-    private void ensureKedaTenancyRole(String namespace, String tenancyRoleName) {
+    private void ensureKedaTenancyRole(String namespace, String tenancyRoleName, Map<String, String> releaseLabels,
+                                       Map<String, String> releaseAnnotations) {
         Role desiredTenancyRole = new RoleBuilder()
-                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace).endMetadata()
+                .withNewMetadata().withName(tenancyRoleName).withNamespace(namespace)
+                    .withLabels(releaseLabels).withAnnotations(releaseAnnotations)
+                .endMetadata()
                 .addNewRule()
                     .withApiGroups("")
                     .withResources("pods")
@@ -5901,11 +5983,13 @@ public class KubernetesService {
      * @param issuerKind   "ClusterIssuer" (default) or "Issuer"
      * @param dnsNames     SANs to put on the leaf
      * @param durationHours leaf validity in hours; cert-manager defaults to 2160 (90d)
+     * @param releaseName  the release the certificate is for: a Certificate this creates, and the Secret cert-manager
+     *                     writes from it, carry its release labels so its uninstall removes them; null labels nothing
      */
     public void applyCertManagerCertificate(String namespace, String certName, String secretName,
                                             String issuerName, String issuerKind,
                                             java.util.List<String> dnsNames, Integer durationHours,
-                                            Map<String, Object> subject) {
+                                            Map<String, Object> subject, String releaseName) {
         checkConfiguration();
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(certName, "certName");
@@ -5959,14 +6043,82 @@ public class KubernetesService {
         issuerRef.put("group", "cert-manager.io");
         spec.put("issuerRef", issuerRef);
 
+        var handle = client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(namespace).withName(certName);
+        GenericKubernetesResource existing = handle.get();
+        Map<String, String> releaseLabels = releaseLabelsForCr(existing, namespace, releaseName);
+        if (!releaseLabels.isEmpty()) {
+            // cert-manager copies these onto the Secret it writes, which holds the private key: removed with the
+            // Certificate, it is not issued again.
+            Map<String, Object> secretTemplate = new LinkedHashMap<>();
+            secretTemplate.put("labels", releaseLabels);
+            secretTemplate.put("annotations", KdpsReleaseObjects.annotations(namespace));
+            spec.put("secretTemplate", secretTemplate);
+        } else if (existingSpec(existing).get("secretTemplate") != null) {
+            // Another release's, or the administrator's: what cert-manager copies onto the Secret stays theirs.
+            spec.put("secretTemplate", existingSpec(existing).get("secretTemplate"));
+        }
         var resource = buildGenericCr("cert-manager.io/v1", "Certificate",
                 certName, namespace,
-                Map.of("managed-by", "ambari-k8s-view"),
+                null,
                 Map.of("spec", spec));
-        upsertGenericCr(
-                client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(namespace).withName(certName),
-                resource);
+        setCrMetadata(resource, existing, namespace, releaseLabels);
+        upsertGenericCr(handle, resource);
         LOG.info("cert-manager.Certificate {}/{} applied (issuer={}/{}, sans={})", namespace, certName, issuerKind, issuerName, dnsNames);
+    }
+
+    /**
+     * The release labels a Certificate or ExternalSecret KDPS writes for {@code releaseName} gets: those of the release
+     * when KDPS creates it, when it already is the release's, or when KDPS created it and no release claims it. That
+     * includes one an earlier version wrote under the release's default name ({@code <release>-ingress-tls}, with its
+     * {@code managed-by} label) before it marked what it creates, so the uninstall of a release deployed then removes
+     * it too. One someone else made, such as an administrator under a name typed in the wizard, or one another release
+     * claims, gets none, so the uninstall of the release leaves it: every write sets {@code managed-by}, so that label
+     * alone does not prove KDPS created it.
+     */
+    private static Map<String, String> releaseLabelsForCr(GenericKubernetesResource existing, String namespace,
+                                                          String releaseName) {
+        ObjectMeta meta = existing == null ? null : existing.getMetadata();
+        boolean createdByKdps = meta != null && meta.getAnnotations() != null
+                && "true".equals(meta.getAnnotations().get(KdpsReleaseObjects.ANNOTATION_CREATED));
+        boolean writtenForTheRelease = meta != null && releaseName != null
+                && (releaseName + "-ingress-tls").equals(meta.getName()) && meta.getLabels() != null
+                && "ambari-k8s-view".equals(meta.getLabels().get("managed-by"));
+        return KdpsReleaseObjects.labelsFor(meta, createdByKdps || writtenForTheRelease, namespace, releaseName);
+    }
+
+    /** The spec of a custom resource as it is on the cluster; empty when there is none. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> existingSpec(GenericKubernetesResource existing) {
+        Object spec = existing == null ? null : existing.getAdditionalProperties().get("spec");
+        return spec instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+    }
+
+    /**
+     * The metadata of a Certificate or ExternalSecret KDPS writes: the labels and annotations it already has are kept
+     * (they may be an administrator's, or another release's claim), with {@code releaseLabels} and the release's
+     * namespace added when it is the release's. One KDPS creates is marked {@link KdpsReleaseObjects#ANNOTATION_CREATED},
+     * and gets {@code managed-by}; one that was there only keeps the {@code managed-by} it had, or gets it with the
+     * release labels.
+     */
+    private static void setCrMetadata(GenericKubernetesResource resource, GenericKubernetesResource existing,
+                                      String namespace, Map<String, String> releaseLabels) {
+        ObjectMeta current = existing == null ? null : existing.getMetadata();
+        Map<String, String> labels = new LinkedHashMap<>(
+                current == null || current.getLabels() == null ? Map.of() : current.getLabels());
+        Map<String, String> annotations = new LinkedHashMap<>(
+                current == null || current.getAnnotations() == null ? Map.of() : current.getAnnotations());
+        if (current == null || !releaseLabels.isEmpty()) {
+            labels.put("managed-by", "ambari-k8s-view");
+        }
+        labels.putAll(releaseLabels);
+        if (!releaseLabels.isEmpty()) {
+            annotations.putAll(KdpsReleaseObjects.annotations(namespace));
+        }
+        if (current == null) {
+            annotations.put(KdpsReleaseObjects.ANNOTATION_CREATED, "true");
+        }
+        resource.getMetadata().setLabels(labels);
+        resource.getMetadata().setAnnotations(annotations);
     }
 
     /**
@@ -6081,10 +6233,12 @@ public class KubernetesService {
      * @param storeKind       "ClusterSecretStore" (default) or "SecretStore"
      * @param remoteKey       path/key in the upstream secret store (e.g. "pki/issue/clemlab/foo")
      * @param refreshInterval ESO refresh cadence (e.g. "1h"; "0" disables periodic refresh)
+     * @param releaseName     the release the Secret is for: an ExternalSecret this creates carries its release labels,
+     *                        so its uninstall removes it, and the Secret it owns with it; null labels nothing
      */
     public void applyExternalSecret(String namespace, String esName, String secretName,
                                     String storeName, String storeKind, String remoteKey,
-                                    String refreshInterval) {
+                                    String refreshInterval, String releaseName) {
         checkConfiguration();
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(esName, "esName");
@@ -6108,13 +6262,15 @@ public class KubernetesService {
         dataFrom.put("extract", extract);
         spec.put("dataFrom", java.util.List.of(dataFrom));
 
+        var handle = client.genericKubernetesResources(externalSecretRdc()).inNamespace(namespace).withName(esName);
+        GenericKubernetesResource existing = handle.get();
+        Map<String, String> releaseLabels = releaseLabelsForCr(existing, namespace, releaseName);
         var resource = buildGenericCr("external-secrets.io/" + esoApiVersion(), "ExternalSecret",
                 esName, namespace,
-                Map.of("managed-by", "ambari-k8s-view"),
+                null,
                 Map.of("spec", spec));
-        upsertGenericCr(
-                client.genericKubernetesResources(externalSecretRdc()).inNamespace(namespace).withName(esName),
-                resource);
+        setCrMetadata(resource, existing, namespace, releaseLabels);
+        upsertGenericCr(handle, resource);
         LOG.info("external-secrets.ExternalSecret {}/{} applied (store={}/{}, key={})", namespace, esName, storeKind, storeName, remoteKey);
     }
 
@@ -7184,6 +7340,31 @@ public class KubernetesService {
     }
 
     /**
+     * Adds labels and annotations to an existing Secret, leaving its keys and its other labels and annotations as they
+     * are: how a Secret KDPS wrote before it labelled what it creates, and now keeps as it is, is given the release
+     * labels. Its data is not written again, so a key the caller does not know of is not lost.
+     */
+    public void addSecretLabels(String namespace, String secretName, Map<String, String> labels,
+                                Map<String, String> annotations) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(secretName, "secretName");
+        checkNamespaceAllowed(namespace);
+        checkConfiguration();
+        client.secrets().inNamespace(namespace).withName(secretName).edit(secret -> {
+            ObjectMeta meta = secret.getMetadata();
+            Map<String, String> merged = new LinkedHashMap<>(meta.getLabels() == null ? Map.of() : meta.getLabels());
+            if (labels != null) merged.putAll(labels);
+            meta.setLabels(merged);
+            Map<String, String> mergedAnnotations =
+                    new LinkedHashMap<>(meta.getAnnotations() == null ? Map.of() : meta.getAnnotations());
+            if (annotations != null) mergedAnnotations.putAll(annotations);
+            meta.setAnnotations(mergedAnnotations);
+            return secret;
+        });
+        LOG.info("Labelled Secret '{}/{}' with {}", namespace, secretName, labels);
+    }
+
+    /**
      * Read a single key from an Opaque Secret as raw bytes.
      *
      * @param namespace  Kubernetes namespace
@@ -7779,6 +7960,422 @@ public class KubernetesService {
     public void deleteSecret(String namespace, String name) {
         checkConfiguration();
         client.secrets().inNamespace(namespace).withName(name).delete();
+    }
+
+    /** One namespaced kind of object KDPS creates for a release: how to list it by labels and delete one by name. */
+    private record KdpsObjectKind(
+            String kind,
+            java.util.function.BiFunction<String, Map<String, String>, List<? extends HasMetadata>> list,
+            java.util.function.BiConsumer<String, String> delete) {
+    }
+
+    /**
+     * The namespaced kinds of objects KDPS creates for a release (see {@link KdpsReleaseObjects}), in the order the
+     * uninstall removes them: a Certificate before the Secret cert-manager writes from it, which it would otherwise
+     * issue again, and the bindings before the roles and accounts they bind.
+     */
+    private List<KdpsObjectKind> kdpsObjectKinds() {
+        return List.of(
+                new KdpsObjectKind(KdpsReleaseObjects.CERTIFICATE,
+                        (ns, sel) -> client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(ns)
+                                .withLabels(sel).list().getItems(),
+                        (ns, name) -> client.genericKubernetesResources(CERT_MANAGER_CERT_RDC).inNamespace(ns)
+                                .withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.EXTERNAL_SECRET,
+                        (ns, sel) -> client.genericKubernetesResources(externalSecretRdc()).inNamespace(ns)
+                                .withLabels(sel).list().getItems(),
+                        (ns, name) -> client.genericKubernetesResources(externalSecretRdc()).inNamespace(ns)
+                                .withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.SECRET,
+                        (ns, sel) -> client.secrets().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.secrets().inNamespace(ns).withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.CONFIG_MAP,
+                        (ns, sel) -> client.configMaps().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.configMaps().inNamespace(ns).withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.ROLE_BINDING,
+                        (ns, sel) -> client.rbac().roleBindings().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.rbac().roleBindings().inNamespace(ns).withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.ROLE,
+                        (ns, sel) -> client.rbac().roles().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.rbac().roles().inNamespace(ns).withName(name).delete()),
+                new KdpsObjectKind(KdpsReleaseObjects.SERVICE_ACCOUNT,
+                        (ns, sel) -> client.serviceAccounts().inNamespace(ns).withLabels(sel).list().getItems(),
+                        (ns, name) -> client.serviceAccounts().inNamespace(ns).withName(name).delete()));
+    }
+
+    /** The HTTP status of an API failure, or 0 when it is not one. */
+    private static int apiStatus(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof KubernetesClientException kce) return kce.getCode();
+        }
+        return 0;
+    }
+
+    /**
+     * The objects KDPS created for {@code releaseName} in {@code namespace}, as {@code <Kind>/<name>}: those carrying
+     * its release labels (see {@link KdpsReleaseObjects}), the cluster-scoped ones (the autoscaler's
+     * ClusterRoleBinding) included when this account may list them. What cannot be listed, such as a kind whose
+     * operator is not installed, is left out. Recorded with the release, and shown before it is uninstalled.
+     */
+    public List<String> listKdpsObjectsForRelease(String namespace, String releaseName) {
+        checkConfiguration();
+        List<String> found = new ArrayList<>();
+        if (!KdpsReleaseObjects.labelable(releaseName)) return found;
+        Map<String, String> selector = KdpsReleaseObjects.selector(releaseName);
+        for (KdpsObjectKind kind : kdpsObjectKinds()) {
+            try {
+                for (HasMetadata o : kind.list().apply(namespace, selector)) {
+                    if (KdpsReleaseObjects.ofRelease(o.getMetadata(), namespace, releaseName)) {
+                        found.add(KdpsReleaseObjects.ref(kind.kind(), o.getMetadata().getName()));
+                    }
+                }
+            } catch (RuntimeException e) {
+                LOG.debug("Could not list the {} objects of release {}/{}: {}", kind.kind(), namespace, releaseName,
+                        e.toString());
+            }
+        }
+        try {
+            for (ClusterRoleBinding crb : client.rbac().clusterRoleBindings().withLabels(selector).list().getItems()) {
+                if (KdpsReleaseObjects.ofRelease(crb.getMetadata(), namespace, releaseName)) {
+                    found.add(KdpsReleaseObjects.ref(KdpsReleaseObjects.CLUSTER_ROLE_BINDING,
+                            crb.getMetadata().getName()));
+                }
+            }
+        } catch (RuntimeException e) {
+            // A project-limited account may not list cluster-scoped objects; it never creates any either.
+            LOG.debug("Could not list the ClusterRoleBindings of release {}/{}: {}", namespace, releaseName,
+                    e.toString());
+        }
+        return found;
+    }
+
+    /**
+     * Removes what KDPS created for a release outside its chart, once the release is uninstalled: every Secret,
+     * ConfigMap, ServiceAccount, Role, RoleBinding, cert-manager Certificate and ExternalSecret of the namespace that
+     * carries the release's labels (see {@link KdpsReleaseObjects}), and the ClusterRoleBindings the release's record
+     * says KDPS created for it. An object without those labels (one an administrator provided, or one shared by the
+     * releases of the project) is never touched, and neither is one another uninstall step removes (single sign-on,
+     * Atlas tag sync, SCC grants), which carries its own {@code managed-by} value.
+     *
+     * <p>A labelled Secret the Ingress of another release still uses (two releases given the same certificate) is kept
+     * and handed to that release (see {@link #handOver}), and so is the Certificate or ExternalSecret that keeps it.
+     * The autoscaler objects KDPS cannot prove it created ({@link KdpsReleaseObjects#ANNOTATION_ORIGIN}) are kept too,
+     * with the command that deletes them. When the Ingresses of the namespace cannot be listed, which other release
+     * uses a certificate is unknown: the release's certificate Secrets, Certificates and ExternalSecrets are then left,
+     * with the command that deletes them, rather than taken from a release that may still use them.
+     *
+     * <p>Never throws: what this account may not list or delete is reported as left, with the command that removes
+     * it, rather than failing an uninstall whose release is already gone. A Certificate or ExternalSecret it may not
+     * list is not, unless the release's record names one: the account holds no rights on those operators' kinds
+     * where it does not use them, so it made none.
+     *
+     * @param recordedObjects the objects the release's record names, as {@code <Kind>/<name>}: a ClusterRoleBinding
+     *                        is only deleted when named there (KDPS created it) and still carrying the release's
+     *                        labels
+     * @return what was removed and what is left
+     */
+    public KdpsReleaseObjects.Cleanup revokeKdpsObjectsForRelease(String namespace, String releaseName,
+                                                                  List<String> recordedObjects) {
+        List<String> removed = new ArrayList<>();
+        List<KdpsReleaseObjects.Leftover> left = new ArrayList<>();
+        if (client == null || namespace == null || namespace.isBlank() || !KdpsReleaseObjects.labelable(releaseName)) {
+            return new KdpsReleaseObjects.Cleanup(removed, left);
+        }
+        List<KdpsReleaseObjects.Leftover> kept = new ArrayList<>();
+        Map<String, String> selector = KdpsReleaseObjects.selector(releaseName);
+        // Listed once, on the first certificate object met; empty when the Ingresses could not be listed.
+        Optional<Map<String, List<Ingress>>> usedByOthers = null;
+        for (KdpsObjectKind kind : kdpsObjectKinds()) {
+            List<? extends HasMetadata> items;
+            try {
+                items = kind.list().apply(namespace, selector);
+            } catch (RuntimeException e) {
+                int status = apiStatus(e);
+                if (status == 404) {
+                    continue; // the kind is not served: its operator is not installed, so KDPS created none
+                }
+                if (status == 403 && isOperatorKind(kind.kind()) && !recordsKind(recordedObjects, kind.kind())) {
+                    // A project-limited account is refused the list of an operator's kind it holds no rights on, even
+                    // when the operator is not installed. KDPS made none for the release then: it could not have,
+                    // and its record names none.
+                    LOG.debug("Uninstall of {}/{}: may not list {} objects, and the release has none recorded",
+                            namespace, releaseName, kind.kind());
+                    continue;
+                }
+                LOG.warn("Uninstall of {}/{}: could not list its {} objects: {}", namespace, releaseName, kind.kind(),
+                        e.toString());
+                String reason = status == 403
+                        ? "this account may not list them" : "they could not be listed: " + rootMessage(e);
+                left.add(new KdpsReleaseObjects.Leftover(kind.kind() + " objects of the release", reason,
+                        KdpsReleaseObjects.deleteAllCommand(kind.kind(), releaseName, namespace)));
+                continue;
+            }
+            for (HasMetadata o : items) {
+                if (!KdpsReleaseObjects.ofRelease(o.getMetadata(), namespace, releaseName)) continue;
+                String name = o.getMetadata().getName();
+                // A Secret, or the Certificate or ExternalSecret that keeps one, whose Secret the Ingress of another
+                // release uses: deleting the operator's object would take that release's certificate away too (the
+                // External Secrets Operator's Secret is owned by its ExternalSecret, and cert-manager stops renewing).
+                String secret = KdpsReleaseObjects.SECRET.equals(kind.kind()) ? name : targetSecretOf(kind.kind(), o);
+                if (secret != null) {
+                    if (usedByOthers == null) usedByOthers = secretsUsedByOtherReleases(namespace, releaseName);
+                    if (usedByOthers.isEmpty()) {
+                        // Without the Ingresses, a certificate another release may still use cannot be told from
+                        // one no release uses: leave it rather than take a certificate away. Any other Secret (a
+                        // keytab, a truststore) is no Ingress's certificate and goes.
+                        if (!KdpsReleaseObjects.SECRET.equals(kind.kind()) || isCertificateSecret(o)) {
+                            left.add(new KdpsReleaseObjects.Leftover(KdpsReleaseObjects.ref(kind.kind(), name),
+                                    "could not check whether another release's Ingress still uses it",
+                                    KdpsReleaseObjects.deleteCommand(kind.kind(), name, namespace)));
+                            continue;
+                        }
+                    } else {
+                        List<Ingress> users = usedByOthers.get().get(secret);
+                        if (users != null && !users.isEmpty()) {
+                            kept.add(handOver(kind.kind(), namespace, name, secret, users));
+                            continue;
+                        }
+                    }
+                }
+                deleteKdpsObject(kind.kind(), namespace, name, () -> kind.delete().accept(namespace, name), removed,
+                        left);
+            }
+        }
+        kept.addAll(unconfirmedObjectsOfRelease(namespace, releaseName));
+        for (String ref : recordedObjects == null ? List.<String>of() : recordedObjects) {
+            String prefix = KdpsReleaseObjects.CLUSTER_ROLE_BINDING + "/";
+            if (ref == null || !ref.startsWith(prefix)) continue;
+            String name = ref.substring(prefix.length());
+            ClusterRoleBinding crb;
+            try {
+                crb = client.rbac().clusterRoleBindings().withName(name).get();
+            } catch (RuntimeException e) {
+                left.add(new KdpsReleaseObjects.Leftover(ref, apiStatus(e) == 403
+                        ? "this account may not read it" : "it could not be read: " + rootMessage(e),
+                        KdpsReleaseObjects.deleteCommand(KdpsReleaseObjects.CLUSTER_ROLE_BINDING, name, namespace)));
+                continue;
+            }
+            // Gone, or no longer the release's (made again by someone else): nothing of the release to remove.
+            if (crb == null || !KdpsReleaseObjects.ofRelease(crb.getMetadata(), namespace, releaseName)) continue;
+            deleteKdpsObject(KdpsReleaseObjects.CLUSTER_ROLE_BINDING, namespace, name,
+                    () -> client.rbac().clusterRoleBindings().withName(name).delete(), removed, left);
+        }
+        if (!removed.isEmpty() || !left.isEmpty() || !kept.isEmpty()) {
+            LOG.info("Uninstall of {}/{}: removed the objects KDPS created for it {}; left {}; kept {}", namespace,
+                    releaseName, removed, left, kept);
+        }
+        return new KdpsReleaseObjects.Cleanup(removed, left, kept);
+    }
+
+    /** Whether {@code kind} is served by an operator a cluster may not have (cert-manager, External Secrets). */
+    private static boolean isOperatorKind(String kind) {
+        return KdpsReleaseObjects.CERTIFICATE.equals(kind) || KdpsReleaseObjects.EXTERNAL_SECRET.equals(kind);
+    }
+
+    /** Whether the release's record names an object of {@code kind}. */
+    private static boolean recordsKind(List<String> recordedObjects, String kind) {
+        return recordedObjects != null && recordedObjects.stream().anyMatch(o -> o != null && o.startsWith(kind + "/"));
+    }
+
+    /**
+     * The Secrets of {@code namespace} the Ingresses of other releases use for their certificate, each with those
+     * Ingresses. An Ingress of the release being uninstalled does not count: it is on its way out (Flux removes it a
+     * little after the uninstall). Empty, rather than an empty map, when the Ingresses cannot be listed: the caller
+     * must then not take any certificate for unused.
+     */
+    private Optional<Map<String, List<Ingress>>> secretsUsedByOtherReleases(String namespace, String releaseName) {
+        Map<String, List<Ingress>> used = new LinkedHashMap<>();
+        try {
+            for (Ingress ingress : client.network().v1().ingresses().inNamespace(namespace).list().getItems()) {
+                if (ofHelmRelease(ingress.getMetadata(), namespace, releaseName) || ingress.getSpec() == null
+                        || ingress.getSpec().getTls() == null) {
+                    continue;
+                }
+                for (var tls : ingress.getSpec().getTls()) {
+                    if (tls.getSecretName() != null) {
+                        used.computeIfAbsent(tls.getSecretName(), k -> new ArrayList<>()).add(ingress);
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("Uninstall of {}/{}: could not list the Ingresses of the namespace to find the certificates other"
+                    + " releases use; its certificates are left: {}", namespace, releaseName, e.toString());
+            return Optional.empty();
+        }
+        return Optional.of(used);
+    }
+
+    /**
+     * Whether a Secret holds a certificate an Ingress can use: of type {@code kubernetes.io/tls}, or with a
+     * {@code tls.crt} key (an External Secrets Operator target may be Opaque).
+     */
+    private static boolean isCertificateSecret(HasMetadata o) {
+        if (!(o instanceof Secret s)) return true; // not readable as a Secret: assume the worst
+        return "kubernetes.io/tls".equals(s.getType())
+                || (s.getData() != null && s.getData().containsKey("tls.crt"))
+                || (s.getStringData() != null && s.getStringData().containsKey("tls.crt"));
+    }
+
+    /** Whether Helm made the object for {@code releaseName} of {@code namespace}. */
+    private static boolean ofHelmRelease(ObjectMeta meta, String namespace, String releaseName) {
+        if (meta == null) return false;
+        Map<String, String> annotations = meta.getAnnotations() == null ? Map.of() : meta.getAnnotations();
+        if (releaseName.equals(annotations.get(KdpsReleaseObjects.HELM_RELEASE_NAME))) {
+            String ns = annotations.get(KdpsReleaseObjects.HELM_RELEASE_NAMESPACE);
+            return ns == null || ns.equals(namespace);
+        }
+        return meta.getLabels() != null && releaseName.equals(meta.getLabels().get(KdpsReleaseObjects.LABEL_INSTANCE));
+    }
+
+    /** The release Helm made {@code ingress} for, or null when not known. */
+    private static String helmReleaseOf(Ingress ingress) {
+        Map<String, String> annotations = ingress.getMetadata().getAnnotations();
+        String release = annotations == null ? null : annotations.get(KdpsReleaseObjects.HELM_RELEASE_NAME);
+        if (release == null && ingress.getMetadata().getLabels() != null) {
+            release = ingress.getMetadata().getLabels().get(KdpsReleaseObjects.LABEL_INSTANCE);
+        }
+        return release;
+    }
+
+    /**
+     * The Secret a Certificate ({@code spec.secretName}) or an ExternalSecret ({@code spec.target.name}, by default its
+     * own name) keeps; null for any other kind, or when it names none.
+     */
+    private static String targetSecretOf(String kind, HasMetadata o) {
+        if (!(o instanceof GenericKubernetesResource cr)) return null;
+        Map<String, Object> spec = existingSpec(cr);
+        if (KdpsReleaseObjects.CERTIFICATE.equals(kind)) {
+            Object secretName = spec.get("secretName");
+            return secretName == null ? null : String.valueOf(secretName);
+        }
+        if (KdpsReleaseObjects.EXTERNAL_SECRET.equals(kind)) {
+            Object target = spec.get("target");
+            Object targetName = target instanceof Map<?, ?> t ? t.get("name") : null;
+            return targetName == null || String.valueOf(targetName).isBlank()
+                    ? cr.getMetadata().getName() : String.valueOf(targetName);
+        }
+        return null;
+    }
+
+    /**
+     * Keeps an object of the uninstalled release whose Secret the Ingresses of other releases still use (two releases
+     * given the same certificate): the Secret itself, or the Certificate or ExternalSecret that keeps it. Deleting it
+     * would take their certificate away. It goes with the release using it when there is one, so that release's
+     * uninstall removes it; with several, or one Helm did not make, it is no release's any more and stays. A
+     * Certificate's Secret template goes along, since cert-manager copies it onto the Secret.
+     */
+    private KdpsReleaseObjects.Leftover handOver(String kind, String namespace, String name, String secret,
+                                                 List<Ingress> users) {
+        java.util.Set<String> releases = new java.util.LinkedHashSet<>();
+        users.forEach(i -> releases.add(helmReleaseOf(i)));
+        String heir = releases.size() == 1 ? releases.iterator().next() : null;
+        boolean handedOver = heir != null && KdpsReleaseObjects.labelable(heir);
+        String newRelease = handedOver ? heir : null;
+        try {
+            if (KdpsReleaseObjects.SECRET.equals(kind)) {
+                client.secrets().inNamespace(namespace).withName(name).edit(s -> {
+                    s.getMetadata().setLabels(handedOverLabels(s.getMetadata().getLabels(), newRelease));
+                    return s;
+                });
+            } else {
+                var rdc = KdpsReleaseObjects.CERTIFICATE.equals(kind) ? CERT_MANAGER_CERT_RDC : externalSecretRdc();
+                client.genericKubernetesResources(rdc).inNamespace(namespace).withName(name).edit(cr -> {
+                    cr.getMetadata().setLabels(handedOverLabels(cr.getMetadata().getLabels(), newRelease));
+                    if (existingSpec(cr).get("secretTemplate") instanceof Map<?, ?> template
+                            && template.get("labels") instanceof Map<?, ?> templateLabels) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> editable = (Map<String, Object>) template;
+                        editable.put("labels", handedOverLabels(templateLabels, newRelease));
+                    }
+                    return cr;
+                });
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("Could not hand {} {}/{} over to the releases still using it: {}", kind, namespace, name,
+                    e.toString());
+        }
+        String ingresses = String.join(", ", users.stream().map(i -> i.getMetadata().getName()).toList());
+        String usedBy = (KdpsReleaseObjects.SECRET.equals(kind) ? "" : "its Secret " + secret + " is ")
+                + "still used by the Ingress " + ingresses;
+        return new KdpsReleaseObjects.Leftover(KdpsReleaseObjects.ref(kind, name),
+                usedBy + (handedOver ? " of release " + heir + ", whose uninstall removes it"
+                        : " of other releases"), null);
+    }
+
+    /**
+     * {@code labels} with the release label naming {@code release}, or, with no release, without the release selector:
+     * the object is then no release's.
+     */
+    private static Map<String, String> handedOverLabels(Map<?, ?> labels, String release) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (labels != null) labels.forEach((k, v) -> out.put(String.valueOf(k), String.valueOf(v)));
+        if (release != null) {
+            out.put(KdpsReleaseObjects.LABEL_RELEASE, release);
+        } else {
+            out.remove(KdpsReleaseObjects.LABEL_RELEASE);
+            out.remove(KdpsReleaseObjects.LABEL_MANAGED_BY);
+        }
+        return out;
+    }
+
+    /**
+     * The objects of a release KDPS cannot prove it created (see {@link KdpsReleaseObjects#ANNOTATION_ORIGIN}), with
+     * the command that deletes each: left for the operator, who knows whether an administrator made them for another
+     * use. What cannot be listed is left out.
+     */
+    private List<KdpsReleaseObjects.Leftover> unconfirmedObjectsOfRelease(String namespace, String releaseName) {
+        List<KdpsReleaseObjects.Leftover> found = new ArrayList<>();
+        Map<String, String> selector = Map.of(KdpsReleaseObjects.LABEL_RELEASE, releaseName);
+        for (KdpsObjectKind kind : kdpsObjectKinds()) {
+            if (isOperatorKind(kind.kind())) continue;
+            try {
+                for (HasMetadata o : kind.list().apply(namespace, selector)) {
+                    ObjectMeta meta = o.getMetadata();
+                    Map<String, String> annotations = meta.getAnnotations() == null ? Map.of() : meta.getAnnotations();
+                    String origin = annotations.get(KdpsReleaseObjects.ANNOTATION_ORIGIN);
+                    if (!KdpsReleaseObjects.ORIGIN_UNCONFIRMED.equals(origin)
+                            || KdpsReleaseObjects.ofRelease(meta, namespace, releaseName)
+                            || !namespace.equals(annotations.getOrDefault(KdpsReleaseObjects.ANNOTATION_NAMESPACE,
+                                    namespace))) {
+                        continue;
+                    }
+                    found.add(new KdpsReleaseObjects.Leftover(KdpsReleaseObjects.ref(kind.kind(), meta.getName()),
+                            "made for the release's autoscaler before KDPS marked what it creates, or by an"
+                                    + " administrator: delete it unless something else uses it",
+                            KdpsReleaseObjects.deleteCommand(kind.kind(), meta.getName(), namespace)));
+                }
+            } catch (RuntimeException e) {
+                LOG.debug("Could not list the unconfirmed {} objects of release {}/{}: {}", kind.kind(), namespace,
+                        releaseName, e.toString());
+            }
+        }
+        return found;
+    }
+
+    /** Deletes one object of a release, recording it as removed, or as left with why and the command to run. */
+    private static void deleteKdpsObject(String kind, String namespace, String name, Runnable delete,
+                                         List<String> removed, List<KdpsReleaseObjects.Leftover> left) {
+        String ref = KdpsReleaseObjects.ref(kind, name);
+        try {
+            delete.run();
+            removed.add(ref);
+        } catch (RuntimeException e) {
+            int status = apiStatus(e);
+            if (status == 404) return; // already gone
+            LOG.warn("Could not delete {} of {}: {}", ref, namespace, e.toString());
+            left.add(new KdpsReleaseObjects.Leftover(ref, status == 403
+                    ? "this account may not delete it" : "it could not be deleted: " + rootMessage(e),
+                    KdpsReleaseObjects.deleteCommand(kind, name, namespace)));
+        }
+    }
+
+    /** The innermost message of a failure. */
+    private static String rootMessage(Throwable e) {
+        String message = e.toString();
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t.getMessage() != null && !t.getMessage().isBlank()) message = t.getMessage();
+        }
+        return message;
     }
 
     /** The annotation Flux reads on an object on the cluster before it prunes it, and the value that keeps it. */

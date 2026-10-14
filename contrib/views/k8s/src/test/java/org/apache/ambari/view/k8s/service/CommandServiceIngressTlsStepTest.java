@@ -251,6 +251,77 @@ class CommandServiceIngressTlsStepTest {
     }
 
     @Test
+    void theSecretKdpsMintsCarriesTheReleaseLabelsItsUninstallRemovesItBy() {
+        CommandStatusEntity step = runSelfSign(HOST, false, true);
+
+        assertEquals(CommandState.SUCCEEDED.name(), step.getState(), step.getMessage());
+        Map<String, String> labels = current().getMetadata().getLabels();
+        assertEquals("ambari-k8s-view", labels.get(KdpsReleaseObjects.LABEL_MANAGED_BY));
+        assertEquals(REL, labels.get(KdpsReleaseObjects.LABEL_RELEASE));
+    }
+
+    /**
+     * The leaf an earlier version minted carries the release label only. A redeploy that keeps it gives it the rest of
+     * the release selector, without minting again, so the uninstall of the release removes it.
+     */
+    @Test
+    void aKeptLeafAnEarlierVersionMintedGetsTheReleaseLabelsItLacks() throws Exception {
+        assertEquals(CommandState.SUCCEEDED.name(), runSelfSign(HOST, false, true).getState());
+        client.secrets().inNamespace(NS).withName(SECRET).edit(s -> {
+            s.getMetadata().getLabels().remove(KdpsReleaseObjects.LABEL_MANAGED_BY);
+            s.getMetadata().getAnnotations().remove(KdpsReleaseObjects.ANNOTATION_NAMESPACE);
+            return s;
+        });
+        Secret before = current();
+        assertFalse(KdpsReleaseObjects.ofRelease(before.getMetadata(), NS, REL));
+
+        CommandStatusEntity step = runSelfSign(HOST, false, true);
+
+        assertEquals(CommandState.SUCCEEDED.name(), step.getState(), step.getMessage());
+        Secret after = current();
+        assertTrue(KdpsReleaseObjects.ofRelease(after.getMetadata(), NS, REL), after.getMetadata().toString());
+        assertEquals(NS, after.getMetadata().getAnnotations().get(KdpsReleaseObjects.ANNOTATION_NAMESPACE));
+        assertEquals(before.getData(), after.getData(), "the kept leaf and its key are not written again");
+        assertEquals(leaf(before).getSerialNumber(), leaf(after).getSerialNumber());
+    }
+
+    @Test
+    void aKeptLeafMintedForAnotherReleaseIsNotTakenAsTheReleases() {
+        Secret minted = new SecretBuilder().withNewMetadata().withName(SECRET).withNamespace(NS)
+                .addToLabels("managed-by", "ambari-k8s-view")
+                .addToLabels(IngressTlsSecretGuard.ISSUER_LABEL, "self-signed")
+                .addToLabels(KdpsReleaseObjects.LABEL_RELEASE, "superset").endMetadata().build();
+        assertEquals(Map.of(), CommandService.keptSelfSignedTlsLabels(minted, NS, REL));
+        Secret legacy = new SecretBuilder(minted).editMetadata()
+                .addToLabels(KdpsReleaseObjects.LABEL_RELEASE, REL).endMetadata().build();
+        assertEquals(KdpsReleaseObjects.labels(REL), CommandService.keptSelfSignedTlsLabels(legacy, NS, REL));
+        // Not minted by KDPS: an uploaded or operator's Secret is never kept by this step, nor labelled by it.
+        assertEquals(Map.of(), CommandService.keptSelfSignedTlsLabels(uploadedCorporateSecret(), NS, REL));
+    }
+
+    @Test
+    void anUploadLabelsOnlyASecretKdpsCreatesOrUploadedForTheRelease() {
+        assertEquals(KdpsReleaseObjects.labels(REL), CommandService.ingressTlsUploadLabels(null, NS, REL));
+        Secret ours = new SecretBuilder(uploadedCorporateSecret()).editMetadata()
+                .withLabels(KdpsReleaseObjects.labels(REL)).endMetadata().build();
+        assertEquals(KdpsReleaseObjects.labels(REL), CommandService.ingressTlsUploadLabels(ours, NS, REL));
+        // What an earlier version uploaded under the release's default name, before it labelled what it creates.
+        assertEquals(KdpsReleaseObjects.labels(REL),
+                CommandService.ingressTlsUploadLabels(uploadedCorporateSecret(), NS, REL));
+        // The operator's own Secret, which they confirmed replacing: it stays theirs, and the uninstall leaves it.
+        Secret operators = new SecretBuilder(uploadedCorporateSecret()).editMetadata().withAnnotations(Map.of())
+                .endMetadata().build();
+        assertEquals(Map.of(), CommandService.ingressTlsUploadLabels(operators, NS, REL));
+        // A Secret uploaded under a name typed for it, which other releases may share.
+        Secret typedName = new SecretBuilder(uploadedCorporateSecret()).editMetadata().withName("wildcard-tls")
+                .endMetadata().build();
+        assertEquals(Map.of(), CommandService.ingressTlsUploadLabels(typedName, NS, REL));
+        Secret anotherRelease = new SecretBuilder(uploadedCorporateSecret()).editMetadata()
+                .withLabels(KdpsReleaseObjects.labels("trino-b")).endMetadata().build();
+        assertEquals(Map.of(), CommandService.ingressTlsUploadLabels(anotherRelease, NS, REL));
+    }
+
+    @Test
     void aRedeployKeepsTheLeafKdpsMintedWhenItIsStillGood() throws Exception {
         assertEquals(CommandState.SUCCEEDED.name(), runSelfSign(HOST, false, true).getState());
         Secret minted = current();
@@ -311,8 +382,9 @@ class CommandServiceIngressTlsStepTest {
 
     @Test
     void aReinstallOverTheSecretAnEarlierInstallUploadedIsRefusedUntilConfirmed() {
-        // Uninstalling does not remove the Secret an upload wrote outside Helm: the release is installed again with the
-        // default TLS mode, "Sign with Ambari Internal CA", and the wizard has not asked anything yet.
+        // An uninstall by an earlier KDPS version did not remove the Secret an upload wrote outside Helm: the release is
+        // installed again with the default TLS mode, "Sign with Ambari Internal CA", and the wizard has not asked
+        // anything yet.
         Secret before = create(uploadedCorporateSecret());
         HelmDeployRequest reinstall = deploy();
         reinstall.setIngressTlsSelfSign(new LinkedHashMap<>(Map.of("mode", "ambariInternal", "ingressHost", HOST,

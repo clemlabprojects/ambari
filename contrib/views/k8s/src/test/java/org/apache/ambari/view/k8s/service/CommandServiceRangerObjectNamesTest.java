@@ -192,18 +192,23 @@ class CommandServiceRangerObjectNamesTest {
         }
         assertEquals(6, written.size(), "only the releases' own ConfigMaps are written: " + written.keySet());
 
-        // The truststore and credential Secrets are the release's own too.
+        // The truststore and credential Secrets are the release's own too, with the release labels its uninstall
+        // removes them by.
         for (String release : List.of("trino-cdp", "trino-odp")) {
+            Map<String, String> releaseLabels = Map.of("managed-by", "ambari-k8s-view",
+                    "app.kubernetes.io/instance", release, "app.kubernetes.io/managed-by", "ambari-k8s-view",
+                    "ambari.clemlab.com/release", release);
             verify(k8s).ensureOrRotateTruststoreSecretFromLocalFile(eq(NS), eq(release + "-ranger-admin-truststore"),
-                    anyString(), eq("JKS"), any(char[].class), eq("truststore.jks"), anyInt(),
-                    eq(Map.of("managed-by", "ambari-k8s-view", "app.kubernetes.io/instance", release)));
+                    anyString(), eq("JKS"), any(char[].class), eq("truststore.jks"), anyInt(), eq(releaseLabels));
             verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(release + "-ranger-admin-ts-pass"), eq("password"),
-                    any(byte[].class), eq(Map.of("managed-by", "ambari-k8s-view", "app.kubernetes.io/instance", release)),
-                    any(), eq(Boolean.TRUE));
+                    any(byte[].class), eq(releaseLabels),
+                    eq(Map.of("ambari.clemlab.com/release-namespace", NS)), eq(Boolean.TRUE));
             ArgumentCaptor<Map<String, String>> credLabels = labelsCaptor();
             verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(release + "-ranger-trino-plugin-credential-provider"),
                     eq("cred.jceks"), any(byte[].class), credLabels.capture(), anyMap(), eq(Boolean.TRUE));
             assertEquals(release, credLabels.getValue().get("app.kubernetes.io/instance"));
+            assertEquals(release, credLabels.getValue().get("ambari.clemlab.com/release"));
+            assertEquals("ambari-k8s-view", credLabels.getValue().get("app.kubernetes.io/managed-by"));
         }
     }
 
@@ -238,6 +243,9 @@ class CommandServiceRangerObjectNamesTest {
         for (Map<String, String> l : labels.getAllValues()) {
             assertEquals("trino-odp", l.get("app.kubernetes.io/instance"));
             assertEquals("ambari-k8s-view", l.get("managed-by"));
+            // Their names are the release's own: the uninstall of the release finds and removes them.
+            assertEquals("trino-odp", l.get("ambari.clemlab.com/release"));
+            assertEquals("ambari-k8s-view", l.get("app.kubernetes.io/managed-by"));
         }
     }
 

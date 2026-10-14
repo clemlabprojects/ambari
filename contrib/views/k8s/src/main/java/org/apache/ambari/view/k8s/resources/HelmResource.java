@@ -1607,7 +1607,8 @@ public class HelmResource {
      * made to grant the release's service accounts an SCC are deleted once the release is gone. The Ranger account the
      * release synced Atlas tags with, if any, is then disabled and its Secret deleted, and so is what the release signed
      * in through OIDC with: the Secrets holding its client secret and the client KDPS registered for it in Keycloak
-     * ({@link CommandService#revokeOidcForRelease}).
+     * ({@link CommandService#revokeOidcForRelease}). Last, the other objects KDPS created for the release outside its
+     * chart, which carry its labels, are deleted ({@link CommandService#revokeKdpsObjectsForRelease}).
      *
      * <p>A GitOps release is removed from the repository, base branch and path its metadata records, with the Git
      * credential KDPS saved for it ({@link FluxGitOpsBackend#destroy(String, String)}): a request naming another
@@ -1626,7 +1627,9 @@ public class HelmResource {
      * @param oidcCleanup  {@code none} leaves the release's OIDC client and its Secrets in place; anything else, or
      *                     nothing, removes them
      * @return HTTP 200 on success, with {@code polarisCleanup}, {@code oidcCleanup}, {@code sccCleanup} and
-     *         {@code tagSyncCleanup} notes saying what was taken back and what is left for an administrator to do; 202 when the removal of a GitOps release waits
+     *         {@code tagSyncCleanup} notes saying what was taken back and what is left for an administrator to do, and
+     *         {@code kdpsObjectsCleanup} ({@code removed}, {@code left}, {@code note}) for the objects KDPS created for
+     *         the release outside its chart; 202 when the removal of a GitOps release waits
      *         for the merge of its pull request, with {@code pendingDelete}, {@code pullRequestUrl} and a
      *         {@code message}, and nothing else done; 400, with nothing removed, when the request names a Git
      *         repository, branch or credential, or for a GitOps release whose recorded Git directory is not its own
@@ -1801,12 +1804,49 @@ public class HelmResource {
                 LOG.warn("OIDC cleanup for {}/{} failed: {}", namespace, releaseName, ex.toString());
             }
         }
+        // Last, what KDPS created for the release outside its chart, which neither Helm nor Flux removes: its keytab,
+        // truststore and krb5.conf, its Ranger plugin configuration, its ingress certificate objects and its
+        // autoscaler's monitoring account. Only objects carrying the release's labels go, so what an administrator
+        // provided stays; done after the steps above, which read their own Secrets before removing them. Never fails
+        // the uninstall: what this account may not delete is listed with the command that deletes it.
+        // A release KDPS holds no record of is none it deployed: nothing of an earlier version to look for either.
+        Map<String, Object> kdpsObjectsCleanup = null;
+        try {
+            kdpsObjectsCleanup = commandService.revokeKdpsObjectsForRelease(namespace, releaseName,
+                    meta != null ? meta.getKdpsObjects() : List.of());
+        } catch (Exception ex) {
+            LOG.warn("Cleanup of the objects KDPS created for {}/{} failed: {}", namespace, releaseName, ex.toString());
+        }
         Map<String, Object> notes = new LinkedHashMap<>();
         if (polarisCleanupNote != null) notes.put("polarisCleanup", polarisCleanupNote);
         if (oidcCleanupNote != null) notes.put("oidcCleanup", oidcCleanupNote);
         if (sccCleanupNote != null) notes.put("sccCleanup", sccCleanupNote);
         if (tagSyncCleanupNote != null) notes.put("tagSyncCleanup", tagSyncCleanupNote);
+        if (kdpsObjectsCleanup != null) notes.put("kdpsObjectsCleanup", kdpsObjectsCleanup);
         return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
+    }
+
+    /**
+     * What the uninstall of a release removes of the objects KDPS created for it outside its chart (see
+     * {@link CommandService#revokeKdpsObjectsForRelease}), for the uninstall confirmation to list.
+     *
+     * @return 200 with {@code objects}, as {@code <Kind>/<name>}; empty when there are none or they cannot be listed
+     */
+    @GET
+    @Path("/release/{namespace}/{name}/kdps-objects")
+    public Response kdpsObjectsOfRelease(@PathParam("namespace") String namespace,
+                                         @PathParam("name") String releaseName) {
+        authHelper.checkWritePermission();
+        List<String> objects;
+        try {
+            K8sReleaseEntity meta = releaseMetadataService.find(namespace, releaseName);
+            objects = commandService.kdpsObjectsOfRelease(namespace, releaseName,
+                    meta != null ? meta.getKdpsObjects() : null);
+        } catch (Exception ex) {
+            LOG.warn("Could not list the objects KDPS created for {}/{}: {}", namespace, releaseName, ex.toString());
+            objects = List.of();
+        }
+        return Response.ok(Map.of("objects", objects)).build();
     }
 
     /**

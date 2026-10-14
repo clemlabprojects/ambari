@@ -534,8 +534,9 @@ export function unconfirmedTlsReplacement(error: any): UnconfirmedTlsReplacement
 
 /**
  * The confirmation a deploy asks for once the server refused to replace an existing Secret KDPS did not issue. On a
- * first install that is mostly the Secret an earlier install of the release left behind (uninstalling keeps it), with
- * the certificate uploaded then, or one created outside KDPS; Upgrade/Config asks before it submits instead.
+ * first install that is mostly the Secret an earlier install of the release left behind (an uninstall by an earlier
+ * KDPS version kept it), with the certificate uploaded then, or one created outside KDPS; Upgrade/Config asks before
+ * it submits instead.
  */
 export function describeExistingSecretReplacement(refused: UnconfirmedTlsReplacement, form: any): string[] {
   const ns = refused.namespace || text(form?.namespace);

@@ -27,6 +27,7 @@ jest.mock('../../api/client', () => ({
   getReleaseTlsState: jest.fn(),
   getReleaseStatus: jest.fn(),
   uninstallHelm: jest.fn(),
+  getReleaseKdpsObjects: jest.fn(),
   getReleaseActionRefusals: jest.fn(),
   getReleaseHistory: jest.fn(),
   rollbackReleaseToRevision: jest.fn(),
@@ -38,7 +39,7 @@ jest.mock('../../context/ClusterStatusContext', () => ({
 
 import {
   getAvailableServices, getClusterCapabilities, getHelmReleases, getReleaseActionRefusals, getReleaseHistory,
-  getReleaseStatus, getReleaseTlsState, rollbackReleaseToRevision, uninstallHelm,
+  getReleaseKdpsObjects, getReleaseStatus, getReleaseTlsState, rollbackReleaseToRevision, uninstallHelm,
 } from '../../api/client';
 import { invalidateCapabilities } from '../../components/ServiceInstallationModal/capabilities';
 import { PermissionsContext } from '../../context/PermissionsContext';
@@ -195,6 +196,27 @@ describe('HelmReleasesPage uninstall outcome', () => {
     const confirm = await openConfirm();
 
     expect(within(confirm).getByText(/revokes its Polaris principal and role/)).toBeTruthy();
+  });
+
+  it('lists the objects KDPS created for the release, which go with it', async () => {
+    (getHelmReleases as jest.Mock).mockResolvedValue({ items: [trino], total: 1 });
+    (getReleaseKdpsObjects as jest.Mock).mockResolvedValue(['Secret/trino-keytab', 'ServiceAccount/trino-thanos-token']);
+
+    const confirm = await openConfirm();
+
+    expect(within(confirm).getByText(/deletes what it created for this release outside its chart: Secret\/trino-keytab,/))
+      .toBeTruthy();
+    expect(getReleaseKdpsObjects).toHaveBeenCalledWith('trino', 'analytics');
+  });
+
+  it('still asks to confirm when the objects cannot be listed', async () => {
+    (getHelmReleases as jest.Mock).mockResolvedValue({ items: [trino], total: 1 });
+    (getReleaseKdpsObjects as jest.Mock).mockRejectedValue(new Error('cluster unreachable'));
+
+    const confirm = await openConfirm();
+
+    expect(within(confirm).queryByText(/deletes what it created for this release/)).toBeNull();
+    expect(within(confirm).getByRole('button', { name: 'Uninstall' })).toBeTruthy();
   });
 
   it('shows why the release could not be uninstalled and keeps it listed', async () => {

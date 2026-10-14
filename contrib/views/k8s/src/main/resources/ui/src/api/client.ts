@@ -1619,6 +1619,38 @@ export interface UninstallNotes {
   sccCleanup?: string;
   /** The Ranger account of the release's Atlas tag sync that KDPS could not disable, or a Ranger password to change. */
   tagSyncCleanup?: string;
+  /** What became of the objects KDPS created for the release outside its chart (keytab, truststore, autoscaler account...). */
+  kdpsObjectsCleanup?: KdpsObjectsCleanup;
+}
+
+/** An object KDPS created for a release that its uninstall could not remove, why, and the command that removes it. */
+export interface KdpsObjectLeftover {
+  object: string;
+  reason: string;
+  command?: string;
+}
+
+/** What the uninstall of a release removed of the objects KDPS created for it outside its chart, and what it left. */
+export interface KdpsObjectsCleanup {
+  /** The objects removed, as `<Kind>/<name>`. */
+  removed: string[];
+  left: KdpsObjectLeftover[];
+  /** Objects left on purpose: one another release still uses, or one KDPS cannot prove it created. */
+  kept?: KdpsObjectLeftover[];
+  /** The same, as the operator reads it. */
+  note?: string;
+}
+
+/**
+ * The objects KDPS created for a release outside its chart, which its uninstall removes, as `<Kind>/<name>`: what the
+ * uninstall confirmation lists. Empty when there are none or they cannot be listed.
+ */
+export async function getReleaseKdpsObjects(name: string, namespace: string): Promise<string[]> {
+  const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/kdps-objects`;
+  const response = await apiFetch(url, { method: 'GET' });
+  if (!response.ok) return [];
+  const body: any = await response.json().catch(() => ({}));
+  return Array.isArray(body?.objects) ? body.objects.map(String) : [];
 }
 
 /**

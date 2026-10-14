@@ -40,6 +40,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -81,13 +82,15 @@ class TlsManagerTest {
         verify(kubernetesService).createNamespace("ns");
 
         ArgumentCaptor<Map<String, byte[]>> keystoreCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https"), keystoreCaptor.capture());
+        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https"),
+                keystoreCaptor.capture(), any(), any());
         Map<String, byte[]> keystoreData = keystoreCaptor.getValue();
         assertTrue(keystoreData.containsKey("keystore.p12"), "Keystore secret should contain the keystore binary");
         assertArrayEquals("testpass".getBytes(), keystoreData.get("truststore.password"));
 
         ArgumentCaptor<Map<String, byte[]>> passwordCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"), passwordCaptor.capture());
+        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"),
+                passwordCaptor.capture(), any(), any());
         Map<String, byte[]> passwordData = passwordCaptor.getValue();
         assertArrayEquals("testpass".getBytes(), passwordData.get("truststore.password"));
 
@@ -107,10 +110,11 @@ class TlsManagerTest {
         tlsManager.applyTls(ownKeystore("typed-pass"), request(), new HashMap<>());
 
         ArgumentCaptor<Map<String, byte[]>> passwordCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"), passwordCaptor.capture());
+        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"),
+                passwordCaptor.capture(), any(), any());
         assertArrayEquals("typed-pass".getBytes(), passwordCaptor.getValue().get("truststore.password"));
         assertEquals(1, passwordCaptor.getValue().size(), "the password Secret holds the password only");
-        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https"), any());
+        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https"), any(), any(), any());
         verifyNoInteractions(webHookService);
     }
 
@@ -126,7 +130,7 @@ class TlsManagerTest {
             tlsManager.applyTls(ownKeystore("typed-pass"), request(), new HashMap<>());
         }
 
-        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any());
+        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any(), any(), any());
     }
 
     /**
@@ -144,7 +148,8 @@ class TlsManagerTest {
         tlsManager.applyTls(ownKeystore("typed-pass"), request(), new HashMap<>());
 
         ArgumentCaptor<Map<String, byte[]>> passwordCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"), passwordCaptor.capture());
+        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"),
+                passwordCaptor.capture(), any(), any());
         assertArrayEquals("typed-pass".getBytes(), passwordCaptor.getValue().get("truststore.password"));
     }
 
@@ -173,7 +178,7 @@ class TlsManagerTest {
         assertTrue(noKey.getMessage().contains("Secret 'rel-https-pass' in namespace 'ns' has no key"
                 + " 'truststore.password'"), noKey.getMessage());
 
-        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any());
+        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any(), any(), any());
     }
 
     @Test
@@ -185,7 +190,41 @@ class TlsManagerTest {
         tlsManager.applyTls(ownKeystore(""), request(), new HashMap<>());
 
         verify(kubernetesService, never()).getSecret(anyString(), anyString());
-        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any());
+        verify(kubernetesService, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), any(), any(), any());
+    }
+
+    /**
+     * What KDPS generates for a release (the keystore with the server's private key, and its password) carries the
+     * release labels, so the uninstall of the release removes it; a Secret another release claims under the same name
+     * is not taken as this release's.
+     */
+    @Test
+    void theSecretsKdpsGeneratesCarryTheReleaseLabels() {
+        KubernetesService kubernetesService = mock(KubernetesService.class);
+        WebHookConfigurationService webHookService = mock(WebHookConfigurationService.class);
+        when(webHookService.issueServerKeystore(anyList(), anyString(), any(), anyInt()))
+                .thenReturn(new ServerKeystoreMaterial("CERT", "KEY", "CA", new byte[]{1, 2, 3}));
+        when(kubernetesService.getSecret("ns", "rel-https-pass")).thenReturn(new SecretBuilder()
+                .withNewMetadata().withName("rel-https-pass").withNamespace("ns")
+                .withLabels(KdpsReleaseObjects.labels("other")).endMetadata().build());
+        Map<String, Object> httpsSpec = new HashMap<>();
+        httpsSpec.put("enabled", true);
+        httpsSpec.put("secretName", "rel-https");
+        httpsSpec.put("passwordSecretName", "rel-https-pass");
+
+        new TlsManager(kubernetesService, webHookService).applyTls(Map.of("https", httpsSpec), request(),
+                new HashMap<>());
+
+        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https"), any(),
+                eq(KdpsReleaseObjects.labels("rel")), eq(KdpsReleaseObjects.annotations("ns")));
+        verify(kubernetesService).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"), any(), eq(Map.of()),
+                isNull());
+
+        // The password Secret written for the operator's own keystore is KDPS's too.
+        KubernetesService other = mock(KubernetesService.class);
+        new TlsManager(other, webHookService).applyTls(ownKeystore("typed-pass"), request(), new HashMap<>());
+        verify(other).createOrUpdateOpaqueSecret(eq("ns"), eq("rel-https-pass"), any(),
+                eq(KdpsReleaseObjects.labels("rel")), eq(KdpsReleaseObjects.annotations("ns")));
     }
 
     private static HelmDeployRequest request() {

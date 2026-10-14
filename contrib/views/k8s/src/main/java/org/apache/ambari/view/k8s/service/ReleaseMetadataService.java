@@ -382,6 +382,29 @@ public class ReleaseMetadataService {
         releaseRepository.update(e);
     }
 
+    /**
+     * Records the objects KDPS created for a release outside its chart (see {@link KdpsReleaseObjects}), as found on
+     * the cluster after a deploy. The ClusterRoleBindings recorded before are kept: an account that may not list them
+     * finds none, although they are still there, and the uninstall deletes one only when it is recorded.
+     *
+     * @param objects the objects found, as {@code <Kind>/<name>}; null changes nothing
+     */
+    public void recordKdpsObjects(String namespace, String releaseName, java.util.List<String> objects) {
+        if (objects == null) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null) return;
+        java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(objects);
+        java.util.List<String> before = e.getKdpsObjects();
+        if (before != null) {
+            before.stream().filter(o -> o != null && o.startsWith(KdpsReleaseObjects.CLUSTER_ROLE_BINDING + "/"))
+                    .forEach(merged::add);
+        }
+        java.util.List<String> recorded = new java.util.ArrayList<>(merged);
+        if (recorded.equals(before)) return;
+        e.setKdpsObjects(recorded);
+        releaseRepository.update(e);
+    }
+
     /** The truststores recorded for a release, or {@code null} when no selection was ever recorded. */
     public java.util.List<String> truststoreRefs(String namespace, String releaseName) {
         K8sReleaseEntity e = find(namespace, releaseName);

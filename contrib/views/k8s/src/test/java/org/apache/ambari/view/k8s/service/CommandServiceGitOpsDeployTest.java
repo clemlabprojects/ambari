@@ -829,6 +829,39 @@ class CommandServiceGitOpsDeployTest {
         verify(k8s).createOrUpdateTlsSecret(eq(NS), eq(rel + "-ingress-tls"), any(), any(), any(), any());
     }
 
+    /**
+     * A redeploy with the certificate an earlier version uploaded for the release keeps its Secret as it is, and gives
+     * it the release labels it lacks, without writing its keys again: the uninstall of the release then removes it.
+     */
+    @Test
+    void anUploadTheReleasesSecretAlreadyHoldsGivesItTheReleaseLabelsWithoutRewritingIt() {
+        HelmDeployRequest request = request("DIRECT_HELM", "main");
+        String certPem = String.valueOf(request.getIngressTlsUpload().get("certPem"));
+        String keyPem = String.valueOf(request.getIngressTlsUpload().get("keyPem"));
+        java.util.function.Function<String, io.fabric8.kubernetes.api.model.Secret> uploadedEarlier = name ->
+                new io.fabric8.kubernetes.api.model.SecretBuilder()
+                        .withNewMetadata().withName(name).withNamespace(NS)
+                        .addToAnnotations("managed-by", "ambari-k8s-view").endMetadata()
+                        .withType("kubernetes.io/tls")
+                        .addToData("tls.crt", java.util.Base64.getEncoder().encodeToString(certPem.getBytes()))
+                        .addToData("tls.key", java.util.Base64.getEncoder().encodeToString(keyPem.getBytes()))
+                        .build();
+        when(k8s.getSecret(NS, rel + "-ingress-tls")).thenReturn(uploadedEarlier.apply(rel + "-ingress-tls"));
+
+        plan(request, false);
+
+        verify(k8s, never()).createOrUpdateTlsSecret(anyString(), anyString(), any(), any(), any(), any());
+        verify(k8s).addSecretLabels(NS, rel + "-ingress-tls", KdpsReleaseObjects.labels(rel),
+                KdpsReleaseObjects.annotations(NS));
+
+        // Under a name typed for it, which other releases may share, it stays nobody's.
+        HelmDeployRequest shared = request("DIRECT_HELM", "main");
+        shared.getIngressTlsUpload().put("secretName", "wildcard-tls");
+        when(k8s.getSecret(NS, "wildcard-tls")).thenReturn(uploadedEarlier.apply("wildcard-tls"));
+        plan(shared, false);
+        verify(k8s, never()).addSecretLabels(eq(NS), eq("wildcard-tls"), any(), any());
+    }
+
     @Test
     void aGitOpsDeployIsRefusedWhileAnotherOneOfTheReleaseHasNotFinishedOrIsBeingSubmitted() throws Exception {
         // A deploy planned and not run yet: its commit is still to come.
@@ -977,7 +1010,7 @@ class CommandServiceGitOpsDeployTest {
 
         assertTrue(dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing was planned, so Helm never ran");
         assertEquals(List.of(seedCommit), commitsOn("main"), "nothing reached Git");
-        verify(k8s, never()).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap());
+        verify(k8s, never()).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap(), any(), any());
     }
 
     @Test
@@ -985,7 +1018,7 @@ class CommandServiceGitOpsDeployTest {
         when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
                 .thenReturn(managedTruststore("ambari-pki", "corp-ca-truststore"));
         doThrow(new io.fabric8.kubernetes.client.KubernetesClientException("etcdserver: request timed out", 500, null))
-                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap());
+                .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap(), any(), any());
         for (String mode : List.of("DIRECT_HELM", "FLUX_GITOPS")) {
             HelmDeployRequest request = request(mode, "main");
             request.setTruststoreRefs(List.of("corp-ca"));
@@ -1009,7 +1042,10 @@ class CommandServiceGitOpsDeployTest {
 
         String rootId = plan(request, false);
 
-        verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap());
+        // The release's own truststore: labelled so that its uninstall removes it.
+        verify(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap(),
+                eq(Map.of("app.kubernetes.io/managed-by", "ambari-k8s-view", "ambari.clemlab.com/release", rel)),
+                eq(Map.of("ambari.clemlab.com/release-namespace", NS)));
         assertTrue(String.valueOf(paramsOf(dataStore.find(CommandEntity.class, rootId)))
                 .contains("global.security.tls.truststoreSecret"), "the chart is pointed at the Secret");
     }

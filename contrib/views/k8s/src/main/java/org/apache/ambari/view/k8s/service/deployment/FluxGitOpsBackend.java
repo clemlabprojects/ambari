@@ -1891,6 +1891,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     prState
             );
             releaseMetadataService.recordTruststoreRefs(namespace, release, request.getTruststoreRefs());
+            // What KDPS created for the release outside Git (keytab, truststore, autoscaler account...), which the
+            // uninstall removes: a cluster-scoped one only when recorded here.
+            try {
+                releaseMetadataService.recordKdpsObjects(namespace, release,
+                        kubernetesService.listKdpsObjectsForRelease(namespace, release));
+            } catch (RuntimeException e) {
+                LOG.warn("Could not record the objects KDPS created for {}/{}: {}", namespace, release, e.toString());
+            }
             recordHostKeys(namespace, release, hostKeys);
             // Exactly where the change went: a direct commit forgets an earlier pull request, and a deploy ends a
             // removal that waited for its merge.

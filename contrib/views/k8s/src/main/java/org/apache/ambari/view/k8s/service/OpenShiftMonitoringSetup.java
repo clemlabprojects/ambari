@@ -96,8 +96,9 @@ public final class OpenShiftMonitoringSetup {
             throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
                     + " with OpenShift KEDA autoscaling: server.keda.triggerAuthentication.secretName is not set.");
         }
+        // Labelled with the release, so its uninstall removes the token and the account it reads with.
         String problem = kubernetesService.ensureKedaThanosTokenSecret(request.getNamespace(), tokenSecretName,
-                tokenSecretName, usesProjectScope(kubernetesService, request));
+                tokenSecretName, usesProjectScope(kubernetesService, request), request.getReleaseName());
         if (problem != null) {
             throw new IllegalStateException("Cannot deploy " + request.getReleaseName()
                     + " with OpenShift KEDA autoscaling: " + problem);

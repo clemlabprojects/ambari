@@ -42,7 +42,39 @@ export function uninstallFollowUps(notes: UninstallNotes | undefined): Uninstall
   if (notes?.tagSyncCleanup) {
     out.push({ title: 'Ranger account of Atlas tag sync', text: notes.tagSyncCleanup });
   }
+  const objects = notes?.kdpsObjectsCleanup;
+  if (objects && ((objects.removed || []).length > 0 || (objects.left || []).length > 0
+    || (objects.kept || []).length > 0)) {
+    out.push({ title: 'Objects KDPS created for the release', text: objects.note || kdpsObjectsText(objects) });
+  }
   return out;
+}
+
+/** What the uninstall did with the objects KDPS created for the release, for a server that sent no note. */
+function kdpsObjectsText(cleanup: NonNullable<UninstallNotes['kdpsObjectsCleanup']>): string {
+  const lines: string[] = [];
+  if ((cleanup.removed || []).length > 0) {
+    lines.push(`Removed what KDPS created for the release outside its chart: ${cleanup.removed.join(', ')}.`);
+  }
+  for (const l of cleanup.left || []) {
+    lines.push(`Left ${l.object} (${l.reason})${l.command ? `: ${l.command}` : ''}`);
+  }
+  for (const l of cleanup.kept || []) {
+    lines.push(`Kept ${l.object} (${l.reason})${l.command ? `: ${l.command}` : ''}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * What the uninstall confirmation says of the objects KDPS created for the release outside its chart, which the
+ * uninstall removes: those still there, by name. Null when there are none.
+ *
+ * @param objects the objects, as `<Kind>/<name>`
+ */
+export function uninstallKdpsObjectRemovals(objects: string[] | undefined): string | null {
+  if (!objects || objects.length === 0) return null;
+  return `KDPS also deletes what it created for this release outside its chart: ${objects.join(', ')}. Objects an `
+    + 'administrator provided, or shared with other releases of the project, are kept.';
 }
 
 /**

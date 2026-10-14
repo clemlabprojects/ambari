@@ -159,4 +159,24 @@ class ReleaseMetadataServiceRoundTripTest {
         assertNull(metadata().find(NS, "trino"));
         assertTrue(metadata().findAll().isEmpty());
     }
+    @Test
+    void theObjectsKdpsCreatedAreRecordedAndAClusterBindingIsNeverForgotten() {
+        recordGitOpsInstall();
+
+        metadata().recordKdpsObjects(NS, "trino", List.of("Secret/trino-keytab",
+                "ClusterRoleBinding/kdps-monview-analytics-trino-thanos-token"));
+        assertEquals(List.of("Secret/trino-keytab", "ClusterRoleBinding/kdps-monview-analytics-trino-thanos-token"),
+                metadata().find(NS, "trino").getKdpsObjects());
+
+        // A later deploy by an account that may not list cluster-scoped objects finds none: the binding is still
+        // there, and still recorded.
+        metadata().recordKdpsObjects(NS, "trino", List.of("Secret/trino-keytab", "Secret/trino-truststore"));
+        K8sReleaseEntity e = metadata().find(NS, "trino");
+        assertEquals(List.of("Secret/trino-keytab", "Secret/trino-truststore",
+                "ClusterRoleBinding/kdps-monview-analytics-trino-thanos-token"), e.getKdpsObjects());
+        assertEquals("kdps/trino", e.getGitBranch(), "the rest of the metadata is left as it is");
+
+        metadata().recordKdpsObjects(NS, "trino", null);
+        assertEquals(3, metadata().find(NS, "trino").getKdpsObjects().size(), "null changes nothing");
+    }
 }

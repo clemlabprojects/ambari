@@ -2985,6 +2985,31 @@ public class CommandService {
     }
 
     /**
+     * The labels of the Ranger plugin object named by {@code template} in service.json. One whose name is the release's
+     * own ({@code {{releaseName}}}) also gets the release labels, so the uninstall of the release removes it; one
+     * shared by the releases of the namespace does not, so it stays for the others.
+     */
+    static Map<String, String> rangerObjectLabels(String releaseName, String template) {
+        Map<String, String> labels = rangerObjectLabels(releaseName);
+        return template != null && template.contains("{{releaseName}}") && releaseName != null
+                ? KdpsReleaseObjects.withLabels(labels, releaseName.trim())
+                : labels;
+    }
+
+    /**
+     * The annotations of a Ranger plugin object with the labels {@code labels}: {@code extra}, and the release's
+     * namespace when the object is the release's own (see {@link KdpsReleaseObjects}).
+     */
+    private static Map<String, String> rangerObjectAnnotations(Map<String, String> labels, String namespace,
+                                                               Map<String, String> extra) {
+        Map<String, String> annotations = new LinkedHashMap<>(extra == null ? Map.of() : extra);
+        if (labels.containsKey(KdpsReleaseObjects.LABEL_RELEASE)) {
+            annotations.putAll(KdpsReleaseObjects.annotations(namespace));
+        }
+        return annotations;
+    }
+
+    /**
      * The Ranger plugin objects the deployed values of a release still mount although they are not its own: those an
      * earlier version shared by every release of the namespace. They stay mounted until the release is upgraded,
      * which points it at its own.
@@ -3085,7 +3110,6 @@ public class CommandService {
         AmbariAliasResolver aliasResolver = ambariAliasResolver != null
                 ? ambariAliasResolver
                 : new AmbariAliasResolver(ctx);
-        Map<String, String> rangerObjectLabels = rangerObjectLabels(request.getReleaseName());
         List<String> rangerAuditWarnings = new ArrayList<>();
         // What the audit writers take over from the security entry, which comes before the audit entry: the plugin's
         // Kerberos login and the writable directory its policy cache lives in.
@@ -3117,6 +3141,7 @@ public class CommandService {
             // the plain file name, which is what the chart mounts by subPath whatever the object is called.
             String name = rangerObjectName(nameTemplate, request.getReleaseName(), request.getNamespace());
             String dataKeyBase = rangerObjectName(nameTemplate, null, null);
+            Map<String, String> objectLabels = rangerObjectLabels(request.getReleaseName(), nameTemplate);
             boolean asSecret = "secret".equalsIgnoreCase(kind);
             boolean doCreation = true;
             String xmlKey = dataKeyBase + ".xml";
@@ -3385,7 +3410,10 @@ public class CommandService {
                             char[] truststorePass = aliasResolver.resolve(ctx, truststorePassProp);
                             RangerCredentialWriter writer = new RangerCredentialWriter(kubernetesService);
                             String jceksPath = credProviderPath + "/" + credProviderFile;
-                            Map<String, String> credLabels = new LinkedHashMap<>(rangerObjectLabels);
+                            String credTemplate = resolveStringValue(
+                                    spec.get("ranger_plugin_credential_provider_secretName"), null);
+                            Map<String, String> credLabels = new LinkedHashMap<>(
+                                    rangerObjectLabels(request.getReleaseName(), credTemplate));
                             credLabels.put("app", rangerServiceType);
                             Map<String, String> props = writer.ensureJceksSecretForTruststorePassword(
                                     request.getNamespace(),
@@ -3394,7 +3422,8 @@ public class CommandService {
                                     RangerCredentialWriter.DEFAULT_ALIAS,
                                     truststorePass,
                                     credLabels,
-                                    Map.of("purpose", "ranger-ssl-password")
+                                    rangerObjectAnnotations(credLabels, request.getNamespace(),
+                                            Map.of("purpose", "ranger-ssl-password"))
                             );
                             policymgrSsl.put("xasecure.policymgr.clientssl.truststore.password", "crypted");
                             policymgrSsl.putAll(props);
@@ -3422,6 +3451,8 @@ public class CommandService {
                             request.getReleaseName(),
                             request.getNamespace()
                     );
+                    Map<String, String> passwordLabels = rangerObjectLabels(request.getReleaseName(),
+                            resolveStringValue(spec.get("truststore_password_secret_name"), null));
                     if (helmValuesPasswordSecretKey != null && helmValuesPasswordSecretValue != null) {
                         this.commandUtils.addOverride(params, helmValuesPasswordSecretKey, helmValuesPasswordSecretValue);
                     }
@@ -3453,7 +3484,7 @@ public class CommandService {
                                         truststorePass,
                                         helmValuesFileValue,
                                         365,
-                                        rangerObjectLabels
+                                        objectLabels
                                 );
                             }
                             if (helmValuesPasswordSecretValue != null && !helmValuesPasswordSecretValue.isBlank()
@@ -3463,8 +3494,8 @@ public class CommandService {
                                         helmValuesPasswordSecretValue,
                                         helmValuesPasswordValue,
                                         new String(truststorePass).getBytes(StandardCharsets.UTF_8),
-                                        rangerObjectLabels,
-                                        null,
+                                        passwordLabels,
+                                        rangerObjectAnnotations(passwordLabels, request.getNamespace(), null),
                                         Boolean.TRUE
                                 );
                             }
@@ -3496,7 +3527,8 @@ public class CommandService {
                                 Map<String, byte[]> data = new LinkedHashMap<>();
                                 data.put(helmValuesFileValue, merged);
                                 data.put("ca.crt", org.apache.ambari.view.k8s.utils.TlsChainCapture.toPem(extra).getBytes(StandardCharsets.UTF_8));
-                                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data, rangerObjectLabels);
+                                kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data,
+                                        objectLabels, rangerObjectAnnotations(objectLabels, request.getNamespace(), null));
                             }
                         } catch (Exception ex) {
                             LOG.warn("Ranger truststore for '{}': could not add the external Ranger CA: {}", rangerRepositoryName, ex.toString());
@@ -3522,7 +3554,8 @@ public class CommandService {
                 if (asSecret) {
                     Map<String, byte[]> data = new LinkedHashMap<>();
                     data.put(xmlKey, xml.getBytes(StandardCharsets.UTF_8));
-                    kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data, rangerObjectLabels);
+                    kubernetesService.createOrUpdateOpaqueSecret(request.getNamespace(), name, data, objectLabels,
+                            rangerObjectAnnotations(objectLabels, request.getNamespace(), null));
                 } else {
                     Map<String, String> data = new LinkedHashMap<>();
                     data.put(xmlKey, xml);
@@ -3530,8 +3563,8 @@ public class CommandService {
                             request.getNamespace(),
                             name,
                             data,
-                            rangerObjectLabels,
-                            Map.of()
+                            objectLabels,
+                            rangerObjectAnnotations(objectLabels, request.getNamespace(), null)
                     );
                 }
             }
@@ -5732,6 +5765,65 @@ public class CommandService {
         return commandId;
     }
 
+    /**
+     * The labels of the ingress certificate Secret an upload writes: the release's when KDPS creates the Secret, or
+     * wrote it for the release before, so the uninstall of the release removes it. That includes the Secret an earlier
+     * version uploaded under the release's default name before it labelled what it creates. Any other Secret that was
+     * there already is the operator's, or one releases share under a name typed for it: it gets none, and stays.
+     */
+    static Map<String, String> ingressTlsUploadLabels(io.fabric8.kubernetes.api.model.Secret existing, String namespace,
+                                                      String releaseName) {
+        io.fabric8.kubernetes.api.model.ObjectMeta meta = existing == null ? null : existing.getMetadata();
+        boolean uploadedForTheRelease = meta != null && releaseName != null
+                && (releaseName + "-ingress-tls").equals(meta.getName()) && meta.getAnnotations() != null
+                && VIEW_MANAGED_BY_VALUE.equals(meta.getAnnotations().get(VIEW_MANAGED_BY_ANNOTATION));
+        return KdpsReleaseObjects.labelsFor(meta, uploadedForTheRelease, namespace, releaseName);
+    }
+
+    /**
+     * The release labels a self-signed ingress certificate Secret KDPS keeps as it is still lacks: an earlier version
+     * minted it with the release label only. None when KDPS did not mint it, or another release claims it.
+     */
+    static Map<String, String> keptSelfSignedTlsLabels(io.fabric8.kubernetes.api.model.Secret existing,
+                                                       String namespace, String releaseName) {
+        return KdpsReleaseObjects.missingLabels(existing == null ? null : existing.getMetadata(),
+                IngressTlsSecretGuard.mintedByView(existing), namespace, releaseName, null);
+    }
+
+    /**
+     * Gives an ingress certificate Secret a redeploy keeps as it is the release labels it lacks, without writing its
+     * keys again, so the uninstall of the release removes it. Best effort: the deploy goes on without them.
+     *
+     * @param labels the release labels the Secret should carry; nothing is done when they are empty or already there
+     */
+    private void labelKeptIngressTlsSecret(String namespace, String secretName, Map<String, String> labels,
+                                           io.fabric8.kubernetes.api.model.Secret existing) {
+        if (labels == null || labels.isEmpty() || existing == null
+                || KdpsReleaseObjects.ofRelease(existing.getMetadata(), namespace,
+                        labels.get(KdpsReleaseObjects.LABEL_RELEASE))) {
+            return;
+        }
+        try {
+            kubernetesService.addSecretLabels(namespace, secretName, labels, KdpsReleaseObjects.annotations(namespace));
+        } catch (Exception e) {
+            LOG.warn("Could not label ingress TLS Secret {}/{} as its release's: {}", namespace, secretName,
+                    e.toString());
+        }
+    }
+
+    /** {@link #labelKeptIngressTlsSecret} for the self-signed certificate Secret a redeploy kept. */
+    private void labelKeptSelfSignedTlsSecret(String namespace, String secretName, String releaseName) {
+        io.fabric8.kubernetes.api.model.Secret kept;
+        try {
+            kept = kubernetesService.getSecret(namespace, secretName);
+        } catch (Exception e) {
+            LOG.warn("Could not read ingress TLS Secret {}/{} to label it as its release's: {}", namespace,
+                    secretName, e.toString());
+            return;
+        }
+        labelKeptIngressTlsSecret(namespace, secretName, keptSelfSignedTlsLabels(kept, namespace, releaseName), kept);
+    }
+
     /** The ingress TLS Secret an {@code ingressTlsUpload} or {@code ingressTlsSelfSign} payload writes. */
     private static String ingressTlsSecretName(Map<String, Object> payload, HelmDeployRequest request) {
         Object name = payload.get("secretName");
@@ -5892,7 +5984,7 @@ public class CommandService {
      * install pipeline (operation=create) — the Certificate CR is applied pre-deploy so
      * cert-manager already has the Secret ready by the time the chart references it.
      */
-    private String appendIngressTlsCertManagerStep(CommandEntity root, String namespace,
+    private String appendIngressTlsCertManagerStep(CommandEntity root, String namespace, String releaseName,
                                                    String certName, String secretName,
                                                    String issuerName, String issuerKind,
                                                    List<String> dnsNames, Integer durationHours,
@@ -5906,6 +5998,7 @@ public class CommandService {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("operation", "create");
         params.put("namespace", namespace);
+        if (releaseName != null) params.put("releaseName", releaseName);
         params.put("certName", certName);
         params.put("secretName", secretName);
         params.put("issuerName", issuerName);
@@ -5934,7 +6027,7 @@ public class CommandService {
      * install pipeline — the ExternalSecret CR is applied pre-deploy so ESO has already
      * synced the Secret from the upstream store by the time the chart references it.
      */
-    private String appendIngressTlsExternalSecretStep(CommandEntity root, String namespace,
+    private String appendIngressTlsExternalSecretStep(CommandEntity root, String namespace, String releaseName,
                                                        String esName, String secretName,
                                                        String storeName, String storeKind,
                                                        String remoteKey, String refreshInterval) {
@@ -5947,6 +6040,7 @@ public class CommandService {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("operation", "create");
         params.put("namespace", namespace);
+        if (releaseName != null) params.put("releaseName", releaseName);
         params.put("externalSecretName", esName);
         params.put("secretName", secretName);
         params.put("secretStoreName", storeName);
@@ -8256,20 +8350,25 @@ public class CommandService {
             String certPem = String.valueOf(ingressTlsUpload.getOrDefault("certPem", ""));
             String keyPem = String.valueOf(ingressTlsUpload.getOrDefault("keyPem", ""));
             if (!certPem.isBlank() && !keyPem.isBlank()) {
-                if (holdsTlsPair(kubernetesService.getSecret(request.getNamespace(), secretName), certPem, keyPem)) {
+                io.fabric8.kubernetes.api.model.Secret existingTls =
+                        kubernetesService.getSecret(request.getNamespace(), secretName);
+                if (holdsTlsPair(existingTls, certPem, keyPem)) {
                     LOG.info("Ingress TLS secret '{}/{}' already holds the uploaded certificate and key; left as it is",
                             request.getNamespace(), secretName);
+                    labelKeptIngressTlsSecret(request.getNamespace(), secretName, ingressTlsUploadLabels(existingTls,
+                            request.getNamespace(), request.getReleaseName()), existingTls);
                 } else {
                     LOG.info("Creating/updating ingress TLS secret '{}' in namespace '{}' for release '{}' (ingress TLS upload present)", secretName, request.getNamespace(), request.getReleaseName());
                     LOG.info("Ingress TLS secret creation input: cert length={} chars, key length={} chars", certPem.length(), keyPem.length());
-                    LOG.info("Ingress TLS secret creation labels/annotations not provided; using defaults");
+                    Map<String, String> tlsLabels = ingressTlsUploadLabels(existingTls, request.getNamespace(),
+                            request.getReleaseName());
                     kubernetesService.createOrUpdateTlsSecret(
                             request.getNamespace(),
                             secretName,
                             certPem.getBytes(),
                             keyPem.getBytes(),
-                            null,
-                            null
+                            tlsLabels,
+                            tlsLabels.isEmpty() ? null : KdpsReleaseObjects.annotations(request.getNamespace())
                     );
                 }
                 // Inject the standard ingress.tls[0] list shape every KDPS chart understands.
@@ -8403,7 +8502,8 @@ public class CommandService {
                     if (!vals.isEmpty()) certSubject.put(keys[1], vals);
                 }
                 String stepId = appendIngressTlsCertManagerStep(rootCommand, request.getNamespace(),
-                        certName, secretName, issuerName, issuerKind, dnsNames, durationHours, certSubject);
+                        request.getReleaseName(), certName, secretName, issuerName, issuerKind, dnsNames,
+                        durationHours, certSubject);
                 childCommands.add(stepId);
                 this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
                 this.commandUtils.addOverride(params, "ingress.tls[0].hosts[0]", dnsNames.get(0));
@@ -8432,7 +8532,7 @@ public class CommandService {
                                 + " Pick a SecretStore from the dropdown and provide the upstream key/path.");
             } else {
                 String stepId = appendIngressTlsExternalSecretStep(rootCommand, request.getNamespace(),
-                        esName, secretName, storeName, storeKind, remoteKey, refreshInterval);
+                        request.getReleaseName(), esName, secretName, storeName, storeKind, remoteKey, refreshInterval);
                 childCommands.add(stepId);
                 this.commandUtils.addOverride(params, "ingress.tls[0].secretName", secretName);
                 if (ingressHost != null && !ingressHost.isBlank()) {
@@ -9757,6 +9857,21 @@ public class CommandService {
             }
             metadataService.recordTruststoreRefs(namespace, releaseName, truststores);
         }
+        recordKdpsObjects(metadataService, namespace, releaseName);
+    }
+
+    /**
+     * Records with the release the objects KDPS created for it outside its chart, as they are on the cluster now (see
+     * {@link KdpsReleaseObjects}): its uninstall removes a cluster-scoped one only when recorded. Never fails the
+     * deploy.
+     */
+    private void recordKdpsObjects(ReleaseMetadataService metadataService, String namespace, String releaseName) {
+        try {
+            metadataService.recordKdpsObjects(namespace, releaseName,
+                    kubernetesService.listKdpsObjectsForRelease(namespace, releaseName));
+        } catch (Exception e) {
+            LOG.warn("Could not record the objects KDPS created for {}/{}: {}", namespace, releaseName, e.toString());
+        }
     }
 
     /**
@@ -11067,13 +11182,13 @@ public class CommandService {
 
                         if (!secretData.isEmpty()) {
                             LOG.info("Materializing Secret {} in {}", secretName, namespace);
-                            Map<String, String> labels = Map.of(
-                                    "managed-by", "ambari-k8s-view",
-                                    "ambari.clemlab.com/service", serviceName,
-                                    "ambari.clemlab.com/release", releaseName
-                            );
-                            // Create/Update the secret in K8s
-                            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData);
+                            // The release's own Secret (its name carries the release): its uninstall removes it.
+                            Map<String, String> labels = new LinkedHashMap<>();
+                            labels.put("managed-by", "ambari-k8s-view");
+                            labels.put("ambari.clemlab.com/service", serviceName);
+                            labels.putAll(KdpsReleaseObjects.labels(releaseName));
+                            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, secretData, labels,
+                                    KdpsReleaseObjects.annotations(namespace));
                         }
                     }
                 }
@@ -11529,8 +11644,10 @@ public class CommandService {
                     }
 
                     this.kubernetesService.createNamespace(namespace);
+                    // The release labels: the uninstall of the release removes the Secret KDPS minted for it.
                     Map<String, String> labels = new LinkedHashMap<>();
                     labels.put("ambari.clemlab.com/release", (String) childParams.getOrDefault("releaseName", ""));
+                    labels.putAll(KdpsReleaseObjects.labels(stringValue(childParams.get("releaseName"))));
                     labels.put("ambari.clemlab.com/ca-mode", caMode);
                     if (caName != null) labels.put("ambari.clemlab.com/ca-name",
                             caName.toLowerCase().replaceAll("[^a-z0-9._-]", "-"));
@@ -11542,6 +11659,8 @@ public class CommandService {
                             asBoolean(childParams.get("replaceExisting"), false),
                             asBoolean(childParams.get("keepValidLeaf"), false));
                     if (outcome.kept()) {
+                        labelKeptSelfSignedTlsSecret(namespace, secretName,
+                                stringValue(childParams.get("releaseName")));
                         appendCommandLog(id, "INGRESS_TLS_SELFSIGN: kept " + namespace + "/" + secretName
                                 + ": its certificate is already from this CA for " + ingressHost + " and valid until "
                                 + outcome.notAfter() + ". Use Renew TLS to issue a new one.");
@@ -11607,7 +11726,8 @@ public class CommandService {
                         Map<String, Object> certSubject = childParams.get("subject") instanceof Map<?, ?> m
                                 ? (Map<String, Object>) m : null;
                         this.kubernetesService.applyCertManagerCertificate(namespace, certName, secretName,
-                                issuerName, issuerKind, dnsNames, durationHours, certSubject);
+                                issuerName, issuerKind, dnsNames, durationHours, certSubject,
+                                (String) childParams.get("releaseName"));
                         appendCommandLog(id, "INGRESS_TLS_CERTMANAGER: applied Certificate "
                                 + namespace + "/" + certName + " issuer=" + issuerKind + "/" + issuerName);
                     }
@@ -11640,7 +11760,8 @@ public class CommandService {
                             throw new IllegalStateException("INGRESS_TLS_EXTERNAL_SECRET: secretStoreName + remoteKey are required");
                         }
                         this.kubernetesService.applyExternalSecret(namespace, esName, secretName,
-                                storeName, storeKind, remoteKey, refreshInterval);
+                                storeName, storeKind, remoteKey, refreshInterval,
+                                (String) childParams.get("releaseName"));
                         appendCommandLog(id, "INGRESS_TLS_EXTERNAL_SECRET: applied ExternalSecret "
                                 + namespace + "/" + esName + " store=" + storeKind + "/" + storeName);
                     }
@@ -11985,7 +12106,8 @@ public class CommandService {
                             // ignore: namespace may already exist or user may not want auto-create
                         }
                         this.kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, keyNameInSecret,
-                                source.get(), keytabSecretLabels(keytabRelease, keytabPrincipal), null, Boolean.TRUE);
+                                source.get(), keytabSecretLabels(keytabRelease, keytabPrincipal),
+                                KdpsReleaseObjects.annotations(namespace), Boolean.TRUE);
                         Optional<byte[]> written =
                                 this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
                         String copiedSha256 = sha256Hex(source.get());
@@ -12079,7 +12201,8 @@ public class CommandService {
                             try {
                                 this.kubernetesService.createOrUpdateOpaqueSecret(
                                         namespace, secretName, keyNameInSecret, keytabBytes,
-                                        keytabSecretLabels(keytabRelease, keytabPrincipal), null, Boolean.TRUE
+                                        keytabSecretLabels(keytabRelease, keytabPrincipal),
+                                        KdpsReleaseObjects.annotations(namespace), Boolean.TRUE
                                 );
 
                                 Optional<byte[]> verifiedSecretBytes =
@@ -13568,6 +13691,8 @@ public class CommandService {
         if (release != null && release.matches("[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?")) {
             labels.put(KEYTAB_RELEASE_LABEL, release);
         }
+        // The uninstall of the release removes its keytab Secret (the principal stays in the KDC).
+        labels.putAll(KdpsReleaseObjects.labels(release));
         return labels;
     }
 
@@ -13745,7 +13870,8 @@ public class CommandService {
             String key = sibling.key() != null ? sibling.key() : "service.keytab";
             try {
                 kubernetesService.createOrUpdateOpaqueSecret(namespace, sibling.secretName(), key, issued,
-                        keytabSecretLabels(sibling.release(), principal), null, Boolean.TRUE);
+                        keytabSecretLabels(sibling.release(), principal), KdpsReleaseObjects.annotations(namespace),
+                        Boolean.TRUE);
             } catch (Exception e) {
                 appendCommandLog(commandId, "WARNING: could not write the new keytab of " + principal + " to Secret "
                         + namespace + "/" + sibling.secretName() + ", which now holds an outdated key: " + e.getMessage()
@@ -13920,7 +14046,10 @@ public class CommandService {
 
     /**
      * Labels a keytab Secret an earlier version wrote without the labels naming its principal and release, so the
-     * other releases of the principal find it. Best effort: the keytab is rewritten unchanged.
+     * other releases of the principal find it, and the uninstall of its release removes it. Best effort: the keytab is
+     * rewritten unchanged, and one already labelled with its principal only gets the release labels it lacks, its data
+     * left as it is. A Secret the view did not write (one an administrator provided), or one another release claims,
+     * is not given the release labels, so the release's uninstall leaves it.
      */
     private void labelKeytabSecret(String namespace, String secretName, String key, byte[] keytab, String releaseName,
                                    String principal) {
@@ -13929,13 +14058,29 @@ public class CommandService {
         }
         try {
             io.fabric8.kubernetes.api.model.Secret secret = kubernetesService.getSecret(namespace, secretName);
-            Map<String, String> labels = secret == null || secret.getMetadata() == null ? null
-                    : secret.getMetadata().getLabels();
-            if (secret == null || (labels != null && labels.containsKey(KEYTAB_PRINCIPAL_LABEL))) {
+            if (secret == null || secret.getMetadata() == null) {
                 return;
             }
-            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, key, keytab,
-                    keytabSecretLabels(releaseName, principal), null, Boolean.TRUE);
+            Map<String, String> labels = secret.getMetadata().getLabels();
+            boolean viewWritten = secret.getMetadata().getAnnotations() != null
+                    && VIEW_MANAGED_BY.equals(secret.getMetadata().getAnnotations().get("managed-by"));
+            if (labels != null && labels.containsKey(KEYTAB_PRINCIPAL_LABEL)) {
+                // Written with its principal's label before the release labels existed: a reused keytab is not written
+                // again, so this is the only step that can make it the release's.
+                Map<String, String> missing = KdpsReleaseObjects.missingLabels(secret.getMetadata(), viewWritten,
+                        namespace, releaseName, KEYTAB_RELEASE_LABEL);
+                if (!missing.isEmpty()) {
+                    kubernetesService.addSecretLabels(namespace, secretName, missing,
+                            KdpsReleaseObjects.annotations(namespace));
+                }
+                return;
+            }
+            Map<String, String> keytabLabels = keytabSecretLabels(releaseName, principal);
+            if (!viewWritten) {
+                keytabLabels.remove(KdpsReleaseObjects.LABEL_RELEASE);
+            }
+            kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, key, keytab, keytabLabels,
+                    viewWritten ? KdpsReleaseObjects.annotations(namespace) : null, Boolean.TRUE);
         } catch (Exception e) {
             LOG.info("Could not label keytab Secret {}/{}: {}", namespace, secretName, e.toString());
         }
@@ -17461,6 +17606,61 @@ public class CommandService {
         return kubernetesService.removeSccGrants(namespace, releaseName, sccGrants, otherReleases);
     }
 
+    /**
+     * Removes what KDPS created for a release outside its chart, once the release is uninstalled (see
+     * {@link KubernetesService#revokeKdpsObjectsForRelease}): in both deployment modes, since Helm and Flux only remove
+     * what the release's manifests hold.
+     *
+     * <p>Failures are reported, never thrown: the release is already gone.
+     *
+     * @param recordedObjects the objects the release's record names (see {@link K8sReleaseEntity#getKdpsObjects}); null
+     *                        for a release recorded before KDPS recorded them, whose report then says what to look for
+     * @return the report ({@code removed}, {@code left} with the commands that remove them, {@code note}), or null when
+     *         KDPS created nothing for the release
+     */
+    public Map<String, Object> revokeKdpsObjectsForRelease(String namespace, String releaseName,
+                                                           List<String> recordedObjects) {
+        KdpsReleaseObjects.Cleanup cleanup;
+        try {
+            cleanup = kubernetesService.revokeKdpsObjectsForRelease(namespace, releaseName, recordedObjects);
+        } catch (RuntimeException e) {
+            LOG.warn("Cleanup of the objects KDPS created for {}/{} failed: {}", namespace, releaseName, e.toString());
+            cleanup = new KdpsReleaseObjects.Cleanup(List.of(), List.of(new KdpsReleaseObjects.Leftover(
+                    "Objects KDPS created for the release", "the cleanup failed: " + reasonOf(e),
+                    "oc delete secret,configmap,serviceaccount,role,rolebinding -l "
+                            + KdpsReleaseObjects.LABEL_MANAGED_BY + "=" + KdpsReleaseObjects.MANAGED_BY + ","
+                            + KdpsReleaseObjects.LABEL_RELEASE + "=" + releaseName + " -n " + namespace)));
+        }
+        if (recordedObjects == null && cleanup != null) {
+            // Deployed, and not since redeployed, by a version that neither labelled nor recorded what it created:
+            // an empty report would read as a complete cleanup.
+            List<KdpsReleaseObjects.Leftover> kept = new ArrayList<>(cleanup.kept());
+            kept.add(new KdpsReleaseObjects.Leftover("Objects an earlier KDPS version created for the release",
+                    "that version did not mark them, so they cannot be told from objects an administrator provided."
+                            + " Look for the autoscaler's monitoring token with its service account, Role and"
+                            + " RoleBinding, the cert-manager Certificate or ExternalSecret and the ingress certificate"
+                            + " Secret named after the release, and delete those nothing else uses",
+                    "oc get secret,serviceaccount,role,rolebinding,certificate.cert-manager.io,"
+                            + "externalsecret.external-secrets.io -n " + namespace + " | grep " + releaseName));
+            cleanup = new KdpsReleaseObjects.Cleanup(cleanup.removed(), cleanup.left(), kept);
+        }
+        return cleanup == null || cleanup.isEmpty() ? null : cleanup.toMap();
+    }
+
+    /**
+     * The objects the uninstall of a release would remove of those KDPS created for it (see
+     * {@link #revokeKdpsObjectsForRelease}), as {@code <Kind>/<name>}: what the uninstall confirmation lists. The
+     * ClusterRoleBindings are those the release's record names.
+     */
+    public List<String> kdpsObjectsOfRelease(String namespace, String releaseName, List<String> recordedObjects) {
+        List<String> found = kubernetesService.listKdpsObjectsForRelease(namespace, releaseName);
+        List<String> objects = new ArrayList<>(found == null ? List.of() : found);
+        String clusterScoped = KdpsReleaseObjects.CLUSTER_ROLE_BINDING + "/";
+        objects.removeIf(o -> o.startsWith(clusterScoped)
+                && (recordedObjects == null || !recordedObjects.contains(o)));
+        return objects;
+    }
+
     /** A service's {@code openshiftScc}, read once per service; null when unknown or unreadable. */
     private static List<Map<String, Object>> openshiftScc(StackDefinitionService definitions,
                                                           Map<String, List<Map<String, Object>>> read,
@@ -17897,13 +18097,17 @@ public class CommandService {
     private static final String VIEW_MANAGED_BY_ANNOTATION = "managed-by";
     private static final String VIEW_MANAGED_BY_VALUE = "ambari-k8s-view";
 
-    /** The labels of the Secrets holding the OIDC client of a release. */
+    /**
+     * The labels of the Secrets holding the OIDC client of a release. They carry the release label too, but keep their
+     * own {@code managed-by} value: {@link #revokeOidcForRelease} removes them with the Keycloak client, or leaves
+     * them when the uninstall asks to keep the sign-in, so the sweep of the release's other objects does not.
+     */
     static Map<String, String> oidcSecretLabels(String releaseName) {
         Map<String, String> labels = new LinkedHashMap<>();
         labels.put(OIDC_LABEL_MANAGED_BY, OIDC_MANAGED_BY_KDPS);
         if (releaseName != null && !releaseName.isBlank()) labels.put(OIDC_LABEL_INSTANCE, releaseName);
         labels.put(OIDC_LABEL_TYPE, OIDC_TYPE_CLIENT);
-        return labels;
+        return KdpsReleaseObjects.withReleaseLabel(labels, releaseName);
     }
 
     /**

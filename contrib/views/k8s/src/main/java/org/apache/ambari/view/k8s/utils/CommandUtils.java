@@ -25,6 +25,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.CommandParamsStore;
 import org.apache.ambari.view.k8s.service.CommandPlanFactory;
+import org.apache.ambari.view.k8s.service.KdpsReleaseObjects;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.slf4j.Logger;
@@ -563,7 +564,7 @@ public class CommandUtils {
         String configMapName = krb5ConfigMapName(releaseName);
         boolean written;
         try {
-            written = ensureKrb5ConfConfigMap(namespace, configMapName, contextKrb5);
+            written = ensureKrb5ConfConfigMap(namespace, configMapName, contextKrb5, releaseName);
         } catch (RuntimeException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             throw new IllegalStateException("Kerberos is enabled for this deploy but its krb5.conf ConfigMap "
@@ -592,6 +593,17 @@ public class CommandUtils {
      * from the Ambari-hosting cluster.
      */
     public boolean ensureKrb5ConfConfigMap(String namespace, String configMapName, String krb5Override) {
+        return ensureKrb5ConfConfigMap(namespace, configMapName, krb5Override, null);
+    }
+
+    /**
+     * Same as {@link #ensureKrb5ConfConfigMap(String, String, String)}, for the krb5.conf ConfigMap of
+     * {@code releaseName}, which gets the release labels so the uninstall of the release removes it.
+     *
+     * @param releaseName the release the ConfigMap is for; null for one shared by the namespace, left unlabelled
+     */
+    public boolean ensureKrb5ConfConfigMap(String namespace, String configMapName, String krb5Override,
+                                           String releaseName) {
         final boolean fromContext = (krb5Override != null && !krb5Override.isBlank());
         final String krb5Path = "/etc/krb5.conf";
         File f = new File(krb5Path);
@@ -628,14 +640,16 @@ public class CommandUtils {
             // key name inside the CM; this is what you mount with subPath: "krb5.conf"
             data.put("krb5.conf", content);
 
-            Map<String, String> labels = Map.of(
-                    "managed-by", "ambari-k8s-view",
-                    "purpose", "kerberos-krb5-conf"
-            );
+            Map<String, String> labels = new LinkedHashMap<>();
+            labels.put("managed-by", "ambari-k8s-view");
+            labels.put("purpose", "kerberos-krb5-conf");
+            labels.putAll(KdpsReleaseObjects.labels(releaseName));
 
-            Map<String, String> annotations = Map.of(
-                    "managed-at", java.time.Instant.now().toString()
-            );
+            Map<String, String> annotations = new LinkedHashMap<>();
+            annotations.put("managed-at", java.time.Instant.now().toString());
+            if (labels.containsKey(KdpsReleaseObjects.LABEL_RELEASE)) {
+                annotations.putAll(KdpsReleaseObjects.annotations(namespace));
+            }
 
             this.kubernetesService.createNamespace(namespace);
             this.kubernetesService.createOrUpdateConfigMap(
