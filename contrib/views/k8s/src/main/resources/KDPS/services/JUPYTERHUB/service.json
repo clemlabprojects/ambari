@@ -1,6 +1,6 @@
 {
   "label": "JupyterHub",
-  "description": "Multi-user JupyterHub on Kubernetes (Z2JH). Spawns a per-user JupyterLab pod on login. SSO via Keycloak (OIDC). Single-user image is the Clemlab wrap of jupyter/datascience-notebook with Trino + PySpark preinstalled and the company CAs in the trust store.",
+  "description": "Multi-user JupyterHub on Kubernetes (Z2JH). Spawns a per-user JupyterLab pod on login. SSO via Keycloak (OIDC). Single-user image is the Clemlab wrap of jupyter/datascience-notebook with Trino + PySpark preinstalled.",
   "chart": "jupyterhub",
   "version": "4.3.5",
   "defaultRepo": "clemlab",
@@ -126,14 +126,14 @@
           "label": "Single-user image",
           "type": "string",
           "defaultValue": "registry.clemlab.com/clemlabprojects/jupyterhub/singleuser",
-          "help": "Container image users get when they spawn a notebook. Default is the Clemlab wrap (datascience-notebook + Trino + PySpark + Clemlab CA in trust store). Replace with your own image to add libs."
+          "help": "Container image users get when they spawn a notebook. Default is the Clemlab wrap (datascience-notebook + Trino + PySpark). Replace with your own image to add libs or to control which certificate authorities the notebook trusts."
         },
         {
           "name": "hub.image.name",
           "label": "Hub image",
           "type": "string",
           "defaultValue": "registry.clemlab.com/clemlabprojects/jupyterhub/hub",
-          "help": "JupyterHub hub container image. Default is the Clemlab wrap of quay.io/jupyterhub/k8s-hub that downgrades the cryptography Python package from the upstream's broken 48.0.0 (SIGILLs on armv8) to a known-good 45.x and adds the company CA bundle to the trust store. Override only if you've built your own."
+          "help": "JupyterHub hub container image. Default is the Clemlab wrap of quay.io/jupyterhub/k8s-hub that downgrades the cryptography Python package from the upstream's broken 48.0.0 (SIGILLs on armv8) to a known-good 45.x. The truststores selected for the release are mounted into the hub at runtime. Override only if you've built your own."
         },
         {
           "name": "hub.image.tag",
@@ -146,7 +146,7 @@
           "label": "Single-user image tag",
           "type": "string",
           "defaultValue": "1.0.0",
-          "help": "Tag of the single-user image. Bump this whenever you rebuild the Dockerfile (clemlab-internal CA refresh, new pinned libs)."
+          "help": "Tag of the single-user image. Bump this whenever you rebuild the Dockerfile (new pinned libs)."
         },
         {
           "name": "singleuser.storage.capacity",
@@ -295,7 +295,7 @@
     },
     {
       "name": "hub-trust-clemlab-ca",
-      "_description": "Mount the merged <release>-truststore Secret's ca.crt into the hub pod and point Python's requests/urllib at it. The Hub itself is upstream Z2JH (not our wrap) and so doesn't trust Clemlab Internal CA by default — without this the Hub fails the OIDC discovery / token / JWKS calls to Keycloak when those endpoints use the company CA.",
+      "_description": "Mount the merged <release>-truststore Secret's ca.crt into the hub pod and point Python's requests/urllib at it. The Hub itself is upstream Z2JH (not our wrap) and so doesn't trust the private CAs of the truststores by default — without this the Hub fails the OIDC discovery / token / JWKS calls to Keycloak when those endpoints use the company CA.",
       "targets": [
         { "path": "hub.extraVolumes[0].name",                     "from": { "type": "template", "template": "clemlab-ca" } },
         { "path": "hub.extraVolumes[0].secret.secretName",        "from": { "type": "template", "template": "${releaseName}-truststore" } },
