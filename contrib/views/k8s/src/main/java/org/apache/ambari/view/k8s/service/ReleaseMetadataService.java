@@ -216,6 +216,25 @@ public class ReleaseMetadataService {
         releaseRepository.update(e);
     }
 
+    /**
+     * Records the truststores selected for a release, so a later redeploy without a selection keeps them.
+     *
+     * @param refs the selection; an empty list is a choice too (default truststores only); null changes nothing
+     */
+    public void recordTruststoreRefs(String namespace, String releaseName, java.util.List<String> refs) {
+        if (refs == null) return;
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null || java.util.Objects.equals(refs, e.getTruststoreRefs())) return;
+        e.setTruststoreRefs(refs);
+        releaseRepository.update(e);
+    }
+
+    /** The truststores recorded for a release, or {@code null} when no selection was ever recorded. */
+    public java.util.List<String> truststoreRefs(String namespace, String releaseName) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        return e == null ? null : e.getTruststoreRefs();
+    }
+
     public void recordInstallOrUpgrade(
             String namespace,
             String releaseName,

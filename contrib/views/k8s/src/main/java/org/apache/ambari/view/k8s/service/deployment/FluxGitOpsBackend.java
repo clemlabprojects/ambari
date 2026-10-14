@@ -55,6 +55,7 @@ import org.apache.ambari.view.k8s.service.TrustBundleService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
 import org.apache.ambari.view.k8s.service.CommandService;
+import org.apache.ambari.view.k8s.service.DependencyRules;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
@@ -180,6 +181,44 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.warn("Could not determine the Kerberos state from Ambari, leaving the chart default: {}", ex.toString());
             return null;
         }
+    }
+
+    /**
+     * Why a dependency is not written to Git for this deploy, or {@code null}: the keytab webhook outside the WEBHOOK
+     * Kerberos injection mode, then the rules direct deploys apply ({@link DependencyRules}).
+     */
+    private String gitOpsSkipReason(String name, Map<String, Object> spec, HelmDeployRequest request,
+                                    boolean managedHere, DeploymentContext context) {
+        if ("kerberos-keytab-mutating-webhook".equals(name)) {
+            if (!"WEBHOOK".equals(CommandService.resolveKerberosInjectionMode(viewContext))) {
+                return "Skipped — the keytab webhook is only used in the WEBHOOK Kerberos injection mode.";
+            }
+            if (followsAmbariKerberos(request) && Boolean.FALSE.equals(ambariClusterKerberos(context))) {
+                return "Skipped — Kerberos is disabled on the cluster.";
+            }
+        }
+        DependencyRules.applyNamespaceFromForm(spec, request.getFormValues());
+        String reason = DependencyRules.settingsSkipReason(name, spec, request, kubernetesService);
+        if (reason != null || managedHere) {
+            return reason;
+        }
+        return DependencyRules.reuseSkipReason(name, spec, request, kubernetesService, this::helmReleaseExists);
+    }
+
+    /** Whether a Helm release of that name is installed in the namespace. */
+    private boolean helmReleaseExists(String namespace, String name) {
+        try {
+            String kubeconfig = kubernetesService.getConfigurationService().getKubeconfigContents();
+            return kubeconfig != null && !kubeconfig.isBlank()
+                    && helmService.list(namespace, kubeconfig).stream().anyMatch(r -> name.equals(r.getName()));
+        } catch (Exception e) {
+            LOG.warn("Could not check for Helm release {}/{}: {}", namespace, name, e.toString());
+            return false;
+        }
+    }
+
+    private static String stringOrNull(Object o) {
+        return o == null ? null : String.valueOf(o);
     }
 
     /**
@@ -454,8 +493,33 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         LOG.warn("Skipping dependency {} with missing chart name", depKey);
                         continue;
                     }
-                    
-                    String depVersion = firstNonBlank((String) depSpec.get("version"), version, "latest");
+                    // The same dependencies as a direct deploy: none on OpenShift that the platform provides, none
+                    // that the settings do not need, none already on the cluster. One this release already manages
+                    // through Flux is kept even though it is now "on the cluster": Flux installed it.
+                    // "Manages" = published on the base branch, not merely present in the local workspace.
+                    Path depFile = depDir.resolve(firstNonBlank((String) depSpec.get("releaseName"), depKey) + "-helmrelease.yaml");
+                    // (the base branch; in direct-commit mode also the working branch this release pushes to, which
+                    // Flux reads; never a PR branch, which is not reconciled until merged)
+                    Boolean onBase = gitClient.publishedOn(depFile, baseBranch);
+                    Boolean onWorking = "PR_MODE".equalsIgnoreCase(git.getCommitMode()) ? Boolean.FALSE
+                            : gitClient.publishedOn(depFile, branch);
+                    boolean managedHere = Boolean.TRUE.equals(onBase) || Boolean.TRUE.equals(onWorking);
+                    String skipped = gitOpsSkipReason(depKey, depSpec, request, managedHere, context);
+                    if (skipped != null) {
+                        // A published file is left in place: the operator it installs (KEDA, the keytab webhook) is
+                        // shared, and other releases may rely on it. One never published (e.g. in a still-open PR
+                        // branch) is removed, so merging it cannot install a second copy. When the lookup failed,
+                        // nothing is deleted.
+                        if (!managedHere && onBase != null && onWorking != null) {
+                            gitClient.deletePath(depFile);
+                        }
+                        logFluxInfo(namespace, release, "automation", "Dependency %s not written: %s", depKey, skipped);
+                        continue;
+                    }
+
+                    // service.json names it chartVersion; "version" is kept for older definitions.
+                    String depVersion = firstNonBlank(stringOrNull(depSpec.get("chartVersion")),
+                            stringOrNull(depSpec.get("version")), version, "latest");
                     String depReleaseName = firstNonBlank((String) depSpec.get("releaseName"), depKey);
                     String depNamespace = firstNonBlank((String) depSpec.get("namespace"), namespace);
                     depRefs.add(new DepRef(depReleaseName, depNamespace));
@@ -764,6 +828,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     prNumber,
                     prState
             );
+            releaseMetadataService.recordTruststoreRefs(namespace, release, request.getTruststoreRefs());
         } catch (Exception ex) {
             LOG.warn("Failed to persist Flux metadata for {}/{}: {}", namespace, release, ex.toString());
         }
@@ -1445,9 +1510,18 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             int code = new ProcessBuilder("git", "reset", "--hard", "HEAD")
                     .directory(repoDir.toFile())
                     .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                     .start()
                     .waitFor();
             if (code != 0) LOG.warn("git reset --hard failed (exit {}) in {}", code, repoDir);
+            // Files written for the failed deploy and never committed would otherwise linger into the next one.
+            code = new ProcessBuilder("git", "clean", "-fd")
+                    .directory(repoDir.toFile())
+                    .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .start()
+                    .waitFor();
+            if (code != 0) LOG.warn("git clean -fd failed (exit {}) in {}", code, repoDir);
         } catch (Exception ex) {
             LOG.warn("Could not reset workspace {} after failure: {}", repoDir, ex.getMessage());
         }

@@ -117,4 +117,45 @@ class GitClientTest {
     org.junit.jupiter.api.Assertions.assertNull(credentialsFor("ssh://git@git.example.com/a/b.git", "t0k"));
     org.junit.jupiter.api.Assertions.assertNull(credentialsFor("https://git.example.com/a/b.git", ""));
   }
+
+    @Test
+    void onlyWhatTheBaseBranchPublishesCountsAsExisting(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        assertTrue(client.existsOnBaseBranch(Path.of("README.md")));
+
+        client.writeFile(Path.of("deps/keda-helmrelease.yaml"), "kind: HelmRelease\n");
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")),
+                "written but not published");
+        client.commitWithoutPush("local only");
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")),
+                "committed but not pushed");
+        client.writeFile(Path.of("deps/other.yaml"), "x: 1\n");
+        assertNotNull(client.commitAndPush("publish"), "pushes both commits");
+        client.sync();
+        assertTrue(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")));
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("../outside")));
+    }
+
+    @Test
+    void aFilePublishedOnTheWorkingBranchIsSeenThere(@TempDir Path tmp) throws Exception {
+        String url = seededBareRepo(tmp);
+        GitClient client = new GitClient(tmp.resolve("ws"), url, BRANCH, null).withAuthor("KDPS Test", "kdps@example.com");
+        client.sync();
+        client.checkoutBranch("flux-123");
+        client.writeFile(Path.of("deps/keda-helmrelease.yaml"), "kind: HelmRelease\n");
+        assertNotNull(client.commitAndPush("on the working branch"));
+        client.sync();
+
+        assertTrue(client.existsOnRemoteBranch(Path.of("deps/keda-helmrelease.yaml"), "flux-123"));
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnBaseBranch(Path.of("deps/keda-helmrelease.yaml")));
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnRemoteBranch(Path.of("README.md"), "never-pushed"));
+        org.junit.jupiter.api.Assertions.assertFalse(client.existsOnRemoteBranch(Path.of("README.md"), null));
+        org.junit.jupiter.api.Assertions.assertEquals(Boolean.TRUE, client.publishedOn(Path.of("README.md"), BRANCH));
+
+        GitClient noRepo = new GitClient(tmp.resolve("not-a-repo"), url, BRANCH, null);
+        org.junit.jupiter.api.Assertions.assertNull(noRepo.publishedOn(Path.of("README.md"), BRANCH),
+                "unreadable: unknown, so the caller deletes nothing");
+    }
 }
