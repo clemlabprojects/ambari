@@ -517,12 +517,12 @@ class CommandServiceRedeployDefaultsTest {
 
     @Test
     void aServiceWithoutAnOperatorKeytabIsNotRefused() throws Exception {
-        // JupyterHub runs with Kerberos from its own values and has no operator keytab field to restore or select.
-        recordRelease("JUPYTERHUB", "jupyterhub", "cdp-prod", "4.3.5");
+        // GitLab has no Kerberos keytab field to restore or select, whatever its values say.
+        recordRelease("GITLAB", "gitlab", "cdp-prod", "8.11.2");
         Map<String, Object> values = kerberizedValues(null);
         HelmDeployRequest request = resyncRequest(values);
-        request.setChart("jupyterhub");
-        request.setServiceKey("JUPYTERHUB");
+        request.setChart("gitlab");
+        request.setServiceKey("GITLAB");
         when(k8s.getHelmReleaseValues(NS, RELEASE)).thenReturn(values);
 
         submit(request, null, null);

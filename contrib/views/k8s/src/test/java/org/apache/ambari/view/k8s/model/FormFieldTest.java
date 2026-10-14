@@ -91,41 +91,10 @@ class FormFieldTest {
   }
 
   @Test
-  void jupyterHubSignInFieldsKeepTheirRules() throws Exception {
-    // Same failure mode: without these properties the wizard would let JupyterHub deploy with nobody allowed to sign
-    // in, an upgrade would show an all-users hub as group-restricted, and an upgrade nobody edited would empty the
-    // allowed groups, the admin groups and the admin users.
-    try (InputStream in = getClass().getResourceAsStream("/KDPS/services/JUPYTERHUB/service.json")) {
-      assertNotNull(in, "JUPYTERHUB/service.json must be on the classpath");
-      JsonNode form = mapper.readTree(in).get("form");
-
-      FormField access = mapper.treeToValue(findFieldByName(form, "hubLoginAccess"), FormField.class);
-      assertTrue(access.required);
-      assertEquals("groups", access.defaultValue);
-      assertEquals("hub.config.GenericOAuthenticator.allow_all", access.seedFromValue);
-      assertEquals("all", access.seedValueMap.get("true"));
-      assertEquals("groups", access.seedValueMap.get("false"));
-
-      FormField allowed = mapper.treeToValue(findFieldByName(form, "allowedGroups"), FormField.class);
-      assertNotNull(allowed.requiredUnlessAny, "allowedGroups must keep its requiredUnlessAny rule");
-      assertEquals(java.util.List.of("adminGroups", "hubAdminUsers"), allowed.requiredUnlessAny.get("fields"));
-      assertNotNull(allowed.requiredUnlessAny.get("message"));
-      assertEquals("groups", allowed.condition.get("value"));
-      assertEquals(java.util.List.of("hub.config.GenericOAuthenticator.allowed_groups"), allowed.seedFromValues);
-
-      FormField adminGroups = mapper.treeToValue(findFieldByName(form, "adminGroups"), FormField.class);
-      assertEquals(java.util.List.of("hub.config.GenericOAuthenticator.admin_groups"), adminGroups.seedFromValues);
-
-      FormField adminUsers = mapper.treeToValue(findFieldByName(form, "hubAdminUsers"), FormField.class);
-      assertEquals("hub.extraConfig.20-clemlab-admins", adminUsers.seedFromSnippet);
-    }
-  }
-
-  @Test
   void everyReleaseNameFieldWarnsWithHelmsRule() throws Exception {
     // Same failure mode again: an undeclared "pattern" would never reach the wizard, which would then let any name
     // through until the server refuses it.
-    for (String service : new String[] {"TRINO", "SUPERSET", "OPENMETADATA", "JUPYTERHUB", "GITLAB"}) {
+    for (String service : new String[] {"TRINO", "SUPERSET", "OPENMETADATA", "GITLAB"}) {
       try (InputStream in = getClass().getResourceAsStream("/KDPS/services/" + service + "/service.json")) {
         assertNotNull(in, service);
         JsonNode releaseName = null;

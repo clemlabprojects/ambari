@@ -78,6 +78,10 @@ These services were offered by pre-release builds and are no longer in the servi
   mode. Its Trino password or token would be kept in the chart values, and committed to Git in GitOps mode. Its
   documentation site would be published without login or TLS. To run dbt, use your own tooling against the Trino
   that KDPS deploys.
+- **JupyterHub**: not part of this release. It is no longer offered in the catalog or in the install list of the
+  Releases page. A JupyterHub release deployed by a pre-release build stays in the Releases list and can be
+  uninstalled, but it can no longer be deployed again or upgraded from KDPS. The container images that pre-release
+  builds published for it have been withdrawn: do not run them.
 
 ### Services with limits
 

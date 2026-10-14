@@ -67,7 +67,7 @@ public class FluxGitOpsBackendTimeoutTest {
 
     @Test
     public void everyShippedServiceGetsATimeoutFluxAccepts() {
-        for (String key : new String[] {"GITLAB", "OPENMETADATA", "SUPERSET", "TRINO", "JUPYTERHUB"}) {
+        for (String key : new String[] {"GITLAB", "OPENMETADATA", "SUPERSET", "TRINO"}) {
             String timeout = FluxGitOpsBackend.helmTimeout(new StackDefinitionService().getServiceDefinition(key));
             assertTrue(key + ": " + timeout, timeout.matches("([0-9]+(\\.[0-9]+)?(ms|s|m|h))+"));
         }

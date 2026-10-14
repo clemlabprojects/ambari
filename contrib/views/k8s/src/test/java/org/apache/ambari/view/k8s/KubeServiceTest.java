@@ -654,7 +654,7 @@ class KubeServiceTest {
         .filter(c -> "Create ClusterRoles/ClusterRoleBindings".equals(c.get("name"))).findFirst().orElseThrow();
     assertEquals(false, clusterRbac.get("allowed"));
     assertEquals(true, clusterRbac.get("advisory"));
-    assertTrue(String.valueOf(clusterRbac.get("remediation")).contains("scheduling.userScheduler.enabled"),
+    assertTrue(String.valueOf(clusterRbac.get("remediation")).contains("ClusterRoleBindings"),
         String.valueOf(clusterRbac.get("remediation")));
     assertEquals(true, out.get("allOk"), "advisory: a project-limited account can still deploy the KDPS services");
   }

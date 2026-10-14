@@ -202,9 +202,9 @@ class TrustBundleStrictTest {
         when(k8s.listViewSecretsWithLabel(anyString(), anyString(), anyString())).thenReturn(List.of());
 
         IllegalStateException stopped = assertThrows(IllegalStateException.class,
-                () -> trustBundle.provisionForDeploy(NS, "hub", "JUPYTERHUB", List.of()));
+                () -> trustBundle.provisionForDeploy(NS, "gitlab", "GITLAB", List.of()));
 
-        assertTrue(stopped.getMessage().startsWith("Could not write truststore Secret analytics/hub-truststore: no CA "
+        assertTrue(stopped.getMessage().startsWith("Could not write truststore Secret analytics/gitlab-truststore: no CA "
                 + "certificate could be assembled"), stopped.getMessage());
         assertTrue(stopped.getMessage().contains("CA store unreadable"), stopped.getMessage());
     }
@@ -263,10 +263,9 @@ class TrustBundleStrictTest {
     }
 
     @Test
-    void gitLabAndJupyterHubMountTheReleaseTruststoreSecret() {
+    void gitLabMountsTheReleaseTruststoreSecret() {
         StackDefinitionService definitions = new StackDefinitionService();
         assertTrue(TrustBundleService.bindsReleaseTruststore(definitions.getServiceDefinition("GITLAB")));
-        assertTrue(TrustBundleService.bindsReleaseTruststore(definitions.getServiceDefinition("JUPYTERHUB")));
         assertFalse(TrustBundleService.bindsReleaseTruststore(definitions.getServiceDefinition("TRINO")));
         assertFalse(TrustBundleService.bindsReleaseTruststore(null));
     }

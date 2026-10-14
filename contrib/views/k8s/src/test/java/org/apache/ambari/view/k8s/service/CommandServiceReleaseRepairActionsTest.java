@@ -280,29 +280,29 @@ class CommandServiceReleaseRepairActionsTest {
     }
 
     @Test
-    void jupyterHubRedirectIsReadFromTheDeployedIngressHost() {
+    void aRedirectIsReadFromTheDeployedIngressHostOfAServiceThatKeepsItOutOfItsValues() {
         externalContext(true, false);
-        release("jupyterhub", "JUPYTERHUB", CONTEXT, null);
-        deployedValues.put("jupyterhub", values(
+        release("superset", "SUPERSET", CONTEXT, null);
+        deployedValues.put("superset", values(
                 "global", Map.of("security", Map.of("auth", Map.of("mode", "oidc"))),
-                "ingress", Map.of("hosts", List.of("jupyter.apps.example.com"))));
+                "ingress", Map.of("hosts", List.of("superset.apps.example.com"))));
 
-        String id = service.planReleaseOidcRegistration(NS, "jupyterhub", new MultivaluedHashMap<>(), BASE_URI);
+        String id = service.planReleaseOidcRegistration(NS, "superset", new MultivaluedHashMap<>(), BASE_URI);
 
-        assertEquals("https://jupyter.apps.example.com/hub/oauth_callback",
+        assertEquals("https://superset.apps.example.com/oauth-authorized/generic",
                 paramsOf(step(id, CommandType.OIDC_REGISTER_CLIENT)).get("oidcRedirectUri"));
     }
 
     @Test
     void aRedirectUriMissingAHostIsRefusedAndKeycloakIsLeftAlone() {
         externalContext(true, false);
-        release("jupyterhub", "JUPYTERHUB", CONTEXT, null);
-        deployedValues.put("jupyterhub", values("global", Map.of("security", Map.of("auth", Map.of("mode", "oidc")))));
+        release("superset", "SUPERSET", CONTEXT, null);
+        deployedValues.put("superset", values("global", Map.of("security", Map.of("auth", Map.of("mode", "oidc")))));
 
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
-                () -> service.planReleaseOidcRegistration(NS, "jupyterhub", new MultivaluedHashMap<>(), BASE_URI));
+                () -> service.planReleaseOidcRegistration(NS, "superset", new MultivaluedHashMap<>(), BASE_URI));
 
-        assertTrue(refused.getMessage().contains("{{jupyterHost}}"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("{{ingressHost}}"), refused.getMessage());
         assertTrue(view.dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing is planned");
     }
 

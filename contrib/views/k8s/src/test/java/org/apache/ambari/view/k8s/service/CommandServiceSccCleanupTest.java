@@ -108,7 +108,6 @@ class CommandServiceSccCleanupTest {
   @SuppressWarnings("unchecked")
   void theOtherReleasesOfTheProjectSayWhatMustStay() {
     when(k8s.isOpenShiftCluster()).thenReturn(true);
-    recorded("data", "jhub", "JUPYTERHUB");
     recorded("data", "om2", "OPENMETADATA");
     recorded("data", "trino", "TRINO");            // declares no SCC
     recorded("analytics", "om3", "OPENMETADATA");  // another project
@@ -118,8 +117,7 @@ class CommandServiceSccCleanupTest {
 
     ArgumentCaptor<Map<String, List<Map<String, Object>>>> others = ArgumentCaptor.forClass(Map.class);
     verify(k8s).removeSccGrants(eq("data"), eq("om"), any(), others.capture());
-    assertEquals(List.of("jhub", "om2"), List.copyOf(others.getValue().keySet()));
-    assertEquals("nonroot-v2", others.getValue().get("jhub").get(0).get("scc"));
+    assertEquals(List.of("om2"), List.copyOf(others.getValue().keySet()));
     assertEquals("anyuid", others.getValue().get("om2").get(0).get("scc"));
   }
 

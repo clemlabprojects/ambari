@@ -423,3 +423,48 @@ describe('HelmReleasesPage GitOps release not installed by Flux yet', () => {
     expect(getReleaseHistory).not.toHaveBeenCalled();
   });
 });
+
+describe('HelmReleasesPage release of a service this build no longer ships', () => {
+  const user = userEvent.setup();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    invalidateCapabilities();
+  });
+
+  it('offers only its history and its uninstall', async () => {
+    (getAvailableServices as jest.Mock).mockResolvedValue({ TRINO: { label: 'Trino', chart: 'trinodb/trino' } });
+    (getClusterCapabilities as jest.Mock).mockResolvedValue({ platform: 'kubernetes' });
+    (getHelmReleases as jest.Mock).mockResolvedValue({
+      items: [{
+        id: 'hub', name: 'hub', namespace: 'analytics', chart: 'jupyterhub', version: '4.0.0',
+        status: 'deployed', managedByUi: true, serviceKey: 'JUPYTERHUB', deploymentMode: 'DIRECT_HELM',
+        securityProfile: 'ldap', securityProfileStale: true, restartRequired: true, installed: true,
+      }],
+      total: 1,
+    });
+    (getReleaseTlsState as jest.Mock).mockResolvedValue([]);
+    (getReleaseStatus as jest.Mock).mockResolvedValue({
+      name: 'hub', namespace: 'analytics', status: 'deployed', deploymentMode: 'DIRECT_HELM',
+    });
+    (getReleaseActionRefusals as jest.Mock).mockResolvedValue({ refusals: {} });
+    render(
+      <PermissionsContext.Provider value={{ permissions: { canWrite: true, canConfigure: true } as any, loading: false }}>
+        <MemoryRouter><HelmReleasesPage /></MemoryRouter>
+      </PermissionsContext.Provider>);
+    await screen.findByText('hub');
+    await waitFor(() => expect(getAvailableServices).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+
+    const row = screen.getByText('hub').closest('tr') as HTMLElement;
+    const buttons = within(row).getAllByRole('button');
+    await user.click(buttons[buttons.length - 1]);
+
+    for (const name of [/Upgrade \/ Config/, /Resync \/ restart/, /Refresh security profile/]) {
+      const item = await screen.findByRole('menuitem', { name });
+      expect(item.getAttribute('aria-disabled')).toBe('true');
+    }
+    expect(screen.getByRole('menuitem', { name: /Revision history/ }).getAttribute('aria-disabled')).not.toBe('true');
+    expect(screen.getByRole('menuitem', { name: /Uninstall/ }).getAttribute('aria-disabled')).not.toBe('true');
+  });
+});

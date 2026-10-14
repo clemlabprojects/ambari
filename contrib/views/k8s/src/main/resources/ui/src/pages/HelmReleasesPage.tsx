@@ -56,6 +56,7 @@ const HelmReleasesPage: React.FC = () => {
   const { status, refresh, nodes, events } = useClusterStatus();
   const navigate = useNavigate();
   const [serviceDefinitions, setServiceDefinitions] = useState<AvailableServices>({});
+  const [servicesLoaded, setServicesLoaded] = useState(false);
   const [isCommandDrawerOpen, setIsCommandDrawerOpen] = useState(false);
   const [watchedCommandId, setWatchedCommandId] = useState<string | undefined>(undefined);
   const [isInstallPickerOpen, setIsInstallPickerOpen] = useState(false);
@@ -114,7 +115,7 @@ const HelmReleasesPage: React.FC = () => {
      * because the page can still render releases without this data; we avoid
      * blocking the UI on non-critical metadata.
      */
-    getAvailableServices().then(setServiceDefinitions).catch(() => {});
+    getAvailableServices().then((defs) => { setServiceDefinitions(defs); setServicesLoaded(true); }).catch(() => {});
     // The background-operations count is now polled globally by the app header
     // (AppLayout), so this page no longer tracks it.
   }, []);
@@ -693,10 +694,23 @@ const HelmReleasesPage: React.FC = () => {
       onClick,
     });
 
+    const SERVICE_RETIRED = 'This service is not part of this release; its releases can only be uninstalled.';
+    const serviceRetiredFor = (record: HelmRelease) =>
+      servicesLoaded && !!record.serviceKey && !serviceDefinitions[record.serviceKey];
+
     // An action that redeploys the release from the values the cluster holds, which a GitOps release Flux has not
     // installed has none of: disabled on it, with the reason.
-    const redeployItem = <T extends { label: React.ReactNode; disabled?: boolean }>(record: HelmRelease, item: T): T =>
-      notInstalledByFlux(record)
+    // A release of a service this build no longer ships (JupyterHub) cannot be redeployed either, whatever its
+    // platform: only its history and its uninstall stay (keepForRetired).
+    const redeployItem = <T extends { label: React.ReactNode; disabled?: boolean }>(record: HelmRelease, item: T,
+                                                                                    keepForRetired = false): T =>
+      !keepForRetired && serviceRetiredFor(record)
+        ? {
+          ...item,
+          disabled: true,
+          label: <Tooltip title={SERVICE_RETIRED} placement="left"><span>{item.label}</span></Tooltip>,
+        }
+        : notInstalledByFlux(record)
         ? {
           ...item,
           disabled: true,
@@ -727,7 +741,7 @@ const HelmReleasesPage: React.FC = () => {
           // A GitOps release goes back to an earlier version through Git: its history is shown, not rolled back.
           label: rollbackHeldInGit(record) ? 'Revision history (read-only)…' : 'Revision history…',
           onClick: () => { void openHistoryModal(record); },
-        }),
+        }, true),
         // Live catalog management, on the Trino releases where it can run: runs on the coordinator as the operator.
         ...(offersCatalogs(record) ? [{
           key: 'catalogs',

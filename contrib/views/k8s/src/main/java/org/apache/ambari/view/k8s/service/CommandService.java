@@ -6317,6 +6317,7 @@ public class CommandService {
         // before anything is prepared for it: its pods would never be admitted, and the install would only time out.
         // The catalog already hides it there; this also covers a deploy sent straight to the API.
         checkSupportedPlatform(request);
+        checkServiceInRelease(request);
         // A Helm call KDPS started on the release, canceled or not, may still be running. Refuse before anything
         // is done: planning the deploy already rewrites the release's TLS and truststore Secrets and its Hadoop
         // configuration, which would change under the running call for a deploy its Helm step then refuses.
@@ -6896,6 +6897,25 @@ public class CommandService {
         }
         CommandUtils.addOverride(params, KERBEROS_ENABLED_PATH, "false");
         LOG.info("Kerberos is disabled on cluster {} and no context krb5.conf supplied; overriding chart values with global.security.kerberos.enabled=false", cluster);
+    }
+
+    /**
+     * Refuses a deploy, upgrade or resync of a service this release no longer ships a definition for (JupyterHub): a
+     * release deployed by an earlier build stays listed and can be uninstalled, nothing else. Uninstall does not go
+     * through a deploy, so it is not affected.
+     *
+     * @param request the deploy request
+     * @throws IllegalStateException when the request names a service without a definition
+     */
+    void checkServiceInRelease(HelmDeployRequest request) {
+        String key = request.getServiceKey();
+        if (key == null || key.isBlank()) return;
+        if (!new StackDefinitionService(this.ctx).hasServiceDefinition(key)) {
+            LOG.warn("Deploy of {} as {}/{} refused: the service is not part of this release", key,
+                    request.getNamespace(), request.getReleaseName());
+            throw new IllegalStateException(key + " is not part of this release; a release of it deployed by an"
+                    + " earlier build can only be uninstalled.");
+        }
     }
 
     /**

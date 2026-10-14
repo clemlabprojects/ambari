@@ -71,7 +71,7 @@ public class TrustBundleService {
 
     private static final Logger LOG = LoggerFactory.getLogger(TrustBundleService.class);
 
-    /** The template service definitions bind the release truststore Secret with (GitLab, JupyterHub). */
+    /** The template service definitions bind the release truststore Secret with (GitLab). */
     static final String RELEASE_TRUSTSTORE_TEMPLATE = "${releaseName}" + TruststoreRegistryService.SUFFIX;
 
     private final ViewContext viewContext;

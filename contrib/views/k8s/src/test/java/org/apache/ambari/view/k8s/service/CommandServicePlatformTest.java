@@ -171,4 +171,18 @@ class CommandServicePlatformTest {
                 CommandService.unsupportedPlatformProblem(unlabelled, "EXAMPLE", true));
         assertNull(CommandService.unsupportedPlatformProblem(unlabelled, "EXAMPLE", false));
     }
+
+    @Test
+    void aServiceTheReleaseNoLongerShipsIsRefused() throws Exception {
+        HelmDeployRequest request = gitLab("DIRECT_HELM");
+        request.setServiceKey("JUPYTERHUB");
+        request.setReleaseName("jupyterhub");
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class, () -> submit(request));
+
+        assertEquals("JUPYTERHUB is not part of this release; a release of it deployed by an earlier build can only"
+                + " be uninstalled.", refused.getMessage());
+        verify(k8s, never()).createNamespace(anyString());
+        verify(direct, never()).apply(any(), any());
+    }
 }

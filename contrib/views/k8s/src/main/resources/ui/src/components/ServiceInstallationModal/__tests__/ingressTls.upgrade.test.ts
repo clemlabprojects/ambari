@@ -440,7 +440,7 @@ describe('a deploy refused for an existing Secret KDPS did not issue', () => {
 });
 
 describe('services whose chart manages its own TLS', () => {
-  it.each(['GITLAB', 'JUPYTERHUB'])('%s gets no ingress certificate handling on Upgrade/Config', (svc) => {
+  it.each(['GITLAB'])('%s gets no ingress certificate handling on Upgrade/Config', (svc) => {
     const def = load(svc);
     expect(offersKeepCurrentTls(def.form)).toBe(false);
     const form: any = { ingress: { enabled: true } };

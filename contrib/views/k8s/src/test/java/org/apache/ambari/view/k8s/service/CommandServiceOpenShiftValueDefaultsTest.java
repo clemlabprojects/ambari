@@ -59,9 +59,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * JupyterHub's user scheduler is off on OpenShift for every deploy, not only those from the wizard: the chart gives it a
- * ClusterRole and a ClusterRoleBinding, which an account limited to its own projects cannot create, and which a
- * cluster-admin Flux would create silently, handing a project service account cluster-wide pod rights.
+ * A user scheduler that a service definition turns off on OpenShift is off for every deploy, not only those from the
+ * wizard: the chart gives it a ClusterRole and a ClusterRoleBinding, which an account limited to its own projects
+ * cannot create, and which a cluster-admin Flux would create silently, handing a project service account cluster-wide
+ * pod rights.
  */
 class CommandServiceOpenShiftValueDefaultsTest {
 
@@ -121,13 +122,13 @@ class CommandServiceOpenShiftValueDefaultsTest {
         f.set(service, value);
     }
 
-    /** A JupyterHub deploy sent straight to the API: no wizard bindings ran on its values. */
-    private static HelmDeployRequest jupyterHub(String deploymentMode, Map<String, Object> values) {
+    /** A deploy sent straight to the API: no wizard bindings ran on its values. */
+    private static HelmDeployRequest schedulerChart(String deploymentMode, Map<String, Object> values) {
         HelmDeployRequest request = new HelmDeployRequest();
-        request.setChart("jupyterhub");
-        request.setReleaseName("jupyterhub");
+        request.setChart("scheduler-chart");
+        request.setReleaseName("scheduler");
         request.setNamespace("data");
-        request.setServiceKey("JUPYTERHUB");
+        request.setServiceKey("ZZTESTOSDEFAULTS");
         request.setRepoId("charts");
         request.setValues(values);
         request.setDeploymentMode(deploymentMode);
@@ -146,7 +147,7 @@ class CommandServiceOpenShiftValueDefaultsTest {
     void anApiDeployOnOpenShiftTurnsTheUserSchedulerOff() throws Exception {
         when(k8s.isOpenShiftCluster()).thenReturn(true);
 
-        Map<String, Object> values = deployedValues(direct, jupyterHub("DIRECT_HELM", new LinkedHashMap<>()));
+        Map<String, Object> values = deployedValues(direct, schedulerChart("DIRECT_HELM", new LinkedHashMap<>()));
 
         assertEquals(false, ConfigResolutionService.getByDottedPath(values, USER_SCHEDULER));
     }
@@ -155,7 +156,7 @@ class CommandServiceOpenShiftValueDefaultsTest {
     void aGitOpsDeployOnOpenShiftTurnsTheUserSchedulerOffToo() throws Exception {
         when(k8s.isOpenShiftCluster()).thenReturn(true);
 
-        Map<String, Object> values = deployedValues(gitOps, jupyterHub("FLUX_GITOPS", null));
+        Map<String, Object> values = deployedValues(gitOps, schedulerChart("FLUX_GITOPS", null));
 
         assertEquals(false, ConfigResolutionService.getByDottedPath(values, USER_SCHEDULER),
                 "the HelmRelease Flux applies must not render the user scheduler's ClusterRole");
@@ -165,7 +166,7 @@ class CommandServiceOpenShiftValueDefaultsTest {
     void theUserSchedulerKeepsTheChartDefaultOnPlainKubernetes() throws Exception {
         when(k8s.isOpenShiftCluster()).thenReturn(false);
 
-        Map<String, Object> values = deployedValues(direct, jupyterHub("DIRECT_HELM", new LinkedHashMap<>()));
+        Map<String, Object> values = deployedValues(direct, schedulerChart("DIRECT_HELM", new LinkedHashMap<>()));
 
         assertNull(ConfigResolutionService.getByDottedPath(values, USER_SCHEDULER));
     }
@@ -177,7 +178,7 @@ class CommandServiceOpenShiftValueDefaultsTest {
         CommandService.putDotted(requested, USER_SCHEDULER, true);
         CommandService.putDotted(requested, "scheduling.userScheduler.replicas", 1);
 
-        Map<String, Object> values = deployedValues(direct, jupyterHub("DIRECT_HELM", requested));
+        Map<String, Object> values = deployedValues(direct, schedulerChart("DIRECT_HELM", requested));
 
         assertEquals(true, ConfigResolutionService.getByDottedPath(values, USER_SCHEDULER));
         assertEquals(1, ConfigResolutionService.getByDottedPath(values, "scheduling.userScheduler.replicas"));
@@ -185,7 +186,7 @@ class CommandServiceOpenShiftValueDefaultsTest {
 
     /**
      * "Upgrade chart" on the Releases page sends the release's own values back to Helm without the wizard or
-     * submitDeploy: a JupyterHub installed on OpenShift before the default existed loses its user scheduler there too.
+     * submitDeploy: a release installed on OpenShift before the default existed loses its user scheduler there too.
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -204,9 +205,9 @@ class CommandServiceOpenShiftValueDefaultsTest {
             return "/cache/values.json";
         });
         // A release of its own: the in-flight registry is shared by the whole JVM.
-        String rel = "jupyterhub-" + Long.toHexString(System.nanoTime());
+        String rel = "scheduler-" + Long.toHexString(System.nanoTime());
         Map<String, Object> deployed = new LinkedHashMap<>();
-        CommandService.putDotted(deployed, "hub.config.JupyterHub.admin_access", true);
+        CommandService.putDotted(deployed, "hub.config.admin_access", true);
         when(cluster.getHelmReleaseValues("data", rel)).thenReturn(deployed);
         CommandService upgrades = new CommandService(upgradeCtx,
                 new HelmService(upgradeCtx, mock(HelmClient.class), () -> mock(NamespaceScope.class)), cluster);
@@ -218,8 +219,8 @@ class CommandServiceOpenShiftValueDefaultsTest {
             release.setNamespace("data");
             release.setReleaseName(rel);
             release.setManagedByUi(true);
-            release.setServiceKey("JUPYTERHUB");
-            release.setChartRef("jupyterhub");
+            release.setServiceKey("ZZTESTOSDEFAULTS");
+            release.setChartRef("scheduler-chart");
             release.setRepoId("charts");
             release.setVersion("4.3.4");
             dataStore.store(release);
@@ -231,7 +232,7 @@ class CommandServiceOpenShiftValueDefaultsTest {
             Map<String, Object> sent = new Gson().fromJson(valuesFiles.get(0), Map.class);
             assertEquals(false, ConfigResolutionService.getByDottedPath(sent, USER_SCHEDULER),
                     "the upgrade must not keep the user scheduler's ClusterRole: " + sent);
-            assertEquals(true, ConfigResolutionService.getByDottedPath(sent, "hub.config.JupyterHub.admin_access"),
+            assertEquals(true, ConfigResolutionService.getByDottedPath(sent, "hub.config.admin_access"),
                     "the release's own values are kept");
         } finally {
             upgrades.shutdown();
@@ -252,17 +253,6 @@ class CommandServiceOpenShiftValueDefaultsTest {
         assertEquals(false, ConfigResolutionService.getByDottedPath(values, USER_SCHEDULER));
         assertEquals(0, ConfigResolutionService.getByDottedPath(values, "scheduling.userPlaceholder.replicas"));
         assertFalse(values.containsKey("_comment"));
-    }
-
-    @Test
-    void jupyterHubDeclaresTheDefaultAndNoLongerAsksForAnSccForTheUserScheduler() {
-        StackServiceDef def = new StackDefinitionService().getServiceDefinition("JUPYTERHUB");
-
-        assertEquals(false, def.openshiftValueDefaults.get(USER_SCHEDULER));
-        List<String> accounts = KubernetesService.sccNeeds("jupyterhub", def.openshiftScc).stream()
-                .flatMap(need -> need.serviceAccounts().stream()).toList();
-        assertFalse(accounts.contains("user-scheduler"), accounts::toString);
-        assertTrue(accounts.contains("hub"), accounts::toString);
     }
 
     @Test

@@ -504,17 +504,16 @@ public class KubeService {
         checks.add(preflightCheck("Create Secrets", "Core", k.canI("create", "", "secrets", null, null, namespace)));
         checks.add(preflightCheck("Create ConfigMaps", "Core", k.canI("create", "", "configmaps", null, null, namespace)));
         // Cluster-wide RBAC (advisory): an account limited to its own projects cannot create these, and the KDPS
-        // services do not need them on OpenShift with their defaults (JupyterHub's user scheduler, which does, is off
-        // there). A chart that renders them anyway fails at install with "forbidden ... at the cluster scope".
+        // services do not need them with their defaults. A chart that renders them anyway fails at install with
+        // "forbidden ... at the cluster scope".
         boolean clusterRbac = k.canI("create", "rbac.authorization.k8s.io", "clusterroles", null, null, null)
                 && k.canI("create", "rbac.authorization.k8s.io", "clusterrolebindings", null, null, null);
         Map<String, Object> clusterRbacCheck = preflightCheck("Create ClusterRoles/ClusterRoleBindings",
                 "Cluster-wide RBAC", clusterRbac);
         clusterRbacCheck.put("advisory", true);
-        clusterRbacCheck.put("remediation", "With their default settings, the KDPS services do not need it on"
-                + " OpenShift. On plain Kubernetes, JupyterHub's user scheduler does: either a cluster administrator"
-                + " lets this account create ClusterRoles and ClusterRoleBindings, or set"
-                + " scheduling.userScheduler.enabled to false in the JupyterHub values before deploying.");
+        clusterRbacCheck.put("remediation", "With their default settings, the KDPS services do not need it. If a chart"
+                + " you configured does, a cluster administrator lets this account create ClusterRoles and"
+                + " ClusterRoleBindings.");
         clusterRbacCheck.put("note", "Charts that grant cluster-wide permissions create these objects at install."
                 + " Without the right, such an install is refused by the cluster and leaves a failed release.");
         checks.add(clusterRbacCheck);
@@ -546,7 +545,7 @@ public class KubeService {
                 checks.add(projectPort);
             }
 
-            // SCC (advisory): some services (OpenMetadata, JupyterHub) run pods that the default restricted-v2 SCC
+            // SCC (advisory): some services (OpenMetadata) run pods that the default restricted-v2 SCC
             // refuses. Their deploy grants the SCCs to the release's own service accounts when this account may in
             // this project (bind on the SCC's ClusterRole, or use of the SCC); otherwise it stops with the commands
             // for the platform team, and finds their grant on the next attempt. Advisory: it does not fail the
@@ -554,7 +553,7 @@ public class KubeService {
             List<String> sccs = KubernetesService.SERVICE_SCCS;
             boolean canGrantScc = sccs.stream().allMatch(scc -> k.canGrantScc(namespace, scc));
             Map<String, Object> sccCheck = preflightCheck("Grant the " + String.join(" and ", sccs)
-                    + " SCCs to the service accounts of a release (OpenMetadata, JupyterHub)", "Security (SCC)",
+                    + " SCCs to the service accounts of a release (OpenMetadata)", "Security (SCC)",
                     canGrantScc);
             sccCheck.put("advisory", true);
             sccCheck.put("remediation", "Once per project, the platform team lets this account grant them:\n"

@@ -54,7 +54,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * OpenShift SCCs for the service accounts of a release (OpenMetadata, JupyterHub): detected first, granted through one
+ * OpenShift SCCs for the service accounts of a release (OpenMetadata): detected first, granted through one
  * RoleBinding per release only when the account may, never taken away by a failed or later deploy, and removed with
  * the release.
  */
@@ -218,9 +218,14 @@ class KubernetesServiceSccGrantsTest {
     return new StackDefinitionService().getServiceDefinition("OPENMETADATA").openshiftScc;
   }
 
-  private static List<Map<String, Object>> jupyterHubScc() {
-    StackServiceDef def = new StackDefinitionService().getServiceDefinition("JUPYTERHUB");
-    return def.openshiftScc;
+  /**
+   * The SCC needs of a second service sharing the namespace's 'default' account with OpenMetadata: nonroot-v2 for a
+   * pinned non-root UID, and anyuid for a root sidecar. Declared here because no shipped service has this shape.
+   */
+  private static List<Map<String, Object>> twoSccService() {
+    return List.of(
+        Map.of("scc", "nonroot-v2", "serviceAccounts", List.of("hub", "default")),
+        Map.of("scc", "anyuid", "serviceAccounts", List.of("default")));
   }
 
   private static List<String> openMetadataAccounts(String release) {
@@ -373,7 +378,7 @@ class KubernetesServiceSccGrantsTest {
   void anotherSccAdmittingTheProbeIsNotTheOneNeeded() throws Exception {
     sccFieldGrants("privileged", "hub", "default");
 
-    String problem = svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings);
+    String problem = svc.ensureSccGrants(NS, "jhub", twoSccService(), warnings);
 
     assertNotNull(problem);
     assertTrue(problem.contains("add-scc-to-user nonroot-v2 -z hub -z default -n data"), problem);
@@ -389,8 +394,8 @@ class KubernetesServiceSccGrantsTest {
     rbacGrants("anyuid", "default");
     accountMayGrant("anyuid", "nonroot-v2");
 
-    assertNull(svc.checkSccGrants(NS, "jhub", jupyterHubScc(), warnings), "GitOps finds the platform team's grants");
-    assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings), "so does a direct deploy");
+    assertNull(svc.checkSccGrants(NS, "jhub", twoSccService(), warnings), "GitOps finds the platform team's grants");
+    assertNull(svc.ensureSccGrants(NS, "jhub", twoSccService(), warnings), "so does a direct deploy");
 
     assertEquals(List.of(), roleBindingWrites(requests()));
     assertTrue(probes.stream().anyMatch(sc -> "RuntimeDefault".equals(sc.path("seccompProfile").path("type").asText())
@@ -405,7 +410,7 @@ class KubernetesServiceSccGrantsTest {
     rbacGrants("nonroot-v2", "hub");
     rbacGrants("anyuid", "default");
 
-    String problem = svc.checkSccGrants(NS, "jhub", jupyterHubScc(), warnings);
+    String problem = svc.checkSccGrants(NS, "jhub", twoSccService(), warnings);
 
     assertNotNull(problem);
     assertTrue(problem.contains("oc adm policy add-scc-to-user nonroot-v2 -z default -n data"), problem);
@@ -414,7 +419,7 @@ class KubernetesServiceSccGrantsTest {
 
     // The platform team runs the printed command.
     rbacGrants("nonroot-v2", "default");
-    assertNull(svc.checkSccGrants(NS, "jhub", jupyterHubScc(), warnings));
+    assertNull(svc.checkSccGrants(NS, "jhub", twoSccService(), warnings));
   }
 
   @Test
@@ -425,7 +430,7 @@ class KubernetesServiceSccGrantsTest {
     rbacGrants("nonroot-v2", "hub", "default");
     rbacGrants("anyuid", "default");
 
-    String problem = svc.checkSccGrants(NS, "jhub", jupyterHubScc(), warnings);
+    String problem = svc.checkSccGrants(NS, "jhub", twoSccService(), warnings);
 
     assertNotNull(problem);
     assertTrue(problem.contains("could not check the existing grants")
@@ -461,13 +466,13 @@ class KubernetesServiceSccGrantsTest {
 
   @Test
   void aGrantOnlyThroughAnotherReleaseGetsTheReleasesOwnBinding() throws Exception {
-    // OpenMetadata granted anyuid to 'default'; JupyterHub needs it too and must not depend on OpenMetadata staying.
+    // OpenMetadata granted anyuid to 'default'; the second service needs it too and must not depend on OpenMetadata staying.
     existingBinding("kdps-scc-anyuid-om", releaseLabels("om", "anyuid"), "anyuid",
         openMetadataAccounts("om").toArray(new String[0]));
     rbacGrants("anyuid", openMetadataAccounts("om").toArray(new String[0]));
     accountMayGrant("anyuid", "nonroot-v2");
 
-    assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings));
+    assertNull(svc.ensureSccGrants(NS, "jhub", twoSccService(), warnings));
 
     assertEquals(Set.of("default"), subjects(binding("kdps-scc-anyuid-jhub")));
     assertEquals(Set.of("hub", "default"), subjects(binding("kdps-scc-nonroot-v2-jhub")));
@@ -480,7 +485,7 @@ class KubernetesServiceSccGrantsTest {
     rbacGrants("anyuid", "default");
     rbacGrants("nonroot-v2", "hub", "default");
 
-    assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings), "its pods are admitted today");
+    assertNull(svc.ensureSccGrants(NS, "jhub", twoSccService(), warnings), "its pods are admitted today");
     assertNull(binding("kdps-scc-anyuid-jhub"));
     assertEquals(1, warnings.size(), warnings::toString);
     String warning = warnings.get(0);
@@ -496,7 +501,7 @@ class KubernetesServiceSccGrantsTest {
     accountMayGrant("anyuid");
     requests();
 
-    assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings));
+    assertNull(svc.ensureSccGrants(NS, "jhub", twoSccService(), warnings));
 
     assertEquals(Set.of("default"), subjects(binding("kdps-scc-anyuid-jhub")));
     assertEquals(Set.of("default", "om-airflow-worker"), subjects(binding("kdps-scc-anyuid")), "left untouched");
@@ -511,7 +516,7 @@ class KubernetesServiceSccGrantsTest {
     rbacGrants("anyuid", "default");
     rbacGrants("nonroot-v2", "hub", "default");
 
-    assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings));
+    assertNull(svc.ensureSccGrants(NS, "jhub", twoSccService(), warnings));
 
     assertEquals(1, warnings.size(), warnings::toString);
     assertTrue(warnings.get(0).contains("kdps-scc-anyuid (made by an earlier KDPS version for the whole project)"),
@@ -528,7 +533,7 @@ class KubernetesServiceSccGrantsTest {
     accountMayGrant("anyuid", "nonroot-v2");
     requests();
 
-    assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings));
+    assertNull(svc.ensureSccGrants(NS, "jhub", twoSccService(), warnings));
 
     assertEquals(List.of(), roleBindingWrites(requests()));
     assertEquals(List.of(), warnings);
@@ -546,7 +551,7 @@ class KubernetesServiceSccGrantsTest {
     rbacGrants("anyuid", "default");
     rbacGrants("nonroot-v2", "hub", "default");
 
-    assertNull(svc.ensureSccGrants(NS, "jhub", jupyterHubScc(), warnings));
+    assertNull(svc.ensureSccGrants(NS, "jhub", twoSccService(), warnings));
 
     assertEquals(List.of(), warnings);
   }
@@ -558,7 +563,7 @@ class KubernetesServiceSccGrantsTest {
     existingBinding("kdps-scc-anyuid-jhub", releaseLabels("jhub", "anyuid"), "anyuid", "default");
     requests();
 
-    String note = svc.removeSccGrants(NS, "om", openMetadataScc(), Map.of("jhub", jupyterHubScc()));
+    String note = svc.removeSccGrants(NS, "om", openMetadataScc(), Map.of("jhub", twoSccService()));
 
     assertEquals(List.of(), roleBindingWrites(requests()), "nothing of KDPS's to remove");
     assertNotNull(note);
@@ -624,8 +629,8 @@ class KubernetesServiceSccGrantsTest {
     rbacGrants("anyuid", openMetadataAccounts("om").toArray(new String[0]));
     requests();
 
-    // JupyterHub needed only 'default', which OpenMetadata's Airflow grant in that binding also covers.
-    assertNull(svc.removeSccGrants(NS, "jhub", jupyterHubScc(), Map.of("om", openMetadataScc())),
+    // it needed only 'default', which OpenMetadata's Airflow grant in that binding also covers.
+    assertNull(svc.removeSccGrants(NS, "jhub", twoSccService(), Map.of("om", openMetadataScc())),
         "the shared binding still holds OpenMetadata's grant");
 
     assertEquals(List.of(), roleBindingWrites(requests()));
@@ -636,7 +641,7 @@ class KubernetesServiceSccGrantsTest {
 
   @Test
   void uninstallHandsAGrantAnotherReleaseStillUsesOverToIt() throws Exception {
-    // OpenMetadata's binding is all that lets JupyterHub's 'default' use anyuid.
+    // OpenMetadata's binding is all that lets the second service's 'default' use anyuid.
     existingBinding("kdps-scc-anyuid-om", releaseLabels("om", "anyuid"), "anyuid",
         openMetadataAccounts("om").toArray(new String[0]));
     existingBinding("kdps-scc-nonroot-v2-jhub", releaseLabels("jhub", "nonroot-v2"), "nonroot-v2",
@@ -645,7 +650,7 @@ class KubernetesServiceSccGrantsTest {
     accountMayGrant("anyuid");
     requests();
 
-    assertNull(svc.removeSccGrants(NS, "om", openMetadataScc(), Map.of("jhub", jupyterHubScc())));
+    assertNull(svc.removeSccGrants(NS, "om", openMetadataScc(), Map.of("jhub", twoSccService())));
 
     assertNull(binding("kdps-scc-anyuid-om"));
     RoleBinding handedOver = binding("kdps-scc-anyuid-jhub");
@@ -664,7 +669,7 @@ class KubernetesServiceSccGrantsTest {
     rbacGrants("anyuid", openMetadataAccounts("om").toArray(new String[0]));
     requests();
 
-    String note = svc.removeSccGrants(NS, "om", openMetadataScc(), Map.of("jhub", jupyterHubScc()));
+    String note = svc.removeSccGrants(NS, "om", openMetadataScc(), Map.of("jhub", twoSccService()));
 
     assertEquals(List.of(), roleBindingWrites(requests()), "nothing deleted: jhub's pods would be refused");
     assertNotNull(binding("kdps-scc-anyuid-om"));

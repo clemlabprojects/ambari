@@ -46,16 +46,15 @@ import static org.mockito.Mockito.*;
 
 /**
  * A GitOps commit without a command plan pulls its images as a direct deploy does: from the image registry of the
- * chart repository (its registry host override), with the image paths of charts that ignore {@code
- * global.imageRegistry} moved onto it, and with the image pull Secret as plain names and in the paths the service
- * definition adds. Each dependency gets the registry of its repository and its own pull Secret, created in its
+ * chart repository (its registry host override), and with the image pull Secret as plain names and in the paths the
+ * service definition adds. Each dependency gets the registry of its repository and its own pull Secret, created in its
  * namespace. What the operator set explicitly wins. Against a local bare repository.
  */
 class FluxGitOpsBackendImageRegistryTest {
 
-    private static final String NS = "notebooks";
-    private static final String RELEASE = "jupyterhub";
-    private static final String RELEASE_DIR = "clusters/default/notebooks/jupyterhub";
+    private static final String NS = "analytics";
+    private static final String RELEASE = "trino";
+    private static final String RELEASE_DIR = "clusters/default/analytics/trino";
     private static final String SHARED_DIR = "clusters/default/_shared";
     private static final String MIRROR = "harbor.bank/x";
 
@@ -140,20 +139,19 @@ class FluxGitOpsBackendImageRegistryTest {
         return backend;
     }
 
-    /** A JupyterHub deploy from the bank's chart repository, committed straight to main, which Flux reads. */
+    /** A Trino deploy from the bank's chart repository, committed straight to main, which Flux reads. */
     private HelmDeployRequest request(String serviceKey) {
         HelmDeployRequest request = new HelmDeployRequest();
         request.setNamespace(NS);
         request.setReleaseName(RELEASE);
-        request.setChart("jupyterhub");
-        request.setVersion("4.1.0");
+        request.setChart("trino");
+        request.setVersion("1.43.9");
         request.setRepoId("charts");
         request.setServiceKey(serviceKey);
         request.setDeploymentMode("FLUX_GITOPS");
         request.setSecretName("registry-credentials");
         Map<String, Object> values = new LinkedHashMap<>();
-        values.put("hub", new LinkedHashMap<>(Map.of("image",
-                new LinkedHashMap<>(Map.of("name", "quay.io/jupyterhub/k8s-hub", "tag", "4.1.0")))));
+        values.put("coordinator", new LinkedHashMap<>(Map.of("replicas", 1)));
         request.setValues(values);
         HelmDeployRequest.GitOptions git = new HelmDeployRequest.GitOptions();
         git.setRepoUrl(repoUrl);
@@ -179,16 +177,11 @@ class FluxGitOpsBackendImageRegistryTest {
 
     @Test
     void theReleasePullsFromTheRegistryOfItsChartRepositoryWithItsPullSecret() throws Exception {
-        backend().apply(request("JUPYTERHUB"), null);
+        backend().apply(request("TRINO"), null);
 
         String helmRelease = published(RELEASE_DIR + "/helmrelease.yaml");
         assertContains(helmRelease,
                 "      imageRegistry: \"" + MIRROR + "\"\n",
-                // Z2JH ignores global.imageRegistry: the image paths its definition lists follow the mirror, the
-                // submitted one and those the request leaves to the definition's defaults.
-                "      name: \"" + MIRROR + "/jupyterhub/k8s-hub\"\n",
-                "name: \"" + MIRROR + "/jupyterhub/configurable-http-proxy\"",
-                "name: \"" + MIRROR + "/pause\"",
                 // As a direct deploy passes it: a plain name in global.imagePullSecrets, never a {name: ...} map.
                 "      imagePullSecrets:\n      - \"registry-credentials\"\n",
                 "    imagePullSecrets:\n    - name: \"registry-credentials\"\n");
@@ -214,7 +207,7 @@ class FluxGitOpsBackendImageRegistryTest {
 
     @Test
     void eachDependencyPullsFromTheRegistryOfItsRepositoryWithItsOwnPullSecret() throws Exception {
-        HelmDeployRequest request = request("JUPYTERHUB");
+        HelmDeployRequest request = request("TRINO");
         LinkedHashMap<String, Object> dependencies = new LinkedHashMap<>();
         // As the service definitions declare them.
         dependencies.put("keda", new LinkedHashMap<>(Map.of("chart", "keda", "chartVersion", "2.18.0",
@@ -247,7 +240,7 @@ class FluxGitOpsBackendImageRegistryTest {
 
     @Test
     void whatTheOperatorSetExplicitlyWins() throws Exception {
-        HelmDeployRequest request = request("JUPYTERHUB");
+        HelmDeployRequest request = request("TRINO");
         request.getValues().put("_ov", new LinkedHashMap<>(Map.of(
                 "global.imageRegistry", "nexus.bank/approved",
                 "global.imagePullSecrets[0]", "bank-pull")));
@@ -265,8 +258,6 @@ class FluxGitOpsBackendImageRegistryTest {
         assertContains(helmRelease,
                 "      imageRegistry: \"nexus.bank/approved\"\n",
                 "      imagePullSecrets:\n      - \"bank-pull\"\n",
-                // The image paths follow the registry the operator chose.
-                "      name: \"nexus.bank/approved/jupyterhub/k8s-hub\"\n",
                 "    imagePullSecrets:\n    - name: \"registry-credentials\"\n");
         assertFalse(helmRelease.contains(MIRROR), helmRelease);
         String keda = published(SHARED_DIR + "/keda/keda-helmrelease.yaml");
