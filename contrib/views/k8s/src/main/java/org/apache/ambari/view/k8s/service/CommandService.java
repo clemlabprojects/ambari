@@ -10433,6 +10433,16 @@ public class CommandService {
 
     // -------------------- Scheduling & execution --------------------
 
+    /** With the growing pause, about six minutes of retries: long enough to ride out a restart of the database. */
+    static final int MAX_DB_READ_ATTEMPTS = 10;
+    /** Tries to mark an operation FAILED while the database stays unreadable, with the same growing pause. */
+    private static final int MAX_FAIL_ROOT_ATTEMPTS = 12;
+    private static final int TERMINAL_WRITE_ATTEMPTS = 4;
+    /** Consecutive database read failures per operation, so the retries are bounded. */
+    private final Map<String, Integer> dbReadFailures = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Pause before the first retry of a final-state write, multiplied by the attempt number; tests shorten it. */
+    volatile long terminalWriteBackoffMillis = 500;
+
     private void scheduleNow(String id) {
         timer.schedule(() -> workers.submit(() -> runNextStep(id)), 0, TimeUnit.SECONDS);
     }
@@ -10446,15 +10456,101 @@ public class CommandService {
     // package-private so tests can run one step synchronously
 
     void runNextStep(String id) {
+        try {
+            runNextStepUnguarded(id);
+            dbReadFailures.remove(id);
+        } catch (StoreReadException ex) {
+            // The database could not be read: that is not "the command is gone". Try again a few times, then fail the
+            // operation so that it can be resumed rather than leave it showing RUNNING.
+            int attempt = dbReadFailures.merge(id, 1, Integer::sum);
+            if (attempt < MAX_DB_READ_ATTEMPTS) {
+                LOG.warn("[{}] Database read failed ({}/{}), trying again: {}", id, attempt, MAX_DB_READ_ATTEMPTS, ex.getMessage());
+                rescheduleWithBackoff(id, attempt);
+            } else {
+                dbReadFailures.remove(id);
+                LOG.error("[{}] Database read kept failing, failing the operation", id, ex);
+                failRootPersistently(id, ex, 1);
+            }
+        } catch (Throwable t) {
+            // Whatever escapes here would be lost with the worker's discarded Future and leave the operation RUNNING.
+            dbReadFailures.remove(id);
+            LOG.error("[{}] Orchestrator crashed", id, t);
+            failRootPersistently(id, t, 1);
+            if (t instanceof VirtualMachineError) throw (VirtualMachineError) t;
+        } finally {
+            activeStepLogId.remove();
+            org.slf4j.MDC.remove(CommandLogAppender.COMMAND_MDC_KEY);
+        }
+    }
+
+    /** A database read failed, as opposed to finding nothing. */
+    private static class StoreReadException extends RuntimeException {
+        StoreReadException(String message, Throwable cause) { super(message, cause); }
+    }
+
+    /**
+     * A final state could not be written. It is handled like a failed read: the operation is scanned again later,
+     * which derives the same final state from the steps and writes it once the database is back.
+     */
+    private static final class StoreWriteException extends StoreReadException {
+        StoreWriteException(String message) { super(message, null); }
+    }
+
+    /**
+     * Marks an operation whose orchestration stopped unexpectedly, and its running step, as FAILED so that the
+     * operator can resume it. When the database cannot be read, the attempt is repeated later with a growing pause,
+     * because giving up would leave the operation showing RUNNING with nothing left to move it on.
+     */
+    void failRootPersistently(String id, Throwable cause, int attempt) {
+        try {
+            failRoot(id, cause);
+        } catch (StoreReadException ex) {
+            if (attempt < MAX_FAIL_ROOT_ATTEMPTS) {
+                LOG.warn("[{}] Could not read the operation to mark it as failed ({}/{}), trying again: {}",
+                        id, attempt, MAX_FAIL_ROOT_ATTEMPTS, ex.getMessage());
+                long delay = (long) Math.min(300, Math.pow(2, Math.min(attempt, 6)));
+                timer.schedule(() -> workers.submit(() -> failRootPersistently(id, cause, attempt + 1)),
+                        delay, TimeUnit.SECONDS);
+            } else {
+                LOG.error("[{}] Could not mark the operation as failed, the database stayed unreadable", id, ex);
+            }
+        } catch (Throwable t) {
+            LOG.error("[{}] Could not mark the operation as failed", id, t);
+        }
+    }
+
+    private void failRoot(String id, Throwable cause) {
+        CommandEntity root = findOrThrow(id);
+        if (root == null) return;
+        CommandStatusEntity rootSt = findStatusOrThrow(root.getCommandStatusId());
+        if (rootSt == null || isTerminal(rootSt.getState())
+                || CommandState.CANCELED.name().equals(rootSt.getState())) {
+            return;
+        }
+        String reason = "Stopped by an internal error (" + trim(String.valueOf(cause.getMessage() != null
+                ? cause.getMessage() : cause.getClass().getSimpleName())) + "). Resume the operation to continue.";
+        for (String childId : childIdsOf(root)) {
+            // A step that cannot be read is skipped: the operation itself must still end FAILED.
+            CommandEntity child = find(childId);
+            CommandStatusEntity st = child == null ? null : findCommandStatusById(child.getCommandStatusId());
+            if (st != null && CommandState.RUNNING.name().equals(st.getState())) {
+                fail(st, reason);
+            }
+        }
+        fail(rootSt, reason);
+        appendCommandLog(id, reason);
+    }
+
+    private void runNextStepUnguarded(String id) {
         // 0) Load root & status (the orchestrator is the root command id)
-        CommandEntity root = find(id);
+        CommandEntity root = findOrThrow(id);
         if (root == null) return;
 
         LOG.info("Running next step for command with id: {} ", root.getId());
         Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
         String resolvedRootParams = resolveParamsJson(root);
         Map<String, Object> rootParams = gson.fromJson(resolvedRootParams, mapType);
-        CommandStatusEntity rootSt = findCommandStatusById(root.getCommandStatusId());
+        CommandStatusEntity rootSt = findStatusOrThrow(root.getCommandStatusId());
         if (rootSt == null) return;
         if (isTerminal(rootSt.getState())) return; // terminal guard
         if (CommandState.CANCELED.name().equals(rootSt.getState())) {
@@ -10496,16 +10592,16 @@ public class CommandService {
             String childId = childIds.get(i);
             if (childId == null || childId.isBlank()) continue;
             LOG.info("Processing child command with id: {} for root command with id: {} ", childId, id);
-            CommandEntity child = find(childId);
-            LOG.info("Child Title is: {} ", child.getTitle());
+            CommandEntity child = findOrThrow(childId);
             if (child == null) {
                 // If a child is missing, fail root (plan integrity error)
                 fail(rootSt, "Missing child command: " + childId);
                 refreshCurrentStepSnapshot(root);
                 return;
             }
+            LOG.info("Child Title is: {} ", child.getTitle());
 
-            CommandStatusEntity st = findCommandStatusById(child.getCommandStatusId());
+            CommandStatusEntity st = findStatusOrThrow(child.getCommandStatusId());
             if (st == null || st.getState() == null) {
                 fail(rootSt, "Missing status for child: " + childId);
                 refreshCurrentStepSnapshot(root);
@@ -14172,20 +14268,38 @@ public class CommandService {
         e.setState(CommandState.SUCCEEDED.name());
         e.setMessage(message);
         e.setUpdatedAt(Instant.now().toString());
-        store(e);
+        storeTerminal(e);
     }
 
     private void fail(CommandStatusEntity e, String message) {
         e.setState(CommandState.FAILED.name());
         e.setMessage(message);
         e.setUpdatedAt(Instant.now().toString());
-        store(e);
+        storeTerminal(e);
     }
 
-    private void store(CommandStatusEntity e) {
-        try { dataStore.store(e); }
+    /**
+     * Writes a final state. A write that is lost leaves the operation RUNNING for good, so it is tried a few times
+     * and then reported to the caller, which schedules another scan of the operation.
+     */
+    private void storeTerminal(CommandStatusEntity e) {
+        for (int attempt = 1; attempt <= TERMINAL_WRITE_ATTEMPTS; attempt++) {
+            if (store(e)) return;
+            if (attempt < TERMINAL_WRITE_ATTEMPTS) {
+                try { Thread.sleep(terminalWriteBackoffMillis * attempt); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+            }
+        }
+        LOG.error("Could not persist the final state {} of command status {}", e.getState(), e.getId());
+        throw new StoreWriteException("Cannot write the final state " + e.getState() + " of command status " + e.getId());
+    }
+
+    /** @return whether the status was persisted */
+    private boolean store(CommandStatusEntity e) {
+        try { dataStore.store(e); return true; }
         catch (PersistenceException ex) {
             LOG.error("Persist error", ex);
+            return false;
         }
     }
 
@@ -19445,6 +19559,24 @@ public class CommandService {
     private CommandStatusEntity findCommandStatusById(String id) {
         try { return dataStore.find(CommandStatusEntity.class, id); }
         catch (PersistenceException ex) { LOG.error("Find error", ex); return null; }
+    }
+
+    /** Like {@link #findCommandStatusById} but a database failure is thrown, not mistaken for a missing row. */
+    private CommandStatusEntity findStatusOrThrow(String id) {
+        try { return dataStore.find(CommandStatusEntity.class, id); }
+        catch (PersistenceException ex) {
+            LOG.error("Find error", ex);
+            throw new StoreReadException("Cannot read command status " + id, ex);
+        }
+    }
+
+    /** Like {@link #find} but a database failure is thrown, not mistaken for a missing row. */
+    private CommandEntity findOrThrow(String id) {
+        try { return dataStore.find(CommandEntity.class, id); }
+        catch (PersistenceException ex) {
+            LOG.error("Find error", ex);
+            throw new StoreReadException("Cannot read command " + id, ex);
+        }
     }
 
     private CommandEntity find(String id) {
