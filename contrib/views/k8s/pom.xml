@@ -43,7 +43,9 @@ limitations under the License.
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <ui.directory>${basedir}/src/main/resources/ui</ui.directory>
-        <ambari.grafana.arch>arm64</ambari.grafana.arch>
+        <!-- Helm native library packaged in the view. The arch-* profiles below follow the build JVM's os.arch;
+             this fallback only applies to an architecture none of them names. -->
+        <ambari.grafana.arch>amd64</ambari.grafana.arch>
         <fabric8.k8s-client.version>6.12.1</fabric8.k8s-client.version>
         <jersey.version>2.25.1</jersey.version>
         <junit.jupiter.version>5.8.2</junit.jupiter.version>
@@ -772,6 +774,13 @@ limitations under the License.
                         <goals><goal>run</goal></goals>
                         <configuration>
                             <target>
+                                <!-- Fail the build when the target arch's native jar is not there (a cross-build with a
+                                     wrong -Dambari.grafana.arch, or a stale staging dir), instead of packaging a view
+                                     whose Helm calls all fail on the host it is installed on. -->
+                                <available file="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-0.0.15.jar"
+                                           property="helm.native.jar.present"/>
+                                <fail unless="helm.native.jar.present"
+                                      message="Helm native library linux-${ambari.grafana.arch}-0.0.15.jar is missing from the view; ambari.grafana.arch must be amd64 or arm64 and match the target host."/>
                                 <delete>
                                     <fileset dir="${project.build.directory}/lib"
                                              includes="linux-amd64-*.jar,linux-arm64-*.jar,darwin-amd64-*.jar,darwin-arm64-*.jar"
@@ -797,6 +806,16 @@ limitations under the License.
                                 <move file="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-stripped.jar"
                                       tofile="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-0.0.15.jar"
                                       overwrite="true"/>
+                                <!-- Exactly the target arch's native jar must be left, nothing for another arch. -->
+                                <fileset id="helm.native.jars" dir="${project.build.directory}/classes/WEB-INF/lib"
+                                         includes="linux-*-*.jar,darwin-*-*.jar"/>
+                                <fail message="The view must ship only linux-${ambari.grafana.arch}-0.0.15.jar as Helm native library.">
+                                    <condition>
+                                        <not>
+                                            <resourcecount refid="helm.native.jars" when="equal" count="1"/>
+                                        </not>
+                                    </condition>
+                                </fail>
                             </target>
                         </configuration>
                     </execution>
@@ -1262,6 +1281,7 @@ chmod +x "${OUT_DIR}/load.sh"
                 </property>
             </activation>
             <properties>
+                <ambari.grafana.arch>amd64</ambari.grafana.arch>
                 <webhook.rpm.arch>x86_64</webhook.rpm.arch>
                 <webhook.deb.arch>amd64</webhook.deb.arch>
                 <webhook.package.arch.classifier>amd64</webhook.package.arch.classifier>
@@ -1277,6 +1297,7 @@ chmod +x "${OUT_DIR}/load.sh"
                 </property>
             </activation>
             <properties>
+                <ambari.grafana.arch>amd64</ambari.grafana.arch>
                 <webhook.rpm.arch>x86_64</webhook.rpm.arch>
                 <webhook.deb.arch>amd64</webhook.deb.arch>
                 <webhook.package.arch.classifier>amd64</webhook.package.arch.classifier>
@@ -1292,6 +1313,7 @@ chmod +x "${OUT_DIR}/load.sh"
                 </property>
             </activation>
             <properties>
+                <ambari.grafana.arch>arm64</ambari.grafana.arch>
                 <webhook.rpm.arch>aarch64</webhook.rpm.arch>
                 <webhook.deb.arch>arm64</webhook.deb.arch>
                 <webhook.package.arch.classifier>arm64</webhook.package.arch.classifier>
@@ -1307,6 +1329,7 @@ chmod +x "${OUT_DIR}/load.sh"
                 </property>
             </activation>
             <properties>
+                <ambari.grafana.arch>arm64</ambari.grafana.arch>
                 <webhook.rpm.arch>aarch64</webhook.rpm.arch>
                 <webhook.deb.arch>arm64</webhook.deb.arch>
                 <webhook.package.arch.classifier>arm64</webhook.package.arch.classifier>

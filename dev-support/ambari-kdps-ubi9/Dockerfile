@@ -84,11 +84,25 @@ COPY openshift-nonroot.py /tmp/openshift-nonroot.py
 # the ~1 GB of files the RPM installs (setup's ownership pass, the resource-files keeper, the
 # OpenShift group-permission pass); as separate RUN instructions they stored the payload three times
 # and the image weighed 3.3 GB compressed instead of ~0.6 GB.
+#
+# Right after the install the view jar is checked for this machine's Helm native library. The view calls
+# Helm in-process through a per-architecture library: a package built for the other architecture still
+# starts and serves every Kubernetes page, then fails each deploy, upgrade and release list, so the image
+# build refuses it.
 RUN set -eux; \
     test -n "${AMBARI_REPO_URL}" || { echo "AMBARI_REPO_URL build-arg is required" >&2; exit 1; }; \
     printf '[ambari]\nname=Ambari\nbaseurl=%s\nenabled=1\ngpgcheck=0\n' "${AMBARI_REPO_URL}" > /etc/yum.repos.d/ambari.repo; \
     dnf install -y --setopt=install_weak_deps=False "ambari-server-${AMBARI_VERSION}"; \
     dnf clean all; rm -rf /var/cache/dnf; \
+    \
+    case "$(uname -m)" in x86_64|amd64) helm_arch=amd64;; aarch64|arm64) helm_arch=arm64;; \
+        *) echo "No Helm native library for architecture $(uname -m)" >&2; exit 1;; esac; \
+    for jar in /var/lib/ambari-server/resources/views/k8s-view-*.jar; do \
+        natives="$(python3 -c 'import re, sys, zipfile; print(" ".join(n for n in zipfile.ZipFile(sys.argv[1]).namelist() if re.match(r"WEB-INF/lib/(linux|darwin|windows)-[^/]+[.]jar$", n)))' "$jar")"; \
+        case "$natives" in "WEB-INF/lib/linux-${helm_arch}-"*.jar) ;; \
+            *) echo "$jar must hold exactly the Helm native library linux-${helm_arch}, found: ${natives:-none}" >&2; exit 1;; esac; \
+        case "$natives" in *" "*) echo "$jar holds several Helm native libraries: $natives" >&2; exit 1;; esac; \
+    done; \
     \
     for v in ${DROP_VIEWS}; do rm -fv /var/lib/ambari-server/resources/views/${v}-*.jar; done; \
     \

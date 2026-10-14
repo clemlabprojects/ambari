@@ -74,25 +74,53 @@ order or classloader quirks.
 ## Build-time arch selection
 
 The arch is chosen at *build* time via the `ambari.grafana.arch` Maven
-property:
+property, and by default it follows the architecture of the JVM running the
+build (`os.arch`):
 
-| OS target (Jenkinsfile) | `ambari.grafana.arch` |
+| Build host `os.arch` | `ambari.grafana.arch` |
 |---|---|
-| rhel8, rhel9, ubuntu22, ubuntu24 (x86_64) | `amd64` |
-| rhel9-aarch64 (aarch64) | `arm64` |
+| `amd64`, `x86_64` | `amd64` |
+| `aarch64`, `arm64` | `arm64` |
+| anything else | `amd64` (fallback) |
 
-Jenkins passes `-Dambari.grafana.arch=${arch_grafana}` per build stage in
-`Jenkinsfile`. For local builds outside Jenkins, pass it explicitly:
+A build on an x86 agent therefore packages `linux-amd64` and a build on an
+aarch64 agent packages `linux-arm64`, with no flag. The view jar goes into the
+architecture-specific `ambari-server` package, so the build host and the
+package normally agree.
+
+A cross-build (for example an arm64 box producing the x86_64 package) passes
+the target explicitly, which always wins over the default:
 
 ```bash
 mvn package -Dambari.grafana.arch=amd64    # x86_64 target
 mvn package -Dambari.grafana.arch=arm64    # aarch64 target
 ```
 
-The pom default is `arm64` for legacy reasons — Jenkins always overrides, so
-in CI this doesn't matter, but local developers building for x86_64 must pass
-`-Dambari.grafana.arch=amd64` or they'll get a jar that fails on their
-target host.
+## Guards against the wrong library
+
+A view that carries the other architecture's library still starts and serves
+every Kubernetes page, then fails each Helm action (deploy, upgrade, uninstall,
+release list). Two checks stop that from reaching a host:
+
+- **Build.** The `enforce-single-helm-native-arch` step in `pom.xml` fails the
+  build when `linux-${ambari.grafana.arch}-0.0.15.jar` is not among the
+  libraries to package, and when anything other than that one native jar is left
+  after the clean-up. An unknown value of the property already fails earlier,
+  because no such artifact exists.
+- **Image.** Right after installing the `ambari-server` package, the OpenShift
+  image build (`dev-support/ambari-kdps-ubi9/Dockerfile`) fails unless the view
+  jar holds exactly one native jar, the one for the machine's own architecture.
+  The check is inline in the Dockerfile, so the image build context needs no
+  extra file.
+- **Packages.** `dev-support/ambari-kdps-ubi9/check-helm-native-arch.py` makes
+  the same check on any view jar. A release job can run it with `--arch amd64` or
+  `--arch arm64` on the `k8s-view-*.jar` taken from each package (RHEL 8/9,
+  Ubuntu 22/24) before publishing it.
+
+Before a release, confirm that the published x86_64 `ambari-server` package
+holds `WEB-INF/lib/linux-amd64-0.0.15.jar` in its `k8s-view-*.jar`, and that on
+the amd64 image `GET .../api/helm/releases` answers 200: the namespaces call
+alone passes even with the wrong library, because it does not use Helm.
 
 ## Why not auto-detect at runtime?
 

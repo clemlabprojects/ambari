@@ -53,6 +53,11 @@ export AMBARI_VERSION=2.8.2.0-137
 
 That produces `registry.clemlab.com/clemlabprojects/ambari-kdps:2.8.2.0-137-arm64`.
 
+The build fails when the KDPS view in the installed package does not carry the Helm native library of the
+image's architecture (checked in the Dockerfile right after the package install). That happens when the repository holds the other
+architecture's package, and without the check the image would serve Kubernetes pages but fail every Helm
+deploy, upgrade and release list.
+
 Per-architecture native builds are the default, the same convention the ODP images follow: each agent
 builds only its own architecture, so nothing runs under emulation. Once both have pushed,
 `merge-manifest.sh` assembles the multi-arch manifest under the bare tag. A single-run multi-arch

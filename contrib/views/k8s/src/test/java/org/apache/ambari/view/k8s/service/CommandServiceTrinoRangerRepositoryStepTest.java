@@ -48,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -90,6 +91,8 @@ class CommandServiceTrinoRangerRepositoryStepTest {
         ranger = new FakeRangerAdmin();
         view = new PerUserViewContext("trino-repo-" + Long.toHexString(System.nanoTime()), workDir);
         service = new CommandService(view.context, mock(HelmService.class), mock(KubernetesService.class));
+        // The background sweep reads the view context: stubbing it while that thread runs races with Mockito.
+        service.startupSweep.get(30, java.util.concurrent.TimeUnit.SECONDS);
 
         view.as("admin");
         ContextRequest context = new ContextRequest();
@@ -223,7 +226,7 @@ class CommandServiceTrinoRangerRepositoryStepTest {
     @Test
     void theManagedPathReportsARefusedSelfGrantAndTheRemovedRule() throws InterruptedException {
         CommandServiceTrinoImpersonationTest.FakeAmbari ambari = new CommandServiceTrinoImpersonationTest.FakeAmbari();
-        when(view.context.getURLStreamProvider()).thenReturn(ambari);
+        doReturn(ambari).when(view.context).getURLStreamProvider();
         ambari.outcomes.add("COMPLETED");   // the repository
         ambari.outcomes.add("FAILED");      // the self-impersonation grant
         ambari.outcomes.add("COMPLETED");   // the revoke
