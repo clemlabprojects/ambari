@@ -66,6 +66,29 @@ option "Encrypt passwords stored in ambari.properties file", and persist the mas
 
 Ambari deployed with the `ambari` chart is not affected: the chart and the image already require a master key.
 
+### Access roles
+
+KDPS now gives each user one of three roles, read from two properties of the view instance:
+
+- **Admin**: the users listed in `view.admin.users`. They configure the view (kubeconfig, platform contexts,
+  Helm repositories, security profiles, truststores) and can do everything an operator does. **When the list is
+  empty, only Ambari administrators are admins.**
+- **Operator**: the users listed in `view.operator.users`. They deploy, upgrade, roll back and uninstall releases
+  and restart or delete their pods, but cannot change the view configuration.
+- **Read-only**: every other user the view instance is granted to.
+
+**This changes existing installations.** In earlier builds, with both lists empty, every user granted the view
+could configure it and deploy. After the upgrade, those users are read-only unless they are Ambari
+administrators. Before or right after upgrading, fill in `view.admin.users` and `view.operator.users`
+(Ambari > Manage Ambari > Views > K8S-VIEW > the instance > Edit).
+
+**Kerberos and Ranger need Ambari cluster-administrator rights.** On a deploy, KDPS asks the Ambari server for
+keytabs, Ranger plugin repositories and Ranger policies with the deploying user's own Ambari account. Ambari only
+allows that to accounts that hold the *Cluster Administrator* role (the `CLUSTER.TOGGLE_KERBEROS` permission). An
+operator whose Ambari account does not have it can deploy services without Kerberos or Ranger, but a
+Kerberized or Ranger-enabled Trino or Superset deploy fails at the keytab or Ranger step with an access-denied
+error. Give the operators who deploy such services the Cluster Administrator role in Ambari.
+
 ### Services not in this release
 
 These services were offered by pre-release builds and are no longer in the service catalog.
