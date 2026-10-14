@@ -21,7 +21,6 @@ package org.apache.ambari.view.k8s.utils;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.security.*;
 import org.apache.ambari.view.k8s.security.AESEncryptor;
-import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -329,7 +328,7 @@ public final class AmbariAliasResolver {
             }
 
             ConfigurationProperty<?> other = (ConfigurationProperty<?>) obj;
-            return StringUtils.equals(this.m_key, other.m_key);
+            return Objects.equals(this.m_key, other.m_key);
         }
 
         /**

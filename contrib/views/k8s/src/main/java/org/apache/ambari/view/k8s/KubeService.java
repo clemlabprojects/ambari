@@ -21,8 +21,6 @@ package org.apache.ambari.view.k8s;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.google.common.annotations.VisibleForTesting;
-
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.model.UserPermissions;
 import org.apache.ambari.view.k8s.resources.*;
@@ -99,12 +97,12 @@ public class KubeService {
 
 
 
-    @VisibleForTesting
+    /** Replaces the Kubernetes service; for tests. */
     void setKubernetesService(KubernetesService kubernetesService) {
         this.kubernetesService = kubernetesService;
     }
 
-    @VisibleForTesting
+    /** Replaces the view configuration service; for tests. */
     void setConfigService(ViewConfigurationService configService) {
         this.configService = configService;
     }
