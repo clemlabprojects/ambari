@@ -3914,6 +3914,7 @@ public class CommandService {
             LOG.info("No Ambari cluster for the Ranger repository of release {}; its configs read from Ambari are left out",
                     request.getReleaseName());
         }
+        params.putIfAbsent(RANGER_SSL_VERIFICATION_PARAM, rangerSslVerificationSuffix(request, effectiveValues));
         Map<String, String> computedConfigs = configResolutionService.computeExtraRangerConfigs(
                 rangerPluginSettingsSpec,
                 params,
@@ -5246,6 +5247,11 @@ public class CommandService {
             // The steps planned from the request read the context there too.
             rangerRequest.setFormValues(Map.of("platformContextId", target.contextId()));
         }
+        if (operatorSuppliedHttpsKeystore(namespace, effectiveValues)) {
+            // The form is gone on a reapply; without this the repository would get the full host-name check that an
+            // operator certificate may not satisfy.
+            rangerRequest.setTls(Map.of("https", Map.of("autoGenerate", false)));
+        }
 
         final String commandId = UUID.randomUUID().toString();
         final String now = Instant.now().toString();
@@ -6348,6 +6354,7 @@ public class CommandService {
         // OpenShift defaults the wizard sets through its bindings (JupyterHub's user scheduler off), for the deploys
         // that do not run them. After the aliases, so a default never lands beside a value moved to its new path.
         applyOpenShiftValueDefaults(request);
+        restoreTriggerCertSkipOnOlderChart(request.getValues(), chartSource.version());
 
         // Operator-supplied extra catalogs. Parsed here, next to the alias rewriting and for the same
         // reason: it is the one place every backend goes through, so a deploy driven straight at the
@@ -6359,6 +6366,7 @@ public class CommandService {
         // fix them in the wizard, otherwise written into the operation log.
         addIfPresent(warnings, checkLiteralCatalogCredentials(request, recorded));
         addIfPresent(warnings, checkSecretChartVersions(request, chartSource.version(), fromForm));
+        addIfPresent(warnings, rangerLookupTrustWarning(request));
 
         // OpenMetadata Trino base ingestion: validate the target release and write the TagSync
         // mapping into the values BEFORE anything is persisted, so a bad selection fails the
@@ -7784,6 +7792,112 @@ public class CommandService {
                 LOG.info("Removed {} retired line(s) from {}", lines.size() - kept.size(), path);
             }
         }
+    }
+
+    /** Chart value naming the Secret that holds the internal HTTPS keystore. */
+    private static final String HTTPS_KEYSTORE_SECRET_VALUE = "server.config.https.keystore.secretName";
+
+    /**
+     * Whether the release's internal HTTPS keystore is one the operator supplied: its Secret exists and this view did
+     * not write it. Unknown (no Secret named, not found, lookup failed) counts as not supplied.
+     */
+    boolean operatorSuppliedHttpsKeystore(String namespace, Map<String, Object> releaseValues) {
+        Object name = ConfigResolutionService.getByDottedPath(releaseValues, HTTPS_KEYSTORE_SECRET_VALUE);
+        if (name == null || String.valueOf(name).isBlank()) return false;
+        try {
+            io.fabric8.kubernetes.api.model.Secret secret = kubernetesService.getSecret(namespace, String.valueOf(name));
+            if (secret == null) return false;
+            return secret.getMetadata() == null || secret.getMetadata().getAnnotations() == null
+                    || !"ambari-k8s-view".equals(secret.getMetadata().getAnnotations().get("managed-by"));
+        } catch (Exception e) {
+            LOG.warn("Could not read the HTTPS keystore Secret {}/{}: {}", namespace, name, e.toString());
+            return false;
+        }
+    }
+
+    /** Command parameter holding the SSLVerification part of the Ranger repository's JDBC URL (empty without TLS). */
+    static final String RANGER_SSL_VERIFICATION_PARAM = "rangerSslVerificationSuffix";
+
+    /** The form field that tells whether KDPS issues the internal HTTPS keystore or the operator supplies it. */
+    private static final String HTTPS_AUTO_GENERATE_FIELD = "tls.https.autoGenerate";
+
+    /**
+     * How Ranger Admin checks the Trino certificate on its lookup connection. A keystore issued by KDPS lists the
+     * coordinator Service names, so the full check (chain and host name) works; an operator-supplied certificate may
+     * carry other names, so only its chain is checked.
+     */
+    static String rangerSslVerification(HelmDeployRequest request) {
+        Object autoGenerate = request.getFormValues() == null ? null
+                : ConfigResolutionService.getByDottedPath(request.getFormValues(), HTTPS_AUTO_GENERATE_FIELD);
+        if (autoGenerate == null && request.getTls() != null && request.getTls().get("https") instanceof Map<?, ?> https) {
+            // A request built without the form (a reapply) carries the choice in its TLS spec.
+            autoGenerate = https.get("autoGenerate");
+        }
+        return autoGenerate != null && !asBoolean(autoGenerate, true) ? "CA" : "FULL";
+    }
+
+    /**
+     * The JDBC URL part that sets the certificate check. The Trino JDBC driver refuses SSLVerification on a connection
+     * without TLS, so with internal HTTPS off nothing is added.
+     */
+    static String rangerSslVerificationSuffix(HelmDeployRequest request, Map<String, Object> helmValues) {
+        boolean https = helmValues != null
+                && asBoolean(ConfigResolutionService.getByDottedPath(helmValues, TRINO_HTTPS_ENABLED), false);
+        return https ? "&SSLVerification=" + rangerSslVerification(request) : "";
+    }
+
+    /**
+     * What the operator must do for Ranger Admin's lookups and 'Test connection' to work: Ranger Admin's JVM has to
+     * trust the CA that signed the Trino certificate. It runs outside the cluster, so KDPS cannot import it; policy
+     * download is not affected, so nothing else would point at it.
+     *
+     * @return the warning, or null when the deploy has no Ranger repository or no internal HTTPS
+     */
+    static String rangerLookupTrustWarning(HelmDeployRequest request) {
+        if (request.getRanger() == null || request.getRanger().isEmpty() || request.getValues() == null) return null;
+        if (!"TRINO".equalsIgnoreCase(request.getServiceKey())) return null;
+        if (!asBoolean(ConfigResolutionService.getByDottedPath(request.getValues(), TRINO_HTTPS_ENABLED), false)) return null;
+        boolean issued = "FULL".equals(rangerSslVerification(request));
+        return "Ranger Admin verifies the Trino certificate when it looks up resources and tests the connection. Add "
+                + (issued ? "the Ambari internal CA" : "the CA that signed the Trino keystore you supplied")
+                + " to the truststore Ranger Admin uses (ranger.truststore.file, or its JVM default), otherwise 'Test"
+                + " connection' and resource lookups for this repository fail with a certificate error. Policy download is"
+                + " not affected.";
+    }
+
+    /** Chart value naming the Secret key whose CA the KEDA triggers verify; charts before 1.43.18 ignore it. */
+    static final String KEDA_TRIGGER_CA_KEY = "server.keda.triggerAuthentication.caKey";
+
+    /**
+     * An OpenShift deploy asks the triggers to verify the monitoring endpoint against the CA in the token Secret, and
+     * leaves out the certificate-check skip. A chart that predates that CA key (a redeploy keeps the chart the release
+     * already runs) would render triggers that neither skip nor verify with the right CA, and autoscaling would stop
+     * without any error. For such a chart the CA key is dropped and the skip put back, which is what the release
+     * had before.
+     *
+     * @return true when the values were rewritten
+     */
+    @SuppressWarnings("unchecked")
+    static boolean restoreTriggerCertSkipOnOlderChart(Map<String, Object> values, String chartVersion) {
+        if (values == null || chartVersion == null || chartVersion.isBlank()) return false;
+        Object caKey = ConfigResolutionService.getByDottedPath(values, KEDA_TRIGGER_CA_KEY);
+        if (!(caKey instanceof String s) || s.isBlank()) return false;
+        if (isChartVersionCompatible(chartVersion, ">=1.43.18")) return false;
+        Object server = values.get("server");
+        Object keda = server instanceof Map<?, ?> sm ? sm.get("keda") : null;
+        if (!(keda instanceof Map<?, ?> km)) return false;
+        Object auth = km.get("triggerAuthentication");
+        if (auth instanceof Map<?, ?> am) ((Map<String, Object>) am).remove("caKey");
+        Object triggers = km.get("triggers");
+        if (triggers instanceof List<?> list) {
+            for (Object t : list) {
+                if (!(t instanceof Map<?, ?> tm) || !(tm.get("metadata") instanceof Map<?, ?> md)) continue;
+                if ("bearer".equals(String.valueOf(md.get("authModes")))) ((Map<String, Object>) md).put("unsafeSsl", "true");
+            }
+        }
+        LOG.warn("Chart {} cannot verify the monitoring certificate with a CA: the autoscaling triggers keep skipping"
+                + " the certificate check. Use chart 1.43.18 or later to verify it.", chartVersion);
+        return true;
     }
 
     /**

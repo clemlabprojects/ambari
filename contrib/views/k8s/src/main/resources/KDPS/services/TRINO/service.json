@@ -2,7 +2,7 @@
   "label": "Trino",
   "chart": "trinodb/trino",
   "secretName": "registry-credentials",
-  "version": "1.43.17",
+  "version": "1.43.18",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -46,8 +46,13 @@
         {
           "property": "jdbc.url",
           "type": "template",
-          "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=NONE",
+          "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}{{sslVerification}}",
           "properties": {
+            "sslVerification": {
+              "source": "embedded",
+              "type": "string",
+              "path": "rangerSslVerificationSuffix"
+            },
             "host": {
               "source": "template",
               "type": "string",
@@ -55,7 +60,7 @@
             },
             "port": {
               "source": "helm",
-              "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}server.config.https.port{% endif %}",
+              "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}service.port{% endif %}",
               "type": "integer"
             },
             "ssl": {
@@ -1354,7 +1359,6 @@
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "unsafeSsl": "true",
                 "threshold": "${keda.requiredWorkers.threshold}",
                 "query": "sum by (service) (avg_over_time(trino_execution_ClusterSizeMonitor_RequiredWorkers{service=\"${trino.fullname}\"}[${keda.requiredWorkers.window}]))"
               }
@@ -1375,7 +1379,6 @@
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "unsafeSsl": "true",
                 "threshold": "${keda.queuedQueries.threshold}",
                 "activationThreshold": "${keda.queuedQueries.activation}",
                 "query": "sum(trino_execution_QueryManager_QueuedQueries{namespace=\"${namespace}\"})"
@@ -1397,7 +1400,6 @@
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "unsafeSsl": "true",
                 "threshold": "${keda.runningQueries.threshold}",
                 "activationThreshold": "${keda.runningQueries.activation}",
                 "query": "sum(trino_execution_QueryManager_RunningQueries{namespace=\"${namespace}\"})"
@@ -1419,7 +1421,6 @@
               "metadata": {
                 "serverAddress": "${keda.thanos.serverAddress}",
                 "authModes": "bearer",
-                "unsafeSsl": "true",
                 "threshold": "${keda.heap.threshold}",
                 "activationThreshold": "${keda.heap.activation}",
                 "query": "((sum(java_lang_Memory_HeapMemoryUsage_used{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"}) / sum(java_lang_Memory_HeapMemoryUsage_max{area=\"heap\",namespace=\"${namespace}\",pod=~\"${workerPodPrefix}.*\"})) * 100)"
@@ -1450,6 +1451,13 @@
           "op": "set",
           "skipIfVarEmpty": "isOpenShift",
           "from": { "type": "template", "template": "${keda.thanos.tokenSecret}" }
+        },
+        {
+          "comment": "service-ca.crt in the service-account-token Secret is the CA that signs the monitoring endpoint's certificate, so the triggers verify it instead of skipping the check.",
+          "path": "server.keda.triggerAuthentication.caKey",
+          "op": "set",
+          "skipIfVarEmpty": "isOpenShift",
+          "from": { "type": "template", "template": "service-ca.crt" }
         }
       ]
     },

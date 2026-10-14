@@ -19,7 +19,7 @@ RANGER_REPOSITORY_CREATION
     _rangerRepositoryName = trino-analytics
     _rangerServiceType = trino
     _rangerPluginUserName = trino_ranger_plugin_user
-    _rangerServiceConfigs = {jdbc.driverClassName=io.trino.jdbc.TrinoDriver, jdbc.url=jdbc:trino://trino-trino-coordinator.analytics.svc.cluster.local:8443?SSL=false&SSLVerification=NONE, policy.download.auth.users=trino-analytics, tag.download.auth.users=trino-analytics}
+    _rangerServiceConfigs = {jdbc.driverClassName=io.trino.jdbc.TrinoDriver, jdbc.url=jdbc:trino://trino-trino-coordinator.analytics.svc.cluster.local:8080?SSL=false, policy.download.auth.users=trino-analytics, tag.download.auth.users=trino-analytics}
 HELM_REPO_LOGIN
     repoId = charts
 HELM_DEPLOY_DEPENDENCY_CRD

@@ -31,7 +31,7 @@
           {
             "property": "jdbc.url",
             "type": "template",
-            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=NONE",
+            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=FULL",
             "properties": {
               "host": {
                 "source": "template",
@@ -40,7 +40,7 @@
               },
               "port": {
                 "source": "helm",
-                "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}server.config.https.port{% endif %}" ,
+                "path": "{% if server.config.https.enabled %}server.config.https.port{% else %}service.port{% endif %}" ,
                 "type": "integer"
               },
               "ssl": {

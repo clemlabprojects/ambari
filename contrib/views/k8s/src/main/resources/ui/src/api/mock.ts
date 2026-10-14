@@ -335,7 +335,7 @@ export const getChartsJSON = (): any => {
           {
             "property": "jdbc.url",
             "type": "template",
-            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=NONE",
+            "template": "jdbc:trino://{{host}}:{{port}}?SSL={{ssl}}&SSLVerification=FULL",
             "properties": {
               "host": {
                 "source": "template",
