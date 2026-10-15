@@ -240,6 +240,13 @@
       }
     },
     {
+      "name": "routeIpWhitelist",
+      "from": {
+        "type": "form",
+        "field": "ingress.route.ipWhitelist"
+      }
+    },
+    {
       "name": "namespace",
       "from": {
         "type": "form",
@@ -615,6 +622,21 @@
                 "${ingressHost}"
               ]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "openshift-route-allowlist",
+      "_description": "On OpenShift the chart copies ingress.annotations onto its Route; some clusters refuse a Route without this router annotation.",
+      "targets": [
+        {
+          "path": "ingress.annotations.haproxy\\.router\\.openshift\\.io/ip_whitelist",
+          "skipIfVarEmpty": "routeIpWhitelist",
+          "op": "set",
+          "from": {
+            "type": "template",
+            "template": "${routeIpWhitelist}"
           }
         }
       ]
@@ -2344,6 +2366,17 @@
             "field": "ingress.tlsMode",
             "value": "sourcedFromExternalSecret"
           }
+        },
+        {
+          "name": "ingress.route.ipWhitelist",
+          "label": "Allowed source IPs (OpenShift Route)",
+          "type": "string",
+          "excludeFromValues": true,
+          "condition": {
+            "field": "ingress.enabled",
+            "value": true
+          },
+          "help": "OpenShift only. Space-separated IP addresses or CIDR ranges allowed to reach the Route, e.g. '10.0.0.0/8 172.16.20.0/24'. Set it when the cluster requires the haproxy.router.openshift.io/ip_whitelist annotation on every Route. Leave blank to allow all sources."
         },
         {
           "name": "ingressTuning",
