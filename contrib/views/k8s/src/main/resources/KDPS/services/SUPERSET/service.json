@@ -2,7 +2,7 @@
   "label": "Superset",
   "chart": "apache/superset",
   "secretName": "registry-credentials",
-  "version": "0.12.50",
+  "version": "0.12.52",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -1488,6 +1488,20 @@
           "type": "string",
           "required": true,
           "help": "URL of the OpenStreetMap server used by Superset."
+        },
+        {
+          "name": "supersetWorker.concurrency",
+          "label": "Worker processes",
+          "type": "number",
+          "defaultValue": 4,
+          "help": "Celery worker processes running SQL Lab asynchronous queries, reports and alerts. Without a number Celery starts one per CPU of the node, which on a large bare-metal node means dozens of processes and a worker pod killed for memory. Raise the worker memory limit below with it (about 400 MiB per process). Needs chart 0.12.52 or later; an older chart ignores it."
+        },
+        {
+          "name": "supersetWorker.resources.limits.memory",
+          "label": "Worker memory limit",
+          "type": "string",
+          "defaultValue": "2Gi",
+          "help": "Memory limit of the Celery worker pod, e.g. 2Gi for 4 worker processes, 4Gi for 8."
         }
       ]
     },
