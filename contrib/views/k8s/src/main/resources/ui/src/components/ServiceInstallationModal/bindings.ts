@@ -112,6 +112,24 @@ export const pushUniqueBy = (arr: any[], key: (x: any) => string, entry: any) =>
   if (!arr.some(e => key(e) === key(entry))) arr.push(entry);
 };
 
+/** JSON with object keys sorted, so the same entry read back from a deployed release compares equal. */
+const canonicalJson = (v: any): string =>
+  JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x)
+    ? Object.keys(x).sort().reduce((o: any, k) => { o[k] = x[k]; return o; }, {})
+    : x));
+
+/**
+ * Appends binding values to a list, skipping those it already holds. An upgrade starts from the release's deployed
+ * values, which already contain what the bindings added at install; appending again doubled entries such as Trino's
+ * -javaagent option, and the second JMX exporter then failed the JVM at start.
+ */
+export const pushUniqueValues = (arr: any[], val: any) => {
+  for (const entry of Array.isArray(val) ? val : [val]) {
+    const key = canonicalJson(entry);
+    if (!arr.some(e => canonicalJson(e) === key)) arr.push(entry);
+  }
+};
+
 /* ==============================================================================================
    ARRAY PATH HELPERS (Legacy/Form Sync)
    Similar to above, but works with pre-split string arrays (['a', 'b']) instead of strings.
@@ -453,13 +471,7 @@ export const makeTargetsPatch = (
         } else {
           // Generic Value in Array (e.g. ingress hosts)
           const val = valueFrom(t);
-          if (val !== undefined) {
-            if (Array.isArray(val)) {
-              arr.push(...val);
-            } else {
-              arr.push(val);
-            }
-          }
+          if (val !== undefined) pushUniqueValues(arr, val);
         }
         continue;
       }
@@ -529,13 +541,7 @@ export function applyBindingTargets(
           pushUniqueBy(arr, (x: any) => `${x?.name}@@${x?.mountPath}`, entry);
         } else {
           const val = valueFromTargetSource(t, mounts, formValues, varCtx);
-          if (val !== undefined) {
-            if (Array.isArray(val)) {
-              arr.push(...val);
-            } else {
-              arr.push(val);
-            }
-          }
+          if (val !== undefined) pushUniqueValues(arr, val);
         }
         continue;
       }
