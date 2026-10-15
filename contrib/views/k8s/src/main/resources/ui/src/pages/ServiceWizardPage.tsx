@@ -43,6 +43,7 @@ import { deployFormValues } from './deployFormValues';
 import { isSharedTruststore, normalizeTruststoreRefs, selectableTruststores, truststoreRef } from './truststoreRefs';
 import SizingCard from '../components/wizard/SizingCard';
 import { formWithout, sizingOf } from '../components/wizard/sizing';
+import { contextChoiceNeeded } from './contextChoice';
 import { federationManualGrantNotice, federationMayTurnOnFileAuth, federationRefusalNotice, federationWritesAtlasUserStore } from './atlasFederationAuth';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -73,6 +74,9 @@ const ServiceWizardPage: React.FC = () => {
   const [contexts, setContexts] = useState<PlatformContext[]>([]);
   const [resolvedSel, setResolvedSel] = useState<ResolvedContext | null>(null);
   const [ctxDetailsOpen, setCtxDetailsOpen] = useState(false);
+  // A new install with several platform contexts waits for the operator to choose one: the pre-selected one only
+  // fills the preview until then. An upgrade keeps the context the release was deployed with.
+  const [contextChosen, setContextChosen] = useState(true);
 
   // State
   const [installValues, setInstallValues] = useState<any>({}); // Step 1 & 2 data
@@ -164,6 +168,7 @@ const ServiceWizardPage: React.FC = () => {
             initial.platformContextId = loadedContexts.some(c => c.id === 'default') || !loadedContexts.length
               ? 'default'
               : loadedContexts[0].id;
+            setContextChosen(!contextChoiceNeeded(!!upgradeState, loadedContexts.length));
             if (upgradeState) {
               initial.releaseName = upgradeState.releaseName || initial.releaseName;
               initial.namespace = upgradeState.namespace || initial.namespace;
@@ -668,6 +673,57 @@ const ServiceWizardPage: React.FC = () => {
     return Array.from(new Set(missing));
   }, [def, resolvedSel, installValues]);
 
+  /**
+   * The platform context selector: in step 1, where a new install with several contexts must choose one before going
+   * on, and in the side panel of every step.
+   */
+  const renderContextCard = (inStepOne: boolean) => {
+    const selectedId = (installValues as any)?.platformContextId || 'default';
+    return (
+      <Card style={{ marginBottom: 16 }}
+        title={<span style={{ fontSize: 15 }}><ApiOutlined /> Platform context</span>}
+        extra={<Button size="small" type="link" onClick={() => setCtxDetailsOpen(true)}>Details</Button>}>
+        <Select
+          size="large"
+          style={{ width: '100%' }}
+          // Empty until chosen: picking the pre-selected context again would not count as a choice otherwise.
+          value={contextChosen ? selectedId : undefined}
+          placeholder="Choose a platform context"
+          onChange={(v) => { setContextChosen(true); setInstallValues((prev: any) => ({ ...prev, platformContextId: v })); }}
+          options={[
+            // First-class "no context": a standalone service wired to no backend at all.
+            // Every context-dependent step (Hive/Ranger/Kerberos/OIDC wiring, Hadoop config
+            // maps) is skipped — required on a standalone Ambari where no managed cluster
+            // exists, and useful anywhere for a plain unwired deploy.
+            { value: 'none', label: 'No platform context (standalone service)' },
+            ...(contexts.length ? contexts : [{ id: 'default', name: 'Ambari-managed cluster', kind: 'MANAGED' } as PlatformContext])
+              .map((c) => ({ value: c.id, label: `${c.name}${c.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` })),
+          ]}
+          dropdownRender={(menu) => (
+            <>
+              {menu}
+              <Divider style={{ margin: '6px 0' }} />
+              <Button type="text" icon={<PlusOutlined />} style={{ width: '100%', textAlign: 'left' }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => window.open('#/contexts', '_blank')}>
+                Add / manage platform contexts
+              </Button>
+            </>
+          )}
+        />
+        {inStepOne && !contextChosen && (
+          <Alert style={{ marginTop: 10 }} type="info" showIcon
+            message="Choose the platform context this release is wired to: its Kerberos, Ranger, Hive and single sign-on settings come from it." />
+        )}
+        {unmetContextReqs.length > 0 && (
+          <Alert style={{ marginTop: 10 }} type="warning" showIcon
+            message={<span>Context missing: <b>{unmetContextReqs.join(', ')}</b></span>} />
+        )}
+      </Card>
+    );
+  };
+
+
   // Auto-enable a toggle when the selected platform context provides its capability — e.g. the Hive
   // catalog turns ON when the context exposes Hive (resolvedFields has a `hive.*` value). Declared
   // per-field via `autoEnableWhenContext: "<capability>"`. Applied once per (context, field) so it
@@ -1044,7 +1100,12 @@ const ServiceWizardPage: React.FC = () => {
   const steps = React.useMemo(() => {
     if (!def) return [];
     return [
-      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} upgrade={!!isUpgrade} deployedMode={upgradeState?.deploymentMode} /> },
+      { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: (
+        <>
+          {renderContextCard(true)}
+          <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} upgrade={!!isUpgrade} deployedMode={upgradeState?.deploymentMode} />
+        </>
+      ) },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
       { title: 'Chart Settings', content: (
         <>
@@ -1055,12 +1116,16 @@ const ServiceWizardPage: React.FC = () => {
           {/* A service with sizes: they and the fields they fill are in the Sizing card, the rest stays in the form. */}
           {sizingOf(def) && (
             <SizingCard definition={def} sizing={sizingOf(def)!} data={installValues} onChange={setInstallValues} upgrade={!!isUpgrade} />
+          )}
+          <InstallStep
+            definition={sizingOf(def) ? { ...def, form: formWithout((def as any)?.form, sizingOf(def)!.fields) } : def}
+            data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} upgrade={!!isUpgrade} />
         </>
       ) },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
       { title: 'Review', content: <ReviewStep def={def} install={installValues} repoLabel={repos.find(r => r.id === installValues.repoId)?.name || installValues.repoId} contextLabel={resolvedSel ? `${resolvedSel.name}${resolvedSel.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` : undefined} /> },
     ];
-  }, [def, installValues, repos, configs, configOverrides, isUpgrade, currentIngressTls, exposure, atlasFederationRefusal, atlasFederationManualGrant]);
+  }, [def, installValues, repos, configs, configOverrides, isUpgrade, currentIngressTls, exposure, atlasFederationRefusal, atlasFederationManualGrant, contexts, contextChosen, unmetContextReqs]);
 
   // Disable Next if any password field reports invalid (empty, unconfirmed, or
   // mismatched). PropertyRenderer pushes the boolean validity here via its
@@ -1127,45 +1192,7 @@ const ServiceWizardPage: React.FC = () => {
               and the engine resolves that context's capabilities (Atlas, Ranger, Hive, Kerberos,
               OIDC, …) into whichever fields the service's service.json declares as context-resolved.
               So the selector is shown for ALL services, not just those declaring atlasFederation. */}
-          {(() => {
-            const selectedId = (installValues as any)?.platformContextId || 'default';
-            return (
-              <Card style={{ marginBottom: 16 }}
-                title={<span style={{ fontSize: 15 }}><ApiOutlined /> Platform context</span>}
-                extra={<Button size="small" type="link" onClick={() => setCtxDetailsOpen(true)}>Details</Button>}>
-                <Select
-                  size="large"
-                  style={{ width: '100%' }}
-                  value={selectedId}
-                  onChange={(v) => setInstallValues((prev: any) => ({ ...prev, platformContextId: v }))}
-                  options={[
-                    // First-class "no context": a standalone service wired to no backend at all.
-                    // Every context-dependent step (Hive/Ranger/Kerberos/OIDC wiring, Hadoop config
-                    // maps) is skipped — required on a standalone Ambari where no managed cluster
-                    // exists, and useful anywhere for a plain unwired deploy.
-                    { value: 'none', label: 'No platform context (standalone service)' },
-                    ...(contexts.length ? contexts : [{ id: 'default', name: 'Ambari-managed cluster', kind: 'MANAGED' } as PlatformContext])
-                      .map((c) => ({ value: c.id, label: `${c.name}${c.kind === 'MANAGED' ? ' (managed)' : ' (external)'}` })),
-                  ]}
-                  dropdownRender={(menu) => (
-                    <>
-                      {menu}
-                      <Divider style={{ margin: '6px 0' }} />
-                      <Button type="text" icon={<PlusOutlined />} style={{ width: '100%', textAlign: 'left' }}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => window.open('#/contexts', '_blank')}>
-                        Add / manage platform contexts
-                      </Button>
-                    </>
-                  )}
-                />
-                {unmetContextReqs.length > 0 && (
-                  <Alert style={{ marginTop: 10 }} type="warning" showIcon
-                    message={<span>Context missing: <b>{unmetContextReqs.join(', ')}</b></span>} />
-                )}
-              </Card>
-            );
-          })()}
+          {renderContextCard(false)}
 
           {/* Trusted truststores: operator-created truststores (Truststores tab) to trust in this
               release. Defaults are always merged server-side, so this only adds extras. */}
@@ -1347,7 +1374,7 @@ const ServiceWizardPage: React.FC = () => {
       </Text>
       {current > 0 && <Button onClick={() => setCurrent(current - 1)} disabled={submitting}>Previous</Button>}
       {current < steps.length - 1 &&
-       <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={current === 3 && hasInvalidPasswords}>Next</Button>}
+       <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={(current === 3 && hasInvalidPasswords) || (current === 0 && !contextChosen)}>Next</Button>}
       {current === steps.length - 1 &&
        <Button
          type="primary"
