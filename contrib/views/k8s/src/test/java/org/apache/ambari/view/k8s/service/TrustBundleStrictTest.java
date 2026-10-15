@@ -109,8 +109,8 @@ class TrustBundleStrictTest {
         String message = stopped.getMessage();
         assertTrue(message.startsWith("Could not write truststore Secret analytics/superset-truststore: "), message);
         assertTrue(message.contains("'gone-ca' (Truststore not found: ambari-pki/gone-ca-truststore)"), message);
-        assertTrue(message.contains("'team-a/partner-ca-truststore' (Truststore team-a/partner-ca-truststore is not in the "
-                + "truststore project ambari-pki"), message);
+        assertTrue(message.contains("'team-a/partner-ca-truststore' (Truststore team-a/partner-ca-truststore belongs to "
+                + "project team-a, so only the releases of that project can use it"), message);
         assertFalse(message.contains("'ambari-pki/corp-ca-truststore'"), "the readable one is not named: " + message);
         verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), any(), any());
     }
@@ -144,16 +144,17 @@ class TrustBundleStrictTest {
     }
 
     @Test
-    void aTruststoreLabelledInAWorkloadProjectIsNeverTrusted() {
-        // Whoever may write Secrets in a workload project can label one as a truststore: selecting it by reference
-        // must not make it a trust anchor of the release.
+    void aTruststoreOfAnotherProjectIsNeverTrusted() {
+        // Whoever may write Secrets in one project can label one as a truststore: selecting it by reference must not
+        // make it a trust anchor of a release of another project.
         when(k8s.getSecret("team-a", "corp-ca-truststore"))
                 .thenReturn(truststore("team-a", "corp-ca-truststore", partnerCaPem, false));
 
         IllegalStateException stopped = assertThrows(IllegalStateException.class,
                 () -> trustBundle.provisionForDeploy(NS, RELEASE, "SUPERSET", List.of("team-a/corp-ca-truststore")));
 
-        assertTrue(stopped.getMessage().contains("is not in the truststore project ambari-pki"), stopped.getMessage());
+        assertTrue(stopped.getMessage().contains("belongs to project team-a, so only the releases of that project can use it"),
+                stopped.getMessage());
         verify(k8s, never()).getSecret(eq("team-a"), anyString());
         verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), any(), any());
     }
@@ -241,7 +242,7 @@ class TrustBundleStrictTest {
     }
 
     @Test
-    void defaultTruststoresComeFromTheTruststoreProjectOnly() {
+    void defaultTruststoresComeFromTheTruststoreProjectAndTheReleaseProjectOnly() {
         String otherCaPem = TestCertificates.caPem("CN=Not Default CA");
         // A cluster-wide account could list a default-flagged truststore Secret a tenant wrote in a workload project.
         when(k8s.listViewSecretsWithLabel(anyString(), eq(TruststoreRegistryService.LABEL_RESOURCE_TYPE),
@@ -258,8 +259,59 @@ class TrustBundleStrictTest {
         String bundle = writtenCaBundle();
         assertTrue(holds(bundle, corporateCaPem));
         assertFalse(holds(bundle, otherCaPem), "not flagged default");
-        assertFalse(holds(bundle, partnerCaPem), "flagged default outside the truststore project");
+        assertFalse(holds(bundle, partnerCaPem), "flagged default in a project the release is not in");
         verify(k8s, never()).listViewSecretsWithLabel(eq("team-b"), anyString(), anyString());
+    }
+
+    @Test
+    void aTruststoreOfTheReleaseProjectCanBeSelected() {
+        when(k8s.getSecret(NS, "partner-ca-truststore")).thenReturn(truststore(NS, "partner-ca-truststore", partnerCaPem, false));
+
+        TrustBundleService.ProvisionResult result = trustBundle.provisionForDeploy(NS, RELEASE, "SUPERSET",
+                List.of(NS + "/partner-ca-truststore"));
+
+        assertEquals(2, result.caCount(), "the Ambari Internal CA and the selected project one");
+        assertTrue(holds(writtenCaBundle(), partnerCaPem));
+    }
+
+    @Test
+    void aDefaultTruststoreOfTheReleaseProjectIsTrustedByItsReleases() {
+        when(k8s.listViewSecretsWithLabel(anyString(), eq(TruststoreRegistryService.LABEL_RESOURCE_TYPE),
+                eq(TruststoreRegistryService.RESOURCE_TYPE_TRUSTSTORE))).thenAnswer(call -> switch ((String) call.getArgument(0)) {
+                    case "ambari-pki" -> List.of(truststore("ambari-pki", "corp-ca-truststore", corporateCaPem, true));
+                    case NS -> List.of(truststore(NS, "partner-ca-truststore", partnerCaPem, true));
+                    default -> List.of();
+                });
+
+        TrustBundleService.ProvisionResult result = trustBundle.provisionForDeploy(NS, RELEASE, null, null);
+
+        assertEquals(3, result.caCount(), "the Ambari Internal CA, the shared default and the project default");
+        String bundle = writtenCaBundle();
+        assertTrue(holds(bundle, corporateCaPem));
+        assertTrue(holds(bundle, partnerCaPem));
+    }
+
+    @Test
+    void aBareNameNeverResolvesToAProjectTruststore() {
+        // Releases deployed by earlier versions recorded bare names, all of them shared truststores.
+        when(k8s.getSecret(NS, "partner-ca-truststore")).thenReturn(truststore(NS, "partner-ca-truststore", partnerCaPem, false));
+
+        IllegalStateException stopped = assertThrows(IllegalStateException.class,
+                () -> trustBundle.provisionForDeploy(NS, RELEASE, null, List.of("partner-ca")));
+
+        assertTrue(stopped.getMessage().contains("Truststore not found: ambari-pki/partner-ca-truststore"), stopped.getMessage());
+        verify(k8s, never()).getSecret(eq(NS), eq("partner-ca-truststore"));
+    }
+
+    @Test
+    void aProjectTruststoreNamedLikeTheReleaseTruststoreIsNeverOverwritten() {
+        when(k8s.getSecret(NS, "mounting-truststore")).thenReturn(truststore(NS, "mounting-truststore", partnerCaPem, false));
+
+        IllegalStateException stopped = assertThrows(IllegalStateException.class,
+                () -> trustBundle.provisionForDeploy(NS, "mounting", "ZZTESTKUBEONLY", null));
+
+        assertTrue(stopped.getMessage().contains("has the name of this release's own truststore"), stopped.getMessage());
+        verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), any(), any());
     }
 
     @Test

@@ -794,37 +794,62 @@ class KubeServiceTest {
     assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), error(deleted));
   }
 
-  @Test
-  void aTruststoreOutsideTheTruststoreProjectCannotBeMadeDefaultNorDeleted(
-      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+  /** The API as a view operator: may deploy, may not change the view configuration. */
+  private KubeService apiAsOperator(java.nio.file.Path workDir) throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
+    when(ctx.getUsername()).thenReturn("olga");
+    when(ctx.getProperties()).thenReturn(Map.of(
+        "view.admin.users", "dave",
+        "view.operator.users", "olga",
+        "k8s.view.working.dir", workDir.toString()));
+    return api;
+  }
 
-    Response flipped = api.setTruststoreDefault(null, "team-a", "corp-ca-truststore", Map.of("default", true));
-    assertEquals(400, flipped.getStatus());
-    assertTrue(error(flipped).contains("is not in the truststore project ambari-pki"), error(flipped));
+  @Test
+  void anOperatorChangesTheTruststoresOfAProjectButNotTheSharedOnes(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir)
+      throws Exception {
+    KubeService api = apiAsOperator(workDir);
+    when(k8s.getClient()).thenThrow(forbidden());
+    String pem = org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Partner Root CA");
 
-    Response deleted = api.deleteTruststore(null, "team-a", "corp-ca-truststore");
-    assertEquals(400, deleted.getStatus());
+    // A shared truststore may be trusted by every release: changing one stays a configuration task.
+    javax.ws.rs.WebApplicationException shared = assertThrows(javax.ws.rs.WebApplicationException.class,
+        () -> api.createTruststore(null, Map.of("name", "corp-ca", "caCertPem", pem)));
+    assertEquals(403, shared.getResponse().getStatus());
+    assertThrows(javax.ws.rs.WebApplicationException.class,
+        () -> api.setTruststoreDefault(null, "ambari-pki", "corp-ca-truststore", Map.of("default", true)));
+    assertThrows(javax.ws.rs.WebApplicationException.class,
+        () -> api.deleteTruststore(null, "ambari-pki", "corp-ca-truststore"));
     verify(k8s, never()).getClient();
+
+    // A project one reaches the cluster, which answers for the project named.
+    Response created = api.createTruststore(null, Map.of("name", "partner-ca", "caCertPem", pem, "namespace", "team-a"));
+    assertEquals(403, created.getStatus());
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(created));
+    Response flipped = api.setTruststoreDefault(null, "team-a", "partner-ca-truststore", Map.of("default", true));
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(flipped));
+    Response deleted = api.deleteTruststore(null, "team-a", "partner-ca-truststore");
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(deleted));
   }
 
   @Test
   @SuppressWarnings("unchecked")
-  void onlyTheTruststoresOfTheTruststoreProjectAreListedAsManaged() throws Exception {
-    // A Secret labelled as a truststore in a workload project is neither selectable nor default: a deploy would not
-    // trust it, so the Truststores tab and the wizard do not offer it as one.
+  void theListingTellsSharedTruststoresFromProjectOnes() throws Exception {
+    // A truststore of a workload project is selectable by the releases of that project only; the wizard and the
+    // server read the scope to keep it there.
     KubernetesService.TruststoreSummary registered = summary("ambari-pki", "corp-ca-truststore");
-    KubernetesService.TruststoreSummary planted = summary("team-b", "partner-ca-truststore");
-    when(k8s.listTruststores(null)).thenReturn(new java.util.ArrayList<>(java.util.List.of(registered, planted)));
+    KubernetesService.TruststoreSummary project = summary("team-b", "partner-ca-truststore");
+    when(k8s.listTruststores(null)).thenReturn(new java.util.ArrayList<>(java.util.List.of(registered, project)));
 
     java.util.List<KubernetesService.TruststoreSummary> listed =
         (java.util.List<KubernetesService.TruststoreSummary>) api().listTruststores(null).getEntity();
 
     assertEquals(2, listed.size());
-    assertTrue(listed.get(0).managed);
+    assertEquals("shared", listed.get(0).scope);
     assertTrue(listed.get(0).isDefault);
-    assertFalse(listed.get(1).managed);
-    assertFalse(listed.get(1).isDefault);
+    assertEquals("project", listed.get(1).scope);
+    assertTrue(listed.get(1).managed);
+    assertTrue(listed.get(1).isDefault, "default for the releases of its project");
   }
 
   /** A truststore created in the Truststores tab and flagged default, as the listing reports it. */

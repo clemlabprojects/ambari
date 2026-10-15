@@ -111,6 +111,15 @@ These services were offered by pre-release builds and are no longer in the servi
   own images until it is uninstalled. GitOps deployments still work with your existing Git
   server once it is registered under Git Repositories.
 
+### Truststores per project
+
+The Truststores page creates a truststore either **shared** (in the truststore project of Cluster Settings, available
+to every release, as before) or for **one project** (stored in that project, available only to the releases deployed
+there). Use a project truststore when the KDPS account cannot write in the shared truststore project, or for a CA only
+one project's services need. A project truststore marked default is trusted by every release of its project. Operators
+can create project truststores; shared ones remain an administrator task. Existing truststores and releases are
+unchanged.
+
 ### GitOps deployments
 
 - Every change of a GitOps release now lands on the base branch that Flux reconciles (main unless you choose another

@@ -52,10 +52,11 @@ The view builds the bundle from:
    the CA the view itself uses to sign mutating-webhook serving certs and
    other in-cluster leaves.
 
-3. **The default truststores** of the Truststores page (flagged *default*),
-   in the *Truststore project*.
+3. **The default truststores** of the Truststores page (flagged *default*):
+   the shared ones, and the project ones of the release's own project.
 4. **The truststores selected for the release** in the deploy wizard
-   (`<namespace>/<name>`), read from the *Truststore project* only.
+   (`<namespace>/<name>`): shared ones, or project ones of the release's
+   own project.
 
 All are merged and deduplicated by fingerprint. Result: one PEM bundle
 covering every CA the workload could need.
@@ -68,13 +69,23 @@ Git, naming it. So does a `<releaseName>-truststore` Secret that cannot
 be written when truststores were selected, or when the service mounts the
 Secret itself.
 
-The truststores of the Truststores page live in the *Truststore project*
-(Cluster Settings → *Truststores and Company CAs*; `ambari-pki` by
-default). Only that project counts: a Secret carrying the truststore label
-in any other project is listed as a plain Secret, never selectable nor
-trusted by default, so that whoever may write Secrets in a workload project
-cannot add a trust anchor to every release. Grant write access to the
-Truststore project only to those who manage the platform's trust.
+The truststores of the Truststores page have one of two scopes, chosen when
+they are created:
+
+- **Shared**: stored in the *Truststore project* (Cluster Settings →
+  *Truststores and Company CAs*; `ambari-pki` by default). Any release can
+  select one, and one flagged default is trusted by every release. Creating
+  or changing one needs the view administrator role. Grant write access to
+  the Truststore project only to those who manage the platform's trust.
+- **Project**: stored in a project releases are deployed to. Only the
+  releases of that project can select one, and one flagged default is
+  trusted by every release of that project. A view operator can create one.
+  A release of another project never trusts it, so whoever may write Secrets
+  in one project cannot add a trust anchor to the releases of another.
+
+A project truststore cannot take the name of a release's own truststore
+(`<release>-truststore`) in the same project: creating it is refused, and so
+is deploying a release whose truststore name is already taken by one.
 
 To add a CA system-wide (so every future KDPS install picks it up):
 

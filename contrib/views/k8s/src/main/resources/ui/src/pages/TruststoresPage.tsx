@@ -17,9 +17,9 @@
  */
 
 import React from 'react';
-import { Alert, Button, Card, Checkbox, Empty, Form, Input, Modal, Popconfirm, Space, Spin, Switch, Table, Tag, Tooltip, Typography, Upload, message } from 'antd';
+import { Alert, Button, Card, Checkbox, Empty, Form, Input, Modal, Popconfirm, Radio, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography, Upload, message } from 'antd';
 import { DatabaseOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons';
-import { listTruststores, createTruststore, setTruststoreDefault, deleteTruststore, getTruststoreRegistry, type TruststoreCert, type TruststoreRegistryStatus, type TruststoreSummary } from '../api/client';
+import { listTruststores, createTruststore, setTruststoreDefault, deleteTruststore, getTruststoreRegistry, getNamespaces, type TruststoreCert, type TruststoreRegistryStatus, type TruststoreSummary } from '../api/client';
 import { useNamespace, ALL_NAMESPACES } from '../context/NamespaceContext';
 import { serverMessage } from '../utils/serverMessage';
 
@@ -56,13 +56,30 @@ const TruststoresPage: React.FC = () => {
   const [saving, setSaving] = React.useState(false);
   const [busyRow, setBusyRow] = React.useState<string | null>(null);
   const [form] = Form.useForm();
+  const scope = Form.useWatch('scope', form);
+  // The projects a project truststore can go to: those KDPS can see.
+  const [projects, setProjects] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    if (!createOpen) return;
+    getNamespaces()
+      .then((list) => setProjects(list.map((n) => n.name).filter((n) => n !== registry?.namespace).sort()))
+      .catch(() => setProjects([]));
+  }, [createOpen, registry?.namespace]);
+
+  const openCreate = () => {
+    // A project selected in the namespace selector is the likely target of a project truststore.
+    const selected = namespace !== ALL_NAMESPACES && namespace !== registry?.namespace ? namespace : undefined;
+    form.setFieldsValue({ scope: selected ? 'project' : 'shared', namespace: selected });
+    setCreateOpen(true);
+  };
 
   const submitCreate = async () => {
     try {
       const v = await form.validateFields();
       setSaving(true);
-      await createTruststore(v.name, v.caCertPem, !!v.makeDefault, v.description);
-      message.success(`Truststore "${v.name}" created`);
+      const project = v.scope === 'project' ? v.namespace : undefined;
+      await createTruststore(v.name, v.caCertPem, !!v.makeDefault, v.description, project);
+      message.success(project ? `Truststore "${v.name}" created in project ${project}` : `Truststore "${v.name}" created`);
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -158,6 +175,11 @@ const TruststoresPage: React.FC = () => {
         bundle in three formats (<Text code>ca.crt</Text>, <Text code>truststore.jks</Text>, <Text code>truststore.password</Text>).
         See <Text code>docs/OUTBOUND_TLS_TRUSTSTORE.md</Text> for the schema.
       </Paragraph>
+      <Paragraph type="secondary">
+        Truststores you create are <Text strong>shared</Text> (kept in the truststore project set in Cluster Settings,
+        any release can trust them) or belong to a <Text strong>project</Text> (only the releases of that project can
+        trust them). A default truststore is trusted by every release it is available to.
+      </Paragraph>
 
       <Card
         size="small"
@@ -172,7 +194,7 @@ const TruststoresPage: React.FC = () => {
             <Tooltip title="Refresh">
               <Button icon={<ReloadOutlined />} onClick={load} />
             </Tooltip>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
               Create truststore
             </Button>
           </Space>
@@ -187,8 +209,8 @@ const TruststoresPage: React.FC = () => {
       >
         {registry && !registry.canWrite && (
           <Alert type="warning" showIcon style={{ margin: 12 }}
-            message="Truststores cannot be created or changed"
-            description={registry.message} />
+            message="Shared truststores cannot be created or changed"
+            description={<>{registry.message} Truststores of a project KDPS may write in can still be created.</>} />
         )}
         {error && (
           <Alert type="error" showIcon message={error} style={{ margin: 12 }} />
@@ -235,16 +257,19 @@ const TruststoresPage: React.FC = () => {
                 title: 'Type',
                 key: 'type',
                 width: 110,
-                render: (_v: any, row: TruststoreSummary) => row.managed
-                  ? <Tag color="geekblue" style={{ margin: 0 }}>managed</Tag>
-                  : <Tooltip title="Auto-created for a release; edit via the install wizard"><Tag style={{ margin: 0 }}>release</Tag></Tooltip>,
+                render: (_v: any, row: TruststoreSummary) => !row.managed
+                  ? <Tooltip title="Auto-created for a release; edit via the install wizard"><Tag style={{ margin: 0 }}>release</Tag></Tooltip>
+                  : row.scope === 'project'
+                    ? <Tooltip title={`Only the releases of project ${row.namespace} can trust it`}><Tag color="cyan" style={{ margin: 0 }}>project</Tag></Tooltip>
+                    : <Tooltip title="Any release can trust it"><Tag color="geekblue" style={{ margin: 0 }}>shared</Tag></Tooltip>,
               },
               {
                 title: 'Default',
                 key: 'default',
                 width: 90,
                 render: (_v: any, row: TruststoreSummary) => (
-                  <Tooltip title={row.managed ? 'Trust this in every release' : 'Only truststores of the truststore project set in Cluster Settings can be marked default'}>
+                  <Tooltip title={!row.managed ? 'Only truststores created here can be marked default'
+                    : row.scope === 'project' ? `Trust this in every release of project ${row.namespace}` : 'Trust this in every release'}>
                     <Switch
                       size="small"
                       checked={!!row.isDefault}
@@ -288,11 +313,28 @@ const TruststoresPage: React.FC = () => {
       >
         <Paragraph type="secondary" style={{ marginTop: 0 }}>
           Paste (or upload) a company's <Text strong>public</Text> certificate in PEM format — a trust
-          anchor, no private key. Mark it default to trust it in every release, or select it per
+          anchor, no private key. Mark it default to trust it automatically, or select it per
           release in the install wizard (step 3).
-          {registry && <> It is stored in project <Text code>{registry.namespace}</Text> (set in Cluster Settings).</>}
         </Paragraph>
-        <Form form={form} layout="vertical" initialValues={{ makeDefault: false }}>
+        <Form form={form} layout="vertical" initialValues={{ makeDefault: false, scope: 'shared' }}>
+          <Form.Item name="scope" label="Available to">
+            <Radio.Group>
+              <Radio value="shared">
+                Every release (shared{registry ? <>, stored in project <Text code>{registry.namespace}</Text></> : null})
+              </Radio>
+              <Radio value="project">The releases of one project</Radio>
+            </Radio.Group>
+          </Form.Item>
+          {scope === 'project' && (
+            <Form.Item
+              name="namespace"
+              label="Project"
+              rules={[{ required: true, message: 'Choose the project whose releases may trust it' }]}
+              extra="Stored in this project. Anyone who can edit Secrets there can change it, which only affects that project's releases."
+            >
+              <Select showSearch placeholder="Select a project" options={projects.map((p) => ({ value: p, label: p }))} />
+            </Form.Item>
+          )}
           <Form.Item
             name="name"
             label="Name"
@@ -327,7 +369,7 @@ const TruststoresPage: React.FC = () => {
             </Upload>
           </Space>
           <Form.Item name="makeDefault" valuePropName="checked">
-            <Checkbox>Trust in every release by default</Checkbox>
+            <Checkbox>{scope === 'project' ? 'Trust in every release of this project by default' : 'Trust in every release by default'}</Checkbox>
           </Form.Item>
         </Form>
       </Modal>

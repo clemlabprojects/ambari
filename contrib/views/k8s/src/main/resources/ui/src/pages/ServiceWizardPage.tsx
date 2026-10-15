@@ -40,7 +40,7 @@ import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPaylo
 import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecretReplacement, describeIngressTlsChange, ingressTlsChange, ingressTlsNotice, keptCertificateHostProblem, KEEP_CURRENT_TLS, offersKeepCurrentTls, securityProfileIngress, seedKeepCurrentTls, unconfirmedTlsReplacement, upgradeChartFormValues, type CurrentIngressTls } from '../components/ServiceInstallationModal/ingressTls';
 import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
 import { deployFormValues } from './deployFormValues';
-import { normalizeTruststoreRefs, truststoreRef } from './truststoreRefs';
+import { isSharedTruststore, normalizeTruststoreRefs, selectableTruststores, truststoreRef } from './truststoreRefs';
 import { federationManualGrantNotice, federationMayTurnOnFileAuth, federationRefusalNotice, federationWritesAtlasUserStore } from './atlasFederationAuth';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -1174,11 +1174,21 @@ const ServiceWizardPage: React.FC = () => {
               placeholder="Select truststore(s) to trust in this release"
               value={normalizeTruststoreRefs((installValues as any)?.truststoreRefs, managedTruststores)}
               onChange={(v) => setInstallValues((prev: any) => ({ ...prev, truststoreRefs: v }))}
-              options={managedTruststores.map((t) => ({
-                value: truststoreRef(t),
-                label: `${t.name} (${t.namespace})${t.isDefault ? ' (default)' : ''} · ${t.caCount} CA${t.caCount === 1 ? '' : 's'}`,
-              }))}
-              notFoundContent={<span style={{ fontSize: 12 }}>No managed truststores — create one in the Truststores tab</span>}
+              options={(() => {
+                // Shared truststores, then those of the release's own project: the server refuses any other.
+                const selectable = selectableTruststores(managedTruststores, (installValues as any)?.namespace);
+                const option = (t: TruststoreSummary) => ({
+                  value: truststoreRef(t),
+                  label: `${t.name} (${t.namespace})${t.isDefault ? ' (default)' : ''} · ${t.caCount} CA${t.caCount === 1 ? '' : 's'}`,
+                });
+                const shared = selectable.filter(isSharedTruststore).map(option);
+                const project = selectable.filter((t) => !isSharedTruststore(t)).map(option);
+                return [
+                  ...(shared.length ? [{ label: 'Shared', options: shared }] : []),
+                  ...(project.length ? [{ label: `Project ${(installValues as any)?.namespace}`, options: project }] : []),
+                ];
+              })()}
+              notFoundContent={<span style={{ fontSize: 12 }}>No truststore for this project — create one in the Truststores tab</span>}
               dropdownRender={(menu) => (
                 <>
                   {menu}
@@ -1192,7 +1202,8 @@ const ServiceWizardPage: React.FC = () => {
               )}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
-              Default truststores are trusted automatically; selections here add to them.
+              Default truststores (the shared ones, and those of this release's project) are trusted automatically;
+              selections here add to them.
             </Typography.Text>
           </Card>
 

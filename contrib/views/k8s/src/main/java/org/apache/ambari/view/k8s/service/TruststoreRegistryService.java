@@ -41,16 +41,21 @@ import java.util.UUID;
  * Operator-managed truststores created from a public certificate PEM (a trust anchor, no private
  * key — distinct from {@link CaRegistryService}, which stores issuing CAs *with* keys).
  *
- * <p>Each truststore is a Secret named {@code <sanitized-name>-truststore} in a single management
- * namespace (see {@link PkiNamespaces#truststoreNamespace()}) carrying {@code ca.crt} (PEM) plus a
+ * <p>Each truststore is a Secret named {@code <sanitized-name>-truststore} carrying {@code ca.crt} (PEM) plus a
  * JVM-consumable {@code truststore.jks}/{@code truststore.password}, labelled
- * {@link #LABEL_RESOURCE_TYPE}={@value #RESOURCE_TYPE_TRUSTSTORE}. Truststores flagged default
- * ({@link #ANNOTATION_TRUST_DEFAULT}) are trusted by every release; others can be selected per
- * release in the install wizard. {@link TrustBundleService} merges both into the release truststore.
+ * {@link #LABEL_RESOURCE_TYPE}={@value #RESOURCE_TYPE_TRUSTSTORE}. {@link TrustBundleService} merges the ones a
+ * release trusts into its release truststore. There are two scopes:</p>
+ * <ul>
+ *   <li><b>shared</b>: in the management namespace (see {@link PkiNamespaces#truststoreNamespace()}, set in Cluster
+ *       Settings). Any release may select one, and one flagged default ({@link #ANNOTATION_TRUST_DEFAULT}) is trusted
+ *       by every release;</li>
+ *   <li><b>project</b>: in a project releases are deployed to. Only the releases of that project may select one, and
+ *       one flagged default is trusted by every release of that project.</li>
+ * </ul>
  *
- * <p>Only the Secrets of the management namespace count as truststores, for selection, for the default flag and for
- * the trust every release gets. A Secret carrying the same label in any other namespace is not one: whoever may write
- * Secrets in a workload project could otherwise add a trust anchor to every release KDPS deploys.</p>
+ * <p>A project truststore never reaches a release of another project: whoever may write Secrets in one project could
+ * otherwise add a trust anchor to the releases of every other. Within its own project it gives nothing its editors do
+ * not already have, since they can change the releases themselves.</p>
  */
 public class TruststoreRegistryService {
 
@@ -68,6 +73,15 @@ public class TruststoreRegistryService {
     public static final String ANNOTATION_DESCRIPTION = "ambari.clemlab.com/description";
     public static final String ANNOTATION_UPLOADED_BY = "ambari.clemlab.com/uploaded-by";
     public static final String ANNOTATION_UPLOADED_AT = "ambari.clemlab.com/uploaded-at";
+
+    /** {@link KubernetesService.TruststoreSummary#scope} of a truststore of the management namespace. */
+    public static final String SCOPE_SHARED = "shared";
+    /** {@link KubernetesService.TruststoreSummary#scope} of a truststore of a workload project. */
+    public static final String SCOPE_PROJECT = "project";
+
+    /** A Kubernetes namespace name: a DNS-1123 label. */
+    private static final java.util.regex.Pattern NAMESPACE_NAME =
+            java.util.regex.Pattern.compile("[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?");
 
     private final ViewContext viewContext;
     private final KubernetesService kubernetesService;
@@ -105,16 +119,33 @@ public class TruststoreRegistryService {
         return safe + SUFFIX;
     }
 
+    /** Whether a namespace holds the shared truststores: the management namespace. */
+    public boolean isShared(String namespace) {
+        return namespace == null || namespace.isBlank() || managementNamespace().equals(namespace.trim());
+    }
+
+    /**
+     * Create (or replace) a shared truststore from a public certificate PEM.
+     *
+     * @see #create(String, String, String, boolean, String)
+     */
+    public Map<String, Object> create(String name, String caCertPem, boolean makeDefault, String description) {
+        return create(null, name, caCertPem, makeDefault, description);
+    }
+
     /**
      * Create (or replace) a truststore from a public certificate PEM.
      *
+     * @param namespace   the project of a project truststore; {@code null} or blank, or the management namespace, for a
+     *                    shared one
      * @param name        operator-chosen short id
      * @param caCertPem   one or more PEM certificates (trust anchors, no private key)
-     * @param makeDefault whether the truststore should be trusted by every release
+     * @param makeDefault whether the truststore should be trusted by every release (of its project, for a project one)
      * @param description optional free text
      * @return summary of the created truststore
      */
-    public Map<String, Object> create(String name, String caCertPem, boolean makeDefault, String description) {
+    public Map<String, Object> create(String namespace, String name, String caCertPem, boolean makeDefault,
+                                      String description) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("name is required");
         }
@@ -126,7 +157,8 @@ public class TruststoreRegistryService {
             throw new IllegalArgumentException("No X.509 certificate found in the provided PEM");
         }
 
-        String namespace = managementNamespace();
+        boolean shared = isShared(namespace);
+        String targetNamespace = shared ? managementNamespace() : validNamespace(namespace);
         String secretName = secretNameFor(name);
         String canonicalPem = WebHookConfigurationService.toPemBundle(certs);
         char[] password = UUID.randomUUID().toString().replace("-", "").toCharArray();
@@ -151,11 +183,14 @@ public class TruststoreRegistryService {
         annotations.put(ANNOTATION_UPLOADED_AT, Instant.now().toString());
         annotations.put("ambari.clemlab.com/subject", certs.get(0).getSubjectX500Principal().getName());
 
-        ensureNamespace(namespace);
+        // Only the management namespace is KDPS's own to create; a project is the platform team's.
+        if (shared) {
+            ensureNamespace(targetNamespace);
+        }
         Secret secret = new SecretBuilder()
                 .withNewMetadata()
                 .withName(secretName)
-                .withNamespace(namespace)
+                .withNamespace(targetNamespace)
                 .withLabels(labels)
                 .withAnnotations(annotations)
                 .endMetadata()
@@ -163,29 +198,40 @@ public class TruststoreRegistryService {
                 .withData(data)
                 .build();
 
-        Secret existing = kubernetesService.getClient().secrets().inNamespace(namespace).withName(secretName).get();
+        Secret existing = kubernetesService.getClient().secrets().inNamespace(targetNamespace).withName(secretName).get();
+        // A release keeps its own truststore under the same naming (<release>-truststore): never replace one.
+        if (existing != null && !isManaged(existing)) {
+            throw new IllegalArgumentException("Project " + targetNamespace + " already has a Secret " + secretName
+                    + " that was not created in the Truststores tab (a release named " + secretName.substring(0,
+                    secretName.length() - SUFFIX.length()) + " keeps its own truststore under that name). Choose "
+                    + "another name.");
+        }
         if (existing == null) {
-            kubernetesService.getClient().secrets().inNamespace(namespace).resource(secret).create();
+            kubernetesService.getClient().secrets().inNamespace(targetNamespace).resource(secret).create();
             LOG.info("truststore-registry: CREATED {}/{} certs={} default={} by={}",
-                    namespace, secretName, certs.size(), makeDefault, annotations.get(ANNOTATION_UPLOADED_BY));
+                    targetNamespace, secretName, certs.size(), makeDefault, annotations.get(ANNOTATION_UPLOADED_BY));
         } else {
-            kubernetesService.getClient().secrets().inNamespace(namespace).resource(secret).update();
+            kubernetesService.getClient().secrets().inNamespace(targetNamespace).resource(secret).update();
             LOG.info("truststore-registry: REPLACED {}/{} certs={} default={} by={}",
-                    namespace, secretName, certs.size(), makeDefault, annotations.get(ANNOTATION_UPLOADED_BY));
+                    targetNamespace, secretName, certs.size(), makeDefault, annotations.get(ANNOTATION_UPLOADED_BY));
         }
 
         Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("namespace", namespace);
+        summary.put("namespace", targetNamespace);
         summary.put("name", secretName);
         summary.put("caCount", certs.size());
         summary.put("isDefault", makeDefault);
         summary.put("managed", true);
+        summary.put("scope", shared ? SCOPE_SHARED : SCOPE_PROJECT);
         return summary;
     }
 
-    /** Flip the default flag on a managed truststore. Multiple truststores may be default. */
+    /**
+     * Flip the default flag on a managed truststore. Multiple truststores may be default. A shared one flagged default
+     * is trusted by every release, a project one by every release of its project.
+     */
     public Map<String, Object> setDefault(String namespace, String name, boolean value) {
-        String ns = requireManagementNamespace(namespace, name);
+        String ns = namespaceOf(namespace);
         Secret secret = kubernetesService.getClient().secrets().inNamespace(ns).withName(name).get();
         if (secret == null) {
             throw new IllegalArgumentException("Truststore not found: " + ns + "/" + name);
@@ -206,7 +252,7 @@ public class TruststoreRegistryService {
 
     /** Delete a managed truststore. Refuses to delete non-managed (e.g. per-release) truststores. */
     public void delete(String namespace, String name) {
-        String ns = requireManagementNamespace(namespace, name);
+        String ns = namespaceOf(namespace);
         Secret secret = kubernetesService.getClient().secrets().inNamespace(ns).withName(name).get();
         if (secret == null) {
             throw new IllegalArgumentException("Truststore not found: " + ns + "/" + name);
@@ -217,16 +263,28 @@ public class TruststoreRegistryService {
     }
 
     /**
-     * The {@code ca.crt} PEM of a truststore created in the Truststores tab.
+     * The {@code ca.crt} PEM of a shared truststore, for what is not deployed to a project (a chart repository).
      *
-     * @param ref {@code <namespace>/<name>}, as the deploy wizard sends it from the listing, or a bare name (as deploys
-     *            recorded by earlier versions and chart repositories name it), read from the management namespace;
-     *            the name with or without its {@value #SUFFIX} suffix
-     * @return the PEM bundle
-     * @throws IllegalArgumentException when the namespace is not the management namespace, or the Secret is missing,
-     *                                  was not created in the Truststores tab, or holds no {@code ca.crt}
+     * @see #caPemByName(String, String)
      */
     public String caPemByName(String ref) {
+        return caPemByName(ref, null);
+    }
+
+    /**
+     * The {@code ca.crt} PEM of a truststore created in the Truststores tab.
+     *
+     * @param ref              {@code <namespace>/<name>}, as the deploy wizard sends it from the listing, or a bare
+     *                         name (as deploys recorded by earlier versions and chart repositories name it), read from the
+     *                         management namespace; the name with or without its {@value #SUFFIX} suffix
+     * @param releaseNamespace the project of the release that trusts it, whose project truststores it may use; {@code null}
+     *                         for shared truststores only
+     * @return the PEM bundle
+     * @throws IllegalArgumentException when the namespace is neither the management namespace nor the release's, or the
+     *                                  Secret is missing, was not created in the Truststores tab, or holds no
+     *                                  {@code ca.crt}
+     */
+    public String caPemByName(String ref, String releaseNamespace) {
         Objects.requireNonNull(ref, "ref");
         String namespace = managementNamespace();
         String name = ref.trim();
@@ -234,7 +292,7 @@ public class TruststoreRegistryService {
         if (slash >= 0) {
             String given = name.substring(0, slash).trim();
             name = name.substring(slash + 1).trim();
-            namespace = requireManagementNamespace(given, name);
+            namespace = usableNamespace(given, name, releaseNamespace);
         }
         String secretName = secretNameFor(name);
         Secret secret = kubernetesService.getSecret(namespace, secretName);
@@ -259,14 +317,33 @@ public class TruststoreRegistryService {
     }
 
     /**
-     * The {@code ca.crt} PEM bundles of every truststore flagged default in the management namespace.
+     * The {@code ca.crt} PEM bundles of every shared truststore flagged default.
      *
      * @return the PEM bundles
      * @throws RuntimeException when they cannot be listed
      */
     public List<String> defaultTruststorePems() {
+        return defaultPemsIn(managementNamespace());
+    }
+
+    /**
+     * The {@code ca.crt} PEM bundles of the truststores flagged default that a release of a project trusts: the shared
+     * ones, and those of its project.
+     *
+     * @param releaseNamespace the project of the release; {@code null} for the shared ones only
+     * @return the PEM bundles
+     * @throws RuntimeException when they cannot be listed
+     */
+    public List<String> defaultTruststorePems(String releaseNamespace) {
+        List<String> out = defaultPemsIn(managementNamespace());
+        if (!isShared(releaseNamespace)) {
+            out.addAll(defaultPemsIn(releaseNamespace.trim()));
+        }
+        return out;
+    }
+
+    private List<String> defaultPemsIn(String ns) {
         List<String> out = new ArrayList<>();
-        String ns = managementNamespace();
         for (Secret s : kubernetesService.listViewSecretsWithLabel(ns, LABEL_RESOURCE_TYPE, RESOURCE_TYPE_TRUSTSTORE)) {
             Map<String, String> ann = s.getMetadata() != null ? s.getMetadata().getAnnotations() : null;
             boolean isDefault = ann != null && Boolean.parseBoolean(ann.getOrDefault(ANNOTATION_TRUST_DEFAULT, "false"));
@@ -285,9 +362,8 @@ public class TruststoreRegistryService {
     }
 
     /**
-     * Marks the listed truststores the way they are used: one of the management namespace created in the Truststores
-     * tab is managed, and trusted by every release when flagged default. One carrying the label elsewhere is shown as
-     * any other Secret, neither selectable nor default, since a deploy would not trust it.
+     * Marks the scope of the listed truststores created in the Truststores tab: shared in the management namespace,
+     * project anywhere else. Release truststores and other Secrets have none.
      *
      * @param listed the Secrets named {@code *}{@value #SUFFIX} the account can read; changed in place
      * @return the same list
@@ -295,33 +371,53 @@ public class TruststoreRegistryService {
     public List<KubernetesService.TruststoreSummary> markManaged(List<KubernetesService.TruststoreSummary> listed) {
         String ns = managementNamespace();
         for (KubernetesService.TruststoreSummary t : listed) {
-            if (t.managed && !ns.equals(t.namespace)) {
-                t.managed = false;
-                t.isDefault = false;
-            }
+            t.scope = !t.managed ? null : ns.equals(t.namespace) ? SCOPE_SHARED : SCOPE_PROJECT;
         }
         return listed;
     }
 
-    /**
-     * The namespace a truststore of the Truststores tab is in.
-     *
-     * @param namespace the namespace given; {@code null} or blank for the management namespace
-     * @param name      the truststore, for the message
-     * @return the management namespace
-     * @throws IllegalArgumentException when another namespace is given
-     */
-    private String requireManagementNamespace(String namespace, String name) {
-        String ns = managementNamespace();
-        if (namespace == null || namespace.isBlank() || ns.equals(namespace.trim())) {
-            return ns;
-        }
-        throw new IllegalArgumentException("Truststore " + namespace.trim() + "/" + name + " is not in the truststore "
-                + "project " + ns + " set in Cluster Settings; only the truststores of that project can be trusted or "
-                + "changed. Create it again in the Truststores tab.");
+    /** The namespace of a truststore to change: the one given, or the management namespace when blank. */
+    private String namespaceOf(String namespace) {
+        return isShared(namespace) ? managementNamespace() : validNamespace(namespace);
     }
 
-    private static boolean isManaged(Secret secret) {
+    /**
+     * The namespace a release may read a selected truststore from.
+     *
+     * @param namespace        the namespace of the reference; {@code null} or blank for the management namespace
+     * @param name             the truststore, for the message
+     * @param releaseNamespace the project of the release; {@code null} when only shared truststores may be used
+     * @return the namespace
+     * @throws IllegalArgumentException when it is neither the management namespace nor the release's project
+     */
+    private String usableNamespace(String namespace, String name, String releaseNamespace) {
+        if (isShared(namespace)) {
+            return managementNamespace();
+        }
+        String ns = namespace.trim();
+        if (releaseNamespace != null && ns.equals(releaseNamespace.trim())) {
+            return ns;
+        }
+        String shared = "the shared truststores of project " + managementNamespace() + " (set in Cluster Settings)";
+        if (releaseNamespace == null || releaseNamespace.isBlank()) {
+            throw new IllegalArgumentException("Truststore " + ns + "/" + name + " belongs to project " + ns
+                    + "; only " + shared + " can be used here.");
+        }
+        throw new IllegalArgumentException("Truststore " + ns + "/" + name + " belongs to project " + ns
+                + ", so only the releases of that project can use it. A release of project " + releaseNamespace.trim()
+                + " can use the truststores of its own project and " + shared + ".");
+    }
+
+    private static String validNamespace(String namespace) {
+        String ns = namespace.trim();
+        if (!NAMESPACE_NAME.matcher(ns).matches()) {
+            throw new IllegalArgumentException("'" + ns + "' is not a valid project name");
+        }
+        return ns;
+    }
+
+    /** Whether a Secret is a truststore created in the Truststores tab. */
+    static boolean isManaged(Secret secret) {
         Map<String, String> labels = secret.getMetadata() != null ? secret.getMetadata().getLabels() : null;
         return labels != null && RESOURCE_TYPE_TRUSTSTORE.equals(labels.get(LABEL_RESOURCE_TYPE));
     }

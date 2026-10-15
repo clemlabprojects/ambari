@@ -1914,10 +1914,15 @@ export interface TruststoreSummary {
   jvmReady: boolean;
   pemReady: boolean;
   certificates: TruststoreCert[];
-  /** Trusted by every release (default truststore). */
+  /** Trusted by every release (default truststore), or by every release of its project for a project one. */
   isDefault?: boolean;
   /** Created via the Truststores tab (can be edited/deleted). */
   managed?: boolean;
+  /**
+   * For a truststore of the Truststores tab: `shared` in the truststore project set in Cluster Settings, any release
+   * may trust it; `project` elsewhere, only the releases of its project may.
+   */
+  scope?: 'shared' | 'project';
 }
 
 /** List Secrets matching {@code *-truststore} with parsed ca.crt summaries. */
@@ -1937,16 +1942,20 @@ export interface TruststoreRegistryStatus {
 export const getTruststoreRegistry = async (): Promise<TruststoreRegistryStatus> =>
   fetchJson<TruststoreRegistryStatus>('/truststores/registry');
 
-/** Create a truststore from a public certificate PEM (trust anchor, no private key). */
+/**
+ * Create a truststore from a public certificate PEM (trust anchor, no private key): a shared one without `namespace`,
+ * a project one in `namespace`.
+ */
 export const createTruststore = async (
   name: string,
   caCertPem: string,
   makeDefault: boolean,
   description?: string,
-): Promise<{ namespace: string; name: string; caCount: number; isDefault: boolean; managed: boolean }> =>
+  namespace?: string,
+): Promise<{ namespace: string; name: string; caCount: number; isDefault: boolean; managed: boolean; scope: 'shared' | 'project' }> =>
   fetchJson(`/truststores`, {
     method: 'POST',
-    body: JSON.stringify({ name, caCertPem, default: makeDefault, description }),
+    body: JSON.stringify({ name, caCertPem, default: makeDefault, description, namespace }),
   });
 
 /** Toggle the default flag on a managed truststore (multiple may be default). */

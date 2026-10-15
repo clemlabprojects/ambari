@@ -20,25 +20,40 @@ import type { TruststoreSummary } from '../api/client';
 
 /*
  * The truststores a release trusts, as the deploy wizard sends them: `<namespace>/<name>` of a truststore the
- * Truststores tab lists as managed. Only those of the truststore project set in Cluster Settings are managed, and the
- * server trusts no other. Releases deployed by earlier versions recorded a bare name, which the server reads from that
- * project too.
+ * Truststores tab lists as managed. A shared one (in the truststore project set in Cluster Settings) may be trusted by
+ * any release; a project one only by the releases of its project, and the server refuses it to any other. Releases
+ * deployed by earlier versions recorded a bare name, which the server reads from the shared project.
  */
+
+/** Whether a truststore of the Truststores tab is shared: any release may trust it. */
+export const isSharedTruststore = (t: Pick<TruststoreSummary, 'managed' | 'scope'>): boolean =>
+  !!t.managed && (t.scope ?? 'shared') === 'shared';
+
+/**
+ * The truststores a release of `releaseNamespace` may trust: the shared ones, then those of its own project. Without a
+ * project yet, the shared ones only.
+ */
+export const selectableTruststores = (listed: TruststoreSummary[], releaseNamespace?: string): TruststoreSummary[] => [
+  ...listed.filter(isSharedTruststore),
+  ...(releaseNamespace
+    ? listed.filter((t) => t.managed && t.scope === 'project' && t.namespace === releaseNamespace)
+    : []),
+];
 
 /** The reference of a truststore of the listing. */
 export const truststoreRef = (t: Pick<TruststoreSummary, 'namespace' | 'name'>): string => `${t.namespace}/${t.name}`;
 
 /**
  * The recorded truststores of a release, each as the wizard's picker names it when it can be matched: a bare name is
- * replaced by the one managed truststore of that name (with or without its `-truststore` suffix). A Secret of the same
- * name elsewhere, which a tenant could create once the original is deleted, never matches. One that matches none is
- * kept as recorded, and the server decides.
+ * replaced by the one shared truststore of that name (with or without its `-truststore` suffix). A Secret of the same
+ * name elsewhere, a project truststore included, never matches. One that matches none is kept as recorded, and the
+ * server decides.
  */
 export const normalizeTruststoreRefs = (refs: string[] | undefined, listed: TruststoreSummary[]): string[] => {
   return (refs || []).map((ref) => {
     if (!ref || ref.includes('/')) return ref;
     const secretName = ref.endsWith('-truststore') ? ref : `${ref}-truststore`;
-    const matches = listed.filter((t) => t.managed && t.name === secretName);
+    const matches = listed.filter((t) => isSharedTruststore(t) && t.name === secretName);
     return matches.length === 1 ? truststoreRef(matches[0]) : ref;
   });
 };

@@ -5294,10 +5294,19 @@ public class KubernetesService {
         public boolean pemReady;
         /** Parsed certs in {@code ca.crt}; one entry per cert block. */
         public List<Map<String, Object>> certificates;
-        /** Trusted by every release (annotation {@code ambari.clemlab.com/trust-default=true}). */
+        /**
+         * Flagged default (annotation {@code ambari.clemlab.com/trust-default=true}): trusted by every release, or by
+         * every release of its project for a project truststore.
+         */
         public boolean isDefault;
         /** Created via the view's Truststores tab (label {@code resource-type=truststore}); can be edited/deleted. */
         public boolean managed;
+        /**
+         * For a truststore of the Truststores tab: {@code shared} in the truststore project set in Cluster Settings, any
+         * release may use it; {@code project} elsewhere, only the releases of its project may. Null for any other
+         * Secret. Set by {@link TruststoreRegistryService#markManaged}.
+         */
+        public String scope;
     }
 
     /**

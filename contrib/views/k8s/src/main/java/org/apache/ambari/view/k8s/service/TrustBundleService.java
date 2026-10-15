@@ -54,8 +54,10 @@ import java.util.UUID;
  *       password credential-store/alias resolved — present only when Ambari runs on SSL;</li>
  *   <li>the Ambari Internal CA (always) — so view-signed pod certs stay trusted;</li>
  *   <li>truststores of the Truststores tab flagged default
- *       ({@link TruststoreRegistryService#ANNOTATION_TRUST_DEFAULT}) — trusted by every release;</li>
- *   <li>truststores of the Truststores tab selected for this release in the deploy wizard.</li>
+ *       ({@link TruststoreRegistryService#ANNOTATION_TRUST_DEFAULT}) — the shared ones trusted by every release, the
+ *       project ones by every release of their project;</li>
+ *   <li>truststores of the Truststores tab selected for this release in the deploy wizard: shared ones, or those of
+ *       the release's own project.</li>
  * </ol>
  *
  * <p>Used by both the orchestrated/direct deploy pipeline and the Flux GitOps backend so their trust
@@ -126,6 +128,16 @@ public class TrustBundleService {
      * Same as {@link #assemble(List)}, protecting the JKS with {@code password} when given (a fresh one otherwise).
      */
     TrustMaterial assemble(List<String> truststoreRefs, char[] password) {
+        return assemble(truststoreRefs, null, password);
+    }
+
+    /**
+     * Same as {@link #assemble(List, char[])}, for a release of {@code releaseNamespace}: the truststores of that project
+     * count as well as the shared ones.
+     *
+     * @param releaseNamespace the project of the release; {@code null} for the shared truststores only
+     */
+    TrustMaterial assemble(List<String> truststoreRefs, String releaseNamespace, char[] password) {
         List<X509Certificate> certs = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         List<String> sources = new ArrayList<>();
@@ -180,7 +192,7 @@ public class TrustBundleService {
 
         // 3) Default truststores (flagged default in the Truststores tab)
         try {
-            for (String pem : truststoreRegistryService.defaultTruststorePems()) {
+            for (String pem : truststoreRegistryService.defaultTruststorePems(releaseNamespace)) {
                 for (X509Certificate c : WebHookConfigurationService.parsePemCertificates(pem)) {
                     add.accept(c, "default-truststore");
                 }
@@ -201,7 +213,7 @@ public class TrustBundleService {
                 String name = ref.trim();
                 try {
                     List<X509Certificate> selected = WebHookConfigurationService.parsePemCertificates(
-                            truststoreRegistryService.caPemByName(name));
+                            truststoreRegistryService.caPemByName(name, releaseNamespace));
                     if (selected.isEmpty()) {
                         throw new IllegalArgumentException("it holds no certificate");
                     }
@@ -303,16 +315,23 @@ public class TrustBundleService {
      */
     public ProvisionResult provisionReleaseTruststore(String namespace, String releaseName, List<String> truststoreRefs) {
         String secretName = releaseName + TruststoreRegistryService.SUFFIX;
-        TrustMaterial material = assemble(truststoreRefs);
+        TrustMaterial material = assemble(truststoreRefs, namespace, null);
         if (material.certs().isEmpty()) {
             return new ProvisionResult(false, null, Map.of(), 0, material.warnings());
         }
         // Same CAs as the Secret this view wrote last time: keep its password. The password ends up in the service
         // configuration, so a new one restarts every pod; with changed CAs that restart is wanted (the JKS is mounted
         // as a file the pods only read at start), so a fresh password is kept then.
-        char[] previous = reusablePassword(secretOrNull(namespace, secretName), material.caPem());
+        io.fabric8.kubernetes.api.model.Secret current = secretOrNull(namespace, secretName);
+        // A project truststore of the Truststores tab may carry the release truststore's name: never overwrite it.
+        if (current != null && TruststoreRegistryService.isManaged(current)) {
+            throw new IllegalStateException("The truststore " + namespace + "/" + secretName + " of the Truststores "
+                    + "tab has the name of this release's own truststore. Rename it (create it under another name and "
+                    + "delete this one), or deploy the release under another name.");
+        }
+        char[] previous = reusablePassword(current, material.caPem());
         if (previous != null) {
-            material = assemble(truststoreRefs, previous);
+            material = assemble(truststoreRefs, namespace, previous);
         }
         Map<String, byte[]> data = new LinkedHashMap<>();
         data.put("truststore.jks", material.jks());

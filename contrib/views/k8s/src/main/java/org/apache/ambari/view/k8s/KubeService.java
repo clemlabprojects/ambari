@@ -1123,14 +1123,32 @@ public class KubeService {
         return Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", message)).build();
     }
 
-    /** Create a truststore from a public certificate PEM. Body: {name, caCertPem, default?, description?}. */
+    /**
+     * Checks who may change a truststore: a shared one may be trusted by every deploy, so changing it is a configuration
+     * task; a project one reaches only the releases of its project, which deploying operators already change.
+     */
+    private void checkTruststorePermission(HttpHeaders headers, String namespace) {
+        AuthHelper auth = new AuthHelper(viewContext, headers);
+        // Decided from the view settings alone: the role is checked before anything talks to the cluster.
+        String shared = new PkiNamespaces(viewContext).truststoreNamespace();
+        if (namespace == null || namespace.isBlank() || shared.equals(namespace.trim())) {
+            auth.checkConfigurationPermission();
+        } else {
+            auth.checkWritePermission();
+        }
+    }
+
+    /**
+     * Create a truststore from a public certificate PEM. Body: {name, caCertPem, default?, description?, namespace?};
+     * without a namespace, or with the truststore project of Cluster Settings, a shared truststore.
+     */
     @POST
     @Path("/truststores")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public Response createTruststore(@Context HttpHeaders headers, Map<String, Object> body) {
-        // Default truststores are trusted by every deploy, so adding or changing one is a configuration task.
-        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        String namespace = body == null || body.get("namespace") == null ? null : String.valueOf(body.get("namespace"));
+        checkTruststorePermission(headers, namespace);
         try {
             if (body == null) {
                 return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", "request body is required")).build();
@@ -1139,12 +1157,18 @@ public class KubeService {
             String caCertPem = body.get("caCertPem") == null ? null : String.valueOf(body.get("caCertPem"));
             boolean makeDefault = Boolean.parseBoolean(String.valueOf(body.getOrDefault("default", false)));
             String description = body.get("description") == null ? null : String.valueOf(body.get("description"));
-            return Response.ok(truststoreRegistry().create(name, caCertPem, makeDefault, description)).build();
+            return Response.ok(truststoreRegistry().create(namespace, name, caCertPem, makeDefault, description)).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
+            String target = truststoreRegistry().isShared(namespace)
+                    ? truststoreRegistry().managementNamespace() : namespace.trim();
             if (NamespaceScope.isForbidden(e)) {
-                return truststoreRefused(truststoreRegistry().managementNamespace(), e);
+                return truststoreRefused(target, e);
+            }
+            if (e instanceof io.fabric8.kubernetes.client.KubernetesClientException kce && kce.getCode() == 404) {
+                return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error",
+                        "Project " + target + " does not exist, or KDPS cannot see it.")).build();
             }
             return handleError(e);
         }
@@ -1159,7 +1183,7 @@ public class KubeService {
                                          @PathParam("namespace") String namespace,
                                          @PathParam("name") String name,
                                          Map<String, Object> body) {
-        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        checkTruststorePermission(headers, namespace);
         try {
             boolean value = body == null || !body.containsKey("default")
                     ? true : Boolean.parseBoolean(String.valueOf(body.get("default")));
@@ -1181,7 +1205,7 @@ public class KubeService {
     public Response deleteTruststore(@Context HttpHeaders headers,
                                      @PathParam("namespace") String namespace,
                                      @PathParam("name") String name) {
-        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        checkTruststorePermission(headers, namespace);
         try {
             truststoreRegistry().delete(namespace, name);
             return Response.ok(Map.of("deleted", true, "namespace", namespace, "name", name)).build();
