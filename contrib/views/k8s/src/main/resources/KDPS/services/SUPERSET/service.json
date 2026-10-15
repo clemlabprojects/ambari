@@ -1664,5 +1664,51 @@
     "unauthenticatedExposure": "Superset then signs users in with its local accounts only, starting with the administrator this deploy creates: your directory and single sign-on are not used, and that one password guards every database connection Superset holds.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view"
+  },
+  "sizing": {
+    "_comment": "Sizes offered at step 3 of the wizard. A size fills the listed form fields; M is the fields' defaults. The fields are edited in the sizing dialog instead of the form.",
+    "default": "M",
+    "fields": [
+      "supersetWorker.concurrency",
+      "supersetWorker.resources.limits.memory"
+    ],
+    "presets": [
+      {
+        "key": "S",
+        "label": "Small",
+        "summary": "2 worker processes, worker memory limit 1 GiB",
+        "values": {
+          "supersetWorker.concurrency": 2,
+          "supersetWorker.resources.limits.memory": "1Gi"
+        }
+      },
+      {
+        "key": "M",
+        "label": "Medium",
+        "summary": "4 worker processes, worker memory limit 2 GiB",
+        "values": {
+          "supersetWorker.concurrency": 4,
+          "supersetWorker.resources.limits.memory": "2Gi"
+        }
+      },
+      {
+        "key": "L",
+        "label": "Large",
+        "summary": "8 worker processes, worker memory limit 4 GiB",
+        "values": {
+          "supersetWorker.concurrency": 8,
+          "supersetWorker.resources.limits.memory": "4Gi"
+        }
+      },
+      {
+        "key": "XL",
+        "label": "Extra large",
+        "summary": "16 worker processes, worker memory limit 8 GiB",
+        "values": {
+          "supersetWorker.concurrency": 16,
+          "supersetWorker.resources.limits.memory": "8Gi"
+        }
+      }
+    ]
   }
 }

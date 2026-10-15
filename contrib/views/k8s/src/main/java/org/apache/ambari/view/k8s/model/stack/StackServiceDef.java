@@ -158,6 +158,13 @@ public class StackServiceDef {
     public Map<String, Object> retiredValues;
 
     /**
+     * Sizes the deploy wizard offers at its chart step: {@code {default, fields, presets: [{key, label, summary,
+     * values}]}}. A size fills the listed form fields with its values; the fields are edited in the wizard's sizing
+     * dialog instead of the form. Read by the UI only.
+     */
+    public Map<String, Object> sizing;
+
+    /**
      * Chart values that always carry the release's name, as dotted paths, e.g. {@code ["fullnameOverride"]} for
      * OpenMetadata. The chart names its Service after the release only when the release name contains
      * "openmetadata", so KDPS pins the name: the post-install steps (ingestion, Atlas federation, Ranger TagSync)

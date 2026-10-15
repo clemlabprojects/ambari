@@ -40,6 +40,8 @@ interface InstallStepProps {
   upgrade?: boolean;
   /** How the release being upgraded was deployed; a release deployed with Flux GitOps keeps its mode. */
   deployedMode?: string;
+  /** Rendered inside another panel (the sizing dialog): the chart fields only, without the step's title. */
+  embedded?: boolean;
 }
 
 const InstallStep: React.FC<InstallStepProps> = ({
@@ -52,6 +54,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
   resolvedContext,
   upgrade = false,
   deployedMode,
+  embedded = false,
 }) => {
   const [form] = Form.useForm();
 
@@ -292,12 +295,12 @@ const InstallStep: React.FC<InstallStepProps> = ({
           </>
         ) : (
           <>
-            <Typography.Title level={4}>Chart Configuration</Typography.Title>
+            {!embedded && <Typography.Title level={4}>Chart Configuration</Typography.Title>}
             {/* Verbose TLS / auth-cascade explanatory alerts removed — the TLS mode + auth
                 field are still pre-selected/locked server-side; the inline field help covers it
                 without a wall of warning text at the top of every step-3 view. The actionable
                 mismatch warning below is kept. */}
-            {cascadeMismatch && (
+            {cascadeMismatch && !embedded && (
               <Alert
                 type="warning"
                 showIcon

@@ -3234,5 +3234,88 @@
     "unauthenticatedExposure": "Without sign-in Trino trusts the user name each client sends: anyone who reaches this address can run queries as any user, administrators included, and Ranger authorizes that name.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view"
+  },
+  "sizing": {
+    "_comment": "Sizes offered at step 3 of the wizard. A size fills the listed form fields; M is the fields' defaults. The fields are edited in the sizing dialog instead of the form.",
+    "default": "M",
+    "fields": [
+      "coordinator.resources.requests.cpu",
+      "coordinator.resources.requests.memory",
+      "coordinator.resources.limits.cpu",
+      "coordinator.resources.limits.memory",
+      "coordinator.jvm.maxHeapSize",
+      "worker.resources.requests.cpu",
+      "worker.resources.requests.memory",
+      "worker.resources.limits.cpu",
+      "worker.resources.limits.memory",
+      "worker.jvm.maxHeapSize",
+      "server.workers"
+    ],
+    "presets": [
+      {
+        "key": "S",
+        "label": "Small",
+        "summary": "Coordinator and each worker 1 CPU / 4 GiB, 1 worker",
+        "values": {
+          "coordinator.resources.requests.cpu": "1",
+          "coordinator.resources.requests.memory": "4Gi",
+          "coordinator.resources.limits.cpu": "1",
+          "coordinator.resources.limits.memory": "4Gi",
+          "worker.resources.requests.cpu": "1",
+          "worker.resources.requests.memory": "4Gi",
+          "worker.resources.limits.cpu": "1",
+          "worker.resources.limits.memory": "4Gi",
+          "server.workers": 1
+        }
+      },
+      {
+        "key": "M",
+        "label": "Medium",
+        "summary": "Coordinator and each worker 2 CPU / 8 GiB, 3 workers",
+        "values": {
+          "coordinator.resources.requests.cpu": "2",
+          "coordinator.resources.requests.memory": "8Gi",
+          "coordinator.resources.limits.cpu": "2",
+          "coordinator.resources.limits.memory": "8Gi",
+          "worker.resources.requests.cpu": "2",
+          "worker.resources.requests.memory": "8Gi",
+          "worker.resources.limits.cpu": "2",
+          "worker.resources.limits.memory": "8Gi",
+          "server.workers": 3
+        }
+      },
+      {
+        "key": "L",
+        "label": "Large",
+        "summary": "Coordinator and each worker 4 CPU / 16 GiB, 3 workers",
+        "values": {
+          "coordinator.resources.requests.cpu": "4",
+          "coordinator.resources.requests.memory": "16Gi",
+          "coordinator.resources.limits.cpu": "4",
+          "coordinator.resources.limits.memory": "16Gi",
+          "worker.resources.requests.cpu": "4",
+          "worker.resources.requests.memory": "16Gi",
+          "worker.resources.limits.cpu": "4",
+          "worker.resources.limits.memory": "16Gi",
+          "server.workers": 3
+        }
+      },
+      {
+        "key": "XL",
+        "label": "Extra large",
+        "summary": "Coordinator and each worker 8 CPU / 32 GiB, 5 workers",
+        "values": {
+          "coordinator.resources.requests.cpu": "8",
+          "coordinator.resources.requests.memory": "32Gi",
+          "coordinator.resources.limits.cpu": "8",
+          "coordinator.resources.limits.memory": "32Gi",
+          "worker.resources.requests.cpu": "8",
+          "worker.resources.requests.memory": "32Gi",
+          "worker.resources.limits.cpu": "8",
+          "worker.resources.limits.memory": "32Gi",
+          "server.workers": 5
+        }
+      }
+    ]
   }
 }

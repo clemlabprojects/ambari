@@ -2731,5 +2731,62 @@
       "skipIfValueEmpty": "baseIngestion.trinoEnabled",
       "_description": "Replays the OpenMetadata Trino databaseService + metadata pipeline registration (and the kdps metadata grants) from the deployed values."
     }
-  ]
+  ],
+  "sizing": {
+    "_comment": "Sizes offered at step 3 of the wizard. A size fills the listed form fields; M is the fields' defaults. The fields are edited in the sizing dialog instead of the form.",
+    "default": "M",
+    "fields": [
+      "resources.requests.cpu",
+      "resources.requests.memory",
+      "resources.limits.cpu",
+      "resources.limits.memory",
+      "replicaCount"
+    ],
+    "presets": [
+      {
+        "key": "S",
+        "label": "Small",
+        "summary": "Server 250m-1 CPU / 1-2 GiB",
+        "values": {
+          "resources.requests.cpu": "250m",
+          "resources.requests.memory": "1Gi",
+          "resources.limits.cpu": "1",
+          "resources.limits.memory": "2Gi"
+        }
+      },
+      {
+        "key": "M",
+        "label": "Medium",
+        "summary": "Server 500m-2 CPU / 2-4 GiB",
+        "values": {
+          "resources.requests.cpu": "500m",
+          "resources.requests.memory": "2Gi",
+          "resources.limits.cpu": "2",
+          "resources.limits.memory": "4Gi"
+        }
+      },
+      {
+        "key": "L",
+        "label": "Large",
+        "summary": "Server 1-4 CPU / 4-8 GiB",
+        "values": {
+          "resources.requests.cpu": "1",
+          "resources.requests.memory": "4Gi",
+          "resources.limits.cpu": "4",
+          "resources.limits.memory": "8Gi"
+        }
+      },
+      {
+        "key": "XL",
+        "label": "Extra large",
+        "summary": "Server 2-8 CPU / 8-16 GiB",
+        "values": {
+          "resources.requests.cpu": "2",
+          "resources.requests.memory": "8Gi",
+          "resources.limits.cpu": "8",
+          "resources.limits.memory": "16Gi"
+        }
+      }
+    ]
+  }
 }

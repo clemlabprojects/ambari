@@ -41,6 +41,8 @@ import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecr
 import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
 import { deployFormValues } from './deployFormValues';
 import { isSharedTruststore, normalizeTruststoreRefs, selectableTruststores, truststoreRef } from './truststoreRefs';
+import SizingCard from '../components/wizard/SizingCard';
+import { formWithout, sizingOf } from '../components/wizard/sizing';
 import { federationManualGrantNotice, federationMayTurnOnFileAuth, federationRefusalNotice, federationWritesAtlasUserStore } from './atlasFederationAuth';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
@@ -1050,7 +1052,9 @@ const ServiceWizardPage: React.FC = () => {
           {atlasFederationRefusalAlert}
           {atlasFederationManualGrantAlert}
           {ingressTlsAlert}
-          <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="chart" repos={repos} securityProfiles={securityProfiles.profiles} resolvedContext={resolvedSel as any} upgrade={!!isUpgrade} />
+          {/* A service with sizes: they and the fields they fill are in the Sizing card, the rest stays in the form. */}
+          {sizingOf(def) && (
+            <SizingCard definition={def} sizing={sizingOf(def)!} data={installValues} onChange={setInstallValues} upgrade={!!isUpgrade} />
         </>
       ) },
       { title: 'Configuration', content: <ConfigurationStep configs={configs} overrides={configOverrides} onChange={setConfigOverrides} passwordValidity={passwordValidity} onPasswordValidityChange={setPasswordValidity} /> },
