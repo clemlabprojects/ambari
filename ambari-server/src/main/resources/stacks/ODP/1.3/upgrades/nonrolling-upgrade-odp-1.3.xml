@@ -347,6 +347,14 @@
       </execute-stage>
 
       <!-- ATLAS -->
+      <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Migrate Atlas Server Logging to Logback">
+        <task xsi:type="configure" id="odp_1_3_1_0_atlas_logback_metadata_opts_migration"/>
+      </execute-stage>
+
+      <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Set Missing Atlas Server Logging Options">
+        <task xsi:type="configure" id="odp_1_3_1_0_atlas_logback_metadata_opts_default"/>
+      </execute-stage>
+
       <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Update Atlas Logging for Kafka Major Version Client Update">
         <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_atlas_consumer_producer"/>
       </execute-stage>
