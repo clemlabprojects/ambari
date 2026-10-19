@@ -451,9 +451,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
         List<String> secretValues = new ArrayList<>();
         collectStrings(split.secretValues(), secretValues);
+        ProfileRenderer.RenderContext base = new ProfileRenderer.RenderContext(release, namespace, serviceKey, chart,
+                version, repositoryUrl, split.publicValues(), ProfileRenderer.images(split.publicValues()),
+                List.of(namespace), viewContext.getUsername(), java.time.Instant.now(), valuesSecretName);
+        // The other instances the repository holds, so that a file listing every instance has all of them.
         ProfileRenderer.RenderContext ctx = new ProfileRenderer.RenderContext(release, namespace, serviceKey, chart,
-                version, repositoryUrl, split.publicValues(), List.of(), List.of(namespace),
-                viewContext.getUsername(), java.time.Instant.now(), valuesSecretName);
+                version, repositoryUrl, base.values(), base.images(), ProfileRenderer.instances(profile, base, repoDir),
+                base.deployedBy(), base.timestamp(), valuesSecretName);
         for (ProfileRenderer.RenderedFile file : ProfileRenderer.render(profile, ctx, secretValues)) {
             Path path = Path.of(file.path());
             if (GitOpsProfile.MODE_CREATE_IF_MISSING.equals(file.mode()) && Files.exists(repoDir.resolve(path))) {
@@ -2351,8 +2355,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     @Override
     public HelmReleaseDTO status(String namespace, String releaseName) throws Exception {
-        HelmReleaseDTO dto = fluxStatus(namespace, releaseName);
         var meta = releaseMetadataService.find(namespace, releaseName);
+        HelmReleaseDTO dto = isProfileRelease(meta) ? profileStatus(namespace, releaseName, meta)
+                : fluxStatus(namespace, releaseName);
         if (meta != null && meta.isGitPendingDelete()) {
             String pullRequest = firstNonBlank(dto.gitPrUrl, meta.getGitPrUrl(), meta.getGitPrNumber());
             String base = recordedBaseBranch(meta);
@@ -2667,8 +2672,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             // once it names the release's own directory.
             releaseDirectory(meta.getGitPath(), namespace, releaseName);
         }
+        boolean profileRelease = isProfileRelease(meta);
         try {
-            if (isPullRequestMode(meta.getGitCommitMode())) {
+            if (profileRelease) {
+                if (removeProfileFiles(meta)) {
+                    // Its files stay on the base branch until the removal is merged: nothing else is removed yet.
+                    return;
+                }
+                forgetGitCredentials(meta);
+            } else if (isPullRequestMode(meta.getGitCommitMode())) {
                 if (proposeRemoval(meta)) {
                     // Flux keeps running the release until the removal is merged: nothing else is removed yet.
                     return;
@@ -2688,9 +2700,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.warn("Flux destroy git cleanup failed for {}/{}: {}", namespace, releaseName, ex.toString());
             throw new RuntimeException("Flux destroy encountered issues: Git cleanup failed: " + ex.getMessage(), ex);
         }
-        // The branch Flux reconciles no longer holds the release. Flux removes it when it prunes what Git no longer
-        // holds; deleted here too for a Flux that does not.
-        deleteHelmRelease(namespace, releaseName);
+        if (profileRelease) {
+            // The pipeline or Argo CD reading the repository removes the release from the cluster; the secret values
+            // KDPS kept for it are no longer needed.
+            deleteProfileValuesSecret(namespace, releaseName);
+        } else {
+            // The branch Flux reconciles no longer holds the release. Flux removes it when it prunes what Git no
+            // longer holds; deleted here too for a Flux that does not.
+            deleteHelmRelease(namespace, releaseName);
+        }
         try {
             releaseMetadataService.delete(namespace, releaseName);
         } catch (Exception ex) {
@@ -2699,6 +2717,187 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         } finally {
             workspaceLock.unlock();
+        }
+    }
+
+    /** Whether a release is written into Git with a file profile rather than the Flux layout. */
+    public static boolean isProfileRelease(K8sReleaseEntity meta) {
+        String profile = meta == null ? null : meta.getGitProfile();
+        return profile != null && !profile.isBlank() && !GitOpsProfile.flux().name.equals(profile);
+    }
+
+    /**
+     * The status of a release written with a file profile: the Helm release of that name in its namespace, as the
+     * pipeline or Argo CD reading the repository installed it; until then, where its change is.
+     */
+    private HelmReleaseDTO profileStatus(String namespace, String releaseName, K8sReleaseEntity meta) {
+        HelmReleaseDTO dto = null;
+        try {
+            String kubeconfig = kubernetesService.getConfigurationService().getKubeconfigContents();
+            dto = helmService.list(namespace, kubeconfig).stream().filter(r -> releaseName.equals(r.getName()))
+                    .findFirst().map(HelmReleaseDTO::from).orElse(null);
+        } catch (Exception e) {
+            LOG.debug("Helm status of {}/{} unavailable: {}", namespace, releaseName, e.toString());
+        }
+        if (dto == null) {
+            dto = new HelmReleaseDTO();
+            dto.name = releaseName;
+            dto.namespace = namespace;
+            boolean prOpen = meta.getGitPrUrl() != null && GitPullRequests.isOpen(meta.getGitPrState());
+            dto.status = prOpen ? "PENDING_PR" : "NOT_FOUND";
+            dto.message = prOpen
+                    ? "Waiting for the pull request " + meta.getGitPrUrl() + " to be merged into "
+                            + recordedBaseBranch(meta) + ": what reads the repository (a pipeline, Argo CD) deploys it"
+                            + " once it is merged"
+                    : "Written to Git with GitOps profile " + meta.getGitProfile() + "; not installed in " + namespace
+                            + " under this name yet: what reads the repository (a pipeline, Argo CD) deploys it";
+            dto.reconcileMessage = dto.message;
+        }
+        dto.gitPrUrl = meta.getGitPrUrl();
+        dto.gitPrNumber = meta.getGitPrNumber();
+        dto.gitPrState = meta.getGitPrState();
+        return dto;
+    }
+
+    /** Deletes the Secret holding the secret values of a release written with a file profile; never fails. */
+    private void deleteProfileValuesSecret(String namespace, String releaseName) {
+        try {
+            kubernetesService.deleteSecret(namespace, GitOpsSecretValues.secretName(releaseName));
+        } catch (Exception e) {
+            LOG.warn("Could not delete the values Secret of {}/{}: {}", namespace, releaseName, e.toString());
+        }
+    }
+
+    /**
+     * Removes from Git the files of one instance of a release written with a file profile
+     * ({@link ProfileRenderer#instancePaths}): by a commit to the base branch, or in a pull request of its own when the
+     * release is delivered by pull requests. The chart folder, the files shared with other instances and those its
+     * team owns stay. An open pull request of the release is closed first, so that merging it later cannot bring the
+     * release back.
+     *
+     * @return whether the uninstall waits for the removal's pull request to be merged; the release's record then says so
+     * @throws IllegalStateException when the profile is gone, or the removal cannot be proposed; nothing was removed
+     */
+    private boolean removeProfileFiles(K8sReleaseEntity meta) throws Exception {
+        String namespace = meta.getNamespace();
+        String releaseName = meta.getReleaseName();
+        String release = namespace + "/" + releaseName;
+        String repoUrl = meta.getGitRepoUrl();
+        if (repoUrl == null || repoUrl.isBlank()) {
+            return false;
+        }
+        GitOpsProfile profile = profileStore().get(meta.getGitProfile());
+        if (profile == null || !GitOpsProfile.KIND_FILES.equals(profile.kind)) {
+            throw new IllegalStateException(release + " was deployed with GitOps profile '" + meta.getGitProfile()
+                    + "', which no longer exists, so KDPS cannot tell which files are its own and nothing was removed."
+                    + " Save the profile again, then uninstall the release.");
+        }
+        List<Path> paths = new ArrayList<>();
+        for (String path : ProfileRenderer.instancePaths(profile, new ProfileRenderer.RenderContext(releaseName,
+                namespace, meta.getServiceKey(), meta.getChartRef(), meta.getVersion(), null, Map.of(), List.of(),
+                List.of(namespace), viewContext.getUsername(), java.time.Instant.now(), null))) {
+            paths.add(Path.of(path));
+        }
+        String base = recordedBaseBranch(meta);
+        GitSecrets secrets = recordedGitSecrets(meta);
+        String token = secrets.token();
+        Path repoDir = workspaceForRelease(namespace, releaseName);
+        ReentrantLock workspaceLock = lockWorkspace(namespace, releaseName);
+        try {
+        GitClient gitClient = new GitClient(repoDir, repoUrl, base, token, secrets.sshKey())
+                .withAuthor(viewContext.getUsername(), viewContext.getUsername() + "@ambari")
+                .withTimeout(gitTimeoutSeconds(viewContext))
+                .withProxy(ViewConfigurationService.outboundProxy(viewContext))
+                .withHostKeys(secrets.knownHosts());
+        try {
+        withGitRetry(() -> { gitClient.sync(); return null; }, "destroy-sync");
+        boolean prMode = isPullRequestMode(meta.getGitCommitMode());
+        boolean baseOnServer = gitClient.isOnServer(base);
+        boolean onBase = false;
+        for (Path path : paths) {
+            Boolean published = baseOnServer ? gitClient.publishedOn(path, base) : Boolean.FALSE;
+            if (published == null) {
+                throw new IOException("Branch " + base + " of " + repoUrl + " could not be read");
+            }
+            onBase |= published;
+        }
+        if (prMode && !meta.isGitPendingDelete()) {
+            closeOpenPullRequest(meta, repoUrl, token);
+        }
+        if (!onBase) {
+            logFluxInfo(namespace, releaseName, "destroy", "Branch %s holds no file of %s: finishing the removal", base,
+                    release);
+            return false;
+        }
+        if (!prMode) {
+            for (Path path : paths) {
+                gitClient.deletePath(path);
+            }
+            commitAndPush(gitClient, "KDPS uninstall " + release + " (profile " + profile.name + ")", () -> { },
+                    release + " (uninstall)");
+            return false;
+        }
+        String pending = meta.isGitPendingDelete() ? meta.getGitPrNumber() : null;
+        if (pending != null && !pending.isBlank() && token != null && !token.isBlank()) {
+            GitPullRequests.PullRequestInfo proposed = pullRequests.get(repoUrl, pending, token);
+            releaseMetadataService.updatePrInfo(namespace, releaseName, proposed.url(), proposed.id(),
+                    proposed.state());
+            if (GitPullRequests.isOpen(proposed.state())) {
+                logFluxInfo(namespace, releaseName, "destroy", "The removal waits for pull request %s to be merged",
+                        proposed.url());
+                return true;
+            }
+        }
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("KDPS removes " + release + " through a pull request into " + base + ", which"
+                    + " it opens with the access token of the Git server, and none is saved for the release, so nothing"
+                    + " was removed. Remove " + paths + " from " + base + " by hand, then uninstall the release again to"
+                    + " finish.");
+        }
+        pullRequests.api(repoUrl, token);
+        String branch = GitClient.generateBranch(profile.delivery.branchPrefix + releaseName + "-remove");
+        gitClient.checkoutWorkBranch(branch, base);
+        for (Path path : paths) {
+            gitClient.deletePath(path);
+        }
+        String title = "KDPS uninstall " + release + " (profile " + profile.name + ")";
+        if (commitAndPush(gitClient, title, () -> { }, release + " (uninstall)") == null) {
+            return false;
+        }
+        GitPullRequests.PullRequestInfo opened;
+        try {
+            opened = pullRequests.open(repoUrl, base, branch, title, token);
+        } catch (Exception ex) {
+            throw new IllegalStateException("The removal of " + release + " was pushed to branch " + branch + " of "
+                    + repoUrl + ", but its pull request into " + base + " could not be opened: " + ex.getMessage()
+                    + " Open it by hand and merge it, then uninstall the release again to finish.", ex);
+        }
+        releaseMetadataService.recordPendingRemoval(namespace, releaseName, branch, opened.url(), opened.id(),
+                firstNonBlank(opened.state(), "open"), List.of());
+        logFluxInfo(namespace, releaseName, "destroy", "Removal proposed in pull request %s into %s", opened.url(),
+                base);
+        return true;
+        } catch (Exception destroyEx) {
+            // Nothing of a failed removal may stay in the workspace for the next operation to take as published.
+            resetWorkspaceOnFailure(gitClient, repoDir);
+            throw destroyEx;
+        }
+        } finally {
+            workspaceLock.unlock();
+        }
+    }
+
+    /** Closes the release's own pull request when it is still open: merged later, it would bring the release back. */
+    private void closeOpenPullRequest(K8sReleaseEntity meta, String repoUrl, String token) throws Exception {
+        String number = meta.getGitPrNumber();
+        if (number == null || number.isBlank() || token == null || token.isBlank()) {
+            return;
+        }
+        GitPullRequests.PullRequestInfo info = pullRequests.get(repoUrl, number, token);
+        if (GitPullRequests.isOpen(info.state())) {
+            pullRequests.close(repoUrl, number, token);
+            logFluxInfo(meta.getNamespace(), meta.getReleaseName(), "destroy", "Closed pull request %s, still open",
+                    firstNonBlank(info.url(), "#" + number));
         }
     }
 

@@ -73,6 +73,9 @@ public class FluxGitOpsBackendProfileTest {
     private final FakePullRequests pullRequests = new FakePullRequests();
     private final Map<String, String> secretPayloads = new ConcurrentHashMap<>();
     private final Map<String, K8sReleaseEntity> releases = new ConcurrentHashMap<>();
+    /** Ambari's credential store, as a deploy keeps the release's Git token in it. */
+    private final Map<String, String> storedCredentials = new ConcurrentHashMap<>();
+    private org.apache.ambari.view.k8s.service.GitCredentialService credentials;
     /** The chart the fake repository publishes, by path inside the chart. */
     private Map<String, byte[]> publishedChart;
 
@@ -137,6 +140,21 @@ public class FluxGitOpsBackendProfileTest {
                     new String((byte[]) inv.getArgument(3), StandardCharsets.UTF_8));
             return null;
         }).when(k8s).createOrUpdateOpaqueSecret(anyString(), anyString(), anyString(), any(byte[].class), anyMap(), any(), any());
+        doAnswer(inv -> {
+            secretPayloads.remove(inv.getArgument(0) + "/" + inv.getArgument(1));
+            return null;
+        }).when(k8s).deleteSecret(anyString(), anyString());
+
+        credentials = mock(org.apache.ambari.view.k8s.service.GitCredentialService.class);
+        Map<String, String> hosts = new ConcurrentHashMap<>();
+        when(credentials.storeSecret(anyString(), anyString(), anyString())).thenAnswer(inv -> {
+            storedCredentials.put(inv.getArgument(0), inv.getArgument(1));
+            hosts.put(inv.getArgument(0), org.apache.ambari.view.k8s.service.GitCredentialService.hostOf(inv.getArgument(2)));
+            return inv.getArgument(0);
+        });
+        when(credentials.resolveSecret(anyString())).thenAnswer(inv -> storedCredentials.get((String) inv.getArgument(0)));
+        when(credentials.boundHost(anyString())).thenAnswer(inv -> hosts.get((String) inv.getArgument(0)));
+        when(credentials.removeSecret(anyString())).thenAnswer(inv -> storedCredentials.remove((String) inv.getArgument(0)) != null);
 
         profiles = new GitOpsProfileStore(new InstanceSettings(new InMemoryDataStore(),
                 TestMasterKeys.encryptionWithoutKey()));
@@ -173,8 +191,11 @@ public class FluxGitOpsBackendProfileTest {
         return profiles.save(p);
     }
 
-    private FluxGitOpsBackend backend() {
+    private FluxGitOpsBackend backend() throws Exception {
         FluxGitOpsBackend backend = new FluxGitOpsBackend(fluxRoot, k8s, ctx);
+        java.lang.reflect.Field field = FluxGitOpsBackend.class.getDeclaredField("gitCredentialService");
+        field.setAccessible(true);
+        field.set(backend, credentials);
         backend.setPullRequests(pullRequests);
         backend.setProfileStore(profiles);
         backend.setChartFetcher(new ChartFetcher(dir -> { }) {
@@ -319,5 +340,101 @@ public class FluxGitOpsBackendProfileTest {
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
                 () -> backend().apply(request, null));
         assertTrue(refused.getMessage(), refused.getMessage().contains("'missing' does not exist"));
+    }
+
+    /** Merges a branch into another on the server, as a pull request merged by default. */
+    private void mergeOnServer(String branch, String into) throws Exception {
+        Path clone = tmp.newFolder("merger-" + System.nanoTime()).toPath();
+        try (Git g = Git.cloneRepository().setURI(repoUrl).setBranch(into).setDirectory(clone.toFile()).call()) {
+            g.merge().include(g.getRepository().resolve("refs/remotes/origin/" + branch)).setMessage("Merge")
+                    .setCommit(true).call();
+            g.push().setRefSpecs(new RefSpec("HEAD:refs/heads/" + into)).call();
+        }
+    }
+
+    private HelmDeployRequest requestIn(String namespace) {
+        HelmDeployRequest request = request();
+        request.setNamespace(namespace);
+        return request;
+    }
+
+    @Test
+    public void aFileListingTheInstancesHasEveryNamespaceTheRepositoryHolds() throws Exception {
+        GitOpsProfile p = environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        p.files.add(rule("namespaces.json", GitOpsProfile.MODE_ALWAYS, "{{ instances | toJson }}\n"));
+        profiles.save(p);
+
+        backend().apply(requestIn("analytics"), null);
+        backend().apply(requestIn("team-b"), null);
+
+        assertEquals("[\"analytics\",\"team-b\"]\n", published("main", "namespaces.json"));
+    }
+
+    @Test
+    public void anUninstallRemovesOnlyTheFilesOfItsInstance() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        backend().apply(requestIn("analytics"), null);
+        backend().apply(requestIn("team-b"), null);
+        String analyticsSecret = secretPayloads.keySet().stream().filter(k -> k.startsWith("analytics/")).findFirst()
+                .orElseThrow();
+
+        backend().destroy("analytics", "trino");
+
+        assertNull(published("main", "environments/analytics/values.yaml"));
+        assertNotNull("another instance keeps its file", published("main", "environments/team-b/values.yaml"));
+        assertNotNull("the chart is shared", published("main", "chart/Chart.yaml"));
+        assertNotNull("the team's file stays", published("main", "OWNERS.md"));
+        assertEquals("# Runbook\n", published("main", "docs/runbook.md"));
+        assertFalse("the secret values KDPS kept are gone", secretPayloads.containsKey(analyticsSecret));
+    }
+
+    @Test
+    public void anUninstallByPullRequestWaitsForItsMergeThenFinishes() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_PULL_REQUEST);
+        backend().apply(request(), null);
+        FakePullRequests.Opened deploy = pullRequests.last();
+        mergeOnServer(deploy.head(), "main");
+        pullRequests.merge(deploy.number());
+
+        backend().destroy("analytics", "trino");
+
+        FakePullRequests.Opened removal = pullRequests.last();
+        assertNotEquals(deploy.number(), removal.number());
+        assertTrue(removal.head(), removal.head().startsWith("kdps/trino-remove-"));
+        assertNotNull("the release stays until the removal is merged", published("main", "environments/analytics/values.yaml"));
+        assertNull(published(removal.head(), "environments/analytics/values.yaml"));
+        K8sReleaseEntity record = releases.values().iterator().next();
+        assertTrue(record.isGitPendingDelete());
+
+        mergeOnServer(removal.head(), "main");
+        pullRequests.merge(removal.number());
+        backend().destroy("analytics", "trino");
+
+        assertNull(published("main", "environments/analytics/values.yaml"));
+        assertEquals("no further pull request", removal.number(), pullRequests.last().number());
+    }
+
+    @Test
+    public void anUninstallBeforeTheDeploysPullRequestIsMergedClosesIt() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_PULL_REQUEST);
+        backend().apply(request(), null);
+        FakePullRequests.Opened deploy = pullRequests.last();
+
+        backend().destroy("analytics", "trino");
+
+        assertEquals("closed", pullRequests.state(deploy.number()));
+        assertEquals("nothing to remove from the base branch", 1, pullRequests.opened.size());
+    }
+
+    @Test
+    public void theStatusOfAReleaseNotInstalledYetSaysWhoInstallsIt() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        backend().apply(request(), null);
+
+        org.apache.ambari.view.k8s.model.HelmReleaseDTO status = backend().status("analytics", "trino");
+
+        assertEquals("NOT_FOUND", status.status);
+        assertTrue(status.message, status.message.contains("GitOps profile environments"));
+        assertFalse(status.message, status.message.contains("Flux"));
     }
 }

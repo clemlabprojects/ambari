@@ -1864,6 +1864,12 @@ public class HelmResource {
         if (tagSyncCleanupNote != null) notes.put("tagSyncCleanup", tagSyncCleanupNote);
         if (kdpsObjectsCleanup != null) notes.put("kdpsObjectsCleanup", kdpsObjectsCleanup);
         if (externalCleanupReport != null) notes.put("externalCleanup", externalCleanupReport);
+        if (gitOps && FluxGitOpsBackend.isProfileRelease(meta)) {
+            // No Flux to prune it: what reads the repository removes the release from the cluster, or nothing does.
+            notes.put("gitOpsProfile", "Removed from Git with GitOps profile " + meta.getGitProfile() + ". What reads"
+                    + " the repository removes the release from the cluster: Argo CD prunes it, while a pipeline that"
+                    + " only deploys does not, so remove it there.");
+        }
         return notes.isEmpty() ? Response.ok().build() : Response.ok(notes).build();
     }
 

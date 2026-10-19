@@ -168,4 +168,33 @@ class ProfileRendererTest {
         noPrefix.delivery.branchPrefix = " ";
         assertThrows(IllegalArgumentException.class, () -> ProfileRenderer.validate(noPrefix));
     }
+
+    @Test
+    void theFilesOfOneInstanceAreItsAlwaysFilesNamingItsNamespaceOrRelease() {
+        GitOpsProfile p = environmentsLayout();
+        p.files.add(rule("shared/{{ vars.regions }}.txt", GitOpsProfile.MODE_ALWAYS, "x"));
+        p.files.add(rule("releases/{{ release }}.yaml", GitOpsProfile.MODE_ALWAYS, "x"));
+        p.files.add(rule("owned/{{ namespace }}.md", GitOpsProfile.MODE_CREATE_IF_MISSING, "x"));
+
+        assertEquals(List.of("environments/team-a/values.yaml", "releases/analytics.yaml"),
+                ProfileRenderer.instancePaths(p, context()));
+    }
+
+    @Test
+    void theInstancesAreReadFromTheRepository(@org.junit.jupiter.api.io.TempDir java.nio.file.Path repo) throws Exception {
+        for (String f : List.of("team-b/values.yaml", "team-c/values.yaml", "team-d/notes.txt", "Bad_Name/values.yaml")) {
+            java.nio.file.Files.createDirectories(repo.resolve("environments/" + f).getParent());
+            java.nio.file.Files.writeString(repo.resolve("environments/" + f), "x");
+        }
+        assertEquals(List.of("team-a", "team-b", "team-c"), ProfileRenderer.instances(environmentsLayout(), context(), repo));
+    }
+
+    @Test
+    void imagesAreReadFromTheValues() {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("image", Map.of("registry", "registry.example.org/", "repository", "trino", "tag", "476"));
+        values.put("sidecar", Map.of("image", "busybox:1.36"));
+        values.put("notAnImage", Map.of("repository", "https://git.example.org/x.git"));
+        assertEquals(List.of("busybox:1.36", "registry.example.org/trino:476"), ProfileRenderer.images(values));
+    }
 }
