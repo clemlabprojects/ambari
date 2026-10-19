@@ -967,4 +967,6 @@ This license is Copyright (C) 2003-2004 Lawrence E. Rosen. All rights reserved. 
 This product uses software based on SIL Open Font License (OFL)
 * Font-Awesome (SIL OFL 1.1) [http://fortawesome.github.io/Font-Awesome/]
 * Image clippy.svg from Octicon project (SIL OFL 1.1)  [https://octicons.github.com/]
+* IBM Plex Sans and IBM Plex Mono, Copyright 2018 IBM Corp. (SIL OFL 1.1) [https://github.com/IBM/plex], in the k8s view
+* Outfit, Copyright 2021 The Outfit Project Authors (SIL OFL 1.1) [https://github.com/Outfitio/Outfit-Fonts], in the k8s view
 

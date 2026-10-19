@@ -50,7 +50,7 @@ export default function CatalogDefinitionForm({ template, form, preview, setPrev
       </div>
       {template.id === 'generic' ? (
         <Form.Item name="__raw" label="Catalog properties" rules={[{ required: true, message: 'connector.name=… is required' }]}>
-          <Input.TextArea rows={8} spellCheck={false} style={{ fontFamily: 'monospace' }} placeholder={'connector.name=kafka\nkafka.nodes=k1:9092'}
+          <Input.TextArea rows={8} spellCheck={false} style={{ fontFamily: 'var(--mono)' }} placeholder={'connector.name=kafka\nkafka.nodes=k1:9092'}
             onChange={(e) => setPreview(e.target.value)} />
         </Form.Item>
       ) : (
@@ -64,7 +64,7 @@ export default function CatalogDefinitionForm({ template, form, preview, setPrev
             ))}
           </div>
           <Form.Item label={<span>Resulting properties <Text type="secondary">(editable)</Text></span>}>
-            <Input.TextArea rows={6} value={preview} onChange={(e) => setPreview(e.target.value)} spellCheck={false} style={{ fontFamily: 'monospace' }} placeholder="Fill the fields above…" />
+            <Input.TextArea rows={6} value={preview} onChange={(e) => setPreview(e.target.value)} spellCheck={false} style={{ fontFamily: 'var(--mono)' }} placeholder="Fill the fields above…" />
           </Form.Item>
         </>
       )}

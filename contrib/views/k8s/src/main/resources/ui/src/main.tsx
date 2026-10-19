@@ -27,11 +27,15 @@ import { ClusterStatusProvider } from './context/ClusterStatusContext.tsx';
 import { ThemeModeProvider, useThemeMode } from './context/ThemeModeContext.tsx';
 import { ReduceMotionProvider, useReduceMotion } from './context/ReduceMotionContext.tsx';
 
-/** Clemlab brand faces (self-hosted in fonts.css), with safe system fallbacks. */
+/**
+ * Interface and code faces (self-hosted in fonts.css), with safe system fallbacks. IBM Plex reads clearly at console
+ * sizes, keeps digits and look-alike letters apart, and gives text and code one family; the Clemlab brand face (Outfit)
+ * is kept for the KDPS wordmark only (AppLayout.css).
+ */
 const FONT_SANS =
-  "'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, sans-serif";
+  "'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, sans-serif";
 const FONT_MONO =
-  "'Source Code Pro', ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
+  "'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
 
 /**
  * antd theme driven by the light/dark preference. The algorithm flips every antd
@@ -56,10 +60,10 @@ const ThemedRoot: React.FC = () => {
           ...(reduceMotion ? { motionDurationFast: '0s', motionDurationMid: '0s', motionDurationSlow: '0s' } : {}),
           fontFamily: FONT_SANS,
           fontFamilyCode: FONT_MONO,
-          // Outfit is a light-ish variable font; 12px read too thin. Bump the base size and make
-          // "strong" text properly bold so field titles, headings and buttons are legible.
-          fontSize: 13,
-          fontWeightStrong: 700,
+          // One type scale from a 14px base (antd derives the headings from it); three weights only: 400 for text,
+          // 500 for navigation and tags, 600 for labels, buttons, titles and strong text.
+          fontSize: 14,
+          fontWeightStrong: 600,
           borderRadius: 8,
           borderRadiusLG: 10,
           borderRadiusSM: 6,
@@ -84,12 +88,12 @@ const ThemedRoot: React.FC = () => {
             ? { itemSelectedBg: 'rgba(0,217,168,0.14)', itemSelectedColor: '#00ffbc', itemHoverBg: 'rgba(0,217,168,0.08)', itemBorderRadius: 6 }
             : { itemSelectedBg: '#e9fbf5', itemSelectedColor: '#008e6e', itemHoverBg: '#f0faf6', itemBorderRadius: 6 },
           Table: dark
-            ? { headerBg: '#11161f', headerColor: '#8a97a9', headerSplitColor: 'transparent', borderColor: '#1d2433', rowHoverBg: 'rgba(0,217,168,0.06)', headerBorderRadius: 8, fontSize: 13, cellPaddingBlockSM: 10, cellPaddingInlineSM: 14 }
-            : { headerBg: '#f7f9fc', headerColor: '#5b6675', headerSplitColor: 'transparent', borderColor: '#eef1f5', rowHoverBg: '#f5f8ff', headerBorderRadius: 8, fontSize: 13, cellPaddingBlockSM: 10, cellPaddingInlineSM: 14 },
-          Card: { borderRadiusLG: 10, headerFontSize: 15 },
-          Modal: { borderRadiusLG: 12, titleFontSize: 16 },
+            ? { headerBg: '#11161f', headerColor: '#8a97a9', headerSplitColor: 'transparent', borderColor: '#1d2433', rowHoverBg: 'rgba(0,217,168,0.06)', headerBorderRadius: 8, fontSize: 14, cellPaddingBlockSM: 10, cellPaddingInlineSM: 14 }
+            : { headerBg: '#f7f9fc', headerColor: '#5b6675', headerSplitColor: 'transparent', borderColor: '#eef1f5', rowHoverBg: '#f5f8ff', headerBorderRadius: 8, fontSize: 14, cellPaddingBlockSM: 10, cellPaddingInlineSM: 14 },
+          Card: { borderRadiusLG: 10, headerFontSize: 16 },
+          Modal: { borderRadiusLG: 12, titleFontSize: 17 },
           Button: { borderRadius: 8, fontWeight: 600, primaryShadow: 'none', defaultShadow: 'none' },
-          Form: { labelFontSize: 13 },
+          Form: { labelFontSize: 14 },
           Input: { borderRadius: 8 },
           Select: { borderRadius: 8 },
           Tag: { borderRadiusSM: 6 },

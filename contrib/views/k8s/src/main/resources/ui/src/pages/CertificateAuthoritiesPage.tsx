@@ -150,7 +150,7 @@ const CertificateAuthoritiesPage: React.FC = () => {
       title: 'Subject',
       dataIndex: 'subject',
       key: 'subject',
-      render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</Text>,
+      render: (v: string) => <Text style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{v}</Text>,
     },
     {
       title: 'Expires',

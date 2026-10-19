@@ -571,7 +571,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
             <div
               ref={(el) => { logRefs.current[logId] = el; }}
               onScroll={handleLogScroll(logId)}
-              style={{ background: '#0d1117', color: '#c9d1d9', padding: 10, borderRadius: 6, flex: 1, minHeight: 200, maxHeight: '50vh', overflow: 'auto', fontFamily: 'monospace', whiteSpace: 'pre-wrap', fontSize: 12 }}
+              style={{ background: '#0d1117', color: '#c9d1d9', padding: 10, borderRadius: 6, flex: 1, minHeight: 200, maxHeight: '50vh', overflow: 'auto', fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap', fontSize: 12 }}
             >
               {logs?.content ? formatLogContent(logs.content) : (logs?.loading ? 'Loading…' : (running ? 'Waiting for output…' : 'No logs yet.'))}
             </div>
