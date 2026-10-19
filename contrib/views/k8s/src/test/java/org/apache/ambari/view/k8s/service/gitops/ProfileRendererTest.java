@@ -41,7 +41,7 @@ class ProfileRendererTest {
         values.put("version", "1.10");
         return new ProfileRenderer.RenderContext("analytics", "team-a", "TRINO", "clemlab-trino", "1.43.20",
                 "oci://registry.example.org/charts", values, List.of("registry.example.org/trino:476"),
-                List.of("team-a", "team-b"), "operator1", Instant.parse("2026-10-19T10:00:00Z"));
+                List.of("team-a", "team-b"), "operator1", Instant.parse("2026-10-19T10:00:00Z"), null);
     }
 
     private static GitOpsProfile.FileRule rule(String path, String mode, String content) {
@@ -98,7 +98,7 @@ class ProfileRendererTest {
         Map<String, Object> leaking = new LinkedHashMap<>(context().values());
         leaking.put("ldap", Map.of("bindPassword", PASSWORD));
         ProfileRenderer.RenderContext ctx = new ProfileRenderer.RenderContext("analytics", "team-a", "TRINO",
-                "clemlab-trino", "1.43.20", "oci://x", leaking, List.of(), List.of(), "op", Instant.now());
+                "clemlab-trino", "1.43.20", "oci://x", leaking, List.of(), List.of(), "op", Instant.now(), null);
 
         IllegalStateException refused = assertThrows(IllegalStateException.class,
                 () -> ProfileRenderer.render(p, ctx, List.of(PASSWORD)));

@@ -17,6 +17,12 @@
  */
 package org.apache.ambari.view.k8s.service.deployment;
 
+import org.apache.ambari.view.k8s.store.InstanceSettings;
+import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
+import org.apache.ambari.view.k8s.service.gitops.ChartFetcher;
+import org.apache.ambari.view.k8s.service.gitops.GitOpsProfile;
+import org.apache.ambari.view.k8s.service.gitops.GitOpsProfileStore;
+import org.apache.ambari.view.k8s.service.gitops.ProfileRenderer;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.service.HelmRepositoryService;
 
@@ -333,6 +339,157 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     /** The client of the Git servers' pull request APIs; for tests. */
     void setPullRequests(GitPullRequests pullRequests) {
         this.pullRequests = pullRequests;
+    }
+
+    /** The GitOps output profiles; read from the view settings unless a test sets them. */
+    private GitOpsProfileStore profileStore;
+    /** Downloads the chart a file profile copies into the repository. */
+    private ChartFetcher chartFetcher;
+    /** Logs in to a chart repository before its chart is downloaded, as installs do. */
+    private java.util.function.Consumer<String> repositoryLogin;
+
+    void setProfileStore(GitOpsProfileStore profileStore) {
+        this.profileStore = profileStore;
+    }
+
+    void setChartFetcher(ChartFetcher chartFetcher, java.util.function.Consumer<String> repositoryLogin) {
+        this.chartFetcher = chartFetcher;
+        this.repositoryLogin = repositoryLogin;
+    }
+
+    private GitOpsProfileStore profileStore() {
+        if (profileStore == null) {
+            profileStore = new GitOpsProfileStore(new InstanceSettings(viewContext));
+        }
+        return profileStore;
+    }
+
+    private ChartFetcher chartFetcher() {
+        if (chartFetcher == null) {
+            HelmClientDefault helm = new HelmClientDefault();
+            chartFetcher = new ChartFetcher(helm::dependencyUpdate);
+        }
+        return chartFetcher;
+    }
+
+    private java.util.function.Consumer<String> repositoryLogin() {
+        if (repositoryLogin == null) {
+            repositoryLogin = repoId -> new HelmRepositoryService(viewContext).loginOrSync(repoId);
+        }
+        return repositoryLogin;
+    }
+
+    /**
+     * A file profile writes the release's own chart only: a dependency the deploy would install (one the platform does
+     * not provide, the settings need, and the cluster does not have) stops it before anything is prepared.
+     */
+    private void refuseDependenciesToInstall(GitOpsProfile profile, HelmDeployRequest request,
+                                             DeploymentContext context, PlannedRelease planned) {
+        if (request.getDependencies() == null) {
+            return;
+        }
+        for (Map.Entry<String, Object> dep : request.getDependencies().entrySet()) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> spec = dep.getValue() instanceof Map
+                    ? new LinkedHashMap<>((Map<String, Object>) dep.getValue()) : new LinkedHashMap<>();
+            String chart = stringOrNull(spec.get("chart"));
+            if (chart == null || chart.isBlank()) {
+                continue;
+            }
+            DependencyRules.applyNamespaceFromForm(spec, request.getFormValues());
+            if (gitOpsSkipReason(dep.getKey(), spec, request, false, context, planned) == null) {
+                throw new IllegalArgumentException("The GitOps profile '" + profile.name + "' writes only the "
+                        + "release's own chart, but this deploy also needs " + dep.getKey() + " (chart " + chart
+                        + "), which is not on the cluster. Install it first, or deploy with the flux profile or with "
+                        + "Direct Helm.");
+            }
+        }
+    }
+
+    /**
+     * Writes a deploy with a file profile: the chart, as its repository publishes it, under the profile's chart path,
+     * then the files the profile's rules render around it. A {@code createIfMissing} file already in the repository is
+     * left as it is.
+     *
+     * @return the chart path in the repository, or {@code null} when the profile copies no chart
+     */
+    private Path writeProfileFiles(GitOpsProfile profile, GitClient gitClient, Path repoDir, List<Path> writtenFiles,
+                                   String namespace, String release, String serviceKey, String repoName, String chart,
+                                   String version, GitOpsSecretValues.Split split, String valuesSecretName)
+            throws IOException {
+        HelmRepoEntity repo = checkChartSource(repoName);
+        String repositoryUrl;
+        if (isOciRepository(repoName)) {
+            repositoryUrl = "oci://" + repo.getUrl().trim().replaceFirst("^oci://", "");
+        } else if (HelmRepositoryService.isAnonymous(repo)) {
+            repositoryUrl = repo.getUrl().trim();
+        } else {
+            throw new IllegalArgumentException("Chart repository '" + repoName + "' needs a password, and a GitOps "
+                    + "profile can copy charts from an OCI registry or a public HTTP repository only. Mirror the chart "
+                    + "to an OCI registry, or deploy with the flux profile.");
+        }
+
+        Path chartDir = null;
+        if (profile.chartPath != null && !profile.chartPath.isBlank()) {
+            chartDir = Path.of(ProfileRenderer.repositoryPath(profile.chartPath, "the chart path"));
+            repositoryLogin().accept(repoName);
+            Path work = Files.createTempDirectory(fluxRoot, "chart-");
+            Map<String, byte[]> chartFiles;
+            try {
+                chartFiles = chartFetcher().fetch(repositoryUrl, chart, version, work);
+            } finally {
+                deleteRecursively(work);
+            }
+            // Replaced as a whole, so a file the new version no longer has goes too.
+            gitClient.deletePath(chartDir);
+            Map<Path, byte[]> written = new LinkedHashMap<>();
+            for (Map.Entry<String, byte[]> file : chartFiles.entrySet()) {
+                written.put(chartDir.resolve(file.getKey()), file.getValue());
+            }
+            gitClient.write(new GitClient.Change(written, Set.of()));
+        }
+
+        List<String> secretValues = new ArrayList<>();
+        collectStrings(split.secretValues(), secretValues);
+        ProfileRenderer.RenderContext ctx = new ProfileRenderer.RenderContext(release, namespace, serviceKey, chart,
+                version, repositoryUrl, split.publicValues(), List.of(), List.of(namespace),
+                viewContext.getUsername(), java.time.Instant.now(), valuesSecretName);
+        for (ProfileRenderer.RenderedFile file : ProfileRenderer.render(profile, ctx, secretValues)) {
+            Path path = Path.of(file.path());
+            if (GitOpsProfile.MODE_CREATE_IF_MISSING.equals(file.mode()) && Files.exists(repoDir.resolve(path))) {
+                continue;
+            }
+            gitClient.writeFile(path, file.content());
+            writtenFiles.add(path);
+        }
+        logFluxInfo(namespace, release, "apply", "Wrote the release with GitOps profile %s%s", profile.name,
+                chartDir != null ? ", chart " + chart + " " + version + " in " + chartDir : "");
+        return chartDir;
+    }
+
+    /** Every string of a nested map or list. */
+    private static void collectStrings(Object value, List<String> out) {
+        if (value instanceof Map<?, ?> map) {
+            map.values().forEach(v -> collectStrings(v, out));
+        } else if (value instanceof List<?> list) {
+            list.forEach(v -> collectStrings(v, out));
+        } else if (value != null) {
+            out.add(String.valueOf(value));
+        }
+    }
+
+    private static void deleteRecursively(Path dir) {
+        try (var walk = Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException e) {
+                    LOG.debug("Could not delete {}: {}", p, e.toString());
+                }
+            });
+        } catch (IOException e) {
+            LOG.debug("Could not delete {}: {}", dir, e.toString());
+        }
     }
 
     /**
@@ -1234,6 +1391,19 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String repoUrl = git.getRepoUrl().trim();
         GitCredentialService.checkRepoUrl(repoUrl);
 
+        // The profile writing the deploy into Git: as given, else the release's. A file profile decides how the change
+        // is delivered, whatever the deploy asked.
+        GitOpsProfile profile = profileStore().get(git.getProfile());
+        if (profile == null) {
+            throw new IllegalArgumentException("The GitOps profile '" + git.getProfile() + "' does not exist. Choose "
+                    + "another one, or save it again on the GitOps profiles page.");
+        }
+        final GitOpsProfile filesProfile = GitOpsProfile.KIND_FILES.equals(profile.kind) ? profile : null;
+        if (filesProfile != null) {
+            git.setCommitMode(GitOpsProfile.DELIVERY_PULL_REQUEST.equals(filesProfile.delivery.mode)
+                    ? "PR_MODE" : "DIRECT_COMMIT");
+        }
+
         logFluxInfo(namespace, release, "apply", "Starting Flux GitOps deploy (mode=%s, repo=%s)", git.getCommitMode(), repoUrl);
 
         // The branch Flux reconciles: as given, else as recorded for the release, else main.
@@ -1292,7 +1462,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // Before anything is prepared or pushed: a pull request the Git server cannot take would leave the change on a
         // branch nobody merges, and the reuse of the previous pull request's branch depends on whether it is open, as
         // does the closing of one this deploy no longer goes through.
-        WorkBranch work = workBranch(prMode, git.getBranch(), baseBranch, existingMeta, repoUrl, token);
+        WorkBranch work = workBranch(prMode, git.getBranch(), baseBranch, existingMeta, repoUrl, token,
+                filesProfile != null ? filesProfile.delivery.branchPrefix + release : "flux");
 
         // Over SSH the Git server must present a host key given or recorded for the release. Without one, only an
         // explicit trust on first use lets the deploy accept the key presented, which is then recorded and required.
@@ -1390,7 +1561,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         List<PendingDependency> pendingDeps = new ArrayList<>();
         // Every file this deploy writes, searched for passwords and secrets before the commit.
         List<Path> writtenFiles = new ArrayList<>();
-        if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
+        if (filesProfile != null) {
+            refuseDependenciesToInstall(filesProfile, request, context, planned);
+        } else if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
             // The dependency being prepared, and its namespace once known, for the message that stops the deploy.
             String depKey = null;
             String depNamespace = null;
@@ -1650,7 +1823,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // Only a direct commit, to the branch Flux reconciles, is applied as soon as it is pushed. A pull request must not
         // alter the running release before it is merged, yet Flux applies a change of the Secret the release reads at
         // once.
-        boolean appliedOnCommit = !prMode;
+        // A file profile's deploy is applied by whatever reads the repository (a pipeline, Argo CD), never on commit.
+        boolean appliedOnCommit = filesProfile == null && !prMode;
         // Once secret, always secret: a redeploy that re-submits the release's current values (resync, security
         // refresh, autoscaling) carries no form, yet those values hold what Flux merged in from the values Secrets.
         // What the Secrets hold now is recorded before anything is split.
@@ -1676,71 +1850,83 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         List<ValuesSecret> valuesSecrets = new ArrayList<>();
         String valuesSecretName = null;
         if (split.hasSecrets()) {
-            ValuesSecret valuesSecret = valuesSecret(namespace, release, split.secretValues(), stored, appliedOnCommit);
+            // A file profile's pipeline reads the Secret under its one stable name, whether or not the change is merged.
+            ValuesSecret valuesSecret = valuesSecret(namespace, release, split.secretValues(), stored,
+                    appliedOnCommit || filesProfile != null);
             valuesSecrets.add(valuesSecret);
             valuesSecretName = valuesSecret.name();
         }
 
-        // The chart source of the release, and the Secrets Flux reads it with, written before the commit.
-        ChartSource source = chartSource(repoName, release, namespace, targetDir.resolve(HELM_REPOSITORY_FILE),
-                sharedDir, false);
-        List<SourceSecret> sourceSecrets = new ArrayList<>(source.secrets());
+        String hrYaml = null;
+        String specDigest = null;
+        List<SourceSecret> sourceSecrets = new ArrayList<>();
+        // Where a file profile copies the chart: published content, which the deploy's secrets are not searched in.
+        Path chartDir = null;
+        if (filesProfile != null) {
+            chartDir = writeProfileFiles(filesProfile, gitClient, repoDir, writtenFiles, namespace, release, serviceKey,
+                    repoName, chartInSource, version, split, valuesSecretName);
+        } else {
+            // The chart source of the release, and the Secrets Flux reads it with, written before the commit.
+            ChartSource source = chartSource(repoName, release, namespace, targetDir.resolve(HELM_REPOSITORY_FILE),
+                    sharedDir, false);
+            sourceSecrets.addAll(source.secrets());
 
-        // Dependencies an earlier version wrote into this release's directory move to the shared directory, in this
-        // commit: those written above replace their old copy, the others go on as they were. One that cannot move yet
-        // is written where it is, with its chart source next to it.
-        Set<Path> stayed = migrateLegacyDependencies(gitClient, repoDir, targetDir, sharedDir,
-                pendingDeps.stream().map(PendingDependency::file).collect(Collectors.toSet()), baseBranch, namespace,
-                release);
-        Map<Path, String> sourceFiles = new LinkedHashMap<>();
-        sourceFiles.put(source.file(), source.yaml());
-        List<DepRef> depRefs = new ArrayList<>();
-        for (int i = 0; i < pendingDeps.size(); i++) {
-            PendingDependency dep = pendingDeps.get(i);
-            boolean inPlace = stayed.contains(dep.file());
-            Path depFile = inPlace ? dep.legacyFile() : dep.file();
-            Path depSourceFile = inPlace
-                    ? dependencyFile(dep.legacyFile().getParent(), dep.releaseName(), "-" + HELM_REPOSITORY_FILE)
-                    : sharedDependencyFile(sharedDir, dep.namespace(), dep.releaseName(), "-" + HELM_REPOSITORY_FILE);
-            ChartSource depSource = chartSource(dep.repoName(), dep.releaseName(), dep.namespace(), depSourceFile,
-                    sharedDir, true);
-            sourceSecrets.addAll(depSource.secrets());
-            sourceFiles.put(depSource.file(), depSource.yaml());
-            GitOpsSecretValues.Split depSplit = secrets.splitContaining(dep.values(), storedDeps.get(i).documents());
-            String depValuesSecretName = null;
-            if (depSplit.hasSecrets()) {
-                ValuesSecret depSecret = valuesSecret(dep.namespace(), dep.releaseName(), depSplit.secretValues(),
-                        storedDeps.get(i), appliedOnCommit);
-                valuesSecrets.add(depSecret);
-                depValuesSecretName = depSecret.name();
+            // Dependencies an earlier version wrote into this release's directory move to the shared directory, in this
+            // commit: those written above replace their old copy, the others go on as they were. One that cannot move yet
+            // is written where it is, with its chart source next to it.
+            Set<Path> stayed = migrateLegacyDependencies(gitClient, repoDir, targetDir, sharedDir,
+                    pendingDeps.stream().map(PendingDependency::file).collect(Collectors.toSet()), baseBranch, namespace,
+                    release);
+            Map<Path, String> sourceFiles = new LinkedHashMap<>();
+            sourceFiles.put(source.file(), source.yaml());
+            List<DepRef> depRefs = new ArrayList<>();
+            for (int i = 0; i < pendingDeps.size(); i++) {
+                PendingDependency dep = pendingDeps.get(i);
+                boolean inPlace = stayed.contains(dep.file());
+                Path depFile = inPlace ? dep.legacyFile() : dep.file();
+                Path depSourceFile = inPlace
+                        ? dependencyFile(dep.legacyFile().getParent(), dep.releaseName(), "-" + HELM_REPOSITORY_FILE)
+                        : sharedDependencyFile(sharedDir, dep.namespace(), dep.releaseName(), "-" + HELM_REPOSITORY_FILE);
+                ChartSource depSource = chartSource(dep.repoName(), dep.releaseName(), dep.namespace(), depSourceFile,
+                        sharedDir, true);
+                sourceSecrets.addAll(depSource.secrets());
+                sourceFiles.put(depSource.file(), depSource.yaml());
+                GitOpsSecretValues.Split depSplit = secrets.splitContaining(dep.values(), storedDeps.get(i).documents());
+                String depValuesSecretName = null;
+                if (depSplit.hasSecrets()) {
+                    ValuesSecret depSecret = valuesSecret(dep.namespace(), dep.releaseName(), depSplit.secretValues(),
+                            storedDeps.get(i), appliedOnCommit);
+                    valuesSecrets.add(depSecret);
+                    depValuesSecretName = depSecret.name();
+                }
+                gitClient.writeFile(depFile, FluxManifests.helmRelease(dep.releaseName(), dep.namespace(), null,
+                        FluxManifests.helmReleaseSpec(dep.chart(), dep.version(), depSource.name(),
+                                depSource.referencedFrom(dep.namespace()), List.of(), depValuesSecretName,
+                                depSplit.publicValues()), true));
+                writtenFiles.add(depFile);
+                // Only a dependency whose HelmRelease is written: the release must never wait on one Git does not hold.
+                depRefs.add(new DepRef(dep.releaseName(), dep.namespace()));
             }
-            gitClient.writeFile(depFile, FluxManifests.helmRelease(dep.releaseName(), dep.namespace(), null,
-                    FluxManifests.helmReleaseSpec(dep.chart(), dep.version(), depSource.name(),
-                            depSource.referencedFrom(dep.namespace()), List.of(), depValuesSecretName,
-                            depSplit.publicValues()), true));
-            writtenFiles.add(depFile);
-            // Only a dependency whose HelmRelease is written: the release must never wait on one Git does not hold.
-            depRefs.add(new DepRef(dep.releaseName(), dep.namespace()));
+            Map<String, Object> hrSpec = FluxManifests.helmReleaseSpec(chartInSource, version, source.name(),
+                    source.referencedFrom(namespace), depRefs, valuesSecretName, split.publicValues(),
+                    helmTimeout(serviceKey));
+            specDigest = specDigest(FluxManifests.specYaml(hrSpec));
+            hrYaml = FluxManifests.helmRelease(release, namespace, specDigest, hrSpec);
+            if (!source.file().equals(targetDir.resolve(HELM_REPOSITORY_FILE))) {
+                // The release reads the platform's source: one of its own, written by a deploy before, goes.
+                gitClient.deletePath(targetDir.resolve(HELM_REPOSITORY_FILE));
+            }
+            for (Map.Entry<Path, String> sourceFile : sourceFiles.entrySet()) {
+                gitClient.writeFile(sourceFile.getKey(), sourceFile.getValue());
+                writtenFiles.add(sourceFile.getKey());
+            }
+            removeCopiesOfSharedSources(gitClient, repoDir, sharedDir, namespace, release);
+            gitClient.writeFile(targetDir.resolve(HELM_RELEASE_FILE), hrYaml);
+            writtenFiles.add(targetDir.resolve(HELM_RELEASE_FILE));
         }
-        Map<String, Object> hrSpec = FluxManifests.helmReleaseSpec(chartInSource, version, source.name(),
-                source.referencedFrom(namespace), depRefs, valuesSecretName, split.publicValues(),
-                helmTimeout(serviceKey));
-        String specDigest = specDigest(FluxManifests.specYaml(hrSpec));
-        String hrYaml = FluxManifests.helmRelease(release, namespace, specDigest, hrSpec);
-        if (!source.file().equals(targetDir.resolve(HELM_REPOSITORY_FILE))) {
-            // The release reads the platform's source: one of its own, written by a deploy before, goes.
-            gitClient.deletePath(targetDir.resolve(HELM_REPOSITORY_FILE));
-        }
-        for (Map.Entry<Path, String> sourceFile : sourceFiles.entrySet()) {
-            gitClient.writeFile(sourceFile.getKey(), sourceFile.getValue());
-            writtenFiles.add(sourceFile.getKey());
-        }
-        removeCopiesOfSharedSources(gitClient, repoDir, sharedDir, namespace, release);
-        gitClient.writeFile(targetDir.resolve(HELM_RELEASE_FILE), hrYaml);
-        writtenFiles.add(targetDir.resolve(HELM_RELEASE_FILE));
 
         // Fail closed: nothing that holds a password or secret is committed, whatever wrote it there.
-        String leakingFile = fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets);
+        String leakingFile = fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets, chartDir);
         if (leakingFile != null) {
             throw new IllegalStateException("GitOps deploy of " + namespace + "/" + release + " stopped: "
                     + leakingFile + " would contain a password or secret value, so nothing was committed to Git. "
@@ -1756,7 +1942,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         writeSourceSecrets(sourceSecrets, namespace, release);
         List<ValuesSecret> secretsWritten = writeValuesSecrets(valuesSecrets);
 
-        String commitMsg = prMode
+        String commitMsg = filesProfile != null
+                ? "KDPS deploy " + namespace + "/" + release + " (profile " + filesProfile.name + ")"
+                : prMode
                 ? "Flux GitOps (PR) apply " + namespace + "/" + release
                 : "Flux GitOps apply " + namespace + "/" + release;
 
@@ -1781,7 +1969,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         // A change that did not land where Flux reads is applied anyway once Git already holds it there: a pull request
         // merged since, which a redeploy then finds with nothing new to commit.
-        boolean appliedNow = appliedOnCommit || (!committed && hrYaml.equals(
+        boolean appliedNow = appliedOnCommit || (!committed && hrYaml != null && hrYaml.equals(
                 gitClient.publishedContent(targetDir.resolve(HELM_RELEASE_FILE), baseBranch)));
         String recordedBranch = existingMeta != null ? existingMeta.getGitBranch() : null;
         String prUrl = null;
@@ -1809,6 +1997,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     try {
                         releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
                                 baseToRecord, git.getCommitMode(), prUrl, prNumber, prState, specDigest);
+                        releaseMetadataService.recordGitProfile(namespace, release,
+                                filesProfile != null ? filesProfile.name : null);
                     } catch (Exception ex) {
                         LOG.warn("Failed to record the Git state of {}/{}: {}", namespace, release, ex.toString());
                     }
@@ -1904,6 +2094,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             // removal that waited for its merge.
             releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
                     baseToRecord, git.getCommitMode(), prUrl, prNumber, prState, specDigest);
+            releaseMetadataService.recordGitProfile(namespace, release, filesProfile != null ? filesProfile.name : null);
             if (alias != null && recordedAlias != null && !alias.equalsIgnoreCase(recordedAlias)) {
                 forgetReplacedAlias(recordedAlias, namespace, release);
             }
@@ -1950,6 +2141,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if ((git.getCommitMode() == null || git.getCommitMode().isBlank()) && existingMeta != null) {
             git.setCommitMode(existingMeta.getGitCommitMode());
         }
+        if ((git.getProfile() == null || git.getProfile().isBlank()) && existingMeta != null) {
+            git.setProfile(existingMeta.getGitProfile());
+        }
         return git;
     }
 
@@ -1984,7 +2178,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * @throws IllegalStateException when the state of the previous pull request cannot be read
      */
     private WorkBranch workBranch(boolean prMode, String requested, String baseBranch, K8sReleaseEntity existingMeta,
-                                  String repoUrl, String token) throws Exception {
+                                  String repoUrl, String token, String branchPrefix) throws Exception {
         if (prMode) {
             pullRequests.api(repoUrl, token);
         }
@@ -2026,7 +2220,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (joins && previous != null) {
             return new WorkBranch(recorded, previous, null);
         }
-        String branch = !prMode ? baseBranch : named ? requested : GitClient.generateBranch("flux");
+        String branch = !prMode ? baseBranch : named ? requested : GitClient.generateBranch(branchPrefix);
         return new WorkBranch(branch, null, previous);
     }
 
@@ -4724,6 +4918,16 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     static String fileLeakingSecrets(Path repoDir, GitClient gitClient, List<Path> writtenFiles,
                                      GitOpsSecretValues secrets) throws IOException {
+        return fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets, null);
+    }
+
+    /**
+     * Same as {@link #fileLeakingSecrets(Path, GitClient, List, GitOpsSecretValues)}, leaving out the files under
+     * {@code excluded}: a chart copied as published, whose own default settings are not the deploy's and could match a
+     * short secret by chance.
+     */
+    static String fileLeakingSecrets(Path repoDir, GitClient gitClient, List<Path> writtenFiles,
+                                     GitOpsSecretValues secrets, Path excluded) throws IOException {
         if (secrets.isEmpty()) {
             return null;
         }
@@ -4731,6 +4935,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         writtenFiles.forEach(f -> files.add(f.normalize()));
         gitClient.changedFiles().forEach(f -> files.add(f.normalize()));
         for (Path file : files) {
+            if (excluded != null && file.startsWith(excluded)) {
+                continue;
+            }
             Path absolute = repoDir.resolve(file);
             if (Files.isRegularFile(absolute)
                     && secrets.leaksInto(new String(Files.readAllBytes(absolute), java.nio.charset.StandardCharsets.UTF_8))) {

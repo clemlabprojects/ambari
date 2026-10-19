@@ -50,7 +50,8 @@ public final class ProfileRenderer {
      */
     public record RenderContext(String release, String namespace, String service, String chartName,
                                 String chartVersion, String chartRepository, Map<String, Object> values,
-                                List<String> images, List<String> instances, String deployedBy, Instant timestamp) {
+                                List<String> images, List<String> instances, String deployedBy, Instant timestamp,
+                                String valuesSecret) {
     }
 
     /** A file to write: its path relative to the repository root, its content, and its write mode. */
@@ -183,6 +184,12 @@ public final class ProfileRenderer {
         c.put("chartPath", profile.chartPath);
         c.put("deployedBy", ctx.deployedBy());
         c.put("timestamp", ctx.timestamp() == null ? null : ctx.timestamp().toString());
+        // The Kubernetes Secret holding the deploy's secret values, for the tool deploying the chart to add to its values; its
+        // name only, never its content.
+        Map<String, Object> secretValues = new LinkedHashMap<>();
+        secretValues.put("secretName", ctx.valuesSecret());
+        secretValues.put("key", ctx.valuesSecret() == null ? null : "values.yaml");
+        c.put("secretValues", secretValues);
         return c;
     }
 
@@ -192,7 +199,7 @@ public final class ProfileRenderer {
      *
      * @throws IllegalArgumentException naming {@code what} otherwise
      */
-    static String repositoryPath(String path, String what) {
+    public static String repositoryPath(String path, String what) {
         String p = path == null ? "" : path.trim();
         while (p.endsWith("/")) {
             p = p.substring(0, p.length() - 1);

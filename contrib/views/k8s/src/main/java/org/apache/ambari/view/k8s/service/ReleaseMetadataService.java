@@ -460,6 +460,14 @@ public class ReleaseMetadataService {
      * @param prState    its state, or null
      * @param specDigest the spec digest annotation of the HelmRelease Git now holds for the release, or null
      */
+    /** Records the GitOps output profile a release is written into Git with; {@code null} for the Flux layout. */
+    public void recordGitProfile(String namespace, String releaseName, String profile) {
+        K8sReleaseEntity e = find(namespace, releaseName);
+        if (e == null) return;
+        e.setGitProfile(profile);
+        releaseRepository.update(e);
+    }
+
     public void recordGitChange(String namespace, String releaseName, String branch, String baseBranch,
                                 String commitMode, String prUrl, String prNumber, String prState,
                                 String specDigest) {

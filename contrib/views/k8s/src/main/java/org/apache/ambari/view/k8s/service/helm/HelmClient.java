@@ -99,4 +99,12 @@ public interface HelmClient {
     default String showChart(String chartRef, String versionOpt, java.nio.file.Path repoConfigPath) {
         throw new UnsupportedOperationException("showChart not implemented");
     }
+
+    /**
+     * Runs {@code helm dependency update} in a chart directory: downloads the charts its {@code Chart.yaml} depends on
+     * into its {@code charts/} directory, with the registry logins already made. Repositories are not refreshed.
+     */
+    default void dependencyUpdate(java.nio.file.Path chartDir) {
+        throw new UnsupportedOperationException("dependencyUpdate not implemented");
+    }
 }

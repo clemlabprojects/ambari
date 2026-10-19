@@ -541,6 +541,15 @@ public class K8sReleaseEntity extends BaseModel {
         return gitMeta().get("commitMode");
     }
 
+    /** The GitOps output profile the release is written into Git with; {@code null} for the Flux layout. */
+    public String getGitProfile() {
+        return gitMeta().get("profile");
+    }
+
+    public void setGitProfile(String gitProfile) {
+        putGitMeta("profile", gitProfile);
+    }
+
     public void setGitCommitMode(String gitCommitMode) {
         putGitMeta("commitMode", gitCommitMode);
     }

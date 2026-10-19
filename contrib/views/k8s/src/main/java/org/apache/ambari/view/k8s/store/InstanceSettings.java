@@ -62,6 +62,9 @@ public class InstanceSettings {
      */
     public static final int MAX_SECRET_LENGTH = 16 * 1024;
 
+    /** Longest text {@link #putText} saves (a GitOps profile with its file templates). */
+    public static final int MAX_TEXT_LENGTH = 256 * 1024;
+
     /** Longest part of an encrypted secret kept in parts, safely under {@link #MAX_VALUE_LENGTH}. */
     static final int SECRET_PART_LENGTH = 2900;
 
@@ -265,16 +268,60 @@ public class InstanceSettings {
         checkSecretLength("secret '" + key + "'", plainSecret);
         String encrypted = new String(encryption().encrypt(plainSecret.getBytes(StandardCharsets.UTF_8)),
                 StandardCharsets.UTF_8);
+        putInParts(key, encrypted);
+    }
+
+    /**
+     * Returns a text saved with {@link #putText}.
+     *
+     * @param key the setting key
+     * @return the text, or {@code null} when none is saved
+     */
+    public String getText(String key) {
+        String value = get(key);
+        if (value != null && value.startsWith(SECRET_PARTS_MARKER)) {
+            return joinSecretParts(key, value);
+        }
+        return value;
+    }
+
+    /**
+     * Saves a text that may be longer than one setting holds (a JSON document), in parts when needed, for every user
+     * of the view instance. Not encrypted: for configuration, never for a secret.
+     *
+     * @param key  the setting key
+     * @param text the text; {@code null} deletes the setting
+     * @throws IllegalArgumentException when the text is longer than {@link #MAX_TEXT_LENGTH}, or starts with the
+     *                                  marker of a value kept in parts
+     */
+    public void putText(String key, String text) {
+        if (text == null) {
+            delete(key);
+            return;
+        }
+        if (text.length() > MAX_TEXT_LENGTH) {
+            throw new IllegalArgumentException("The view setting '" + key + "' is too long to be saved (" + text.length()
+                    + " characters, at most " + MAX_TEXT_LENGTH + ").");
+        }
+        if (text.startsWith(SECRET_PARTS_MARKER)) {
+            throw new IllegalArgumentException("The view setting '" + key + "' cannot start with '"
+                    + SECRET_PARTS_MARKER + "'.");
+        }
+        putInParts(key, text);
+    }
+
+    /** Saves a value, in parts when it is longer than one setting holds; parts left from a longer value go. */
+    private void putInParts(String key, String value) {
         synchronized (WRITE_LOCK) {
             int before = secretParts(find(key));
             int parts = 0;
-            if (encrypted.length() <= MAX_VALUE_LENGTH) {
-                put(key, encrypted);
+            if (value.length() <= MAX_VALUE_LENGTH) {
+                put(key, value);
             } else {
-                parts = (encrypted.length() + SECRET_PART_LENGTH - 1) / SECRET_PART_LENGTH;
+                parts = (value.length() + SECRET_PART_LENGTH - 1) / SECRET_PART_LENGTH;
                 for (int i = 1; i <= parts; i++) {
-                    String part = encrypted.substring((i - 1) * SECRET_PART_LENGTH,
-                            Math.min(encrypted.length(), i * SECRET_PART_LENGTH));
+                    String part = value.substring((i - 1) * SECRET_PART_LENGTH,
+                            Math.min(value.length(), i * SECRET_PART_LENGTH));
                     store(new KdpsSettingEntity(key + SECRET_PART_SUFFIX + i, part));
                 }
                 // Written last, so it never names a part that is not written yet.
