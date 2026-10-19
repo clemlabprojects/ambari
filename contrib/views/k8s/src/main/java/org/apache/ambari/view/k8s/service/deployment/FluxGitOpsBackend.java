@@ -22,6 +22,7 @@ import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.service.gitops.ChartFetcher;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfile;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfileStore;
+import org.apache.ambari.view.k8s.service.gitops.ProfilePreview;
 import org.apache.ambari.view.k8s.service.gitops.ProfileRenderer;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.service.HelmRepositoryService;
@@ -407,16 +408,58 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     /**
-     * Writes a deploy with a file profile: the chart, as its repository publishes it, under the profile's chart path,
-     * then the files the profile's rules render around it. A {@code createIfMissing} file already in the repository is
-     * left as it is.
+     * The profile a deploy writes the release with: the one named, else the release's, else Flux. A release KDPS
+     * committed to Git keeps its profile: written with another one, the files of the first would stay in Git and two
+     * tools would deploy the release.
      *
-     * @return the chart path in the repository, or {@code null} when the profile copies no chart
+     * @param name the profile the deploy names, or the release's when it names none
+     * @throws IllegalArgumentException when the profile does not exist, or is not the one the release was written with
      */
-    private Path writeProfileFiles(GitOpsProfile profile, GitClient gitClient, Path repoDir, List<Path> writtenFiles,
-                                   String namespace, String release, String serviceKey, String repoName, String chart,
-                                   String version, GitOpsSecretValues.Split split, String valuesSecretName)
-            throws IOException {
+    private GitOpsProfile deployProfile(String name, K8sReleaseEntity existingMeta, String release) {
+        GitOpsProfile profile = profileStore().get(name);
+        if (profile == null) {
+            throw new IllegalArgumentException("The GitOps profile '" + name + "' does not exist. Choose another one, "
+                    + "or save it again on the GitOps profiles page.");
+        }
+        checkSameProfile(existingMeta, profile, release);
+        return profile;
+    }
+
+    static void checkSameProfile(K8sReleaseEntity existingMeta, GitOpsProfile profile, String release) {
+        if (existingMeta == null || existingMeta.getGitRepoUrl() == null || existingMeta.getGitRepoUrl().isBlank()) {
+            return;
+        }
+        String recorded = existingMeta.getGitProfile() == null || existingMeta.getGitProfile().isBlank()
+                ? GitOpsProfile.flux().name : existingMeta.getGitProfile();
+        if (!recorded.equals(profile.name)) {
+            throw new IllegalArgumentException(release + " was written to Git with the GitOps profile " + recorded
+                    + ". Deploy it with that profile, or uninstall it before deploying it with " + profile.name + ".");
+        }
+    }
+
+    /** How a file profile delivers a deploy, as a commit mode of the Git options. */
+    private static String profileCommitMode(GitOpsProfile profile) {
+        return GitOpsProfile.DELIVERY_PULL_REQUEST.equals(profile.delivery.mode) ? "PR_MODE" : "DIRECT_COMMIT";
+    }
+
+    /**
+     * What a deploy with a file profile writes: the chart's files, as its repository publishes them, for the profile's
+     * chart path, and the files its rules render around it, with the operator's edits.
+     *
+     * @param chartDir   the chart path in the repository, {@code null} when the profile copies no chart
+     * @param chartFiles the chart's files by path inside the chart
+     */
+    private record ProfilePlan(String repositoryUrl, Path chartDir, Map<String, byte[]> chartFiles,
+                               List<ProfileRenderer.RenderedFile> files) {}
+
+    /**
+     * Plans a deploy with a file profile against the branch checked out in {@code repoDir}. The deploy writes this plan;
+     * the repository preview shows it.
+     */
+    private ProfilePlan planProfileFiles(GitOpsProfile profile, Path repoDir, String namespace, String release,
+                                         String serviceKey, String repoName, String chart, String version,
+                                         GitOpsSecretValues.Split split, String valuesSecretName,
+                                         Map<String, String> fileEdits) throws IOException {
         HelmRepoEntity repo = checkChartSource(repoName);
         String repositoryUrl;
         if (isOciRepository(repoName)) {
@@ -429,26 +472,6 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     + "to an OCI registry, or deploy with the flux profile.");
         }
 
-        Path chartDir = null;
-        if (profile.chartPath != null && !profile.chartPath.isBlank()) {
-            chartDir = Path.of(ProfileRenderer.repositoryPath(profile.chartPath, "the chart path"));
-            repositoryLogin().accept(repoName);
-            Path work = Files.createTempDirectory(fluxRoot, "chart-");
-            Map<String, byte[]> chartFiles;
-            try {
-                chartFiles = chartFetcher().fetch(repositoryUrl, chart, version, work);
-            } finally {
-                deleteRecursively(work);
-            }
-            // Replaced as a whole, so a file the new version no longer has goes too.
-            gitClient.deletePath(chartDir);
-            Map<Path, byte[]> written = new LinkedHashMap<>();
-            for (Map.Entry<String, byte[]> file : chartFiles.entrySet()) {
-                written.put(chartDir.resolve(file.getKey()), file.getValue());
-            }
-            gitClient.write(new GitClient.Change(written, Set.of()));
-        }
-
         List<String> secretValues = new ArrayList<>();
         collectStrings(split.secretValues(), secretValues);
         ProfileRenderer.RenderContext base = new ProfileRenderer.RenderContext(release, namespace, serviceKey, chart,
@@ -458,7 +481,51 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         ProfileRenderer.RenderContext ctx = new ProfileRenderer.RenderContext(release, namespace, serviceKey, chart,
                 version, repositoryUrl, base.values(), base.images(), ProfileRenderer.instances(profile, base, repoDir),
                 base.deployedBy(), base.timestamp(), valuesSecretName);
-        for (ProfileRenderer.RenderedFile file : ProfileRenderer.render(profile, ctx, secretValues)) {
+        // Rendered before the chart is downloaded: a template error stops the deploy at once.
+        List<ProfileRenderer.RenderedFile> files = ProfilePreview.withEdits(
+                ProfileRenderer.render(profile, ctx, secretValues), fileEdits,
+                path -> Files.exists(repoDir.resolve(path)), secretValues);
+
+        Path chartDir = null;
+        Map<String, byte[]> chartFiles = Map.of();
+        if (profile.chartPath != null && !profile.chartPath.isBlank()) {
+            chartDir = Path.of(ProfileRenderer.repositoryPath(profile.chartPath, "the chart path"));
+            repositoryLogin().accept(repoName);
+            Path work = Files.createTempDirectory(fluxRoot, "chart-");
+            try {
+                chartFiles = chartFetcher().fetch(repositoryUrl, chart, version, work);
+            } finally {
+                deleteRecursively(work);
+            }
+        }
+        return new ProfilePlan(repositoryUrl, chartDir, chartFiles, files);
+    }
+
+    /**
+     * Writes a deploy with a file profile: the chart, as its repository publishes it, under the profile's chart path,
+     * then the files the profile's rules render around it. A {@code createIfMissing} file already in the repository is
+     * left as it is.
+     *
+     * @return the chart path in the repository, or {@code null} when the profile copies no chart
+     */
+    private Path writeProfileFiles(GitOpsProfile profile, GitClient gitClient, Path repoDir, List<Path> writtenFiles,
+                                   String namespace, String release, String serviceKey, String repoName, String chart,
+                                   String version, GitOpsSecretValues.Split split, String valuesSecretName,
+                                   Map<String, String> fileEdits)
+            throws IOException {
+        ProfilePlan plan = planProfileFiles(profile, repoDir, namespace, release, serviceKey, repoName, chart, version,
+                split, valuesSecretName, fileEdits);
+        Path chartDir = plan.chartDir();
+        if (chartDir != null) {
+            // Replaced as a whole, so a file the new version no longer has goes too.
+            gitClient.deletePath(chartDir);
+            Map<Path, byte[]> written = new LinkedHashMap<>();
+            for (Map.Entry<String, byte[]> file : plan.chartFiles().entrySet()) {
+                written.put(chartDir.resolve(file.getKey()), file.getValue());
+            }
+            gitClient.write(new GitClient.Change(written, Set.of()));
+        }
+        for (ProfileRenderer.RenderedFile file : plan.files()) {
             Path path = Path.of(file.path());
             if (GitOpsProfile.MODE_CREATE_IF_MISSING.equals(file.mode()) && Files.exists(repoDir.resolve(path))) {
                 continue;
@@ -469,6 +536,159 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         logFluxInfo(namespace, release, "apply", "Wrote the release with GitOps profile %s%s", profile.name,
                 chartDir != null ? ", chart " + chart + " " + version + " in " + chartDir : "");
         return chartDir;
+    }
+
+    /**
+     * The repository as a deploy with a file profile would leave it, written nowhere: the plan the deploy writes, against
+     * the base branch as the Git server holds it. The values are the request's, with the overrides it carries and its
+     * passwords moved out, and what the deploy adds to them (security profile, Kerberos, truststore, image registry):
+     * only the cluster objects the deploy prepares (the krb5.conf ConfigMap, the truststore Secret) are not created.
+     *
+     * @param request the deploy as the wizard submits it; without a Git repository, the preview is for an empty one
+     * @param draft   a profile not saved yet, previewed in place of the one the request names; {@code null} for that one
+     * @param context the caller's Ambari server, from which the deploy reads the cluster's Kerberos state
+     * @throws IllegalArgumentException when the request or the profile cannot be deployed as given
+     * @throws FileTemplate.TemplateException when a template cannot be rendered
+     * @throws IllegalStateException when a file would hold a secret, or the chart cannot be downloaded
+     */
+    public ProfilePreview.Preview previewProfile(HelmDeployRequest request, GitOpsProfile draft,
+                                                DeploymentContext context) throws Exception {
+        DeployRequestValidator.validateForGitOps(request, null, null);
+        String namespace = request.getNamespace();
+        String release = request.getReleaseName();
+        K8sReleaseEntity existingMeta = releaseMetadataService.find(namespace, release);
+        HelmDeployRequest.GitOptions git = mergeGitOptions(request, existingMeta);
+        // A draft is tried on an example release, which may share a deployed release's name.
+        GitOpsProfile profile = draft != null ? draft : deployProfile(git.getProfile(), existingMeta, release);
+        ProfileRenderer.validate(profile);
+        if (!GitOpsProfile.KIND_FILES.equals(profile.kind)) {
+            throw new IllegalArgumentException("The " + profile.name + " profile writes a HelmRelease that Flux applies:"
+                    + " the preview shows profiles made of file rules.");
+        }
+        String repoName = firstNonBlank(request.getRepoId(), existingMeta != null ? existingMeta.getRepoId() : null);
+        if (repoName == null) {
+            throw new IllegalArgumentException("Select a chart repository for " + release + ".");
+        }
+        DeployRequestValidator.checkRepositoryIfGiven("Chart repository", repoName);
+        String serviceKey = firstNonBlank(request.getServiceKey(),
+                existingMeta != null ? existingMeta.getServiceKey() : null);
+        String version = chartVersion(request, null, existingMeta, serviceKey);
+        String chart = chartNameInSource(request.getChart(), isOciRepository(repoName));
+
+        // The values as the deploy builds and splits them (see commit), in the same order, without creating the cluster
+        // objects the deploy prepares (the krb5.conf ConfigMap, the truststore Secret): their names are known.
+        // As the commit step receives them: dotted keys expanded, whole numbers as integers (JSON gives doubles).
+        @SuppressWarnings("unchecked")
+        Map<String, Object> values = request.getValues() == null ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(HelmService.expandDotPaths((Map<String, Object>)
+                        CommandService.wholeNumbersAsIntegers(request.getValues())));
+        Map<String, String> overrides = new LinkedHashMap<>();
+        if (values.get("_ov") instanceof Map<?, ?> ovMap) {
+            ovMap.forEach((k, v) -> {
+                if (k != null && v != null) {
+                    overrides.put(String.valueOf(k), String.valueOf(v));
+                }
+            });
+        }
+        final Map<String, String> operatorOverrides = new LinkedHashMap<>(overrides);
+        SecurityConfigDTO securityCfg = loadSecurityConfig(resolveSecurityProfileName(request.getSecurityProfile()));
+        applySecurityOverrides(securityCfg, overrides);
+        // Kerberos as the deploy decides it; the krb5.conf ConfigMap it then prepares has a name known in advance.
+        boolean profileKerberos = securityCfg != null && securityCfg.mode != null
+                && securityCfg.mode.toLowerCase().contains("kerberos");
+        String kerberosEnabled = kerberosEnabledValue(profileKerberos,
+                followsAmbariKerberos(request) ? ambariClusterKerberos(context) : null);
+        if (kerberosEnabled != null) {
+            addOverride(overrides, "global.security.kerberos.enabled", kerberosEnabled);
+        }
+        if ("true".equals(kerberosEnabled)) {
+            addOverride(overrides, "global.security.kerberos.configMapName", CommandUtils.krb5ConfigMapName(release));
+        }
+        List<String> notes = new ArrayList<>();
+        try {
+            new TrustBundleService(viewContext, kubernetesService)
+                    .plannedOverrides(namespace, release, request.getTruststoreRefs())
+                    .forEach((k, v) -> addOverride(overrides, k, v));
+        } catch (RuntimeException e) {
+            notes.add("The truststore of the release could not be read, so its settings are not shown: "
+                    + e.getMessage());
+        }
+        addOverride(overrides, "global.security.kerberos.injectionMode",
+                CommandService.resolveKerberosInjectionMode(viewContext));
+        GitOpsSecretValues secrets = new GitOpsSecretValues();
+        try {
+            List<StackConfig> globals = globalConfigService.listGlobalConfigs();
+            for (StackConfig cfg : globals == null ? List.<StackConfig>of() : globals) {
+                for (StackProperty p : cfg.properties == null ? List.<StackProperty>of() : cfg.properties) {
+                    if (p.name != null && !p.name.isBlank() && p.value != null && !String.valueOf(p.value).isBlank()) {
+                        addOverride(overrides, p.name, String.valueOf(p.value));
+                        secrets.addPasswordProperty(p.name, p);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            // As the deploy: it goes on without them.
+            LOG.warn("Failed to apply global configs to the preview: {}", ex.toString());
+        }
+        if (request.getStackConfigOverrides() != null) {
+            request.getStackConfigOverrides().forEach((k, v) -> {
+                if (k != null && v != null && !k.isBlank()) {
+                    addOverride(overrides, k, String.valueOf(v));
+                }
+            });
+        }
+        ConfigResolutionService.mergeDynamicOverrides(values, overrides);
+        try {
+            Map<String, String> resolvedTokens = resolveDynamicTokens(values, release);
+            if (resolvedTokens != null) {
+                resolvedTokens.forEach((k, v) -> addOverride(overrides, k, v));
+            }
+        } catch (Exception ex) {
+            LOG.warn("Failed to resolve dynamic tokens for the preview of {}: {}", release, ex.toString());
+        }
+        releaseImageOverrides(request, repoName, serviceKey, values, overrides, operatorOverrides);
+        secrets.addMarkedOverrides(overrides);
+        applyOverridesToValues(values, overrides);
+        values.remove("_ov");
+        addServicePasswords(secrets, serviceKey, request, values);
+        secrets.addValuesAtPaths(values);
+        GitOpsSecretValues.Split split = secrets.split(values);
+        String valuesSecretName = split.hasSecrets() ? GitOpsSecretValues.secretName(release) : null;
+
+        if (valuesSecretName != null) {
+            notes.add("Passwords and secrets are not in the files: the deploy puts them in the Secret "
+                    + valuesSecretName + " (key " + GitOpsSecretValues.VALUES_KEY + ") of namespace " + namespace + ".");
+        }
+        String repoUrl = git.getRepoUrl() == null || git.getRepoUrl().isBlank() ? null : git.getRepoUrl().trim();
+        Path work = Files.createTempDirectory(fluxRoot, "preview-");
+        try {
+            Path checkout = work.resolve("repo");
+            if (repoUrl == null) {
+                Files.createDirectories(checkout);
+                notes.add("No Git repository was given: the preview is for an empty repository.");
+            } else {
+                GitCredentialService.checkRepoUrl(repoUrl);
+                GitSecrets gitSecrets = gitSecrets(git, repoUrl, namespace, release, existingMeta);
+                GitClient gitClient = new GitClient(checkout, repoUrl, git.getBaseBranch(), gitSecrets.token(),
+                        gitSecrets.sshKey())
+                        .withTimeout(gitTimeoutSeconds(viewContext))
+                        .withProxy(ViewConfigurationService.outboundProxy(viewContext))
+                        .withHostKeys(gitSecrets.knownHosts())
+                        .withHostKeyTrustOnFirstUse(gitSecrets.knownHosts() == null
+                                && Boolean.TRUE.equals(git.getTrustHostKeyOnFirstUse()));
+                gitClient.sync();
+                gitClient.requireOnServer(git.getBaseBranch(), "the preview shows the change to that branch");
+            }
+            ProfilePlan plan = planProfileFiles(profile, checkout, namespace, release, serviceKey, repoName, chart,
+                    version, split, valuesSecretName, git.getFileEdits());
+            String chartPath = plan.chartDir() == null ? null : plan.chartDir().toString().replace('\\', '/');
+            List<ProfilePreview.PreviewFile> files = ProfilePreview.files(profile, chartPath, plan.chartFiles(),
+                    plan.files(), checkout);
+            return new ProfilePreview.Preview(profile.name, repoUrl == null ? null : GitClient.redact(repoUrl),
+                    git.getBaseBranch(), chart, version, chartPath, files, notes);
+        } finally {
+            deleteRecursively(work);
+        }
     }
 
     /** Every string of a nested map or list. */
@@ -1069,9 +1289,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 firstNonBlank(request.getServiceKey(), existingMeta != null ? existingMeta.getServiceKey() : null));
         sourceNamespace();
         checkChartSources(repoName, request.getDependencies());
-        String commitMode = firstNonBlank(given.getCommitMode(),
-                existingMeta != null ? existingMeta.getGitCommitMode() : null);
-        checkWorkingBranch(commitMode, given.getBranch(),
+        GitOpsProfile profile = deployProfile(firstNonBlank(given.getProfile(),
+                existingMeta != null ? existingMeta.getGitProfile() : null), existingMeta, request.getReleaseName());
+        boolean files = GitOpsProfile.KIND_FILES.equals(profile.kind);
+        String commitMode = files ? profileCommitMode(profile)
+                : firstNonBlank(given.getCommitMode(), existingMeta != null ? existingMeta.getGitCommitMode() : null);
+        checkWorkingBranch(commitMode, files ? null : given.getBranch(),
                 firstNonBlank(given.getBaseBranch() == null ? null : given.getBaseBranch().trim(),
                         recordedBaseBranch(existingMeta), DEFAULT_BASE_BRANCH), existingMeta);
         if (isPullRequestMode(commitMode)) {
@@ -1397,15 +1620,12 @@ public class FluxGitOpsBackend implements DeploymentBackend {
 
         // The profile writing the deploy into Git: as given, else the release's. A file profile decides how the change
         // is delivered, whatever the deploy asked.
-        GitOpsProfile profile = profileStore().get(git.getProfile());
-        if (profile == null) {
-            throw new IllegalArgumentException("The GitOps profile '" + git.getProfile() + "' does not exist. Choose "
-                    + "another one, or save it again on the GitOps profiles page.");
-        }
+        GitOpsProfile profile = deployProfile(git.getProfile(), existingMeta, release);
         final GitOpsProfile filesProfile = GitOpsProfile.KIND_FILES.equals(profile.kind) ? profile : null;
         if (filesProfile != null) {
-            git.setCommitMode(GitOpsProfile.DELIVERY_PULL_REQUEST.equals(filesProfile.delivery.mode)
-                    ? "PR_MODE" : "DIRECT_COMMIT");
+            git.setCommitMode(profileCommitMode(filesProfile));
+            // Its pull requests go on branches named from the profile's prefix.
+            git.setBranch(null);
         }
 
         logFluxInfo(namespace, release, "apply", "Starting Flux GitOps deploy (mode=%s, repo=%s)", git.getCommitMode(), repoUrl);
@@ -1868,7 +2088,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         Path chartDir = null;
         if (filesProfile != null) {
             chartDir = writeProfileFiles(filesProfile, gitClient, repoDir, writtenFiles, namespace, release, serviceKey,
-                    repoName, chartInSource, version, split, valuesSecretName);
+                    repoName, chartInSource, version, split, valuesSecretName, git.getFileEdits());
         } else {
             // The chart source of the release, and the Secrets Flux reads it with, written before the commit.
             ChartSource source = chartSource(repoName, release, namespace, targetDir.resolve(HELM_REPOSITORY_FILE),

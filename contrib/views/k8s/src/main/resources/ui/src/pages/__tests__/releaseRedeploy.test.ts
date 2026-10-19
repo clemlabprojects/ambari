@@ -66,6 +66,16 @@ describe('gitOptionsForRelease', () => {
     gitCommitMode: 'PR_MODE',
   } as HelmRelease;
 
+  it('sends the GitOps profile the release is written with', () => {
+    expect(gitOptionsForRelease({ ...gitOps, gitProfile: 'pipeline' } as HelmRelease)).toEqual({
+      repoUrl: 'https://git.example.com/platform.git',
+      baseBranch: 'production',
+      commitMode: 'PR_MODE',
+      profile: 'pipeline',
+    });
+    expect(gitOptionsForRelease(gitOps)).not.toHaveProperty('profile');
+  });
+
   it('sends the recorded base branch and commit mode, and no working branch', () => {
     expect(gitOptionsForRelease(gitOps)).toEqual({
       repoUrl: 'https://git.example.com/platform.git',

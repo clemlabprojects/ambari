@@ -13225,9 +13225,10 @@ public class CommandService {
 
     /**
      * The values with their whole numbers as integers. A step reads its values file back with Gson, which makes every
-     * number a double: Helm takes 2.0 as it takes 2, but a HelmRelease reviewed in Git would show 2.0.
+     * number a double: Helm takes 2.0 as it takes 2, but a HelmRelease reviewed in Git would show 2.0. Also used by the
+     * Git repository preview, which shows what the commit step writes.
      */
-    static Object wholeNumbersAsIntegers(Object node) {
+    public static Object wholeNumbersAsIntegers(Object node) {
         if (node instanceof Map<?, ?> map) {
             Map<String, Object> out = new LinkedHashMap<>();
             map.forEach((key, value) -> out.put(String.valueOf(key), wholeNumbersAsIntegers(value)));

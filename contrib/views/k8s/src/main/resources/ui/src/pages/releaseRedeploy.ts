@@ -24,6 +24,8 @@ export function gitOptionsForRelease(release: HelmRelease) {
     repoUrl: release.gitRepoUrl,
     baseBranch: release.gitBaseBranchAssumed ? undefined : release.gitBaseBranch,
     commitMode: release.gitCommitMode,
+    // The profile the release is written with: another one is refused.
+    ...(release.gitProfile ? { profile: release.gitProfile } : {}),
   };
 }
 

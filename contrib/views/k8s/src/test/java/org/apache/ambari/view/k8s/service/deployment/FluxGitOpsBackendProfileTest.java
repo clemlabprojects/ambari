@@ -26,6 +26,7 @@ import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.gitops.ChartFetcher;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfile;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfileStore;
+import org.apache.ambari.view.k8s.service.gitops.ProfilePreview;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.InMemoryDataStore;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
@@ -436,5 +437,158 @@ public class FluxGitOpsBackendProfileTest {
         assertEquals("NOT_FOUND", status.status);
         assertTrue(status.message, status.message.contains("GitOps profile environments"));
         assertFalse(status.message, status.message.contains("Flux"));
+    }
+
+    /** The files of a branch as published, by path, Git's own directory left out. */
+    private Map<String, String> publishedFiles(String branch) throws Exception {
+        Path clone = tmp.getRoot().toPath().resolve("verify-" + System.nanoTime());
+        Map<String, String> files = new LinkedHashMap<>();
+        try (Git ignored = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, branch, clone);
+             java.util.stream.Stream<Path> walk = Files.walk(clone)) {
+            for (Path f : walk.filter(Files::isRegularFile).toList()) {
+                String path = clone.relativize(f).toString().replace('\\', '/');
+                if (!path.startsWith(".git/")) {
+                    files.put(path, Files.readString(f));
+                }
+            }
+        }
+        return files;
+    }
+
+    private static ProfilePreview.PreviewFile file(ProfilePreview.Preview preview, String path) {
+        return preview.files().stream().filter(f -> f.path().equals(path)).findFirst()
+                .orElseThrow(() -> new AssertionError("not in the preview: " + path));
+    }
+
+    @Test
+    public void thePreviewShowsWhatTheDeployThenWrites() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        Map<String, String> before = publishedFiles("main");
+
+        ProfilePreview.Preview preview = backend().previewProfile(request(), null, null);
+
+        assertEquals("the preview writes nothing", before, publishedFiles("main"));
+        backend().apply(request(), null);
+        Map<String, String> after = publishedFiles("main");
+        // Every file of the repository after the deploy, and nothing else, with the content the preview showed.
+        Map<String, String> previewed = new LinkedHashMap<>();
+        for (ProfilePreview.PreviewFile f : preview.files()) {
+            assertNotEquals(f.path(), ProfilePreview.CHANGE_REMOVED, f.change());
+            previewed.put(f.path(), f.content());
+        }
+        assertEquals(new java.util.TreeMap<>(after), new java.util.TreeMap<>(previewed));
+
+        assertEquals(ProfilePreview.ORIGIN_CHART, file(preview, "chart/Chart.yaml").origin());
+        ProfilePreview.PreviewFile values = file(preview, "environments/analytics/values.yaml");
+        assertEquals(ProfilePreview.CHANGE_NEW, values.change());
+        assertFalse("written again by every deploy", values.editable());
+        assertFalse("no secret in a file of the profile", values.content().contains(BIND_PASSWORD));
+        assertTrue("created once, so editable", file(preview, "OWNERS.md").editable());
+        ProfilePreview.PreviewFile team = file(preview, "docs/runbook.md");
+        assertEquals(ProfilePreview.ORIGIN_REPOSITORY, team.origin());
+        assertTrue(team.protectedPath());
+        assertTrue(preview.notes().stream().anyMatch(n -> n.contains(secretName())));
+    }
+
+    /** The values Secret of the test release, as the deploy names it. */
+    private static String secretName() {
+        return "trino-kdps-values";
+    }
+
+    @Test
+    public void aSecondPreviewShowsWhatTheNextDeployChanges() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        backend().apply(request(), null);
+        publishedChart.remove("templates/deployment.yaml");
+        HelmDeployRequest again = request();
+        again.getValues().put("server", new LinkedHashMap<>(Map.of("workers", 3)));
+
+        ProfilePreview.Preview preview = backend().previewProfile(again, null, null);
+
+        ProfilePreview.PreviewFile values = file(preview, "environments/analytics/values.yaml");
+        assertEquals(ProfilePreview.CHANGE_CHANGED, values.change());
+        assertTrue(values.current().contains("workers: 2"));
+        assertTrue(values.content().contains("workers: 3"));
+        assertEquals(ProfilePreview.CHANGE_KEPT, file(preview, "OWNERS.md").change());
+        assertFalse(file(preview, "OWNERS.md").editable());
+        assertEquals(ProfilePreview.CHANGE_UNCHANGED, file(preview, "chart/Chart.yaml").change());
+        assertEquals(ProfilePreview.CHANGE_REMOVED, file(preview, "chart/templates/deployment.yaml").change());
+    }
+
+    @Test
+    public void aTemplateErrorFailsThePreview() throws Exception {
+        GitOpsProfile p = environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        p.files.get(0).content = "{{ valeus | toYaml }}\n";
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> backend().previewProfile(request(), p, null));
+
+        assertTrue(refused.getMessage(), refused.getMessage().contains("valeus"));
+    }
+
+    @Test
+    public void anEditToAFileCreatedOnceIsWhatIsCommitted() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        HelmDeployRequest request = request();
+        request.getGit().setFileEdits(Map.of("OWNERS.md", "# trino\nOwned by the data team.\n"));
+
+        backend().apply(request, null);
+
+        assertEquals("# trino\nOwned by the data team.\n", published("main", "OWNERS.md"));
+    }
+
+    @Test
+    public void anEditToAFileWrittenByEveryDeployIsRefusedBeforeAnythingIsPushed() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        HelmDeployRequest request = request();
+        request.getGit().setFileEdits(Map.of("environments/analytics/values.yaml", "server:\n  workers: 9\n"));
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> backend().apply(request, null));
+
+        assertTrue(refused.getMessage(), refused.getMessage().contains("written again by every deploy"));
+        assertNull(published("main", "environments/analytics/values.yaml"));
+        assertNull(published("main", "chart/Chart.yaml"));
+    }
+
+    @Test
+    public void anEditHoldingASecretIsRefused() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        HelmDeployRequest request = request();
+        request.getGit().setFileEdits(Map.of("OWNERS.md", "bindPassword: " + BIND_PASSWORD + "\n"));
+
+        assertThrows(IllegalStateException.class, () -> backend().apply(request, null));
+
+        assertNull(published("main", "OWNERS.md"));
+    }
+
+    @Test
+    public void aReleaseKeepsTheProfileItWasWrittenWith() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        backend().apply(request(), null);
+        HelmDeployRequest again = request();
+        again.getGit().setProfile("flux");
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> backend().checkCommittable(again, null));
+        assertTrue(refused.getMessage(), refused.getMessage().contains("written to Git with the GitOps profile environments"));
+        assertThrows(IllegalArgumentException.class, () -> backend().apply(again, null));
+
+        assertNull("no Flux manifest", published("main", "clusters/default/analytics/trino/helmrelease.yaml"));
+        // Named again, or not at all, the release's own profile is used.
+        again.getGit().setProfile(null);
+        backend().apply(again, null);
+    }
+
+    @Test
+    public void thePreviewShowsWholeNumbersAsTheCommitStepWritesThem() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        HelmDeployRequest request = request();
+        // A request read from JSON carries every number as a double.
+        request.getValues().put("server", new LinkedHashMap<>(Map.of("workers", 2.0)));
+
+        String values = file(backend().previewProfile(request, null, null), "environments/analytics/values.yaml").content();
+
+        assertTrue(values, values.contains("workers: 2\n"));
     }
 }

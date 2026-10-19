@@ -21,9 +21,11 @@ import { Layout, Steps, Button, message, notification, Spin, theme, Row, Col, Ca
 import { ApiOutlined, PlusOutlined, WarningOutlined, DatabaseOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
+import RepositoryPreview from '../components/gitops/RepositoryPreview';
+import { serverMessage } from '../utils/serverMessage';
 import yaml from 'yaml';
 
-import { getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getReleaseTlsState, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
+import { previewGitOpsProfile, type GitOpsPreview, getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getReleaseTlsState, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
@@ -105,6 +107,10 @@ const ServiceWizardPage: React.FC = () => {
   const isDirtyRef = useRef(false);
   const parsedRef = useRef<Record<string, any> | null>(null);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  // The Git repository as a deploy with a GitOps file profile would leave it (see runGitPreview).
+  const [gitPreview, setGitPreview] = useState<GitOpsPreview | null>(null);
+  const [gitPreviewOpen, setGitPreviewOpen] = useState(false);
+  const [gitPreviewLoading, setGitPreviewLoading] = useState(false);
 
   // Command status drawer
   const [showOpsModal, setShowOpsModal] = useState(false);
@@ -829,6 +835,98 @@ const ServiceWizardPage: React.FC = () => {
     return errors.length === 0;
   };
 
+  // The deploy request, as submitted: also what the Git repository preview of a GitOps profile is computed from.
+  const deployRequestBody = (finalValues: Record<string, any>, atlasRestartAuthorized: boolean, replaceExistingTls: boolean) => {
+      const chartRef = (installValues.chartOverride && String(installValues.chartOverride).trim()) || def.chart;
+      const versionOverride = targetChartVersion();
+      return {
+        chart: chartRef,
+        releaseName: installValues.releaseName,
+        namespace: installValues.namespace,
+        // In the body as well as the query: the GitOps backend writes them into the HelmRelease.
+        repoId: (installValues.repoId as string) || undefined,
+        version: versionOverride || undefined,
+        values: finalValues, 
+        // Send Step 3 data to backend
+        stackConfigOverrides: configOverrides,
+        // Required to trigger the Config Materialize step
+        serviceKey: serviceName,
+        // Pass image pull secret if defined by the service definition or form
+        secretName: (def as any)?.secretName || (installValues as any)?.secretName || undefined,
+        endpoints: (def as any)?.endpoints || undefined,
+        // An upgrade is the install path with different inputs: every def-seeded block is sent
+        // every time and the backend steps converge (PVCs, dependencies, Ranger, ConfigMaps are
+        // all ensure-or-skip). Stripping them on upgrade meant a feature turned on in
+        // Upgrade/Config never got the mounts, dependencies or values it needed.
+        mounts: (installValues as any)?.mounts || (def as any)?.mounts || null,
+        dependencies: (def as any)?.dependencies || null,
+        // Context-dependent blocks are omitted only when the deploy is wired to NO platform
+        // context (standalone service, 'none'): there is no backend to source Ranger or the
+        // hadoop-conf site XML from. For a MANAGED context the backend materializes
+        // requiredConfigMaps from the LOCAL cluster; for an EXTERNAL/CDP/REMOTE context it
+        // sources them FROM the context (CDP → Cloudera Manager clientConfig, REMOTE → remote
+        // Ambari, manual → pasted XML) per AMBARI-558 — so requiredConfigMaps MUST be sent for
+        // every real context, not just MANAGED. Gating it to MANAGED-only left external deploys
+        // with no trino-hadoop-conf ConfigMap while Trino still referenced /etc/hadoop/conf/*.xml,
+        // failing with "file does not exist". Mirror the Ranger gate (context-agnostic).
+        // Not gated on isUpgrade: an upgrade is how Ranger gets turned on for a release
+        // installed without it, and dropping the block meant the policy repository was never
+        // planned, so the chart rendered without ranger.serviceName. Re-running is supported
+        // — the same path backs the Reapply Ranger repository action.
+        ranger: selectedCtxId === 'none' ? null : ((def as any)?.ranger || null),
+        // Same reasoning, and the other half of it: Trino's Ranger plugin reads
+        // /etc/hadoop/conf/*.xml, which only exists if trino-hadoop-conf is materialised. Send
+        // the Ranger block without this and the coordinator crashes on "file does not exist".
+        requiredConfigMaps: selectedCtxId === 'none'
+          ? null : ((def as any)?.requiredConfigMaps || null),
+        dynamicValues: (def as any)?.dynamicValues || null,
+        tls: buildTlsPayload((def as any)?.tls, installValues),
+        kerberos: (installValues as any)?.kerberos || undefined,
+        // The ingress certificate (see buildIngressTlsPayload): nothing for "Keep current certificate",
+        // so the deployed ingress.tls stays as it is.
+        ...buildIngressTlsPayload(installValues),
+        ...(replaceExistingTls ? { replaceExistingTls: true } : {}),
+        // Only send securityProfile if user explicitly picked one.
+        securityProfile: (installValues as any)?.securityProfile || undefined,
+        // Managed truststores selected to trust in this release (defaults are always merged
+        // server-side), as <namespace>/<name> of the Truststores tab listing, so the server reads
+        // the one picked. Always sent, empty included: the backend records the choice and reuses it
+        // when the release is redeployed without one. A deploy stops when one cannot be read.
+        truststoreRefs: Array.isArray((installValues as any)?.truststoreRefs)
+          ? normalizeTruststoreRefs((installValues as any).truststoreRefs, managedTruststores) : [],
+        deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
+        // A working branch left in the form names nothing for a direct commit, which the server refuses.
+        git: gitOptionsToSubmit((installValues as any)?.git) || undefined,
+        // Snapshot of raw form state (envelope keys stripped) so backend can read
+        // excludeFromValues form fields when rendering OIDC redirectUriTemplate etc.
+        // Without this, JupyterHub's "{{jupyterHost}}" renders empty server-side and
+        // Keycloak rejects the client registration with HTTP 400 invalid_input.
+        formValues: deployFormValues(installValues, atlasRestartAuthorized),
+      };
+  };
+
+  // A GitOps deploy with a file profile: the repository can be previewed, and the files the profile creates once
+  // edited before they are committed (git.fileEdits).
+  const gitProfile: string | undefined = (installValues as any)?.git?.profile || undefined;
+  const previewsGit = (installValues as any)?.deploymentMode === 'FLUX_GITOPS' && !!gitProfile && gitProfile !== 'flux';
+  const fileEdits: Record<string, string> = (installValues as any)?.git?.fileEdits || {};
+  const setFileEdit = (path: string, content: string | null) => setInstallValues((prev: any) => {
+    const edits = { ...(prev?.git?.fileEdits || {}) };
+    if (content === null) delete edits[path]; else edits[path] = content;
+    return { ...prev, git: { ...(prev?.git || {}), fileEdits: Object.keys(edits).length ? edits : undefined } };
+  });
+  const runGitPreview = async () => {
+    setGitPreviewLoading(true);
+    try {
+      setGitPreview(await previewGitOpsProfile(deployRequestBody(buildFinalValues(), true, false)));
+      setGitPreviewOpen(true);
+    } catch (e: any) {
+      message.error(serverMessage(e, 'The Git repository preview failed.'), 10);
+    } finally {
+      setGitPreviewLoading(false);
+    }
+  };
+
   const doDeploy = async (atlasRestartAuthorized: boolean = true, replaceExistingTls: boolean = false) => {
       if (!formRulesPass()) return;
       const validationError = validateTlsPayload();
@@ -846,76 +944,12 @@ const ServiceWizardPage: React.FC = () => {
             resourceErrors.forEach(error => message.error(error, 10));
             return;
           }
-          const chartRef = (installValues.chartOverride && String(installValues.chartOverride).trim()) || def.chart;
           const params = new URLSearchParams();
           if (installValues.repoId) params.set('repoId', installValues.repoId as string);
           const versionOverride = targetChartVersion();
           if (versionOverride) params.set('version', versionOverride);
 
-          const accepted = await submitHelmDeploy({
-              chart: chartRef,
-              releaseName: installValues.releaseName,
-              namespace: installValues.namespace,
-              // In the body as well as the query: the GitOps backend writes them into the HelmRelease.
-              repoId: (installValues.repoId as string) || undefined,
-              version: versionOverride || undefined,
-              values: finalValues, 
-              // Send Step 3 data to backend
-              stackConfigOverrides: configOverrides,
-              // Required to trigger the Config Materialize step
-              serviceKey: serviceName,
-              // Pass image pull secret if defined by the service definition or form
-              secretName: (def as any)?.secretName || (installValues as any)?.secretName || undefined,
-              endpoints: (def as any)?.endpoints || undefined,
-              // An upgrade is the install path with different inputs: every def-seeded block is sent
-              // every time and the backend steps converge (PVCs, dependencies, Ranger, ConfigMaps are
-              // all ensure-or-skip). Stripping them on upgrade meant a feature turned on in
-              // Upgrade/Config never got the mounts, dependencies or values it needed.
-              mounts: (installValues as any)?.mounts || (def as any)?.mounts || null,
-              dependencies: (def as any)?.dependencies || null,
-              // Context-dependent blocks are omitted only when the deploy is wired to NO platform
-              // context (standalone service, 'none'): there is no backend to source Ranger or the
-              // hadoop-conf site XML from. For a MANAGED context the backend materializes
-              // requiredConfigMaps from the LOCAL cluster; for an EXTERNAL/CDP/REMOTE context it
-              // sources them FROM the context (CDP → Cloudera Manager clientConfig, REMOTE → remote
-              // Ambari, manual → pasted XML) per AMBARI-558 — so requiredConfigMaps MUST be sent for
-              // every real context, not just MANAGED. Gating it to MANAGED-only left external deploys
-              // with no trino-hadoop-conf ConfigMap while Trino still referenced /etc/hadoop/conf/*.xml,
-              // failing with "file does not exist". Mirror the Ranger gate (context-agnostic).
-              // Not gated on isUpgrade: an upgrade is how Ranger gets turned on for a release
-              // installed without it, and dropping the block meant the policy repository was never
-              // planned, so the chart rendered without ranger.serviceName. Re-running is supported
-              // — the same path backs the Reapply Ranger repository action.
-              ranger: selectedCtxId === 'none' ? null : ((def as any)?.ranger || null),
-              // Same reasoning, and the other half of it: Trino's Ranger plugin reads
-              // /etc/hadoop/conf/*.xml, which only exists if trino-hadoop-conf is materialised. Send
-              // the Ranger block without this and the coordinator crashes on "file does not exist".
-              requiredConfigMaps: selectedCtxId === 'none'
-                ? null : ((def as any)?.requiredConfigMaps || null),
-              dynamicValues: (def as any)?.dynamicValues || null,
-              tls: buildTlsPayload((def as any)?.tls, installValues),
-              kerberos: (installValues as any)?.kerberos || undefined,
-              // The ingress certificate (see buildIngressTlsPayload): nothing for "Keep current certificate",
-              // so the deployed ingress.tls stays as it is.
-              ...buildIngressTlsPayload(installValues),
-              ...(replaceExistingTls ? { replaceExistingTls: true } : {}),
-              // Only send securityProfile if user explicitly picked one.
-              securityProfile: (installValues as any)?.securityProfile || undefined,
-              // Managed truststores selected to trust in this release (defaults are always merged
-              // server-side), as <namespace>/<name> of the Truststores tab listing, so the server reads
-              // the one picked. Always sent, empty included: the backend records the choice and reuses it
-              // when the release is redeployed without one. A deploy stops when one cannot be read.
-              truststoreRefs: Array.isArray((installValues as any)?.truststoreRefs)
-                ? normalizeTruststoreRefs((installValues as any).truststoreRefs, managedTruststores) : [],
-              deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
-              // A working branch left in the form names nothing for a direct commit, which the server refuses.
-              git: gitOptionsToSubmit((installValues as any)?.git) || undefined,
-              // Snapshot of raw form state (envelope keys stripped) so backend can read
-              // excludeFromValues form fields when rendering OIDC redirectUriTemplate etc.
-              // Without this, JupyterHub's "{{jupyterHost}}" renders empty server-side and
-              // Keycloak rejects the client registration with HTTP 400 invalid_input.
-              formValues: deployFormValues(installValues, atlasRestartAuthorized),
-          }, params);
+          const accepted = await submitHelmDeploy(deployRequestBody(finalValues, atlasRestartAuthorized, replaceExistingTls), params);
       // A GitOps deploy says where its change goes in Git; the operations window then shows the commit and pull request.
       message.success(deploySubmittedMessage('Deployment', accepted), accepted?.mode === 'FLUX_GITOPS' ? 8 : undefined);
       setLastCommandId(accepted.id);
@@ -1375,6 +1409,10 @@ const ServiceWizardPage: React.FC = () => {
       {current > 0 && <Button onClick={() => setCurrent(current - 1)} disabled={submitting}>Previous</Button>}
       {current < steps.length - 1 &&
        <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={(current === 3 && hasInvalidPasswords) || (current === 0 && !contextChosen)}>Next</Button>}
+      {current === steps.length - 1 && previewsGit &&
+       <Button onClick={runGitPreview} loading={gitPreviewLoading} disabled={submitting}>
+         Preview Git repository{Object.keys(fileEdits).length ? ` (${Object.keys(fileEdits).length} edited)` : ''}
+       </Button>}
       {current === steps.length - 1 &&
        <Button
          type="primary"
@@ -1385,6 +1423,22 @@ const ServiceWizardPage: React.FC = () => {
          Deploy
        </Button>}
     </div>
+    <Modal
+      open={gitPreviewOpen}
+      onCancel={() => setGitPreviewOpen(false)}
+      width="90%"
+      title={`Git repository after the deploy (profile ${gitProfile || ''})`}
+      footer={[
+        <Button key="refresh" onClick={runGitPreview} loading={gitPreviewLoading}>Refresh</Button>,
+        <Button key="close" type="primary" onClick={() => setGitPreviewOpen(false)}>Close</Button>,
+      ]}
+    >
+      <Typography.Paragraph type="secondary">
+        Nothing has been written yet. Edits to files the profile creates once are committed with the deploy, and KDPS
+        never rewrites those files afterwards.
+      </Typography.Paragraph>
+      {gitPreview && <RepositoryPreview preview={gitPreview} edits={fileEdits} onEdit={setFileEdit} />}
+    </Modal>
     <Modal
       open={previewModalOpen}
       onCancel={() => setPreviewModalOpen(false)}

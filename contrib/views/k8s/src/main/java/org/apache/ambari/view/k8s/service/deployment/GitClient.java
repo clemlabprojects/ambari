@@ -244,7 +244,7 @@ public class GitClient {
     private boolean plaintextWarningLogged;
 
     /** The URL without any user information, for logs. */
-    private static String redact(String url) {
+    static String redact(String url) {
         return url == null ? null : url.replaceFirst("://[^@/]+@", "://");
     }
 

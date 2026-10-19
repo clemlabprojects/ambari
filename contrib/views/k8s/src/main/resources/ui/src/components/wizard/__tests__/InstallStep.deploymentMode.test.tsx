@@ -16,11 +16,16 @@
  * limitations under the License.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import InstallStep from '../InstallStep';
 
 jest.mock('../../../api/client', () => ({
   getClusterCapabilities: jest.fn(() => Promise.resolve({ platform: 'kubernetes' })),
+  listGitOpsProfiles: jest.fn(() => Promise.resolve({ canConfigure: false, items: [
+    { name: 'flux', kind: 'flux', builtIn: true, variables: {}, delivery: { mode: 'commit' }, files: [], protect: [] },
+    { name: 'environments', kind: 'files', chartPath: 'chart', variables: {},
+      delivery: { mode: 'pullRequest', branchPrefix: 'kdps/' }, files: [], protect: [] },
+  ] })),
 }));
 // The installation modal pulls in the service icons, which jest does not load; the general step does not use it.
 jest.mock('../../ServiceInstallationModal', () => ({
@@ -28,12 +33,12 @@ jest.mock('../../ServiceInstallationModal', () => ({
   applyAuthCascadeToFields: jest.fn(),
 }));
 
-const renderGeneral = (props: { upgrade?: boolean; deployedMode?: string; deploymentMode: string }) =>
+const renderGeneral = (props: { upgrade?: boolean; deployedMode?: string; deploymentMode: string; profile?: string }) =>
   render(
     <InstallStep
       definition={{}}
       data={{ releaseName: 'trino', namespace: 'trino', deploymentMode: props.deploymentMode,
-        git: { repoUrl: 'https://git.example.org/platform/gitops.git' } }}
+        git: { repoUrl: 'https://git.example.org/platform/gitops.git', profile: props.profile } }}
       onChange={() => undefined}
       mode="general"
       upgrade={props.upgrade}
@@ -58,5 +63,19 @@ describe('InstallStep deployment mode', () => {
   it('Upgrade/Config of a release deployed with Helm offers both modes', () => {
     renderGeneral({ upgrade: true, deployedMode: 'DIRECT_HELM', deploymentMode: 'DIRECT_HELM' });
     expect(screen.getByRole('radio', { name: 'Flux GitOps' })).toBeEnabled();
+  });
+
+  it('a file profile replaces the Flux path and commit settings with what the profile says', async () => {
+    renderGeneral({ deploymentMode: 'FLUX_GITOPS', profile: 'environments' });
+    expect(await screen.findByText('Written as the profile environments says')).toBeInTheDocument();
+    expect(screen.queryByText('Path prefix')).not.toBeInTheDocument();
+    expect(screen.queryByText('Commit mode')).not.toBeInTheDocument();
+  });
+
+  it('the Flux profile keeps the Flux settings', async () => {
+    renderGeneral({ deploymentMode: 'FLUX_GITOPS', profile: 'flux' });
+    await waitFor(() => expect(screen.getByText('Path prefix')).toBeInTheDocument());
+    expect(screen.getByText('Commit mode')).toBeInTheDocument();
+    expect(screen.queryByText(/Written as the profile/)).not.toBeInTheDocument();
   });
 });

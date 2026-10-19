@@ -27,6 +27,7 @@ import { BASE_BRANCH_TOOLTIP, COMMIT_MODE_LABELS, DEFAULT_BASE_BRANCH, WORKING_B
 import { namespaceRules, releaseNameRules } from '../../utils/nameRules';
 import GitSshFields from '../common/GitSshFields';
 import { savedRepoGitFields } from '../../utils/gitSsh';
+import { listGitOpsProfiles, type GitOpsProfile } from '../../api/client';
 
 interface InstallStepProps {
   definition: any;
@@ -115,6 +116,16 @@ const InstallStep: React.FC<InstallStepProps> = ({
   };
 
   const heldInGit = upgrade && deployedMode === 'FLUX_GITOPS';
+
+  // The GitOps profiles a deploy can write the release with (see the GitOps Profiles page).
+  const [gitOpsProfiles, setGitOpsProfiles] = React.useState<GitOpsProfile[]>([]);
+  React.useEffect(() => {
+    if (mode !== 'general') return;
+    listGitOpsProfiles().then(r => setGitOpsProfiles(r.items || [])).catch(() => setGitOpsProfiles([]));
+  }, [mode]);
+  const chosenProfile = gitOpsProfiles.find(p => p.name === form.getFieldValue(['git', 'profile']));
+  // A file profile decides how its deploys are delivered and where they are written.
+  const filesProfile = chosenProfile?.kind === 'files' ? chosenProfile : undefined;
 
   if (mode === 'general') {
       return (
@@ -214,6 +225,23 @@ const InstallStep: React.FC<InstallStepProps> = ({
                 <Form.Item name={['git','baseBranch']} label="Base branch" tooltip={BASE_BRANCH_TOOLTIP}>
                   <Input placeholder={DEFAULT_BASE_BRANCH} />
                 </Form.Item>
+                <Form.Item name={['git','profile']} label="GitOps profile"
+                  tooltip="How the release is written into Git: the Flux layout, or the files of a profile made on the GitOps Profiles page for Argo CD or a CI pipeline.">
+                  <Select allowClear
+                    placeholder={upgrade ? 'The profile the release was deployed with' : 'flux (HelmRelease applied by Flux)'}
+                    options={gitOpsProfiles.map(p => ({ value: p.name, label: p.description ? `${p.name} — ${p.description}` : p.name }))} />
+                </Form.Item>
+                {filesProfile ? (
+                  <Alert type="info" showIcon style={{ marginBottom: 16 }}
+                    message={`Written as the profile ${filesProfile.name} says`}
+                    description={<>
+                      {filesProfile.chartPath ? <>The chart is copied to <code>{filesProfile.chartPath}</code>, with the profile's files around it. </> : 'The profile\'s files are written. '}
+                      {filesProfile.delivery?.mode === 'pullRequest'
+                        ? `The change is proposed in a pull request from a branch starting with ${filesProfile.delivery.branchPrefix || 'kdps/'}.`
+                        : 'The change is committed to the base branch.'}
+                      {' '}Your Argo CD or pipeline then deploys it. Check the files with Preview Git repository before deploying.
+                    </>} />
+                ) : (<>
                 <Form.Item name={['git','pathPrefix']} label="Path prefix">
                   <Input placeholder="clusters/default" />
                 </Form.Item>
@@ -223,8 +251,9 @@ const InstallStep: React.FC<InstallStepProps> = ({
                     <Select.Option value="PR_MODE">{COMMIT_MODE_LABELS.PR_MODE}</Select.Option>
                   </Select>
                 </Form.Item>
+                </>)}
                 {/* Only a pull request has a working branch: a direct commit goes to the base branch. */}
-                {opensPullRequest(form.getFieldValue('git')) && (
+                {!filesProfile && opensPullRequest(form.getFieldValue('git')) && (
                   <Form.Item
                     name={['git','branch']}
                     label="Working branch"

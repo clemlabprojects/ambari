@@ -413,6 +413,7 @@ public class HelmResource {
             dto.gitBaseBranchAssumed = FluxGitOpsBackend.knownBaseBranch(metadata) == null;
             dto.gitCommitMode = metadata.getGitCommitMode() == null || metadata.getGitCommitMode().isBlank()
                     ? "DIRECT_COMMIT" : metadata.getGitCommitMode();
+            dto.gitProfile = metadata.getGitProfile();
             dto.gitPendingDelete = metadata.isGitPendingDelete();
         }
     }

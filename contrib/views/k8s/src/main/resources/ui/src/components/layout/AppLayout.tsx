@@ -22,6 +22,7 @@ import { Layout, Menu, Tag, Alert, Button, Breadcrumb, Tooltip, Space, Badge, Sk
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   BellOutlined,
+  BranchesOutlined,
   ContainerOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
@@ -64,6 +65,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/helm': 'Releases',
   '/repositories': 'Helm Repositories',
   '/git-repositories': 'Git Repositories',
+  '/gitops-profiles': 'GitOps Profiles',
   '/nodes': 'Nodes',
   '/contexts': 'Platform Contexts',
   '/trino-catalogs': 'Trino Catalogs',
@@ -84,6 +86,7 @@ const ROUTE_SECTIONS: Record<string, string> = {
   '/helm': 'Releases',
   '/repositories': 'Catalog',
   '/git-repositories': 'Catalog',
+  '/gitops-profiles': 'Catalog',
   '/workloads': 'Workloads',
   '/global-security': 'Security',
   '/certificate-authorities': 'Security',
@@ -182,6 +185,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         { key: '/workloads', icon: <NodeIndexOutlined />, label: <NavLink to="/workloads">Workloads</NavLink> },
         { key: '/repositories', icon: <ContainerOutlined />, label: <NavLink to="/repositories">Helm Repositories</NavLink> },
         { key: '/git-repositories', icon: <ContainerOutlined />, label: <NavLink to="/git-repositories">Git Repositories</NavLink> },
+        { key: '/gitops-profiles', icon: <BranchesOutlined />, label: <NavLink to="/gitops-profiles">GitOps Profiles</NavLink> },
       ],
     },
     {

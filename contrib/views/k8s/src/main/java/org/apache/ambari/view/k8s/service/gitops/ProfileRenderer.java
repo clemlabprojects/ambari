@@ -123,18 +123,7 @@ public final class ProfileRenderer {
         Map<String, Object> context = context(profile, ctx);
         String chartPath = profile.chartPath == null || profile.chartPath.isBlank() ? null
                 : repositoryPath(profile.chartPath, "the chart path");
-        List<PathMatcher> protect = new ArrayList<>();
-        for (String glob : profile.protect == null ? List.<String>of() : profile.protect) {
-            if (glob != null && !glob.isBlank()) {
-                protect.add(FileSystems.getDefault().getPathMatcher("glob:" + glob.trim()));
-            }
-        }
-        Set<String> secrets = new LinkedHashSet<>();
-        for (String s : secretValues == null ? List.<String>of() : secretValues) {
-            if (s != null && s.length() >= MIN_SECRET_LENGTH) {
-                secrets.add(s);
-            }
-        }
+        List<PathMatcher> protect = protectMatchers(profile);
 
         List<RenderedFile> out = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
@@ -155,15 +144,46 @@ public final class ProfileRenderer {
                 throw new IllegalArgumentException("Two file rules write " + path + ".");
             }
             String content = FileTemplate.render(path, rule.content, context);
-            for (String secret : secrets) {
-                if (path.contains(secret) || content.contains(secret)) {
-                    throw new IllegalStateException("File " + path + " would hold a password or secret of this "
-                            + "deploy; nothing was written. Secrets stay in the cluster: refer to the Secret by name.");
-                }
-            }
+            checkNoSecret(path, content, secretValues);
             out.add(new RenderedFile(path, content, rule.mode));
         }
         return out;
+    }
+
+    /**
+     * Refuses a file that holds a secret value of the deploy, in its path or content. Secrets shorter than {@link
+     * #MIN_SECRET_LENGTH} are not searched for.
+     *
+     * @throws IllegalStateException naming the file, never the value
+     */
+    public static void checkNoSecret(String path, String content, Collection<String> secretValues) {
+        for (String secret : secretValues == null ? List.<String>of() : secretValues) {
+            if (secret != null && secret.length() >= MIN_SECRET_LENGTH
+                    && (path.contains(secret) || (content != null && content.contains(secret)))) {
+                throw new IllegalStateException("File " + path + " would hold a password or secret of this "
+                        + "deploy; nothing was written. Secrets stay in the cluster: refer to the Secret by name.");
+            }
+        }
+    }
+
+    /** Whether a repository path matches one of the profile's protected globs: never written nor deleted. */
+    public static boolean isProtected(GitOpsProfile profile, String path) {
+        for (PathMatcher m : protectMatchers(profile)) {
+            if (m.matches(Path.of(path))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<PathMatcher> protectMatchers(GitOpsProfile profile) {
+        List<PathMatcher> protect = new ArrayList<>();
+        for (String glob : profile.protect == null ? List.<String>of() : profile.protect) {
+            if (glob != null && !glob.isBlank()) {
+                protect.add(FileSystems.getDefault().getPathMatcher("glob:" + glob.trim()));
+            }
+        }
+        return protect;
     }
 
     /** A rule's path that names the release's namespace or the release itself: a file of that instance only. */

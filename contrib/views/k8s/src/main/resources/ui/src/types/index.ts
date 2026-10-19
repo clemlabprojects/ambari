@@ -48,6 +48,8 @@ export interface HelmRelease {
   installed?: boolean; // false: a GitOps release Helm does not list (not installed by Flux yet, or removed by it)
   gitPath?: string;
   gitRepoUrl?: string;
+  /** The GitOps profile the release is written with; absent for the Flux layout. */
+  gitProfile?: string;
   gitPrUrl?: string;
   gitPrNumber?: string;
   gitPrState?: string;

@@ -30,6 +30,7 @@ import RequirePermission from './components/common/RequirePermission';
 // fast and each page's code arrives only when navigated to.
 const RepositoriesPage = React.lazy(() => import('./pages/HelmRepositoriesPage'));
 const GitRepositoriesPage = React.lazy(() => import('./pages/GitRepositoriesPage'));
+const GitOpsProfilesPage = React.lazy(() => import('./pages/GitOpsProfilesPage'));
 const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
 const NodesPage = React.lazy(() => import('./pages/NodesPage'));
 const HelmReleasesPage = React.lazy(() => import('./pages/HelmReleasesPage'));
@@ -118,6 +119,7 @@ const AppRouter: React.FC = () => {
           <Route path="/workloads" element={<WorkloadsPage />} />
           <Route path="/repositories" element={<RequirePermission requires="canConfigure"><RepositoriesPage /></RequirePermission>} />
           <Route path="/git-repositories" element={<GitRepositoriesPage />} />
+          <Route path="/gitops-profiles" element={<GitOpsProfilesPage />} />
           <Route path="/contexts" element={<RequirePermission requires="canConfigure"><ContextsPage /></RequirePermission>} />
           <Route path="/trino-catalogs" element={<TrinoCatalogsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
