@@ -24,6 +24,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,6 +60,10 @@ public final class ProfilePreview {
     /** Longest text shown for a file the profile does not manage, and the total shown for all of them. */
     static final int MAX_SHOWN_REPOSITORY_BYTES = 64 * 1024;
     static final int MAX_SHOWN_REPOSITORY_TOTAL = 2 * 1024 * 1024;
+    /** Longest file of the repository compared with what the deploy writes; a longer one is taken as changed. */
+    static final long MAX_COMPARED_BYTES = 8L * 1024 * 1024;
+    /** A file of the repository longer than {@link #MAX_COMPARED_BYTES}: never read. */
+    private static final byte[] TOO_LARGE = new byte[0];
     /** Most text a deploy's edits may hold, all files together. */
     public static final int MAX_EDITS_BYTES = 256 * 1024;
 
@@ -111,7 +116,7 @@ public final class ProfilePreview {
         for (ProfileRenderer.RenderedFile file : files) {
             byte[] current = read(repoDir, file.path());
             if (GitOpsProfile.MODE_CREATE_IF_MISSING.equals(file.mode()) && current != null) {
-                String text = text(current, MAX_SHOWN_BYTES);
+                String text = current == TOO_LARGE ? null : text(current, MAX_SHOWN_BYTES);
                 out.put(file.path(), new PreviewFile(file.path(), ORIGIN_FILE, CHANGE_KEPT, file.mode(), false, false,
                         text == null, text, null));
                 continue;
@@ -126,16 +131,19 @@ public final class ProfilePreview {
                 continue;
             }
             boolean underChart = chartDir != null && path.startsWith(chartDir + "/");
-            byte[] bytes = Files.readAllBytes(repoDir.resolve(path));
-            String text = underChart || shown + bytes.length > MAX_SHOWN_REPOSITORY_TOTAL ? null
-                    : text(bytes, MAX_SHOWN_REPOSITORY_BYTES);
+            long size = Files.size(repoDir.resolve(path));
+            // Only read when shown: a file longer than that is listed without its content.
+            byte[] bytes = underChart || size > MAX_SHOWN_REPOSITORY_BYTES || shown + size > MAX_SHOWN_REPOSITORY_TOTAL
+                    ? null : Files.readAllBytes(repoDir.resolve(path));
+            String text = bytes == null ? null : text(bytes, MAX_SHOWN_REPOSITORY_BYTES);
             if (text != null) {
                 shown += bytes.length;
             }
             out.put(path, new PreviewFile(path, underChart ? ORIGIN_CHART : ORIGIN_REPOSITORY,
                     // The chart is replaced as a whole: a file the new version does not have goes.
                     underChart ? CHANGE_REMOVED : CHANGE_UNCHANGED, null, false,
-                    !underChart && ProfileRenderer.isProtected(profile, path), isBinary(bytes), text, null));
+                    !underChart && ProfileRenderer.isProtected(profile, path), bytes != null && isBinary(bytes), text,
+                    null));
         }
         return new ArrayList<>(out.values());
     }
@@ -143,9 +151,9 @@ public final class ProfilePreview {
     private static PreviewFile written(String path, String origin, String mode, boolean createIfMissing, byte[] after,
                                        byte[] before) {
         String change = before == null ? CHANGE_NEW
-                : Arrays.equals(before, after) ? CHANGE_UNCHANGED : CHANGE_CHANGED;
+                : before != TOO_LARGE && Arrays.equals(before, after) ? CHANGE_UNCHANGED : CHANGE_CHANGED;
         String text = text(after, MAX_SHOWN_BYTES);
-        String previous = CHANGE_CHANGED.equals(change) ? text(before, MAX_SHOWN_BYTES) : null;
+        String previous = CHANGE_CHANGED.equals(change) && before != TOO_LARGE ? text(before, MAX_SHOWN_BYTES) : null;
         return new PreviewFile(path, origin, change, mode, createIfMissing && before == null, false,
                 isBinary(after), text, previous);
     }
@@ -199,13 +207,16 @@ public final class ProfilePreview {
         return new ArrayList<>(byPath.values());
     }
 
-    /** The files of a checkout, as repository paths, Git's own directory left out. */
+    /**
+     * The regular files of a checkout, as repository paths, Git's own directory left out. A symbolic link is neither
+     * listed nor followed: it could lead to a file outside the repository (KDPS checks links out as plain files).
+     */
     private static List<String> repositoryFiles(Path repoDir) throws IOException {
         if (repoDir == null || !Files.isDirectory(repoDir)) {
             return List.of();
         }
         try (Stream<Path> walk = Files.walk(repoDir)) {
-            return walk.filter(Files::isRegularFile)
+            return walk.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
                     .map(p -> repoDir.relativize(p).toString().replace('\\', '/'))
                     .filter(p -> !p.equals(".git") && !p.startsWith(".git/"))
                     .sorted()
@@ -213,12 +224,28 @@ public final class ProfilePreview {
         }
     }
 
+    /**
+     * A file the deploy writes, as the repository holds it: {@code null} when absent, {@link #TOO_LARGE} when longer
+     * than what is compared.
+     *
+     * @throws IllegalArgumentException when the path goes through a symbolic link, which the deploy refuses too
+     */
     private static byte[] read(Path repoDir, String path) throws IOException {
         if (repoDir == null) {
             return null;
         }
-        Path file = repoDir.resolve(path);
-        return Files.isRegularFile(file) ? Files.readAllBytes(file) : null;
+        Path current = repoDir;
+        for (Path part : Path.of(path)) {
+            current = current.resolve(part);
+            if (Files.isSymbolicLink(current)) {
+                throw new IllegalArgumentException(path + " goes through the symbolic link " + repoDir.relativize(current)
+                        + " of the repository, and KDPS never writes through a link.");
+            }
+        }
+        if (!Files.isRegularFile(current, LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        return Files.size(current) > MAX_COMPARED_BYTES ? TOO_LARGE : Files.readAllBytes(current);
     }
 
     private static boolean isBinary(byte[] bytes) {

@@ -591,4 +591,56 @@ public class FluxGitOpsBackendProfileTest {
 
         assertTrue(values, values.contains("workers: 2\n"));
     }
+
+    /** Commits and pushes a change of the main branch, as someone working on the repository would. */
+    private void pushToMain(java.util.function.Consumer<Path> change) throws Exception {
+        Path edit = tmp.newFolder().toPath();
+        try (Git g = org.apache.ambari.view.k8s.utils.TestGitClones.clone(repoUrl, "main", edit)) {
+            change.accept(edit);
+            g.add().addFilepattern(".").call();
+            g.commit().setMessage("change").setAuthor("t", "t@example.com").call();
+            g.push().call();
+        }
+    }
+
+    private static void link(Path link, Path target) {
+        try {
+            Files.createDirectories(link.getParent());
+            Files.createSymbolicLink(link, target);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
+    public void aLinkInTheRepositoryNeverLetsTheDeployWriteOutsideIt() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        Path outside = tmp.newFolder("outside").toPath();
+        // A folder the profile writes into is a link to a directory of the host.
+        pushToMain(repo -> link(repo.resolve("environments"), outside));
+
+        assertThrows(Exception.class, () -> backend().apply(request(), null));
+
+        try (java.util.stream.Stream<Path> written = Files.list(outside)) {
+            assertEquals("nothing written outside the repository", 0, written.count());
+        }
+        assertNull(published("main", "chart/Chart.yaml"));
+    }
+
+    @Test
+    public void thePreviewNeverShowsWhatALinkPointsTo() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        Path secret = tmp.newFile("host-secret.txt").toPath();
+        Files.writeString(secret, "TOP-SECRET-VALUE\n");
+        pushToMain(repo -> link(repo.resolve("docs/secret.txt"), secret));
+
+        ProfilePreview.Preview preview = backend().previewProfile(request(), null, null);
+
+        for (ProfilePreview.PreviewFile f : preview.files()) {
+            assertFalse(f.path(), String.valueOf(f.content()).contains("TOP-SECRET-VALUE"));
+            assertFalse(f.path(), String.valueOf(f.current()).contains("TOP-SECRET-VALUE"));
+        }
+        // Checked out as a plain file holding the link's target, as Git does with links turned off.
+        assertEquals(secret.toString(), file(preview, "docs/secret.txt").content());
+    }
 }
