@@ -47,6 +47,11 @@ JSON_PATH = '/var/lib/ambari-agent/tmp/hdfs_resources_{timestamp}.json'
 JAR_PATH = '/var/lib/ambari-agent/lib/fast-hdfs-resource.jar'
 WEBHDFS_KRB_CACHE_DIR = 'curl_krb_cache'
 WEBHDFS_KRB_CACHE_PREFIX = 'webhdfs'
+LOCAL_FILE_HDFS_CLI_THRESHOLD = 1 * 1024 * 1024 * 1024
+
+
+def _get_hadoop_binary(hadoop_bin_dir):
+  return os.path.join(hadoop_bin_dir, "hadoop") if hadoop_bin_dir else "hadoop"
 
 RESOURCE_TO_JSON_FIELDS = {
   'target': 'target',
@@ -168,9 +173,9 @@ class HdfsResourceJar:
     )
 
     # Execute jar to create/delete resources in hadoop
-    Execute(format("hadoop --config {hadoop_conf_dir} jar {jar_path} {json_path}"),
+    hadoop_bin = _get_hadoop_binary(hadoop_bin_dir)
+    Execute(format("{hadoop_bin} --config {hadoop_conf_dir} jar {jar_path} {json_path}"),
             user=user,
-            path=[hadoop_bin_dir],
             logoutput=logoutput,
     )
 
@@ -288,12 +293,9 @@ class WebHDFSUtil:
         raise Fail(format("File {file_to_put} is not found."))
 
       if file_to_put:
-        if os.path.getsize(file_to_put) > 1 * 1024 * 1024 * 1024:
-          Logger.info(f"File {file_to_put} is larger than 1GB. Using streaming option with curl.")
-          cmd += ["-T", file_to_put, "-H", "Content-Type: application/octet-stream"]
-        else:
-          Logger.info(f"File {file_to_put} is smaller than 1GB. Using normal file upload with curl.")
-          cmd += ["--data-binary", "@"+file_to_put, "-H", "Content-Type: application/octet-stream"]
+        # Large local files use the Hadoop CLI in _create_file. Do not use
+        # curl -T across the authenticated WebHDFS redirect for these tarballs.
+        cmd += ["--data-binary", "@"+file_to_put, "-H", "Content-Type: application/octet-stream"]
       else:
         cmd += ["-d", "", "-H", "Content-Length: 0"]
 
@@ -593,7 +595,27 @@ class HdfsResourceWebHDFS:
     Logger.info(format("Creating new file {target} in DFS"))
     kwargs = {'permission': mode} if mode else {}
 
-    self.util.run_command(target, 'CREATE', method='PUT', overwrite=True, assertable_result=False, file_to_put=source, **kwargs)
+    try:
+      if source and os.path.getsize(source) > LOCAL_FILE_HDFS_CLI_THRESHOLD:
+        Logger.info(f"Uploading large local file {source} to DFS via hadoop fs -copyFromLocal")
+        hadoop_bin = _get_hadoop_binary(self.main_resource.resource.hadoop_bin_dir)
+        shell.checked_call(
+          [hadoop_bin, "--config", self.main_resource.resource.hadoop_conf_dir, "fs", "-copyFromLocal", "-f", source, target],
+          user=self.main_resource.resource.user,
+          env=self.kerberos_env,
+        )
+      else:
+        self.util.run_command(target, 'CREATE', method='PUT', overwrite=True, assertable_result=False, file_to_put=source, **kwargs)
+    except Exception:
+      if source and not file_status:
+        try:
+          partial_status = self._get_file_status(target)
+          if partial_status:
+            Logger.warning(f"Deleting partially created DFS file {target} after failed upload")
+            self.util.run_command(target, 'DELETE', method='DELETE', recursive=True, ignore_status_codes=['404'])
+        except Exception:
+          Logger.exception(f"Failed to delete partially created DFS file {target}")
+      raise
 
     if mode and file_status:
       file_status['permission'] = mode
