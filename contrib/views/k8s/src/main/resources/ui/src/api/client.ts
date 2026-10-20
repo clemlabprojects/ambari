@@ -2063,3 +2063,75 @@ export const createReleaseRangerPolicy = (ns: string, rel: string, body: RangerP
 
 export const adoptReleaseCatalog = (ns: string, rel: string, name: string) =>
   fetchJson<{ name: string; properties: string } & CatalogSaved>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, { method: 'POST' });
+
+// ---------------------------------------------------------------------------
+// GitOps output profiles: how a GitOps deploy writes a release into Git (the built-in Flux layout, or file rules
+// around a chart copied as published), and the repository preview of a deploy.
+// ---------------------------------------------------------------------------
+
+export type GitOpsFileMode = 'always' | 'createIfMissing';
+
+export interface GitOpsFileRule {
+  path: string;
+  mode: GitOpsFileMode;
+  content: string;
+}
+
+export interface GitOpsProfile {
+  name: string;
+  description?: string;
+  /** 'flux' (the built-in HelmRelease layout) or 'files' (file rules). */
+  kind: 'flux' | 'files';
+  builtIn?: boolean;
+  version?: number;
+  chartPath?: string;
+  variables: Record<string, string>;
+  delivery: { mode: 'pullRequest' | 'commit'; branchPrefix?: string; tag?: string };
+  files: GitOpsFileRule[];
+  protect: string[];
+}
+
+export interface GitOpsPreviewFile {
+  path: string;
+  /** 'chart' (copied as published), 'file' (a rule of the profile) or 'repository' (not managed by the profile). */
+  origin: 'chart' | 'file' | 'repository';
+  change: 'new' | 'changed' | 'unchanged' | 'removed' | 'kept';
+  mode?: GitOpsFileMode | null;
+  editable: boolean;
+  protectedPath: boolean;
+  binary: boolean;
+  content?: string | null;
+  current?: string | null;
+}
+
+export interface GitOpsPreview {
+  profile: string;
+  repoUrl?: string | null;
+  baseBranch?: string | null;
+  chart: string;
+  version: string;
+  chartPath?: string | null;
+  files: GitOpsPreviewFile[];
+  notes: string[];
+}
+
+const gitOpsProfilePath = (name: string) => `/gitops/profiles/${encodeURIComponent(name)}`;
+
+export const listGitOpsProfiles = () =>
+  fetchJson<{ items: GitOpsProfile[]; canConfigure: boolean }>('/gitops/profiles');
+
+export const saveGitOpsProfile = (profile: GitOpsProfile) =>
+  fetchJson<GitOpsProfile>(gitOpsProfilePath(profile.name), { method: 'PUT', body: JSON.stringify(profile) });
+
+export const deleteGitOpsProfile = (name: string) =>
+  fetchJson<void>(gitOpsProfilePath(name), { method: 'DELETE' });
+
+/**
+ * The repository as a deploy would leave it, with nothing written. `request` is the deploy request as the wizard
+ * submits it; `profile`, a profile not saved yet, is previewed in place of the one the request names.
+ */
+export const previewGitOpsProfile = (request: Record<string, any>, profile?: GitOpsProfile) =>
+  fetchJson<GitOpsPreview>('/gitops/profiles/preview', {
+    method: 'POST',
+    body: JSON.stringify({ request, profile: profile || null }),
+  });

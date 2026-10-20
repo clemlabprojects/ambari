@@ -11737,13 +11737,25 @@ public class CommandService {
                     childSt.setResultJson(gson.toJson(gitOpsCommitResult(commit)));
                     // The operation says what the deploy did in Git at once, while the wait for Flux still runs.
                     recordGitOpsResult(root.getCommandStatusId(), rootSt, gitOpsDeployResult(commit));
-                    if (!commit.appliedOnCommit()) {
+                    String profileName = gitOpsProfileOf(namespace, releaseName);
+                    if (profileName != null) {
+                        operationEndMessage = gitOpsProfileDelivered(commit, profileName);
+                    } else if (!commit.appliedOnCommit()) {
                         operationEndMessage = gitOpsMergeWait(commit);
                     }
                 }
                 case FLUX_WAIT_READY -> {
                     String namespace = (String) childParams.get("namespace");
                     String releaseName = (String) childParams.get("releaseName");
+                    String profileName = gitOpsProfileOf(namespace, releaseName);
+                    if (profileName != null) {
+                        // Flux does not deploy it: there is no HelmRelease to wait for.
+                        stepDoneMessage = "Not waiting for Flux: " + namespace + "/" + releaseName + " is written with"
+                                + " GitOps profile " + profileName + ", and what reads the repository (a pipeline,"
+                                + " Argo CD) deploys it.";
+                        appendCommandLog(id, stepDoneMessage);
+                        break;
+                    }
                     Map<String, Object> commitResult = gitOpsCommitResultOf(root);
                     String expectedDigest = commitResult.get("specDigest") instanceof String s && !s.isBlank() ? s : null;
                     // Flux tries a release it gave up on again only once its spec or values change. A deploy that
@@ -13213,9 +13225,10 @@ public class CommandService {
 
     /**
      * The values with their whole numbers as integers. A step reads its values file back with Gson, which makes every
-     * number a double: Helm takes 2.0 as it takes 2, but a HelmRelease reviewed in Git would show 2.0.
+     * number a double: Helm takes 2.0 as it takes 2, but a HelmRelease reviewed in Git would show 2.0. Also used by the
+     * Git repository preview, which shows what the commit step writes.
      */
-    static Object wholeNumbersAsIntegers(Object node) {
+    public static Object wholeNumbersAsIntegers(Object node) {
         if (node instanceof Map<?, ?> map) {
             Map<String, Object> out = new LinkedHashMap<>();
             map.forEach((key, value) -> out.put(String.valueOf(key), wholeNumbersAsIntegers(value)));
@@ -13514,6 +13527,34 @@ public class CommandService {
         result.put("appliedOnCommit", commit.appliedOnCommit());
         result.put("specDigest", commit.specDigest());
         return result;
+    }
+
+    /** The GitOps output profile a release is written with; {@code null} for the Flux layout. */
+    private String gitOpsProfileOf(String namespace, String releaseName) {
+        try {
+            K8sReleaseEntity release = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+            String profile = release == null ? null : release.getGitProfile();
+            return profile == null || profile.isBlank() || "flux".equals(profile) ? null : profile;
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the GitOps profile of {}/{}: {}", namespace, releaseName, e.toString());
+            return null;
+        }
+    }
+
+    /** Where the change of a deploy written with a GitOps profile went, and what deploys it from there. */
+    static String gitOpsProfileDelivered(FluxGitOpsBackend.CommitResult commit, String profile) {
+        if (commit.commitSha() != null && commit.commitSha().startsWith("PR-STUB:")) {
+            return gitOpsMergeWait(commit);
+        }
+        String base = commit.baseBranch() == null || commit.baseBranch().isBlank()
+                ? "the base branch" : "branch " + commit.baseBranch();
+        String deploys = "what reads the repository (a pipeline, Argo CD) deploys it";
+        if (commit.pullRequestUrl() != null && !commit.pullRequestUrl().isBlank()) {
+            return "Written with GitOps profile " + profile + " in pull request " + commit.pullRequestUrl() + " into "
+                    + base + ": once it is merged, " + deploys + ".";
+        }
+        return "Written with GitOps profile " + profile + " to " + base + " of " + commit.repoUrl() + ": " + deploys
+                + ".";
     }
 
     /** Why the change of a GitOps deploy is not applied yet, and what applies it. */

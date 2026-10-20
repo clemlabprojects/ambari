@@ -105,6 +105,8 @@ class ResourceRoleGuardTest {
       "ContextResource.probeCdp",
       "ContextResource.probeRemote",
       "ContextResource.save",
+      "GitOpsProfileResource.delete",
+      "GitOpsProfileResource.save",
       "HelmRepoResource.delete",
       "HelmRepoResource.save",
       "KubeService.createTruststore",

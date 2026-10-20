@@ -951,6 +951,15 @@ public class KubeService {
     }
 
     /**
+     * GitOps output profiles: how a GitOps deploy writes a release into Git, and the repository preview.
+     * URL: /api/v1/.../resources/api/gitops/profiles
+     */
+    @Path("/gitops/profiles")
+    public GitOpsProfileResource gitOpsProfiles(@Context HttpHeaders headers) {
+        return new GitOpsProfileResource(viewContext, getKubernetesService(), headers);
+    }
+
+    /**
      * Sub-resource for Cluster Capabilities (cert-manager / external-secrets / OpenShift detection).
      * URL: /api/v1/.../resources/api/cluster/capabilities
      */

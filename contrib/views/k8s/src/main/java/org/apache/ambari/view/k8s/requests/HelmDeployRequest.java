@@ -137,6 +137,11 @@ public class HelmDeployRequest {
         private String authToken;
         private String sshKey;
         private String commitMode; // DIRECT_COMMIT or PR_MODE
+        // The GitOps output profile writing the deploy into Git (see GitOpsProfileStore); blank for the Flux layout.
+        private String profile;
+        // Files of a file profile written once (createIfMissing) and not in the repository yet, as the operator edited
+        // them in the repository preview: path -> content committed instead of the rendered one.
+        private Map<String, String> fileEdits;
         private String branch;
         private String credentialAlias;
         // Credential store alias of the access token when the SSH key holds credentialAlias: a deploy given both
@@ -164,6 +169,10 @@ public class HelmDeployRequest {
         public void setCommitMode(String commitMode) { this.commitMode = commitMode; }
         public String getBranch() { return branch; }
         public void setBranch(String branch) { this.branch = branch; }
+        public String getProfile() { return profile; }
+        public void setProfile(String profile) { this.profile = profile; }
+        public Map<String, String> getFileEdits() { return fileEdits; }
+        public void setFileEdits(Map<String, String> fileEdits) { this.fileEdits = fileEdits; }
         public String getCredentialAlias() { return credentialAlias; }
         public void setCredentialAlias(String credentialAlias) { this.credentialAlias = credentialAlias; }
         public String getAuthTokenAlias() { return authTokenAlias; }

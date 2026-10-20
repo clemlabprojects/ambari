@@ -290,4 +290,29 @@ class InstanceSettingsTest {
 
         assertNull(settings.get("helm.repo.secret.harbor"));
     }
+
+    @Test
+    void aLongTextIsKeptInPartsAndAShorterOneDropsTheLeftovers() {
+        InstanceSettings settings = new InstanceSettings(new InMemoryDataStore(), TestMasterKeys.encryptionWithoutKey());
+        String longText = "{\"files\":\"" + "x".repeat(10_000) + "\"}";
+
+        settings.putText("gitops.profile.p", longText);
+        assertEquals(longText, settings.getText("gitops.profile.p"));
+        assertTrue(settings.get("gitops.profile.p").startsWith("@parts:"), "kept in parts");
+
+        settings.putText("gitops.profile.p", "{}");
+        assertEquals("{}", settings.getText("gitops.profile.p"));
+        assertNull(settings.get("gitops.profile.p" + InstanceSettings.SECRET_PART_SUFFIX + "1"), "the parts of the longer text are gone");
+
+        settings.putText("gitops.profile.p", null);
+        assertNull(settings.getText("gitops.profile.p"));
+    }
+
+    @Test
+    void aTextThatWouldReadAsPartsOrIsTooLongIsRefused() {
+        InstanceSettings settings = new InstanceSettings(new InMemoryDataStore(), TestMasterKeys.encryptionWithoutKey());
+        assertThrows(IllegalArgumentException.class, () -> settings.putText("k", "@parts:3"));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.putText("k", "x".repeat(InstanceSettings.MAX_TEXT_LENGTH + 1)));
+    }
 }

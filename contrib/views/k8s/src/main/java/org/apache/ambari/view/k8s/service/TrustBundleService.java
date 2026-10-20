@@ -341,13 +341,31 @@ public class TrustBundleService {
         kubernetesService.createOrUpdateOpaqueSecret(namespace, secretName, data,
                 KdpsReleaseObjects.labels(releaseName), KdpsReleaseObjects.annotations(namespace));
 
+        return new ProvisionResult(true, secretName, releaseTruststoreOverrides(secretName), material.certs().size(),
+                material.warnings());
+    }
+
+    /** The Helm overrides that wire a release to its truststore Secret. */
+    private static Map<String, String> releaseTruststoreOverrides(String secretName) {
         Map<String, String> overrides = new LinkedHashMap<>();
         overrides.put("global.security.tls.enabled", "true");
         overrides.put("global.security.tls.truststore.enabled", "true");
         overrides.put("global.security.tls.truststoreSecret", secretName);
         overrides.put("global.security.tls.truststoreKey", "truststore.jks");
         overrides.put("global.security.tls.truststorePasswordKey", "truststore.password");
-        return new ProvisionResult(true, secretName, overrides, material.certs().size(), material.warnings());
+        return overrides;
+    }
+
+    /**
+     * The Helm overrides {@link #provisionForDeploy} would give a deploy, with nothing written: for a preview of what
+     * the deploy commits. Empty when no CA could be assembled.
+     *
+     * @throws IllegalStateException when a selected truststore cannot be read
+     */
+    public Map<String, String> plannedOverrides(String namespace, String releaseName, List<String> truststoreRefs) {
+        TrustMaterial material = assemble(truststoreRefs, namespace, null);
+        return material.certs().isEmpty() ? Map.of()
+                : releaseTruststoreOverrides(releaseName + TruststoreRegistryService.SUFFIX);
     }
 
     /**

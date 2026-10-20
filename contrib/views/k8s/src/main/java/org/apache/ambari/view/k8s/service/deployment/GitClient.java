@@ -244,7 +244,7 @@ public class GitClient {
     private boolean plaintextWarningLogged;
 
     /** The URL without any user information, for logs. */
-    private static String redact(String url) {
+    static String redact(String url) {
         return url == null ? null : url.replaceFirst("://[^@/]+@", "://");
     }
 
@@ -392,6 +392,7 @@ public class GitClient {
                     StoredConfig cfg = git.getRepository().getConfig();
                     cfg.setString("remote", "origin", "url", repoUrl);
                     noAutoGc(cfg);
+                    noSymbolicLinks(cfg);
                     cfg.save();
                 }
                 fetch();
@@ -413,8 +414,10 @@ public class GitClient {
             try (Git git = Git.open(workspace.toFile())) {
                 StoredConfig cfg = git.getRepository().getConfig();
                 noAutoGc(cfg);
+                noSymbolicLinks(cfg);
                 cfg.save();
                 switchTo(git, baseBranch);
+                replaceSymbolicLinks(git);
             }
         } catch (GitAPIException e) {
             throw new IOException("git sync failed for " + redact(repoUrl) + ": " + e.getMessage(), e);
@@ -429,6 +432,38 @@ public class GitClient {
     private static void noAutoGc(StoredConfig cfg) {
         cfg.setInt("gc", null, "auto", 0);
         cfg.setInt("gc", null, "autoPackLimit", 0);
+    }
+
+    /**
+     * Symbolic links of the repository are checked out as plain files holding their target: a link in the working tree
+     * would let a write, a delete or a read of the deploy reach a file outside the repository, on the Ambari host.
+     */
+    private static void noSymbolicLinks(StoredConfig cfg) {
+        cfg.setBoolean("core", null, "symlinks", false);
+    }
+
+    /**
+     * Replaces the symbolic links left in the working tree, by a clone made before links were turned off or by the
+     * clone itself, with the plain files Git checks out for them now.
+     */
+    private void replaceSymbolicLinks(Git git) throws IOException, GitAPIException {
+        List<String> links;
+        try (var walk = Files.walk(workspace)) {
+            links = walk.filter(Files::isSymbolicLink)
+                    .map(p -> workspace.relativize(p).toString().replace('\\', '/'))
+                    .filter(p -> !p.equals(".git") && !p.startsWith(".git/"))
+                    .toList();
+        }
+        if (links.isEmpty()) {
+            return;
+        }
+        for (String link : links) {
+            Files.delete(workspace.resolve(link));
+        }
+        CheckoutCommand checkout = git.checkout();
+        links.forEach(checkout::addPath);
+        checkout.call();
+        LOG.info("Checked out {} symbolic link(s) of {} as plain files", links.size(), redact(repoUrl));
     }
 
     /** Fetches every branch of the server, forgetting those it no longer has. */
@@ -988,8 +1023,8 @@ public class GitClient {
     }
 
     /**
-     * Ensure callers cannot escape the repository root via ".." or absolute paths, nor write to or delete Git's own
-     * data in its {@code .git} directory.
+     * Ensure callers cannot escape the repository root via ".." or absolute paths or through a symbolic link, nor write
+     * to or delete Git's own data in its {@code .git} directory.
      */
     private Path resolveSafe(Path relative) throws IOException {
         if (relative == null) {
@@ -1001,6 +1036,15 @@ public class GitClient {
         }
         if (normalized.startsWith(workspace.resolve(".git"))) {
             throw new IOException("Refusing to operate on the repository's .git directory: " + relative);
+        }
+        // Checked down from the root: a link anywhere on the way could lead outside the repository.
+        Path current = workspace;
+        for (Path part : workspace.relativize(normalized)) {
+            current = current.resolve(part);
+            if (Files.isSymbolicLink(current)) {
+                throw new IOException("Refusing to operate through the symbolic link " + workspace.relativize(current)
+                        + " of the repository: " + relative);
+            }
         }
         return normalized;
     }

@@ -1020,8 +1020,8 @@ public class HelmService {
      * "prometheus.ingress.enabled" while still shipping the structured YAML the Helm chart expects.
      */
     @SuppressWarnings("unchecked")
-    // package-private for unit testing, and for the GitOps commit, which writes the values Helm would get
-    static Map<String, Object> expandDotPaths(Map<String, Object> source) {
+    // For unit testing, the GitOps commit, which writes the values Helm would get, and its Git repository preview
+    public static Map<String, Object> expandDotPaths(Map<String, Object> source) {
         if (source == null || source.isEmpty()) {
             return new LinkedHashMap<>();
         }

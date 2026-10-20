@@ -239,6 +239,11 @@ public class HelmClientDefault implements HelmClient {
      * @return Parsed values as a Map<String,Object>. Empty map on error.
      */
     @Override
+    public void dependencyUpdate(Path chartDir) {
+        new Helm(chartDir).dependency().update().skipRefresh().call();
+    }
+
+    @Override
     public String showValues(String chartRef, String versionOpt, Path repoConfigPath) {
         try {
             // With helm-java:
