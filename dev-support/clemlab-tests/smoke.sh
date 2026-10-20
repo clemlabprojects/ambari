@@ -8,7 +8,7 @@ SMOKE_COMPOSE="${COMPOSE_DIR}/docker-compose.smoke.yml"
 MAVEN_SETTINGS_TEMPLATE="${MAVEN_SETTINGS_TEMPLATE:-${COMPOSE_DIR}/maven-settings.xml}"
 PROJECT_NAME="ambari-smoke"
 CLUSTER_NAME="odp"
-ODP_REPO_VERSION="${ODP_REPO_VERSION:-1.3.1.0-242}"
+ODP_REPO_VERSION="${ODP_REPO_VERSION:-1.3.2.0-41}"
 ODP_REPO_ID="${ODP_REPO_ID:-ODP-${ODP_REPO_VERSION}}"
 ODP_REPO_NAME="${ODP_REPO_NAME:-ODP}"
 SKIP_COMPOSE_DOWN="${SKIP_COMPOSE_DOWN:-}"
@@ -190,10 +190,10 @@ default_repo_base_url() {
       echo "https://clemlabs.s3.eu-west-3.amazonaws.com/centos8/odp-release/${ODP_REPO_VERSION}/rpms/"
       ;;
     ubuntu22)
-      echo "https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu22/odp-release/${ODP_REPO_VERSION}/dist/ODP"
+      echo "https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu22/odp-release/${ODP_REPO_VERSION}/ODP"
       ;;
     ubuntu24)
-      echo "https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu24/odp-release/${ODP_REPO_VERSION}/dist/ODP"
+      echo "https://clemlabs.s3.eu-west-3.amazonaws.com/ubuntu24/odp-release/${ODP_REPO_VERSION}/ODP"
       ;;
     *)
       return 1
