@@ -49,7 +49,9 @@ const ThemedRoot: React.FC = () => {
   const dark = mode === 'dark';
   return (
     <ConfigProvider
-      componentSize="small"
+      // Fields and buttons at antd's standard size (32px high), easier to read and to hit; dense tables and toolbars
+      // ask for "small" themselves.
+      componentSize="middle"
       // In reduce-motion mode, disable the click ripple and collapse antd's motion durations to
       // near-zero — the biggest source of continuous repaints (costly over Citrix/VDI). The
       // reduce-motion class on <html> (see index.css) flattens the rest globally.
