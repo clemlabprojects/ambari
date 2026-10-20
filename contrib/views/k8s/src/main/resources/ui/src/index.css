@@ -23,9 +23,11 @@
    Default (no attribute yet) = dark, matching the default preference, so there is
    no light flash before React mounts. ===== */
 :root,
-/* The code face, in both themes: versions, IDs, YAML and logs. */
+/* The code face, in both themes: versions, IDs, YAML and logs. Headers, titles and the menu use Ambari's own face
+ * (Roboto, embedded in fonts.css), so the view reads as part of Ambari; text and fields stay in IBM Plex Sans. */
 :root {
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --heading: Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 :root[data-theme="dark"] {
   --void: #0c111b;
@@ -110,6 +112,22 @@ body {
 .ant-tag {
   font-weight: 500;
 }
+/* Headers, titles and the menu in the heading face. !important: antd injects its component styles (with their own
+ * font family) after this sheet, as for the form labels above. */
+h1, h2, h3, h4, h5, h6,
+.ant-card-head-title,
+.ant-modal-title,
+.ant-drawer-title,
+.ant-menu,
+.ant-menu-item-group-title,
+.ant-tabs-tab,
+.ant-table-thead > tr > th,
+.ant-descriptions-title,
+.app-header,
+.app-breadcrumb {
+  font-family: var(--heading) !important;
+}
+
 /* Figures line up in columns: versions, counts, sizes and times in tables, descriptions and tags. */
 .ant-table,
 .ant-descriptions,

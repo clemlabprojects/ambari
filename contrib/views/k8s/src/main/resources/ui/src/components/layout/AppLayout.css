@@ -180,9 +180,9 @@
 /* Flat section headers (antd Menu type:'group') — uppercase, mono, tracked,
    matching the control-plane mockup's CATALOG / SECURITY / ADMINISTRATION labels. */
 .app-sider-menu-wrap .ant-menu-item-group-title {
-  font-family: var(--mono);
+  font-family: var(--heading);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--ink-faint);
