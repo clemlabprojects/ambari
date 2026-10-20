@@ -23,6 +23,12 @@
    Default (no attribute yet) = dark, matching the default preference, so there is
    no light flash before React mounts. ===== */
 :root,
+/* The code face, in both themes: versions, IDs, YAML and logs. Headers, titles and the menu use Ambari's own face
+ * (Roboto, embedded in fonts.css), so the view reads as part of Ambari; text and fields stay in IBM Plex Sans. */
+:root {
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --heading: Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
 :root[data-theme="dark"] {
   --void: #0c111b;
   --panel: #121a2a;
@@ -43,7 +49,6 @@
   --grad: linear-gradient(135deg, #00ffbc, #00d9a8);
   --brand-ink: #03201a;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --mono: 'Source Code Pro', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --grid-dot: rgba(255, 255, 255, 0.028);
   /* aliases kept for existing rules */
   --surface-muted: var(--void);
@@ -84,16 +89,15 @@ html, body, #root {
 }
 
 body {
-  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui,
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui,
     Roboto, 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--void);
 }
 
-/* --- Readability (AMBARI-524 UX): Outfit is a light variable font and read too thin at small
- * sizes. Firm up field titles and action buttons so they are comfortably legible, incl. the
- * wizard footer controls (bottom-right). Colours use the theme tokens so both light/dark work. */
+/* --- Type weights: field labels, buttons and titles at 600, description labels and tags at 500 (see the theme in
+ * main.tsx), so what names a value stands out from the value. Colours use the theme tokens so both light/dark work. */
 /* !important: antd v5 injects its own `.ant-form-item-label > label {font-weight:400}` at runtime via
  * CSS-in-JS, after this static sheet, so an equal-specificity rule would lose the cascade. Label size
  * is handled reliably by the Form.labelFontSize theme token in main.tsx. */
@@ -104,14 +108,42 @@ body {
 .ant-btn {
   font-weight: 600;
 }
+.ant-descriptions-item-label,
+.ant-tag {
+  font-weight: 500;
+}
+/* Headers, titles and the menu in the heading face. !important: antd injects its component styles (with their own
+ * font family) after this sheet, as for the form labels above. */
+h1, h2, h3, h4, h5, h6,
+.ant-card-head-title,
+.ant-modal-title,
+.ant-drawer-title,
+.ant-menu,
+.ant-menu-item-group-title,
+.ant-tabs-tab,
+.ant-table-thead > tr > th,
+.ant-descriptions-title,
+.app-header,
+.app-breadcrumb {
+  font-family: var(--heading) !important;
+}
+
+/* Figures line up in columns: versions, counts, sizes and times in tables, descriptions and tags. */
+.ant-table,
+.ant-descriptions,
+.ant-statistic,
+.ant-tag,
+.ant-progress-text {
+  font-variant-numeric: tabular-nums;
+}
 .ant-btn-sm {
-  font-size: 13px;
+  font-size: 14px;
 }
 /* Modal / drawer footer = the bottom-right Next / Back / Deploy / Cancel buttons */
 .ant-modal-footer .ant-btn,
 .ant-drawer-footer .ant-btn {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* --- Background Operations step tree: make each node fill the row so the state Tag + progress bar

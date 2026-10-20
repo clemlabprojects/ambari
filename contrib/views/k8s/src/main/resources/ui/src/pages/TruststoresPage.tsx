@@ -361,7 +361,7 @@ const TruststoresPage: React.FC = () => {
               },
             ]}
           >
-            <Input.TextArea rows={8} placeholder={'-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----'} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            <Input.TextArea rows={8} placeholder={'-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----'} style={{ fontFamily: 'var(--mono)', fontSize: 12 }} />
           </Form.Item>
           <Space style={{ marginBottom: 12 }}>
             <Upload accept=".pem,.crt,.cer,.txt" showUploadList={false} beforeUpload={beforeUpload}>

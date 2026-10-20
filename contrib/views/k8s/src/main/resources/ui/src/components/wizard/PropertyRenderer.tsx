@@ -104,7 +104,7 @@ const PropertyRenderer: React.FC<PropertyRendererProps> = ({ configName, propert
           </Tooltip>
         )}
       </Space>
-      <div style={{ fontSize: 12, color: '#888', fontFamily: 'monospace' }}>{property.name}</div>
+      <div style={{ fontSize: 12, color: '#888', fontFamily: 'var(--mono)' }}>{property.name}</div>
     </div>
   );
 

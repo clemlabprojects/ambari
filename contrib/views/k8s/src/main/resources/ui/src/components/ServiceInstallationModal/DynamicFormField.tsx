@@ -330,7 +330,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
             rows={(field as any).rows || 10}
             spellCheck={false}
             placeholder={(field as any).placeholder}
-            style={{ fontFamily: 'monospace' }}
+            style={{ fontFamily: 'var(--mono)' }}
           />
         </Form.Item>
       );
