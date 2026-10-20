@@ -613,14 +613,17 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
                   <Typography.Text strong ellipsis style={{ flex: 1, minWidth: 0 }} title={op.message || op.type || op.id}>
                     {op.message || op.type || op.id}
                   </Typography.Text>
-                  <Tag color={stateColor(op.state)} style={{ margin: 0, flexShrink: 0 }}>{op.state}</Tag>
                   {op.state === 'SUCCEEDED' && waitingForMerge(op) && (
                     <Tag color="gold" style={{ margin: 0, flexShrink: 0 }}>WAITING FOR MERGE</Tag>
                   )}
-                  <Progress percent={displayPercent(op)} size="small" status={progressStatus(op.state) as any} style={{ width: 120, marginBottom: 0, flexShrink: 0 }} />
-                  <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatTimestamp(op.updatedAt)}</Typography.Text>
+                  {/* Fixed columns, so the state, progress, time and action line up from one operation to the next
+                      whether or not it has an action. */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '120px 150px 190px 96px', columnGap: 12, alignItems: 'center', flexShrink: 0 }}>
+                  <Tag color={stateColor(op.state)} style={{ margin: 0, width: '100%', textAlign: 'center' }}>{op.state}</Tag>
+                  <Progress percent={displayPercent(op)} size="small" status={progressStatus(op.state) as any} style={{ width: '100%', marginBottom: 0 }} />
+                  <Typography.Text type="secondary" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{formatTimestamp(op.updatedAt)}</Typography.Text>
                   {(op.state === 'RUNNING' || op.state === 'PENDING') ? (
-                    <Button size="small" danger style={{ flexShrink: 0 }} onClick={async (e) => {
+                    <Button size="small" danger block onClick={async (e) => {
                       e.stopPropagation();
                       Modal.confirm({
                         title: `Abort "${op.message || op.type || op.id}"?`,
@@ -639,12 +642,13 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
                     // Resume from the failed step: re-runs that sub-step and continues, skipping the
                     // succeeded steps — for transient sub-step failures, so the whole KDPS wizard flow
                     // need not be repeated. Blue, in the same slot Abort uses while running.
-                    <Button size="small" type="primary" style={{ flexShrink: 0 }} onClick={async (e) => {
+                    <Button size="small" type="primary" block onClick={async (e) => {
                       e.stopPropagation();
                       try { await resumeCommand(op.id); message.success('Resuming from the failed step'); loadPage(true); }
                       catch (err: any) { message.error(err?.message || 'Resume failed'); }
                     }}>Resume</Button>
-                  ) : null}
+                  ) : <span />}
+                  </div>
                 </div>
               ),
               children: renderOperationBody(op),
