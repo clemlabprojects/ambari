@@ -18,31 +18,20 @@
 
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert, Button, Card, Col, Collapse, Empty, Form, Input, Modal, Popconfirm, Radio, Row, Segmented, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Empty, Form, Input, Modal, Popconfirm, Radio, Row, Segmented, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import { ArrowLeftOutlined, BranchesOutlined, CopyOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, SaveOutlined, WarningOutlined } from '@ant-design/icons';
-import Editor, { DiffEditor } from '@monaco-editor/react';
+import Editor, { DiffEditor, type OnMount } from '@monaco-editor/react';
 import yaml from 'yaml';
 import { deleteGitOpsProfile, getHelmRepos, listGitOpsProfiles, previewGitOpsProfile, saveGitOpsProfile, type GitOpsFileRule, type GitOpsPreview, type GitOpsProfile } from '../api/client';
 import type { HelmRepo } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { serverMessage } from '../utils/serverMessage';
+import FieldsHelp from '../components/gitops/FieldsHelp';
 import FileExplorer, { PathSegment } from '../components/gitops/FileExplorer';
 import { FileView } from '../components/gitops/RepositoryPreview';
 import { changeLabel, editorLanguage } from '../components/gitops/previewTree';
 import { blankProfile, copyOfProfile, forSaving } from '../components/gitops/profileDraft';
 import { examplePath, normalizePath, repositoryEntries, repositoryTree, type RepositoryEntry, type RepositoryNode } from '../components/gitops/virtualRepository';
-
-const TEMPLATE_HELP: Array<[string, string]> = [
-  ['{{ release }}, {{ namespace }}, {{ service }}', 'the release, its namespace and its KDPS service'],
-  ['{{ chart.name }}, {{ chart.version }}, {{ chart.repository }}', 'the chart deployed, as its repository publishes it'],
-  ['{{ chartPath }}', 'the folder the chart is copied to'],
-  ['{{ values | toYaml }}', 'the chart values of the deploy, passwords and secrets left out'],
-  ['{{ secretValues.secretName }}, {{ secretValues.key }}', 'the Kubernetes Secret holding the passwords and secrets, and its key'],
-  ['{{ images | toYaml }}', 'the container images the values name'],
-  ['{{ instances | toYaml }}', 'every namespace the repository holds an instance in, this one included'],
-  ['{{ vars.<name> }}', 'a variable of the profile'],
-  ['{{ deployedBy }}, {{ timestamp }}', 'who deployed, and when'],
-];
 
 const CHANGE_COLORS: Record<string, string> = { new: 'green', changed: 'gold', removed: 'red', kept: 'blue' };
 
@@ -345,6 +334,7 @@ const ProfileEditor: React.FC<EditorProps> = ({ saved, initial, canConfigure, on
           {editable && saved && changed && <Tag color="orange">unsaved changes</Tag>}
         </Space>
         <Space wrap>
+          {files && <FieldsHelp profile={draft} example={example} />}
           {canConfigure && files && <Button icon={<CopyOutlined />} onClick={() => onCopy(draft)}>Copy</Button>}
           {editable && saved && (
             <Popconfirm title={`Delete the profile ${draft.name}?`} description="Refused while a release is deployed with it." onConfirm={remove}>
@@ -516,6 +506,18 @@ const RuleEditor: React.FC<{
   onChange: (patch: Partial<GitOpsFileRule>) => void;
 }> = ({ entry, rule, draft, editable, previewed, example, onChange }) => {
   const result = entry.file;
+  const editorRef = React.useRef<Parameters<OnMount>[0] | null>(null);
+  // A field inserted where the cursor is in the template, or at its end when the template is not on screen.
+  const insertInTemplate = (text: string) => {
+    const ed = editorRef.current;
+    const selection = ed?.getSelection();
+    if (ed && selection) {
+      ed.executeEdits('fields-help', [{ range: selection, text, forceMoveMarkers: true }]);
+      ed.focus();
+    } else {
+      onChange({ content: `${rule.content || ''}${text}` });
+    }
+  };
   const resultView = !result ? (
     <Empty description={previewed ? 'Not in the last preview: preview again.' : 'Use Preview in the explorer to see what this file holds for an example deploy.'} />
   ) : result.change === 'changed' && result.current != null ? (
@@ -534,6 +536,10 @@ const RuleEditor: React.FC<{
         <Typography.Text strong>Path</Typography.Text>
         <Input style={{ width: 420 }} value={rule.path} disabled={!editable} onChange={e => onChange({ path: e.target.value })}
           placeholder="environments/{{ namespace }}/values.yaml" />
+        {editable && (
+          <FieldsHelp compact profile={draft} example={example} onInsertTemplate={insertInTemplate}
+            onInsertPath={text => onChange({ path: `${rule.path || ''}${text}` })} />
+        )}
         <Segmented value={rule.mode} disabled={!editable} onChange={v => onChange({ mode: v as GitOpsFileRule['mode'] })}
           options={[{ value: 'always', label: 'Written by every deploy' }, { value: 'createIfMissing', label: 'Created once' }]} />
       </Space>
@@ -541,19 +547,19 @@ const RuleEditor: React.FC<{
         {rule.mode === 'createIfMissing'
           ? 'Written by the first deploy only, then owned by your team: KDPS never rewrites it.'
           : 'Written again by every deploy: edit the template here, not the file in Git.'}
-        {' '}For the example deploy: <Typography.Text code>{examplePath(rule.path, draft, example) || '—'}</Typography.Text>
+        {' '}For the example deploy: <Typography.Text code>{examplePath(rule.path, draft, example) || '—'}</Typography.Text>.
+        {' '}The path and the template can use fields such as <Typography.Text code>{'{{ namespace }}'}</Typography.Text>: see
+        {' '}Fields and filters.
       </Typography.Text>
       {entry.problem && <Alert type="error" showIcon message={entry.problem} />}
       <Tabs size="small" items={[
         {
           key: 'template', label: 'Template',
           children: (
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Editor height="420px" language={editorLanguage(rule.path || '')} value={rule.content}
-                onChange={v => onChange({ content: v ?? '' })}
-                options={{ readOnly: !editable, minimap: { enabled: false }, scrollBeyondLastLine: false }} />
-              <TemplateHelp />
-            </Space>
+            <Editor height="420px" language={editorLanguage(rule.path || '')} value={rule.content}
+              onMount={ed => { editorRef.current = ed; }}
+              onChange={v => onChange({ content: v ?? '' })}
+              options={{ readOnly: !editable, minimap: { enabled: false }, scrollBeyondLastLine: false }} />
           ),
         },
         { key: 'result', label: result ? `Result (${changeLabel(result)})` : 'Result', children: resultView },
@@ -561,23 +567,6 @@ const RuleEditor: React.FC<{
     </Space>
   );
 };
-
-const TemplateHelp: React.FC = () => (
-  <Collapse size="small" items={[{
-    key: 'help',
-    label: 'What a template can use',
-    children: (
-      <div>
-        {TEMPLATE_HELP.map(([t, d]) => <div key={t}><Typography.Text code>{t}</Typography.Text> {d}</div>)}
-        <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-          Filters: <code>toYaml</code>, <code>toJson</code>, <code>quote</code>, <code>trim</code>, <code>indent 4</code>,{' '}
-          <code>default "x"</code>. A field or filter KDPS does not know stops the preview and the deploy. Text that is
-          not between double braces, such as <code>{'${IMAGE_TAG}'}</code>, is written as it is.
-        </Typography.Paragraph>
-      </div>
-    ),
-  }]} />
-);
 
 /** The example deploy the files are previewed with: its chart is downloaded and its branch read, nothing written. */
 const PreviewDialog: React.FC<{

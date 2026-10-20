@@ -59,6 +59,14 @@ describe('the GitOps profiles page', () => {
     // The first file is open in the editor.
     expect(screen.getByDisplayValue('environments/{{ namespace }}/values.yaml')).toBeInTheDocument();
 
+    // The fields reference opens from the header, and from the file it adds a field to the path.
+    fireEvent.click(screen.getByRole('button', { name: /Fields and filters/ }));
+    expect(await screen.findByText('secretValues.secretName')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Close'));
+    fireEvent.click(screen.getAllByRole('button', { name: /question-circle/ }).find(b => !/Fields and filters/.test(b.textContent || ''))!);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Path' }))[0]);
+    expect(screen.getByDisplayValue('environments/{{ namespace }}/values.yaml{{ release }}')).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: /GitOps profiles/ }));
     expect(await screen.findByRole('button', { name: /New profile/ })).toBeInTheDocument();
   });
