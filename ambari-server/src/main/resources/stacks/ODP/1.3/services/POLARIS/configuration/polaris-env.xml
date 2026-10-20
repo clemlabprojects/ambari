@@ -476,6 +476,7 @@
   </property>
   <property>
     <name>polaris_admin_password</name>
+    <property-type>PASSWORD</property-type>
     <display-name>Polaris Bootstrap Client Secret</display-name>
     <value>s3cr3t</value>
     <description>Client secret used to bootstrap Polaris internal root credentials.</description>

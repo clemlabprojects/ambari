@@ -21,7 +21,7 @@
     <name>hue_database</name>
     <value>MYSQL</value>
     <display-name>DB FLAVOR</display-name>
-    <description>The database type to be used (mysql/oracle)</description>
+    <description>The database type to be used (MySQL, Oracle or PostgreSQL).</description>
     <value-attributes>
       <overridable>true</overridable>
       <type>value-list</type>
@@ -171,7 +171,11 @@
       </property>
       <property>
         <type>hue-ini-conf</type>
-        <name>db_host</name>
+        <name>hue_db_host</name>
+      </property>
+      <property>
+        <type>hue-ini-conf</type>
+        <name>hue_db_port</name>
       </property>
     </depends-on>
     <on-ambari-upgrade add="false"/>

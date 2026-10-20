@@ -253,6 +253,7 @@ var files = [
   'test/views/common/breadcrumbs_view_test',
   'test/views/common/chart/linear_time_test',
   'test/views/common/configs/widgets/combo_config_widget_view_test',
+  'test/views/common/configs/widgets/test_db_connection_widget_view_test',
   'test/views/common/configs/widgets/config_widget_view_test',
   'test/views/common/configs/widgets/list_config_widget_view_test',
   'test/views/common/configs/widgets/slider_config_widget_view_test',

@@ -74,7 +74,7 @@
           "subsection-name": "subsection-hue-db-root-user-col1"
         },
         {
-          "config": "admin-properties/db_root_password",
+          "config": "hue-env/db_root_password",
           "subsection-name": "subsection-hue-db-root-user-col2"
         },
         {
@@ -124,13 +124,13 @@
         }
       },
       {
-        "config": "hue-env/hue_db_host",
+        "config": "hue-ini-conf/hue_db_host",
         "widget": {
           "type": "text-field"
         }
       },
       {
-        "config": "hue-env/hue_db_password",
+        "config": "hue-ini-conf/hue_db_password",
         "widget": {
           "type": "password"
         }

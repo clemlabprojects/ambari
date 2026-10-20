@@ -226,6 +226,50 @@
       <on-ambari-upgrade add="false"/>
     </property>
     <property>
+      <name>hue.jpa.jdbc.url</name>
+      <display-name>Database JDBC URL</display-name>
+      <value>jdbc:mysql://localhost:3306/hue_db</value>
+      <description>JDBC URL used to verify the Hue database connection. Generated from the database type, host, port and name.</description>
+      <value-attributes>
+        <overridable>false</overridable>
+      </value-attributes>
+      <depends-on>
+        <property>
+          <type>hue-env</type>
+          <name>hue_database</name>
+        </property>
+        <property>
+          <type>hue-ini-conf</type>
+          <name>hue_db_host</name>
+        </property>
+        <property>
+          <type>hue-ini-conf</type>
+          <name>hue_db_port</name>
+        </property>
+        <property>
+          <type>hue-ini-conf</type>
+          <name>hue_db_name</name>
+        </property>
+      </depends-on>
+      <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
+      <name>hue.jpa.jdbc.driver</name>
+      <display-name>Database JDBC Driver</display-name>
+      <value>com.mysql.jdbc.Driver</value>
+      <description>JDBC driver class used to verify the Hue database connection.</description>
+      <value-attributes>
+        <overridable>false</overridable>
+      </value-attributes>
+      <depends-on>
+        <property>
+          <type>hue-env</type>
+          <name>hue_database</name>
+        </property>
+      </depends-on>
+      <on-ambari-upgrade add="false"/>
+    </property>
+    <property>
       <name>hue_db_host</name>
       <display-name>Database host</display-name>
       <value>localhost</value>

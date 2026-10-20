@@ -126,6 +126,10 @@
           "subsection-name": "subsection-hue-db-row1-col2"
         },
         {
+          "config": "hue-ini-conf/hue_db_port",
+          "subsection-name": "subsection-hue-db-row1-col2"
+        },
+        {
           "config": "hue-ini-conf/hue.jpa.jdbc.driver",
           "subsection-name": "subsection-hue-db-row1-col2"
         },
@@ -216,6 +220,12 @@
       },
       {
         "config": "hue-ini-conf/hue_db_host",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "hue-ini-conf/hue_db_port",
         "widget": {
           "type": "text-field"
         }

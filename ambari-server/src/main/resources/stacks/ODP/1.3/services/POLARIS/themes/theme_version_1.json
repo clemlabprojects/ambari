@@ -138,6 +138,21 @@
           "subsection-name": "polaris-db-row2"
         },
         {
+          "config": "polaris-db-properties/test_db_connection",
+          "subsection-name": "polaris-db-row2",
+          "property_value_attributes": {
+            "ui_only_property": true
+          },
+          "depends-on": [
+            {
+              "configs": ["polaris-db-properties/create_db_dbuser"],
+              "if": "${polaris-db-properties/create_db_dbuser}",
+              "then": {"property_value_attributes": {"visible": false}},
+              "else": {"property_value_attributes": {"visible": true}}
+            }
+          ]
+        },
+        {
           "config": "polaris-db-properties/db_root_user",
           "subsection-name": "polaris-db-root-col1"
         },
@@ -148,6 +163,13 @@
         {
           "config": "polaris-db-properties/db_root_password",
           "subsection-name": "polaris-db-root-col2"
+        },
+        {
+          "config": "polaris-db-properties/test_root_db_connection",
+          "subsection-name": "polaris-db-root-col1",
+          "property_value_attributes": {
+            "ui_only_property": true
+          }
         }
       ]
     },
@@ -216,6 +238,38 @@
         "config": "polaris-db-properties/db_root_password",
         "widget": {
           "type": "password"
+        }
+      },
+      {
+        "config": "polaris-db-properties/test_db_connection",
+        "widget": {
+          "type": "test-db-connection",
+          "display-name": "Test Connection",
+          "required-properties": {
+            "jdbc.driver.class": "polaris-application-properties/quarkus.datasource.jdbc.driver",
+            "jdbc.driver.url": "polaris-application-properties/quarkus.datasource.jdbc.url",
+            "db.connection.source.host": "polaris-site/polaris_server_hosts",
+            "db.type": "polaris-db-properties/DB_FLAVOR",
+            "db.connection.destination.host": "polaris-db-properties/db_host",
+            "db.connection.user": "polaris-db-properties/db_user",
+            "db.connection.password": "polaris-db-properties/db_password"
+          }
+        }
+      },
+      {
+        "config": "polaris-db-properties/test_root_db_connection",
+        "widget": {
+          "type": "test-db-connection",
+          "display-name": "Test Connection",
+          "required-properties": {
+            "jdbc.driver.class": "polaris-application-properties/quarkus.datasource.jdbc.driver",
+            "jdbc.driver.url": "polaris-db-properties/polaris_privelege_user_jdbc_url",
+            "db.connection.source.host": "polaris-site/polaris_server_hosts",
+            "db.type": "polaris-db-properties/DB_FLAVOR",
+            "db.connection.destination.host": "polaris-db-properties/db_host",
+            "db.connection.user": "polaris-db-properties/db_root_user",
+            "db.connection.password": "polaris-db-properties/db_root_password"
+          }
         }
       }
     ]

@@ -157,17 +157,17 @@ class HueRecommender(service_advisor.ServiceAdvisor):
       cluster_env = self.getServicesSiteProperties(services, "cluster-env")
       security_enabled = cluster_env is not None and "security_enabled" in cluster_env and \
                         cluster_env["security_enabled"].lower() == "true"
-      putHueEnvProperty("hue_database", 'MYSQL')
       hueDbFlavor = services['configurations']["hue-env"]["properties"]["hue_database"]
       hueDbHost =   services['configurations']["hue-ini-conf"]["properties"]["hue_db_host"]
+      hueDbPort = services['configurations']["hue-ini-conf"]["properties"].get("hue_db_port")
       hueDbName =   services['configurations']["hue-ini-conf"]["properties"]["hue_db_name"]
       hue_db_url_dict = {
         'MYSQL': {'hue.jpa.jdbc.driver': 'com.mysql.jdbc.Driver',
-                  'hue.jpa.jdbc.url': 'jdbc:mysql://' + self.getDBConnectionHostPort(hueDbFlavor, hueDbHost) + '/' + hueDbName},
+                  'hue.jpa.jdbc.url': 'jdbc:mysql://' + self.getDBConnectionHostPort(hueDbFlavor, hueDbHost, hueDbPort) + '/' + hueDbName},
         'ORACLE': {'hue.jpa.jdbc.driver': 'oracle.jdbc.driver.OracleDriver',
-                    'hue.jpa.jdbc.url': 'jdbc:oracle:thin:@' + self.getOracleDBConnectionHostPort(hueDbFlavor, hueDbHost, hueDbName)},
+                    'hue.jpa.jdbc.url': 'jdbc:oracle:thin:@' + self.getOracleDBConnectionHostPort(hueDbFlavor, hueDbHost, hueDbName, hueDbPort)},
         'POSTGRES': {'hue.jpa.jdbc.driver': 'org.postgresql.Driver',
-                      'hue.jpa.jdbc.url': 'jdbc:postgresql://' + self.getDBConnectionHostPort(hueDbFlavor, hueDbHost) + '/' + hueDbName}
+                      'hue.jpa.jdbc.url': 'jdbc:postgresql://' + self.getDBConnectionHostPort(hueDbFlavor, hueDbHost, hueDbPort) + '/' + hueDbName}
       }
       hueDbProperties = hue_db_url_dict.get(hueDbFlavor, hue_db_url_dict['MYSQL'])
       for key in hueDbProperties:
@@ -180,10 +180,11 @@ class HueRecommender(service_advisor.ServiceAdvisor):
 
       hueDbFlavor = services['configurations']["hue-env"]["properties"]["hue_database"]
       hueDbHost =   services['configurations']["hue-ini-conf"]["properties"]["hue_db_host"]
+      hueDbPort = services['configurations']["hue-ini-conf"]["properties"].get("hue_db_port")
       hue_db_privelege_url_dict = {
-        'MYSQL': {'hue_privelege_user_jdbc_url': 'jdbc:mysql://' + self.getDBConnectionHostPort(hueDbFlavor, hueDbHost)},
-        'ORACLE': {'hue_privelege_user_jdbc_url': 'jdbc:oracle:thin:@' + self.getOracleDBConnectionHostPort(hueDbFlavor, hueDbHost, None)},
-        'POSTGRES': {'hue_privelege_user_jdbc_url': 'jdbc:postgresql://' + self.getDBConnectionHostPort(hueDbFlavor, hueDbHost) + '/postgres'}
+        'MYSQL': {'hue_privelege_user_jdbc_url': 'jdbc:mysql://' + self.getDBConnectionHostPort(hueDbFlavor, hueDbHost, hueDbPort)},
+        'ORACLE': {'hue_privelege_user_jdbc_url': 'jdbc:oracle:thin:@' + self.getOracleDBConnectionHostPort(hueDbFlavor, hueDbHost, None, hueDbPort)},
+        'POSTGRES': {'hue_privelege_user_jdbc_url': 'jdbc:postgresql://' + self.getDBConnectionHostPort(hueDbFlavor, hueDbHost, hueDbPort) + '/postgres'}
       }
       huePrivelegeDbProperties = hue_db_privelege_url_dict.get(hueDbFlavor, hue_db_privelege_url_dict['MYSQL'])
       for key in huePrivelegeDbProperties:
@@ -242,7 +243,7 @@ class HueRecommender(service_advisor.ServiceAdvisor):
         services["forced-configurations"].append({"type" : "ozone-httpfs-site", "name" : "httpfs.proxyuser.{0}.groups".format(hueUser)})
 
 
-  def getDBConnectionHostPort(self, db_type, db_host):
+  def getDBConnectionHostPort(self, db_type, db_host, db_port=None):
       connection_string = ""
       if db_type is None or db_type == "":
         return connection_string
@@ -250,7 +251,9 @@ class HueRecommender(service_advisor.ServiceAdvisor):
         colon_count = db_host.count(':')
         DB_TYPE_DEFAULT_PORT_MAP = {"MYSQL":"3306", "ORACLE":"1521", "POSTGRES":"5432", "MSSQL":"1433", "SQLA":"2638"}
         if colon_count == 0:
-          if db_type in DB_TYPE_DEFAULT_PORT_MAP:
+          if db_port is not None and str(db_port).strip():
+            connection_string = db_host + ":" + str(db_port).strip()
+          elif db_type in DB_TYPE_DEFAULT_PORT_MAP:
             connection_string = db_host + ":" + DB_TYPE_DEFAULT_PORT_MAP[db_type]
           else:
             connection_string = db_host
@@ -261,8 +264,8 @@ class HueRecommender(service_advisor.ServiceAdvisor):
 
       return connection_string
 
-  def getOracleDBConnectionHostPort(self, db_type, db_host, hueDbName):
-      connection_string = self.getDBConnectionHostPort(db_type, db_host)
+  def getOracleDBConnectionHostPort(self, db_type, db_host, hueDbName, db_port=None):
+      connection_string = self.getDBConnectionHostPort(db_type, db_host, db_port)
       colon_count = db_host.count(':')
       if colon_count == 1 and '/' in db_host:
         connection_string = "//" + connection_string
