@@ -21,6 +21,7 @@ package org.apache.ambari.server.api.services.stackadvisor.commands;
 import static java.util.Collections.emptyMap;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Matchers.any;
@@ -279,6 +280,39 @@ public class StackAdvisorCommandTest {
     ArrayNode stackVersions = (ArrayNode) stackHierarchy.get("stack_versions");
     assertNotNull(stackVersions);
     assertEquals(0, stackVersions.size());
+  }
+
+  @Test
+  public void testPopulateRepositoryVersion() throws Exception {
+    File file = mock(File.class);
+    StackAdvisorRunner stackAdvisorRunner = mock(StackAdvisorRunner.class);
+    AmbariMetaInfo ambariMetaInfo = mock(AmbariMetaInfo.class);
+    StackAdvisorCommand<TestResource> cmd = new TestStackAdvisorCommand(file, "1w", ServiceInfo.ServiceAdvisorType.PYTHON, 1,
+        stackAdvisorRunner, ambariMetaInfo, null);
+    ObjectNode objectNode = (ObjectNode) cmd.mapper.readTree("{\"Versions\": " +
+        "{\"stack_name\": \"stack\", \"stack_version\":\"1.0.0\"}}");
+    StackAdvisorRequest request = StackAdvisorRequestBuilder.forStack("stack", "1.0.0")
+        .withRepositoryVersion("1.0.0.0-41").build();
+
+    cmd.populateRepositoryVersion(objectNode, request);
+
+    assertEquals("1.0.0.0-41", objectNode.get("Versions").get("repository_version").asText());
+  }
+
+  @Test
+  public void testPopulateRepositoryVersion_unknown() throws Exception {
+    File file = mock(File.class);
+    StackAdvisorRunner stackAdvisorRunner = mock(StackAdvisorRunner.class);
+    AmbariMetaInfo ambariMetaInfo = mock(AmbariMetaInfo.class);
+    StackAdvisorCommand<TestResource> cmd = new TestStackAdvisorCommand(file, "1w", ServiceInfo.ServiceAdvisorType.PYTHON, 1,
+        stackAdvisorRunner, ambariMetaInfo, null);
+    ObjectNode objectNode = (ObjectNode) cmd.mapper.readTree("{\"Versions\": " +
+        "{\"stack_name\": \"stack\", \"stack_version\":\"1.0.0\"}}");
+    StackAdvisorRequest request = StackAdvisorRequestBuilder.forStack("stack", "1.0.0").build();
+
+    cmd.populateRepositoryVersion(objectNode, request);
+
+    assertNull(objectNode.get("Versions").get("repository_version"));
   }
 
   @Test

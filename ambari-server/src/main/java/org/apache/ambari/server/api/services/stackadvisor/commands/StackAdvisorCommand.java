@@ -177,6 +177,7 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
       ObjectNode root = (ObjectNode) this.mapper.readTree(data.servicesJSON);
 
       populateStackHierarchy(root);
+      populateRepositoryVersion(root, request);
       populateComponentHostsMap(root, request.getComponentHostsMap());
       populateServiceAdvisors(root);
       populateConfigurations(root, request);
@@ -258,6 +259,17 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
     ArrayNode parents = stackHierarchy.putArray("stack_versions");
     for (String parentVersion : metaInfo.getStackParentVersions(stackName.asText(), stackVersion.asText())) {
       parents.add(parentVersion);
+    }
+  }
+
+  /**
+   * Adds Versions/repository_version when the request knows it, so that service advisors can tell apart
+   * repository versions that share one stack version (ODP 1.3.1.0 and 1.3.2.0 are both stack ODP 1.3).
+   */
+  protected void populateRepositoryVersion(ObjectNode root, StackAdvisorRequest request) {
+    String repositoryVersion = request.getRepositoryVersion();
+    if (repositoryVersion != null) {
+      ((ObjectNode) root.get("Versions")).put("repository_version", repositoryVersion);
     }
   }
 

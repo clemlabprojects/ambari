@@ -18,6 +18,24 @@
 var App = require('app');
 
 /**
+ * Tells the stack advisor which repository version a request is about. Several repository versions share one
+ * stack version (ODP 1.3.1.0 and 1.3.2.0 are both stack ODP 1.3): before the cluster exists the install wizard
+ * sends the version picked in its first step, afterwards the server reads the cluster's version from clusterId.
+ */
+function addStackAdvisorTarget(body) {
+  var clusterId = App.get('clusterId');
+  if (clusterId) {
+    body.clusterId = clusterId;
+  } else {
+    var selectedStack = App.Stack.find().findProperty('isSelected', true);
+    if (selectedStack && selectedStack.get('repositoryVersion')) {
+      body.repository_version = selectedStack.get('repositoryVersion');
+    }
+  }
+  return body;
+}
+
+/**
  * Config for each ajax-request
  *
  * Fields example:
@@ -2365,7 +2383,7 @@ var urls = {
       }
 
       return {
-        data: JSON.stringify(q)
+        data: JSON.stringify(addStackAdvisorTarget(q))
       }
     }
   },
@@ -2379,7 +2397,7 @@ var urls = {
     'type': 'POST',
     'format': function (data) {
       return {
-        data: JSON.stringify(data.dataToSend)
+        data: JSON.stringify(addStackAdvisorTarget(data.dataToSend))
       }
     }
   },
@@ -2390,12 +2408,12 @@ var urls = {
     'type': 'POST',
     'format': function (data) {
       return {
-        data: JSON.stringify({
+        data: JSON.stringify(addStackAdvisorTarget({
           hosts: data.hosts,
           services: data.services,
           validate: data.validate,
           recommendations: data.recommendations
-        })
+        }))
       }
     }
   },

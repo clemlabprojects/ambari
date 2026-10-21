@@ -42,6 +42,7 @@ public class StackAdvisorRequest {
   private String serviceName;
   private String stackName;
   private String stackVersion;
+  private String repositoryVersion;
   private StackAdvisorRequestType requestType;
   private List<String> hosts = new ArrayList<>();
   private Collection<String> services = new ArrayList<>();
@@ -128,6 +129,14 @@ public class StackAdvisorRequest {
 
   public Long getClusterId() {
     return clusterId;
+  }
+
+  /**
+   * @return the repository version the request is about (for example 1.3.2.0-41), or null when unknown.
+   * Several repository versions can share one stack version.
+   */
+  public String getRepositoryVersion() {
+    return repositoryVersion;
   }
 
   public String getServiceName() {
@@ -236,6 +245,11 @@ public class StackAdvisorRequest {
 
     public StackAdvisorRequestBuilder withClusterId(Long clusterId) {
       this.instance.clusterId = clusterId;
+      return this;
+    }
+
+    public StackAdvisorRequestBuilder withRepositoryVersion(String repositoryVersion) {
+      this.instance.repositoryVersion = repositoryVersion;
       return this;
     }
 

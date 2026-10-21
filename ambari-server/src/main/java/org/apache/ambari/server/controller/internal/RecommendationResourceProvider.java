@@ -110,6 +110,7 @@ public class RecommendationResourceProvider extends StackAdvisorResourceProvider
       STACK_VERSION_PROPERTY_ID,
       RECOMMEND_PROPERTY_ID,
       CLUSTER_ID_PROPERTY_ID,
+      REPOSITORY_VERSION_PROPERTY,
       SERVICE_NAME_PROPERTY_ID,
       AUTO_COMPLETE_PROPERTY_ID,
       CONFIGS_RESPONSE_PROPERTY_ID,

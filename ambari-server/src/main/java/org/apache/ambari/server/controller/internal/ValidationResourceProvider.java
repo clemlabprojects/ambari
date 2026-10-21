@@ -54,6 +54,7 @@ public class ValidationResourceProvider extends StackAdvisorResourceProvider {
 
   protected static final String VALIDATION_ID_PROPERTY_ID = PropertyHelper.getPropertyId(
       "Validation", "id");
+  protected static final String CLUSTER_ID_PROPERTY_ID = "clusterId";
   protected static final String VALIDATE_PROPERTY_ID = "validate";
 
   protected static final String ITEMS_PROPERTY_ID = "items";
@@ -92,6 +93,8 @@ public class ValidationResourceProvider extends StackAdvisorResourceProvider {
    */
   private static Set<String> propertyIds = Sets.newHashSet(
       VALIDATION_ID_PROPERTY_ID,
+      CLUSTER_ID_PROPERTY_ID,
+      REPOSITORY_VERSION_PROPERTY,
       VALIDATE_PROPERTY_ID,
       ITEMS_PROPERTY_ID,
       STACK_NAME_PROPERTY_ID,

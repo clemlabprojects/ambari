@@ -26,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -46,6 +47,7 @@ import org.apache.ambari.server.controller.spi.Request;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.Resource.Type;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.state.ChangedConfigInfo;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
@@ -57,6 +59,7 @@ import org.apache.ambari.server.state.ServiceComponentHost;
 import org.apache.ambari.server.state.ServiceInfo;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.configgroup.ConfigGroup;
+import org.apache.ambari.server.utils.VersionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -76,6 +79,7 @@ public abstract class StackAdvisorResourceProvider extends ReadOnlyResourceProvi
 
 
   private static final String CLUSTER_ID_PROPERTY = "clusterId";
+  protected static final String REPOSITORY_VERSION_PROPERTY = "repository_version";
   private static final String SERVICE_NAME_PROPERTY = "serviceName";
   private static final String AUTO_COMPLETE_PROPERTY = "autoComplete";
   private static final String CONFIGS_RESPONSE_PROPERTY = "configsResponse";
@@ -126,11 +130,34 @@ public abstract class StackAdvisorResourceProvider extends ReadOnlyResourceProvi
 
   protected abstract String getRequestTypePropertyId();
 
+  /**
+   * The repository version of a cluster's services, the highest one when they differ (during a patch
+   * upgrade). Null when it cannot be determined, which leaves the request as it was.
+   */
+  private String getClusterRepositoryVersion(Long clusterId) {
+    try {
+      return clusters.getCluster(clusterId).getServices().values().stream()
+          .map(Service::getDesiredRepositoryVersion).filter(Objects::nonNull)
+          .map(RepositoryVersionEntity::getVersion).filter(Objects::nonNull)
+          .max((a, b) -> VersionUtils.compareVersions(a.split("-")[0], b.split("-")[0]))
+          .orElse(null);
+    } catch (Exception e) {
+      LOG.debug("Unable to determine the repository version of cluster {}", clusterId, e);
+      return null;
+    }
+  }
+
   @SuppressWarnings("unchecked")
   protected StackAdvisorRequest prepareStackAdvisorRequest(Request request) {
     try {
       String clusterIdProperty = (String) getRequestProperty(request, CLUSTER_ID_PROPERTY);
       Long clusterId = clusterIdProperty == null ? null : Long.valueOf(clusterIdProperty);
+
+      // the install wizard sends the repository version it installs; an existing cluster is asked for its own
+      String repositoryVersion = (String) getRequestProperty(request, REPOSITORY_VERSION_PROPERTY);
+      if (repositoryVersion == null && clusterId != null) {
+        repositoryVersion = getClusterRepositoryVersion(clusterId);
+      }
 
       String serviceName = (String) getRequestProperty(request, SERVICE_NAME_PROPERTY);
 
@@ -218,6 +245,7 @@ public abstract class StackAdvisorResourceProvider extends ReadOnlyResourceProvi
         withUserContext(userContext).
         withGPLLicenseAccepted(gplLicenseAccepted).
         withClusterId(clusterId).
+        withRepositoryVersion(repositoryVersion).
         withServiceName(serviceName).
         withConfigsResponse(configsResponse).build();
     } catch (Exception e) {
