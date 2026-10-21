@@ -23,6 +23,11 @@ limitations under the License.
 --webserver_port={{tserver_webserver_port}}
 --tserver_master_addrs={{tserver_master_addrs}}
 --log_dir={{kudu_log_dir}}
+{# KUDU-3479: Kudu built with GCC 11 or newer (Ubuntu 22.04, RHEL 9) crashes in its LLVM code generation;
+   an explicit --mrs_use_codegen in the additional flags takes precedence #}
+{% if '--mrs_use_codegen' not in tserver_additional_flags %}
+--mrs_use_codegen=false
+{% endif %}
 {% if kudu_enable_tls and kudu_tls_cert_file and kudu_tls_private_key_file %}
 --unlock_experimental_flags
 --rpc_certificate_file={{kudu_tls_cert_file}}
