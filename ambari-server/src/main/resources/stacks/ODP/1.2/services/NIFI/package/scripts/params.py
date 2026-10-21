@@ -291,6 +291,9 @@ nifi_node_logback_content = config['configurations']['nifi-node-logback-env']['c
 # params from nifi-properties-env
 nifi_master_properties_content = config['configurations']['nifi-master-properties-env']['content']
 nifi_properties = config['configurations']['nifi-properties'].copy()
+# NiFi 2.x dropped nifi.flow.configuration.json.file and reads the JSON flow from nifi.flow.configuration.file
+if check_stack_feature('nifi_flow_json_only', version_for_stack_feature_checks) and 'nifi.flow.configuration.json.file' in nifi_properties:
+  nifi_properties['nifi.flow.configuration.file'] = nifi_properties.pop('nifi.flow.configuration.json.file')
 
 #kerberos params
 nifi_kerberos_authentication_expiration = config['configurations']['nifi-properties']['nifi.kerberos.spnego.authentication.expiration']

@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<!-- Keep the H2 database in the managed database directory instead of the versioned install directory. -->
+<configuration>
+    <property>
+        <name>nifi.registry.db.url</name>
+        <value>jdbc:h2:{{nifi_registry_database_dir}}/nifi-registry-primary;AUTOCOMMIT=OFF;DB_CLOSE_ON_EXIT=FALSE;LOCK_MODE=3;LOCK_TIMEOUT=25000;WRITE_DELAY=0;AUTO_SERVER=FALSE</value>
+        <on-ambari-upgrade add="true"/>
+        <description>The JDBC URL of the NiFi Registry database. The default H2 database lives in the NiFi Registry database directory.</description>
+    </property>
+</configuration>

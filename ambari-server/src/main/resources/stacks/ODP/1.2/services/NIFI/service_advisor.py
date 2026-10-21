@@ -35,6 +35,9 @@ except Exception as e:
 
 # NiFi 2.x (ODP 1.3.2.0 and later) no longer ships the TLS Toolkit the NiFi Certificate Authority runs on
 NIFI2_REPOSITORY_VERSION = '1.3.2.0'
+# NiFi 2.x removed the legacy PBE algorithms; NiFi 1.x and 2.x require 12+ characters for these two
+NIFI2_SENSITIVE_PROPS_ALGORITHMS = ('NIFI_PBKDF2_AES_GCM_256', 'NIFI_ARGON2_AES_GCM_256')
+SENSITIVE_PROPS_KEY_MIN_LENGTH = 12
 NIFI_CA_UNSUPPORTED_MESSAGE = 'The NiFi Certificate Authority is not available from ODP 1.3.2.0: NiFi 2.x no longer ships the TLS Toolkit. ' \
                               'Remove it and configure NiFi TLS with your own certificates in nifi-ambari-ssl-config.'
 
@@ -66,3 +69,21 @@ class NIFI170ServiceAdvisor(service_advisor.ServiceAdvisor):
         if not self.getComponentHostNames(services, "NIFI", "NIFI_CA"):
             return []
         return [{"type": 'host-component', "level": 'ERROR', "message": NIFI_CA_UNSUPPORTED_MESSAGE, "component-name": 'NIFI_CA'}]
+
+    def getServiceConfigurationsValidationItems(self, configurations, recommendedDefaults, services, hosts):
+        properties = self.getSiteProperties(configurations, "nifi-properties")
+        if not properties:
+            return []
+        items = []
+        nifi2 = self.isNiFi2(services)
+        algorithm = properties.get("nifi.sensitive.props.algorithm") or ""
+        if nifi2 and algorithm not in NIFI2_SENSITIVE_PROPS_ALGORITHMS:
+            items.append({"config-name": "nifi.sensitive.props.algorithm", "item": self.getErrorItem(
+                "NiFi 2.x supports only NIFI_PBKDF2_AES_GCM_256 and NIFI_ARGON2_AES_GCM_256.")})
+        # an existing cluster's password reaches the advisor masked (SECRET:...), so only typed values are measured
+        key = properties.get("nifi.sensitive.props.key") or ""
+        if key and not key.startswith("SECRET:") and len(key) < SENSITIVE_PROPS_KEY_MIN_LENGTH \
+                and (nifi2 or algorithm in NIFI2_SENSITIVE_PROPS_ALGORITHMS):
+            items.append({"config-name": "nifi.sensitive.props.key", "item": self.getErrorItem(
+                "NiFi requires a sensitive properties key of at least {0} characters.".format(SENSITIVE_PROPS_KEY_MIN_LENGTH))})
+        return self.toConfigurationValidationProblems(items, "nifi-properties")

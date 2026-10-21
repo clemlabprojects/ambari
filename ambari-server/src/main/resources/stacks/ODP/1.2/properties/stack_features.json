@@ -417,6 +417,11 @@
         "max_version": "1.3.2.0"
       },
       {
+        "name": "nifi_flow_json_only",
+        "description": "NiFi 2.x reads its flow only from nifi.flow.configuration.file, in the JSON format",
+        "min_version": "1.3.2.0"
+      },
+      {
         "name": "admin_toolkit_support",
         "description": "Supports the nifi admin toolkit",
         "min_version": "1.0.0.0"
