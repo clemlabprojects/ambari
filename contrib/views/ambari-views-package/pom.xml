@@ -34,6 +34,7 @@
   </description>
 
   <properties>
+    <jdeb.skip>true</jdeb.skip>
     <deb.dependency.list>ambari-server (&gt;= ${ambari.version})</deb.dependency.list>
     <views.directory>/var/lib/ambari-server/resources/views</views.directory>
     <deb.architecture>amd64</deb.architecture>
@@ -86,7 +87,8 @@
             </goals>
             <configuration>
             <verbose>true</verbose>
-            <skip>false</skip>
+            <!-- the .deb is only built with the deb profile (-Pdeb / -Dbuild-deb), not on the RPM builders -->
+            <skip>${jdeb.skip}</skip>
             <controlDir>${basedir}/src/main/package/deb/control</controlDir>
             <deb>${basedir}/target/${project.artifactId}_${package-version}-${package-release}.deb</deb>
             <dataSet>
@@ -134,4 +136,17 @@
       </plugins>
     </pluginManagement>
   </build>
+  <profiles>
+    <profile>
+      <id>deb</id>
+      <activation>
+        <property>
+          <name>build-deb</name>
+        </property>
+      </activation>
+      <properties>
+        <jdeb.skip>false</jdeb.skip>
+      </properties>
+    </profile>
+  </profiles>
 </project>
