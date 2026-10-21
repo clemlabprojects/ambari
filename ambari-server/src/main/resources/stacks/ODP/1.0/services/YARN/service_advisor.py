@@ -114,6 +114,22 @@ class YARNServiceAdvisor(service_advisor.ServiceAdvisor):
       'APP_TIMELINE_SERVER': {31: 1, "else": 2},
     })
 
+  def colocateService(self, hostsComponentsMap, serviceComponents):
+    """
+    YARN Registry DNS is optional (cardinality 0-1) and only serves YARN native services, but the
+    default layout places every master of a selected service. It also binds a DNS server on port 53,
+    which the systemd-resolved stub resolver already holds on Ubuntu 22.04. Leave it out of new
+    layouts and keep it wherever it is already installed.
+    """
+    for component in serviceComponents:
+      if component["StackServiceComponents"]["component_name"] != "YARN_REGISTRY_DNS":
+        continue
+      if self.isComponentHostsPopulated(component):
+        return
+      for hostName in hostsComponentsMap:
+        hostsComponentsMap[hostName] = [c for c in hostsComponentsMap[hostName]
+                                        if c.get("name") != "YARN_REGISTRY_DNS"]
+
   def getServiceComponentLayoutValidations(self, services, hosts):
     """
     Get a list of errors.
@@ -888,6 +904,9 @@ class YARNRecommender(service_advisor.ServiceAdvisor):
 
   def recommendYARNConfigurationsFromODP10(self, configurations, clusterData, services, hosts):
     putYarnProperty = self.putProperty(configurations, "yarn-site", services)
+    # Registry DNS is optional: only advertise it as enabled where the component is deployed
+    registryDnsHosts = self.getComponentHostNames(services, "YARN", "YARN_REGISTRY_DNS")
+    putYarnProperty('hadoop.registry.dns.enabled', 'true' if registryDnsHosts else 'false')
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     # check if spark is present to enable/disable spark_shuffle
     sparkInstalled = False
