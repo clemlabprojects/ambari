@@ -372,9 +372,10 @@ stack_support_nifi_toolkit_package = check_stack_feature('nifi_admin_toolkit_sup
 #some released ODP stacks will not have this stack feature, manually check
 if not stack_support_nifi_toolkit_package and stack_name == "ODP":
   marker_script = os.path.join(stack_root, "current/nifi-toolkit/bin/tls-toolkit.sh")
-  if sudo.path_isfile(marker_script):
+  if sudo.path_isfile(marker_script) and os.path.getsize(marker_script) > 0:
     stack_support_nifi_toolkit_package = True
 stack_support_encrypt_config = check_stack_feature('nifi_encrypt_config', version_for_stack_feature_checks)
+stack_support_nifi_certificate_authority = check_stack_feature('nifi_certificate_authority', version_for_stack_feature_checks)
 stack_support_toolkit_update = check_stack_feature('toolkit_config_update', version_for_stack_feature_checks)
 stack_support_admin_toolkit = check_stack_feature('admin_toolkit_support', version_for_stack_feature_checks)
 stack_support_nifi_jaas = check_stack_feature('nifi_jaas_conf_create', version_for_stack_feature_checks)
