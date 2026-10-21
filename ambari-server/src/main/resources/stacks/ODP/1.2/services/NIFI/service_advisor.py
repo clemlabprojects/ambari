@@ -20,58 +20,49 @@ import os
 from importlib.machinery import SourceFileLoader
 import traceback
 
+from resource_management.libraries.functions.version import compare_versions
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SERVICE_DIR = os.path.join(SCRIPT_DIR, '../../../../../common-services/NIFI/1.1.0')
-PARENT_FILE = os.path.join(SERVICE_DIR, 'service_advisor.py')
+STACKS_DIR = os.path.join(SCRIPT_DIR, '../../../../')
+PARENT_FILE = os.path.join(STACKS_DIR, 'service_advisor.py')
 
 try:
     with open(PARENT_FILE, 'rb') as fp:
         service_advisor = SourceFileLoader('service_advisor', PARENT_FILE).load_module()
-        print(service_advisor)
 except Exception as e:
     traceback.print_exc()
     print("Failed to load parent")
 
-class NIFI170ServiceAdvisor(service_advisor.NIFI110ServiceAdvisor):
+# NiFi 2.x (ODP 1.3.2.0 and later) no longer ships the TLS Toolkit the NiFi Certificate Authority runs on
+NIFI2_REPOSITORY_VERSION = '1.3.2.0'
+NIFI_CA_UNSUPPORTED_MESSAGE = 'The NiFi Certificate Authority is not available from ODP 1.3.2.0: NiFi 2.x no longer ships the TLS Toolkit. ' \
+                              'Remove it and configure NiFi TLS with your own certificates in nifi-ambari-ssl-config.'
 
-    def validateNiFiAmbariConfigurations(self, properties, recommendedDefaults, configurations, services, hosts):
+class NIFI170ServiceAdvisor(service_advisor.ServiceAdvisor):
 
-        parentValidationProblems = super(NIFI170ServiceAdvisor, self).validateNiFiAmbariConfigurations(properties, recommendedDefaults, configurations, services, hosts)
+    def isNiFi2(self, services):
+        """
+        The stack version (1.3) does not tell NiFi 1.x from NiFi 2.x, the repository version does. It is only known
+        when Ambari passes it to the advisor; without it the layout is left as it always was.
+        """
+        repository_version = services.get("Versions", {}).get("repository_version")
+        if not repository_version:
+            return False
+        return compare_versions(repository_version.split('-')[0], NIFI2_REPOSITORY_VERSION) >= 0
 
-        validationItems = []
+    def colocateServiceWithServicesInfo(self, hostsComponentsMap, serviceComponents, services):
+        """
+        NIFI_CA is optional (cardinality 0-1), but the default layout still puts it on a host.
+        Leave it out of new layouts when the target repository ships NiFi 2.x.
+        """
+        if not self.isNiFi2(services):
+            return
+        for hostName in hostsComponentsMap:
+            hostsComponentsMap[hostName] = [c for c in hostsComponentsMap[hostName] if c.get("name") != "NIFI_CA"]
 
-        if 'nifi.allow.explicit.keytab' in properties and properties['nifi.allow.explicit.keytab'] == 'true':
-            validationItems.append({"config-name": 'nifi.allow.explicit.keytab', 'item': self.getWarnItem('NiFi is currently set to "true" to allow explicit configuration of keytabs on processors. Please consider changing this value to false to force use of the Keytab controller for enhanced security.')})
-
-        validationProblems = self.toConfigurationValidationProblems(validationItems, "nifi-ambari-config")
-        validationProblems.extend(parentValidationProblems)
-
-        return validationProblems
-
-    def validateNiFiSslProperties(self, properties, recommendedDefaults, configurations, services, hosts):
-
-        parentValidationProblems = super(NIFI170ServiceAdvisor, self).validateNiFiSslProperties(properties, recommendedDefaults, configurations, services, hosts)
-
-        validationItems = []
-        ssl_enabled = properties['nifi.node.ssl.isenabled'] and str(properties['nifi.node.ssl.isenabled']).lower() != 'false'
-        if properties['nifi.toolkit.tls.token'] and ssl_enabled and len(properties['nifi.toolkit.tls.token']) < 16:
-            validationItems.append({"config-name": 'nifi.toolkit.tls.token', 'item': self.getErrorItem('The NiFi CA token must be 16 or more characters.')})
-
-        validationProblems = self.toConfigurationValidationProblems(validationItems, "nifi-ambari-ssl-config")
-        validationProblems.extend(parentValidationProblems)
-
-        return validationProblems
-
-    def validateNiFiProperties(self, properties, recommendedDefaults, configurations, services, hosts):
-
-        parentValidationProblems = super(NIFI170ServiceAdvisor, self).validateNiFiProperties(properties, recommendedDefaults, configurations, services, hosts)
-
-        validationItems = []
-
-        if 'nifi.sensitive.props.key' in properties and len(properties['nifi.sensitive.props.key']) < 19 :
-            validationItems.append({'config-name':'nifi.sensitive.props.key', 'item':self.getErrorItem('Password to ecnrypt nifi sensible key must be 19 length length')})
-
-        validationProblems = self.toConfigurationValidationProblems(validationItems, "nifi-properties")
-        validationProblems.extend(parentValidationProblems)
-
-        return validationProblems
+    def getServiceComponentLayoutValidations(self, services, hosts):
+        if not self.isNiFi2(services):
+            return []
+        if not self.getComponentHostNames(services, "NIFI", "NIFI_CA"):
+            return []
+        return [{"type": 'host-component', "level": 'ERROR', "message": NIFI_CA_UNSUPPORTED_MESSAGE, "component-name": 'NIFI_CA'}]
