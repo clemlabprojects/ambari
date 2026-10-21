@@ -255,8 +255,10 @@ stack_support_nifi_toolkit_package = check_stack_feature('nifi_toolkit_package',
 #some released HDP stacks will not have this stack feature, manually check
 if not stack_support_nifi_toolkit_package and stack_name == "HDP" or "ODP":
     marker_script = os.path.join(stack_root, "current/nifi-toolkit/bin/tls-toolkit.sh")
-    if sudo.path_isfile(marker_script):
+    if sudo.path_isfile(marker_script) and os.path.getsize(marker_script) > 0:
         stack_support_nifi_toolkit_package = True
+stack_support_nifi_certificate_authority = check_stack_feature('nifi_certificate_authority', version_for_stack_feature_checks)
+stack_support_encrypt_config = check_stack_feature('nifi_encrypt_config', version_for_stack_feature_checks)
 
 if security_enabled:
     _hostname_lowercase = nifi_registry_host.lower()

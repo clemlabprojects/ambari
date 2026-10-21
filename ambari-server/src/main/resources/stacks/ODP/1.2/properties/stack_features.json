@@ -401,12 +401,20 @@
       {
         "name": "nifi_encrypt_config",
         "description": "Encrypt sensitive properties written to nifi property file",
-        "min_version": "1.0.0.0"
+        "min_version": "1.0.0.0",
+        "max_version": "1.3.2.0"
       },
       {
         "name": "tls_toolkit_san",
         "description": "Support subject alternative name flag",
-        "min_version": "1.0.0.0"
+        "min_version": "1.0.0.0",
+        "max_version": "1.3.2.0"
+      },
+      {
+        "name": "nifi_certificate_authority",
+        "description": "NiFi Certificate Authority and TLS Toolkit client, removed in NiFi 2.x",
+        "min_version": "1.0.0.0",
+        "max_version": "1.3.2.0"
       },
       {
         "name": "admin_toolkit_support",

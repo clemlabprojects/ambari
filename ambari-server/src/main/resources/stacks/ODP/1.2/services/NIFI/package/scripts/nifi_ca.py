@@ -20,7 +20,7 @@ limitations under the License.
 
 import nifi_toolkit_util_common, os, time
 
-from resource_management.core.exceptions import ComponentIsNotRunning
+from resource_management.core.exceptions import ComponentIsNotRunning, Fail
 from resource_management.core.resources.system import Directory, Execute
 from resource_management.core.sudo import kill, read_file, path_isfile, unlink
 from resource_management.libraries.functions.check_process_status import check_process_status
@@ -58,9 +58,17 @@ class CertificateAuthority(Script):
   def post_upgrade_restart(self, env, upgrade_type=None):
     pass
 
+  def check_certificate_authority_supported(self):
+    import params
+    if not params.stack_support_nifi_certificate_authority:
+      raise Fail("The NiFi Certificate Authority is not supported from ODP 1.3.2.0: NiFi 2.x no longer ships the TLS Toolkit. "
+                 "Delete this component and configure NiFi TLS with your own certificates in nifi-ambari-ssl-config.")
+
   def install(self, env):
     import params
     import status_params
+
+    self.check_certificate_authority_supported()
 
     self.install_packages(env)
 
@@ -108,6 +116,8 @@ class CertificateAuthority(Script):
     import params
     import status_params
 
+    self.check_certificate_authority_supported()
+
     nifi_toolkit_util_common.copy_toolkit_scripts(params.toolkit_files_dir, params.toolkit_tmp_dir, params.nifi_user, params.nifi_group, upgrade_type, service=nifi_toolkit_util_common.NIFI)
 
     self.configure(env)
@@ -120,7 +130,7 @@ class CertificateAuthority(Script):
         recursive_ownership=True
     )
 
-    File(ca_server_script, mode=0o755)
+    nifi_toolkit_util_common.ensure_toolkit_script(ca_server_script)
     File(run_ca_script, mode=0o755)
     Execute(
       (
@@ -144,10 +154,14 @@ class CertificateAuthority(Script):
     import params
     import status_params
 
+    if not params.stack_support_nifi_certificate_authority:
+      Logger.info("The NiFi Certificate Authority is not supported from ODP 1.3.2.0, nothing to stop")
+      return
+
     nifi_toolkit_util_common.copy_toolkit_scripts(params.toolkit_files_dir, params.toolkit_tmp_dir, params.nifi_user, params.nifi_group, upgrade_type, service=nifi_toolkit_util_common.NIFI)
     run_ca_script = os.path.join(params.toolkit_tmp_dir, 'run_ca.sh')
     ca_server_script = nifi_toolkit_util_common.get_toolkit_script('tls-toolkit.sh',params.toolkit_tmp_dir, params.stack_version_buildnum)
-    File(ca_server_script, mode=0o755)
+    nifi_toolkit_util_common.ensure_toolkit_script(ca_server_script)
     File(run_ca_script, mode=0o755)
 
     if path_isfile(status_params.nifi_ca_pid_file):

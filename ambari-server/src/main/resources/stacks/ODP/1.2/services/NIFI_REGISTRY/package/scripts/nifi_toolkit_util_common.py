@@ -154,6 +154,16 @@ def overlay(config_dict, overlay_dict):
       config_dict[k] = v
 
 
+def ensure_toolkit_script(script):
+  """
+  Make a NiFi toolkit script executable, failing when it is missing. File() alone would create an
+  empty executable that then "runs" successfully and does nothing (NiFi 2.x no longer ships the TLS
+  Toolkit or encrypt-config).
+  """
+  if not sudo.path_isfile(script):
+    raise Fail("NiFi toolkit script {0} not found".format(script))
+  File(script, mode=0o755)
+
 def get_toolkit_script(scriptName, scriptDir=files_dir, toolkitDirPrefix='nifi-toolkit-'):
   import params
 
@@ -472,7 +482,7 @@ def run_toolkit_client(ca_client_dict, config_dir, jdk64_home, java_options, use
                        toolkit_tmp_dir, stack_version_buildnum, no_client_file=False):
   Logger.info("Generating NiFi Keystore and Truststore")
   ca_client_script = get_toolkit_script('tls-toolkit.sh', toolkit_tmp_dir, stack_version_buildnum)
-  File(ca_client_script, mode=0o755)
+  ensure_toolkit_script(ca_client_script)
   if no_client_file:
     ca_client_json_dump = json.dumps(ca_client_dict)
     cert_command = (
@@ -548,7 +558,7 @@ def encrypt_sensitive_properties(
   encrypt_config_script = get_toolkit_script('encrypt-config.sh', toolkit_tmp_dir, stack_version_buildnum)
   encrypt_config_command = (encrypt_config_script,)
   environment = {'JAVA_HOME': jdk64_home, 'JAVA_OPTS': java_options}
-  File(encrypt_config_script, mode=0o755)
+  ensure_toolkit_script(encrypt_config_script)
 
   if is_starting:
     if service == NIFI:

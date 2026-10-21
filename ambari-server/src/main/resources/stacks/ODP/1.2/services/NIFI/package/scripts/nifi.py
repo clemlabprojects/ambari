@@ -166,7 +166,7 @@ class Master(Script):
     if upgrade_stack is None:
       raise Fail('Unable to determine the stack and stack version')
 
-    if params.upgrade_direction == Direction.UPGRADE and params.nifi_ssl_enabled and params.nifi_ca_host:
+    if params.upgrade_direction == Direction.UPGRADE and params.nifi_ssl_enabled and params.nifi_ca_host and params.stack_support_nifi_certificate_authority:
       version_file = params.nifi_config_dir + '/config_version'
       client_json_file = params.nifi_config_dir+ '/nifi-certificate-authority-client.json'
 
@@ -204,7 +204,7 @@ class Master(Script):
                                params.nifi_keystore, params.nifi_keystoreType, params.nifi_keystorePasswd, params.nifi_keyPasswd, nifi_toolkit_util_common.NIFI)
 
     #determine whether new keystore/truststore should be regenerated
-    run_tls = (params.nifi_ca_host and params.nifi_ambari_ssl_enabled) and (params.nifi_toolkit_tls_regenerate or nifi_toolkit_util_common.generate_keystore_truststore(nifi_current_properties,params.nifi_properties, master_key, nifi_toolkit_util_common.NIFI))
+    run_tls = params.stack_support_nifi_certificate_authority and (params.nifi_ca_host and params.nifi_ambari_ssl_enabled) and (params.nifi_toolkit_tls_regenerate or nifi_toolkit_util_common.generate_keystore_truststore(nifi_current_properties,params.nifi_properties, master_key, nifi_toolkit_util_common.NIFI))
     if run_tls:
       nifi_toolkit_util_common.move_keystore_truststore(nifi_current_properties, nifi_toolkit_util_common.NIFI)
       params.nifi_properties = nifi_toolkit_util_common.create_keystore_truststore(
@@ -231,36 +231,40 @@ class Master(Script):
     #Write configuration files
     self.write_files(params)
 
-    #Encrypt files
-    nifi_toolkit_util_common.encrypt_sensitive_properties(
-      params.nifi_config_dir,
-      params.jdk64_home,
-      params.nifi_toolkit_java_options,
-      params.nifi_user,
-      master_key,
-      params.nifi_security_encrypt_configuration_password,
-      is_starting,
-      params.toolkit_tmp_dir,
-      params.stack_version_buildnum,
-      nifi_toolkit_util_common.NIFI,
-      nifi_flow_config_dir=params.nifi_flow_config_dir,
-      nifi_sensitive_props_key=params.nifi_sensitive_props_key,
-      support_encrypt_authorizers=params.stack_support_encrypt_authorizers
-    )
-    Logger.info(params.nifi_node_nonssl_host)
-    #Apply Hashed Ambari parameters by retrieving new master key and hashing required parameters for Ambari
-    bootstrap_current_conf = nifi_toolkit_util_common.convert_properties_to_dict(format("{params.nifi_bootstrap_file}"))
-    new_master_key = bootstrap_current_conf['nifi.bootstrap.sensitive.key'] if 'nifi.bootstrap.sensitive.key' in bootstrap_current_conf else None
-    if new_master_key:
-      nifi_hashed_params = nifi_toolkit_util_common.update_nifi_ambari_hash_properties(
-        params.nifi_truststorePasswd,
-        params.nifi_keystorePasswd, params.nifi_keyPasswd,
-        new_master_key,
-        nifi_toolkit_util_common.NIFI
+    # NiFi 2.x (ODP 1.3.2.0 and later) no longer ships encrypt-config, so there is no master key either
+    if params.stack_support_encrypt_config:
+      #Encrypt files
+      nifi_toolkit_util_common.encrypt_sensitive_properties(
+        params.nifi_config_dir,
+        params.jdk64_home,
+        params.nifi_toolkit_java_options,
+        params.nifi_user,
+        master_key,
+        params.nifi_security_encrypt_configuration_password,
+        is_starting,
+        params.toolkit_tmp_dir,
+        params.stack_version_buildnum,
+        nifi_toolkit_util_common.NIFI,
+        nifi_flow_config_dir=params.nifi_flow_config_dir,
+        nifi_sensitive_props_key=params.nifi_sensitive_props_key,
+        support_encrypt_authorizers=params.stack_support_encrypt_authorizers
       )
-      ModifyPropertiesFile(format("{params.nifi_config_dir}/nifi.properties"), properties = nifi_hashed_params, owner = params.nifi_user)
+      Logger.info(params.nifi_node_nonssl_host)
+      #Apply Hashed Ambari parameters by retrieving new master key and hashing required parameters for Ambari
+      bootstrap_current_conf = nifi_toolkit_util_common.convert_properties_to_dict(format("{params.nifi_bootstrap_file}"))
+      new_master_key = bootstrap_current_conf['nifi.bootstrap.sensitive.key'] if 'nifi.bootstrap.sensitive.key' in bootstrap_current_conf else None
+      if new_master_key:
+        nifi_hashed_params = nifi_toolkit_util_common.update_nifi_ambari_hash_properties(
+          params.nifi_truststorePasswd,
+          params.nifi_keystorePasswd, params.nifi_keyPasswd,
+          new_master_key,
+          nifi_toolkit_util_common.NIFI
+        )
+        ModifyPropertiesFile(format("{params.nifi_config_dir}/nifi.properties"), properties = nifi_hashed_params, owner = params.nifi_user)
+      else:
+        raise Fail("Unable to persist ambari hashes due to no master key! Please validate this was written to bootstrap.conf file.")
     else:
-      raise Fail("Unable to persist ambari hashes due to no master key! Please validate this was written to bootstrap.conf file.")
+      Logger.info("encrypt-config is not available with NiFi 2.x, sensitive properties are left as written")
 
 
   def write_files(self, params):
