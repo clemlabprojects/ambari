@@ -142,6 +142,8 @@ retry_enabled = default('/commandParams/ranger_plugin_hook_retry_enabled', 'Fals
 enable_ranger_kudu = str(
     default('/configurations/ranger-kudu-plugin-properties/ranger-kudu-plugin-enabled', 'No')
 ).lower() == 'yes'
+# Kudu starts its Ranger client from the service keytab and refuses the Ranger flags without Kerberos
+kudu_ranger_authz_enabled = enable_ranger_kudu and security_enabled and bool(kudu_principal_name) and bool(kudu_keytab)
 
 ranger_policy_config = {}
 xa_audit_hdfs_is_enabled = False

@@ -236,6 +236,17 @@ class KuduValidator(service_advisor.ServiceAdvisor):
 
         ranger_plugin_enabled = str(properties.get("ranger-kudu-plugin-enabled", "No")).lower() == "yes"
         if not ranger_plugin_enabled:
+            # Kerberos without Ranger leaves Kudu with its cluster-wide user ACL only, no table permissions
+            cluster_env = self.getServicesSiteProperties(services, "cluster-env") or {}
+            if str(cluster_env.get("security_enabled", "false")).lower() == "true" and \
+                    "RANGER" in self.get_services_list(services):
+                validation_items.append({
+                    "config-name": "ranger-kudu-plugin-enabled",
+                    "item": self.getWarnItem(
+                        "Kerberos is enabled but Ranger authorization for Kudu is off, so Kudu does not check table "
+                        "permissions. Turn on the Kudu Ranger plugin in Ranger > Configs > Ranger Plugin."
+                    )
+                })
             return self.toConfigurationValidationProblems(validation_items, "ranger-kudu-plugin-properties")
 
         ranger_env = self.getServicesSiteProperties(services, "ranger-env")

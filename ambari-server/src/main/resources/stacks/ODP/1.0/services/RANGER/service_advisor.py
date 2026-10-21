@@ -853,6 +853,11 @@ class RangerValidator(service_advisor.ServiceAdvisor):
                               "item": self.getWarnItem(
                                 "Ranger Kafka plugin should not be enabled in non-kerberos environment.")})
 
+    if ranger_env_properties.get("ranger-kudu-plugin-enabled", "No").lower() == 'yes' and not security_enabled:
+      validationItems.append({"config-name": "ranger-kudu-plugin-enabled",
+                              "item": self.getWarnItem(
+                                "Ranger authorization for Kudu requires Kerberos. Kudu runs without it until Kerberos is enabled.")})
+
     ranger_audit_fs_type = str(ranger_env_properties.get("ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))).upper()
     if not include_hdfs and ranger_audit_fs_type == "HDFS":
       validationItems.append({"config-name": "ranger_audit_filesystem_type",

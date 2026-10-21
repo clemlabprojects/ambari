@@ -39,7 +39,7 @@ limitations under the License.
 --keytab_file={{kudu_keytab}}
 --principal={{kudu_principal_name}}
 {% endif %}
-{% if enable_ranger_kudu %}
+{% if kudu_ranger_authz_enabled %}
 {% if '--ranger_config_path' not in tserver_additional_flags %}
 --ranger_config_path={{ranger_kudu_config_path}}
 {% endif %}

@@ -607,6 +607,9 @@ class Kudu(Script):
         for data_dir in self._split_dirs(params.tserver_data_dirs):
             Directory(data_dir, owner=params.kudu_user, group=params.kudu_group, create_parents=True, mode=0o755)
 
+        if params.enable_ranger_kudu and not params.kudu_ranger_authz_enabled:
+            Logger.warning("Ranger authorization for Kudu requires Kerberos: Kudu starts without it until Kerberos is enabled")
+
         File(
             format('{kudu_conf_dir}/master.gflagfile'),
             owner='root',
