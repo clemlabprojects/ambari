@@ -133,17 +133,34 @@ describe('App.MainMenuView', function () {
       });
 
       describe("#goToCategory()", function () {
-        [false, true].forEach(function (disabled) {
-          it('opens Java Runtimes only when enabled: ' + !disabled, function () {
+        [
+          {upgrading: false, holding: false},
+          {upgrading: true, holding: false},
+          {upgrading: false, holding: true}
+        ].forEach(function (state) {
+          it('uses the Java Runtimes menu action with upgrading=' + state.upgrading +
+              ' and holding=' + state.holding, function () {
             var selector = require('utils/upgrade_java');
             sinon.stub(selector, 'showAdministration');
+            sinon.stub(App, 'isAuthorized').returns(false)
+              .withArgs('AMBARI.MANAGE_CONFIGURATION').returns(true);
+            sinon.stub(App, 'get');
+            App.get.withArgs('upgradeInProgress').returns(state.upgrading);
+            App.get.withArgs('upgradeHolding').returns(state.holding);
+            sinon.stub(App.router, 'urlFor').returns('#');
             try {
-              adminDropdownItemView.set('parentView.content.routing', 'admin');
-              adminDropdownItemView.reopen({isActive: false, isDisabled: disabled});
-              adminDropdownItemView.goToCategory({context: 'javaRuntimes'});
-              expect(selector.showAdministration.called).to.equal(!disabled);
+              itemViewClass.set('content.routing', 'admin');
+              var category = itemViewClass.get('dropdownCategories').findProperty('name', 'javaRuntimes');
+              adminDropdownItemView.setProperties({parentView: itemViewClass, item: category.name});
+              // The menu template passes category.url, not category.name, to the action.
+              adminDropdownItemView.goToCategory({context: category.url});
+              expect(category.url).to.equal('javaRuntimes');
+              expect(selector.showAdministration.calledOnce).to.equal(!state.upgrading && !state.holding);
               expect(App.router.route.called).to.equal(false);
             } finally {
+              App.router.urlFor.restore();
+              App.get.restore();
+              App.isAuthorized.restore();
               selector.showAdministration.restore();
             }
           });

@@ -101,7 +101,7 @@ App.MainSideMenuView = Em.CollectionView.extend({
       let {router} = App;
       if (itemName === 'admin') {
         if (App.isAuthorized('AMBARI.MANAGE_CONFIGURATION')) {
-          categories.push({name: 'javaRuntimes', label: Em.I18n.t('admin.java.title'), disabled: upg, href: '#'});
+          categories.push({name: 'javaRuntimes', url: 'javaRuntimes', label: Em.I18n.t('admin.java.title'), disabled: upg, href: '#'});
         }
         if(App.isAuthorized('CLUSTER.VIEW_STACK_DETAILS, CLUSTER.UPGRADE_DOWNGRADE_STACK') || upg) {
           categories.push({
