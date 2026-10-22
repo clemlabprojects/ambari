@@ -31,7 +31,7 @@ import FileExplorer, { PathSegment } from '../components/gitops/FileExplorer';
 import { FileView } from '../components/gitops/RepositoryPreview';
 import { changeLabel, editorLanguage } from '../components/gitops/previewTree';
 import { blankProfile, copyOfProfile, forSaving } from '../components/gitops/profileDraft';
-import { examplePath, normalizePath, repositoryEntries, repositoryTree, type RepositoryEntry, type RepositoryNode } from '../components/gitops/virtualRepository';
+import { chartEntries, chartEntryOf, chartFileProblem, examplePath, normalizePath, repositoryEntries, repositoryTree, type RepositoryEntry, type RepositoryNode } from '../components/gitops/virtualRepository';
 
 const CHANGE_COLORS: Record<string, string> = { new: 'green', changed: 'gold', removed: 'red', kept: 'blue' };
 
@@ -216,7 +216,9 @@ const ProfileEditor: React.FC<EditorProps> = ({ saved, initial, canConfigure, on
   const stale = !!preview && previewedFor !== JSON.stringify({ draft, sample });
   const selectedEntry = entries.find(e => e.key === selected);
   const chartPath = normalizePath(draft.chartPath || '');
-  const inChart = (path: string) => !!chartPath && (path === chartPath || path.startsWith(`${chartPath}/`));
+  // The chart's own entries in the chart folder (Chart.yaml, templates/...): copied as published, never written.
+  const ownEntries = chartEntries(chartPath, preview);
+  const chartEntry = (path: string) => chartEntryOf(chartPath, path, ownEntries);
 
   const save = async () => {
     setSaving(true);
@@ -271,7 +273,7 @@ const ProfileEditor: React.FC<EditorProps> = ({ saved, initial, canConfigure, on
   const createFile = (path: string): string | undefined => {
     const p = normalizePath(path);
     if (!p || p.split('/').some(s => s === '..' || s === '.')) return 'Give a name that stays inside the repository.';
-    if (inChart(p)) return 'The chart folder is copied as published: no file may be written there.';
+    if (chartEntry(p)) return chartFileProblem(chartPath, chartEntry(p)!);
     if (draft.files.some(r => normalizePath(r.path) === p)) return 'The profile already has a file with this path.';
     update({ files: [...draft.files, { path: p, mode: 'always', content: '' }] });
     setEmptyFolders(f => f.filter(x => !p.startsWith(`${x}/`)));
@@ -281,7 +283,7 @@ const ProfileEditor: React.FC<EditorProps> = ({ saved, initial, canConfigure, on
   const createFolder = (path: string): string | undefined => {
     const p = normalizePath(path);
     if (!p || p.split('/').some(s => s === '..' || s === '.')) return 'Give a name that stays inside the repository.';
-    if (inChart(p)) return 'The chart folder is copied as published: no folder may be added there.';
+    if (chartEntry(p)) return chartFileProblem(chartPath, chartEntry(p)!);
     if (!entries.some(e => e.path === p || e.path.startsWith(`${p}/`))) setEmptyFolders(f => [...f, p]);
     setSelected(entries.find(e => e.path === p && e.kind !== 'rule')?.key || `dir:${p}`);
     return undefined;
@@ -291,7 +293,7 @@ const ProfileEditor: React.FC<EditorProps> = ({ saved, initial, canConfigure, on
     .filter(r => r.path.startsWith(`${folder}/`));
   const canDelete = (n: RepositoryNode) => {
     if (n.entry?.kind === 'rule' || n.entry?.kind === 'folder') return true;
-    return !!n.children && n.entry?.kind !== 'chartFolder' && !inChart(n.path) && rulesUnder(n.path).length > 0;
+    return !!n.children && n.entry?.kind !== 'chartFolder' && !chartEntry(n.path) && rulesUnder(n.path).length > 0;
   };
   const deleteNode = (n: RepositoryNode) => {
     if (n.entry?.kind === 'rule') {
@@ -420,7 +422,7 @@ const SettingsForm: React.FC<{ draft: GitOpsProfile; editable: boolean; update: 
             <Input value={draft.description} onChange={e => update({ description: e.target.value })} />
           </Form.Item>
           <Form.Item label="Chart folder"
-            extra="Where the chart is copied, complete and as its repository publishes it. Replaced as a whole on every deploy. Leave empty to copy no chart (Argo CD then pulls it from the chart repository).">
+            extra="Where the chart is copied, complete and as its repository publishes it. Its own files (Chart.yaml, values.yaml, templates/, charts/…) are replaced on every deploy; other folders inside it, such as environments/, can hold the profile's files and your team's. Leave empty to copy no chart (Argo CD then pulls it from the chart repository).">
             <Input value={draft.chartPath} placeholder="chart" onChange={e => update({ chartPath: e.target.value })} />
           </Form.Item>
           <Form.Item label="Protected paths" extra="Files KDPS never writes nor deletes, as glob patterns such as docs/**.">
@@ -475,8 +477,11 @@ const SelectionPane: React.FC<{
       <Space direction="vertical" style={{ width: '100%' }}>
         <Typography.Title level={5} style={{ margin: 0 }}>Chart folder <Typography.Text code>{entry.path}</Typography.Text></Typography.Title>
         <Typography.Paragraph type="secondary">
-          Each deploy replaces this folder with the chart, complete and as its repository publishes it. No file of the
-          profile may be written inside. Preview the files to list the chart's own files.
+          Each deploy copies the chart here, complete and as its repository publishes it: the chart's own files
+          (Chart.yaml, values.yaml, templates/, charts/ and the other entries of its package) are replaced, and a file
+          the new version no longer has goes. Other folders of this folder are left to the profile's files and your
+          team's: select this folder and use New folder or New file to add one. Preview the files to list the chart's
+          own files.
         </Typography.Paragraph>
         <Input addonBefore="Folder" value={draft.chartPath} disabled={!editable} onChange={e => update({ chartPath: e.target.value })} style={{ maxWidth: 420 }} />
       </Space>

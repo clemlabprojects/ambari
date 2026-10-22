@@ -643,4 +643,52 @@ public class FluxGitOpsBackendProfileTest {
         // Checked out as a plain file holding the link's target, as Git does with links turned off.
         assertEquals(secret.toString(), file(preview, "docs/secret.txt").content());
     }
+
+    private static void write(Path file, String content) {
+        try {
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, content);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
+    public void filesOfTheProfileAndOfTheTeamLiveInTheChartFolderBesideTheChart() throws Exception {
+        GitOpsProfile p = environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        p.files.add(rule("chart/environments/{{ namespace }}.yaml", GitOpsProfile.MODE_ALWAYS, "workers: 2\n"));
+        profiles.save(p);
+        // A file of the team in the chart folder, outside the chart's own entries.
+        pushToMain(repo -> write(repo.resolve("chart/environments/NOTES.md"), "kept\n"));
+
+        backend().apply(request(), null);
+
+        assertEquals("workers: 2\n", published("main", "chart/environments/analytics.yaml"));
+        assertEquals("kind: Deployment\n", published("main", "chart/templates/deployment.yaml"));
+
+        // The next version of the chart drops a template: it goes, while the folders that are not the chart's stay.
+        publishedChart.remove("templates/deployment.yaml");
+        publishedChart.put("templates/statefulset.yaml", bytes("kind: StatefulSet\n"));
+        backend().apply(request(), null);
+
+        assertNull(published("main", "chart/templates/deployment.yaml"));
+        assertEquals("kind: StatefulSet\n", published("main", "chart/templates/statefulset.yaml"));
+        assertEquals("workers: 2\n", published("main", "chart/environments/analytics.yaml"));
+        assertEquals("kept\n", published("main", "chart/environments/NOTES.md"));
+    }
+
+    @Test
+    public void aRuleReplacingOneOfTheChartsOwnFilesIsRefusedBeforeAnythingIsPushed() throws Exception {
+        GitOpsProfile p = environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        // dashboards/ is a folder of this chart's package: the chart's, though Helm gives it no meaning.
+        publishedChart.put("dashboards/overview.json", bytes("{}\n"));
+        p.files.add(rule("chart/dashboards/extra.json", GitOpsProfile.MODE_ALWAYS, "{}\n"));
+        profiles.save(p);
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> backend().apply(request(), null));
+
+        assertTrue(refused.getMessage(), refused.getMessage().contains("part of the chart in chart (dashboards)"));
+        assertNull(published("main", "chart/Chart.yaml"));
+    }
 }

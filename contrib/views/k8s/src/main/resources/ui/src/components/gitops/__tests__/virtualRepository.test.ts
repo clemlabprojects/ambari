@@ -18,7 +18,7 @@
 
 import type { GitOpsPreview, GitOpsPreviewFile } from '../../../api/client';
 import { blankProfile } from '../profileDraft';
-import { examplePath, folderKeys, joinPath, repositoryEntries, repositoryTree, segmentParts, targetFolder } from '../virtualRepository';
+import { chartEntries, chartEntryOf, examplePath, folderKeys, joinPath, repositoryEntries, repositoryTree, segmentParts, targetFolder } from '../virtualRepository';
 
 const example = { release: 'trino', namespace: 'analytics', chart: 'trino', version: '1.43.20' };
 
@@ -110,5 +110,28 @@ describe('the files of a profile, as an explorer shows them', () => {
     expect(segmentParts('{{ release }}-values.yaml')).toEqual([
       { text: '{{ release }}', field: 'release' }, { text: '-values.yaml' },
     ]);
+  });
+});
+
+describe('files beside the chart in the chart folder', () => {
+  it('lets the profile write in a folder of the chart folder, never in the chart\'s own entries', () => {
+    const p = profile();
+    p.files.push({ path: 'chart/environments/{{ namespace }}.yaml', mode: 'always', content: '' });
+    p.files.push({ path: 'chart/templates/extra.yaml', mode: 'always', content: '' });
+    p.files.push({ path: 'chart/dashboards/extra.json', mode: 'always', content: '' });
+    const preview: GitOpsPreview = {
+      profile: 'environments', chart: 'trino', version: '1.43.20', chartPath: 'chart', notes: [],
+      files: [previewed('chart/Chart.yaml', { origin: 'chart' }), previewed('chart/dashboards/a.json', { origin: 'chart' })],
+    };
+    const byPath = (entries: ReturnType<typeof repositoryEntries>) =>
+      Object.fromEntries(entries.filter(e => e.kind === 'rule').map(e => [e.path, e.problem]));
+
+    const before = byPath(repositoryEntries(p, example));
+    expect(before['chart/environments/{{ namespace }}.yaml']).toBeUndefined();
+    expect(before['chart/templates/extra.yaml']).toMatch(/Part of the chart \(templates\)/);
+    // A folder of the chart's package is only known once a preview listed its files.
+    expect(before['chart/dashboards/extra.json']).toBeUndefined();
+    expect(byPath(repositoryEntries(p, example, preview))['chart/dashboards/extra.json']).toMatch(/Part of the chart \(dashboards\)/);
+    expect(chartEntryOf('chart', 'chart/environments/a.yaml', chartEntries('chart', preview))).toBeUndefined();
   });
 });

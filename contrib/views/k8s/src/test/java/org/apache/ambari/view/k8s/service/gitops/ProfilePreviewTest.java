@@ -59,7 +59,8 @@ class ProfilePreviewTest {
     void theRepositoryIsListedWithWhereEachFileComesFrom(@TempDir Path repo) throws IOException {
         Files.createDirectories(repo.resolve("chart/charts"));
         Files.writeString(repo.resolve("chart/Chart.yaml"), "# trino\n");
-        Files.writeString(repo.resolve("chart/old.yaml"), "gone\n");
+        Files.createDirectories(repo.resolve("chart/templates"));
+        Files.writeString(repo.resolve("chart/templates/old.yaml"), "gone\n");
         Files.write(repo.resolve("chart/charts/dep.tgz"), new byte[] {31, -117, 8, 0, 0});
         Files.createDirectories(repo.resolve("docs"));
         Files.writeString(repo.resolve("docs/runbook.md"), "# Runbook\n");
@@ -72,7 +73,7 @@ class ProfilePreviewTest {
                 Map.of("Chart.yaml", "# trino\n".getBytes(), "charts/dep.tgz", new byte[] {31, -117, 8, 0, 0}),
                 RENDERED, repo);
 
-        assertEquals(List.of("chart/Chart.yaml", "chart/charts/dep.tgz", "chart/old.yaml", "docs/runbook.md",
+        assertEquals(List.of("chart/Chart.yaml", "chart/charts/dep.tgz", "chart/templates/old.yaml", "docs/runbook.md",
                 "environments/prod/README.md", "environments/prod/values.yaml"),
                 files.stream().map(ProfilePreview.PreviewFile::path).toList());
         assertEquals(ProfilePreview.CHANGE_UNCHANGED, files.get(0).change());
@@ -83,5 +84,23 @@ class ProfilePreviewTest {
         assertEquals(ProfilePreview.ORIGIN_REPOSITORY, files.get(3).origin());
         assertTrue(files.get(4).editable());
         assertFalse(files.get(5).editable());
+    }
+
+    @Test
+    void aFileBesideTheChartInTheChartFolderIsNotTheChartsAndStays(@TempDir Path repo) throws IOException {
+        Files.createDirectories(repo.resolve("chart/templates"));
+        Files.createDirectories(repo.resolve("chart/environments"));
+        Files.writeString(repo.resolve("chart/templates/old.yaml"), "gone\n");
+        Files.writeString(repo.resolve("chart/environments/prod.yaml"), "a: 1\n");
+
+        List<ProfilePreview.PreviewFile> files = ProfilePreview.files(new GitOpsProfile(), "chart",
+                Map.of("Chart.yaml", "name: trino\n".getBytes()), List.of(), repo);
+
+        ProfilePreview.PreviewFile old = files.stream().filter(f -> f.path().equals("chart/templates/old.yaml")).findFirst().orElseThrow();
+        ProfilePreview.PreviewFile beside = files.stream().filter(f -> f.path().equals("chart/environments/prod.yaml")).findFirst().orElseThrow();
+        assertEquals(ProfilePreview.CHANGE_REMOVED, old.change());
+        assertEquals(ProfilePreview.ORIGIN_REPOSITORY, beside.origin());
+        assertEquals(ProfilePreview.CHANGE_UNCHANGED, beside.change());
+        assertEquals("a: 1\n", beside.content());
     }
 }
