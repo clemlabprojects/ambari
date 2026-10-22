@@ -125,12 +125,14 @@ public final class ProfilePreview {
                     GitOpsProfile.MODE_CREATE_IF_MISSING.equals(file.mode()),
                     file.content().getBytes(StandardCharsets.UTF_8), current));
         }
+        // The chart's own entries are replaced by the new version; the other folders of the chart folder stay.
+        java.util.Set<String> chartEntries = ProfileRenderer.chartEntries(chartFiles.keySet());
         int shown = 0;
         for (String path : repositoryFiles(repoDir)) {
             if (out.containsKey(path)) {
                 continue;
             }
-            boolean underChart = chartDir != null && path.startsWith(chartDir + "/");
+            boolean underChart = ProfileRenderer.chartEntryOf(chartDir, path, chartEntries) != null;
             long size = Files.size(repoDir.resolve(path));
             // Only read when shown: a file longer than that is listed without its content.
             byte[] bytes = underChart || size > MAX_SHOWN_REPOSITORY_BYTES || shown + size > MAX_SHOWN_REPOSITORY_TOTAL

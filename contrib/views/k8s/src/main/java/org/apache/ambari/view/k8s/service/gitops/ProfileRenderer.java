@@ -35,7 +35,7 @@ import java.util.regex.Pattern;
 /**
  * Turns a {@link GitOpsProfile} of kind {@link GitOpsProfile#KIND_FILES} into the files a deploy writes around the
  * chart, and checks them before anything reaches Git: every path stays inside the repository, no rule writes under the
- * chart path nor over a protected file, two rules never write the same path, and no secret value of the deploy
+ * chart's own files nor over a protected file, two rules never write the same path, and no secret value of the deploy
  * appears in a path or a content.
  */
 public final class ProfileRenderer {
@@ -110,7 +110,7 @@ public final class ProfileRenderer {
      * @param secretValues the secret values of the deploy: none may appear in a rendered path or content
      * @return the files, in rule order
      * @throws FileTemplate.TemplateException when a template cannot be rendered
-     * @throws IllegalArgumentException when a rendered path is outside the repository, under the chart path, protected,
+     * @throws IllegalArgumentException when a rendered path is outside the repository, one of the chart's, protected,
      *                                  or written by two rules
      * @throws IllegalStateException when a rendered file holds a secret value (the value itself is never named)
      */
@@ -130,9 +130,9 @@ public final class ProfileRenderer {
         for (GitOpsProfile.FileRule rule : profile.files) {
             String path = repositoryPath(FileTemplate.render("path of " + rule.path, rule.path, context),
                     "file " + rule.path);
-            if (chartPath != null && (path.equals(chartPath) || path.startsWith(chartPath + "/"))) {
-                throw new IllegalArgumentException("File " + path + " is under the chart path " + chartPath
-                        + ": the chart is copied as published and no rule may write there.");
+            String chartEntry = chartEntryOf(chartPath, path, HELM_CHART_ENTRIES);
+            if (chartEntry != null) {
+                throw new IllegalArgumentException(chartFileMessage(path, chartPath, chartEntry));
             }
             for (PathMatcher m : protect) {
                 if (m.matches(Path.of(path))) {
@@ -164,6 +164,52 @@ public final class ProfileRenderer {
                         + "deploy; nothing was written. Secrets stay in the cluster: refer to the Secret by name.");
             }
         }
+    }
+
+    /** The entries of a chart folder Helm gives a meaning to: they belong to the chart, whatever version is copied. */
+    public static final Set<String> HELM_CHART_ENTRIES = Set.of("Chart.yaml", "Chart.lock", "values.yaml",
+            "values.schema.json", "requirements.yaml", "requirements.lock", "templates", "charts", "crds");
+
+    /**
+     * The entries of the chart folder that belong to the chart: those Helm gives a meaning to, and the top-level files
+     * and folders of the chart package copied. The other folders of the chart folder, such as {@code environments/}, hold the
+     * profile's files and the team's: a deploy never replaces nor deletes them.
+     *
+     * @param chartFiles the files of the chart package, by path inside the chart; empty when not known yet
+     */
+    public static Set<String> chartEntries(Collection<String> chartFiles) {
+        Set<String> entries = new LinkedHashSet<>(HELM_CHART_ENTRIES);
+        for (String file : chartFiles == null ? List.<String>of() : chartFiles) {
+            entries.add(file.split("/", 2)[0]);
+        }
+        return entries;
+    }
+
+    /**
+     * The entry of the chart a repository path falls in, or {@code null} when the path is not one of the chart's:
+     * outside the chart folder, or in another folder of it.
+     *
+     * @param chartPath the chart folder, {@code null} when the profile copies no chart
+     */
+    public static String chartEntryOf(String chartPath, String path, Set<String> chartEntries) {
+        if (chartPath == null || chartPath.isBlank()) {
+            return null;
+        }
+        if (path.equals(chartPath)) {
+            return chartPath;
+        }
+        if (!path.startsWith(chartPath + "/")) {
+            return null;
+        }
+        String first = path.substring(chartPath.length() + 1).split("/", 2)[0];
+        return chartEntries.contains(first) ? first : null;
+    }
+
+    /** Why a file of a rule is refused when it would replace a file of the chart. */
+    public static String chartFileMessage(String path, String chartPath, String chartEntry) {
+        return "File " + path + " is part of the chart in " + chartPath + " (" + chartEntry + "), which is copied as "
+                + "published: no rule may write there. Write the file in another folder of the chart folder, such as "
+                + chartPath + "/environments/.";
     }
 
     /** Whether a repository path matches one of the profile's protected globs: never written nor deleted. */

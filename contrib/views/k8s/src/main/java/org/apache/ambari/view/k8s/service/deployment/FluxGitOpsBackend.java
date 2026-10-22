@@ -497,6 +497,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             } finally {
                 deleteRecursively(work);
             }
+            // Now that the chart's own entries are known: no rule replaces one of them.
+            String chartPath = repositoryPathText(chartDir);
+            java.util.Set<String> chartEntries = ProfileRenderer.chartEntries(chartFiles.keySet());
+            for (ProfileRenderer.RenderedFile file : files) {
+                String entry = ProfileRenderer.chartEntryOf(chartPath, file.path(), chartEntries);
+                if (entry != null) {
+                    throw new IllegalArgumentException(ProfileRenderer.chartFileMessage(file.path(), chartPath, entry));
+                }
+            }
         }
         return new ProfilePlan(repositoryUrl, chartDir, chartFiles, files);
     }
@@ -506,9 +515,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * then the files the profile's rules render around it. A {@code createIfMissing} file already in the repository is
      * left as it is.
      *
-     * @return the chart path in the repository, or {@code null} when the profile copies no chart
+     * @return which repository paths are the chart's own files, which the deploy's secrets are not searched in;
+     *         {@code null} when the profile copies no chart
      */
-    private Path writeProfileFiles(GitOpsProfile profile, GitClient gitClient, Path repoDir, List<Path> writtenFiles,
+    private java.util.function.Predicate<Path> writeProfileFiles(GitOpsProfile profile, GitClient gitClient, Path repoDir, List<Path> writtenFiles,
                                    String namespace, String release, String serviceKey, String repoName, String chart,
                                    String version, GitOpsSecretValues.Split split, String valuesSecretName,
                                    Map<String, String> fileEdits)
@@ -516,14 +526,24 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         ProfilePlan plan = planProfileFiles(profile, repoDir, namespace, release, serviceKey, repoName, chart, version,
                 split, valuesSecretName, fileEdits);
         Path chartDir = plan.chartDir();
+        java.util.function.Predicate<Path> chartFile = null;
         if (chartDir != null) {
-            // Replaced as a whole, so a file the new version no longer has goes too.
-            gitClient.deletePath(chartDir);
+            // The chart's own entries are replaced as the new version has them, a file it no longer has going too. The
+            // other folders of the chart folder, the profile's files and the team's, stay as they are.
+            String chartPath = repositoryPathText(chartDir);
+            java.util.Set<String> chartEntries = ProfileRenderer.chartEntries(plan.chartFiles().keySet());
             Map<Path, byte[]> written = new LinkedHashMap<>();
             for (Map.Entry<String, byte[]> file : plan.chartFiles().entrySet()) {
                 written.put(chartDir.resolve(file.getKey()), file.getValue());
             }
-            gitClient.write(new GitClient.Change(written, Set.of()));
+            Set<Path> stale = new java.util.LinkedHashSet<>();
+            for (String existing : filesUnder(repoDir, chartDir)) {
+                if (chartEntries.contains(existing.split("/", 2)[0]) && !plan.chartFiles().containsKey(existing)) {
+                    stale.add(chartDir.resolve(existing));
+                }
+            }
+            gitClient.write(new GitClient.Change(written, stale));
+            chartFile = path -> ProfileRenderer.chartEntryOf(chartPath, repositoryPathText(path), chartEntries) != null;
         }
         for (ProfileRenderer.RenderedFile file : plan.files()) {
             Path path = Path.of(file.path());
@@ -535,7 +555,28 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         logFluxInfo(namespace, release, "apply", "Wrote the release with GitOps profile %s%s", profile.name,
                 chartDir != null ? ", chart " + chart + " " + version + " in " + chartDir : "");
-        return chartDir;
+        return chartFile;
+    }
+
+    /** A repository path as profiles write it: slash-separated. */
+    private static String repositoryPathText(Path path) {
+        return path.toString().replace('\\', '/');
+    }
+
+    /**
+     * The regular files under a folder of the checkout, by path inside it, slash-separated; links are neither listed
+     * nor followed. None when the folder does not exist.
+     */
+    private static List<String> filesUnder(Path repoDir, Path folder) throws IOException {
+        Path root = repoDir.resolve(folder);
+        if (!Files.isDirectory(root, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return List.of();
+        }
+        try (java.util.stream.Stream<Path> walk = Files.walk(root)) {
+            return walk.filter(p -> Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                    .map(p -> repositoryPathText(root.relativize(p)))
+                    .toList();
+        }
     }
 
     /**
@@ -2084,10 +2125,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String hrYaml = null;
         String specDigest = null;
         List<SourceSecret> sourceSecrets = new ArrayList<>();
-        // Where a file profile copies the chart: published content, which the deploy's secrets are not searched in.
-        Path chartDir = null;
+        // The chart's own files a file profile copies: published content, which the deploy's secrets are not searched in.
+        java.util.function.Predicate<Path> chartFile = null;
         if (filesProfile != null) {
-            chartDir = writeProfileFiles(filesProfile, gitClient, repoDir, writtenFiles, namespace, release, serviceKey,
+            chartFile = writeProfileFiles(filesProfile, gitClient, repoDir, writtenFiles, namespace, release, serviceKey,
                     repoName, chartInSource, version, split, valuesSecretName, git.getFileEdits());
         } else {
             // The chart source of the release, and the Secrets Flux reads it with, written before the commit.
@@ -2150,7 +2191,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
 
         // Fail closed: nothing that holds a password or secret is committed, whatever wrote it there.
-        String leakingFile = fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets, chartDir);
+        String leakingFile = fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets, chartFile);
         if (leakingFile != null) {
             throw new IllegalStateException("GitOps deploy of " + namespace + "/" + release + " stopped: "
                     + leakingFile + " would contain a password or secret value, so nothing was committed to Git. "
@@ -5337,16 +5378,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      */
     static String fileLeakingSecrets(Path repoDir, GitClient gitClient, List<Path> writtenFiles,
                                      GitOpsSecretValues secrets) throws IOException {
-        return fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets, null);
+        return fileLeakingSecrets(repoDir, gitClient, writtenFiles, secrets, (java.util.function.Predicate<Path>) null);
     }
 
     /**
-     * Same as {@link #fileLeakingSecrets(Path, GitClient, List, GitOpsSecretValues)}, leaving out the files under
-     * {@code excluded}: a chart copied as published, whose own default settings are not the deploy's and could match a
-     * short secret by chance.
+     * Same as {@link #fileLeakingSecrets(Path, GitClient, List, GitOpsSecretValues)}, leaving out the files
+     * {@code excluded} accepts: the files of a chart copied as published, whose own default settings are not the
+     * deploy's and could match a short secret by chance.
      */
     static String fileLeakingSecrets(Path repoDir, GitClient gitClient, List<Path> writtenFiles,
-                                     GitOpsSecretValues secrets, Path excluded) throws IOException {
+                                     GitOpsSecretValues secrets, java.util.function.Predicate<Path> excluded)
+            throws IOException {
         if (secrets.isEmpty()) {
             return null;
         }
@@ -5354,7 +5396,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         writtenFiles.forEach(f -> files.add(f.normalize()));
         gitClient.changedFiles().forEach(f -> files.add(f.normalize()));
         for (Path file : files) {
-            if (excluded != null && file.startsWith(excluded)) {
+            if (excluded != null && excluded.test(file)) {
                 continue;
             }
             Path absolute = repoDir.resolve(file);

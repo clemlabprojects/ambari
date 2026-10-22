@@ -70,6 +70,38 @@ export function examplePath(path: string, profile: GitOpsProfile, example: Examp
   });
 }
 
+/** The entries of a chart folder Helm gives a meaning to: they belong to the chart, whatever version is copied. */
+export const HELM_CHART_ENTRIES = ['Chart.yaml', 'Chart.lock', 'values.yaml', 'values.schema.json', 'requirements.yaml',
+  'requirements.lock', 'templates', 'charts', 'crds'];
+
+/**
+ * The entries of the chart folder that belong to the chart: those Helm gives a meaning to, and, once a preview listed
+ * the chart's files, the top-level files and folders of its package. The other folders of the chart folder hold the
+ * profile's files and the team's.
+ */
+export function chartEntries(chartPath: string, preview?: GitOpsPreview | null): Set<string> {
+  const entries = new Set(HELM_CHART_ENTRIES);
+  if (preview && chartPath && preview.chartPath === chartPath) {
+    preview.files.filter(f => f.origin === 'chart' && f.change !== 'removed' && f.path.startsWith(`${chartPath}/`))
+      .forEach(f => entries.add(f.path.slice(chartPath.length + 1).split('/')[0]));
+  }
+  return entries;
+}
+
+/** The entry of the chart a path falls in, or undefined when the path is not one of the chart's. */
+export function chartEntryOf(chartPath: string, path: string, entries: Set<string>): string | undefined {
+  if (!chartPath) return undefined;
+  if (path === chartPath) return chartPath;
+  if (!path.startsWith(`${chartPath}/`)) return undefined;
+  const first = path.slice(chartPath.length + 1).split('/')[0];
+  return entries.has(first) ? first : undefined;
+}
+
+/** Why no file of the profile may be written at a path of the chart. */
+export const chartFileProblem = (chartPath: string, entry: string): string =>
+  `Part of the chart (${entry}), copied as published: no file of the profile may be written there. Use another folder `
+  + `of the chart folder, such as ${chartPath}/environments/.`;
+
 /** A path relative to the repository root, without leading, trailing or doubled slashes. */
 export const normalizePath = (p: string): string => (p || '').trim().split('/').map(s => s.trim()).filter(Boolean).join('/');
 
@@ -94,6 +126,7 @@ export function repositoryEntries(profile: GitOpsProfile, example: ExampleDeploy
     out.push({ key: 'chart-folder', path: chartPath, kind: 'chartFolder' });
     chartFiles.forEach(f => out.push({ key: `file:${f.path}`, path: f.path, kind: 'chart', file: f }));
   }
+  const entries = chartEntries(chartPath, preview);
   const rendered = new Set<string>();
   const templates = new Set<string>();
   profile.files.forEach((rule, i) => {
@@ -104,8 +137,8 @@ export function repositoryEntries(profile: GitOpsProfile, example: ExampleDeploy
       problem = 'No path yet.';
     } else if ((rule.path || '').split('/').some(s => s.trim() === '..' || s.trim() === '.')) {
       problem = 'The path must stay inside the repository.';
-    } else if (chartPath && (example_ === chartPath || example_.startsWith(`${chartPath}/`))) {
-      problem = 'Inside the chart folder, which is copied as published: no file may be written there.';
+    } else if (chartEntryOf(chartPath, example_, entries)) {
+      problem = chartFileProblem(chartPath, chartEntryOf(chartPath, example_, entries)!);
     } else if (templates.has(path) || rendered.has(example_)) {
       problem = 'Another file of the profile has the same path.';
     }

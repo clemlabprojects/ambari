@@ -128,7 +128,16 @@ class ProfileRendererTest {
         GitOpsProfile underChart = environmentsLayout();
         underChart.files.add(rule("{{ chartPath }}/values.yaml", GitOpsProfile.MODE_ALWAYS, "x"));
         assertTrue(assertThrows(IllegalArgumentException.class,
-                () -> ProfileRenderer.render(underChart, context(), List.of())).getMessage().contains("chart path"));
+                () -> ProfileRenderer.render(underChart, context(), List.of())).getMessage().contains("part of the chart"));
+        GitOpsProfile templates = environmentsLayout();
+        templates.files.add(rule("chart/templates/extra.yaml", GitOpsProfile.MODE_ALWAYS, "x"));
+        assertThrows(IllegalArgumentException.class, () -> ProfileRenderer.render(templates, context(), List.of()));
+
+        // Another folder of the chart folder holds the profile's files.
+        GitOpsProfile beside = environmentsLayout();
+        beside.files.add(rule("{{ chartPath }}/environments/{{ namespace }}.yaml", GitOpsProfile.MODE_ALWAYS, "x"));
+        assertTrue(ProfileRenderer.render(beside, context(), List.of()).stream()
+                .anyMatch(f -> f.path().equals("chart/environments/team-a.yaml")));
 
         GitOpsProfile protectedFile = environmentsLayout();
         protectedFile.files.add(rule("docs/runbook.md", GitOpsProfile.MODE_ALWAYS, "x"));
