@@ -26,6 +26,9 @@ from resource_management.libraries.functions.expect import expect
 from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions.is_empty import is_empty
 from resource_management.libraries.functions.get_stack_version import get_stack_version
+from resource_management.libraries.functions import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.stack_features import get_stack_feature_version
 from resource_management.libraries.resources.hdfs_resource import HdfsResource
 from resource_management.libraries.functions.setup_ranger_plugin_xml import generate_ranger_service_config
 from resource_management.libraries.functions.get_not_managed_resources import get_not_managed_resources
@@ -46,6 +49,25 @@ tmp_dir = Script.get_tmp_dir()
 stack_root = Script.get_stack_root()
 
 java_home = config['ambariLevelParams']['java_home']
+primary_java_home = java_home
+# The Impala daemons embed a JVM that loads the Hive jars, built for Java 21 on ODP 1.3.2.0+;
+# on stacks that advertise secondary_java_home_support the metainfo javaHomeSelector points us
+# at the secondary JDK. Ambari 2.8.x routes the selector through host/command/ambariLevel params
+# depending on the dispatch path; resolve the selector and the JDK from any of them.
+version_for_stack_feature_checks = get_stack_feature_version(config)
+host_level_params = default("/hostLevelParams", {})
+ambari_level_params = default("/ambariLevelParams", {})
+command_params_map = default("/commandParams", {})
+java_home_selector = (
+    host_level_params.get("java_home_selector")
+    or command_params_map.get("java_home_selector")
+    or ambari_level_params.get("java_home_selector")
+    or "java_home"
+)
+if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
+    resolved_java_home = host_level_params.get(java_home_selector) or ambari_level_params.get(java_home_selector)
+    if resolved_java_home:
+        java_home = resolved_java_home
 java_version = expect("/ambariLevelParams/java_version", int)
 ambari_java_home = config['ambariLevelParams']['ambari_java_home']
 ambari_java_exec = format("{ambari_java_home}/bin/java")
@@ -403,7 +425,7 @@ hive_site_config = dict(config['configurations']['hive-site'])
 hivemetastore_site_config = dict(default('/configurations/hivemetastore-site', {}))
 core_site_config = dict(config['configurations']['core-site'])
 hdfs_site_config = dict(default('/configurations/hdfs-site', {}))
-java64_home = config['ambariLevelParams']['java_home']
+java64_home = java_home
 jdk_location = default("/ambariLevelParams/jdk_location", None)
 ldap_credential_cmd = "\"{0}/bin/java\" -cp \"{1}\" org.apache.ambari.server.credentialapi.CredentialUtil get {2} -provider {3} 2>/dev/null | tail -n 1".format(
     java64_home,

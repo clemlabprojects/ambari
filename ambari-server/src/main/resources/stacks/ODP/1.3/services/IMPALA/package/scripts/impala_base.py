@@ -529,6 +529,17 @@ class ImpalaBase(Script):
     def _resolve_java_home(self):
         import params
 
+        # A JDK selected through javaHomeSelector is required: falling back to the primary JDK
+        # would only fail later, inside the embedded JVM, with an unrelated-looking crash.
+        if params.java_home != params.primary_java_home:
+            if self._is_valid_java_home(params.java_home):
+                return os.path.realpath(params.java_home)
+            raise Fail(
+                "Impala requires the JDK selected by {0} ({1}), which is not a valid JDK on this host "
+                "(libjvm.so and libjsig.so not found). Install it, or correct the Java home configured "
+                "in Ambari.".format(params.java_home_selector, params.java_home)
+            )
+
         candidates = [
             params.java_home,
             getattr(params, "java64_home", None),

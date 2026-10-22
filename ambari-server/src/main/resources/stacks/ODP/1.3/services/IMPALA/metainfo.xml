@@ -30,6 +30,7 @@ limitations under the License.
                   <displayName>Impala State Store</displayName>
                   <category>MASTER</category>
                   <cardinality>1-2</cardinality>
+                  <javaHomeSelector>secondary_java_home</javaHomeSelector>
                   <versionAdvertised>true</versionAdvertised>
                   <commandScript>
                     <script>scripts/impala-state-store.py</script>
@@ -53,6 +54,7 @@ limitations under the License.
                   <displayName>Impala Catalog Service</displayName>
                   <category>MASTER</category>
                   <cardinality>1-2</cardinality>
+                  <javaHomeSelector>secondary_java_home</javaHomeSelector>
                   <versionAdvertised>true</versionAdvertised>
                   <dependencies>
                     <dependency>
@@ -92,6 +94,7 @@ limitations under the License.
                   <displayName>Impala Daemon</displayName>
                   <category>SLAVE</category>
                   <cardinality>1+</cardinality>
+                  <javaHomeSelector>secondary_java_home</javaHomeSelector>
                   <versionAdvertised>true</versionAdvertised>
                   <dependencies>
                     <dependency>
@@ -131,6 +134,7 @@ limitations under the License.
                   <displayName>Impala Atlas Extractor</displayName>
                   <category>SLAVE</category>
                   <cardinality>0+</cardinality>
+                  <javaHomeSelector>secondary_java_home</javaHomeSelector>
                   <versionAdvertised>true</versionAdvertised>
                   <dependencies>
                     <dependency>
@@ -153,6 +157,7 @@ limitations under the License.
                     <displayName>Impala Client</displayName>
                     <category>CLIENT</category>
                     <cardinality>1+</cardinality>
+                    <javaHomeSelector>secondary_java_home</javaHomeSelector>
                     <versionAdvertised>true</versionAdvertised>
                     <dependencies>
                       <dependency>
