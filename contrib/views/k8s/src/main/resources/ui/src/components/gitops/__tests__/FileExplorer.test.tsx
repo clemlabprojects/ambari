@@ -66,3 +66,22 @@ describe('the files explorer', () => {
     expect(screen.getByText('The profile already has a file with this path.')).toBeInTheDocument();
   });
 });
+
+describe('removing from the explorer', () => {
+  it('keeps the confirmation open while the pointer leaves the row, and removes on confirm', async () => {
+    const removed: string[] = [];
+    render(
+      <FileExplorer nodes={nodes()} selectedKey={undefined} onSelect={() => undefined} editable
+        onCreateFile={() => undefined} onCreateFolder={() => undefined} canDelete={n => !!n.entry && n.entry.kind === 'rule'}
+        onDelete={n => removed.push(n.path)} badges={() => null} />,
+    );
+    const row = screen.getAllByRole('treeitem').find(r => r.textContent === 'README.md')!;
+    fireEvent.mouseEnter(row);
+    fireEvent.click(screen.getByLabelText('Remove environments/{{ namespace }}/README.md'));
+    fireEvent.mouseLeave(row);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    expect(removed).toEqual(['environments/{{ namespace }}/README.md']);
+  });
+});

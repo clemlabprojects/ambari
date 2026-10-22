@@ -80,6 +80,8 @@ const FileExplorer: React.FC<Props> = ({ nodes, selectedKey, onSelect, editable,
   const [name, setName] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [hovered, setHovered] = React.useState<string | null>(null);
+  // The row whose removal is being confirmed: its confirmation stays open while the pointer moves onto it.
+  const [confirming, setConfirming] = React.useState<string | null>(null);
   const input = React.useRef<InputRef>(null);
 
   const startCreating = (kind: 'file' | 'folder') => {
@@ -177,13 +179,26 @@ const FileExplorer: React.FC<Props> = ({ nodes, selectedKey, onSelect, editable,
         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><PathSegment text={n.name} /></span>
         <span style={{ flex: 1 }} />
         {badges(n)}
-        {editable && canDelete(n) && hovered === n.key && (
+        {editable && canDelete(n) && (
           <Popconfirm
             title={folder ? `Remove the folder ${n.path} and its files from the profile?` : `Remove ${n.path} from the profile?`}
-            onConfirm={e => { e?.stopPropagation(); onDelete(n); }}
-            onCancel={e => e?.stopPropagation()}
+            open={confirming === n.key}
+            onOpenChange={o => setConfirming(o ? n.key : null)}
+            onConfirm={e => { e?.stopPropagation(); setConfirming(null); onDelete(n); }}
+            onCancel={e => { e?.stopPropagation(); setConfirming(null); }}
+            okText="Remove"
+            okButtonProps={{ danger: true }}
           >
-            <DeleteOutlined onClick={e => e.stopPropagation()} style={{ color: token.colorTextSecondary }} />
+            <Tooltip title={folder ? 'Remove the folder' : 'Remove the file'}>
+              <DeleteOutlined
+                aria-label={`Remove ${n.path}`}
+                onClick={e => e.stopPropagation()}
+                style={{
+                  color: token.colorTextSecondary, padding: 4,
+                  visibility: hovered === n.key || selected || confirming === n.key ? 'visible' : 'hidden',
+                }}
+              />
+            </Tooltip>
           </Popconfirm>
         )}
       </div>
