@@ -74,6 +74,7 @@ class NIFI170ServiceAdvisor(service_advisor.ServiceAdvisor):
         properties = self.getSiteProperties(configurations, "nifi-properties")
         if not properties:
             return []
+        problems = self.validateSensitivePropsKey(self.getSiteProperties(configurations, "nifi-ambari-config"), properties, services, "nifi-ambari-config")
         items = []
         nifi2 = self.isNiFi2(services)
         algorithm = properties.get("nifi.sensitive.props.algorithm") or ""
@@ -86,4 +87,14 @@ class NIFI170ServiceAdvisor(service_advisor.ServiceAdvisor):
                 and (nifi2 or algorithm in NIFI2_SENSITIVE_PROPS_ALGORITHMS):
             items.append({"config-name": "nifi.sensitive.props.key", "item": self.getErrorItem(
                 "NiFi requires a sensitive properties key of at least {0} characters.".format(SENSITIVE_PROPS_KEY_MIN_LENGTH))})
-        return self.toConfigurationValidationProblems(items, "nifi-properties")
+        return problems + self.toConfigurationValidationProblems(items, "nifi-properties")
+
+    def validateSensitivePropsKey(self, ambari_config, nifi_properties, services, config_type):
+        """The key in nifi-ambari-config is the one NiFi uses (the scripts write it into nifi.properties)."""
+        key = (ambari_config or {}).get("nifi.sensitive.props.key") or ""
+        algorithm = nifi_properties.get("nifi.sensitive.props.algorithm") or ""
+        if key and not key.startswith("SECRET:") and len(key) < SENSITIVE_PROPS_KEY_MIN_LENGTH \
+                and (self.isNiFi2(services) or algorithm in NIFI2_SENSITIVE_PROPS_ALGORITHMS):
+            return self.toConfigurationValidationProblems([{"config-name": "nifi.sensitive.props.key", "item": self.getErrorItem(
+                "NiFi requires a sensitive properties key of at least {0} characters.".format(SENSITIVE_PROPS_KEY_MIN_LENGTH))}], config_type)
+        return []

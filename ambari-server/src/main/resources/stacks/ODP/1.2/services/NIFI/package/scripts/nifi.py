@@ -35,6 +35,7 @@ from resource_management.core.logger import Logger
 from resource_management.core.source import Template
 
 import nifi_cli
+import nifi_sensitive_props
 import config_utils
 
 class Master(Script):
@@ -179,6 +180,20 @@ class Master(Script):
         sudo.unlink(client_json_file)
 
   def write_configurations(self, params, is_starting):
+
+    # Changing the sensitive properties key or algorithm re-encrypts the existing flow, which is only safe while NiFi is
+    # stopped: at start the flow is converted first, otherwise the change waits for the next start
+    migration = nifi_sensitive_props.FlowSensitivePropertiesMigration(params.nifi_install_dir, params.nifi_config_dir,
+                                                                       params.jdk64_home, params.nifi_user, params.nifi_group)
+    new_key = params.nifi_properties.get(nifi_sensitive_props.KEY)
+    new_algorithm = params.nifi_properties.get(nifi_sensitive_props.ALGORITHM)
+    if is_starting:
+      migration.run(new_key, new_algorithm)
+    else:
+      pending = migration.current_values_if_changed(new_key, new_algorithm)
+      if pending:
+        Logger.warning("The NiFi sensitive properties key or algorithm changed: it is applied, and the flow re-encrypted, at the next NiFi start")
+        params.nifi_properties.update(pending)
 
     if os.path.isfile(params.nifi_config_dir + '/bootstrap.conf'):
       bootstrap_current_conf = nifi_toolkit_util_common.convert_properties_to_dict(params.nifi_config_dir + '/bootstrap.conf')

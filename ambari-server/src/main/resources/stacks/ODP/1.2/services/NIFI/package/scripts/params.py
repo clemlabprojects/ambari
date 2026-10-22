@@ -291,6 +291,10 @@ nifi_node_logback_content = config['configurations']['nifi-node-logback-env']['c
 # params from nifi-properties-env
 nifi_master_properties_content = config['configurations']['nifi-master-properties-env']['content']
 nifi_properties = config['configurations']['nifi-properties'].copy()
+# The key shown in the NiFi configuration (nifi-ambari-config) is the one encrypt-config writes into nifi.properties at
+# every NiFi 1.x start; use it everywhere so nifi.properties, encrypt-config and the flow never disagree
+if nifi_sensitive_props_key:
+  nifi_properties['nifi.sensitive.props.key'] = nifi_sensitive_props_key
 # NiFi 2.x dropped nifi.flow.configuration.json.file and reads the JSON flow from nifi.flow.configuration.file
 if check_stack_feature('nifi_flow_json_only', version_for_stack_feature_checks) and 'nifi.flow.configuration.json.file' in nifi_properties:
   nifi_properties['nifi.flow.configuration.file'] = nifi_properties.pop('nifi.flow.configuration.json.file')
