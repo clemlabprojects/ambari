@@ -28,6 +28,7 @@ import { getPods, listDeployments, type DeploymentRow } from '../api/client';
 import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
+import { deployedBy } from './deployedBy';
 import { gitOptionsForRelease, NOT_INSTALLED_BY_FLUX, notInstalledByFlux, releaseRedeployPayload, rollbackHeldInGit, ROLLBACK_IN_GIT } from './releaseRedeploy';
 import { deploySubmittedMessage } from '../components/common/operationOutcome';
 import { offersCatalogs } from './releaseCatalogs';
@@ -1210,7 +1211,10 @@ const HelmReleasesPage: React.FC = () => {
             if (combined.staleGeneration) extraTags.push(<Tag key="reconciling" color="blue">Reconciling</Tag>);
             if (combined.restartRequired && combined.serviceKey) extraTags.push(<Tag key="restart" color="orange">Restart required</Tag>);
             if (combined.securityProfileStale) extraTags.push(<Tag key="security" color="orange">Security refresh</Tag>);
-            if (combined.deploymentMode === 'FLUX_GITOPS') extraTags.push(<Tooltip key="gitops" title={fluxTip || 'Flux GitOps'}><Tag color="blue">GitOps</Tag></Tooltip>);
+            // How the release reaches the cluster, and for a GitOps profile where it stands in Git.
+            const by = deployedBy(combined);
+            extraTags.push(<Tooltip key="deployed-by" title={by.mark.label === 'Git · Flux' && fluxTip ? fluxTip : by.mark.tip}><Tag color={by.mark.color}>{by.mark.label}</Tag></Tooltip>);
+            const notInstalledYet = !!by.state && by.state.label !== 'Installed';
             if (combined.gitPendingDelete) extraTags.push(<Tooltip key="pending-delete" title={combined.message || 'The removal waits for its pull request to be merged'}><Tag color="volcano">Removal pending</Tag></Tooltip>);
             if (combined.deploymentMode === 'FLUX_GITOPS' && combined.sourceStatus) {
               const isReady = combined.sourceStatus?.toLowerCase() === 'true' || combined.sourceStatus?.toLowerCase() === 'ready';
@@ -1227,9 +1231,13 @@ const HelmReleasesPage: React.FC = () => {
             return (
               <Space size={4} direction="vertical" align="start">
                 <Space size={4}>
-                  <Tooltip title={combined.message || fluxTip || 'Release status'}>
-                    <StatusTag status={combined.status} />
-                  </Tooltip>
+                  {notInstalledYet ? (
+                    <Tooltip title={by.state!.tip}><Tag color={by.state!.color}>{by.state!.label}</Tag></Tooltip>
+                  ) : (
+                    <Tooltip title={combined.message || fluxTip || 'Release status'}>
+                      <StatusTag status={combined.status} />
+                    </Tooltip>
+                  )}
                   <Button type="link" size="small" onClick={() => setStatusModalRelease(combined)}>Details</Button>
                   <Tooltip title="Refresh status">
                     <Button
