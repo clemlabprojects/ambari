@@ -23,6 +23,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import RepositoryPreview from '../components/gitops/RepositoryPreview';
 import { serverMessage } from '../utils/serverMessage';
+import { GITOPS_LAYOUT, submittedDeployment, wizardMode } from '../utils/deploymentModes';
 import yaml from 'yaml';
 
 import { previewGitOpsProfile, type GitOpsPreview, getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getReleaseTlsState, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
@@ -178,7 +179,8 @@ const ServiceWizardPage: React.FC = () => {
             if (upgradeState) {
               initial.releaseName = upgradeState.releaseName || initial.releaseName;
               initial.namespace = upgradeState.namespace || initial.namespace;
-              initial.deploymentMode = upgradeState.deploymentMode || 'DIRECT_HELM';
+              // A release written with a file profile is shown in the "GitOps with a repository layout" mode.
+              initial.deploymentMode = wizardMode(upgradeState.deploymentMode, upgradeState.git?.profile);
               if (upgradeState.repoId) {
                 initial.repoId = upgradeState.repoId;
               }
@@ -894,9 +896,10 @@ const ServiceWizardPage: React.FC = () => {
         // when the release is redeployed without one. A deploy stops when one cannot be read.
         truststoreRefs: Array.isArray((installValues as any)?.truststoreRefs)
           ? normalizeTruststoreRefs((installValues as any).truststoreRefs, managedTruststores) : [],
-        deploymentMode: (installValues as any)?.deploymentMode || 'DIRECT_HELM',
-        // A working branch left in the form names nothing for a direct commit, which the server refuses.
-        git: gitOptionsToSubmit((installValues as any)?.git) || undefined,
+        // The server's mode and Git options for the mode chosen; a working branch left in the form names nothing for a
+        // direct commit, which the server refuses.
+        deploymentMode: submittedDeployment((installValues as any)?.deploymentMode, (installValues as any)?.git).deploymentMode,
+        git: gitOptionsToSubmit(submittedDeployment((installValues as any)?.deploymentMode, (installValues as any)?.git).git) || undefined,
         // Snapshot of raw form state (envelope keys stripped) so backend can read
         // excludeFromValues form fields when rendering OIDC redirectUriTemplate etc.
         // Without this, JupyterHub's "{{jupyterHost}}" renders empty server-side and
@@ -908,7 +911,7 @@ const ServiceWizardPage: React.FC = () => {
   // A GitOps deploy with a file profile: the repository can be previewed, and the files the profile creates once
   // edited before they are committed (git.fileEdits).
   const gitProfile: string | undefined = (installValues as any)?.git?.profile || undefined;
-  const previewsGit = (installValues as any)?.deploymentMode === 'FLUX_GITOPS' && !!gitProfile && gitProfile !== 'flux';
+  const previewsGit = (installValues as any)?.deploymentMode === GITOPS_LAYOUT && !!gitProfile;
   const fileEdits: Record<string, string> = (installValues as any)?.git?.fileEdits || {};
   const setFileEdit = (path: string, content: string | null) => setInstallValues((prev: any) => {
     const edits = { ...(prev?.git?.fileEdits || {}) };

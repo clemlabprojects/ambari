@@ -28,6 +28,7 @@ import { namespaceRules, releaseNameRules } from '../../utils/nameRules';
 import GitSshFields from '../common/GitSshFields';
 import { savedRepoGitFields } from '../../utils/gitSsh';
 import { listGitOpsProfiles, type GitOpsProfile } from '../../api/client';
+import { DEPLOYMENT_MODE_LABELS, DIRECT_HELM, GITOPS_FLUX, GITOPS_LAYOUT, savedGitRepos, writesToGit } from '../../utils/deploymentModes';
 
 interface InstallStepProps {
   definition: any;
@@ -123,9 +124,13 @@ const InstallStep: React.FC<InstallStepProps> = ({
     if (mode !== 'general') return;
     listGitOpsProfiles().then(r => setGitOpsProfiles(r.items || [])).catch(() => setGitOpsProfiles([]));
   }, [mode]);
-  const chosenProfile = gitOpsProfiles.find(p => p.name === form.getFieldValue(['git', 'profile']));
+  const deploymentMode: string | undefined = form.getFieldValue('deploymentMode') ?? data?.deploymentMode;
+  // The profiles that describe a repository layout; the built-in Flux one is the "GitOps with Flux" mode.
+  const layoutProfiles = gitOpsProfiles.filter(p => p.kind === 'files');
   // A file profile decides how its deploys are delivered and where they are written.
-  const filesProfile = chosenProfile?.kind === 'files' ? chosenProfile : undefined;
+  const filesProfile = layoutProfiles.find(p => p.name === form.getFieldValue(['git', 'profile']));
+  // Read when the step is shown, so a repository saved since is listed.
+  const savedRepos = savedGitRepos();
 
   if (mode === 'general') {
       return (
@@ -161,114 +166,97 @@ const InstallStep: React.FC<InstallStepProps> = ({
                   ))}
                 </Select>
             </Form.Item>
-            {/* Flux reconciles a GitOps release from Git: a direct Helm upgrade would be undone at its next
-                reconcile, and the server refuses it. */}
+            {/* A release written to Git is deployed from Git: a direct Helm upgrade would be undone, and the server refuses
+                it. Its mode is kept: written with a profile, it keeps that profile too. */}
             <Form.Item
               name="deploymentMode"
               label="Deployment mode"
-              initialValue="DIRECT_HELM"
+              initialValue={DIRECT_HELM}
               tooltip={heldInGit
-                ? 'This release is deployed with Flux GitOps: its changes are committed to Git, which Flux applies. To deploy it with Helm instead, uninstall it first.'
-                : 'Direct Helm installs releases immediately; Flux GitOps commits manifests to Git.'}
+                ? 'This release is written to Git, and deployed from there. To deploy it another way, uninstall it first.'
+                : 'Direct Helm installs the release now. GitOps with Flux writes a HelmRelease that Flux applies. GitOps with a repository layout writes the chart and the files of a GitOps profile, for your Argo CD or CI to deploy.'}
               rules={[{ required: true }]}
             >
               <Radio.Group disabled={heldInGit}>
-                <Radio value="DIRECT_HELM">Direct Helm</Radio>
-                <Radio value="FLUX_GITOPS">Flux GitOps</Radio>
+                <Radio value={DIRECT_HELM}>{DEPLOYMENT_MODE_LABELS[DIRECT_HELM]}</Radio>
+                <Radio value={GITOPS_FLUX}>{DEPLOYMENT_MODE_LABELS[GITOPS_FLUX]}</Radio>
+                <Radio value={GITOPS_LAYOUT}>{DEPLOYMENT_MODE_LABELS[GITOPS_LAYOUT]}</Radio>
               </Radio.Group>
             </Form.Item>
-            {form.getFieldValue('deploymentMode') === 'FLUX_GITOPS' && (
-              <Card size="small" title="Flux / GitOps settings">
-                <Form.Item name={['git','repoId']} label="Git repository" tooltip="Select a saved Git repository">
-                  <Select
-                    placeholder="Select Git repository or enter URL manually"
-                    allowClear
-                    showSearch
-                    optionFilterProp="label"
-                    onChange={(value) => {
-                      if (value && typeof value === 'string' && value !== '__manual__') {
-                        try {
-                          const gitRepos = (window as any).__gitRepos || [];
-                          const repo = gitRepos.find((r: any) => r.id === value);
-                          if (repo) {
-                            form.setFieldsValue({
-                              git: {
-                                ...form.getFieldValue('git'),
-                                ...savedRepoGitFields(repo),
-                              }
-                            });
-                          }
-                        } catch (e) {
-                          console.error('Failed to load Git repo', e);
-                        }
-                      }
-                    }}
-                  >
-                    <Select.Option value="__manual__">Enter URL manually</Select.Option>
-                    {(() => {
-                      try {
-                        const gitRepos = (window as any).__gitRepos || [];
-                        return gitRepos.map((repo: any) => (
-                          <Select.Option key={repo.id} value={repo.id} label={`${repo.name} (${repo.url})`}>
-                            {repo.name} - {repo.url}
-                          </Select.Option>
-                        ));
-                      } catch {
-                        return null;
-                      }
-                    })()}
-                  </Select>
-                </Form.Item>
-                <Form.Item name={['git','repoUrl']} label="Git repository URL" rules={[{ required: true, message: 'Repository is required for GitOps' }]}>
-                  <Input placeholder="https://git.example.com/org/cluster-config.git" />
-                </Form.Item>
-                <Form.Item name={['git','baseBranch']} label="Base branch" tooltip={BASE_BRANCH_TOOLTIP}>
-                  <Input placeholder={DEFAULT_BASE_BRANCH} />
-                </Form.Item>
+            {deploymentMode === GITOPS_LAYOUT && (
+              <Card size="small" title="Repository layout" style={{ marginBottom: 16 }}>
                 <Form.Item name={['git','profile']} label="GitOps profile"
-                  tooltip="How the release is written into Git: the Flux layout, or the files of a profile made on the GitOps Profiles page for Argo CD or a CI pipeline.">
-                  <Select allowClear
-                    placeholder={upgrade ? 'The profile the release was deployed with' : 'flux (HelmRelease applied by Flux)'}
-                    options={gitOpsProfiles.map(p => ({ value: p.name, label: p.description ? `${p.name} — ${p.description}` : p.name }))} />
+                  rules={[{ required: true, message: 'Choose the profile that describes the layout of the repository' }]}
+                  tooltip="The files the deploy writes around the chart, made on the GitOps Profiles page.">
+                  <Select placeholder="Choose a profile" disabled={heldInGit}
+                    notFoundContent="No profile yet: create one on the GitOps Profiles page."
+                    options={layoutProfiles.map(p => ({ value: p.name, label: p.description ? `${p.name} — ${p.description}` : p.name }))} />
                 </Form.Item>
-                {filesProfile ? (
-                  <Alert type="info" showIcon style={{ marginBottom: 16 }}
+                {filesProfile && (
+                  <Alert type="info" showIcon
                     message={`Written as the profile ${filesProfile.name} says`}
                     description={<>
                       {filesProfile.chartPath ? <>The chart is copied to <code>{filesProfile.chartPath}</code>, with the profile's files around it. </> : 'The profile\'s files are written. '}
                       {filesProfile.delivery?.mode === 'pullRequest'
                         ? `The change is proposed in a pull request from a branch starting with ${filesProfile.delivery.branchPrefix || 'kdps/'}.`
                         : 'The change is committed to the base branch.'}
-                      {' '}Your Argo CD or pipeline then deploys it. Check the files with Preview Git repository before deploying.
+                      {' '}Your Argo CD or CI then deploys it. Check the files with Preview Git repository before deploying.
                     </>} />
-                ) : (<>
-                <Form.Item name={['git','pathPrefix']} label="Path prefix">
-                  <Input placeholder="clusters/default" />
-                </Form.Item>
-                <Form.Item name={['git','commitMode']} label="Commit mode" initialValue="DIRECT_COMMIT">
-                  <Select>
-                    <Select.Option value="DIRECT_COMMIT">{COMMIT_MODE_LABELS.DIRECT_COMMIT}</Select.Option>
-                    <Select.Option value="PR_MODE">{COMMIT_MODE_LABELS.PR_MODE}</Select.Option>
-                  </Select>
-                </Form.Item>
-                </>)}
-                {/* Only a pull request has a working branch: a direct commit goes to the base branch. */}
-                {!filesProfile && opensPullRequest(form.getFieldValue('git')) && (
-                  <Form.Item
-                    name={['git','branch']}
-                    label="Working branch"
-                    tooltip={WORKING_BRANCH_TOOLTIP}
-                    dependencies={[['git','baseBranch']]}
-                    rules={[({ getFieldValue }) => ({
-                      validator: (_, value) => {
-                        const problem = workingBranchProblem({ ...(getFieldValue('git') || {}), branch: value });
-                        return problem ? Promise.reject(new Error(problem)) : Promise.resolve();
-                      },
-                    })]}
-                  >
-                    <Input placeholder="Left empty: a new branch for each change" />
-                  </Form.Item>
                 )}
+              </Card>
+            )}
+            {writesToGit(deploymentMode) && (
+              <Card size="small" title={deploymentMode === GITOPS_FLUX ? 'Flux settings' : 'Git repository'}>
+                <Form.Item name={['git','repoId']} label="Saved Git repository" tooltip="A repository saved on the Git Repositories page fills in its URL and access.">
+                  <Select
+                    placeholder={savedRepos.length ? 'Choose a saved repository, or enter its URL below' : 'No saved repository: enter its URL below'}
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    onChange={(value) => {
+                      const repo = savedRepos.find(r => r.id === value);
+                      if (repo) {
+                        form.setFieldsValue({ git: { ...form.getFieldValue('git'), ...savedRepoGitFields(repo) } });
+                        onValuesChange();
+                      }
+                    }}
+                    options={savedRepos.map(r => ({ value: r.id, label: `${r.name} (${r.url})` }))}
+                  />
+                </Form.Item>
+                <Form.Item name={['git','repoUrl']} label="Git repository URL" rules={[{ required: true, message: 'A GitOps deploy needs its Git repository' }]}>
+                  <Input placeholder="https://git.example.com/org/cluster-config.git" />
+                </Form.Item>
+                <Form.Item name={['git','baseBranch']} label="Base branch" tooltip={BASE_BRANCH_TOOLTIP}>
+                  <Input placeholder={DEFAULT_BASE_BRANCH} />
+                </Form.Item>
+                {deploymentMode === GITOPS_FLUX && (<>
+                  <Form.Item name={['git','pathPrefix']} label="Path prefix">
+                    <Input placeholder="clusters/default" />
+                  </Form.Item>
+                  <Form.Item name={['git','commitMode']} label="Commit mode" initialValue="DIRECT_COMMIT">
+                    <Select>
+                      <Select.Option value="DIRECT_COMMIT">{COMMIT_MODE_LABELS.DIRECT_COMMIT}</Select.Option>
+                      <Select.Option value="PR_MODE">{COMMIT_MODE_LABELS.PR_MODE}</Select.Option>
+                    </Select>
+                  </Form.Item>
+                  {/* Only a pull request has a working branch: a direct commit goes to the base branch. */}
+                  {opensPullRequest(form.getFieldValue('git')) && (
+                    <Form.Item
+                      name={['git','branch']}
+                      label="Working branch"
+                      tooltip={WORKING_BRANCH_TOOLTIP}
+                      dependencies={[['git','baseBranch']]}
+                      rules={[({ getFieldValue }) => ({
+                        validator: (_, value) => {
+                          const problem = workingBranchProblem({ ...(getFieldValue('git') || {}), branch: value });
+                          return problem ? Promise.reject(new Error(problem)) : Promise.resolve();
+                        },
+                      })]}
+                    >
+                      <Input placeholder="Left empty: a new branch for each change" />
+                    </Form.Item>
+                  )}
+                </>)}
                 <Form.Item name={['git','authToken']} label="Auth token">
                   <Input.Password placeholder="Personal access token (optional if using SSH)" />
                 </Form.Item>

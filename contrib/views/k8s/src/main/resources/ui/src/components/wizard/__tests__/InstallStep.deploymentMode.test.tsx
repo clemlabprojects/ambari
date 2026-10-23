@@ -47,35 +47,49 @@ const renderGeneral = (props: { upgrade?: boolean; deployedMode?: string; deploy
   );
 
 describe('InstallStep deployment mode', () => {
-  it('Upgrade/Config of a release deployed with Flux GitOps cannot switch it to Direct Helm', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('Upgrade/Config of a release written to Git cannot switch it to another mode', () => {
     renderGeneral({ upgrade: true, deployedMode: 'FLUX_GITOPS', deploymentMode: 'FLUX_GITOPS' });
     expect(screen.getByRole('radio', { name: 'Direct Helm' })).toBeDisabled();
-    expect(screen.getByRole('radio', { name: 'Flux GitOps' })).toBeDisabled();
-    expect(screen.getByRole('radio', { name: 'Flux GitOps' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'GitOps with Flux' })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: 'GitOps with a repository layout' })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: 'GitOps with Flux' })).toBeChecked();
   });
 
-  it('an install offers both modes', () => {
+  it('an install offers the three modes', () => {
     renderGeneral({ deploymentMode: 'DIRECT_HELM' });
     expect(screen.getByRole('radio', { name: 'Direct Helm' })).toBeEnabled();
-    expect(screen.getByRole('radio', { name: 'Flux GitOps' })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: 'GitOps with Flux' })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: 'GitOps with a repository layout' })).toBeEnabled();
   });
 
-  it('Upgrade/Config of a release deployed with Helm offers both modes', () => {
+  it('Upgrade/Config of a release deployed with Helm offers the GitOps modes', () => {
     renderGeneral({ upgrade: true, deployedMode: 'DIRECT_HELM', deploymentMode: 'DIRECT_HELM' });
-    expect(screen.getByRole('radio', { name: 'Flux GitOps' })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: 'GitOps with Flux' })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: 'GitOps with a repository layout' })).toBeEnabled();
   });
 
-  it('a file profile replaces the Flux path and commit settings with what the profile says', async () => {
-    renderGeneral({ deploymentMode: 'FLUX_GITOPS', profile: 'environments' });
+  it('a repository layout asks for its profile and the repository, not the Flux settings', async () => {
+    renderGeneral({ deploymentMode: 'GITOPS_LAYOUT', profile: 'environments' });
     expect(await screen.findByText('Written as the profile environments says')).toBeInTheDocument();
+    expect(screen.getByText('GitOps profile')).toBeInTheDocument();
+    expect(screen.getByText('Git repository URL')).toBeInTheDocument();
     expect(screen.queryByText('Path prefix')).not.toBeInTheDocument();
     expect(screen.queryByText('Commit mode')).not.toBeInTheDocument();
   });
 
-  it('the Flux profile keeps the Flux settings', async () => {
-    renderGeneral({ deploymentMode: 'FLUX_GITOPS', profile: 'flux' });
+  it('GitOps with Flux asks for the Flux settings and no profile', async () => {
+    renderGeneral({ deploymentMode: 'FLUX_GITOPS' });
     await waitFor(() => expect(screen.getByText('Path prefix')).toBeInTheDocument());
     expect(screen.getByText('Commit mode')).toBeInTheDocument();
-    expect(screen.queryByText(/Written as the profile/)).not.toBeInTheDocument();
+    expect(screen.queryByText('GitOps profile')).not.toBeInTheDocument();
+  });
+
+  it('lists the saved Git repositories without the Git Repositories page being opened first', () => {
+    localStorage.setItem('k8s-view-git-repos', JSON.stringify([
+      { id: 'r1', name: 'platform', url: 'https://git.example.org/platform/gitops.git', type: 'HTTPS' }]));
+    renderGeneral({ deploymentMode: 'FLUX_GITOPS' });
+    expect(screen.getByText('Choose a saved repository, or enter its URL below')).toBeInTheDocument();
   });
 });
