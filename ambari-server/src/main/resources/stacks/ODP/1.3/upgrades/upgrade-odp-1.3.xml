@@ -23,6 +23,8 @@
   <skip-service-check-failures>false</skip-service-check-failures>
   <type>ROLLING</type>
   <prerequisite-checks>
+    <!-- ODP: the deprecated LIVY2_SERVER must be migrated (scripts/migrate_legacy_livy.py) before upgrading. -->
+    <check>org.apache.ambari.server.checks.LegacyLivyCheck</check>
     <!-- List of additional pre-req checks to run in addition to the required pre-reqs -->
     <check>org.apache.ambari.server.checks.HiveMultipleMetastoreCheck</check>
     <check>org.apache.ambari.server.checks.MapReduce2JobHistoryStatePreservingCheck</check>

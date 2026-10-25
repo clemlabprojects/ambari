@@ -342,6 +342,17 @@ public class CheckDescription {
                   "If any hosts require LZO, it should be installed before starting the upgrade. " +
                   "Consult Ambari documentation for instructions on how to do this.").build());
 
+  public static CheckDescription LEGACY_LIVY_CHECK = new CheckDescription("LEGACY_LIVY_CHECK",
+      PrereqCheckType.CLUSTER,
+      "Legacy Livy (LIVY2_SERVER) must be migrated",
+      new ImmutableMap.Builder<String, String>()
+          .put(AbstractCheckDescriptor.DEFAULT,
+              "The deprecated Livy component LIVY2_SERVER, shared by Spark2 and Spark3 and inherited from ODP 1.0, is " +
+                  "still installed: %s. Move it to the per-Spark Livy (SPARK2_LIVY2_SERVER / SPARK3_LIVY2_SERVER) " +
+                  "before upgrading. On the Ambari Server host run " +
+                  "'python3 /var/lib/ambari-server/resources/scripts/migrate_legacy_livy.py --check' to review the " +
+                  "migration, then the same command with --apply.").build());
+
   public static CheckDescription JAVA_VERSION = new CheckDescription("JAVA_VERSION",
       PrereqCheckType.CLUSTER,
       "Verify Java version requirement",
