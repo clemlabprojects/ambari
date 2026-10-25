@@ -21,6 +21,18 @@
     <service>
       <name>SPARK3</name>
       <version>3.5.4</version>
+      <!-- ODP 1.3 (clemlab): Spark2 and Spark3 both inherit the legacy unprefixed livy2-* types from ODP 1.0. With both
+           services installed, Ambari cannot tell which one owns livy2-* and rejects Spark3's config saves. Spark3 uses
+           its own spark3-livy2-* types, so it stops claiming the legacy ones (Spark2 still does). The deprecated
+           LIVY2_SERVER stays defined so ODP 1.3.x clusters that run it keep loading; its removal, with a migration,
+           is planned for the next stack version. -->
+      <excluded-config-types>
+        <config-type>livy2-conf</config-type>
+        <config-type>livy2-env</config-type>
+        <config-type>livy2-client-conf</config-type>
+        <config-type>livy2-log4j-properties</config-type>
+        <config-type>livy2-spark-blacklist</config-type>
+      </excluded-config-types>
       <components>
         <!-- ODP 1.3.2.0 (AMBARI-491): Spark is built against Hive 4.2 (class-file 65) and must
              run the secondary JDK 21. The javaHomeSelector points params.py at secondary_java_home;
