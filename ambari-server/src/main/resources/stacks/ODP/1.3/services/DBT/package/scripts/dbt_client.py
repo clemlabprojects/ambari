@@ -37,9 +37,10 @@ class DbtClient(Script):
     import params
     env.set_params(params)
 
-    Directory([params.dbt_conf_dir, params.dbt_log_dir],
-              owner=params.dbt_user,
-              group=params.user_group,
+    # No log directory: dbt writes its logs in each project's logs/ folder, as the analyst running it.
+    Directory(params.dbt_conf_dir,
+              owner="root",
+              group="root",
               create_parents=True,
               mode=0o755)
 
@@ -57,14 +58,14 @@ class DbtClient(Script):
 
     File(format("{dbt_conf_dir}/profiles.yml"),
          content=InlineTemplate(params.dbt_profiles_content),
-         owner=params.dbt_user,
+         owner="root",
          group=params.user_group,
          mode=0o640)
 
     File(format("{dbt_conf_dir}/dbt-env.sh"),
          content=InlineTemplate(params.dbt_env_content),
-         owner=params.dbt_user,
-         group=params.user_group,
+         owner="root",
+         group="root",
          mode=0o755)
 
   def status(self, env):

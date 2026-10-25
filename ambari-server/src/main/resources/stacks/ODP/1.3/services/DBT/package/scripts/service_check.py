@@ -29,7 +29,7 @@ class DbtServiceCheck(Script):
     env.set_params(params)
 
     Execute(format("{dbt_home}/bin/dbt --version"),
-            user=params.dbt_user,
+            user=params.smoke_user,
             logoutput=True,
             tries=1)
 
@@ -40,7 +40,7 @@ class DbtServiceCheck(Script):
       # debug --config-dir only reads the profile and reports where it looked; no connection is made.
       Execute(format("{dbt_home}/bin/dbt debug --config-dir"),
               environment={"DBT_PROFILES_DIR": params.dbt_conf_dir},
-              user=params.dbt_user,
+              user=params.smoke_user,
               logoutput=True,
               tries=1)
 

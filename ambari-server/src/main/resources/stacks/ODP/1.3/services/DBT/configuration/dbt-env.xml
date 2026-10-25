@@ -19,32 +19,11 @@
 <configuration supports_final="false">
 
   <property>
-    <name>dbt_user</name>
-    <value>dbt</value>
-    <display-name>DBT user</display-name>
-    <description>Account that owns the dbt configuration directory. Analysts run dbt as themselves;
-      this only owns what Ambari writes.</description>
-    <property-type>USER</property-type>
-    <value-attributes>
-      <type>user</type>
-      <overridable>false</overridable>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-  </property>
-
-  <property>
     <name>dbt_conf_dir</name>
     <value>/etc/dbt/conf</value>
     <display-name>Configuration directory</display-name>
     <description>Where the connection profile is written. Point DBT_PROFILES_DIR here, which
       dbt-env.sh does for you.</description>
-    <on-ambari-upgrade add="true"/>
-  </property>
-
-  <property>
-    <name>dbt_log_dir</name>
-    <value>/var/log/dbt</value>
-    <display-name>Log directory</display-name>
     <on-ambari-upgrade add="true"/>
   </property>
 
@@ -265,7 +244,6 @@
 # Sourced before running dbt. Written by Ambari; edit through the service configuration.
 export DBT_HOME={{dbt_home}}
 export DBT_PROFILES_DIR={{dbt_conf_dir}}
-export DBT_LOG_PATH={{dbt_log_dir}}
 export PATH={{dbt_home}}/bin:$PATH
     </value>
     <value-attributes>

@@ -33,10 +33,11 @@ stack_version_formatted = format_stack_version(stack_version_unformatted)
 # lays down a default one so it is usable the moment it is installed.
 dbt_home = format("{stack_root}/current/dbt-client")
 
-dbt_user = config['configurations']['dbt-env']['dbt_user']
+# dbt is a client tool run by each analyst as themselves: no service account. Ambari's files belong to root,
+# the profile is readable by the cluster group, and the service check runs as the smoke user.
+smoke_user = config['configurations']['cluster-env']['smokeuser']
 user_group = config['configurations']['cluster-env']['user_group']
 dbt_conf_dir = config['configurations']['dbt-env']['dbt_conf_dir']
-dbt_log_dir = config['configurations']['dbt-env']['dbt_log_dir']
 
 dbt_profile_name = str(config['configurations']['dbt-env']['dbt_profile_name']).strip() or "trino"
 dbt_target = str(config['configurations']['dbt-env']['dbt_target']).strip() or "prod"
