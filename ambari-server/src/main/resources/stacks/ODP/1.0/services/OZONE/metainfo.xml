@@ -388,7 +388,7 @@
           <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24</osFamily>
           <packages>
             <package>
-              <name>zookeeper_${stack_version}</name>
+              <name>zookeeper-${stack_version}</name>
             </package>
             <package>
               <name>ozone-${stack_version}</name>

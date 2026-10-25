@@ -201,7 +201,7 @@ limitations under the License.
                 <osFamily>ubuntu18,ubuntu20,ubuntu22,ubuntu24</osFamily>
                 <packages>
                   <package>
-                    <name>impala_${stack_version}</name>
+                    <name>impala-${stack_version}</name>
                   </package>
                 </packages>
               </osSpecific>

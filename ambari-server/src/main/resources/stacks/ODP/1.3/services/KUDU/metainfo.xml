@@ -86,7 +86,7 @@ limitations under the License.
           <osFamily>ubuntu18,ubuntu20,ubuntu22,ubuntu24</osFamily>
           <packages>
             <package>
-              <name>kudu_${stack_version}</name>
+              <name>kudu-${stack_version}</name>
             </package>
             <package>
               <name>ranger-kudu-plugin</name>
