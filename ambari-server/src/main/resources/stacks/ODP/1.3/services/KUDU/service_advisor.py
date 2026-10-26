@@ -111,14 +111,8 @@ class KuduRecommender(service_advisor.ServiceAdvisor):
         if ranger_admin_url:
             put_ranger_security("ranger.plugin.kudu.policy.rest.url", ranger_admin_url)
 
-        cluster_name = self._get_property(configurations, services, "cluster-env", "cluster_name")
-        if not cluster_name:
-            cluster_name = services.get("Versions", {}).get("cluster_name", "cluster")
-        current_repo_name = self._get_property(
-            configurations, services, "ranger-kudu-security", "ranger.plugin.kudu.service.name"
-        )
-        if not current_repo_name or "{{" in current_repo_name or "}}" in current_repo_name:
-            put_ranger_security("ranger.plugin.kudu.service.name", "{0}_kudu".format(cluster_name))
+        # ranger.plugin.kudu.service.name keeps {{repo_name}}: params.py resolves it to <cluster>_kudu,
+        # the advisor is not given the cluster name
 
         ranger_plugin_enabled = self._is_ranger_plugin_enabled(configurations, services)
         if not ranger_plugin_enabled:
