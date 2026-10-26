@@ -22,6 +22,7 @@ import { Layout, Menu, Tag, Alert, Button, Breadcrumb, Tooltip, Space, Badge, Sk
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   BellOutlined,
+  QuestionCircleOutlined,
   BranchesOutlined,
   ContainerOutlined,
   CloudServerOutlined,
@@ -49,6 +50,7 @@ import BackgroundOperationsModal from '../common/BackgroundOperationsModal';
 import { CONFIGURE_ONLY_ROUTES } from '../../utils/permissions';
 import { usePermissions } from '../../hooks/usePermissions';
 import NamespaceSelector from './NamespaceSelector';
+import ProductTour, { markTourSeen, shouldStartTour } from './ProductTour';
 import { listCommands, getClusterCapabilities, pingSession } from '../../api/client';
 import './AppLayout.css';
 
@@ -103,6 +105,12 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const { status, error, fetchData, checkLiveness, connectionMessage, nodesRestricted } = useClusterStatus();
   const { permissions } = usePermissions();
+  // The tour of the view: by itself on an administrator's first visit, and from the help button.
+  const [tourOpen, setTourOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (shouldStartTour(permissions?.canConfigure)) setTourOpen(true);
+  }, [permissions?.canConfigure]);
+  const closeTour = () => { setTourOpen(false); markTourSeen(); };
   const canConfigure = !!permissions?.canConfigure;
   const { mode, toggle: toggleTheme } = useThemeMode();
   const { reduceMotion, toggle: toggleReduceMotion } = useReduceMotion();
@@ -324,6 +332,10 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </Tooltip>
               )}
               {status === 'error' && <Tag color="red" style={{ margin: 0 }}>CONNECTION ERROR</Tag>}
+              <Tooltip title="Take the tour of the view">
+                <Button icon={<QuestionCircleOutlined />} onClick={() => setTourOpen(true)} className="action-button"
+                  aria-label="take the tour" />
+              </Tooltip>
               <Tooltip title={reduceMotion ? 'Performance mode ON — animations reduced (best over Citrix/remote desktop)' : 'Reduce motion (faster over Citrix/remote desktop)'}>
                 <Button
                   icon={reduceMotion ? <ThunderboltFilled /> : <ThunderboltOutlined />}
@@ -390,6 +402,8 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </Content>
       </Layout>
 
+      <ProductTour open={tourOpen} canConfigure={!!permissions?.canConfigure} connected={status === 'connected'}
+        onClose={closeTour} />
       <BackgroundOperationsModal
         open={isOperationsModalOpen}
         onClose={() => setIsOperationsModalOpen(false)}
