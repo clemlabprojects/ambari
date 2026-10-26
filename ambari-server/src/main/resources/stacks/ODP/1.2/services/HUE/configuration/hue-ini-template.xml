@@ -152,6 +152,7 @@ temp_dir=/tmp
 [beeswax]
 hive_server_host={{hue_beeswax_hive_server_host}}
 hive_server_port={{hue_beeswax_hive_server_port}}
+use_sasl={{hue_beeswax_use_sasl}}
 server_conn_timeout={{hue_beeswax_server_conn_timeout}}
 hive_conf_dir=/etc/hive/conf
   {% if has_hive_hs2_ssl %}

@@ -545,7 +545,11 @@ if hive_server_hosts != None:
   has_hive_hs2 = len(hive_server_hosts) > 0
   if has_hive_hs2:
     hue_beeswax_hive_server_host = hive_server_hosts[0]
-    hue_beeswax_hive_server_port = hive_http_port
+    # hive_server_port is the binary Thrift port: in http transport mode Hue takes the port and path from hive-site.xml
+    hue_beeswax_hive_server_port = default('/configurations/hive-site/hive.server2.thrift.port', "10000")
+    # Hue derives use_sasl from hive.metastore.sasl.enabled (false without Kerberos), but HiveServer2 speaks SASL
+    # for every authentication except NOSASL
+    hue_beeswax_use_sasl = str(default('/configurations/hive-site/hive.server2.authentication', 'NONE')).upper() != 'NOSASL'
     has_hive_hs2_ssl = default("/configurations/hive-site/hive.server2.use.SSL", False)
     hue_beeswax_server_conn_timeout = config['configurations']['hue-ini-conf']['hue_beeswax_server_conn_timeout']
     if has_hive_hs2_ssl:
