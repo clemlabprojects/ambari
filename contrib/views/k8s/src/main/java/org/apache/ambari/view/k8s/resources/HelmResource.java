@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.marcnuri.helm.Release;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.model.ReleaseEndpointDTO;
 import org.apache.ambari.view.k8s.model.HelmReleasesResponse;
@@ -218,7 +219,11 @@ public class HelmResource {
         // source failing) or no longer lists (a merged removal): listed from their record, before the paging, so the
         // page shows what they wait for, their pull request and their Uninstall.
         final java.util.Set<String> notInHelm = new java.util.HashSet<>();
-        for (HelmReleaseDTO recorded : gitOpsReleasesNotListed(namespace, metaByKey.keySet(), recordedReleases())) {
+        // The releases of the cluster this page lists: Helm lists the default one's, until the page lets the operator
+        // choose the cluster.
+        final ClusterRef listedCluster = ClusterRef.DEFAULT;
+        for (HelmReleaseDTO recorded : gitOpsReleasesNotListed(listedCluster, namespace, metaByKey.keySet(),
+                recordedReleases())) {
             String key = recorded.namespace + "/" + recorded.name;
             metaByKey.put(key, releaseMetadataService.find(recorded.namespace, recorded.name));
             notInHelm.add(key);
@@ -239,6 +244,7 @@ public class HelmResource {
 
         for (HelmReleaseDTO releaseDto : page) {
 
+            releaseDto.kubernetesCluster = listedCluster.id();
             boolean kdpsLabelled = kdpsManaged.contains(releaseDto.namespace + "/" + releaseDto.name);
             K8sReleaseEntity metadata = metaByKey.get(releaseDto.namespace + "/" + releaseDto.name);
             if (metadata != null) {
@@ -444,15 +450,17 @@ public class HelmResource {
      * the SCC grants, the Git credential, the record) can still be run from the page. A release KDPS recorded is one
      * it deployed, so these rows are listed whether or not the page shows only managed releases.
      *
+     * @param cluster   the cluster listed: the records of another cluster's releases are not its rows
      * @param namespace the namespace listed, or {@code null} for all
      * @param listed    the releases Helm listed, as {@code <namespace>/<name>}
      * @param records   the releases KDPS recorded
      */
-    static List<HelmReleaseDTO> gitOpsReleasesNotListed(String namespace, java.util.Set<String> listed,
+    static List<HelmReleaseDTO> gitOpsReleasesNotListed(ClusterRef cluster, String namespace, java.util.Set<String> listed,
                                                         Collection<K8sReleaseEntity> records) {
         List<HelmReleaseDTO> rows = new ArrayList<>();
         for (K8sReleaseEntity meta : records) {
             if (meta == null || meta.getNamespace() == null || meta.getReleaseName() == null
+                    || !cluster.equals(meta.clusterRef())
                     || listed.contains(meta.getNamespace() + "/" + meta.getReleaseName())
                     || (namespace != null && !namespace.isEmpty() && !namespace.equals(meta.getNamespace()))) {
                 continue;

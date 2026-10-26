@@ -28,6 +28,7 @@ import com.google.gson.JsonPrimitive;
 import org.apache.ambari.view.DataStore;
 import org.apache.ambari.view.PersistenceException;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.model.CommandState;
 import org.apache.ambari.view.k8s.model.CommandStatus;
 import org.apache.ambari.view.k8s.model.CommandType;
@@ -8057,6 +8058,8 @@ public class CommandService {
     public String gitOpsDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
                                MultivaluedMap<String, String> callerHeaders, URI baseUri,
                                AmbariAliasResolver ambariAliasResolver) {
+        // Refused before the Git server is contacted: see kubernetesClusterOf.
+        kubernetesClusterOf(request);
         // Only the view sets it, for a token it stored itself (gitOptionsToPersist): any alias a request names here
         // would be resolved from Ambari's credential store and sent to the Git server the request names.
         if (request.getGit() != null) {
@@ -8108,6 +8111,42 @@ public class CommandService {
         }
     }
 
+    /** The parameter of an operation naming the Kubernetes cluster it runs on, by id (see {@link ClusterRef}). */
+    public static final String KUBERNETES_CLUSTER_PARAM = "_kubernetesCluster";
+
+    /**
+     * The Kubernetes cluster a deploy request names: the default cluster when it names none.
+     *
+     * @throws IllegalStateException for any other cluster, which a deploy cannot target until the deploy wizard can
+     *                               choose the cluster: the request is refused rather than deployed to the default one
+     */
+    static ClusterRef kubernetesClusterOf(HelmDeployRequest request) {
+        String named = request.getKubernetesCluster();
+        if (named == null || named.isBlank()) {
+            return ClusterRef.DEFAULT;
+        }
+        if (!ClusterRef.DEFAULT_ID.equals(named.trim())) {
+            throw new IllegalStateException("KDPS cannot deploy to the cluster '" + named.trim() + "' yet: deploys go to "
+                    + "the default cluster until the deploy wizard can choose the cluster. Nothing was deployed.");
+        }
+        return ClusterRef.DEFAULT;
+    }
+
+    /** The Kubernetes cluster an operation runs on: the default one for an operation that names none. */
+    static ClusterRef kubernetesClusterOf(CommandEntity command) {
+        String named = command.getKubernetesCluster();
+        return named == null || named.isBlank() ? ClusterRef.DEFAULT : ClusterRef.of(named);
+    }
+
+    /**
+     * The Kubernetes cluster an operation runs on, from its parameters: the default one for an operation that names
+     * none, as every operation planned before KDPS knew several clusters.
+     */
+    public static ClusterRef kubernetesClusterOf(Map<String, Object> params) {
+        Object named = params == null ? null : params.get(KUBERNETES_CLUSTER_PARAM);
+        return named == null || String.valueOf(named).isBlank() ? ClusterRef.DEFAULT : ClusterRef.of(String.valueOf(named));
+    }
+
     /**
      * Plans and persists the command tree of a release deploy, without starting it.
      *
@@ -8121,6 +8160,8 @@ public class CommandService {
     String planReleaseDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
                              MultivaluedMap<String, String> callerHeaders, URI baseUri,
                              AmbariAliasResolver ambariAliasResolver, boolean gitOps) {
+        // Refused before anything is planned: see kubernetesClusterOf.
+        kubernetesClusterOf(request);
         String namespace = request.getNamespace();
         String release = request.getReleaseName();
         boolean hadTagSyncAccount = tagSyncAccountRecorded(namespace, release);
@@ -8162,11 +8203,15 @@ public class CommandService {
         CommandEntity rootCommand = new CommandEntity();
         rootCommand.setId(id);
         rootCommand.setViewInstance(ctx.getInstanceName());
+        rootCommand.setKubernetesCluster(kubernetesClusterOf(request).id());
         rootCommand.setType(CommandType.K8S_MANAGER_RELEASE_DEPLOY.name());
 
         List<String> childCommands = new ArrayList<>();
         // command params
         Map<String, Object> params = new LinkedHashMap<>();
+        // The cluster the release is deployed to, kept with the operation: its history says where it ran, and an
+        // operation resumed after a restart of Ambari knows its cluster.
+        params.put(KUBERNETES_CLUSTER_PARAM, kubernetesClusterOf(request).id());
         if ((request.getValues() != null) && !request.getValues().isEmpty()) {
             String valuesJson = gson.toJson(request.getValues());
             String valuesPath = this.kubernetesService.getConfigurationService()
@@ -9986,17 +10031,18 @@ public class CommandService {
     void planReleaseMetadata(Map<String, Object> params, String namespace, String releaseName,
                              Map<String, Object> metadata, Map<String, Object> values) {
         params.put(RELEASE_METADATA_PARAM, metadata);
-        if (new ReleaseMetadataService(this.ctx).find(namespace, releaseName) == null) {
-            recordReleaseMetadata(namespace, releaseName, metadata, values);
+        ClusterRef kubernetesCluster = kubernetesClusterOf(params);
+        if (new ReleaseMetadataService(this.ctx, kubernetesCluster).find(namespace, releaseName) == null) {
+            recordReleaseMetadata(kubernetesCluster, namespace, releaseName, metadata, values);
         }
     }
 
     /**
      * Records the release metadata a deploy planned (see {@link #planReleaseMetadata}).
      */
-    private void recordReleaseMetadata(String namespace, String releaseName, Map<?, ?> metadata,
-                                       Map<String, Object> values) {
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+    private void recordReleaseMetadata(ClusterRef kubernetesCluster, String namespace, String releaseName,
+                                       Map<?, ?> metadata, Map<String, Object> values) {
+        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx, kubernetesCluster);
         List<Map<String, Object>> endpoints = new ArrayList<>();
         if (metadata.get("endpoints") instanceof List<?> listed) {
             for (Object endpoint : listed) {
@@ -10137,6 +10183,7 @@ public class CommandService {
         // listCommands so every view (header, list, tree) shows the same fixed title rather
         // than mutating to "Running: …" / "All steps completed." / an error string.
         s.message = (e.getTitle() != null && !e.getTitle().isBlank()) ? e.getTitle() : eStatus.getMessage();
+        s.kubernetesCluster = kubernetesClusterOf(e).id();
         s.createdBy = eStatus.getCreatedBy();
         s.createdAt = eStatus.getCreatedAt();
         s.updatedAt = eStatus.getUpdatedAt();
@@ -10221,6 +10268,7 @@ public class CommandService {
             cs.type = CommandType.valueOf(e.getType());
             cs.state = CommandState.valueOf(st.getState());
             cs.message = (e.getTitle() != null && !e.getTitle().isBlank()) ? e.getTitle() : st.getMessage();
+            cs.kubernetesCluster = kubernetesClusterOf(e).id();
             cs.createdBy = st.getCreatedBy();
             cs.createdAt = st.getCreatedAt();
             cs.updatedAt = st.getUpdatedAt();
@@ -11166,7 +11214,7 @@ public class CommandService {
 
                     // Persist dependency release metadata with version so UI can render it
                     try {
-                        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+                        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx, kubernetesClusterOf(root));
                         GlobalConfigService globalConfigService = new GlobalConfigService();
                         String globalFingerprint = globalConfigService.fingerprint();
                         metadataService.recordInstallOrUpgrade(
@@ -11632,7 +11680,7 @@ public class CommandService {
                     // Helm has applied the deploy: only now does the release metadata describe what runs.
                     if (childParams.get(RELEASE_METADATA_PARAM) instanceof Map<?, ?> plannedMetadata) {
                         try {
-                            recordReleaseMetadata(namespace, releaseName, plannedMetadata, valuesMap);
+                            recordReleaseMetadata(kubernetesClusterOf(root), namespace, releaseName, plannedMetadata, valuesMap);
                         } catch (Exception ex) {
                             LOG.warn("Failed to record release metadata after deploy for {}/{}: {}", namespace, releaseName, ex.toString());
                         }
@@ -11722,7 +11770,7 @@ public class CommandService {
                     boolean restartPods = restartFlagged(namespace, releaseName);
                     if (childParams.get(RELEASE_METADATA_PARAM) instanceof Map<?, ?> plannedMetadata) {
                         try {
-                            recordReleaseMetadata(namespace, releaseName, plannedMetadata, valuesMap);
+                            recordReleaseMetadata(kubernetesClusterOf(root), namespace, releaseName, plannedMetadata, valuesMap);
                         } catch (Exception ex) {
                             LOG.warn("Failed to record release metadata after the GitOps commit for {}/{}: {}",
                                     namespace, releaseName, ex.toString());
@@ -11853,7 +11901,7 @@ public class CommandService {
 
                     // Refresh release metadata with the new chart version so the UI shows it.
                     try {
-                        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+                        ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx, kubernetesClusterOf(root));
                         K8sReleaseEntity existing = metadataService.find(namespace, releaseName);
                         if (existing != null) {
                             metadataService.recordInstallOrUpgrade(

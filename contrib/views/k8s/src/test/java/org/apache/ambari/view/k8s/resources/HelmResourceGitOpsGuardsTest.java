@@ -20,6 +20,7 @@ package org.apache.ambari.view.k8s.resources;
 import com.marcnuri.helm.Release;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.ViewDefinition;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.model.HelmReleasesResponse;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
@@ -333,7 +334,7 @@ class HelmResourceGitOpsGuardsTest {
         K8sReleaseEntity installed = recorded("analytics", "superset", "FLUX_GITOPS");
         K8sReleaseEntity direct = recorded("analytics", "jupyterhub", "DIRECT_HELM");
 
-        List<HelmReleaseDTO> rows = HelmResource.gitOpsReleasesNotListed(null, Set.of("analytics/superset"),
+        List<HelmReleaseDTO> rows = HelmResource.gitOpsReleasesNotListed(ClusterRef.DEFAULT, null, Set.of("analytics/superset"),
                 List.of(pending, installed, direct));
 
         assertEquals(1, rows.size(), "Helm lists the installed one, and a release deployed with Helm is Helm's");
@@ -351,7 +352,7 @@ class HelmResourceGitOpsGuardsTest {
         K8sReleaseEntity removing = recorded("analytics", "trino", "FLUX_GITOPS");
         removing.setGitPendingDelete(true);
 
-        List<HelmReleaseDTO> rows = HelmResource.gitOpsReleasesNotListed("analytics", Set.of(), List.of(removing));
+        List<HelmReleaseDTO> rows = HelmResource.gitOpsReleasesNotListed(ClusterRef.DEFAULT, "analytics", Set.of(), List.of(removing));
 
         assertEquals(1, rows.size());
         assertEquals("PENDING_DELETE", rows.get(0).status);
@@ -402,12 +403,31 @@ class HelmResourceGitOpsGuardsTest {
 
     @Test
     void theRecordedGitOpsReleasesFollowTheNamespaceListed() {
-        List<HelmReleaseDTO> rows = HelmResource.gitOpsReleasesNotListed("bi", Set.of(), List.of(
+        List<HelmReleaseDTO> rows = HelmResource.gitOpsReleasesNotListed(ClusterRef.DEFAULT, "bi", Set.of(), List.of(
                 recorded("analytics", "trino", "FLUX_GITOPS"), recorded("bi", "superset", "FLUX_GITOPS")));
 
         assertEquals(List.of("bi/superset"), rows.stream().map(r -> r.namespace + "/" + r.name).toList());
-        assertEquals(2, HelmResource.gitOpsReleasesNotListed("", Set.of(), List.of(
+        assertEquals(2, HelmResource.gitOpsReleasesNotListed(ClusterRef.DEFAULT, "", Set.of(), List.of(
                 recorded("analytics", "trino", "FLUX_GITOPS"), recorded("bi", "superset", "FLUX_GITOPS"))).size(),
                 "all namespaces");
     }
+
+  @Test
+  void theReleasesPageOfAClusterDoesNotListAnotherClustersRecords() {
+    K8sReleaseEntity onDefault = new K8sReleaseEntity();
+    onDefault.setId(K8sReleaseEntity.idOf("analytics", "superset"));
+    onDefault.setNamespace("analytics");
+    onDefault.setReleaseName("superset");
+    onDefault.setDeploymentMode("FLUX_GITOPS");
+    K8sReleaseEntity onProd = new K8sReleaseEntity();
+    onProd.setId(K8sReleaseEntity.idOf(ClusterRef.of("prod"), "analytics", "trino"));
+    onProd.setNamespace("analytics");
+    onProd.setReleaseName("trino");
+    onProd.setDeploymentMode("FLUX_GITOPS");
+
+    List<HelmReleaseDTO> rows = HelmResource.gitOpsReleasesNotListed(ClusterRef.DEFAULT, null, Set.of(),
+        List.of(onDefault, onProd));
+
+    assertEquals(List.of("superset"), rows.stream().map(r -> r.name).toList());
+  }
 }

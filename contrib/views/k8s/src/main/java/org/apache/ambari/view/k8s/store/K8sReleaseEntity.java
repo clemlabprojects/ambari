@@ -18,6 +18,7 @@
 
 package org.apache.ambari.view.k8s.store;
 
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -40,7 +41,8 @@ import java.util.Map;
 
 /**
  * Tracking entity for Helm releases managed by the UI.
- * ID = namespace + ":" + releaseName
+ * ID = namespace + ":" + releaseName on the default cluster, "@" + cluster + ":" + namespace + ":" + releaseName on
+ * another one (see {@link #idOf(ClusterRef, String, String)}).
  *
  * This model keeps core, short columns in the main table and pushes
  * variable/optional data into dedicated tables (attributes, git, endpoints)
@@ -300,8 +302,34 @@ public class K8sReleaseEntity extends BaseModel {
     }
 
     // ID Helper method
+    /** The id of a release of the default cluster. */
     public static String idOf(String ns, String name) {
-        return ns + ":" + name;
+        return idOf(ClusterRef.DEFAULT, ns, name);
+    }
+
+    /**
+     * The id of a release: {@code namespace:release} on the default cluster, as before KDPS knew several clusters, and
+     * {@code @cluster:namespace:release} on another one. Neither a cluster id nor a namespace holds ':' or '@', so the
+     * cluster is read back from the id without ambiguity ({@link #clusterOfId}).
+     */
+    public static String idOf(ClusterRef cluster, String ns, String name) {
+        return cluster.isDefault() ? ns + ":" + name : "@" + cluster.id() + ":" + ns + ":" + name;
+    }
+
+    /** The cluster of a release id; the default one for an id without a cluster. */
+    public static ClusterRef clusterOfId(String id) {
+        if (id != null && id.startsWith("@")) {
+            int colon = id.indexOf(':');
+            if (colon > 1) {
+                return ClusterRef.of(id.substring(1, colon));
+            }
+        }
+        return ClusterRef.DEFAULT;
+    }
+
+    /** The cluster the release is on. Not a bean property: it is read from the id, never stored apart. */
+    public ClusterRef clusterRef() {
+        return clusterOfId(getId());
     }
 
     public String getCatalogRefsJson() { return catalogRefsJson; }

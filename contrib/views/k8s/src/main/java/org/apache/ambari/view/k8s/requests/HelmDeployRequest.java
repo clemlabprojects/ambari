@@ -129,6 +129,8 @@ public class HelmDeployRequest {
     // redirectUriTemplate "{{jupyterHost}}". Without this map renderOidcTemplate produces
     // "https:///hub/oauth_callback" and Keycloak rejects with 400 invalid_input.
     private Map<String, Object> formValues;
+    // The Kubernetes cluster to deploy to, by id (see ClusterRef); the default cluster when absent.
+    private String kubernetesCluster;
 
     public static class GitOptions {
         private String repoUrl;
@@ -562,6 +564,8 @@ public class HelmDeployRequest {
     }
 
     /** @see #formValues */
+    public String getKubernetesCluster() { return kubernetesCluster; }
+    public void setKubernetesCluster(String kubernetesCluster) { this.kubernetesCluster = kubernetesCluster; }
     public Map<String, Object> getFormValues() {
         return formValues;
     }

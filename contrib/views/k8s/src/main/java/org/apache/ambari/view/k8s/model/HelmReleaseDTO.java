@@ -38,6 +38,7 @@ public class HelmReleaseDTO {
     public Boolean catalogManagement; // Trino: whether the Catalogs action can run on the release (null: not Trino, or unknown)
     public java.util.List<String> truststoreRefs; // truststores selected for the release (null: never recorded)
     public String platformContextId; // KDPS context the release was deployed against (for Upgrade/Config preselect)
+    public String kubernetesCluster; // id of the Kubernetes cluster the release is on
     public String repoId;
     public String chartRef;
     public boolean restartRequired;
