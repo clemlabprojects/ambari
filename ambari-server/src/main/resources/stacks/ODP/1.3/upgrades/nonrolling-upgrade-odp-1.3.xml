@@ -118,6 +118,10 @@
         <component>ZEPPELIN_MASTER</component>
       </service>
 
+      <service name="HUE">
+        <component>HUE_SERVER</component>
+      </service>
+
       <service name="HIVE">
         <component>WEBHCAT_SERVER</component>
         <component>HIVE_SERVER</component>
@@ -809,6 +813,16 @@
     </group>
 
 
+    <group xsi:type="restart" name="HUE" title="Hue">
+      <service-check>false</service-check>
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <parallel-scheduler/>
+      <service name="HUE">
+        <component>HUE_SERVER</component>
+      </service>
+    </group>
+
     <group name="SERVICE_CHECK_2" title="All Service Checks" xsi:type="service-check">
       <direction>UPGRADE</direction>
       <skippable>true</skippable>
@@ -822,6 +836,7 @@
         <service>ATLAS</service>
         <service>ZEPPELIN</service>
         <service>OOZIE</service>
+        <service>HUE</service>
       </priority>
     </group>
 
@@ -1287,6 +1302,14 @@
 
     <service name="FLINK">
       <component name="FLINK_JOBHISTORYSERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="HUE">
+      <component name="HUE_SERVER">
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>

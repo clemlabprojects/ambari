@@ -461,6 +461,15 @@
       </service>
     </group>
 
+    <group name="HUE" title="Hue">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="HUE">
+        <component>HUE_SERVER</component>
+      </service>
+    </group>
+
     <group name="SERVICE_CHECK_3" title="All Service Checks" xsi:type="service-check">
       <direction>UPGRADE</direction>
       <skippable>true</skippable>
@@ -1055,6 +1064,14 @@
         <pre-downgrade/>
         <upgrade>
           <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="HUE">
+      <component name="HUE_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
         </upgrade>
       </component>
     </service>
