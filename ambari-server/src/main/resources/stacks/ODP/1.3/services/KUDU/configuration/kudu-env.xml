@@ -44,12 +44,14 @@ limitations under the License.
   <property>
     <name>kudu_log_dir</name>
     <value>/var/log/kudu</value>
+    <display-name>Kudu log directory</display-name>
     <description>Kudu log directory.</description>
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>kudu_run_dir</name>
     <value>/var/run/kudu</value>
+    <display-name>Kudu PID directory</display-name>
     <description>Kudu pid directory.</description>
     <on-ambari-upgrade add="true"/>
   </property>

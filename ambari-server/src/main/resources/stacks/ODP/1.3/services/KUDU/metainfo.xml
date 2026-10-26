@@ -112,6 +112,13 @@ limitations under the License.
         </quickLinksConfiguration>
       </quickLinksConfigurations>
 
+      <themes>
+        <theme>
+          <fileName>directories.json</fileName>
+          <default>true</default>
+        </theme>
+      </themes>
+
       <restartRequiredAfterChange>true</restartRequiredAfterChange>
     </service>
   </services>

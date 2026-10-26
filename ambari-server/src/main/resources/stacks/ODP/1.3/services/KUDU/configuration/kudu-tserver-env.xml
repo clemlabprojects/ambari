@@ -40,12 +40,14 @@ limitations under the License.
   <property>
     <name>fs_wal_dir</name>
     <value>/var/lib/kudu/tserver</value>
+    <display-name>Kudu Tablet Server WAL directory</display-name>
     <description>WAL directory for Kudu tablet server.</description>
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>fs_data_dirs</name>
     <value>/var/lib/kudu/tserver</value>
+    <display-name>Kudu Tablet Server data directories</display-name>
     <description>Data directories for Kudu tablet server. Comma-separated for multiple paths.</description>
     <on-ambari-upgrade add="true"/>
   </property>
