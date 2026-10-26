@@ -580,7 +580,7 @@ public class WebHookConfigurationService {
         PrivateKey caKey = parsePrivateKeyFromPem(ca.caPrivateKeyPem());
 
         try {
-            X500Name issuer = new X500Name(caCert.getSubjectX500Principal().getName());
+            X500Name issuer = X500Name.getInstance(caCert.getSubjectX500Principal().getEncoded());
             String cn = (dnsSans != null && !dnsSans.isEmpty()) ? dnsSans.get(0) : "webhook.svc";
             X500Name subject = new X500Name(new X500Principal("CN=" + cn).getName());
             Instant notBefore = Instant.now().minus(1, ChronoUnit.DAYS);
@@ -608,7 +608,7 @@ public class WebHookConfigurationService {
                 b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(san.toArray(new GeneralName[0])));
             }
 
-            ContentSigner signer = new JcaContentSignerBuilder("SHA256withECDSA")
+            ContentSigner signer = new JcaContentSignerBuilder(signatureAlgorithmFor(caKey))
                     .setProvider(BOUNCY_CASTLE_PROVIDER)
                     .build(caKey);
 
@@ -712,7 +712,7 @@ public class WebHookConfigurationService {
             X509Certificate caCert = parseCertificateFromPem(certificateAuthorityMaterial.caCertificatePem());
             PrivateKey caPrivateKey = parsePrivateKeyFromPem(certificateAuthorityMaterial.caPrivateKeyPem());
 
-            X500Name issuer = new X500Name(caCert.getSubjectX500Principal().getName());
+            X500Name issuer = X500Name.getInstance(caCert.getSubjectX500Principal().getEncoded());
             X500Name subject = new X500Name(new X500Principal("CN=" + subjectCommonName).getName());
 
             Instant notBefore = Instant.now().minus(1, ChronoUnit.DAYS);
@@ -749,7 +749,7 @@ public class WebHookConfigurationService {
                 builder.addExtension(Extension.subjectAlternativeName, false, gns);
             }
 
-            ContentSigner signer = new JcaContentSignerBuilder("SHA256withECDSA")
+            ContentSigner signer = new JcaContentSignerBuilder(signatureAlgorithmFor(caPrivateKey))
                     .setProvider(BOUNCY_CASTLE_PROVIDER)
                     .build(caPrivateKey);
 
@@ -771,7 +771,7 @@ public class WebHookConfigurationService {
             X509Certificate caCert = parseCertificateFromPem(certificateAuthorityMaterial.caCertificatePem());
             PrivateKey caPrivateKey = parsePrivateKeyFromPem(certificateAuthorityMaterial.caPrivateKeyPem());
 
-            X500Name issuer = new X500Name(caCert.getSubjectX500Principal().getName());
+            X500Name issuer = X500Name.getInstance(caCert.getSubjectX500Principal().getEncoded());
             String cn = (dnsSubjectAlternativeNames != null && !dnsSubjectAlternativeNames.isEmpty())
                     ? dnsSubjectAlternativeNames.get(0)
                     : "service.svc";
@@ -808,7 +808,7 @@ public class WebHookConfigurationService {
                 builder.addExtension(Extension.subjectAlternativeName, false, gns);
             }
 
-            ContentSigner signer = new JcaContentSignerBuilder("SHA256withECDSA")
+            ContentSigner signer = new JcaContentSignerBuilder(signatureAlgorithmFor(caPrivateKey))
                     .setProvider(BOUNCY_CASTLE_PROVIDER)
                     .build(caPrivateKey);
 
@@ -954,16 +954,87 @@ public class WebHookConfigurationService {
         }
     }
 
-    private static PrivateKey parsePrivateKeyFromPem(String pem) {
-        try {
-            String normalized = pem.replace("-----BEGIN PRIVATE KEY-----", "")
-                    .replace("-----END PRIVATE KEY-----", "")
-                    .replaceAll("\\s", "");
-            byte[] der = getDecoder().decode(normalized);
-            KeyFactory kf = KeyFactory.getInstance("EC");
-            return kf.generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(der));
+    /**
+     * Reads a private key in PEM: PKCS#8 ({@code BEGIN PRIVATE KEY}), PKCS#1 ({@code BEGIN RSA PRIVATE KEY}) or SEC1
+     * ({@code BEGIN EC PRIVATE KEY}), RSA or EC. An encrypted key is refused: KDPS has no passphrase for it.
+     */
+    static PrivateKey parsePrivateKeyFromPem(String pem) {
+        Object parsed = null;
+        // OpenSSL writes an EC key's curve in an "EC PARAMETERS" block before the key: the blocks before it are passed.
+        try (org.bouncycastle.openssl.PEMParser parser = new org.bouncycastle.openssl.PEMParser(new java.io.StringReader(pem))) {
+            for (Object block = parser.readObject(); block != null; block = parser.readObject()) {
+                if (block instanceof org.bouncycastle.asn1.pkcs.PrivateKeyInfo
+                        || block instanceof org.bouncycastle.openssl.PEMKeyPair
+                        || block instanceof org.bouncycastle.openssl.PEMEncryptedKeyPair
+                        || block instanceof org.bouncycastle.pkcs.PKCS8EncryptedPrivateKeyInfo) {
+                    parsed = block;
+                    break;
+                }
+            }
         } catch (Exception e) {
             throw new IllegalStateException("Invalid CA private key PEM", e);
+        }
+        try {
+            org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter converter =
+                    new org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter().setProvider(BOUNCY_CASTLE_PROVIDER);
+            if (parsed instanceof org.bouncycastle.asn1.pkcs.PrivateKeyInfo info) {
+                return converter.getPrivateKey(info);
+            }
+            if (parsed instanceof org.bouncycastle.openssl.PEMKeyPair pair) {
+                // Only the private half: a SEC1 key may leave its public key out.
+                return converter.getPrivateKey(pair.getPrivateKeyInfo());
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Invalid CA private key PEM", e);
+        }
+        if (parsed instanceof org.bouncycastle.openssl.PEMEncryptedKeyPair
+                || parsed instanceof org.bouncycastle.pkcs.PKCS8EncryptedPrivateKeyInfo) {
+            throw new IllegalStateException("The CA private key is encrypted: upload it without a passphrase.");
+        }
+        throw new IllegalStateException("Invalid CA private key PEM: no private key found");
+    }
+
+    /** The signature algorithm of a key: SHA256withRSA for an RSA key, SHA256withECDSA for an EC one. */
+    static String signatureAlgorithmFor(PrivateKey key) {
+        return switch (key.getAlgorithm()) {
+            case "RSA" -> "SHA256withRSA";
+            case "EC", "ECDSA" -> "SHA256withECDSA";
+            default -> throw new IllegalStateException("The CA private key is a " + key.getAlgorithm()
+                    + " key: KDPS signs with RSA and EC keys.");
+        };
+    }
+
+    /**
+     * Checks that a CA private key belongs to the CA certificate: a leaf signed with another key would name the CA as
+     * its issuer, yet never verify against it.
+     *
+     * @throws IllegalArgumentException when the key cannot be read, is encrypted, or is not the certificate's
+     */
+    public static void checkCaKeyMatches(String caCertPem, String caKeyPem) {
+        PrivateKey key;
+        try {
+            key = parsePrivateKeyFromPem(caKeyPem);
+        } catch (IllegalStateException e) {
+            throw new IllegalArgumentException(e.getMessage(), e);
+        }
+        try {
+            X509Certificate caCert = parseCertificateFromPem(caCertPem);
+            byte[] probe = "kdps-ca-key-check".getBytes(StandardCharsets.UTF_8);
+            java.security.Signature signer = java.security.Signature.getInstance(signatureAlgorithmFor(key));
+            signer.initSign(key);
+            signer.update(probe);
+            byte[] signature = signer.sign();
+            java.security.Signature verifier = java.security.Signature.getInstance(signatureAlgorithmFor(key));
+            verifier.initVerify(caCert.getPublicKey());
+            verifier.update(probe);
+            if (!verifier.verify(signature)) {
+                throw new IllegalArgumentException("The private key does not belong to the certificate: upload the key "
+                        + "of this CA.");
+            }
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("The private key does not belong to the certificate: " + e.getMessage(), e);
         }
     }
 
