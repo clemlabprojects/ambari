@@ -70,6 +70,12 @@ limitations under the License.
         </component>
       </components>
 
+      <commandScript>
+        <script>scripts/service_check.py</script>
+        <scriptType>PYTHON</scriptType>
+        <timeout>300</timeout>
+      </commandScript>
+
       <osSpecifics>
         <osSpecific>
           <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12,redhat8,redhat9</osFamily>

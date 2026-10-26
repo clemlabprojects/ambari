@@ -55,6 +55,9 @@ kudu_tls_ca_cert_file = default('/configurations/kudu-env/kudu_tls_ca_cert_file'
 
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executable_search_paths', None))
+smokeuser = config['configurations']['cluster-env']['smokeuser']
+smoke_user_keytab = default('/configurations/cluster-env/smokeuser_keytab', '')
+smokeuser_principal = default('/configurations/cluster-env/smokeuser_principal_name', '')
 kudu_keytab = default('/configurations/kudu-env/kudu_keytab', '')
 kudu_principal_name = default('/configurations/kudu-env/kudu_principal_name', '')
 if security_enabled and kudu_principal_name:
@@ -72,6 +75,8 @@ def _extract_port(bind_addresses, default_port):
 kudu_master_hosts = default('/clusterHostInfo/kudu_master_hosts', [])
 if not kudu_master_hosts:
     kudu_master_hosts = [socket.getfqdn()]
+
+kudu_tserver_hosts = default('/clusterHostInfo/kudu_tserver_hosts', [])
 
 master_rpc_bind_addresses = default('/configurations/kudu-master-env/rpc_bind_addresses', '0.0.0.0:7051')
 master_webserver_interface = default('/configurations/kudu-master-env/webserver_interface', '0.0.0.0')
