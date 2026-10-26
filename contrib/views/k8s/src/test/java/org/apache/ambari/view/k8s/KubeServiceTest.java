@@ -779,19 +779,48 @@ class KubeServiceTest {
       throws Exception {
     KubeService api = apiAsViewAdmin(workDir);
     when(k8s.getClient()).thenThrow(forbidden());
+    String pem = org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Partner Root CA");
 
-    Response created = api.createTruststore(null, Map.of("name", "corp-ca",
-        "caCertPem", org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Corporate Root CA")));
+    Response created = api.createTruststore(null, null, Map.of("name", "partner-ca", "caCertPem", pem,
+        "namespace", "team-a"));
     assertEquals(403, created.getStatus());
-    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), error(created));
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(created));
 
-    Response flipped = api.setTruststoreDefault(null, "ambari-pki", "corp-ca-truststore", Map.of("default", true));
+    Response flipped = api.setTruststoreDefault(null, null, "team-a", "partner-ca-truststore", Map.of("default", true));
     assertEquals(403, flipped.getStatus());
-    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), error(flipped));
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(flipped));
 
-    Response deleted = api.deleteTruststore(null, "ambari-pki", "corp-ca-truststore");
+    Response deleted = api.deleteTruststore(null, null, "team-a", "partner-ca-truststore");
     assertEquals(403, deleted.getStatus());
-    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), error(deleted));
+    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(deleted));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void theViewKeepsTheSharedTruststoresWhateverTheClusterAllows(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir)
+      throws Exception {
+    // An account limited to its own projects cannot write the management namespace: the shared truststores do not
+    // need it, the view keeps them for every cluster.
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.getClient()).thenThrow(forbidden());
+    String pem = org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Corporate Root CA");
+
+    Response created = api.createTruststore(null, null, Map.of("name", "corp-ca", "caCertPem", pem));
+    assertEquals(200, created.getStatus());
+    assertEquals("shared", ((Map<?, ?>) created.getEntity()).get("scope"));
+    assertEquals(200, api.setTruststoreDefault(null, null, "ambari-pki", "corp-ca-truststore",
+        Map.of("default", true)).getStatus());
+
+    java.util.List<KubernetesService.TruststoreSummary> listed =
+        (java.util.List<KubernetesService.TruststoreSummary>) api.listTruststores(null, null).getEntity();
+    assertEquals(1, listed.size());
+    assertEquals("ambari-pki", listed.get(0).namespace, "named as the wizard and recorded releases name it");
+    assertEquals("corp-ca-truststore", listed.get(0).name);
+    assertTrue(listed.get(0).isDefault);
+    assertEquals("CN=Corporate Root CA", listed.get(0).certificates.get(0).get("subject"));
+
+    assertEquals(200, api.deleteTruststore(null, null, "ambari-pki", "corp-ca-truststore").getStatus());
+    assertTrue(((java.util.List<?>) api.listTruststores(null, null).getEntity()).isEmpty());
   }
 
   /** The API as a view operator: may deploy, may not change the view configuration. */
@@ -814,38 +843,46 @@ class KubeServiceTest {
 
     // A shared truststore may be trusted by every release: changing one stays a configuration task.
     javax.ws.rs.WebApplicationException shared = assertThrows(javax.ws.rs.WebApplicationException.class,
-        () -> api.createTruststore(null, Map.of("name", "corp-ca", "caCertPem", pem)));
+        () -> api.createTruststore(null, null, Map.of("name", "corp-ca", "caCertPem", pem)));
     assertEquals(403, shared.getResponse().getStatus());
     assertThrows(javax.ws.rs.WebApplicationException.class,
-        () -> api.setTruststoreDefault(null, "ambari-pki", "corp-ca-truststore", Map.of("default", true)));
+        () -> api.setTruststoreDefault(null, null, "ambari-pki", "corp-ca-truststore", Map.of("default", true)));
     assertThrows(javax.ws.rs.WebApplicationException.class,
-        () -> api.deleteTruststore(null, "ambari-pki", "corp-ca-truststore"));
+        () -> api.deleteTruststore(null, null, "ambari-pki", "corp-ca-truststore"));
     verify(k8s, never()).getClient();
 
     // A project one reaches the cluster, which answers for the project named.
-    Response created = api.createTruststore(null, Map.of("name", "partner-ca", "caCertPem", pem, "namespace", "team-a"));
+    Response created = api.createTruststore(null, null, Map.of("name", "partner-ca", "caCertPem", pem,
+        "namespace", "team-a"));
     assertEquals(403, created.getStatus());
     assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(created));
-    Response flipped = api.setTruststoreDefault(null, "team-a", "partner-ca-truststore", Map.of("default", true));
+    Response flipped = api.setTruststoreDefault(null, null, "team-a", "partner-ca-truststore", Map.of("default", true));
     assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(flipped));
-    Response deleted = api.deleteTruststore(null, "team-a", "partner-ca-truststore");
+    Response deleted = api.deleteTruststore(null, null, "team-a", "partner-ca-truststore");
     assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("team-a"), error(deleted));
   }
 
   @Test
   @SuppressWarnings("unchecked")
-  void theListingTellsSharedTruststoresFromProjectOnes() throws Exception {
+  void theListingTellsSharedTruststoresFromProjectOnes(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir)
+      throws Exception {
     // A truststore of a workload project is selectable by the releases of that project only; the wizard and the
     // server read the scope to keep it there.
-    KubernetesService.TruststoreSummary registered = summary("ambari-pki", "corp-ca-truststore");
+    KubeService api = apiAsViewAdmin(workDir);
+    when(k8s.getClient()).thenThrow(forbidden());
+    api.createTruststore(null, null, Map.of("name", "corp-ca", "default", true,
+        "caCertPem", org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Corporate Root CA")));
+    // The Secret an earlier version kept the shared truststore in: the view keeps it now.
+    KubernetesService.TruststoreSummary legacy = summary("ambari-pki", "corp-ca-truststore");
     KubernetesService.TruststoreSummary project = summary("team-b", "partner-ca-truststore");
-    when(k8s.listTruststores(null)).thenReturn(new java.util.ArrayList<>(java.util.List.of(registered, project)));
+    when(k8s.listTruststores(null)).thenReturn(new java.util.ArrayList<>(java.util.List.of(legacy, project)));
 
     java.util.List<KubernetesService.TruststoreSummary> listed =
-        (java.util.List<KubernetesService.TruststoreSummary>) api().listTruststores(null).getEntity();
+        (java.util.List<KubernetesService.TruststoreSummary>) api.listTruststores(null, null).getEntity();
 
     assertEquals(2, listed.size());
     assertEquals("shared", listed.get(0).scope);
+    assertNotSame(legacy, listed.get(0), "the view's own, not the old Secret");
     assertTrue(listed.get(0).isDefault);
     assertEquals("project", listed.get(1).scope);
     assertTrue(listed.get(1).managed);
@@ -863,19 +900,18 @@ class KubeServiceTest {
   }
 
   @Test
-  void theTruststoresPageLearnsWhereTruststoresAreWrittenAndWhetherKdpsMayWriteThere() throws Exception {
-    when(k8s.canI("create", "", "secrets", null, null, "ambari-pki")).thenReturn(false);
-
-    Response refused = api().truststoreRegistryStatus();
+  void theTruststoresPageLearnsWhetherTheCallerMayChangeTheSharedTruststores(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path workDir) throws Exception {
+    Response refused = apiAsOperator(workDir).truststoreRegistryStatus(null);
     assertEquals(200, refused.getStatus());
     Map<?, ?> body = (Map<?, ?>) refused.getEntity();
     assertEquals("ambari-pki", body.get("namespace"));
     assertEquals(false, body.get("canWrite"));
-    assertEquals(org.apache.ambari.view.k8s.service.PkiNamespaces.forbiddenMessage("ambari-pki"), body.get("message"));
+    assertEquals("Only an administrator of the view can change them.", body.get("message"));
 
-    when(k8s.canI("create", "", "secrets", null, null, "ambari-pki")).thenReturn(true);
-    body = (Map<?, ?>) api().truststoreRegistryStatus().getEntity();
+    body = (Map<?, ?>) apiAsViewAdmin(workDir).truststoreRegistryStatus(null).getEntity();
     assertEquals(true, body.get("canWrite"));
     assertFalse(body.containsKey("message"));
+    verify(k8s, never()).canI(any(), any(), any(), any(), any(), any());
   }
 }

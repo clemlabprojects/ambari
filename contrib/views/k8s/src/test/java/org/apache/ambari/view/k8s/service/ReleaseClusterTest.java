@@ -226,7 +226,7 @@ class ReleaseClusterTest {
   }
 
   @Test
-  void aDeployToAnotherClusterMayUseTheCompanyCaButNotManagedTruststoresYet() {
+  void aDeployToAnotherClusterMayUseTheCompanyCaAndTheManagedTruststores() {
     view.as("lead");
     new org.apache.ambari.view.k8s.service.cluster.ClusterRegistry(new org.apache.ambari.view.k8s.store.InstanceSettings(
         view.context)).save(new org.apache.ambari.view.k8s.service.cluster.KubernetesCluster("prod", "Production", "",
@@ -241,10 +241,10 @@ class ReleaseClusterTest {
       companyCa.setIngressTlsSelfSign(Map.of("mode", "companyUploaded", "caName", "corp"));
       prod.checkDeployCluster(companyCa);
 
+      // The view keeps the shared truststores; a project one is read on the cluster of its project.
       HelmDeployRequest truststores = prodRequest();
-      truststores.setTruststoreRefs(List.of("analytics/corp-trust"));
-      assertTrue(assertThrows(IllegalStateException.class, () -> prod.checkDeployCluster(truststores)).getMessage()
-          .contains("analytics/corp-trust"));
+      truststores.setTruststoreRefs(List.of("ambari-pki/corp-trust", "analytics/partner-trust"));
+      prod.checkDeployCluster(truststores);
     } finally {
       prod.shutdown();
     }

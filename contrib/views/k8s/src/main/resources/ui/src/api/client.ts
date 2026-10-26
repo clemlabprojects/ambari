@@ -1941,23 +1941,27 @@ export interface TruststoreSummary {
   /** Created via the Truststores tab (can be edited/deleted). */
   managed?: boolean;
   /**
-   * For a truststore of the Truststores tab: `shared` in the truststore project set in Cluster Settings, any release
-   * may trust it; `project` elsewhere, only the releases of its project may.
+   * For a truststore of the Truststores tab: `shared` when KDPS keeps it, any release on any cluster may trust it (its
+   * `namespace` is then the truststore project of Cluster Settings, which names it); `project` in a project, only the
+   * releases of that project may.
    */
   scope?: 'shared' | 'project';
 }
 
-/** List Secrets matching {@code *-truststore} with parsed ca.crt summaries. */
-export const listTruststores = async (namespace?: string): Promise<TruststoreSummary[]> => {
+/**
+ * The shared truststores KDPS keeps, and the Secrets matching `*-truststore` on a cluster (the default one when none is
+ * named), with parsed ca.crt summaries.
+ */
+export const listTruststores = async (namespace?: string, cluster?: string): Promise<TruststoreSummary[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  return fetchJson<TruststoreSummary[]>(`/truststores${qs}`);
+  return fetchJson<TruststoreSummary[]>(onCluster(`/truststores${qs}`, cluster));
 };
 
-/** Where truststores created in the Truststores tab are written, and whether KDPS may write Secrets there. */
+/** The project that names the shared truststores, and whether the caller may change them. */
 export interface TruststoreRegistryStatus {
   namespace: string;
   canWrite: boolean;
-  /** What to do when KDPS may not write there. */
+  /** Why the caller may not change them. */
   message?: string;
 }
 

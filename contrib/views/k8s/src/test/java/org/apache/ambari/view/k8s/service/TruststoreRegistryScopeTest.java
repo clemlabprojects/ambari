@@ -25,6 +25,8 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
+import org.apache.ambari.view.k8s.store.InMemoryDataStore;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.utils.TestCertificates;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,6 +53,8 @@ class TruststoreRegistryScopeTest {
     private static String caPem;
 
     private TruststoreRegistryService registry;
+    private ViewContext ctx;
+    private KubernetesService kubernetes;
 
     @BeforeEach
     void setUp() {
@@ -61,13 +65,19 @@ class TruststoreRegistryScopeTest {
         client.secrets().inNamespace(PROJECT).delete();
         client.namespaces().resource(new NamespaceBuilder().withNewMetadata().withName(PROJECT).endMetadata().build())
                 .createOr(existing -> existing.update());
-        ViewContext ctx = mock(ViewContext.class, RETURNS_DEEP_STUBS);
+        ctx = mock(ViewContext.class, RETURNS_DEEP_STUBS);
+        when(ctx.getDataStore()).thenReturn(new InMemoryDataStore());
         when(ctx.getInstanceName()).thenReturn("test-instance");
         when(ctx.getUsername()).thenReturn("operator1");
         when(ctx.getProperties()).thenReturn(Map.of("k8s.view.working.dir",
                 System.getProperty("java.io.tmpdir") + "/k8s-truststore-scope-ut"));
-        KubernetesService kubernetes = spy(new KubernetesService(ctx, client, mock(HelmClient.class), true));
-        registry = new TruststoreRegistryService(ctx, kubernetes, new PkiNamespaces(ctx, Map::of));
+        kubernetes = spy(new KubernetesService(ctx, client, mock(HelmClient.class), true));
+        registry = registry();
+    }
+
+    /** The registry of a new request, as each request makes one. */
+    private TruststoreRegistryService registry() {
+        return new TruststoreRegistryService(ctx, kubernetes, new PkiNamespaces(ctx, Map::of));
     }
 
     @Test
@@ -84,13 +94,61 @@ class TruststoreRegistryScopeTest {
     }
 
     @Test
-    void withoutAProjectOrWithTheSharedOneTheTruststoreIsShared() {
+    void withoutAProjectOrWithTheSharedOneTheTruststoreIsSharedAndKeptByTheView() {
         assertEquals(TruststoreRegistryService.SCOPE_SHARED,
                 registry.create(null, "corp-ca", caPem, false, null).get("scope"));
         assertEquals(TruststoreRegistryService.SCOPE_SHARED,
-                registry.create(SHARED, "corp-ca-2", caPem, false, null).get("scope"));
-        assertNotNull(client.secrets().inNamespace(SHARED).withName("corp-ca-truststore").get());
-        assertNotNull(client.secrets().inNamespace(SHARED).withName("corp-ca-2-truststore").get());
+                registry.create(SHARED, "corp-ca-2", caPem, true, null).get("scope"));
+
+        assertTrue(client.secrets().inAnyNamespace().list().getItems().isEmpty(), "nothing written to a cluster");
+        assertEquals(List.of("corp-ca-2-truststore", "corp-ca-truststore"),
+                registry().list(null).stream().map(t -> t.name).toList());
+        assertEquals(List.of(caPem.trim()), registry().defaultTruststorePems().stream().map(String::trim).toList());
+        // As the wizard names it, as earlier releases and chart repositories name it.
+        assertEquals(caPem.trim(), registry().caPemByName(SHARED + "/corp-ca-truststore", PROJECT).trim());
+        assertEquals(caPem.trim(), registry().caPemByName("corp-ca").trim());
+
+        registry().setDefault(SHARED, "corp-ca-2-truststore", false);
+        assertTrue(registry().defaultTruststorePems(PROJECT).isEmpty());
+        registry().delete(null, "corp-ca-truststore");
+        assertThrows(IllegalArgumentException.class, () -> registry().caPemByName("corp-ca"));
+    }
+
+    @Test
+    void theSharedTruststoresOfAnEarlierVersionAreImportedOnceAndTheirSecretsLeftInPlace() {
+        client.secrets().inNamespace(SHARED).resource(new SecretBuilder().withNewMetadata().withName("corp-ca-truststore")
+                .addToLabels(TruststoreRegistryService.LABEL_RESOURCE_TYPE, TruststoreRegistryService.RESOURCE_TYPE_TRUSTSTORE)
+                .addToAnnotations(TruststoreRegistryService.ANNOTATION_TRUST_DEFAULT, "true")
+                .addToAnnotations(TruststoreRegistryService.ANNOTATION_DESCRIPTION, "Corporate root")
+                .endMetadata().addToData("ca.crt", java.util.Base64.getEncoder().encodeToString(caPem.getBytes()))
+                .build()).create();
+
+        assertEquals(1, registry.defaultTruststorePems(PROJECT).size(), "trusted by every release, as before");
+        assertEquals("true", new InstanceSettings(ctx).get(TruststoreRegistryService.IMPORTED_KEY));
+        assertNotNull(client.secrets().inNamespace(SHARED).withName("corp-ca-truststore").get(), "left in place");
+        List<KubernetesService.TruststoreSummary> listed = registry().list(null);
+        assertEquals(1, listed.size(), "listed once, as the view's own");
+        assertEquals(TruststoreRegistryService.SCOPE_SHARED, listed.get(0).scope);
+
+        // Imported once: what is later written there is not a shared truststore.
+        client.secrets().inNamespace(SHARED).resource(new SecretBuilder().withNewMetadata().withName("late-truststore")
+                .addToLabels(TruststoreRegistryService.LABEL_RESOURCE_TYPE, TruststoreRegistryService.RESOURCE_TYPE_TRUSTSTORE)
+                .endMetadata().addToData("ca.crt", java.util.Base64.getEncoder().encodeToString(caPem.getBytes()))
+                .build()).create();
+        assertThrows(IllegalArgumentException.class, () -> registry().caPemByName("late"));
+
+        registry().delete(SHARED, "corp-ca-truststore");
+        assertNull(client.secrets().inNamespace(SHARED).withName("corp-ca-truststore").get(), "its old Secret goes too");
+    }
+
+    @Test
+    void whenTheDefaultClusterCannotBeReadTheImportIsTriedAgainLater() {
+        doThrow(new io.fabric8.kubernetes.client.KubernetesClientException("unreachable")).when(kubernetes).getClient();
+
+        registry.create(null, "corp-ca", caPem, false, null);
+
+        assertNotEquals("true", new InstanceSettings(ctx).get(TruststoreRegistryService.IMPORTED_KEY));
+        assertEquals(1, registry().list(SHARED).size(), "the view's own are listed all the same");
     }
 
     @Test
@@ -114,17 +172,25 @@ class TruststoreRegistryScopeTest {
 
     @Test
     void theListingMarksTheScopeOfTabTruststoresOnly() {
-        List<KubernetesService.TruststoreSummary> listed = new ArrayList<>(List.of(
+        registry.create(null, "corp-ca", caPem, false, null);
+        doReturn(new ArrayList<>(List.of(
                 summary(SHARED, "corp-ca-truststore", true),
                 summary(PROJECT, "partner-ca-truststore", true),
-                summary(PROJECT, "trino-truststore", false)));
+                summary(PROJECT, "trino-truststore", false)))).when(kubernetes).listTruststores(null);
+        doReturn(new ArrayList<>(List.of(
+                summary(PROJECT, "partner-ca-truststore", true),
+                summary(PROJECT, "trino-truststore", false)))).when(kubernetes).listTruststores(PROJECT);
 
-        registry.markManaged(listed);
+        List<KubernetesService.TruststoreSummary> listed = registry().list(null);
 
+        assertEquals(3, listed.size(), "the old Secret of the shared one is left out");
         assertEquals(TruststoreRegistryService.SCOPE_SHARED, listed.get(0).scope);
+        assertEquals(1, listed.get(0).caCount);
         assertEquals(TruststoreRegistryService.SCOPE_PROJECT, listed.get(1).scope);
         assertTrue(listed.get(1).managed, "a project truststore stays selectable");
         assertNull(listed.get(2).scope, "a release's own truststore has no scope");
+        assertEquals(List.of("partner-ca-truststore", "trino-truststore"),
+                registry().list(PROJECT).stream().map(t -> t.name).toList(), "a project lists no shared one");
     }
 
     @Test
@@ -147,7 +213,7 @@ class TruststoreRegistryScopeTest {
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
                 () -> registry.caPemByName(PROJECT + "/partner-ca-truststore"));
 
-        assertTrue(refused.getMessage().contains("only the shared truststores of project " + SHARED), refused.getMessage());
+        assertTrue(refused.getMessage().contains("only the shared truststores (" + SHARED + "/...)"), refused.getMessage());
         assertFalse(registry.caPemByName(PROJECT + "/partner-ca-truststore", PROJECT).isBlank(),
                 "a release of the project reads it");
     }

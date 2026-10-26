@@ -50,6 +50,7 @@ class TrustBundleStrictTest {
     private KubernetesService k8s;
     private WebHookConfigurationService webhook;
     private TrustBundleService trustBundle;
+    private TruststoreRegistryService registry;
 
     private static String internalCaPem;
     private static String corporateCaPem;
@@ -63,14 +64,20 @@ class TrustBundleStrictTest {
             partnerCaPem = TestCertificates.caPem("CN=Partner Root CA");
         }
         ctx = mock(ViewContext.class);
+        when(ctx.getDataStore()).thenReturn(new org.apache.ambari.view.k8s.store.InMemoryDataStore());
         when(ctx.getAmbariProperty(anyString())).thenReturn(null);
         when(ctx.getProperties()).thenReturn(Map.of());
         k8s = mock(KubernetesService.class);
         webhook = mock(WebHookConfigurationService.class);
         when(webhook.ensureAmbariCertificateAuthority())
                 .thenReturn(new WebHookConfigurationService.CertificateAuthorityMaterial(internalCaPem, null, null));
-        TruststoreRegistryService registry = new TruststoreRegistryService(ctx, k8s, new PkiNamespaces(ctx, Map::of));
+        registry = new TruststoreRegistryService(ctx, k8s, new PkiNamespaces(ctx, Map::of));
         trustBundle = new TrustBundleService(ctx, k8s, webhook, registry);
+    }
+
+    /** A shared truststore as the Truststores tab creates it: kept by the view. */
+    private void shared(String name, String caPem, boolean isDefault) {
+        registry.create(null, name, caPem, isDefault, null);
     }
 
     /** A truststore as the Truststores tab creates it, optionally flagged default. */
@@ -100,8 +107,7 @@ class TrustBundleStrictTest {
 
     @Test
     void aSelectedTruststoreThatCannotBeReadStopsTheDeployNamingEveryOne() {
-        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
-                .thenReturn(truststore("ambari-pki", "corp-ca-truststore", corporateCaPem, false));
+        shared("corp-ca", corporateCaPem, false);
 
         IllegalStateException stopped = assertThrows(IllegalStateException.class, () -> trustBundle.provisionForDeploy(
                 NS, RELEASE, "SUPERSET", List.of("ambari-pki/corp-ca-truststore", "gone-ca", "team-a/partner-ca-truststore")));
@@ -117,22 +123,22 @@ class TrustBundleStrictTest {
 
     @Test
     void onlyATruststoreCreatedInTheTruststoresTabIsTrusted() {
-        when(k8s.getSecret("ambari-pki", "trino-truststore")).thenReturn(new SecretBuilder()
-                .withNewMetadata().withNamespace("ambari-pki").withName("trino-truststore").endMetadata()
+        // A release's own truststore in the project, or any Secret named like one there.
+        when(k8s.getSecret(NS, "trino-truststore")).thenReturn(new SecretBuilder()
+                .withNewMetadata().withNamespace(NS).withName("trino-truststore").endMetadata()
                 .addToData("ca.crt", Base64.getEncoder().encodeToString(corporateCaPem.getBytes(StandardCharsets.UTF_8)))
                 .build());
 
         IllegalStateException stopped = assertThrows(IllegalStateException.class,
-                () -> trustBundle.provisionForDeploy(NS, RELEASE, null, List.of("ambari-pki/trino-truststore")));
+                () -> trustBundle.provisionForDeploy(NS, RELEASE, null, List.of(NS + "/trino-truststore")));
 
         assertTrue(stopped.getMessage().contains("is not a truststore created in the Truststores tab"), stopped.getMessage());
         verify(k8s, never()).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), any(), any());
     }
 
     @Test
-    void aSelectedTruststoreIsReadFromTheTruststoreProjectTheWizardNamesIt() {
-        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
-                .thenReturn(truststore("ambari-pki", "corp-ca-truststore", corporateCaPem, false));
+    void aSelectedSharedTruststoreIsReadFromTheViewAsTheWizardNamesIt() {
+        shared("corp-ca", corporateCaPem, false);
 
         TrustBundleService.ProvisionResult result = trustBundle.provisionForDeploy(NS, RELEASE, "SUPERSET",
                 List.of("ambari-pki/corp-ca-truststore"));
@@ -141,6 +147,7 @@ class TrustBundleStrictTest {
         assertEquals(2, result.caCount(), "the Ambari Internal CA and the selected one");
         assertEquals("superset-truststore", result.helmOverrides().get("global.security.tls.truststoreSecret"));
         assertTrue(holds(writtenCaBundle(), corporateCaPem));
+        verify(k8s, never()).getSecret(eq("ambari-pki"), anyString());
     }
 
     @Test
@@ -160,20 +167,21 @@ class TrustBundleStrictTest {
     }
 
     @Test
-    void aRefWithoutANamespaceIsReadFromTheTruststoreProject() {
-        trustBundle = new TrustBundleService(ctx, k8s, webhook, new TruststoreRegistryService(ctx, k8s,
-                new PkiNamespaces(ctx, () -> Map.of("truststore", Map.of("namespace", "kdps-pki")))));
-        when(k8s.getSecret("kdps-pki", "corp-ca-truststore"))
-                .thenReturn(truststore("kdps-pki", "corp-ca-truststore", corporateCaPem, false));
+    void aRefWithoutANamespaceIsASharedTruststore() {
+        // As releases deployed by earlier versions recorded them, whatever the truststore project is called.
+        registry = new TruststoreRegistryService(ctx, k8s,
+                new PkiNamespaces(ctx, () -> Map.of("truststore", Map.of("namespace", "kdps-pki"))));
+        trustBundle = new TrustBundleService(ctx, k8s, webhook, registry);
+        shared("corp-ca", corporateCaPem, false);
 
         assertTrue(trustBundle.provisionForDeploy(NS, RELEASE, null, List.of("corp-ca")).provisioned());
-        verify(k8s).getSecret("kdps-pki", "corp-ca-truststore");
+        assertTrue(trustBundle.provisionForDeploy(NS, RELEASE, null, List.of("kdps-pki/corp-ca-truststore")).provisioned());
+        verify(k8s, never()).getSecret(eq("kdps-pki"), anyString());
     }
 
     @Test
     void aTruststoreSecretThatCannotBeWrittenStopsADeployThatSelectedTruststores() {
-        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
-                .thenReturn(truststore("ambari-pki", "corp-ca-truststore", corporateCaPem, false));
+        shared("corp-ca", corporateCaPem, false);
         doThrow(new KubernetesClientException("secrets \"superset-truststore\" is forbidden", 403, null))
                 .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq("superset-truststore"), anyMap(), anyMap(), anyMap());
 
@@ -229,8 +237,7 @@ class TrustBundleStrictTest {
         when(webhook.ensureAmbariCertificateAuthority()).thenThrow(new IllegalStateException("CA store unreadable"));
         when(k8s.listViewSecretsWithLabel(anyString(), anyString(), anyString()))
                 .thenThrow(new KubernetesClientException("connection reset", 0, null));
-        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
-                .thenReturn(truststore("ambari-pki", "corp-ca-truststore", corporateCaPem, false));
+        shared("corp-ca", corporateCaPem, false);
 
         TrustBundleService.ProvisionResult result = trustBundle.provisionForDeploy(NS, RELEASE, null, List.of("corp-ca"));
 
@@ -242,13 +249,13 @@ class TrustBundleStrictTest {
     }
 
     @Test
-    void defaultTruststoresComeFromTheTruststoreProjectAndTheReleaseProjectOnly() {
+    void defaultTruststoresComeFromTheSharedOnesAndTheReleaseProjectOnly() {
         String otherCaPem = TestCertificates.caPem("CN=Not Default CA");
+        shared("corp-ca", corporateCaPem, true);
+        shared("other-ca", otherCaPem, false);
         // A cluster-wide account could list a default-flagged truststore Secret a tenant wrote in a workload project.
         when(k8s.listViewSecretsWithLabel(anyString(), eq(TruststoreRegistryService.LABEL_RESOURCE_TYPE),
                 eq(TruststoreRegistryService.RESOURCE_TYPE_TRUSTSTORE))).thenAnswer(call -> switch ((String) call.getArgument(0)) {
-                    case "ambari-pki" -> List.of(truststore("ambari-pki", "corp-ca-truststore", corporateCaPem, true),
-                            truststore("ambari-pki", "other-ca-truststore", otherCaPem, false));
                     case "team-b" -> List.of(truststore("team-b", "partner-ca-truststore", partnerCaPem, true));
                     default -> List.of();
                 });
@@ -261,6 +268,7 @@ class TrustBundleStrictTest {
         assertFalse(holds(bundle, otherCaPem), "not flagged default");
         assertFalse(holds(bundle, partnerCaPem), "flagged default in a project the release is not in");
         verify(k8s, never()).listViewSecretsWithLabel(eq("team-b"), anyString(), anyString());
+        verify(k8s, never()).listViewSecretsWithLabel(eq("ambari-pki"), anyString(), anyString());
     }
 
     @Test
@@ -276,9 +284,9 @@ class TrustBundleStrictTest {
 
     @Test
     void aDefaultTruststoreOfTheReleaseProjectIsTrustedByItsReleases() {
+        shared("corp-ca", corporateCaPem, true);
         when(k8s.listViewSecretsWithLabel(anyString(), eq(TruststoreRegistryService.LABEL_RESOURCE_TYPE),
                 eq(TruststoreRegistryService.RESOURCE_TYPE_TRUSTSTORE))).thenAnswer(call -> switch ((String) call.getArgument(0)) {
-                    case "ambari-pki" -> List.of(truststore("ambari-pki", "corp-ca-truststore", corporateCaPem, true));
                     case NS -> List.of(truststore(NS, "partner-ca-truststore", partnerCaPem, true));
                     default -> List.of();
                 });

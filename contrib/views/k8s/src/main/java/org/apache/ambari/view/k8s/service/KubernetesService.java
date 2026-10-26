@@ -5364,11 +5364,39 @@ public class KubernetesService {
         /** Created via the view's Truststores tab (label {@code resource-type=truststore}); can be edited/deleted. */
         public boolean managed;
         /**
-         * For a truststore of the Truststores tab: {@code shared} in the truststore project set in Cluster Settings, any
-         * release may use it; {@code project} elsewhere, only the releases of its project may. Null for any other
-         * Secret. Set by {@link TruststoreRegistryService#markManaged}.
+         * For a truststore of the Truststores tab: {@code shared} when the view keeps it, any release on any cluster may
+         * use it; {@code project} in a project, only the releases of that project may. Null for any other Secret. Set by
+         * {@link TruststoreRegistryService#list}.
          */
         public String scope;
+    }
+
+    /**
+     * What the Truststores tab shows of each certificate of a PEM bundle: subject, issuer, expiry and whether it is a CA.
+     *
+     * @param pem the PEM bundle
+     * @param now the time the days until expiry count from
+     * @return one entry per certificate
+     * @throws java.security.cert.CertificateException when the bundle cannot be parsed
+     */
+    public static List<Map<String, Object>> certificateSummaries(byte[] pem, Instant now)
+            throws java.security.cert.CertificateException {
+        List<Map<String, Object>> certs = new ArrayList<>();
+        Collection<? extends java.security.cert.Certificate> parsed =
+                CertificateFactory.getInstance("X.509").generateCertificates(new ByteArrayInputStream(pem));
+        for (java.security.cert.Certificate cert : parsed) {
+            if (!(cert instanceof X509Certificate x509)) continue;
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("subject", x509.getSubjectX500Principal().getName());
+            c.put("issuer", x509.getIssuerX500Principal().getName());
+            Instant notAfter = x509.getNotAfter().toInstant();
+            c.put("notAfter", notAfter.toString());
+            c.put("daysUntilExpiry", Duration.between(now, notAfter).toDays());
+            c.put("serialNumber", x509.getSerialNumber().toString(16));
+            c.put("isCa", x509.getBasicConstraints() >= 0);
+            certs.add(c);
+        }
+        return certs;
     }
 
     /**
@@ -5391,7 +5419,6 @@ public class KubernetesService {
                         () -> client.secrets().inAnyNamespace().list().getItems(),
                         ns -> client.secrets().inNamespace(ns).list().getItems());
             }
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
             Instant now = Instant.now();
             List<TruststoreSummary> out = new ArrayList<>();
             for (Secret s : secrets) {
@@ -5413,22 +5440,8 @@ public class KubernetesService {
                 ts.pemReady = data.containsKey("ca.crt");
                 List<Map<String, Object>> certs = new ArrayList<>();
                 if (ts.pemReady) {
-                    byte[] pemBytes = getDecoder().decode(data.get("ca.crt"));
                     try {
-                        Collection<? extends java.security.cert.Certificate> parsed =
-                                cf.generateCertificates(new ByteArrayInputStream(pemBytes));
-                        for (java.security.cert.Certificate cert : parsed) {
-                            if (!(cert instanceof X509Certificate x509)) continue;
-                            Map<String, Object> c = new LinkedHashMap<>();
-                            c.put("subject", x509.getSubjectX500Principal().getName());
-                            c.put("issuer", x509.getIssuerX500Principal().getName());
-                            Instant notAfter = x509.getNotAfter().toInstant();
-                            c.put("notAfter", notAfter.toString());
-                            c.put("daysUntilExpiry", Duration.between(now, notAfter).toDays());
-                            c.put("serialNumber", x509.getSerialNumber().toString(16));
-                            c.put("isCa", x509.getBasicConstraints() >= 0);
-                            certs.add(c);
-                        }
+                        certs = certificateSummaries(getDecoder().decode(data.get("ca.crt")), now);
                     } catch (Exception parseEx) {
                         LOG.warn("listTruststores: failed to parse ca.crt in {}/{}: {}", ts.namespace, ts.name, parseEx.toString());
                     }

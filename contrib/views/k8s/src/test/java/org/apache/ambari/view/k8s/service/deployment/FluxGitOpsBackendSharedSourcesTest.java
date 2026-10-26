@@ -119,6 +119,18 @@ public class FluxGitOpsBackendSharedSourcesTest {
         when(ctx.getAmbariProperty(anyString())).thenReturn(null);
         DataStore ds = mock(DataStore.class);
         when(ctx.getDataStore()).thenReturn(ds);
+        // The view settings (the shared truststores among them) are kept as they would be.
+        org.apache.ambari.view.k8s.store.InMemoryDataStore settings = new org.apache.ambari.view.k8s.store.InMemoryDataStore();
+        Class<org.apache.ambari.view.k8s.store.KdpsSettingEntity> setting = org.apache.ambari.view.k8s.store.KdpsSettingEntity.class;
+        when(ds.find(eq(setting), anyString())).thenAnswer(inv -> settings.find(setting, inv.getArgument(1)));
+        doAnswer(inv -> {
+            settings.store(inv.getArgument(0));
+            return null;
+        }).when(ds).store(any(setting));
+        doAnswer(inv -> {
+            settings.remove(inv.getArgument(0));
+            return null;
+        }).when(ds).remove(any(setting));
 
         chartRepos.put("charts", chartRepo("charts", "HTTP", "https://charts.example.com"));
         chartRepos.put("registry", chartRepo("registry", "OCI", "registry.example.com/kdps"));
@@ -453,10 +465,11 @@ public class FluxGitOpsBackendSharedSourcesTest {
     @Test
     public void aPrivateCaComesFromTheKdpsTruststoresTheRepositoryNames() throws Exception {
         chartRepos.get("charts").setCaTruststores("corp-ca, partner-ca");
-        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
-                .thenReturn(truststore("corp-ca-truststore", "-----BEGIN CERTIFICATE-----\nCORP\n-----END CERTIFICATE-----\n"));
-        when(k8s.getSecret("ambari-pki", "partner-ca-truststore"))
-                .thenReturn(truststore("partner-ca-truststore", "-----BEGIN CERTIFICATE-----\nPARTNER\n-----END CERTIFICATE-----"));
+        org.apache.ambari.view.k8s.service.TruststoreRegistryService truststores =
+                new org.apache.ambari.view.k8s.service.TruststoreRegistryService(ctx, k8s);
+        truststores.create("corp-ca", org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Corp"), false, null);
+        truststores.create("partner-ca", org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Partner"), false,
+                null);
 
         backend().apply(request("analytics", "trino", "trinodb/trino", "charts"), null);
 
@@ -467,17 +480,10 @@ public class FluxGitOpsBackendSharedSourcesTest {
         ArgumentCaptor<Map<String, byte[]>> data = ArgumentCaptor.forClass(Map.class);
         verify(k8s).createOrUpdateOpaqueSecret(eq("analytics"), eq("trino-charts-repo-ca"), data.capture(),
                 eq(SOURCE_SECRET_LABELS));
-        assertEquals("-----BEGIN CERTIFICATE-----\nCORP\n-----END CERTIFICATE-----\n"
-                        + "-----BEGIN CERTIFICATE-----\nPARTNER\n-----END CERTIFICATE-----\n",
+        String corp = truststores.caPemByName("corp-ca");
+        String partner = truststores.caPemByName("partner-ca");
+        assertEquals((corp.endsWith("\n") ? corp : corp + "\n") + (partner.endsWith("\n") ? partner : partner + "\n"),
                 new String(data.getValue().get("ca.crt"), StandardCharsets.UTF_8));
-    }
-
-    /** A truststore as the Truststores tab creates it. */
-    private static io.fabric8.kubernetes.api.model.Secret truststore(String name, String caPem) {
-        return new io.fabric8.kubernetes.api.model.SecretBuilder().withNewMetadata().withName(name)
-                .withNamespace("ambari-pki").addToLabels("ambari.clemlab.com/resource-type", "truststore").endMetadata()
-                .addToData("ca.crt", java.util.Base64.getEncoder().encodeToString(caPem.getBytes(StandardCharsets.UTF_8)))
-                .build();
     }
 
     @Test

@@ -973,13 +973,10 @@ class CommandServiceGitOpsDeployTest {
 
     // ------------------------------------------------------------------------------------------------ truststore
 
-    /** A truststore as the Truststores tab creates it. */
-    private static io.fabric8.kubernetes.api.model.Secret managedTruststore(String namespace, String name) {
-        String pem = org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Corporate Root CA");
-        return new io.fabric8.kubernetes.api.model.SecretBuilder().withNewMetadata().withNamespace(namespace)
-                .withName(name).addToLabels("ambari.clemlab.com/resource-type", "truststore").endMetadata()
-                .addToData("ca.crt", java.util.Base64.getEncoder().encodeToString(pem.getBytes(StandardCharsets.UTF_8)))
-                .build();
+    /** A shared truststore as the Truststores tab creates it: kept by the view. */
+    private void sharedTruststore(String name) {
+        new TruststoreRegistryService(ctx, k8s).create(null, name,
+                org.apache.ambari.view.k8s.utils.TestCertificates.caPem("CN=Corporate Root CA"), false, null);
     }
 
     /**
@@ -1015,8 +1012,7 @@ class CommandServiceGitOpsDeployTest {
 
     @Test
     void aTruststoreSecretThatCannotBeWrittenStopsTheDeployBeforeHelmOrGit() throws Exception {
-        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
-                .thenReturn(managedTruststore("ambari-pki", "corp-ca-truststore"));
+        sharedTruststore("corp-ca");
         doThrow(new io.fabric8.kubernetes.client.KubernetesClientException("etcdserver: request timed out", 500, null))
                 .when(k8s).createOrUpdateOpaqueSecret(eq(NS), eq(rel + "-truststore"), anyMap(), any(), any());
         for (String mode : List.of("DIRECT_HELM", "FLUX_GITOPS")) {
@@ -1035,8 +1031,7 @@ class CommandServiceGitOpsDeployTest {
 
     @Test
     void aSelectedTruststoreIsWrittenIntoTheReleaseTruststoreAndWired() throws Exception {
-        when(k8s.getSecret("ambari-pki", "corp-ca-truststore"))
-                .thenReturn(managedTruststore("ambari-pki", "corp-ca-truststore"));
+        sharedTruststore("corp-ca");
         HelmDeployRequest request = request("DIRECT_HELM", "main");
         request.setTruststoreRefs(List.of("ambari-pki/corp-ca-truststore"));
 

@@ -8238,13 +8238,6 @@ public class CommandService {
             throw new IllegalStateException("The Kubernetes cluster '" + named + "' has no connection yet: an "
                     + "administrator saves one under Kubernetes clusters. Nothing was deployed.");
         }
-        // The managed truststores are kept on the default cluster for now: another cluster has none of them, so a
-        // deploy there that needs one is refused rather than deployed without it.
-        if (request.getTruststoreRefs() != null && !request.getTruststoreRefs().isEmpty()) {
-            throw new IllegalStateException("A deploy to the cluster '" + named + "' cannot use managed truststores "
-                    + "yet (" + String.join(", ", request.getTruststoreRefs()) + "): deploy without them. Nothing was "
-                    + "deployed.");
-        }
     }
 
     /** The Kubernetes cluster an operation runs on: the default one for an operation that names none. */

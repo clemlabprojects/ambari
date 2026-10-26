@@ -96,10 +96,13 @@ const ServiceWizardPage: React.FC = () => {
   const targetCluster = chosenCluster && chosenCluster !== 'default' ? chosenCluster : undefined;
   const [managedTruststores, setManagedTruststores] = useState<TruststoreSummary[]>([]);
   useEffect(() => {
-    listTruststores()
-      .then((all) => setManagedTruststores(all.filter((t) => t.managed)))
-      .catch(() => setManagedTruststores([]));
-  }, []);
+    // The shared truststores, and the project ones of the cluster the release goes to.
+    let alive = true;
+    listTruststores(undefined, targetCluster)
+      .then((all) => { if (alive) setManagedTruststores(all.filter((t) => t.managed)); })
+      .catch(() => { if (alive) setManagedTruststores([]); });
+    return () => { alive = false; };
+  }, [targetCluster]);
   const [configOverrides, setConfigOverrides] = useState<Record<string, any>>({}); // Step 3 data
   // Validity flag for each password-typed property, keyed by `${cfg}/${prop}`.
   // PropertyRenderer reports the boolean here whenever its local confirm state's
