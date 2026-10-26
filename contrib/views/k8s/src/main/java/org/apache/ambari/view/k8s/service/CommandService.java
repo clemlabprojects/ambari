@@ -18592,14 +18592,17 @@ public class CommandService {
      *
      * @param mode {@code credentials}, {@code all} or {@code none}
      * @return the report of {@link ExternalCleanup#preview}, as the uninstall answers it, with {@code recorded} false
-     *         when nothing is recorded for the release (one deployed by an earlier version)
+     *         when the release was deployed before KDPS kept a ledger, so what it registered is not known
      */
     public Map<String, Object> externalRegistrationsOfRelease(String namespace, String releaseName, String mode) {
         ReleaseMetadataService metadata = new ReleaseMetadataService(ctx);
         ProvisioningLedger ledger = metadata.provisioningOf(namespace, releaseName);
         Map<String, Object> answer = new LinkedHashMap<>(ExternalCleanup.preview(namespace, ledger, ExternalCleanup.Mode.of(mode),
                 metadata.otherReleasesProvisioning(namespace, releaseName)).toMap());
-        answer.put("recorded", !ledger.isEmpty());
+        // A release recorded since ledgers exist has one, empty when it registered nothing outside Kubernetes: only a
+        // release deployed earlier has none. KDPS registered nothing for a release it has no record of.
+        K8sReleaseEntity record = metadata.find(namespace, releaseName);
+        answer.put("recorded", record == null || record.hasProvisioningLedger() || !ledger.isEmpty());
         return answer;
     }
 

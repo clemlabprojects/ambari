@@ -25,6 +25,7 @@ import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.service.om.FakeRangerAdmin;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
+import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.apache.ambari.view.k8s.store.PerUserViewContext;
 import org.apache.ambari.view.k8s.store.ProvisioningLedger;
 import org.junit.jupiter.api.AfterEach;
@@ -245,6 +246,22 @@ class CommandServiceExternalCleanupTest {
         @SuppressWarnings("unchecked")
         List<String> preview = (List<String>) service.externalRegistrationsOfRelease(NS, RELEASE, null).get("removed");
         assertEquals(1, preview.size());
+    }
+
+    @Test
+    void aReleaseThatRegisteredNothingIsNotTakenForOneDeployedByAnEarlierVersion() throws Exception {
+        ReleaseMetadataService metadata = recordedRelease();
+        assertEquals(true, service.externalRegistrationsOfRelease(NS, RELEASE, null).get("recorded"),
+                "recorded since ledgers exist, with nothing registered");
+
+        K8sReleaseEntity earlier = metadata.find(NS, RELEASE);
+        earlier.setProvisioningJson(""); // the DataStore keeps a value an update sets to null
+        view.dataStore.store(earlier);
+        assertEquals(false, service.externalRegistrationsOfRelease(NS, RELEASE, null).get("recorded"),
+                "deployed before KDPS kept ledgers");
+
+        assertEquals(true, service.externalRegistrationsOfRelease(NS, "not-deployed-by-kdps", null).get("recorded"),
+                "KDPS registered nothing for a release it has no record of");
     }
 
     private ReleaseMetadataService recordedRelease() {
