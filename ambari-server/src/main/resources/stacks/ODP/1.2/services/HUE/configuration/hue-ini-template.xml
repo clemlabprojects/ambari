@@ -130,7 +130,7 @@ temp_dir=/tmp
   security_enabled={{hue_yarn_kerberos_enabled}}
   submit_to={{hue_submit_to}}
   hadoop_mapred_home=/usr/odp/current/hadoop-mapreduce/
-  hadoop_bin=/usr/odp/current/hadoop-client/hadoop/bin/hadoop
+  hadoop_bin=/usr/odp/current/hadoop-client/bin/hadoop
   hadoop_conf_dir=/etc/hadoop/conf
 {% if yarn_ha_enabled %}
   [[[ha]]]
@@ -143,7 +143,7 @@ temp_dir=/tmp
   security_enabled={{hue_yarnha_yarn_kerberos_enabled}}
   submit_to={{hue_yarnha_submit_to}}
   hadoop_mapred_home=/usr/odp/current/hadoop-mapreduce/
-  hadoop_bin=/usr/odp/current/hadoop-client/hadoop/bin/hadoop
+  hadoop_bin=/usr/odp/current/hadoop-client/bin/hadoop
   hadoop_conf_dir=/etc/hadoop/conf
   {% endif %}
 {% endif %}

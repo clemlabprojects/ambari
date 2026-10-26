@@ -330,8 +330,12 @@ spark_historyserver_ui_port = default("/configurations/spark-defaults/spark.hist
 #
 # JobHistory mapreduce
 #
-mr_scheme='http'
-mr_historyserver_address = default("/configurations/mapred-site/mapreduce.jobhistory.webapp.address", None)
+mr_https_on = str(default("/configurations/mapred-site/mapreduce.jobhistory.http.policy", "HTTP_ONLY")).upper() == 'HTTPS_ONLY'
+mr_scheme = 'https' if mr_https_on else 'http'
+if mr_https_on:
+  mr_historyserver_address = default("/configurations/mapred-site/mapreduce.jobhistory.webapp.https.address", None)
+else:
+  mr_historyserver_address = default("/configurations/mapred-site/mapreduce.jobhistory.webapp.address", None)
 
 #
 # Yarn nodemanager
@@ -527,7 +531,7 @@ if has_rm:
   hue_resourcemanager_api_url = format('{yarn_scheme}://{hue_resourcemanager_host}:{rm_port}')
   hue_proxy_api_url = format('{yarn_scheme}://{hue_resourcemanager_host}:{rm_port}')
   hue_resourcemanager_port = rm_submit_port
-  hue_history_server_api_url = mr_historyserver_address
+  hue_history_server_api_url = format('{mr_scheme}://{mr_historyserver_address}') if mr_historyserver_address else ''
   hue_yarn_kerberos_enabled = security_enabled
   hue_submit_to = config['configurations']['hue-env']['hue_submit_to']
   # configures the [[yarn]][[[ha]]]
@@ -536,7 +540,7 @@ if has_rm:
     hue_yarnha_resourcemanager_api_url = format('{yarn_scheme}://{hue_yarnha_resourcemanager_host}:{rm_port}')
     hue_yarnha_proxy_api_url = format('{yarn_scheme}://{hue_yarnha_resourcemanager_host}:{rm_port}')
     hue_yarnha_resourcemanager_port = rm_submit_port
-    hue_yarnha_history_server_api_url = mr_historyserver_address
+    hue_yarnha_history_server_api_url = format('{mr_scheme}://{mr_historyserver_address}') if mr_historyserver_address else ''
     hue_yarnha_yarn_kerberos_enabled = security_enabled
     hue_yarnha_submit_to = config['configurations']['hue-env']['hue_submit_to']
 
