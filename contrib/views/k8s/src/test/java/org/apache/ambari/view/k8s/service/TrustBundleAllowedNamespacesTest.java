@@ -39,7 +39,8 @@ import static org.mockito.Mockito.*;
 
 /**
  * The truststore project is the view's own namespace, not a workload one: limiting the projects releases are deployed
- * to with {@code k8s.view.allowed.namespaces} does not stop a release from trusting the default truststores.
+ * to with {@code k8s.view.allowed.namespaces} does not stop a release from trusting the default truststores, those an
+ * earlier version kept as Secrets there included.
  */
 @EnableKubernetesMockClient(crud = true)
 class TrustBundleAllowedNamespacesTest {
@@ -59,6 +60,7 @@ class TrustBundleAllowedNamespacesTest {
         corporateCaPem = TestCertificates.caPem("CN=Corporate Root CA");
         ViewContext ctx = mock(ViewContext.class, RETURNS_DEEP_STUBS);
         doReturn("allowed-namespaces-truststore-test").when(ctx).getInstanceName();
+        doReturn(new org.apache.ambari.view.k8s.store.InMemoryDataStore()).when(ctx).getDataStore();
         doReturn(null).when(ctx).getAmbariProperty(anyString());
         // The workload projects only; the truststore project is not listed.
         doReturn(Map.of("k8s.view.allowed.namespaces", NS,

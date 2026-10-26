@@ -1381,42 +1381,44 @@ public class KubeService {
     }
 
     /**
-     * Lists Secrets matching the {@code *-truststore} convention with parsed
-     * {@code ca.crt} summaries. {@code namespace} is optional; null = cluster-wide. Only those of the truststore
-     * project are managed (selectable in the wizard, default for every release).
+     * Lists the shared truststores the view keeps, and the Secrets matching the {@code *-truststore} convention on the
+     * cluster the request names, with parsed {@code ca.crt} summaries. {@code namespace} is optional; null =
+     * cluster-wide. Managed truststores are selectable in the wizard: the shared ones by every release, a project one
+     * by the releases of its project.
      */
     @GET
     @Path("/truststores")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response listTruststores(@javax.ws.rs.QueryParam("namespace") String namespace) {
+    public Response listTruststores(@QueryParam("namespace") String namespace, @QueryParam("cluster") String cluster) {
         try {
-            return Response.ok(truststoreRegistry().markManaged(getKubernetesService().listTruststores(namespace)))
-                    .build();
+            return Response.ok(truststoreRegistry(cluster).list(namespace)).build();
         } catch (Exception e) {
             return handleError(e);
         }
     }
 
-    private TruststoreRegistryService truststoreRegistry() {
-        return new TruststoreRegistryService(viewContext, getKubernetesService());
+    /** The truststores of the view, with the project ones of the cluster a request names (the default one if none). */
+    private TruststoreRegistryService truststoreRegistry(String cluster) {
+        return new TruststoreRegistryService(viewContext, kubernetesService(requestedCluster(cluster)));
     }
 
     /**
-     * Where truststores created in the Truststores tab are written, and whether KDPS may write Secrets there: the page
-     * warns before the operator tries. Body: {namespace, canWrite, message?}.
+     * The namespace that names the shared truststores, and whether the caller may change them: the page warns before
+     * the operator tries. Body: {namespace, canWrite, message?}.
      */
     @GET
     @Path("/truststores/registry")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response truststoreRegistryStatus() {
+    public Response truststoreRegistryStatus(@Context HttpHeaders headers) {
         try {
-            String namespace = truststoreRegistry().managementNamespace();
-            boolean canWrite = getKubernetesService().canI("create", "", "secrets", null, null, namespace);
+            String namespace = new PkiNamespaces(viewContext).truststoreNamespace();
+            // The view keeps the shared truststores: who may change them is the view's configuration role.
+            boolean canWrite = new AuthHelper(viewContext, headers).canConfigure();
             Map<String, Object> out = new java.util.LinkedHashMap<>();
             out.put("namespace", namespace);
             out.put("canWrite", canWrite);
             if (!canWrite) {
-                out.put("message", PkiNamespaces.forbiddenMessage(namespace));
+                out.put("message", "Only an administrator of the view can change them.");
             }
             return Response.ok(out).build();
         } catch (Exception e) {
@@ -1457,7 +1459,8 @@ public class KubeService {
     @Path("/truststores")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response createTruststore(@Context HttpHeaders headers, Map<String, Object> body) {
+    public Response createTruststore(@Context HttpHeaders headers, @QueryParam("cluster") String cluster,
+                                     Map<String, Object> body) {
         String namespace = body == null || body.get("namespace") == null ? null : String.valueOf(body.get("namespace"));
         checkTruststorePermission(headers, namespace);
         try {
@@ -1468,12 +1471,15 @@ public class KubeService {
             String caCertPem = body.get("caCertPem") == null ? null : String.valueOf(body.get("caCertPem"));
             boolean makeDefault = Boolean.parseBoolean(String.valueOf(body.getOrDefault("default", false)));
             String description = body.get("description") == null ? null : String.valueOf(body.get("description"));
-            return Response.ok(truststoreRegistry().create(namespace, name, caCertPem, makeDefault, description)).build();
+            return Response.ok(truststoreRegistry(cluster).create(namespace, name, caCertPem, makeDefault, description))
+                    .build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
-            String target = truststoreRegistry().isShared(namespace)
-                    ? truststoreRegistry().managementNamespace() : namespace.trim();
+            if (namespace == null || namespace.isBlank()) {
+                return handleError(e);
+            }
+            String target = namespace.trim();
             if (NamespaceScope.isForbidden(e)) {
                 return truststoreRefused(target, e);
             }
@@ -1491,6 +1497,7 @@ public class KubeService {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public Response setTruststoreDefault(@Context HttpHeaders headers,
+                                         @QueryParam("cluster") String cluster,
                                          @PathParam("namespace") String namespace,
                                          @PathParam("name") String name,
                                          Map<String, Object> body) {
@@ -1498,7 +1505,7 @@ public class KubeService {
         try {
             boolean value = body == null || !body.containsKey("default")
                     ? true : Boolean.parseBoolean(String.valueOf(body.get("default")));
-            return Response.ok(truststoreRegistry().setDefault(namespace, name, value)).build();
+            return Response.ok(truststoreRegistry(cluster).setDefault(namespace, name, value)).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception e) {
@@ -1514,11 +1521,12 @@ public class KubeService {
     @Path("/truststores/{namespace}/{name}")
     @Produces(MediaType.APPLICATION_JSON)
     public Response deleteTruststore(@Context HttpHeaders headers,
+                                     @QueryParam("cluster") String cluster,
                                      @PathParam("namespace") String namespace,
                                      @PathParam("name") String name) {
         checkTruststorePermission(headers, namespace);
         try {
-            truststoreRegistry().delete(namespace, name);
+            truststoreRegistry(cluster).delete(namespace, name);
             return Response.ok(Map.of("deleted", true, "namespace", namespace, "name", name)).build();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();

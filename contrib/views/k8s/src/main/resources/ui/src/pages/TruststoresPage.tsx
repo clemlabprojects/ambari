@@ -210,7 +210,7 @@ const TruststoresPage: React.FC = () => {
         {registry && !registry.canWrite && (
           <Alert type="warning" showIcon style={{ margin: 12 }}
             message="Shared truststores cannot be created or changed"
-            description={<>{registry.message} Truststores of a project KDPS may write in can still be created.</>} />
+            description={<>{registry.message} Truststores of a project you deploy to can still be created.</>} />
         )}
         {error && (
           <Alert type="error" showIcon message={error} style={{ margin: 12 }} />
@@ -225,7 +225,15 @@ const TruststoresPage: React.FC = () => {
             pagination={{ pageSize: 20, size: 'small' }}
             expandable={{ expandedRowRender: expandedRow }}
             columns={[
-              { title: 'Namespace', dataIndex: 'namespace', sorter: (a: TruststoreSummary, b: TruststoreSummary) => a.namespace.localeCompare(b.namespace) },
+              {
+                title: 'Namespace',
+                dataIndex: 'namespace',
+                sorter: (a: TruststoreSummary, b: TruststoreSummary) => a.namespace.localeCompare(b.namespace),
+                // KDPS keeps the shared ones for every Kubernetes cluster: they are in no project.
+                render: (ns: string, row: TruststoreSummary) => row.scope === 'shared'
+                  ? <Tooltip title="Kept by KDPS for every Kubernetes cluster; a release's own truststore receives its certificates"><Text type="secondary">kept by KDPS</Text></Tooltip>
+                  : ns,
+              },
               { title: 'Release', dataIndex: 'releaseName', sorter: (a: TruststoreSummary, b: TruststoreSummary) => a.releaseName.localeCompare(b.releaseName) },
               { title: 'Secret', dataIndex: 'name', render: (s: string) => <Text code style={{ fontSize: 12 }}>{s}</Text> },
               { title: 'CAs', dataIndex: 'caCount', render: (n: number) => <Tag color={n > 0 ? 'green' : 'default'} style={{ margin: 0 }}>{n}</Tag>, width: 80 },
@@ -261,7 +269,7 @@ const TruststoresPage: React.FC = () => {
                   ? <Tooltip title="Auto-created for a release; edit via the install wizard"><Tag style={{ margin: 0 }}>release</Tag></Tooltip>
                   : row.scope === 'project'
                     ? <Tooltip title={`Only the releases of project ${row.namespace} can trust it`}><Tag color="cyan" style={{ margin: 0 }}>project</Tag></Tooltip>
-                    : <Tooltip title="Any release can trust it"><Tag color="geekblue" style={{ margin: 0 }}>shared</Tag></Tooltip>,
+                    : <Tooltip title="Any release, on any Kubernetes cluster, can trust it"><Tag color="geekblue" style={{ margin: 0 }}>shared</Tag></Tooltip>,
               },
               {
                 title: 'Default',
@@ -320,7 +328,7 @@ const TruststoresPage: React.FC = () => {
           <Form.Item name="scope" label="Available to">
             <Radio.Group>
               <Radio value="shared">
-                Every release (shared{registry ? <>, stored in project <Text code>{registry.namespace}</Text></> : null})
+                Every release, on every Kubernetes cluster (shared, kept by KDPS)
               </Radio>
               <Radio value="project">The releases of one project</Radio>
             </Radio.Group>
