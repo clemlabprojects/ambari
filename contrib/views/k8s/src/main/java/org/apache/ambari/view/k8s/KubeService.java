@@ -31,6 +31,10 @@ import org.apache.ambari.view.k8s.service.TruststoreRegistryService;
 import org.apache.ambari.view.k8s.service.NamespaceScope;
 import org.apache.ambari.view.k8s.service.PkiNamespaces;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRegistry;
+import org.apache.ambari.view.k8s.service.cluster.KubernetesCluster;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.service.StackDefinitionService;
 import org.apache.ambari.view.k8s.service.GlobalConfigService;
 import org.apache.ambari.view.k8s.model.stack.StackServiceDef;
@@ -87,6 +91,37 @@ public class KubeService {
         return this.configService;
     }
 
+    /** The Kubernetes service of a cluster: the one tests set for the default cluster. */
+    private KubernetesService kubernetesService(ClusterRef cluster) {
+        return cluster.isDefault() ? getKubernetesService() : KubernetesService.get(viewContext, cluster);
+    }
+
+    /** The connection configuration of a cluster: the one tests set for the default cluster. */
+    private ViewConfigurationService configService(ClusterRef cluster) {
+        if (cluster.isDefault()) {
+            return getConfigService();
+        }
+        ViewConfigurationService configured = clusterConfigServices.get(cluster);
+        return configured != null ? configured : new ViewConfigurationService(viewContext, cluster);
+    }
+
+    private ClusterRegistry clusterRegistry() {
+        return new ClusterRegistry(new InstanceSettings(viewContext));
+    }
+
+    /**
+     * The cluster a request names in its path.
+     *
+     * @throws NotFoundException when the view knows no cluster of that id
+     */
+    private ClusterRef knownCluster(String id) {
+        if (id != null && clusterRegistry().find(id).isPresent()) {
+            return ClusterRef.of(id);
+        }
+        throw new NotFoundException(Response.status(Response.Status.NOT_FOUND).type(MediaType.APPLICATION_JSON)
+                .entity(Collections.singletonMap("error", "KDPS knows no cluster '" + id + "'.")).build());
+    }
+
     private AmbariAliasResolver getAmbariAliasResolver(){
         if (ambariAliasResolver == null){
             this.ambariAliasResolver = new AmbariAliasResolver(this.viewContext);
@@ -105,6 +140,14 @@ public class KubeService {
     /** Replaces the view configuration service; for tests. */
     void setConfigService(ViewConfigurationService configService) {
         this.configService = configService;
+    }
+
+    /** Connection configurations of clusters other than the default one, set by tests. */
+    private final Map<ClusterRef, ViewConfigurationService> clusterConfigServices = new java.util.HashMap<>();
+
+    /** Replaces the connection configuration of a cluster other than the default one; for tests. */
+    void setConfigService(ClusterRef cluster, ViewConfigurationService configService) {
+        this.clusterConfigServices.put(cluster, configService);
     }
 
     /**
@@ -168,9 +211,13 @@ public class KubeService {
     public Response uploadKubeconfig(@Context HttpHeaders headers,
                                      @Context UriInfo ui, InputStream fileInputStream) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return uploadKubeconfig(ClusterRef.DEFAULT, headers, fileInputStream);
+    }
 
+    /** {@link #uploadKubeconfig(HttpHeaders, UriInfo, InputStream)} for a cluster, once the caller's role was checked. */
+    private Response uploadKubeconfig(ClusterRef cluster, HttpHeaders headers, InputStream fileInputStream) {
         try {
-            ViewConfigurationService configurationService = this.getConfigService();
+            ViewConfigurationService configurationService = configService(cluster);
             // The kubeconfig is only ever stored encrypted with the master key: without it, refuse before reading it.
             if (!configurationService.isMasterKeyAvailable()) {
                 LOG.warn("/cluster/config: kubeconfig upload refused, the Ambari master key was not found");
@@ -219,7 +266,7 @@ public class KubeService {
             }
             // Rebuild the client from the kubeconfig just saved. A plain reload keeps an existing client, so a
             // view that was already connected would go on using the previous account until Ambari restarts.
-            Response notConnected = reconnect("The kubeconfig was saved");
+            Response notConnected = reconnect(cluster, "The kubeconfig was saved");
             if (notConnected != null) {
                 boolean contextNotChosenYet = selectedContext == null || selectedContext.isBlank();
                 if (contextNotChosenYet && contextNames.size() > 1
@@ -234,6 +281,10 @@ public class KubeService {
                 }
                 return notConnected;
             }
+            if (!cluster.isDefault()) {
+                // The keytab webhook of another cluster is prepared with the deploys to that cluster.
+                return Response.ok(Collections.singletonMap("message", "Configuration saved.")).build();
+            }
             // The keytab webhook prerequisites (its namespace, mTLS Secrets, CA bundle) only matter in the
             // WEBHOOK Kerberos injection mode. In the default PRE_PROVISIONED mode nothing uses them, and on
             // OpenShift sites where namespaces cannot be created on the fly preparing them made the upload
@@ -244,7 +295,7 @@ public class KubeService {
                 try {
                     WebHookBootstrap.prepareWebhookPrereqs(
                             this.viewContext,
-                            this.getKubernetesService(),
+                            kubernetesService(cluster),
                             webhookName,
                             headers.getRequestHeaders()
                     );
@@ -260,7 +311,7 @@ public class KubeService {
                 LOG.info("/cluster/config: Kerberos injection mode {}; keytab webhook prerequisites not needed", injectionMode);
                 // An account an earlier WEBHOOK setup left behind is withdrawn while an administrator is at hand;
                 // kept, with a warning in the log, while the webhook is still installed.
-                WebHookBootstrap.retireWebhookAccess(this.viewContext, this.getKubernetesService(),
+                WebHookBootstrap.retireWebhookAccess(this.viewContext, kubernetesService(cluster),
                         headers == null ? null : headers.getRequestHeaders());
             }
             return Response.ok(Collections.singletonMap("message", "Configuration saved.")).build();
@@ -303,23 +354,23 @@ public class KubeService {
      * @return {@code null} when connected; otherwise the response to return: 400 when no client can be built from the
      *         configuration, 503 when the cluster cannot be reached or rejects the credentials
      */
-    private Response reconnect(String saved) {
-        return reconnect(saved, "Check that the kubeconfig is valid (details in the Ambari server log).");
+    private Response reconnect(ClusterRef cluster, String saved) {
+        return reconnect(cluster, saved, "Check that the kubeconfig is valid (details in the Ambari server log).");
     }
 
     /**
-     * {@link #reconnect(String)} with what to check when no client can be built.
+     * {@link #reconnect(ClusterRef, String)} with what to check when no client can be built.
      *
      * @param saved       what was saved, to start the error message with
      * @param whatToCheck the advice that follows when no client can be built from the configuration
      */
-    private Response reconnect(String saved, String whatToCheck) {
+    private Response reconnect(ClusterRef cluster, String saved, String whatToCheck) {
         boolean built;
         // When the saved configuration itself is the problem (a kubeconfig whose user only runs a command, for one),
         // the operator is told what to change rather than pointed at the server log.
         String unusable = null;
         try {
-            KubernetesService service = this.getKubernetesService();
+            KubernetesService service = kubernetesService(cluster);
             built = service.forceReloadClient();
             unusable = built ? null : service.unusableConfiguration();
         } catch (Exception e) {
@@ -331,7 +382,7 @@ public class KubeService {
                     saved + ", but KDPS could not build a connection from it. "
                             + (unusable != null ? unusable : whatToCheck))).build();
         }
-        org.apache.ambari.view.k8s.model.ConnectionHealth health = this.getKubernetesService().pingCluster();
+        org.apache.ambari.view.k8s.model.ConnectionHealth health = kubernetesService(cluster).pingCluster();
         if (!health.isConnected()) {
             LOG.warn("{}, but the cluster check failed: {}", saved, health.getMessage());
             return Response.status(Response.Status.SERVICE_UNAVAILABLE).entity(Collections.singletonMap("error",
@@ -349,8 +400,13 @@ public class KubeService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response listKubeconfigContexts(@Context HttpHeaders headers) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return listKubeconfigContexts(ClusterRef.DEFAULT);
+    }
+
+    /** {@link #listKubeconfigContexts(HttpHeaders)} for a cluster, once the caller's role was checked. */
+    private Response listKubeconfigContexts(ClusterRef cluster) {
         try {
-            return Response.ok(this.getKubernetesService().listAvailableContexts()).build();
+            return Response.ok(kubernetesService(cluster).listAvailableContexts()).build();
         } catch (Exception e) {
             LOG.warn("/cluster/contexts: failed to list kubeconfig contexts: {}", e.toString());
             return Response.ok(Collections.emptyList()).build();
@@ -367,11 +423,16 @@ public class KubeService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response selectKubeconfigContext(@Context HttpHeaders headers, java.util.Map<String, String> body) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return selectKubeconfigContext(ClusterRef.DEFAULT, body);
+    }
+
+    /** {@link #selectKubeconfigContext(HttpHeaders, Map)} for a cluster, once the caller's role was checked. */
+    private Response selectKubeconfigContext(ClusterRef cluster, java.util.Map<String, String> body) {
         String context = body == null ? null : body.get("context");
         LOG.info("/cluster/context: selecting kubeconfig context '{}'.", context);
         java.util.List<java.util.Map<String, Object>> available;
         try {
-            available = this.getKubernetesService().listAvailableContexts();
+            available = kubernetesService(cluster).listAvailableContexts();
         } catch (RuntimeException e) {
             LOG.warn("/cluster/context: the saved kubeconfig cannot be read: {}", e.toString());
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
@@ -381,8 +442,8 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
                     "Context '" + context + "' is not in the uploaded kubeconfig.")).build();
         }
-        this.getConfigService().saveSelectedContext(context);
-        Response notConnected = reconnect(
+        configService(cluster).saveSelectedContext(context);
+        Response notConnected = reconnect(cluster, 
                 "Context '" + (context == null || context.isBlank() ? "current-context" : context) + "' was saved");
         if (notConnected != null) {
             return notConnected;
@@ -402,6 +463,11 @@ public class KubeService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response saveOpenShiftLogin(@Context HttpHeaders headers, java.util.Map<String, Object> body) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return saveOpenShiftLogin(ClusterRef.DEFAULT, body);
+    }
+
+    /** {@link #saveOpenShiftLogin(HttpHeaders, Map)} for a cluster, once the caller's role was checked. */
+    private Response saveOpenShiftLogin(ClusterRef cluster, java.util.Map<String, Object> body) {
         if (body == null) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error", "missing body")).build();
         }
@@ -414,19 +480,19 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", "apiUrl, username and password are required")).build();
         }
-        if (!this.getConfigService().isMasterKeyAvailable()) {
+        if (!configService(cluster).isMasterKeyAvailable()) {
             LOG.warn("/cluster/openshift-login: refused, the Ambari master key was not found to encrypt the password");
             return MasterKeyUnavailableException.response();
         }
         LOG.info("/cluster/openshift-login: configuring OpenShift login for user '{}' at {}", username, apiUrl);
         try {
-            this.getConfigService().saveOpenShiftLogin(apiUrl, username, password, caData, insecure);
+            configService(cluster).saveOpenShiftLogin(apiUrl, username, password, caData, insecure);
         } catch (IllegalArgumentException e) {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", e.getMessage())).build();
         }
         try {
-            boolean ok = this.getKubernetesService().forceReloadClient();
+            boolean ok = kubernetesService(cluster).forceReloadClient();
             if (!ok) {
                 return Response.status(502)
                         .entity(Collections.singletonMap("error", "Saved, but could not connect — check URL/credentials and that the cluster allows password login (oc login -u -p).")).build();
@@ -488,12 +554,17 @@ public class KubeService {
     public Response preflight(@Context HttpHeaders headers,
                               @QueryParam("namespace") @DefaultValue("default") String namespace) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
-        KubernetesService k = getKubernetesService();
+        return preflight(ClusterRef.DEFAULT, namespace);
+    }
+
+    /** {@link #preflight(HttpHeaders, String)} for a cluster, once the caller's role was checked. */
+    private Response preflight(ClusterRef cluster, String namespace) {
+        KubernetesService k = kubernetesService(cluster);
         boolean ocp = k.isOpenShiftCluster();
         List<Map<String, Object>> checks = new java.util.ArrayList<>();
         // Every deploy keeps its parameters encrypted with the Ambari master key.
         Map<String, Object> masterKey = preflightCheck("Encrypt the credentials KDPS keeps (Ambari master key)", "KDPS",
-                this.getConfigService().isMasterKeyAvailable());
+                configService(cluster).isMasterKeyAvailable());
         if (!Boolean.TRUE.equals(masterKey.get("allowed"))) {
             masterKey.put("remediation", MasterKeyUnavailableException.MESSAGE);
         }
@@ -649,7 +720,12 @@ public class KubeService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response getInClusterServiceAccount(@Context HttpHeaders headers) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
-        ViewConfigurationService configuration = this.getConfigService();
+        return getInClusterServiceAccount(ClusterRef.DEFAULT);
+    }
+
+    /** {@link #getInClusterServiceAccount(HttpHeaders)} for a cluster, once the caller's role was checked. */
+    private Response getInClusterServiceAccount(ClusterRef cluster) {
+        ViewConfigurationService configuration = configService(cluster);
         org.apache.ambari.view.k8s.service.InClusterServiceAccount pod = configuration.getInClusterServiceAccount();
         String reason = pod.unavailableReason();
         Map<String, Object> out = new java.util.LinkedHashMap<>();
@@ -679,12 +755,12 @@ public class KubeService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response useInClusterServiceAccount(@Context HttpHeaders headers) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
-        return connectWithPodServiceAccount();
+        return connectWithPodServiceAccount(ClusterRef.DEFAULT);
     }
 
     /** {@link #useInClusterServiceAccount}, once the caller's role was checked. */
-    private Response connectWithPodServiceAccount() {
-        ViewConfigurationService configuration = this.getConfigService();
+    private Response connectWithPodServiceAccount(ClusterRef cluster) {
+        ViewConfigurationService configuration = configService(cluster);
         org.apache.ambari.view.k8s.service.InClusterServiceAccount pod = configuration.getInClusterServiceAccount();
         String unavailable = pod.unavailableReason();
         if (unavailable != null) {
@@ -692,11 +768,23 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
                     unavailable + " The previous configuration is unchanged.")).build();
         }
+        // The pod's ServiceAccount belongs to the one cluster the pod runs in.
+        for (KubernetesCluster other : clusterRegistry().list()) {
+            if (!other.ref().equals(cluster)) {
+                ViewConfigurationService otherConfiguration = configService(other.ref());
+                if (otherConfiguration.isConfigured() && otherConfiguration.isInClusterServiceAccount()) {
+                    return Response.status(Response.Status.CONFLICT).entity(Collections.singletonMap("error",
+                            "The cluster '" + other.name() + "' already connects with the ServiceAccount of the Ambari "
+                                    + "pod, which belongs to the one cluster the pod runs in. The previous "
+                                    + "configuration is unchanged.")).build();
+                }
+            }
+        }
         String username = pod.identity().username();
         String account = username == null ? "the ServiceAccount of the Ambari pod" : "the ServiceAccount " + username;
         LOG.info("/cluster/in-cluster: connecting with {}", account);
         configuration.saveInClusterServiceAccount();
-        Response notConnected = reconnect("The connection with " + account + " was saved",
+        Response notConnected = reconnect(cluster, "The connection with " + account + " was saved",
                 "Check the ServiceAccount token and CA certificate mounted in the Ambari pod (details in the Ambari "
                         + "server log).");
         if (notConnected != null) {
@@ -720,15 +808,20 @@ public class KubeService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response setAuthMode(@Context HttpHeaders headers, java.util.Map<String, String> body) {
         new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return setAuthMode(ClusterRef.DEFAULT, body);
+    }
+
+    /** {@link #setAuthMode(HttpHeaders, Map)} for a cluster, once the caller's role was checked. */
+    private Response setAuthMode(ClusterRef cluster, java.util.Map<String, String> body) {
         String mode = body == null ? null : body.get("mode");
         if (ViewConfigurationService.AUTH_MODE_IN_CLUSTER.equals(mode)) {
-            return connectWithPodServiceAccount();
+            return connectWithPodServiceAccount(cluster);
         }
-        this.getConfigService().setAuthMode(mode);
-        try { this.getKubernetesService().forceReloadClient(); } catch (Exception e) {
+        configService(cluster).setAuthMode(mode);
+        try { kubernetesService(cluster).forceReloadClient(); } catch (Exception e) {
             LOG.warn("/cluster/auth-mode: reload failed: {}", e.toString());
         }
-        return Response.ok(Collections.singletonMap("message", "Auth mode set to " + this.getConfigService().getAuthMode())).build();
+        return Response.ok(Collections.singletonMap("message", "Auth mode set to " + configService(cluster).getAuthMode())).build();
     }
 
     /**
@@ -757,7 +850,12 @@ public class KubeService {
     @Path("/cluster/configured")
     @Produces(MediaType.APPLICATION_JSON)
     public Response checkIsViewConfigured(InputStream fileInputStream) {
-        ViewConfigurationService configurationService = this.getConfigService();
+        return checkIsViewConfigured(ClusterRef.DEFAULT);
+    }
+
+    /** {@link #checkIsViewConfigured(InputStream)} for a cluster. */
+    private Response checkIsViewConfigured(ClusterRef cluster) {
+        ViewConfigurationService configurationService = configService(cluster);
         boolean isConfigured = configurationService.isConfigured();
         LOG.info("/cluster/configured: Received request to check if the view is configured: {}", isConfigured);
         if (!isConfigured) {
@@ -788,9 +886,184 @@ public class KubeService {
     @Path("/cluster/liveness")
     @Produces(MediaType.APPLICATION_JSON)
     public Response getClusterLiveness() {
-        org.apache.ambari.view.k8s.model.ConnectionHealth health = getKubernetesService().pingCluster();
+        return getClusterLiveness(ClusterRef.DEFAULT);
+    }
+
+    /** {@link #getClusterLiveness()} for a cluster. */
+    private Response getClusterLiveness(ClusterRef cluster) {
+        org.apache.ambari.view.k8s.model.ConnectionHealth health = kubernetesService(cluster).pingCluster();
         LOG.info("/cluster/liveness: probe result state={}", health.getState());
         return Response.ok(health).build();
+    }
+
+    // ----- the clusters KDPS connects to -----
+
+    /**
+     * The clusters KDPS knows, the default one first, each with how it connects and whether a connection was saved for
+     * it; never a credential. Every user of the view may read them.
+     */
+    @GET
+    @Path("/clusters")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response listClusters() {
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (KubernetesCluster cluster : clusterRegistry().list()) {
+            out.add(clusterView(cluster));
+        }
+        return Response.ok(out).build();
+    }
+
+    /**
+     * Adds a cluster, or describes again one KDPS knows. Body: {@code {name, description?, protected?}}. Its connection
+     * is then saved with the {@code /clusters/{cluster}/...} endpoints. Administrators only.
+     */
+    @PUT
+    @Path("/clusters/{cluster}")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response saveCluster(@Context HttpHeaders headers, @PathParam("cluster") String id,
+                                java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        if (body == null) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error", "missing body")).build();
+        }
+        try {
+            KubernetesCluster saved = clusterRegistry().save(new KubernetesCluster(id,
+                    body.get("name") == null ? null : String.valueOf(body.get("name")),
+                    body.get("description") == null ? null : String.valueOf(body.get("description")),
+                    Boolean.parseBoolean(String.valueOf(body.get("protected")))));
+            LOG.info("/clusters: cluster '{}' saved as '{}'", saved.id(), saved.name());
+            return Response.ok(clusterView(saved)).build();
+        } catch (IllegalArgumentException e) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Collections.singletonMap("error", e.getMessage())).build();
+        }
+    }
+
+    /**
+     * Removes a cluster: its connection is forgotten (settings and files) and closed. The default cluster cannot be
+     * removed. Administrators only.
+     */
+    @DELETE
+    @Path("/clusters/{cluster}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response removeCluster(@Context HttpHeaders headers, @PathParam("cluster") String id) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        ClusterRef cluster = knownCluster(id);
+        if (cluster.isDefault()) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Collections.singletonMap("error", "The default cluster cannot be removed.")).build();
+        }
+        KubernetesService.forget(viewContext, cluster);
+        configService(cluster).forgetConnection();
+        clusterRegistry().remove(cluster.id());
+        LOG.info("/clusters: cluster '{}' removed", cluster);
+        return Response.ok(Collections.singletonMap("message", "The cluster '" + id + "' was removed.")).build();
+    }
+
+    /** A cluster as the API shows it: its description, how it connects and whether a connection was saved. */
+    private Map<String, Object> clusterView(KubernetesCluster cluster) {
+        Map<String, Object> view = new java.util.LinkedHashMap<>();
+        view.put("id", cluster.id());
+        view.put("name", cluster.name());
+        view.put("description", cluster.description());
+        view.put("protected", cluster.protectedCluster());
+        view.put("default", cluster.ref().isDefault());
+        try {
+            ViewConfigurationService configuration = configService(cluster.ref());
+            view.put("configured", configuration.isConfigured());
+            view.put("authMode", configuration.getAuthMode());
+        } catch (RuntimeException e) {
+            LOG.warn("/clusters: the connection of cluster '{}' cannot be read: {}", cluster.id(), e.toString());
+            view.put("configured", false);
+        }
+        return view;
+    }
+
+    @POST
+    @Path("/clusters/{cluster}/config")
+    @Consumes(MediaType.APPLICATION_OCTET_STREAM)
+    public Response uploadClusterKubeconfig(@Context HttpHeaders headers, @PathParam("cluster") String id,
+                                            InputStream fileInputStream) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return uploadKubeconfig(knownCluster(id), headers, fileInputStream);
+    }
+
+    @GET
+    @Path("/clusters/{cluster}/contexts")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response listClusterKubeconfigContexts(@Context HttpHeaders headers, @PathParam("cluster") String id) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return listKubeconfigContexts(knownCluster(id));
+    }
+
+    @POST
+    @Path("/clusters/{cluster}/context")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response selectClusterKubeconfigContext(@Context HttpHeaders headers, @PathParam("cluster") String id,
+                                                   java.util.Map<String, String> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return selectKubeconfigContext(knownCluster(id), body);
+    }
+
+    @POST
+    @Path("/clusters/{cluster}/openshift-login")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response saveClusterOpenShiftLogin(@Context HttpHeaders headers, @PathParam("cluster") String id,
+                                              java.util.Map<String, Object> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return saveOpenShiftLogin(knownCluster(id), body);
+    }
+
+    @GET
+    @Path("/clusters/{cluster}/preflight")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response clusterPreflight(@Context HttpHeaders headers, @PathParam("cluster") String id,
+                                     @QueryParam("namespace") @DefaultValue("default") String namespace) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return preflight(knownCluster(id), namespace);
+    }
+
+    @GET
+    @Path("/clusters/{cluster}/in-cluster")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getClusterInClusterServiceAccount(@Context HttpHeaders headers, @PathParam("cluster") String id) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return getInClusterServiceAccount(knownCluster(id));
+    }
+
+    @POST
+    @Path("/clusters/{cluster}/in-cluster")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response useClusterInClusterServiceAccount(@Context HttpHeaders headers, @PathParam("cluster") String id) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return connectWithPodServiceAccount(knownCluster(id));
+    }
+
+    @POST
+    @Path("/clusters/{cluster}/auth-mode")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response setClusterAuthMode(@Context HttpHeaders headers, @PathParam("cluster") String id,
+                                       java.util.Map<String, String> body) {
+        new AuthHelper(viewContext, headers).checkConfigurationPermission();
+        return setAuthMode(knownCluster(id), body);
+    }
+
+    @GET
+    @Path("/clusters/{cluster}/configured")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response checkIsClusterConfigured(@PathParam("cluster") String id) {
+        return checkIsViewConfigured(knownCluster(id));
+    }
+
+    @GET
+    @Path("/clusters/{cluster}/liveness")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getNamedClusterLiveness(@PathParam("cluster") String id) {
+        return getClusterLiveness(knownCluster(id));
     }
 
     @GET
