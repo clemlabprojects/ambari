@@ -39,6 +39,10 @@ class ImpalaServiceCheck(Script):
             os.path.join(params.impala_home_client, "bin", "impala-shell"),
             os.path.join(params.impala_home_client, "impala-shell"),
         ]
+        # Ambari can run the check on an Impala host without IMPALA_CLIENT (no impala-client link): the shell ships in
+        # the impala package, i.e. in the versioned tree every component link points to.
+        for impala_home in (params.impala_home_daemon, params.impala_home_catalog, params.impala_home_statestore):
+            candidates.append(os.path.join(impala_home, "shell", "impala-shell"))
 
         for candidate in candidates:
             if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
