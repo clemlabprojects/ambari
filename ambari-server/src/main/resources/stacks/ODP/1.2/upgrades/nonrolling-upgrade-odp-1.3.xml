@@ -459,6 +459,20 @@
         </task>
       </execute-stage>
 
+
+      <!-- HUE -->
+      <execute-stage service="HUE" component="HUE_SERVER" title="Render use_sasl for the Hue Hive editor">
+        <task xsi:type="configure" id="odp_1_3_2_0_hue_hive_use_sasl"/>
+      </execute-stage>
+
+      <execute-stage service="HUE" component="HUE_SERVER" title="Fix the hadoop_bin path of the Hue YARN cluster">
+        <task xsi:type="configure" id="odp_1_3_2_0_hue_yarn_hadoop_bin"/>
+      </execute-stage>
+
+      <execute-stage service="HUE" component="HUE_SERVER" title="Add the Hue Impala section">
+        <task xsi:type="configure" id="odp_1_3_2_0_hue_impala_section"/>
+      </execute-stage>
+
     </group>
 
 

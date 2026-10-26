@@ -227,5 +227,28 @@
       </component>
     </service>
 
+    <service name="HUE">
+      <component name="HUE_SERVER">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_3_2_0_hue_hive_use_sasl" summary="Render use_sasl for the Hue Hive editor">
+            <type>hue-ini-template</type>
+            <!-- idempotent: the lookahead skips a template that already sets use_sasl -->
+            <regex-replace key="content" find="(hive_server_port=\{\{hue_beeswax_hive_server_port\}\}\r?\n)(?!use_sasl)"
+                           replace-with="hive_server_port={{hue_beeswax_hive_server_port}}&#10;use_sasl={{hue_beeswax_use_sasl}}&#10;"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_3_2_0_hue_yarn_hadoop_bin" summary="Fix the hadoop_bin path of the Hue YARN cluster">
+            <type>hue-ini-template</type>
+            <replace key="content" find="hadoop_bin=/usr/odp/current/hadoop-client/hadoop/bin/hadoop" replace-with="hadoop_bin=/usr/odp/current/hadoop-client/bin/hadoop"/>
+          </definition>
+          <definition xsi:type="configure" id="odp_1_3_2_0_hue_impala_section" summary="Add the Hue Impala section">
+            <type>hue-ini-template</type>
+            <!-- idempotent: skipped when the template already contains this block -->
+            <insert key="content" value="{% if has_impala %}&#10;[impala]&#10;server_host={{hue_impala_server_host}}&#10;server_port={{hue_impala_server_port}}&#10;impersonation_enabled={{hue_impala_impersonation_enabled}}&#10;  {% if kerberos_enabled %}&#10;impala_principal={{hue_impala_principal}}&#10;  {% endif %}&#10;  {% if hue_impala_ssl_enabled %}&#10;  [[ssl]]&#10;  enabled=true&#10;  cacerts={{hue_impala_ssl_cacerts}}&#10;  validate={{'true' if hue_impala_ssl_cacerts else 'false'}}&#10;  {% endif %}&#10;{% endif %}"
+                    insert-type="append" newline-before="true" newline-after="true"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+
   </services>
 </upgrade-config-changes>
