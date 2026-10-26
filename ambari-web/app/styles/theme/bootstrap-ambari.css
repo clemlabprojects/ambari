@@ -1335,6 +1335,7 @@ th[data-qa="confirm-hosts-table-heading-cell"] label[checked="checked"]:after {
 .navigation-bar-fit-height .side-nav-menu {
   position: absolute;
   top: 55px;
+  bottom: 50px;
 }
 .navigation-bar-fit-height .side-nav-footer {
   position: absolute;
