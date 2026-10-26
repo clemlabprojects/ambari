@@ -36,8 +36,8 @@
       "HBASE_PID_DIR": "$PWD/pids",
       "JAVA_HOME": "{{java64_home}}",
       "HBASE_ROOT_LOGGER": "{{yarn_hbase_log_level}},RFA",
-      "SERVER_GC_OPTS": "-verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:${HBASE_LOG_DIR}/gc.log-`date +'%Y%m%d%H%M'`",
-      "HBASE_OPTS": "-XX:+UseConcMarkSweepGC -XX:ErrorFile=${HBASE_LOG_DIR}/hs_err_pid%p.log -Djava.io.tmpdir=/tmp",
+      "SERVER_GC_OPTS": "{% if java_version and java_version >= 9 %}-Xlog:gc*:file=${HBASE_LOG_DIR}/gc.log-`date +'%Y%m%d%H%M'`:time,uptime{% else %}-verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:${HBASE_LOG_DIR}/gc.log-`date +'%Y%m%d%H%M'`{% endif %}",
+      "HBASE_OPTS": "{% if java_version and java_version >= 9 %}-XX:+UseG1GC{% else %}-XX:+UseConcMarkSweepGC{% endif %} -XX:ErrorFile=${HBASE_LOG_DIR}/hs_err_pid%p.log -Djava.io.tmpdir=/tmp",
       "HADOOP_HOME": "$PWD/lib/hadoop",
       "HADOOP_YARN_HOME": "$PWD/lib/hadoop",
       "HBASE_HOME": "$PWD/lib/hbase"
@@ -96,7 +96,7 @@
         "constraints": [
           {
             "type": "ANTI_AFFINITY",
-            "scope": "NODE",
+            "scope": "node",
             "target_tags": [
                   "master"
             ]
@@ -122,14 +122,14 @@
         "env": {
           "HBASE_LOG_PREFIX": "hbase-$HBASE_IDENT_STRING-regionserver-$HOSTNAME",
           "HBASE_LOGFILE": "$HBASE_LOG_PREFIX.log",
-          "HBASE_REGIONSERVER_OPTS": "-XX:CMSInitiatingOccupancyFraction=70 -XX:ReservedCodeCacheSize=256m -Xms{{yarn_hbase_regionserver_heapsize}} -Xmx{{yarn_hbase_regionserver_heapsize}}"
+          "HBASE_REGIONSERVER_OPTS": "{% if not java_version or java_version < 9 %}-XX:CMSInitiatingOccupancyFraction=70 {% endif %}-XX:ReservedCodeCacheSize=256m -Xms{{yarn_hbase_regionserver_heapsize}} -Xmx{{yarn_hbase_regionserver_heapsize}}"
         }
       },
       "placement_policy": {
         "constraints": [
           {
             "type": "ANTI_AFFINITY",
-            "scope": "NODE",
+            "scope": "node",
             "target_tags": [
                   "regionserver"
             ]
@@ -156,7 +156,7 @@
         "constraints": [
           {
             "type": "ANTI_AFFINITY",
-            "scope": "NODE",
+            "scope": "node",
             "target_tags": [
                   "hbaseclient"
             ]
