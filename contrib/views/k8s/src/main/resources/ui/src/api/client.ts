@@ -834,11 +834,15 @@ export const getClusterServices = async (serviceType: string): Promise<ClusterSe
 /**
  * Discover monitoring stack (kube-prometheus-stack) and return namespace/release.
  */
-export const getMonitoringDiscovery = async (): Promise<{
+/** A path of the API on a cluster: unchanged for the default cluster (no cluster named). */
+export const onCluster = (path: string, cluster?: string): string =>
+  !cluster ? path : `${path}${path.includes('?') ? '&' : '?'}cluster=${encodeURIComponent(cluster)}`;
+
+export const getMonitoringDiscovery = async (cluster?: string): Promise<{
   namespace: string; release: string; url?: string; queryUrl?: string;
   serviceMonitorLabels?: Record<string, string>; warning?: string;
 }> => {
-  const response = await apiFetch(`${API_BASE_URL}/discovery/monitoring/prometheus`, { credentials: 'include' });
+  const response = await apiFetch(`${API_BASE_URL}${onCluster('/discovery/monitoring/prometheus', cluster)}`, { credentials: 'include' });
   return handleApiResponse(response);
 };
 
@@ -847,8 +851,8 @@ export const getMonitoringDiscovery = async (): Promise<{
  * instead of installing a conflicting one. Detection is CRD/operator-based (finds it in any namespace,
  * incl. the OpenShift Custom Metrics Autoscaler in openshift-keda).
  */
-export const getKedaDiscovery = async (): Promise<{ present: boolean; namespace?: string; release?: string; source?: string; message?: string }> => {
-  const response = await apiFetch(`${API_BASE_URL}/discovery/keda`, { credentials: 'include' });
+export const getKedaDiscovery = async (cluster?: string): Promise<{ present: boolean; namespace?: string; release?: string; source?: string; message?: string }> => {
+  const response = await apiFetch(`${API_BASE_URL}${onCluster('/discovery/keda', cluster)}`, { credentials: 'include' });
   return handleApiResponse(response);
 };
 
@@ -984,7 +988,7 @@ export const deleteSecurityProfile = async (profile: string): Promise<void> => {
  * Calls GET /api/discovery/k8s?label=...
  */
 
-export const getDiscoveredK8sServices = async (labelSelector: string): Promise<ClusterService[]> => {
+export const getDiscoveredK8sServices = async (labelSelector: string, cluster?: string): Promise<ClusterService[]> => {
     // In IS_DEV you might want to return mock data,
     // otherwise call the real backend.
     if (IS_DEV) {
@@ -995,6 +999,7 @@ export const getDiscoveredK8sServices = async (labelSelector: string): Promise<C
     }
 
     const params = new URLSearchParams({ label: labelSelector });
+    if (cluster) params.set('cluster', cluster);
     // Note: ensure API_BASE_URL includes the /resources/api part as defined in your file
     const response = await apiFetch(`${API_BASE_URL}/discovery/k8s?${params.toString()}`);
     return handleApiResponse(response);
@@ -1007,7 +1012,7 @@ export const getDiscoveredK8sServices = async (labelSelector: string): Promise<C
  *    pick a hand-created one (e.g. an external Kerberos keytab Secret that carries no KDPS label).
  * Calls GET /api/discovery/secrets?label=... or ?namespace=...
  */
-export const getDiscoveredK8sSecrets = async (labelSelector?: string, namespace?: string): Promise<ClusterService[]> => {
+export const getDiscoveredK8sSecrets = async (labelSelector?: string, namespace?: string, cluster?: string): Promise<ClusterService[]> => {
     if (IS_DEV) {
        console.log(`Mocking K8s Secret discovery (label=${labelSelector ?? ''}, namespace=${namespace ?? ''})`);
        return [];
@@ -1015,24 +1020,27 @@ export const getDiscoveredK8sSecrets = async (labelSelector?: string, namespace?
     const params = new URLSearchParams();
     if (labelSelector) params.set('label', labelSelector);
     if (namespace) params.set('namespace', namespace);
+    if (cluster) params.set('cluster', cluster);
     const response = await apiFetch(`${API_BASE_URL}/discovery/secrets?${params.toString()}`);
     return handleApiResponse(response);
 };
 
 /** cert-manager.io ClusterIssuer/Issuer discovery (Ready=True by default). */
-export const getDiscoveredClusterIssuers = async (includeNotReady = false): Promise<ClusterService[]> => {
+export const getDiscoveredClusterIssuers = async (includeNotReady = false, cluster?: string): Promise<ClusterService[]> => {
     if (IS_DEV) return [];
     const params = new URLSearchParams();
     if (includeNotReady) params.set('includeNotReady', 'true');
+    if (cluster) params.set('cluster', cluster);
     const response = await apiFetch(`${API_BASE_URL}/discovery/cluster-issuers${params.toString() ? '?' + params : ''}`);
     return handleApiResponse(response);
 };
 
 /** external-secrets.io SecretStore/ClusterSecretStore discovery (Ready=True by default). */
-export const getDiscoveredSecretStores = async (includeNotReady = false): Promise<ClusterService[]> => {
+export const getDiscoveredSecretStores = async (includeNotReady = false, cluster?: string): Promise<ClusterService[]> => {
     if (IS_DEV) return [];
     const params = new URLSearchParams();
     if (includeNotReady) params.set('includeNotReady', 'true');
+    if (cluster) params.set('cluster', cluster);
     const response = await apiFetch(`${API_BASE_URL}/discovery/secret-stores${params.toString() ? '?' + params : ''}`);
     return handleApiResponse(response);
 }
@@ -1391,9 +1399,23 @@ export interface ClusterCapabilities {
   // ingress controller (IngressClass present). defaultClass is the one to write into the values.
   ingress?: { available: boolean; classes: string[]; defaultClass: string | null };
 }
-export const getClusterCapabilities = async (): Promise<ClusterCapabilities> => {
-  return fetchJson<ClusterCapabilities>('/cluster/capabilities');
+export const getClusterCapabilities = async (cluster?: string): Promise<ClusterCapabilities> => {
+  return fetchJson<ClusterCapabilities>(onCluster('/cluster/capabilities', cluster));
 };
+
+/** A Kubernetes cluster KDPS connects to, as GET /clusters lists it; never a credential. */
+export interface KubernetesCluster {
+  id: string;
+  name: string;
+  description?: string;
+  protected: boolean;
+  default: boolean;
+  configured: boolean;
+  authMode?: string;
+}
+
+/** The clusters KDPS knows, the default one first. */
+export const listKubernetesClusters = async (): Promise<KubernetesCluster[]> => fetchJson<KubernetesCluster[]>('/clusters');
 
 /**
  * Live connectivity outcome from the backend `/cluster/liveness` probe. Unlike `isViewConfigured`

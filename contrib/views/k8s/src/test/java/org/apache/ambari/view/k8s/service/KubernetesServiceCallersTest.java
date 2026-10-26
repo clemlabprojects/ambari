@@ -40,10 +40,10 @@ import static org.junit.jupiter.api.Assertions.*;
 class KubernetesServiceCallersTest {
 
   /** Calls of {@code KubernetesService.get} with a single argument in the main sources, on 2026-10-26. */
-  static final int BASELINE = 9;
+  static final int BASELINE = 7;
 
   /** Calls of {@code new ReleaseMetadataService} with a single argument in the main sources, on 2026-10-26. */
-  static final int RELEASES_BASELINE = 44;
+  static final int RELEASES_BASELINE = 13;
 
   private static final Pattern DEFAULT_CLUSTER_RELEASES = Pattern.compile("new ReleaseMetadataService\\(\\s*[\\w.]+(\\(\\))?\\s*\\)");
 

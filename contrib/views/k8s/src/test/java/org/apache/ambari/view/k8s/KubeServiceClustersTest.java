@@ -221,6 +221,34 @@ class KubeServiceClustersTest {
   }
 
   @Test
+  void anotherClustersOpenShiftLoginNeedsTheCaOfItsApiServer() throws Exception {
+    addProd();
+
+    Response refused = api("lead").saveClusterOpenShiftLogin(null, "prod",
+        Map.of("apiUrl", "https://prod-oc:6443", "username", "kdps", "password", "secret"));
+
+    assertEquals(400, refused.getStatus());
+    assertTrue(String.valueOf(refused.getEntity()).contains("CA certificate"));
+    assertFalse(new ViewConfigurationService(ctx, pod, PROD).isConfigured(), "nothing saved");
+  }
+
+  @Test
+  void aClusterWithReleasesCannotBeRemoved() throws Exception {
+    addProd();
+    uploadToProd();
+    new org.apache.ambari.view.k8s.service.ReleaseMetadataService(ctx, PROD).recordInstallOrUpgrade("analytics",
+        "trino", "TRINO", null, "clemlab-trino", null, "1.0", null, null, null, null, null, null, "DIRECT_HELM", null,
+        null, null, null, null, null, null, null, null);
+
+    Response refused = api("lead").removeCluster(null, "prod");
+
+    assertEquals(409, refused.getStatus());
+    assertTrue(String.valueOf(refused.getEntity()).contains("analytics/trino"));
+    assertTrue(new ClusterRegistry(new InstanceSettings(ctx)).find("prod").isPresent());
+    assertTrue(new ViewConfigurationService(ctx, pod, PROD).isConfigured(), "its connection is kept");
+  }
+
+  @Test
   void onlyOneClusterConnectsWithTheAmbariPodsServiceAccount() throws Exception {
     addProd();
     new ViewConfigurationService(ctx, pod, ClusterRef.DEFAULT).saveInClusterServiceAccount();

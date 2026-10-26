@@ -480,6 +480,13 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", "apiUrl, username and password are required")).build();
         }
+        if (!cluster.isDefault() && (caData == null || caData.isBlank()) && !insecure) {
+            // Without its CA, the API server would be checked against the trust of the whole Ambari server, which
+            // holds the default cluster's CA: a certificate that CA signed would be taken for this cluster's.
+            return Response.status(Response.Status.BAD_REQUEST).entity(Collections.singletonMap("error",
+                    "Give the CA certificate of this cluster's API server, so that KDPS checks it against that CA "
+                            + "only. Nothing was saved.")).build();
+        }
         if (!configService(cluster).isMasterKeyAvailable()) {
             LOG.warn("/cluster/openshift-login: refused, the Ambari master key was not found to encrypt the password");
             return MasterKeyUnavailableException.response();
@@ -954,6 +961,18 @@ public class KubeService {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Collections.singletonMap("error", "The default cluster cannot be removed.")).build();
         }
+        // Its releases would be left without a cluster to upgrade or uninstall them on.
+        List<String> releases = new org.apache.ambari.view.k8s.service.ReleaseMetadataService(viewContext, cluster)
+                .findAll().stream()
+                .filter(r -> cluster.equals(r.clusterRef()))
+                .map(r -> r.getNamespace() + "/" + r.getReleaseName())
+                .sorted()
+                .toList();
+        if (!releases.isEmpty()) {
+            return Response.status(Response.Status.CONFLICT).entity(Collections.singletonMap("error",
+                    "KDPS still has releases on the cluster '" + id + "': " + String.join(", ", releases)
+                            + ". Uninstall them first; the cluster was not removed.")).build();
+        }
         KubernetesService.forget(viewContext, cluster);
         configService(cluster).forgetConnection();
         clusterRegistry().remove(cluster.id());
@@ -1218,9 +1237,18 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/discovery
      */
     @Path("/discovery")
-    public DiscoveryResource discovery(@Context HttpHeaders headers) {
-        // Pass dependencies
-        return new DiscoveryResource(viewContext, getKubernetesService(), headers);
+    public DiscoveryResource discovery(@Context HttpHeaders headers, @QueryParam("cluster") String cluster) {
+        // What the deploy wizard discovers is on the cluster it deploys to.
+        return new DiscoveryResource(viewContext, kubernetesService(requestedCluster(cluster)), headers);
+    }
+
+    /**
+     * The cluster a request names in its {@code cluster} query parameter: the default one when it names none.
+     *
+     * @throws NotFoundException when the view knows no cluster of that id
+     */
+    private ClusterRef requestedCluster(String id) {
+        return id == null || id.isBlank() ? ClusterRef.DEFAULT : knownCluster(id.trim());
     }
 
     /**
@@ -1237,8 +1265,9 @@ public class KubeService {
      * URL: /api/v1/.../resources/api/cluster/capabilities
      */
     @Path("/cluster/capabilities")
-    public ClusterCapabilitiesResource clusterCapabilities() {
-        return new ClusterCapabilitiesResource(getKubernetesService());
+    public ClusterCapabilitiesResource clusterCapabilities(@QueryParam("cluster") String cluster) {
+        // The operators a service needs (cert-manager, external-secrets...) are looked for on the cluster it goes to.
+        return new ClusterCapabilitiesResource(kubernetesService(requestedCluster(cluster)));
     }
 
     /**

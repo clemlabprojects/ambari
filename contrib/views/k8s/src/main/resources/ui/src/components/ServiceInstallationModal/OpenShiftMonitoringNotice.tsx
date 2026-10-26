@@ -18,6 +18,7 @@
 import React from 'react';
 import { Alert } from 'antd';
 import { getMonitoringDiscovery } from '../../api/client';
+import { useTargetCluster } from '../../context/TargetClusterContext';
 
 /** What to tell the operator about OpenShift monitoring, from whether user workload monitoring is on. */
 export const openShiftMonitoringNotice = (userWorkloadMonitoring: boolean | null | undefined): {
@@ -52,13 +53,14 @@ export const openShiftMonitoringNotice = (userWorkloadMonitoring: boolean | null
 /** OpenShift: replaces the Prometheus fields, which do not apply there, with what monitoring needs. */
 const OpenShiftMonitoringNotice: React.FC = () => {
   const [state, setState] = React.useState<boolean | null | undefined>(undefined);
+  const cluster = useTargetCluster();
   React.useEffect(() => {
     let alive = true;
-    getMonitoringDiscovery()
+    getMonitoringDiscovery(cluster)
       .then((res: any) => { if (alive) setState(res?.userWorkloadMonitoring ?? null); })
       .catch(() => { if (alive) setState(null); });
     return () => { alive = false; };
-  }, []);
+  }, [cluster]);
   if (state === undefined) return null;
   const notice = openShiftMonitoringNotice(state);
   return <Alert showIcon type={notice.type} message={notice.message} description={notice.description} style={{ marginBottom: 16 }} />;

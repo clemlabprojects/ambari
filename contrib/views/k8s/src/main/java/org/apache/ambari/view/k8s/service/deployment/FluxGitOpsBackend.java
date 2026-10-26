@@ -17,6 +17,7 @@
  */
 package org.apache.ambari.view.k8s.service.deployment;
 
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.service.gitops.ChartFetcher;
@@ -285,6 +286,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private final ViewContext viewContext;
     private final GitCredentialService gitCredentialService;
     private final ReleaseMetadataService releaseMetadataService;
+    /** The cluster of the releases this backend writes to Git, on {@link #kubernetesService}. */
+    private final ClusterRef cluster;
     private GitPullRequests pullRequests;
     private final CommandUtils commandUtils;
     private final HelmService helmService;
@@ -300,7 +303,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * @param fluxRoot root directory where manifests will be written (simulates Git workspace).
      */
     public FluxGitOpsBackend(Path fluxRoot, KubernetesService kubernetesService, ViewContext viewContext) {
-        this(fluxRoot, kubernetesService, viewContext, null);
+        this(fluxRoot, kubernetesService, viewContext, (HttpClient) null);
+    }
+
+    /**
+     * The backend of the releases of a cluster: their records, Helm and Git workspaces are that cluster's.
+     *
+     * @param kubernetesService the cluster's connection
+     */
+    public FluxGitOpsBackend(Path fluxRoot, KubernetesService kubernetesService, ViewContext viewContext,
+                             ClusterRef cluster) {
+        this(fluxRoot, kubernetesService, viewContext, null, cluster);
     }
 
     /**
@@ -313,16 +326,22 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     }
 
     FluxGitOpsBackend(Path fluxRoot, KubernetesService kubernetesService, ViewContext viewContext, HttpClient httpClient) {
+        this(fluxRoot, kubernetesService, viewContext, httpClient, ClusterRef.DEFAULT);
+    }
+
+    private FluxGitOpsBackend(Path fluxRoot, KubernetesService kubernetesService, ViewContext viewContext,
+                              HttpClient httpClient, ClusterRef cluster) {
         this.fluxRoot = fluxRoot;
         this.kubernetesService = kubernetesService;
         this.viewContext = viewContext;
+        this.cluster = java.util.Objects.requireNonNull(cluster, "cluster");
         this.gitCredentialService = new GitCredentialService(viewContext);
-        this.releaseMetadataService = new ReleaseMetadataService(viewContext);
+        this.releaseMetadataService = new ReleaseMetadataService(viewContext, cluster);
         this.pullRequests = httpClient == null
                 ? GitPullRequests.through(pullRequestClient(viewContext))
                 : new GitPullRequests(httpClient);
         this.commandUtils = new CommandUtils(viewContext, kubernetesService);
-        this.helmService = new HelmService(viewContext);
+        this.helmService = new HelmService(viewContext, cluster);
         this.securityProfileService = new SecurityProfileService(viewContext);
         this.repositorySecret = repo -> new HelmRepositoryService(viewContext).readPlainSecret(repo);
     }
@@ -3589,7 +3608,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (!GitCredentialService.isViewAlias(alias)) {
             return;
         }
-        String releaseId = K8sReleaseEntity.idOf(namespace, release);
+        String releaseId = K8sReleaseEntity.idOf(cluster, namespace, release);
         try {
             boolean usedElsewhere = releaseMetadataService.findAll().stream()
                     .anyMatch(other -> !releaseId.equals(other.getId()) && alias.equalsIgnoreCase(other.getGitCredentialAlias()));
@@ -3811,15 +3830,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * are serialised via {@link #lockWorkspace}.
      */
     private Path workspaceForRelease(String namespace, String releaseName) {
+        // The default cluster's releases keep the workspaces they had; another cluster's have their own.
         return fluxRoot.resolve(
-            "gitops-" + sanitizePathComponent(namespace) + "-" + sanitizePathComponent(releaseName)
+            "gitops-" + (cluster.isDefault() ? "" : sanitizePathComponent(cluster.id()) + "-")
+                + sanitizePathComponent(namespace) + "-" + sanitizePathComponent(releaseName)
         );
     }
 
     /** Returns (and creates if absent) the per-release ReentrantLock, taken through {@link #lockWorkspace}. */
     private ReentrantLock lockForRelease(String namespace, String releaseName) {
         return WORKSPACE_LOCKS.computeIfAbsent(
-            namespace + ":" + releaseName,
+            K8sReleaseEntity.idOf(cluster, namespace, releaseName),
             k -> new ReentrantLock()
         );
     }
@@ -4328,10 +4349,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * @throws NotOwnDirectoryException naming the other release and its directory
      */
     void checkApartFromRecordedReleases(Path releaseDir, String repoUrl, String namespace, String release) {
-        String id = K8sReleaseEntity.idOf(namespace, release);
+        String id = K8sReleaseEntity.idOf(cluster, namespace, release);
+        // A release of the same namespace and name on another cluster is another release: writing the same folder of
+        // the same repository, the two would overwrite each other.
         List<K8sReleaseEntity> others = releaseMetadataService.findAll().stream()
                 .filter(other -> other != null && !id.equals(other.getId())
-                        && !(namespace.equals(other.getNamespace()) && release.equals(other.getReleaseName()))
+                        && !(cluster.equals(other.clusterRef()) && namespace.equals(other.getNamespace())
+                                && release.equals(other.getReleaseName()))
                         && other.getGitPath() != null
                         && !other.getGitPath().isBlank() && sameRepository(repoUrl, other.getGitRepoUrl()))
                 .sorted(java.util.Comparator.comparing(K8sReleaseEntity::getGitPath))

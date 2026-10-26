@@ -26,7 +26,8 @@ import { serverMessage } from '../utils/serverMessage';
 import { GITOPS_LAYOUT, submittedDeployment, wizardMode } from '../utils/deploymentModes';
 import yaml from 'yaml';
 
-import { previewGitOpsProfile, type GitOpsPreview, getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getReleaseTlsState, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary } from '../api/client';
+import { previewGitOpsProfile, type GitOpsPreview, getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getReleaseTlsState, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary, listKubernetesClusters, type KubernetesCluster } from '../api/client';
+import { TargetClusterContext } from '../context/TargetClusterContext';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
@@ -83,6 +84,16 @@ const ServiceWizardPage: React.FC = () => {
 
   // State
   const [installValues, setInstallValues] = useState<any>({}); // Step 1 & 2 data
+  // The Kubernetes clusters KDPS knows; with more than one, the wizard asks which one the service goes to.
+  const [kubernetesClusters, setKubernetesClusters] = useState<KubernetesCluster[]>([]);
+  useEffect(() => {
+    let alive = true;
+    listKubernetesClusters().then(c => { if (alive) setKubernetesClusters(c || []); }).catch(() => { /* default only */ });
+    return () => { alive = false; };
+  }, []);
+  // What the wizard discovers is read on the cluster it deploys to; undefined is the default cluster.
+  const chosenCluster: string | undefined = (installValues as any)?.kubernetesCluster;
+  const targetCluster = chosenCluster && chosenCluster !== 'default' ? chosenCluster : undefined;
   const [managedTruststores, setManagedTruststores] = useState<TruststoreSummary[]>([]);
   useEffect(() => {
     listTruststores()
@@ -844,6 +855,8 @@ const ServiceWizardPage: React.FC = () => {
       return {
         chart: chartRef,
         releaseName: installValues.releaseName,
+        // The cluster the service is deployed to; none names the default cluster.
+        kubernetesCluster: targetCluster,
         namespace: installValues.namespace,
         // In the body as well as the query: the GitOps backend writes them into the HelmRelease.
         repoId: (installValues.repoId as string) || undefined,
@@ -1140,7 +1153,7 @@ const ServiceWizardPage: React.FC = () => {
       { title: isUpgrade ? 'Upgrade – General' : 'General Info', content: (
         <>
           {renderContextCard(true)}
-          <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} upgrade={!!isUpgrade} deployedMode={upgradeState?.deploymentMode} />
+          <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="general" repos={repos} securityProfiles={securityProfiles.profiles} upgrade={!!isUpgrade} deployedMode={upgradeState?.deploymentMode} kubernetesClusters={kubernetesClusters} />
         </>
       ) },
       { title: 'Storage', content: <InstallStep definition={def} data={installValues} onChange={setInstallValues} mode="storage" repos={repos} securityProfiles={securityProfiles.profiles} /> },
@@ -1186,7 +1199,7 @@ const ServiceWizardPage: React.FC = () => {
   }, [configs, passwordValidity]);
 
   return (
-    <>
+    <TargetClusterContext.Provider value={targetCluster}>
     <Layout style={{ padding: '24px', background: 'var(--panel)', maxHeight: 'calc(100vh - 120px)', overflowY: 'auto', position: 'relative' }}>
       {(loading || !def) && (
         <>
@@ -1525,7 +1538,7 @@ const ServiceWizardPage: React.FC = () => {
         <li><strong>Deploy, skip restart</strong> — the user is still provisioned, but federation stays inactive until you restart ATLAS_SERVER yourself (e.g. from Ambari).</li>
       </ul>
     </Modal>
-    </>
+    </TargetClusterContext.Provider>
   );
 };
 export default ServiceWizardPage;
