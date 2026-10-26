@@ -159,17 +159,8 @@ public class CaRegistryService {
                     caCert.getNotAfter().toInstant() + "). Renew the CA before uploading.");
         }
 
-        // Round-trip the key to confirm it parses; we don't keep the object, just sanity check.
-        try (PEMParser parser = new PEMParser(new StringReader(caKeyPem))) {
-            Object obj = parser.readObject();
-            if (obj == null) {
-                throw new IllegalArgumentException("Failed to parse PEM private key (empty or malformed).");
-            }
-        } catch (IllegalArgumentException iae) {
-            throw iae;
-        } catch (Exception ex) {
-            throw new IllegalArgumentException("Failed to parse PEM private key: " + ex.getMessage(), ex);
-        }
+        // The key must be readable and be the certificate's: a leaf signed with another key would never verify.
+        WebHookConfigurationService.checkCaKeyMatches(caCertPem, caKeyPem);
 
         String namespace = registryNamespace();
         ensureNamespaceExists(namespace);
