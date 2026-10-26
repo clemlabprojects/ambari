@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.ws.rs.core.Response;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -36,8 +37,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * The Certificate Authorities page with an account that may not use Secrets in the Company CA project: a 403 that says
- * what to do, not a server error with the raw refusal of the Kubernetes API.
+ * The Certificate Authorities page with an account that may not read Secrets in the Company CA project: the view keeps
+ * the CAs itself, so the page still lists them; only the import of an earlier version's CAs waits for the access.
  */
 class CaRegistryResourceForbiddenTest {
 
@@ -59,28 +60,21 @@ class CaRegistryResourceForbiddenTest {
         new ViewSettingsService(ctx).save(settings);
     }
 
-    private static String error(Response response) {
-        return String.valueOf(((Map<?, ?>) response.getEntity()).get("error"));
-    }
-
     @Test
-    void listingTheCompanyCasSaysWhatToDo() {
+    void theCompanyCasAreListedWhateverTheAccountMayRead() {
         Response listed = new CaRegistryResource(ctx, k8s, null).list();
 
-        assertEquals(403, listed.getStatus());
-        assertEquals(PkiNamespaces.forbiddenMessage("kdps-pki"), error(listed));
+        assertEquals(200, listed.getStatus());
+        assertEquals(List.of(), ((Map<?, ?>) listed.getEntity()).get("items"));
+        assertEquals(true, ((Map<?, ?>) listed.getEntity()).get("canWrite"), "an administrator");
     }
 
     @Test
-    void changingTheCompanyCasSaysWhatToDo() {
+    void anUnknownCaIsNotFound() {
         CaRegistryResource resource = new CaRegistryResource(ctx, k8s, null);
 
-        Response deleted = resource.delete("corp-issuing-ca");
-        assertEquals(403, deleted.getStatus());
-        assertEquals(PkiNamespaces.forbiddenMessage("kdps-pki"), error(deleted));
-
-        Response promoted = resource.promoteToClusterIssuer("corp-issuing-ca");
-        assertEquals(403, promoted.getStatus());
-        assertEquals(PkiNamespaces.forbiddenMessage("kdps-pki"), error(promoted));
+        assertEquals(404, resource.delete("corp-issuing-ca").getStatus());
+        assertEquals(404, resource.promoteToClusterIssuer("corp-issuing-ca", null).getStatus());
+        assertEquals(404, resource.promoteToClusterIssuer("corp-issuing-ca", "nope").getStatus(), "unknown cluster");
     }
 }

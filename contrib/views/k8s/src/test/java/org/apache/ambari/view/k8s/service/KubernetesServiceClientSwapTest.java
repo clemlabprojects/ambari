@@ -132,7 +132,7 @@ class KubernetesServiceClientSwapTest {
     when(ks.getClient()).thenReturn(fresh); // reconnected after the service was created
 
     // The mocked client returns nothing useful; what matters is which client the call went to.
-    assertThrows(RuntimeException.class, () -> webhooks.loadUploadedCertificateAuthority("ambari-pki", "company-ca"));
+    assertThrows(RuntimeException.class, () -> webhooks.readClientPrivateKeyPem("ambari-pki", "webhook-client"));
     verify(fresh).secrets();
     verify(previous, never()).secrets();
   }

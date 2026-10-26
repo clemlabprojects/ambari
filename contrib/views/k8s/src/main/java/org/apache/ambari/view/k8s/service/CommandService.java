@@ -8238,14 +8238,8 @@ public class CommandService {
             throw new IllegalStateException("The Kubernetes cluster '" + named + "' has no connection yet: an "
                     + "administrator saves one under Kubernetes clusters. Nothing was deployed.");
         }
-        // The Company CAs and the managed truststores are kept on the default cluster for now: another cluster has
-        // none of them, so a deploy there that needs one is refused rather than deployed without it.
-        Map<String, Object> selfSign = request.getIngressTlsSelfSign();
-        if (selfSign != null && "companyUploaded".equals(String.valueOf(selfSign.get("mode")))) {
-            throw new IllegalStateException("The ingress certificate of a deploy to the cluster '" + named + "' cannot "
-                    + "be signed by a Company CA yet: choose Ambari's internal CA, cert-manager or an uploaded "
-                    + "certificate. Nothing was deployed.");
-        }
+        // The managed truststores are kept on the default cluster for now: another cluster has none of them, so a
+        // deploy there that needs one is refused rather than deployed without it.
         if (request.getTruststoreRefs() != null && !request.getTruststoreRefs().isEmpty()) {
             throw new IllegalStateException("A deploy to the cluster '" + named + "' cannot use managed truststores "
                     + "yet (" + String.join(", ", request.getTruststoreRefs()) + "): deploy without them. Nothing was "
@@ -12087,19 +12081,13 @@ public class CommandService {
                         if (caName == null || caName.isBlank()) {
                             throw new IllegalStateException("INGRESS_TLS_SELFSIGN: caName is required when ca=companyUploaded");
                         }
-                        CaRegistryService caRegistry = new CaRegistryService(ctx, this.kubernetesService);
-                        CaRegistryService.CaEntry entry;
-                        try {
-                            entry = caRegistry.get(caName);
-                        } catch (RuntimeException e) {
-                            if (NamespaceScope.isForbidden(e)) {
-                                throw new IllegalStateException("INGRESS_TLS_SELFSIGN: "
-                                        + PkiNamespaces.forbiddenMessage(caRegistry.registryNamespace()), e);
-                            }
-                            throw e;
-                        }
-                        ca = webHookCfg.loadUploadedCertificateAuthority(entry.namespace(), entry.secretName());
-                        appendCommandLog(id, "INGRESS_TLS_SELFSIGN: using company CA '" + caName + "' (subject=" + entry.subject() + ")");
+                        // The view keeps the Company CAs for every cluster: KDPS signs the leaf, the CA key stays with
+                        // the view whatever cluster the release goes to.
+                        CaRegistryService caRegistry = new CaRegistryService(ctx,
+                                KubernetesService.get(ctx, ClusterRef.DEFAULT));
+                        CaRegistryService.CaEntry entry = caRegistry.get(caName);
+                        ca = caRegistry.material(caName);
+                        appendCommandLog(id, "INGRESS_TLS_SELFSIGN: using company CA '" + entry.caName() + "' (subject=" + entry.subject() + ")");
                     } else {
                         ca = webHookCfg.ensureAmbariCertificateAuthority();
                         appendCommandLog(id, "INGRESS_TLS_SELFSIGN: using Ambari Internal CA (testing trust)");

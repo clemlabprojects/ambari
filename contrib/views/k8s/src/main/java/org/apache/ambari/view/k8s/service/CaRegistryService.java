@@ -11,12 +11,11 @@
  */
 package org.apache.ambari.view.k8s.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Secret;
-import io.fabric8.kubernetes.api.model.SecretBuilder;
-import io.fabric8.kubernetes.api.model.Namespace;
-import io.fabric8.kubernetes.api.model.NamespaceBuilder;
-import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.openssl.PEMParser;
 import org.slf4j.Logger;
@@ -30,77 +29,78 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * Persists admin-uploaded Company Issuing CAs as K8s Secrets under a dedicated
- * privileged namespace (default {@code ambari-pki}, set in the view settings: see
- * {@link PkiNamespaces#caNamespace()}). One Secret per CA. Used as the
- * trust anchor when an operator picks the {@code signedByCompanyCA} ingress-TLS mode
- * at install time.
+ * The Company Issuing CAs administrators upload, kept by the view for every Kubernetes cluster it deploys to: the
+ * certificate in the view's settings, the private key encrypted there with the Ambari master key
+ * ({@link InstanceSettings#putSecret}). Used when an operator picks the {@code signedByCompanyCA} ingress TLS mode:
+ * KDPS signs the release's leaf certificate itself, so the CA key never goes to the cluster the release is deployed to.
+ * Only promoting a CA to a cert-manager ClusterIssuer writes it to a cluster, the one the administrator names.
  *
- * <p><b>Storage layout</b>: each CA lives at
- * {@code ambari-pki/<view-instance>-<ca-name>}. The Secret has:
- * <ul>
- *   <li>{@code tls.crt} — CA certificate PEM (one or more concatenated certs allowed
- *       so an intermediate-CA upload can carry its parent for trust-chain building)</li>
- *   <li>{@code tls.key} — CA private key PEM (RSA or EC, unencrypted at the API
- *       boundary; encryption-at-rest is the cluster operator's responsibility via
- *       K8s envelope encryption)</li>
- *   <li>Labels: {@code managed-by=ambari-k8s-view},
- *       {@code ambari.clemlab.com/resource-type=issuing-ca},
- *       {@code ambari.clemlab.com/view-instance=<name>}</li>
- *   <li>Annotations: {@code uploaded-by}, {@code uploaded-at}, {@code subject},
- *       {@code not-before}, {@code not-after}, {@code serial}</li>
- * </ul>
+ * <p>Earlier versions kept each CA as a {@code kubernetes.io/tls} Secret in the Company CA project
+ * ({@link PkiNamespaces#caNamespace()}, {@code ambari-pki} by default) of the one cluster KDPS knew. Those are imported
+ * once from the default cluster, and left in place; deleting a CA also deletes its old Secret.</p>
  *
- * <p><b>RBAC posture</b>: only the K8s view's service account should have
- * {@code get/list/watch/create/update/delete} on Secrets in the registry namespace.
- * The CA private key is never returned to the UI on read — list/get only emit the
- * cert PEM plus metadata; the key stays inside the cluster.
+ * <p>A CA is named by the administrator ({@code caName}) and identified by {@link #secretNameFor} of that name, which
+ * is what the deploy wizard's picker sends and what releases deployed earlier recorded: both are accepted.</p>
  *
- * <p><b>Audit</b>: every mutating operation logs at INFO with the caller principal,
- * action, CA name, and resulting cert subject/serial/notAfter so SREs can correlate
- * with K8s API audit logs.
+ * <p><b>Audit</b>: every change logs at INFO with the caller, the action, the CA and its certificate's subject, serial
+ * and expiry.</p>
  */
 public class CaRegistryService {
 
     private static final Logger LOG = LoggerFactory.getLogger(CaRegistryService.class);
 
-    /** Where the company-CA Secrets live unless the view settings name another project ({@link PkiNamespaces}). */
+    /** Where earlier versions kept the Company CA Secrets unless the view settings named another project. */
     public static final String DEFAULT_REGISTRY_NAMESPACE = PkiNamespaces.DEFAULT_NAMESPACE;
 
-    /** Standard label flagging the K8s view-managed CA registry entries. */
+    /** Label of the CA Secrets earlier versions wrote, and of the deploy wizard's Company CA picker. */
     public static final String LABEL_RESOURCE_TYPE = "ambari.clemlab.com/resource-type";
     public static final String RESOURCE_TYPE_ISSUING_CA = "issuing-ca";
     public static final String LABEL_VIEW_INSTANCE = "ambari.clemlab.com/view-instance";
+    /** The selector of the deploy wizard's Company CA picker ({@code lookupLabel} of the service definitions). */
+    public static final String PICKER_SELECTOR = LABEL_RESOURCE_TYPE + "=" + RESOURCE_TYPE_ISSUING_CA;
+
+    static final String INDEX_KEY = "pki.cas";
+    static final String IMPORTED_KEY = "pki.cas.imported";
+    private static final String ENTRY_PREFIX = "pki.ca.";
+    private static final String KEY_SUFFIX = ".key";
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+    /** Serializes the changes of the registry: a new service is made for each request. */
+    private static final Object LOCK = new Object();
 
     private final ViewContext viewContext;
-    private final KubernetesService kubernetesService;
+    /** The default cluster, where earlier versions kept the CAs: read once to import them. */
+    private final KubernetesService defaultCluster;
     private final PkiNamespaces namespaces;
-
-    public CaRegistryService(ViewContext viewContext, KubernetesService kubernetesService) {
-        this(viewContext, kubernetesService, new PkiNamespaces(viewContext));
-    }
-
-    CaRegistryService(ViewContext viewContext, KubernetesService kubernetesService, PkiNamespaces namespaces) {
-        this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
-        this.kubernetesService = Objects.requireNonNull(kubernetesService, "kubernetesService");
-        this.namespaces = Objects.requireNonNull(namespaces, "namespaces");
-    }
+    private final InstanceSettings settings;
 
     /**
-     * The registry namespace: the Company CA project of the view settings, with a dedicated default. Never a project
-     * releases are deployed to, since the CA private keys would be readable by every editor of that project.
+     * @param viewContext    the view instance
+     * @param defaultCluster the default cluster's service, from which the CAs of earlier versions are imported once
      */
+    public CaRegistryService(ViewContext viewContext, KubernetesService defaultCluster) {
+        this(viewContext, defaultCluster, new PkiNamespaces(viewContext), new InstanceSettings(viewContext));
+    }
+
+    CaRegistryService(ViewContext viewContext, KubernetesService defaultCluster, PkiNamespaces namespaces,
+                      InstanceSettings settings) {
+        this.viewContext = Objects.requireNonNull(viewContext, "viewContext");
+        this.defaultCluster = defaultCluster;
+        this.namespaces = Objects.requireNonNull(namespaces, "namespaces");
+        this.settings = Objects.requireNonNull(settings, "settings");
+    }
+
+    /** The project where earlier versions kept the CA Secrets on the default cluster. */
     public String registryNamespace() {
         return namespaces.caNamespace();
     }
 
-    /** Stable, namespaced Secret name for a CA. Lower-cased + DNS-1123-safe. */
+    /** Stable, DNS-1123-safe identifier of a CA, which earlier versions also used as its Secret's name. */
     public String secretNameFor(String caName) {
         Objects.requireNonNull(caName, "caName");
         String instance = viewContext.getInstanceName() != null ? viewContext.getInstanceName() : "default";
@@ -115,20 +115,15 @@ public class CaRegistryService {
     }
 
     /**
-     * Upload (create or replace) a Company Issuing CA in the registry.
+     * Uploads a CA, or replaces the one of the same name.
      *
-     * <p>Validation:
-     * <ul>
-     *   <li>cert PEM must parse and have {@code basicConstraints.CA=true}</li>
-     *   <li>key PEM must parse and match the certificate's public key</li>
-     *   <li>CA must not be expired ({@code notAfter > now})</li>
-     * </ul>
-     *
-     * @param caName       admin-chosen short id (e.g. {@code "acme-issuing-ca"})
-     * @param caCertPem    CA certificate in PEM (may include intermediate chain)
-     * @param caKeyPem     CA private key in PEM (RSA / EC, unencrypted)
-     * @param description  optional free-text describing the CA for the registry listing
-     * @return a {@link CaEntry} summary (without the private key) for the new/updated CA
+     * @param caName      admin-chosen name (e.g. {@code "acme-issuing-ca"})
+     * @param caCertPem   CA certificate in PEM (may include intermediate chain)
+     * @param caKeyPem    CA private key in PEM (RSA / EC, unencrypted)
+     * @param description optional free text for the registry listing
+     * @return the CA as listed, without its private key
+     * @throws IllegalArgumentException when the certificate is not a valid, current CA or the key cannot be read
+     * @throws org.apache.ambari.view.k8s.security.MasterKeyUnavailableException when the key cannot be encrypted
      */
     public CaEntry upload(String caName, String caCertPem, String caKeyPem, String description) {
         if (caName == null || caName.isBlank()) {
@@ -140,16 +135,7 @@ public class CaRegistryService {
         if (caKeyPem == null || caKeyPem.isBlank()) {
             throw new IllegalArgumentException("caKeyPem is required");
         }
-
         X509Certificate caCert = parseFirstCertificate(caCertPem);
-        // Key parses + matches?
-        try {
-            // Use the same parser as the signing path so failure modes line up.
-            new WebHookConfigurationService(viewContext, kubernetesService); // ensures provider registered
-        } catch (Exception ignored) {
-            // construction side-effects only; safe to ignore
-        }
-
         if (caCert.getBasicConstraints() < 0) {
             throw new IllegalArgumentException("Uploaded certificate is not a CA (basicConstraints.CA=false). " +
                     "Upload an *issuing* CA, not a server / leaf certificate.");
@@ -158,11 +144,8 @@ public class CaRegistryService {
             throw new IllegalArgumentException("Uploaded CA is expired (notAfter=" +
                     caCert.getNotAfter().toInstant() + "). Renew the CA before uploading.");
         }
-
-        // Round-trip the key to confirm it parses; we don't keep the object, just sanity check.
         try (PEMParser parser = new PEMParser(new StringReader(caKeyPem))) {
-            Object obj = parser.readObject();
-            if (obj == null) {
+            if (parser.readObject() == null) {
                 throw new IllegalArgumentException("Failed to parse PEM private key (empty or malformed).");
             }
         } catch (IllegalArgumentException iae) {
@@ -170,131 +153,243 @@ public class CaRegistryService {
         } catch (Exception ex) {
             throw new IllegalArgumentException("Failed to parse PEM private key: " + ex.getMessage(), ex);
         }
-
-        String namespace = registryNamespace();
-        ensureNamespaceExists(namespace);
-        String secretName = secretNameFor(caName);
-
-        Map<String, String> labels = new LinkedHashMap<>();
-        labels.put("managed-by", "ambari-k8s-view");
-        labels.put(LABEL_RESOURCE_TYPE, RESOURCE_TYPE_ISSUING_CA);
-        labels.put(LABEL_VIEW_INSTANCE, viewContext.getInstanceName());
-        labels.put("ambari.clemlab.com/ca-name", sanitizeLabelValue(caName));
-
-        Map<String, String> annotations = new LinkedHashMap<>();
-        annotations.put("ambari.clemlab.com/ca-name", caName);
-        if (description != null && !description.isBlank()) {
-            annotations.put("ambari.clemlab.com/description", description.trim());
-        }
-        annotations.put("ambari.clemlab.com/subject", caCert.getSubjectX500Principal().getName());
-        annotations.put("ambari.clemlab.com/serial", caCert.getSerialNumber().toString(16));
-        annotations.put("ambari.clemlab.com/not-before", caCert.getNotBefore().toInstant().toString());
-        annotations.put("ambari.clemlab.com/not-after", caCert.getNotAfter().toInstant().toString());
-        annotations.put("ambari.clemlab.com/uploaded-at", Instant.now().toString());
-        annotations.put("ambari.clemlab.com/uploaded-by",
-                viewContext.getUsername() != null ? viewContext.getUsername() : "unknown");
-
-        Secret desired = new SecretBuilder()
-                .withNewMetadata()
-                .withName(secretName)
-                .withNamespace(namespace)
-                .addToLabels(labels)
-                .addToAnnotations(annotations)
-                .endMetadata()
-                .withType("kubernetes.io/tls")
-                .addToData("tls.crt", b64(caCertPem))
-                .addToData("tls.key", b64(caKeyPem))
-                .build();
-
-        KubernetesClient k8s = kubernetesService.getClient();
-        Secret existing = k8s.secrets().inNamespace(namespace).withName(secretName).get();
-        if (existing == null) {
-            k8s.secrets().inNamespace(namespace).resource(desired).create();
-            LOG.info("CA registry: CREATED ca={} secret={}/{} subject='{}' notAfter={} uploadedBy={}",
-                    caName, namespace, secretName, caCert.getSubjectX500Principal().getName(),
-                    caCert.getNotAfter().toInstant(),
-                    annotations.get("ambari.clemlab.com/uploaded-by"));
-        } else {
-            k8s.secrets().inNamespace(namespace).resource(desired).createOrReplace();
-            LOG.info("CA registry: REPLACED ca={} secret={}/{} subject='{}' notAfter={} uploadedBy={}",
-                    caName, namespace, secretName, caCert.getSubjectX500Principal().getName(),
-                    caCert.getNotAfter().toInstant(),
-                    annotations.get("ambari.clemlab.com/uploaded-by"));
-        }
-
-        return toEntry(secretName, namespace, caCert, annotations);
-    }
-
-    /** List all registry entries for this view instance. Private keys are never returned. */
-    public List<CaEntry> list() {
-        String namespace = registryNamespace();
-        ensureNamespaceExists(namespace);
-        List<CaEntry> out = new ArrayList<>();
-        List<Secret> secrets = kubernetesService.getClient().secrets().inNamespace(namespace)
-                .withLabel(LABEL_RESOURCE_TYPE, RESOURCE_TYPE_ISSUING_CA)
-                .withLabel(LABEL_VIEW_INSTANCE, viewContext.getInstanceName())
-                .list().getItems();
-        for (Secret s : secrets) {
-            Map<String, String> data = s.getData() != null ? s.getData() : Collections.emptyMap();
-            String certB64 = data.get("tls.crt");
-            if (certB64 == null) continue;
-            try {
-                String certPem = new String(Base64.getDecoder().decode(certB64), StandardCharsets.UTF_8);
-                X509Certificate caCert = parseFirstCertificate(certPem);
-                Map<String, String> annotations = s.getMetadata() != null && s.getMetadata().getAnnotations() != null
-                        ? s.getMetadata().getAnnotations() : Collections.emptyMap();
-                out.add(toEntry(s.getMetadata().getName(), namespace, caCert, annotations));
-            } catch (Exception ex) {
-                LOG.warn("CA registry: skipping unparsable secret {}/{}: {}", namespace, s.getMetadata().getName(), ex.toString());
+        importOnce();
+        String id = secretNameFor(caName);
+        Stored stored = new Stored(caName.trim(), caCertPem, description == null ? "" : description.trim(),
+                viewContext.getUsername() != null ? viewContext.getUsername() : "unknown", Instant.now().toString());
+        boolean replaced;
+        synchronized (LOCK) {
+            List<String> ids = ids();
+            replaced = ids.contains(id);
+            store(id, stored, caKeyPem);
+            if (!replaced) {
+                ids.add(id);
+                writeIds(ids);
             }
         }
+        LOG.info("CA registry: {} ca={} id={} subject='{}' notAfter={} uploadedBy={}", replaced ? "REPLACED" : "CREATED",
+                caName, id, caCert.getSubjectX500Principal().getName(), caCert.getNotAfter().toInstant(),
+                stored.uploadedBy());
+        return toEntry(id, stored);
+    }
+
+    /** Every CA, by name. Private keys are never returned. */
+    public List<CaEntry> list() {
+        importOnce();
+        List<CaEntry> out = new ArrayList<>();
+        for (String id : ids()) {
+            Stored stored = read(id);
+            if (stored == null) {
+                continue;
+            }
+            try {
+                out.add(toEntry(id, stored));
+            } catch (RuntimeException ex) {
+                LOG.warn("CA registry: skipping the CA {}, whose certificate cannot be read: {}", id, ex.toString());
+            }
+        }
+        out.sort(java.util.Comparator.comparing(CaEntry::caName));
         return out;
     }
 
-    /** Delete a CA by its admin-chosen name. */
-    public void delete(String caName) {
-        String namespace = registryNamespace();
-        String secretName = secretNameFor(caName);
-        Secret existing = kubernetesService.getClient().secrets().inNamespace(namespace).withName(secretName).get();
-        if (existing == null) {
-            throw new IllegalArgumentException("CA not found: " + caName);
+    /**
+     * A CA by its name or its identifier, without its private key.
+     *
+     * @throws IllegalArgumentException when there is no such CA
+     */
+    public CaEntry get(String caNameOrId) {
+        String wanted = caNameOrId == null ? "" : caNameOrId.trim();
+        return list().stream()
+                .filter(e -> wanted.equals(e.caName()) || wanted.equals(e.secretName()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("CA not found: " + caNameOrId));
+    }
+
+    /**
+     * What a CA signs with: its certificate and private key, for KDPS to sign a release's leaf certificate.
+     *
+     * @throws IllegalArgumentException when there is no such CA
+     * @throws IllegalStateException    when its key cannot be read, or it is not a CA
+     */
+    public WebHookConfigurationService.CertificateAuthorityMaterial material(String caNameOrId) {
+        CaEntry entry = get(caNameOrId);
+        Stored stored = read(entry.secretName());
+        String keyPem = settings.getSecret(keyKey(entry.secretName()));
+        if (stored == null || keyPem == null || keyPem.isBlank()) {
+            throw new IllegalStateException("The private key of the Company CA '" + entry.caName()
+                    + "' cannot be read; upload the CA again.");
         }
-        kubernetesService.getClient().secrets().inNamespace(namespace).withName(secretName).delete();
-        LOG.info("CA registry: DELETED ca={} secret={}/{} deletedBy={}",
-                caName, namespace, secretName,
+        if (parseFirstCertificate(stored.certPem()).getBasicConstraints() < 0) {
+            throw new IllegalStateException("The Company CA '" + entry.caName() + "' holds a leaf certificate "
+                    + "(basicConstraints.CA=false). Upload an issuing CA.");
+        }
+        return new WebHookConfigurationService.CertificateAuthorityMaterial(stored.certPem(), keyPem,
+                "kdps-settings://" + entry.secretName());
+    }
+
+    /**
+     * Deletes a CA, and the Secret an earlier version kept it in, when it is still there.
+     *
+     * @throws IllegalArgumentException when there is no such CA
+     */
+    public void delete(String caNameOrId) {
+        CaEntry entry = get(caNameOrId);
+        synchronized (LOCK) {
+            List<String> ids = ids();
+            ids.remove(entry.secretName());
+            writeIds(ids);
+            settings.putText(entryKey(entry.secretName()), null);
+            settings.delete(keyKey(entry.secretName()));
+        }
+        deleteLegacySecret(entry.secretName());
+        LOG.info("CA registry: DELETED ca={} id={} deletedBy={}", entry.caName(), entry.secretName(),
                 viewContext.getUsername() != null ? viewContext.getUsername() : "unknown");
     }
 
-    /** Get a single CA entry (without the private key). Throws if not found. */
-    public CaEntry get(String caName) {
-        return list().stream()
-                .filter(e -> caName.equals(e.caName()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("CA not found: " + caName));
+    /**
+     * Makes a CA a cert-manager {@code ClusterIssuer} of kind {@code ca} on a cluster: its certificate and key go to a
+     * {@code kubernetes.io/tls} Secret in cert-manager's namespace there, which the issuer names.
+     *
+     * @param cluster the cluster the issuer is created on
+     * @return the issuer's name ({@code clemlab-<ca name>})
+     */
+    public String promote(String caNameOrId, KubernetesService cluster) {
+        CaEntry entry = get(caNameOrId);
+        WebHookConfigurationService.CertificateAuthorityMaterial ca = material(caNameOrId);
+        String issuerName = "clemlab-" + entry.caName().toLowerCase().replaceAll("[^a-z0-9-]", "-");
+        cluster.applyCertManagerClusterIssuerFromCa(issuerName, entry.secretName(), ca.caCertificatePem(),
+                ca.caPrivateKeyPem());
+        LOG.info("CA registry: PROMOTED ca={} to ClusterIssuer {} on cluster {} by {}", entry.caName(), issuerName,
+                cluster.cluster(), viewContext.getUsername() != null ? viewContext.getUsername() : "unknown");
+        return issuerName;
+    }
+
+    // -------------------- the CAs of earlier versions --------------------
+
+    /**
+     * Imports, once, the CAs earlier versions kept as Secrets on the default cluster. When the cluster cannot be read,
+     * nothing is marked: the import is tried again next time.
+     */
+    private void importOnce() {
+        if ("true".equals(settings.get(IMPORTED_KEY)) || defaultCluster == null) {
+            return;
+        }
+        synchronized (LOCK) {
+            if ("true".equals(settings.get(IMPORTED_KEY))) {
+                return;
+            }
+            List<Secret> legacy;
+            try {
+                legacy = defaultCluster.getClient().secrets().inNamespace(registryNamespace())
+                        .withLabel(LABEL_RESOURCE_TYPE, RESOURCE_TYPE_ISSUING_CA)
+                        .withLabel(LABEL_VIEW_INSTANCE, viewContext.getInstanceName())
+                        .list().getItems();
+            } catch (RuntimeException e) {
+                LOG.warn("CA registry: the CAs of earlier versions could not be read from {} on the default cluster; "
+                        + "tried again later: {}", registryNamespace(), e.toString());
+                return;
+            }
+            List<String> ids = ids();
+            int imported = 0;
+            for (Secret secret : legacy) {
+                Map<String, String> data = secret.getData() != null ? secret.getData() : Collections.emptyMap();
+                String id = secret.getMetadata().getName();
+                if (ids.contains(id) || data.get("tls.crt") == null || data.get("tls.key") == null) {
+                    continue;
+                }
+                Map<String, String> annotations = secret.getMetadata().getAnnotations() != null
+                        ? secret.getMetadata().getAnnotations() : Collections.emptyMap();
+                Stored stored = new Stored(annotations.getOrDefault("ambari.clemlab.com/ca-name", id),
+                        decode(data.get("tls.crt")),
+                        annotations.getOrDefault("ambari.clemlab.com/description", ""),
+                        annotations.getOrDefault("ambari.clemlab.com/uploaded-by", "unknown"),
+                        annotations.getOrDefault("ambari.clemlab.com/uploaded-at", "unknown"));
+                store(id, stored, decode(data.get("tls.key")));
+                ids.add(id);
+                imported++;
+            }
+            writeIds(ids);
+            settings.put(IMPORTED_KEY, "true");
+            if (imported > 0) {
+                LOG.info("CA registry: imported {} CA(s) of an earlier version from {} on the default cluster; their "
+                        + "Secrets are left in place", imported, registryNamespace());
+            }
+        }
+    }
+
+    private void deleteLegacySecret(String id) {
+        if (defaultCluster == null) {
+            return;
+        }
+        try {
+            Secret legacy = defaultCluster.getClient().secrets().inNamespace(registryNamespace()).withName(id).get();
+            if (legacy != null && legacy.getMetadata().getLabels() != null
+                    && RESOURCE_TYPE_ISSUING_CA.equals(legacy.getMetadata().getLabels().get(LABEL_RESOURCE_TYPE))) {
+                defaultCluster.getClient().secrets().inNamespace(registryNamespace()).withName(id).delete();
+                LOG.info("CA registry: deleted the Secret {}/{} an earlier version kept the CA in", registryNamespace(), id);
+            }
+        } catch (RuntimeException e) {
+            LOG.warn("CA registry: the Secret {}/{} an earlier version kept the CA in could not be deleted: {}",
+                    registryNamespace(), id, e.toString());
+        }
+    }
+
+    // -------------------- storage --------------------
+
+    /** A CA as the settings keep it; its private key is kept apart, encrypted. */
+    record Stored(String caName, String certPem, String description, String uploadedBy, String uploadedAt) { }
+
+    private static String entryKey(String id) {
+        return ENTRY_PREFIX + id;
+    }
+
+    private static String keyKey(String id) {
+        return ENTRY_PREFIX + id + KEY_SUFFIX;
+    }
+
+    private void store(String id, Stored stored, String keyPem) {
+        try {
+            settings.putSecret(keyKey(id), keyPem);
+            settings.putText(entryKey(id), JSON.writeValueAsString(stored));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("The CA " + id + " cannot be written: " + e.getOriginalMessage(), e);
+        }
+    }
+
+    private Stored read(String id) {
+        String json = settings.getText(entryKey(id));
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return JSON.readValue(json, Stored.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            LOG.warn("CA registry: the CA {} cannot be read: {}", id, e.getOriginalMessage());
+            return null;
+        }
+    }
+
+    private List<String> ids() {
+        String json = settings.get(INDEX_KEY);
+        if (json == null || json.isBlank()) {
+            return new ArrayList<>();
+        }
+        try {
+            return new ArrayList<>(JSON.readValue(json, new TypeReference<List<String>>() { }));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("The list of Company CAs cannot be read: " + e.getOriginalMessage(), e);
+        }
+    }
+
+    private void writeIds(List<String> ids) {
+        try {
+            settings.put(INDEX_KEY, JSON.writeValueAsString(ids));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("The list of Company CAs cannot be written: " + e.getOriginalMessage(), e);
+        }
     }
 
     // -------------------- helpers --------------------
-
-    private void ensureNamespaceExists(String namespace) {
-        try {
-            Namespace ns = kubernetesService.getClient().namespaces().withName(namespace).get();
-            if (ns == null) {
-                Namespace toCreate = new NamespaceBuilder()
-                        .withNewMetadata()
-                        .withName(namespace)
-                        .addToLabels("managed-by", "ambari-k8s-view")
-                        .addToLabels(LABEL_RESOURCE_TYPE, "pki-registry")
-                        .endMetadata()
-                        .build();
-                kubernetesService.getClient().namespaces().resource(toCreate).create();
-                LOG.info("CA registry: created namespace '{}'", namespace);
-            }
-        } catch (Exception ex) {
-            // Don't fail on best-effort namespace creation; if perms are missing the caller
-            // will see a clearer error when the Secret create attempt fails.
-            LOG.warn("CA registry: could not ensure namespace '{}': {}", namespace, ex.toString());
-        }
-    }
 
     private static X509Certificate parseFirstCertificate(String pem) {
         try (StringReader reader = new StringReader(pem); PEMParser parser = new PEMParser(reader)) {
@@ -313,36 +408,31 @@ public class CaRegistryService {
         }
     }
 
-    private static String b64(String s) {
-        return Base64.getEncoder().encodeToString(s.getBytes(StandardCharsets.UTF_8));
+    private static String decode(String base64) {
+        return new String(Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
     }
 
-    private static String sanitizeLabelValue(String v) {
-        // K8s label values: ≤63 chars, [a-z0-9A-Z._-], must start/end alphanumeric.
-        if (v == null) return "";
-        String s = v.replaceAll("[^a-zA-Z0-9._-]", "-");
-        if (s.length() > 63) s = s.substring(0, 63);
-        return s;
-    }
-
-    private CaEntry toEntry(String secretName, String namespace, X509Certificate caCert, Map<String, String> annotations) {
-        String caName = annotations.getOrDefault("ambari.clemlab.com/ca-name", secretName);
+    private CaEntry toEntry(String id, Stored stored) {
+        X509Certificate caCert = parseFirstCertificate(stored.certPem());
         return new CaEntry(
-                caName,
-                secretName,
-                namespace,
+                stored.caName(),
+                id,
+                "",
                 caCert.getSubjectX500Principal().getName(),
                 caCert.getIssuerX500Principal().getName(),
                 caCert.getSerialNumber().toString(16),
                 caCert.getNotBefore().toInstant().toString(),
                 caCert.getNotAfter().toInstant().toString(),
-                annotations.getOrDefault("ambari.clemlab.com/uploaded-by", "unknown"),
-                annotations.getOrDefault("ambari.clemlab.com/uploaded-at", "unknown"),
-                annotations.getOrDefault("ambari.clemlab.com/description", "")
+                stored.uploadedBy(),
+                stored.uploadedAt(),
+                stored.description()
         );
     }
 
-    /** Public-safe representation of a registry entry (private key is intentionally excluded). */
+    /**
+     * Public-safe representation of a registry entry (private key is intentionally excluded). {@code secretName} is
+     * the CA's identifier ({@link #secretNameFor}); {@code namespace} is empty, the view keeping the CA itself.
+     */
     public record CaEntry(
             String caName,
             String secretName,

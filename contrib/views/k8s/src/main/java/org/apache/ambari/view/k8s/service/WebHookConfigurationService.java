@@ -985,7 +985,7 @@ public class WebHookConfigurationService {
      *
      * <p>The signing CA is provided by the caller — for Ambari Internal CA use
      * {@link #ensureAmbariCertificateAuthority()}, for an admin-uploaded company
-     * CA use {@link #loadUploadedCertificateAuthority(String, String)}.
+     * CA use {@link CaRegistryService#material(String)}.
      *
      * <p>Only a Secret KDPS minted itself is written over (see {@link IngressTlsSecretGuard}), and a new leaf is
      * always minted, as "Renew TLS" wants.
@@ -1186,48 +1186,6 @@ public class WebHookConfigurationService {
 
     private static String decodeUtf8(String base64Value) {
         return new String(getDecoder().decode(base64Value), StandardCharsets.UTF_8);
-    }
-
-    /**
-     * Load an admin-uploaded company issuing CA from the K8s Secret persisted by
-     * {@link org.apache.ambari.view.k8s.service.CaRegistryService}. The Secret is
-     * expected to contain {@code tls.crt} (CA cert PEM, possibly with chain) and
-     * {@code tls.key} (CA private key PEM).
-     *
-     * @param namespace  namespace of the registry Secret (typically {@code ambari-pki})
-     * @param secretName the registry Secret name (one Secret per CA)
-     */
-    public CertificateAuthorityMaterial loadUploadedCertificateAuthority(String namespace,
-                                                                          String secretName) {
-        Secret secret = kubernetesClient().secrets().inNamespace(namespace).withName(secretName).get();
-        if (secret == null) {
-            throw new IllegalArgumentException("Uploaded CA not found: " + namespace + "/" + secretName);
-        }
-        Map<String, String> data = secret.getData() != null ? secret.getData() : Collections.emptyMap();
-        String certB64 = data.get("tls.crt");
-        String keyB64 = data.get("tls.key");
-        if (certB64 == null || keyB64 == null) {
-            throw new IllegalStateException("Uploaded CA secret '" + namespace + "/" + secretName +
-                    "' is missing tls.crt and/or tls.key entries.");
-        }
-        String certPem = new String(java.util.Base64.getDecoder().decode(certB64), StandardCharsets.UTF_8);
-        String keyPem = new String(java.util.Base64.getDecoder().decode(keyB64), StandardCharsets.UTF_8);
-        try {
-            // Sanity-check both halves can be parsed before we hand them to the signer.
-            X509Certificate caCert = parseCertificateFromPem(certPem);
-            parsePrivateKeyFromPem(keyPem);
-            // Confirm it can sign (basicConstraints.CA=true). cert.getBasicConstraints() returns
-            // -1 on a non-CA cert, or path length >= 0 on a CA.
-            if (caCert.getBasicConstraints() < 0) {
-                throw new IllegalStateException("Uploaded CA secret '" + namespace + "/" + secretName +
-                        "' contains a leaf certificate (basicConstraints.CA=false). Upload an issuing CA.");
-            }
-        } catch (RuntimeException re) {
-            throw re;
-        } catch (Exception ex) {
-            throw new IllegalStateException("Failed to parse uploaded CA in '" + namespace + "/" + secretName + "'", ex);
-        }
-        return new CertificateAuthorityMaterial(certPem, keyPem, "k8s-secret://" + namespace + "/" + secretName);
     }
 
     // -------------------- Value objects --------------------
