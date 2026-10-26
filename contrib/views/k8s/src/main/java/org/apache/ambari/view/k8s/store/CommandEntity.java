@@ -48,6 +48,10 @@ public class CommandEntity {
     @Lob
     private String paramsJson;
 
+    // The Kubernetes cluster an operation runs on, by id (see ClusterRef); null for an operation on the default
+    // cluster planned before KDPS knew several clusters.
+    @Column(length = 64)
+    private String kubernetesCluster;
     @Lob
     private String childListJson; // contains a list of child Commands; if empty we are in the end of the list not the root
 
@@ -56,6 +60,12 @@ public class CommandEntity {
     }
     public void setId(String id) {
         this.id = id;
+    }
+    public String getKubernetesCluster() {
+        return kubernetesCluster;
+    }
+    public void setKubernetesCluster(String kubernetesCluster) {
+        this.kubernetesCluster = kubernetesCluster;
     }
     public String getViewInstance() {
         return viewInstance;

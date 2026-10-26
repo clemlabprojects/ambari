@@ -46,6 +46,9 @@ public class CommandStatus {
     @JsonProperty("message")
     public String message;        // Status message like "Validating...", "Syncing repository...", etc.
 
+    @JsonProperty("kubernetesCluster")
+    public String kubernetesCluster; // id of the Kubernetes cluster the operation runs on
+
     @JsonProperty("createdBy")
     public String createdBy;      // Ambari user that initiated the command
 

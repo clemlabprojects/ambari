@@ -33,27 +33,47 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Guards the move to several clusters: {@code KubernetesService.get(ctx)} reaches the default cluster without naming
- * it. The code not moved yet still calls it; new code names its cluster ({@code get(ctx, cluster)}). This fails when
- * the callers grow, and its baseline goes down as code moves, until no caller is left.
+ * it, and {@code new ReleaseMetadataService(ctx)} names releases on the default cluster. The code not moved yet still
+ * calls them; new code names its cluster ({@code get(ctx, cluster)}, {@code new ReleaseMetadataService(ctx, cluster)}).
+ * This fails when the callers grow, and each baseline goes down as code moves, until no caller is left.
  */
 class KubernetesServiceCallersTest {
 
   /** Calls of {@code KubernetesService.get} with a single argument in the main sources, on 2026-10-26. */
-  static final int BASELINE = 11;
+  static final int BASELINE = 9;
+
+  /** Calls of {@code new ReleaseMetadataService} with a single argument in the main sources, on 2026-10-26. */
+  static final int RELEASES_BASELINE = 44;
+
+  private static final Pattern DEFAULT_CLUSTER_RELEASES = Pattern.compile("new ReleaseMetadataService\\(\\s*[\\w.]+(\\(\\))?\\s*\\)");
 
   private static final Pattern DEFAULT_CLUSTER_CALL = Pattern.compile("KubernetesService\\.get\\(\\s*[\\w.]+(\\(\\))?\\s*\\)");
 
-  @Test
-  void noNewCodeReachesTheDefaultClusterWithoutNamingIt() throws IOException {
+  private static List<String> callsOf(Pattern call) throws IOException {
     List<String> calls = new ArrayList<>();
     try (Stream<Path> sources = Files.walk(Path.of("src/main/java"))) {
       for (Path source : sources.filter(p -> p.toString().endsWith(".java")).toList()) {
-        Matcher m = DEFAULT_CLUSTER_CALL.matcher(Files.readString(source));
+        Matcher m = call.matcher(Files.readString(source));
         while (m.find()) {
           calls.add(source.getFileName() + ": " + m.group());
         }
       }
     }
+    return calls;
+  }
+
+  @Test
+  void noNewCodeNamesReleasesOnTheDefaultClusterWithoutSayingSo() throws IOException {
+    List<String> calls = callsOf(DEFAULT_CLUSTER_RELEASES);
+    assertTrue(calls.size() <= RELEASES_BASELINE, "new ReleaseMetadataService(ctx) names releases on the default "
+        + "cluster without saying so: pass the cluster. Calls found: " + calls);
+    assertEquals(RELEASES_BASELINE, calls.size(), "Fewer calls than the baseline: lower RELEASES_BASELINE to "
+        + calls.size() + " so that it keeps guarding. Calls found: " + calls);
+  }
+
+  @Test
+  void noNewCodeReachesTheDefaultClusterWithoutNamingIt() throws IOException {
+    List<String> calls = callsOf(DEFAULT_CLUSTER_CALL);
     assertTrue(calls.size() <= BASELINE, "KubernetesService.get(ctx) reaches the default cluster without naming it: "
         + "call get(ctx, cluster) instead. Calls found: " + calls);
     assertEquals(BASELINE, calls.size(), "Fewer calls than the baseline: lower BASELINE to " + calls.size()

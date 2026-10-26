@@ -18,6 +18,7 @@
 
 package org.apache.ambari.view.k8s.service;
 
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -68,6 +69,8 @@ public class ReleaseMetadataService {
     private final ViewContext viewContext;
     private final K8sReleaseRepo releaseRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    /** The cluster of the releases named by namespace and name; see {@link #ReleaseMetadataService(ViewContext, ClusterRef)}. */
+    private final ClusterRef cluster;
 
     /**
      * Constructs a {@code ReleaseMetadataService} bound to the given view context.
@@ -75,8 +78,25 @@ public class ReleaseMetadataService {
      * @param ctx the Ambari view context providing the data store and instance configuration
      */
     public ReleaseMetadataService(ViewContext ctx) {
+        this(ctx, ClusterRef.DEFAULT);
+    }
+
+    /**
+     * Constructs a {@code ReleaseMetadataService} whose releases, named by namespace and name, are those of a cluster.
+     * Listing every release ({@link #findAll()}) still lists those of every cluster.
+     *
+     * @param ctx     the Ambari view context providing the data store and instance configuration
+     * @param cluster the cluster of the releases named by namespace and name
+     */
+    public ReleaseMetadataService(ViewContext ctx, ClusterRef cluster) {
         this.viewContext = ctx;
+        this.cluster = java.util.Objects.requireNonNull(cluster, "cluster");
         this.releaseRepository = new K8sReleaseRepo(ctx);
+    }
+
+    /** The cluster of the releases this service names by namespace and name. */
+    public ClusterRef cluster() {
+        return cluster;
     }
 
     /**
@@ -87,7 +107,7 @@ public class ReleaseMetadataService {
      * @return the entity if found, or {@code null} if no record exists
      */
     public K8sReleaseEntity find(String namespace, String name) {
-        return releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        return releaseRepository.findById(K8sReleaseEntity.idOf(cluster, namespace, name));
     }
 
     /**
@@ -97,7 +117,7 @@ public class ReleaseMetadataService {
      * @param name      release name
      */
     public void delete(String namespace, String name) {
-        releaseRepository.deleteById(K8sReleaseEntity.idOf(namespace, name));
+        releaseRepository.deleteById(K8sReleaseEntity.idOf(cluster, namespace, name));
         forgetPendingProvisioning(namespace, name);
     }
 
@@ -179,11 +199,14 @@ public class ReleaseMetadataService {
     public Map<String, ProvisioningLedger> otherReleasesProvisioning(String namespace, String releaseName) {
         try {
             Map<String, ProvisioningLedger> others = new java.util.LinkedHashMap<>();
+            String self = K8sReleaseEntity.idOf(cluster, namespace, releaseName);
             for (K8sReleaseEntity other : findAll()) {
-                if (other == null || (namespace.equals(other.getNamespace()) && releaseName.equals(other.getReleaseName()))) {
+                // The same name in the same namespace on another cluster is another release, which may share what
+                // KDPS registered outside Kubernetes (Keycloak, Ranger and Atlas serve every cluster).
+                if (other == null || self.equals(other.getId())) {
                     continue;
                 }
-                String key = other.getNamespace() + "/" + other.getReleaseName();
+                String key = otherReleaseKey(other);
                 if (!other.hasProvisioningLedger()) {
                     others.put(key, ProvisioningLedger.unrecorded());
                     continue;
@@ -198,8 +221,18 @@ public class ReleaseMetadataService {
         }
     }
 
-    private static String pendingProvisioningKey(String namespace, String releaseName) {
-        return PENDING_PROVISIONING_PREFIX + K8sReleaseEntity.idOf(namespace, releaseName);
+    /**
+     * How the uninstall names another release: {@code namespace/release}, followed by {@code @cluster} on a cluster
+     * other than the default one. It starts with the namespace either way, which is how the uninstall tells the
+     * releases of a namespace apart ({@code ExternalCleanup}).
+     */
+    static String otherReleaseKey(K8sReleaseEntity other) {
+        ClusterRef otherCluster = other.clusterRef();
+        return other.getNamespace() + "/" + other.getReleaseName() + (otherCluster.isDefault() ? "" : "@" + otherCluster.id());
+    }
+
+    private String pendingProvisioningKey(String namespace, String releaseName) {
+        return PENDING_PROVISIONING_PREFIX + K8sReleaseEntity.idOf(cluster, namespace, releaseName);
     }
 
     /**
@@ -241,7 +274,7 @@ public class ReleaseMetadataService {
         if (prState == null) {
             return;
         }
-        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(cluster, namespace, name));
         if (entity != null) {
             entity.setGitPrState(prState);
             releaseRepository.update(entity);
@@ -262,7 +295,7 @@ public class ReleaseMetadataService {
         if ((prUrl == null || prUrl.isBlank()) && (prNumber == null || prNumber.isBlank()) && (prState == null || prState.isBlank())) {
             return;
         }
-        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(cluster, namespace, name));
         if (entity == null) {
             return;
         }
@@ -297,7 +330,7 @@ public class ReleaseMetadataService {
      * record.
      */
     public void markRestartRequired(String namespace, String name) {
-        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(cluster, namespace, name));
         if (entity == null || RESTART_REQUIRED_MARKER.equals(entity.getGlobalConfigVersion())) {
             return;
         }
@@ -312,7 +345,7 @@ public class ReleaseMetadataService {
      * @param globalConfigVersion the global configuration fingerprint the release was deployed with
      */
     public void clearRestartRequired(String namespace, String name, String globalConfigVersion) {
-        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(namespace, name));
+        K8sReleaseEntity entity = releaseRepository.findById(K8sReleaseEntity.idOf(cluster, namespace, name));
         if (!restartMarked(entity)) {
             return;
         }
@@ -598,7 +631,7 @@ public class ReleaseMetadataService {
             String gitPrNumber,
             String gitPrState
     ) {
-        String releaseId = K8sReleaseEntity.idOf(namespace, releaseName);
+        String releaseId = K8sReleaseEntity.idOf(cluster, namespace, releaseName);
         K8sReleaseEntity entity = releaseRepository.findById(releaseId);
         boolean isNewEntity = (entity == null);
         
@@ -693,7 +726,7 @@ public class ReleaseMetadataService {
      */
     public void annotateHelmSecret(String namespace, String releaseName, Map<String,String> annotations) {
         try {
-            KubernetesService kubernetesService = KubernetesService.get(viewContext);
+            KubernetesService kubernetesService = KubernetesService.get(viewContext, cluster);
             KubernetesClient kubernetesClient = kubernetesService.getClient();
             
             if (kubernetesClient == null) {
@@ -779,7 +812,7 @@ public class ReleaseMetadataService {
             return;
         }
         try {
-            String releaseId = K8sReleaseEntity.idOf(namespace, releaseName);
+            String releaseId = K8sReleaseEntity.idOf(cluster, namespace, releaseName);
             K8sReleaseEntity entity = releaseRepository.findById(releaseId);
             if (entity == null) {
                 LOG.warn("recordEndpoints: no metadata entity found for {}/{}; skipping endpoints", namespace, releaseName);
@@ -805,7 +838,7 @@ public class ReleaseMetadataService {
         List<ReleaseEndpointDTO> result = new ArrayList<>();
 
         try {
-            KubernetesService ks = KubernetesService.get(viewContext);
+            KubernetesService ks = KubernetesService.get(viewContext, cluster);
             KubernetesClient client = ks.getClient();
             if (client == null) {
                 LOG.info("discoverClusterEndpoints: no Kubernetes client, skipping discovery");
