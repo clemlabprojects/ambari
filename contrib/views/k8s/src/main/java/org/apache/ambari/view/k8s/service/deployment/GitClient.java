@@ -447,13 +447,7 @@ public class GitClient {
      * clone itself, with the plain files Git checks out for them now.
      */
     private void replaceSymbolicLinks(Git git) throws IOException, GitAPIException {
-        List<String> links;
-        try (var walk = Files.walk(workspace)) {
-            links = walk.filter(Files::isSymbolicLink)
-                    .map(p -> workspace.relativize(p).toString().replace('\\', '/'))
-                    .filter(p -> !p.equals(".git") && !p.startsWith(".git/"))
-                    .toList();
-        }
+        List<String> links = symbolicLinksIn(workspace);
         if (links.isEmpty()) {
             return;
         }
@@ -464,6 +458,41 @@ public class GitClient {
         links.forEach(checkout::addPath);
         checkout.call();
         LOG.info("Checked out {} symbolic link(s) of {} as plain files", links.size(), redact(repoUrl));
+    }
+
+    /**
+     * The symbolic links of a working tree, relative to it. The {@code .git} folder is not entered: it holds Git's own
+     * files, never a checked-out one, and JGit creates and removes lock files there while it tidies the repository. A
+     * file removed while the tree is walked is skipped rather than failing the walk.
+     */
+    static List<String> symbolicLinksIn(Path workspace) throws IOException {
+        List<String> links = new java.util.ArrayList<>();
+        Path gitFolder = workspace.resolve(".git");
+        Files.walkFileTree(workspace, new java.nio.file.SimpleFileVisitor<>() {
+            @Override
+            public java.nio.file.FileVisitResult preVisitDirectory(Path dir,
+                                                                   java.nio.file.attribute.BasicFileAttributes attrs) {
+                return dir.equals(gitFolder) ? java.nio.file.FileVisitResult.SKIP_SUBTREE
+                        : java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
+                if (attrs.isSymbolicLink() && !file.equals(gitFolder)) {
+                    links.add(workspace.relativize(file).toString().replace('\\', '/'));
+                }
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult visitFileFailed(Path file, IOException e) throws IOException {
+                if (e instanceof java.nio.file.NoSuchFileException) {
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+                throw e;
+            }
+        });
+        return links;
     }
 
     /** Fetches every branch of the server, forgetting those it no longer has. */
