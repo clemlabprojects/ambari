@@ -564,10 +564,9 @@ if has_oozie:
   hue_oozie_kerberos_enabled = security_enabled
 
 if has_hbase:
-  hbase_thrift_http_port = default("/configurations/hbase-site/hbase.thrift.port", 9090)
-  hbase_thrift_binary_port = default("/configurations/hbase-site/hbase.thrift.http.port", 9095)
-  hbase_thrift_http_enabled = default("/configurations/hbase-site/'hbase.regionserver.thrift.http", 'false')
-  hbase_thrift_port = hbase_thrift_binary_port if hbase_thrift_http_enabled.lower() == 'false' else hbase_thrift_http_port
+  # the HBase Thrift server listens on hbase.regionserver.thrift.port in both binary and http mode; Hue reads the
+  # mode (hbase.regionserver.thrift.http) from hbase-site.xml
+  hbase_thrift_port = default("/configurations/hbase-site/hbase.regionserver.thrift.port", 9090)
   if len(hbase_thrift_hosts) > 1:
     hue_hbase_clusters = ','.join('(HBase|' + item +':'+ str(hbase_thrift_port) + ')' for item in hbase_thrift_hosts) 
   else:
