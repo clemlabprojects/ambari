@@ -38,8 +38,9 @@ def check_thrift_port_sasl(address, port, hive_auth="NOSASL", key=None, kinitcmd
   if isinstance(port, str):
     port = int(port)
 
+  # config values arrive as strings ('true'/'false'); bool('false') is True in Python 3
   if isinstance(ssl, str):
-    ssl = bool(ssl)
+    ssl = ssl.strip().lower() == 'true'
 
   # to pass as beeline argument
   ssl_str = str(ssl).lower()
