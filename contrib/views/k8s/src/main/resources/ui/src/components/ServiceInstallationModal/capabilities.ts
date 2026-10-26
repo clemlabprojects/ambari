@@ -17,6 +17,7 @@
  */
 import React from 'react';
 import { getClusterCapabilities, type ClusterCapabilities } from '../../api/client';
+import { useTargetCluster } from '../../context/TargetClusterContext';
 
 // Module-level memoization: the capability probe is the same for every form/field on the
 // page, so a single fetch is enough — and we cache the Promise so concurrent first renders
@@ -24,8 +25,10 @@ import { getClusterCapabilities, type ClusterCapabilities } from '../../api/clie
 // is invalidated server-side, which already happens on a 60s TTL). `lastResolved` holds the
 // last successfully-resolved value so non-hook callers (e.g. a submit handler building the
 // deploy values) can read the detected platform synchronously.
-let capabilitiesPromise: Promise<ClusterCapabilities> | null = null;
-let lastResolved: ClusterCapabilities | undefined;
+// One probe per cluster, by id ('' for the default cluster): the deploy wizard reads the capabilities of the cluster it
+// deploys to (see TargetClusterContext), every other page those of the default cluster.
+const capabilitiesPromises = new Map<string, Promise<ClusterCapabilities>>();
+const lastResolvedByCluster = new Map<string, ClusterCapabilities>();
 
 // Subscribers (mounted useCapabilities hooks) notified when the cache is invalidated, so they
 // re-probe immediately instead of waiting for a full page reload. Used on cluster reconnect: the
@@ -40,8 +43,8 @@ const capabilityListeners = new Set<() => void>();
  * otherwise survive until a full browser refresh, hiding cert-manager / external-secrets fields.
  */
 export const invalidateCapabilities = (): void => {
-  capabilitiesPromise = null;
-  lastResolved = undefined;
+  capabilitiesPromises.clear();
+  lastResolvedByCluster.clear();
   capabilityListeners.forEach(notify => {
     try { notify(); } catch { /* a detached listener must never break the others */ }
   });
@@ -51,7 +54,8 @@ export const invalidateCapabilities = (): void => {
  *  the platform-conditional binding engine alike. Re-probes on {@link invalidateCapabilities}
  *  (e.g. a cluster reconnect) via a lightweight subscription + local refresh counter. */
 export const useCapabilities = (): ClusterCapabilities | undefined => {
-  const [caps, setCaps] = React.useState<ClusterCapabilities | undefined>(lastResolved);
+  const key = useTargetCluster() || '';
+  const [caps, setCaps] = React.useState<ClusterCapabilities | undefined>(lastResolvedByCluster.get(key));
   const [refreshTick, setRefreshTick] = React.useState(0);
 
   // Subscribe to cache invalidation for the lifetime of this hook; a bumped tick re-runs the
@@ -63,21 +67,25 @@ export const useCapabilities = (): ClusterCapabilities | undefined => {
   }, []);
 
   React.useEffect(() => {
-    if (!capabilitiesPromise) capabilitiesPromise = getClusterCapabilities();
-    capabilitiesPromise
-      .then(c => { lastResolved = c; setCaps(c); })
+    let alive = true;
+    // Another cluster's capabilities are not shown while its own are read.
+    setCaps(lastResolvedByCluster.get(key));
+    let probe = capabilitiesPromises.get(key);
+    if (!probe) {
+      probe = getClusterCapabilities(key || undefined);
+      capabilitiesPromises.set(key, probe);
+    }
+    probe
+      .then(c => { lastResolvedByCluster.set(key, c); if (alive) setCaps(c); })
       .catch(() => {
         // On error leave caps undefined; consumers fail-open (or fail-closed for the
         // OpenShift gate). Reset the cached promise so a future render can retry.
-        capabilitiesPromise = null;
+        capabilitiesPromises.delete(key);
       });
-  }, [refreshTick]);
+    return () => { alive = false; };
+  }, [refreshTick, key]);
   return caps;
 };
-
-/** The detected platform from the last resolved probe, or undefined if it hasn't resolved.
- *  Lets non-hook code (deploy/preview value builders) branch bindings on the platform. */
-export const cachedPlatform = (): string | undefined => lastResolved?.platform;
 
 /**
  * Pure field/option capability gate used by DynamicFormField. A field (or a select

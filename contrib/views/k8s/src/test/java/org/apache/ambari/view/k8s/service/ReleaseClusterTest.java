@@ -139,25 +139,115 @@ class ReleaseClusterTest {
   }
 
   @Test
-  void aDeployNamingAnotherClusterIsRefusedUntilTheWizardCanTargetIt() {
+  void aDeployNamesItsClusterAndOnlyThatClustersOperationsRunIt() {
     HelmDeployRequest request = new HelmDeployRequest();
     assertEquals(ClusterRef.DEFAULT, CommandService.kubernetesClusterOf(request));
-    request.setKubernetesCluster("default");
-    assertEquals(ClusterRef.DEFAULT, CommandService.kubernetesClusterOf(request));
+    request.setKubernetesCluster("prod");
+    assertEquals(PROD, CommandService.kubernetesClusterOf(request));
+    request.setKubernetesCluster("Prod!");
+    assertThrows(IllegalArgumentException.class, () -> CommandService.kubernetesClusterOf(request));
 
     request.setKubernetesCluster("prod");
-    IllegalStateException refused = assertThrows(IllegalStateException.class,
-        () -> CommandService.kubernetesClusterOf(request));
-    assertTrue(refused.getMessage().contains("Nothing was deployed"), refused.getMessage());
-
     request.setNamespace(NS);
     request.setReleaseName(RELEASE);
-    assertThrows(IllegalStateException.class, () -> service.planReleaseDeploy(request, "repo", "1.0", null, null,
-        null, null, false));
-    assertTrue(view.dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing was planned");
+    IllegalStateException elsewhere = assertThrows(IllegalStateException.class, () -> service.planReleaseDeploy(request,
+        "repo", "1.0", null, null, null, null, false));
+    assertTrue(elsewhere.getMessage().contains("reached the operations of the cluster 'default'"), elsewhere.getMessage());
     IllegalStateException gitRefused = assertThrows(IllegalStateException.class, () -> service.gitOpsDeploy(request,
         "repo", "1.0", null, null, null, null));
     assertTrue(gitRefused.getMessage().contains("Nothing was deployed"), "refused before the Git server is contacted");
+    assertTrue(view.dataStore.findAll(CommandEntity.class, null).isEmpty(), "nothing was planned");
+  }
+
+  private CommandService prodOperations(boolean connected) {
+    KubernetesService prodCluster = mock(KubernetesService.class);
+    ViewConfigurationService connection = mock(ViewConfigurationService.class);
+    org.mockito.Mockito.when(connection.isConfigured()).thenReturn(connected);
+    org.mockito.Mockito.when(prodCluster.getConfigurationService()).thenReturn(connection);
+    return new CommandService(view.context, mock(HelmService.class), prodCluster, PROD);
+  }
+
+  private HelmDeployRequest prodRequest() {
+    HelmDeployRequest request = new HelmDeployRequest();
+    request.setKubernetesCluster("prod");
+    request.setNamespace(NS);
+    request.setReleaseName(RELEASE);
+    return request;
+  }
+
+  @Test
+  void aDeployToAClusterTheViewDoesNotKnowOrCannotReachIsRefused() {
+    CommandService unknown = prodOperations(true);
+    try {
+      IllegalStateException refused = assertThrows(IllegalStateException.class,
+          () -> unknown.checkDeployCluster(prodRequest()));
+      assertTrue(refused.getMessage().contains("knows no Kubernetes cluster 'prod'"), refused.getMessage());
+    } finally {
+      unknown.shutdown();
+    }
+
+    view.as("lead");
+    new org.apache.ambari.view.k8s.service.cluster.ClusterRegistry(new org.apache.ambari.view.k8s.store.InstanceSettings(
+        view.context)).save(new org.apache.ambari.view.k8s.service.cluster.KubernetesCluster("prod", "Production", "",
+        true));
+    view.as(null);
+    CommandService unreachable = prodOperations(false);
+    try {
+      IllegalStateException refused = assertThrows(IllegalStateException.class,
+          () -> unreachable.checkDeployCluster(prodRequest()));
+      assertTrue(refused.getMessage().contains("has no connection yet"), refused.getMessage());
+    } finally {
+      unreachable.shutdown();
+    }
+  }
+
+  @Test
+  void noOperationsAreBuiltForAClusterTheViewDoesNotKnow() {
+    IllegalStateException refused = assertThrows(IllegalStateException.class,
+        () -> CommandService.forDeploy(view.context, prodRequest()));
+    assertTrue(refused.getMessage().contains("knows no Kubernetes cluster 'prod'"), refused.getMessage());
+  }
+
+  @Test
+  void aDeployToAClusterWithoutAConnectionIsRefusedBeforeAnythingIsReadThere() {
+    view.as("lead");
+    new org.apache.ambari.view.k8s.service.cluster.ClusterRegistry(new org.apache.ambari.view.k8s.store.InstanceSettings(
+        view.context)).save(new org.apache.ambari.view.k8s.service.cluster.KubernetesCluster("prod", "Production", "",
+        true));
+    view.as(null);
+    CommandService unreachable = prodOperations(false);
+    try {
+      IllegalStateException refused = assertThrows(IllegalStateException.class, () -> unreachable.submitDeploy(
+          prodRequest(), "repo", "1.0", null, null, null, null, null));
+      assertTrue(refused.getMessage().contains("has no connection yet"), refused.getMessage());
+    } finally {
+      unreachable.shutdown();
+    }
+  }
+
+  @Test
+  void aDeployToAnotherClusterCannotUseTheCompanyCaOrManagedTruststoresYet() {
+    view.as("lead");
+    new org.apache.ambari.view.k8s.service.cluster.ClusterRegistry(new org.apache.ambari.view.k8s.store.InstanceSettings(
+        view.context)).save(new org.apache.ambari.view.k8s.service.cluster.KubernetesCluster("prod", "Production", "",
+        true));
+    view.as(null);
+    CommandService prod = prodOperations(true);
+    try {
+      prod.checkDeployCluster(prodRequest());
+
+      HelmDeployRequest companyCa = prodRequest();
+      companyCa.setIngressTlsSelfSign(Map.of("mode", "companyUploaded", "caName", "corp"));
+      assertTrue(assertThrows(IllegalStateException.class, () -> prod.checkDeployCluster(companyCa)).getMessage()
+          .contains("Company CA"));
+
+      HelmDeployRequest truststores = prodRequest();
+      truststores.setTruststoreRefs(List.of("analytics/corp-trust"));
+      assertTrue(assertThrows(IllegalStateException.class, () -> prod.checkDeployCluster(truststores)).getMessage()
+          .contains("analytics/corp-trust"));
+    } finally {
+      prod.shutdown();
+    }
   }
 
   private void storeOperation(String id, String kubernetesCluster) throws Exception {

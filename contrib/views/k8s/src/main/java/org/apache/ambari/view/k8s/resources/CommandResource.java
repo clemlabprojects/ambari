@@ -144,7 +144,10 @@ public class CommandResource {
       // Pass the LOCAL Ambari API base URI (not the inbound request's baseUri) so background workers
       // resuming this command later loop back to ambari-server directly rather than through whatever
       // reverse proxy the user happened to be on. See AmbariLoopbackUrlResolver.
-      String id = CommandService.get(viewContext).submitDeploy(req, repoId, version, kubeContext, this.getCommandsUrl(ui), headers.getRequestHeaders(), AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext), this.ambariAliasResolver);
+      // Planned and run by the operations of the cluster the deploy names, on that cluster's connection.
+      String id = CommandService.forDeploy(viewContext, req).submitDeploy(req, repoId,
+              version, kubeContext, this.getCommandsUrl(ui), headers.getRequestHeaders(),
+              AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext), this.ambariAliasResolver);
       return Response.status(Response.Status.ACCEPTED)
               .entity(deployAccepted(id, req))
               .build();
@@ -282,7 +285,12 @@ public class CommandResource {
   public Response cancel(@PathParam("id") String id) {
     auth().checkWritePermission();
     LOG.info("Canceling command {} for user {}", id, viewContext.getUsername());
-    CommandService.get(viewContext).cancel(id);
+    try {
+      // Cancelled by the operations of the cluster it runs on, which are the ones running it.
+      CommandService.forOperation(viewContext, id).cancel(id);
+    } catch (IllegalArgumentException unknown) {
+      return Response.status(Response.Status.NOT_FOUND).entity(Map.of("id", id, "error", unknown.getMessage())).build();
+    }
     return Response.status(Response.Status.ACCEPTED)
             .entity(Map.of("id", id, "state", "CANCELLED"))
             .build();
@@ -303,7 +311,8 @@ public class CommandResource {
     try {
       // Pass the resume request's (fresh, authenticated) headers so replayed Ambari-callback steps
       // re-authenticate with a live session instead of the invalidated one captured at submit time.
-      CommandService.get(viewContext).resume(id, headers.getRequestHeaders());
+      // Resumed on the cluster it ran on.
+      CommandService.forOperation(viewContext, id).resume(id, headers.getRequestHeaders());
       return Response.status(Response.Status.ACCEPTED)
               .entity(Map.of("id", id, "state", "RUNNING"))
               .build();

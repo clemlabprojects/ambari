@@ -192,6 +192,8 @@ public class CommandService {
     // External dependencies (adapters) — injected
     private final HelmService helmService;
     private final KubernetesService kubernetesService;
+    /** The cluster whose operations this instance runs, on {@link #kubernetesService}. */
+    private final ClusterRef kubernetesCluster;
     private final WebHookConfigurationService webHookConfigurationService;
     private final CommandLogService commandLogService;
     private final FluxGitOpsBackend fluxGitOpsBackend;
@@ -237,11 +239,65 @@ public class CommandService {
     private final ScheduledExecutorService timer;
     private final ExecutorService workers;
 
-    // Singleton per View instance
+    // One per view instance and Kubernetes cluster
     private static final ConcurrentMap<String, CommandService> INSTANCES = new ConcurrentHashMap<>();
 
+    /** The operations of the default cluster, and the view-wide background work. */
     public static CommandService get(ViewContext ctx) {
-        return INSTANCES.computeIfAbsent(ctx.getInstanceName(), k -> new CommandService(ctx));
+        return get(ctx, ClusterRef.DEFAULT);
+    }
+
+    /**
+     * The operations of a Kubernetes cluster: planned, run, resumed and cancelled on that cluster's connection. Only the
+     * default cluster's instance does the view-wide background work (recovery of interrupted operations, clean-up of
+     * stored credentials, file sweeps, the keytab webhook certificate). Listing and reading operations is the same on
+     * every instance: they share the view's store.
+     */
+    public static CommandService get(ViewContext ctx, ClusterRef cluster) {
+        String key = cluster.isDefault() ? ctx.getInstanceName() : ctx.getInstanceName() + "/" + cluster.id();
+        return INSTANCES.computeIfAbsent(key, k -> new CommandService(ctx, cluster));
+    }
+
+    /**
+     * The operations of the cluster a deploy request names. A cluster the view does not know is refused before any
+     * instance is built for it: an instance holds a connection and threads, which a request must not create at will.
+     *
+     * @throws IllegalArgumentException when the request names no valid cluster id
+     * @throws IllegalStateException    when the view knows no such cluster; nothing was deployed
+     */
+    public static CommandService forDeploy(ViewContext ctx, HelmDeployRequest request) {
+        ClusterRef cluster = kubernetesClusterOf(request);
+        if (!cluster.isDefault() && new org.apache.ambari.view.k8s.service.cluster.ClusterRegistry(
+                new InstanceSettings(ctx)).find(cluster.id()).isEmpty()) {
+            throw new IllegalStateException("KDPS knows no Kubernetes cluster '" + cluster + "'. Nothing was deployed.");
+        }
+        return get(ctx, cluster);
+    }
+
+    /**
+     * The instance an operation runs on: that of its cluster.
+     *
+     * @throws IllegalArgumentException when there is no such operation
+     */
+    public static CommandService forOperation(ViewContext ctx, String id) {
+        CommandEntity command = get(ctx).find(id);
+        if (command == null) {
+            throw new IllegalArgumentException("unknown id");
+        }
+        return get(ctx, kubernetesClusterOf(command));
+    }
+
+    /**
+     * The Kubernetes cluster whose operations this instance runs. Every constructor sets it; only an instance built
+     * without a constructor (a test's mock calling real methods) has none, and stands for the default cluster.
+     */
+    public ClusterRef kubernetesCluster() {
+        return kubernetesCluster != null ? kubernetesCluster : ClusterRef.DEFAULT;
+    }
+
+    /** The release records of this instance's cluster. */
+    private ReleaseMetadataService releases() {
+        return new ReleaseMetadataService(this.ctx, kubernetesCluster());
     }
 
     /**
@@ -254,7 +310,12 @@ public class CommandService {
         return ctx;
     }
     public CommandService(ViewContext ctx) {
-        this(ctx, new HelmService(ctx), KubernetesService.get(ctx));
+        this(ctx, ClusterRef.DEFAULT);
+    }
+
+    private CommandService(ViewContext ctx, ClusterRef cluster) {
+        this(ctx, ctx.getDataStore(), new HelmService(ctx, cluster), KubernetesService.get(ctx, cluster), null, null,
+                Executors.newScheduledThreadPool(1), Executors.newCachedThreadPool(), cluster.isDefault(), cluster);
     }
 
     /**
@@ -263,7 +324,16 @@ public class CommandService {
      */
     CommandService(ViewContext ctx, HelmService helmService, KubernetesService kubernetesService) {
         this(ctx, ctx.getDataStore(), helmService, kubernetesService, null, null,
-                Executors.newScheduledThreadPool(1), Executors.newCachedThreadPool(), true);
+                Executors.newScheduledThreadPool(1), Executors.newCachedThreadPool(), true, ClusterRef.DEFAULT);
+    }
+
+    /**
+     * Builds the operations of a cluster on the given Helm and Kubernetes services, without the view-wide background
+     * work; package-private so tests can plan another cluster's deploys against mocks.
+     */
+    CommandService(ViewContext ctx, HelmService helmService, KubernetesService kubernetesService, ClusterRef cluster) {
+        this(ctx, ctx.getDataStore(), helmService, kubernetesService, null, null,
+                Executors.newScheduledThreadPool(1), Executors.newCachedThreadPool(), false, cluster);
     }
 
     /**
@@ -282,7 +352,7 @@ public class CommandService {
                    CommandUtils commandUtils, CommandPlanFactory planFactory, ScheduledExecutorService timer,
                    ExecutorService workers) {
         this(ctx, dataStore, helmService, kubernetesService, Objects.requireNonNull(commandUtils, "commandUtils"),
-                Objects.requireNonNull(planFactory, "planFactory"), timer, workers, false);
+                Objects.requireNonNull(planFactory, "planFactory"), timer, workers, false, ClusterRef.DEFAULT);
     }
 
     /**
@@ -290,12 +360,14 @@ public class CommandService {
      * @param planFactory         null to build the view's own
      * @param startBackgroundWork whether to recover interrupted operations, clear stale credentials, sweep the
      *                            operation files and schedule the webhook certificate renewal, as a view instance does
+     * @param kubernetesCluster   the cluster whose operations this instance runs, on {@code kubernetesService}
      */
     private CommandService(ViewContext ctx, DataStore dataStore, HelmService helmService,
                            KubernetesService kubernetesService, CommandUtils commandUtils,
                            CommandPlanFactory planFactory, ScheduledExecutorService timer, ExecutorService workers,
-                           boolean startBackgroundWork) {
+                           boolean startBackgroundWork, ClusterRef kubernetesCluster) {
         this.ctx = ctx;
+        this.kubernetesCluster = Objects.requireNonNull(kubernetesCluster, "kubernetesCluster");
         this.dataStore = dataStore;
         this.helmService = helmService;
         this.workers = workers;
@@ -315,7 +387,7 @@ public class CommandService {
         CommandLogAppender.install(this.ctx);
         PathConfig pathConfig = new PathConfig(ctx);
         pathConfig.ensureDirs();
-        this.fluxGitOpsBackend = new FluxGitOpsBackend(pathConfig.workDir(), kubernetesService, ctx);
+        this.fluxGitOpsBackend = new FluxGitOpsBackend(pathConfig.workDir(), kubernetesService, ctx, kubernetesCluster);
         this.gitCredentialService = new GitCredentialService(ctx);
         this.tagSyncAccounts = TagSyncRangerAccount.recordsIn(new InstanceSettings(ctx));
         this.tagSyncRangers = this::tagSyncRangersOf;
@@ -2477,7 +2549,7 @@ public class CommandService {
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
 
-        K8sReleaseEntity releaseMetadata = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+        K8sReleaseEntity releaseMetadata = releases().find(namespace, releaseName);
         if (releaseMetadata == null || releaseMetadata.getServiceKey() == null
                 || releaseMetadata.getServiceKey().isBlank()) {
             throw new IllegalArgumentException(
@@ -2677,7 +2749,7 @@ public class CommandService {
     public Map<String, String> releaseActionRefusals(String namespace, String releaseName,
                                                      MultivaluedMap<String, String> callerHeaders, URI baseUri) {
         Map<String, String> refusals = new LinkedHashMap<>();
-        K8sReleaseEntity releaseMetadata = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+        K8sReleaseEntity releaseMetadata = releases().find(namespace, releaseName);
         if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
             return refusals;
         }
@@ -3815,7 +3887,7 @@ public class CommandService {
     List<String> takeBackTagSyncRangerAccount(String namespace, String release, Map<String, Object> params) {
         String recordedContext = null;
         try {
-            K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(namespace, release);
+            K8sReleaseEntity recorded = releases().find(namespace, release);
             recordedContext = recorded != null ? recorded.getPlatformContextId()
                     : stringValue(params.get("_platformContextId"));
         } catch (RuntimeException e) {
@@ -3840,7 +3912,7 @@ public class CommandService {
      */
     private String recordedPlatformContext(String namespace, String release) {
         try {
-            K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(namespace, release);
+            K8sReleaseEntity recorded = releases().find(namespace, release);
             return recorded == null ? null : recorded.getPlatformContextId();
         } catch (RuntimeException e) {
             LOG.warn("Atlas tag sync: the release record of {}/{} could not be read: {}", namespace, release,
@@ -4795,7 +4867,7 @@ public class CommandService {
         if (namespace == null) {
             return releases;
         }
-        for (K8sReleaseEntity release : new ReleaseMetadataService(ctx).findAll()) {
+        for (K8sReleaseEntity release : releases().findAll()) {
             if (namespace.equals(release.getNamespace())) {
                 releases.add(release);
             }
@@ -5037,7 +5109,7 @@ public class CommandService {
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
 
-        K8sReleaseEntity releaseMetadata = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+        K8sReleaseEntity releaseMetadata = releases().find(namespace, releaseName);
         if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
         }
@@ -5214,7 +5286,7 @@ public class CommandService {
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
 
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        ReleaseMetadataService metadataService = releases();
         K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
         if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
@@ -5365,7 +5437,7 @@ public class CommandService {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         boolean trino = "trino".equalsIgnoreCase(kind);
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        ReleaseMetadataService metadataService = releases();
         K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
         if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
@@ -5446,7 +5518,7 @@ public class CommandService {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(releaseName, "releaseName");
         if (body == null) throw new IllegalArgumentException("Empty request");
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        ReleaseMetadataService metadataService = releases();
         K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
         if (releaseMetadata == null || releaseMetadata.getServiceKey() == null || releaseMetadata.getServiceKey().isBlank()) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
@@ -5596,7 +5668,7 @@ public class CommandService {
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
 
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        ReleaseMetadataService metadataService = releases();
         K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
         if (releaseMetadata == null || releaseMetadata.getServiceKey() == null
                 || releaseMetadata.getServiceKey().isBlank()) {
@@ -5715,7 +5787,7 @@ public class CommandService {
         Objects.requireNonNull(releaseName, "releaseName");
         Objects.requireNonNull(baseUri, "baseUri");
 
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        ReleaseMetadataService metadataService = releases();
         K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
         if (releaseMetadata == null || releaseMetadata.getServiceKey() == null
                 || releaseMetadata.getServiceKey().isBlank()) {
@@ -6185,7 +6257,7 @@ public class CommandService {
             throw new IllegalArgumentException("targetVersion is required");
         }
 
-        ReleaseMetadataService metadataService = new ReleaseMetadataService(ctx);
+        ReleaseMetadataService metadataService = releases();
         K8sReleaseEntity releaseMetadata = metadataService.find(namespace, releaseName);
         if (releaseMetadata == null) {
             throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " is not managed by the UI.");
@@ -6321,6 +6393,10 @@ public class CommandService {
      */
     public String submitDeploy(HelmDeployRequest request, String repoId, String version, String kubeContext, String commandsURL, MultivaluedMap<String,String> callerHeaders,
                                URI baseUri, AmbariAliasResolver ambariAliasResolver) {
+        // The cluster first: nothing below may read or prepare anything on a cluster this deploy must not run on.
+        if (request != null) {
+            checkDeployCluster(request);
+        }
         // A release deployed with Flux GitOps stays there: settled first, so its names are checked for that mode.
         K8sReleaseEntity recorded = request == null ? null : recordedRelease(request);
         applyRecordedDeploymentMode(request, recorded);
@@ -6400,7 +6476,7 @@ public class CommandService {
         // Truststores: a redeploy that names none (resync, security refresh, autoscaling change) keeps the release's.
         if (request.getTruststoreRefs() == null) {
             try {
-                request.setTruststoreRefs(new ReleaseMetadataService(ctx).truststoreRefs(
+                request.setTruststoreRefs(releases().truststoreRefs(
                         request.getNamespace(), request.getReleaseName()));
             } catch (Exception e) {
                 LOG.warn("Could not read the recorded truststores of {}/{}: {}", request.getNamespace(),
@@ -6682,7 +6758,7 @@ public class CommandService {
 
     private K8sReleaseEntity recordedRelease(HelmDeployRequest request) {
         try {
-            return new ReleaseMetadataService(ctx).find(request.getNamespace(), request.getReleaseName());
+            return releases().find(request.getNamespace(), request.getReleaseName());
         } catch (Exception e) {
             LOG.warn("Could not read the recorded release {}/{}: {}", request.getNamespace(), request.getReleaseName(),
                     e.toString());
@@ -7200,7 +7276,7 @@ public class CommandService {
     /** The names of the reusable catalogs the release records from its previous deploy, empty for a new release. */
     private Set<String> previousCatalogRefs(HelmDeployRequest request) {
         if (request.getNamespace() == null || request.getReleaseName() == null) return Collections.emptySet();
-        K8sReleaseEntity recorded = new ReleaseMetadataService(ctx).find(request.getNamespace(), request.getReleaseName());
+        K8sReleaseEntity recorded = releases().find(request.getNamespace(), request.getReleaseName());
         return recorded == null ? Collections.emptySet()
                 : TrinoCatalogService.parseRefs(recorded.getCatalogRefsJson()).keySet();
     }
@@ -8058,8 +8134,8 @@ public class CommandService {
     public String gitOpsDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
                                MultivaluedMap<String, String> callerHeaders, URI baseUri,
                                AmbariAliasResolver ambariAliasResolver) {
-        // Refused before the Git server is contacted: see kubernetesClusterOf.
-        kubernetesClusterOf(request);
+        // Refused before the Git server is contacted.
+        checkDeployCluster(request);
         // Only the view sets it, for a token it stored itself (gitOptionsToPersist): any alias a request names here
         // would be resolved from Ambari's credential store and sent to the Git server the request names.
         if (request.getGit() != null) {
@@ -8067,7 +8143,7 @@ public class CommandService {
         }
         String namespace = request.getNamespace();
         String release = request.getReleaseName();
-        return submittingGitOpsChange(namespace, release, () -> {
+        return submittingGitOpsChange(kubernetesCluster(), namespace, release, () -> {
             // Its values were built on what Helm reports, which does not hold yet what the running deploy commits:
             // committed after it, they would take that change out of Git.
             String running = runningGitOpsDeploy(namespace, release);
@@ -8098,8 +8174,15 @@ public class CommandService {
      */
     public static <T> T submittingGitOpsChange(String namespace, String releaseName,
                                                java.util.function.Supplier<T> submission) {
+        return submittingGitOpsChange(ClusterRef.DEFAULT, namespace, releaseName, submission);
+    }
+
+    /** {@link #submittingGitOpsChange(String, String, java.util.function.Supplier)} of a release of a cluster. */
+    public static <T> T submittingGitOpsChange(ClusterRef cluster, String namespace, String releaseName,
+                                               java.util.function.Supplier<T> submission) {
         java.util.concurrent.locks.ReentrantLock lock = GITOPS_SUBMISSIONS.computeIfAbsent(
-                namespace + "/" + releaseName, k -> new java.util.concurrent.locks.ReentrantLock());
+                (cluster.isDefault() ? "" : cluster.id() + ":") + namespace + "/" + releaseName,
+                k -> new java.util.concurrent.locks.ReentrantLock());
         if (!lock.tryLock()) {
             throw new FluxGitOpsBackend.GitOpsBusyException("Another change of " + namespace + "/" + releaseName
                     + " is being submitted to Git. Try again once it has been submitted.");
@@ -8117,19 +8200,57 @@ public class CommandService {
     /**
      * The Kubernetes cluster a deploy request names: the default cluster when it names none.
      *
-     * @throws IllegalStateException for any other cluster, which a deploy cannot target until the deploy wizard can
-     *                               choose the cluster: the request is refused rather than deployed to the default one
+     * @throws IllegalArgumentException when the name is not one a cluster may have
      */
-    static ClusterRef kubernetesClusterOf(HelmDeployRequest request) {
-        String named = request.getKubernetesCluster();
+    public static ClusterRef kubernetesClusterOf(HelmDeployRequest request) {
+        String named = request == null ? null : request.getKubernetesCluster();
         if (named == null || named.isBlank()) {
             return ClusterRef.DEFAULT;
         }
-        if (!ClusterRef.DEFAULT_ID.equals(named.trim())) {
-            throw new IllegalStateException("KDPS cannot deploy to the cluster '" + named.trim() + "' yet: deploys go to "
-                    + "the default cluster until the deploy wizard can choose the cluster. Nothing was deployed.");
+        try {
+            return ClusterRef.of(named.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("'" + named.trim() + "' is not a Kubernetes cluster: " + e.getMessage());
         }
-        return ClusterRef.DEFAULT;
+    }
+
+    /**
+     * Refuses, before anything is planned or contacted, a deploy this instance must not run: one naming another cluster
+     * than this instance's (it would be deployed to the wrong cluster), or a cluster the view does not know or has no
+     * connection for.
+     *
+     * @throws IllegalStateException naming the cluster; nothing was deployed
+     */
+    void checkDeployCluster(HelmDeployRequest request) {
+        ClusterRef named = kubernetesClusterOf(request);
+        if (!named.equals(kubernetesCluster())) {
+            throw new IllegalStateException("This deploy names the cluster '" + named + "' but reached the operations of "
+                    + "the cluster '" + kubernetesCluster() + "'. Nothing was deployed.");
+        }
+        if (named.isDefault()) {
+            return;
+        }
+        if (new org.apache.ambari.view.k8s.service.cluster.ClusterRegistry(new InstanceSettings(ctx)).find(named.id())
+                .isEmpty()) {
+            throw new IllegalStateException("KDPS knows no Kubernetes cluster '" + named + "'. Nothing was deployed.");
+        }
+        if (!kubernetesService.getConfigurationService().isConfigured()) {
+            throw new IllegalStateException("The Kubernetes cluster '" + named + "' has no connection yet: an "
+                    + "administrator saves one under Kubernetes clusters. Nothing was deployed.");
+        }
+        // The Company CAs and the managed truststores are kept on the default cluster for now: another cluster has
+        // none of them, so a deploy there that needs one is refused rather than deployed without it.
+        Map<String, Object> selfSign = request.getIngressTlsSelfSign();
+        if (selfSign != null && "companyUploaded".equals(String.valueOf(selfSign.get("mode")))) {
+            throw new IllegalStateException("The ingress certificate of a deploy to the cluster '" + named + "' cannot "
+                    + "be signed by a Company CA yet: choose Ambari's internal CA, cert-manager or an uploaded "
+                    + "certificate. Nothing was deployed.");
+        }
+        if (request.getTruststoreRefs() != null && !request.getTruststoreRefs().isEmpty()) {
+            throw new IllegalStateException("A deploy to the cluster '" + named + "' cannot use managed truststores "
+                    + "yet (" + String.join(", ", request.getTruststoreRefs()) + "): deploy without them. Nothing was "
+                    + "deployed.");
+        }
     }
 
     /** The Kubernetes cluster an operation runs on: the default one for an operation that names none. */
@@ -8160,8 +8281,8 @@ public class CommandService {
     String planReleaseDeploy(HelmDeployRequest request, String repoId, String version, String commandsURL,
                              MultivaluedMap<String, String> callerHeaders, URI baseUri,
                              AmbariAliasResolver ambariAliasResolver, boolean gitOps) {
-        // Refused before anything is planned: see kubernetesClusterOf.
-        kubernetesClusterOf(request);
+        // Refused before anything is planned.
+        checkDeployCluster(request);
         String namespace = request.getNamespace();
         String release = request.getReleaseName();
         boolean hadTagSyncAccount = tagSyncAccountRecorded(namespace, release);
@@ -8172,7 +8293,7 @@ public class CommandService {
             // A first install refused once its Atlas tag projector was given a Ranger account leaves no release to
             // uninstall: the account, which holds the Ranger administrator role, is taken back now.
             if (!hadTagSyncAccount && tagSyncAccountRecorded(namespace, release)
-                    && new ReleaseMetadataService(ctx).find(namespace, release) == null) {
+                    && releases().find(namespace, release) == null) {
                 String note = TagSyncRangerAccount.revoke(kubernetesService, tagSyncAccounts, namespace, release, null,
                         tagSyncRangersFor(callerHeaders)).note();
                 if (note != null) {
@@ -8255,7 +8376,7 @@ public class CommandService {
         }
         if (effectiveRepoId == null || effectiveRepoId.isBlank()) {
             try {
-                ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+                ReleaseMetadataService metadataService = releases();
                 var meta = metadataService.find(request.getNamespace(), request.getReleaseName());
                 if (meta != null && meta.getRepoId() != null && !meta.getRepoId().isBlank()) {
                     effectiveRepoId = meta.getRepoId();
@@ -9980,7 +10101,7 @@ public class CommandService {
      */
     public HelmReleaseDTO directHelmStatus(String namespace, String releaseName) {
         try {
-            final String kubeconfigContent = new ViewConfigurationService(ctx).getKubeconfigContents();
+            final String kubeconfigContent = kubernetesService.getConfigurationService().getKubeconfigContents();
             List<com.marcnuri.helm.Release> releases = helmService.list(namespace, kubeconfigContent);
             return releases.stream()
                     .filter(r -> releaseName.equals(r.getName()))
@@ -10002,7 +10123,7 @@ public class CommandService {
      * @throws Exception when Helm cannot list the releases of the namespace
      */
     public boolean directHelmReleaseExists(String namespace, String releaseName) throws Exception {
-        final String kubeconfigContent = new ViewConfigurationService(ctx).getKubeconfigContents();
+        final String kubeconfigContent = kubernetesService.getConfigurationService().getKubeconfigContents();
         return helmService.list(namespace, kubeconfigContent).stream()
                 .anyMatch(r -> releaseName.equals(r.getName()));
     }
@@ -10112,8 +10233,8 @@ public class CommandService {
      */
     public void directHelmDestroy(String namespace, String releaseName) {
         try {
-            final String kubeconfigContent = new ViewConfigurationService(ctx).getKubeconfigContents();
-            new HelmService(ctx).uninstall(namespace, releaseName, kubeconfigContent);
+            final String kubeconfigContent = kubernetesService.getConfigurationService().getKubeconfigContents();
+            helmService.uninstall(namespace, releaseName, kubeconfigContent);
         } catch (HelmOperationRegistry.ReleaseBusyException busy) {
             throw busy;
         } catch (Exception ex) {
@@ -13227,7 +13348,7 @@ public class CommandService {
         String release = request.getReleaseName();
         String repoUrl = git.getRepoUrl();
         if (repoUrl == null || repoUrl.isBlank()) {
-            K8sReleaseEntity existing = new ReleaseMetadataService(ctx).find(namespace, release);
+            K8sReleaseEntity existing = releases().find(namespace, release);
             repoUrl = existing != null ? existing.getGitRepoUrl() : null;
         }
         String alias = GitCredentialService.pendingAlias(ctx.getInstanceName(), namespace, release);
@@ -13580,7 +13701,7 @@ public class CommandService {
     /** The GitOps output profile a release is written with; {@code null} for the Flux layout. */
     private String gitOpsProfileOf(String namespace, String releaseName) {
         try {
-            K8sReleaseEntity release = new ReleaseMetadataService(ctx).find(namespace, releaseName);
+            K8sReleaseEntity release = releases().find(namespace, releaseName);
             String profile = release == null ? null : release.getGitProfile();
             return profile == null || profile.isBlank() || "flux".equals(profile) ? null : profile;
         } catch (RuntimeException e) {
@@ -14180,7 +14301,7 @@ public class CommandService {
         String realm = principal.contains("@") ? principal.substring(principal.indexOf('@') + 1) : "";
         try {
             StackDefinitionService definitions = new StackDefinitionService(ctx);
-            for (K8sReleaseEntity record : new ReleaseMetadataService(ctx).findAll()) {
+            for (K8sReleaseEntity record : releases().findAll()) {
                 if (record == null || !namespace.equals(record.getNamespace()) || record.getReleaseName() == null
                         || record.getServiceKey() == null || record.getServiceKey().isBlank()) {
                     continue;
@@ -14291,7 +14412,7 @@ public class CommandService {
      */
     private void markRestartRequired(String namespace, String releaseName) {
         try {
-            new ReleaseMetadataService(ctx).markRestartRequired(namespace, releaseName);
+            releases().markRestartRequired(namespace, releaseName);
         } catch (Exception e) {
             LOG.warn("Could not flag release {}/{} for a restart: {}", namespace, releaseName, e.toString());
         }
@@ -14390,7 +14511,7 @@ public class CommandService {
     /** Whether the record of a release flags it for a restart (see {@link #markRestartRequired}). */
     private boolean restartFlagged(String namespace, String releaseName) {
         try {
-            return ReleaseMetadataService.restartMarked(new ReleaseMetadataService(ctx).find(namespace, releaseName));
+            return ReleaseMetadataService.restartMarked(releases().find(namespace, releaseName));
         } catch (Exception e) {
             LOG.warn("Could not read the restart flag of release {}/{}: {}", namespace, releaseName, e.toString());
             return false;
@@ -14426,7 +14547,7 @@ public class CommandService {
             return;
         }
         try {
-            new ReleaseMetadataService(ctx).clearRestartRequired(namespace, releaseName, globalConfigVersion);
+            releases().clearRestartRequired(namespace, releaseName, globalConfigVersion);
         } catch (Exception e) {
             LOG.warn("Could not clear the restart flag of release {}/{}: {}", namespace, releaseName, e.toString());
         }
@@ -14537,7 +14658,7 @@ public class CommandService {
             String releaseName = (String) rnObj;
             if (namespace.isBlank() || releaseName.isBlank()) return;
 
-            ReleaseMetadataService metadataService = new ReleaseMetadataService(this.ctx);
+            ReleaseMetadataService metadataService = releases();
             List<org.apache.ambari.view.k8s.model.ReleaseEndpointDTO> live =
                     metadataService.discoverExternalClusterEndpoints(namespace, releaseName);
             if (live == null || live.isEmpty()) {
@@ -16356,7 +16477,7 @@ public class CommandService {
         List<Map<String, String>> callers = new ArrayList<>();
         List<K8sReleaseEntity> releases;
         try {
-            releases = new ReleaseMetadataService(this.ctx).findAll();
+            releases = releases().findAll();
         } catch (Exception e) {
             LOG.warn("Could not list the KDPS releases calling Trino {}/{}: {}", trinoNamespace, trinoRelease,
                     e.toString());
@@ -18021,7 +18142,7 @@ public class CommandService {
         // The other releases of the project, as recorded when KDPS deployed them; this release's record is gone.
         Map<String, List<Map<String, Object>>> otherReleases = new LinkedHashMap<>();
         try {
-            for (K8sReleaseEntity other : new ReleaseMetadataService(ctx).findAll()) {
+            for (K8sReleaseEntity other : releases().findAll()) {
                 if (other == null || !namespace.equals(other.getNamespace())
                         || other.getReleaseName() == null || other.getReleaseName().equals(releaseName)) {
                     continue;
@@ -18440,7 +18561,7 @@ public class CommandService {
     /** Whether the view has a record of the release; false when it cannot be read. */
     private boolean releaseRecorded(String namespace, String release) {
         try {
-            return new ReleaseMetadataService(ctx).find(namespace, release) != null;
+            return releases().find(namespace, release) != null;
         } catch (RuntimeException e) {
             LOG.warn("Atlas tag sync: the release record of {}/{} could not be read: {}", namespace, release,
                     e.toString());
@@ -18515,7 +18636,7 @@ public class CommandService {
                             java.util.function.Consumer<ProvisioningLedger> change) {
         if (stepParams == null) return;
         try {
-            new ReleaseMetadataService(ctx).recordProvisioning(stringValue(stepParams.get("namespace")),
+            releases().recordProvisioning(stringValue(stepParams.get("namespace")),
                     stringValue(stepParams.get("releaseName")), change);
         } catch (RuntimeException e) {
             LOG.warn("Could not record what KDPS registered for {}/{}: {}", stepParams.get("namespace"),
@@ -18643,7 +18764,7 @@ public class CommandService {
      *         when the release was deployed before KDPS kept a ledger, so what it registered is not known
      */
     public Map<String, Object> externalRegistrationsOfRelease(String namespace, String releaseName, String mode) {
-        ReleaseMetadataService metadata = new ReleaseMetadataService(ctx);
+        ReleaseMetadataService metadata = releases();
         ProvisioningLedger ledger = metadata.provisioningOf(namespace, releaseName);
         Map<String, Object> answer = new LinkedHashMap<>(ExternalCleanup.preview(namespace, ledger, ExternalCleanup.Mode.of(mode),
                 metadata.otherReleasesProvisioning(namespace, releaseName)).toMap());
@@ -18682,7 +18803,7 @@ public class CommandService {
             cleanupMode = ExternalCleanup.Mode.CREDENTIALS;
         }
         ExternalCleanup.Report report = ExternalCleanup.run(namespace, releaseName, ledger, cleanupMode,
-                signInSecretsSeen, new ReleaseMetadataService(ctx).otherReleasesProvisioning(namespace, releaseName),
+                signInSecretsSeen, releases().otherReleasesProvisioning(namespace, releaseName),
                 new ReleasePlatform(namespace, releaseName, callerHeaders));
         LOG.info("External cleanup of {}/{}: {}", namespace, releaseName, report.note());
         return report.isEmpty() ? null : report.toMap();

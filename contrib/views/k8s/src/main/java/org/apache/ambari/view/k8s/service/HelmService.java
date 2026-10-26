@@ -20,6 +20,7 @@ package org.apache.ambari.view.k8s.service;
 
 import com.marcnuri.helm.Release;
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.helm.HelmClient;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
@@ -57,6 +58,8 @@ public class HelmService {
 
     private static final Logger LOG = LoggerFactory.getLogger(HelmService.class);
 
+    /** The cluster of the releases; see {@link #HelmService(ViewContext, ClusterRef)}. */
+    private final ClusterRef cluster;
     private final ViewContext viewContext;
     private final HelmClient helmClient;
     private final Supplier<NamespaceScope> namespaceScope;
@@ -70,6 +73,19 @@ public class HelmService {
      */
     public HelmService(ViewContext ctx) {
         this(ctx, new HelmClientDefault());
+    }
+
+    /**
+     * Constructs a {@code HelmService} for the releases of a cluster: its namespace scope and the image pull Secrets it
+     * writes are that cluster's.
+     *
+     * @param ctx     the Ambari view context providing configuration and the instance settings
+     * @param cluster the cluster of the releases
+     */
+    public HelmService(ViewContext ctx, ClusterRef cluster) {
+        this(ctx, new HelmClientDefault(),
+                () -> KubernetesService.get(Objects.requireNonNull(ctx, "view context"), cluster).namespaceScope(),
+                cluster);
     }
 
     /**
@@ -92,7 +108,12 @@ public class HelmService {
      *                       called only for cluster-wide listings
      */
     public HelmService(ViewContext ctx, HelmClient helm, Supplier<NamespaceScope> namespaceScope) {
+        this(ctx, helm, namespaceScope, ClusterRef.DEFAULT);
+    }
+
+    private HelmService(ViewContext ctx, HelmClient helm, Supplier<NamespaceScope> namespaceScope, ClusterRef cluster) {
         this.viewContext = ctx;
+        this.cluster = Objects.requireNonNull(cluster, "cluster");
         this.helmClient = helm;
         this.namespaceScope = Objects.requireNonNull(namespaceScope, "namespaceScope");
         this.repositoryService = new HelmRepositoryService(ctx, helm);
@@ -1295,7 +1316,7 @@ public class HelmService {
         }
         LOG.info("Ensuring imagePullSecret '{}' in namespace '{}' for repoId '{}' (registry server: '{}')",
                 secretName, namespace, repoId, registryServer);
-        KubernetesService kubernetesService = KubernetesService.get(this.viewContext);
+        KubernetesService kubernetesService = KubernetesService.get(this.viewContext, cluster);
         kubernetesService.ensureImagePullSecretWithUsernameAndPassword(repoId,namespace,secretName,username,password,registryServer,serviceAccountsToPatch);
     }
 

@@ -23,6 +23,7 @@ import type { ClusterService } from '../../types/ServiceTypes';
 import { getClusterServices, getDiscoveredK8sServices, getDiscoveredK8sSecrets, getDiscoveredClusterIssuers, getDiscoveredSecretStores, getMonitoringDiscovery, getKedaDiscovery } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
+import { useTargetCluster } from '../../context/TargetClusterContext';
 import { UpgradeModeContext } from './fieldSync';
 
 const { Option } = Select;
@@ -41,6 +42,8 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
   // resource created — or a connection repaired — after the picker first rendered would never appear
   // until a full browser refresh (the reported "step 3 shows nothing until I reload" bug).
   const { connectionEpoch } = useClusterStatus();
+  // Discovered on the cluster the wizard deploys to.
+  const cluster = useTargetCluster();
 
   // The deploy target namespace, carried in this wizard form's initialValues (set on the General step).
   // A label-less "secret-discovery" field lists the secrets in THIS namespace so an operator can pick a
@@ -66,7 +69,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
       }
       promise = getClusterServices(field.serviceType);
     } else if (field.type === 'monitoring-discovery') {
-      promise = getMonitoringDiscovery().then((res) => {
+      promise = getMonitoringDiscovery(cluster).then((res) => {
         // The endpoint returns a monitoring stack {namespace, release, url} only when one is discovered;
         // otherwise it returns a bootstrap-state object ({state, message}) with no release/namespace.
         // Only surface an option when we actually found a stack — otherwise the selector must be empty
@@ -75,7 +78,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
         return [{ label: `${res.release} (${res.namespace})`, value: JSON.stringify(res) }];
       }).catch(() => []);
     } else if (field.type === 'keda-discovery') {
-      promise = getKedaDiscovery().then((res) => {
+      promise = getKedaDiscovery(cluster).then((res) => {
         // Only offer an option when a KEDA operator is actually present. The label distinguishes an
         // OLM/OpenShift operator (no Helm release) from a Helm-installed one.
         if (!res || !res.present) return [];
@@ -92,9 +95,9 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
       //    can pick a hand-created one (e.g. an external Kerberos keytab Secret). This is the case the
       //    external-keytab field needs; previously it bailed out and the dropdown was always empty.
       if (field.lookupLabel) {
-        promise = getDiscoveredK8sSecrets(field.lookupLabel);
+        promise = getDiscoveredK8sSecrets(field.lookupLabel, undefined, cluster);
       } else if (targetNamespace) {
-        promise = getDiscoveredK8sSecrets(undefined, targetNamespace);
+        promise = getDiscoveredK8sSecrets(undefined, targetNamespace, cluster);
       } else {
         // Namespace not chosen yet (operator hasn't completed the General step) — nothing to list.
         console.warn('secret-discovery: no lookupLabel and no target namespace yet; leaving the picker empty');
@@ -106,11 +109,11 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
       // cert-manager.io ClusterIssuer / Issuer picker. Backend filters to Ready=True
       // by default; surface the issuer type (ca / acme / vault / selfSigned) in the
       // label so operators can pick the right one at a glance.
-      promise = getDiscoveredClusterIssuers(false);
+      promise = getDiscoveredClusterIssuers(false, cluster);
     } else if (field.type === 'secret-store-discovery') {
       // external-secrets.io SecretStore / ClusterSecretStore picker. Label embeds the
       // provider type (vault / aws / gcp / azurekv / kubernetes / ...).
-      promise = getDiscoveredSecretStores(false);
+      promise = getDiscoveredSecretStores(false, cluster);
     } else {
       if (!field.lookupLabel) {
         console.warn('k8s-discovery called without lookupLabel');
@@ -118,7 +121,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
         setIsLoading(false);
         return;
       }
-      promise = getDiscoveredK8sServices(field.lookupLabel);
+      promise = getDiscoveredK8sServices(field.lookupLabel, cluster);
     }
 
     promise
@@ -129,7 +132,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
 
   useEffect(() => {
     fetchServices();
-  }, [field.lookupLabel, field.serviceType, field.type, connectionEpoch, targetNamespace]);
+  }, [field.lookupLabel, field.serviceType, field.type, connectionEpoch, targetNamespace, cluster]);
 
   // `autoSelectSingle`: when discovery finds exactly one result and nothing is chosen yet, choose it, so what was
   // found fills its fields (and fields only needed when nothing was found can hide).

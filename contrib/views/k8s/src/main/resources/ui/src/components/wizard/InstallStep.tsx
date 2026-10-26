@@ -27,7 +27,7 @@ import { BASE_BRANCH_TOOLTIP, COMMIT_MODE_LABELS, DEFAULT_BASE_BRANCH, WORKING_B
 import { namespaceRules, releaseNameRules } from '../../utils/nameRules';
 import GitSshFields from '../common/GitSshFields';
 import { savedRepoGitFields } from '../../utils/gitSsh';
-import { listGitOpsProfiles, type GitOpsProfile } from '../../api/client';
+import { listGitOpsProfiles, type GitOpsProfile, type KubernetesCluster } from '../../api/client';
 import { DEPLOYMENT_MODE_LABELS, DIRECT_HELM, GITOPS_FLUX, GITOPS_LAYOUT, savedGitRepos, writesToGit } from '../../utils/deploymentModes';
 
 interface InstallStepProps {
@@ -44,6 +44,8 @@ interface InstallStepProps {
   deployedMode?: string;
   /** Rendered inside another panel (the sizing dialog): the chart fields only, without the step's title. */
   embedded?: boolean;
+  /** The Kubernetes clusters KDPS knows: with more than one, the general step asks which one to deploy to. */
+  kubernetesClusters?: KubernetesCluster[];
 }
 
 const InstallStep: React.FC<InstallStepProps> = ({
@@ -57,6 +59,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
   upgrade = false,
   deployedMode,
   embedded = false,
+  kubernetesClusters = [],
 }) => {
   const [form] = Form.useForm();
 
@@ -137,6 +140,17 @@ const InstallStep: React.FC<InstallStepProps> = ({
         <FieldSyncContext.Provider value={onValuesChange}>
         <Form form={form} size="large" layout="vertical" onValuesChange={onValuesChange} initialValues={data}>
             <Typography.Title level={4}>Deployment Basics</Typography.Title>
+            {/* Asked only when KDPS knows several clusters; a release stays on the cluster it was deployed to. */}
+            {!upgrade && kubernetesClusters.length > 1 && (
+              <Form.Item name="kubernetesCluster" label="Kubernetes cluster" initialValue="default"
+                tooltip="The cluster the service is deployed to. What the wizard finds (Secrets, services, operators) is read on it.">
+                <Select options={kubernetesClusters.map(c => ({
+                  value: c.id,
+                  label: c.configured ? c.name : `${c.name} (no connection yet)`,
+                  disabled: !c.configured,
+                }))} />
+              </Form.Item>
+            )}
             {/* Helm and Kubernetes refuse other names; a GitOps deploy writes them into Git. Checked again by the
                 server, these rules only warn as the name is typed. */}
             <Form.Item name="releaseName" label="Release Name" rules={releaseNameRules(definition)}>
