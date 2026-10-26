@@ -6357,85 +6357,56 @@ public class KubernetesService {
     }
 
     /**
-     * Create/update a cert-manager.io/v1 ClusterIssuer of kind {@code ca} that wraps an
-     * existing {@code kubernetes.io/tls} Secret (typically a Company CA uploaded via the
-     * PKI registry). Idempotent: replaces if the ClusterIssuer already exists.
+     * Create/update a cert-manager.io/v1 ClusterIssuer of kind {@code ca} on this cluster, signing with a Company CA
+     * the view keeps ({@link CaRegistryService}). cert-manager reads a ClusterIssuer's CA from its own namespace
+     * ({@code cert-manager}): the CA's certificate and key are written there, in a {@code kubernetes.io/tls} Secret the
+     * issuer names. Idempotent: an existing Secret and issuer are replaced.
      *
-     * @param issuerName     ClusterIssuer name to create (cluster-scoped)
-     * @param caNamespace    namespace where the CA Secret lives (must be readable by
-     *                       the cert-manager controller — by default cert-manager has
-     *                       cluster-wide Secret read perms only in its own namespace; we
-     *                       rely on the CA Registry's namespace ({@code ambari-pki}) being
-     *                       exposed to cert-manager via the standard installation)
-     * @param caSecretName   name of the {@code kubernetes.io/tls} Secret holding tls.crt + tls.key
+     * @param issuerName   ClusterIssuer name to create (cluster-scoped)
+     * @param caSecretName name of the Secret written in cert-manager's namespace (the CA's identifier)
+     * @param caCertPem    the CA certificate (PEM, its chain included)
+     * @param caKeyPem     the CA private key (PEM)
      */
-    public void applyCertManagerClusterIssuerFromCa(String issuerName, String caNamespace, String caSecretName) {
+    public void applyCertManagerClusterIssuerFromCa(String issuerName, String caSecretName, String caCertPem,
+                                                    String caKeyPem) {
         checkConfiguration();
         Objects.requireNonNull(issuerName, "issuerName");
-        Objects.requireNonNull(caNamespace, "caNamespace");
         Objects.requireNonNull(caSecretName, "caSecretName");
+        final String certManagerNs = "cert-manager";
+        Secret caSecret = new io.fabric8.kubernetes.api.model.SecretBuilder()
+                .withNewMetadata()
+                    .withName(caSecretName)
+                    .withNamespace(certManagerNs)
+                    .withLabels(Map.of("managed-by", "ambari-k8s-view",
+                            "ambari.clemlab.com/resource-type", "issuing-ca-for-cert-manager"))
+                    .withAnnotations(Map.of("ambari.clemlab.com/written-at", java.time.Instant.now().toString()))
+                    .endMetadata()
+                .withType("kubernetes.io/tls")
+                .addToData("tls.crt", getEncoder().encodeToString(caCertPem.getBytes(StandardCharsets.UTF_8)))
+                .addToData("tls.key", getEncoder().encodeToString(caKeyPem.getBytes(StandardCharsets.UTF_8)))
+                .build();
+        try {
+            createNamespace(certManagerNs);
+            client.secrets().inNamespace(certManagerNs).resource(caSecret).createOrReplace();
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to write the CA Secret in " + certManagerNs + ": " + e.getMessage(), e);
+        }
 
         Map<String, Object> spec = new java.util.LinkedHashMap<>();
-        // The ca.secretName must be in cert-manager's own namespace (default: cert-manager).
-        // The Secret has to be replicated there. We handle that by either:
-        //   - mirroring the Secret into cert-manager's namespace, OR
-        //   - using a Namespaced Issuer in the source namespace (less general).
-        // Mirroring is simpler from a UI perspective; do it here.
-        ensureCaSecretMirroredToCertManagerNamespace(caNamespace, caSecretName);
         Map<String, Object> ca = new java.util.LinkedHashMap<>();
         ca.put("secretName", caSecretName);
         spec.put("ca", ca);
-
         var labels = new java.util.LinkedHashMap<String, String>();
         labels.put("managed-by", "ambari-k8s-view");
-        labels.put("ambari.clemlab.com/source-ca-namespace", caNamespace);
-        labels.put("ambari.clemlab.com/source-ca-secret", caSecretName);
+        labels.put("ambari.clemlab.com/source-ca", caSecretName);
         var resource = buildGenericCr("cert-manager.io/v1", "ClusterIssuer",
                 issuerName, null, labels,
                 Map.of("spec", spec));
         upsertGenericCr(
                 client.genericKubernetesResources(CERT_MANAGER_CLUSTER_ISSUER_RDC).withName(issuerName),
                 resource);
-        LOG.info("cert-manager.ClusterIssuer {} applied (CA secret={}/{})", issuerName, caNamespace, caSecretName);
-    }
-
-    /**
-     * cert-manager only reads ca.secretName from its own namespace (default {@code cert-manager}).
-     * Our CA registry stores Secrets in {@code ambari-pki}; we therefore copy the Secret into
-     * cert-manager's namespace whenever a CA is promoted. The mirror Secret is read-only —
-     * any future update must come via the registry's promote action (idempotent overwrite).
-     */
-    private void ensureCaSecretMirroredToCertManagerNamespace(String sourceNs, String secretName) {
-        final String certManagerNs = "cert-manager";
-        Secret src = client.secrets().inNamespace(sourceNs).withName(secretName).get();
-        if (src == null) {
-            throw new IllegalStateException("Source CA Secret " + sourceNs + "/" + secretName + " not found");
-        }
-        Secret mirror = new io.fabric8.kubernetes.api.model.SecretBuilder()
-                .withNewMetadata()
-                    .withName(secretName)
-                    .withNamespace(certManagerNs)
-                    .withLabels(Map.of(
-                            "managed-by", "ambari-k8s-view",
-                            "ambari.clemlab.com/mirror-of-namespace", sourceNs))
-                    .withAnnotations(Map.of(
-                            "ambari.clemlab.com/mirrored-at", java.time.Instant.now().toString()))
-                    .endMetadata()
-                .withType(src.getType())
-                .withData(src.getData())
-                .build();
-        try {
-            client.secrets().inNamespace(certManagerNs).resource(mirror).create();
-        } catch (KubernetesClientException e) {
-            // Already exists or namespace missing — try createOrReplace as fallback.
-            try {
-                createNamespace(certManagerNs);
-                client.secrets().inNamespace(certManagerNs).resource(mirror).createOrReplace();
-            } catch (Exception fallback) {
-                throw new IllegalStateException("Failed to mirror CA secret to " + certManagerNs + ": " + fallback.getMessage(), fallback);
-            }
-        }
-        LOG.info("Mirrored CA Secret {}/{} into {}/{}", sourceNs, secretName, certManagerNs, secretName);
+        LOG.info("cert-manager.ClusterIssuer {} applied on cluster {} (CA Secret {}/{})", issuerName, cluster,
+                certManagerNs, caSecretName);
     }
 
     /**

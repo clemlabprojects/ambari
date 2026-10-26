@@ -17,9 +17,9 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Form, Input, message, Modal, Space, Table, Tag, Typography, Upload, Popconfirm } from 'antd';
+import { Alert, Button, Form, Input, message, Modal, Select, Space, Table, Tag, Typography, Upload, Popconfirm } from 'antd';
 import { CloudUploadOutlined, DeleteOutlined, RocketOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { API_BASE_URL, apiFetch, getClusterCapabilities, type ClusterCapabilities } from '../api/client';
+import { API_BASE_URL, apiFetch, getClusterCapabilities, listKubernetesClusters, onCluster, type ClusterCapabilities, type KubernetesCluster } from '../api/client';
 import PermissionGuard from '../components/common/PermissionGuard';
 import { serverMessage } from '../utils/serverMessage';
 
@@ -75,6 +75,12 @@ const CertificateAuthoritiesPage: React.FC = () => {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [capabilities, setCapabilities] = useState<ClusterCapabilities | null>(null);
   const [promotedIssuers, setPromotedIssuers] = useState<Record<string, { name: string; ready: boolean }>>({});
+  // The view keeps the CAs for every cluster; a ClusterIssuer is on one cluster: the one chosen here, with several.
+  const [clusters, setClusters] = useState<KubernetesCluster[]>([]);
+  const [issuerCluster, setIssuerCluster] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    listKubernetesClusters().then(c => setClusters(c || [])).catch(() => { /* default only */ });
+  }, []);
 
   const refresh = async () => {
     setLoading(true);
@@ -82,12 +88,14 @@ const CertificateAuthoritiesPage: React.FC = () => {
     try {
       const data = await fetchJson<CaListing>('/pki/cas');
       setItems(data.items || []);
-      setRegistry({ namespace: data.namespace, canWrite: data.canWrite, message: data.message });
+      setRegistry({ canWrite: data.canWrite, message: data.message });
       // Refresh the promotion map by listing ClusterIssuers and matching by source label.
-      const caps = await getClusterCapabilities();
+      const caps = await getClusterCapabilities(issuerCluster);
       setCapabilities(caps);
+      setPromotedIssuers({});
       if (caps.certManager.installed) {
-        const issuers = await fetchJson<Array<{ value: string; ready: string }>>('/discovery/cluster-issuers?includeNotReady=true');
+        const issuers = await fetchJson<Array<{ value: string; ready: string }>>(
+          onCluster('/discovery/cluster-issuers?includeNotReady=true', issuerCluster));
         const map: Record<string, { name: string; ready: boolean }> = {};
         for (const ca of data.items || []) {
           const expected = 'clemlab-' + ca.caName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
@@ -103,12 +111,12 @@ const CertificateAuthoritiesPage: React.FC = () => {
     }
   };
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); }, [issuerCluster]);
 
   const onPromote = async (entry: CaEntry) => {
     try {
       const res = await fetchJson<{ clusterIssuerName: string; ready: boolean }>(
-        `/pki/cas/${encodeURIComponent(entry.caName)}/promote-to-cluster-issuer`,
+        onCluster(`/pki/cas/${encodeURIComponent(entry.caName)}/promote-to-cluster-issuer`, issuerCluster),
         { method: 'POST' }
       );
       message.success(`Promoted to ClusterIssuer ${res.clusterIssuerName} (${res.ready ? 'ready' : 'pending'})`);
@@ -251,8 +259,18 @@ const CertificateAuthoritiesPage: React.FC = () => {
         TLS signing pipeline (when picking <em>Sign with Company CA</em> in a service install),
         or <strong>promoted to a cert-manager ClusterIssuer</strong> so any service installed
         via the <em>Sign via cert-manager</em> TLS mode can issue leaves chained to it.
-        Either path uses the same root of trust.
+        Either path uses the same root of trust. KDPS keeps the CAs for every cluster it deploys to, the private key
+        encrypted with the Ambari master key; a CA is written to a cluster only when it is promoted to a ClusterIssuer
+        there.
       </Paragraph>
+      {clusters.length > 1 && (
+        <Space style={{ marginBottom: 16 }}>
+          <Text>ClusterIssuers on</Text>
+          <Select style={{ minWidth: 240 }} value={issuerCluster ?? 'default'}
+            onChange={(v: string) => setIssuerCluster(v === 'default' ? undefined : v)}
+            options={clusters.map(c => ({ value: c.id, label: c.name, disabled: !c.configured }))} />
+        </Space>
+      )}
 
       {loadError && (
         <Alert type="error" showIcon style={{ marginBottom: 16 }}
@@ -282,12 +300,12 @@ const CertificateAuthoritiesPage: React.FC = () => {
         pagination={false}
       />
 
-      <UploadModal open={uploadOpen} namespace={registry?.namespace} onCancel={() => setUploadOpen(false)} onSubmit={onUpload} />
+      <UploadModal open={uploadOpen} onCancel={() => setUploadOpen(false)} onSubmit={onUpload} />
     </div>
   );
 };
 
-const UploadModal: React.FC<{ open: boolean; namespace?: string; onCancel: () => void; onSubmit: (v: any) => void }> = ({ open, namespace, onCancel, onSubmit }) => {
+const UploadModal: React.FC<{ open: boolean; onCancel: () => void; onSubmit: (v: any) => void }> = ({ open, onCancel, onSubmit }) => {
   const [form] = Form.useForm();
   const onFinish = (vals: any) => onSubmit(vals);
   return (
@@ -304,7 +322,7 @@ const UploadModal: React.FC<{ open: boolean; namespace?: string; onCancel: () =>
         showIcon
         style={{ marginBottom: 12 }}
         message="Private key in transit"
-        description={`The CA private key is uploaded over the (TLS-protected) view connection and stored as a kubernetes.io/tls Secret in the ${namespace || 'ambari-pki'} project, which only administrators should be able to read. Encryption-at-rest is the cluster's etcd-encryption configuration; ensure it's enabled (KMS provider recommended).`}
+        description="The CA private key is uploaded over the (TLS-protected) view connection and kept by KDPS in Ambari, encrypted with the Ambari master key. It is written to a cluster only when the CA is promoted to a cert-manager ClusterIssuer there."
       />
       <Form layout="vertical" form={form} onFinish={onFinish}>
         <Form.Item name="caName" label="Name" rules={[{ required: true, pattern: /^[a-z0-9-]+$/, message: 'lowercase letters, digits and dashes only' }]}>

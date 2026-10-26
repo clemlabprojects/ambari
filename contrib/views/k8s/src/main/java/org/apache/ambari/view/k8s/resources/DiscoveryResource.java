@@ -19,6 +19,8 @@
 package org.apache.ambari.view.k8s.resources;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
+import org.apache.ambari.view.k8s.service.CaRegistryService;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
@@ -438,8 +440,21 @@ public class DiscoveryResource {
                 // "secret-discovery" fields that declare no lookupLabel.
                 LOG.info("/discovery/secrets: listing user-selectable secrets in namespace '{}'", namespace);
                 secrets = kubernetesService.listSecretsInNamespace(namespace);
+            } else if (CaRegistryService.PICKER_SELECTOR.equals(label == null ? null : label.trim())) {
+                // The Company CA picker: the view keeps the CAs for every cluster, so they are listed from it
+                // whatever cluster the wizard deploys to. The value is the CA's identifier, as earlier pickers sent.
+                List<Map<String, String>> items = new ArrayList<>();
+                for (CaRegistryService.CaEntry ca : new CaRegistryService(viewContext,
+                        KubernetesService.get(viewContext, ClusterRef.DEFAULT)).list()) {
+                    Map<String, String> entry = new HashMap<>();
+                    entry.put("label", ca.caName() + " (" + ca.subject() + ")");
+                    entry.put("value", ca.secretName());
+                    entry.put("description", ca.description() == null ? "" : ca.description());
+                    items.add(entry);
+                }
+                return Response.ok(items).build();
             } else if (label != null && !label.isBlank()) {
-                // Label-based, cross-namespace lookup (e.g. the Company CA picker in ambari-pki).
+                // Label-based, cross-namespace lookup.
                 String key = label;
                 String value = null;
                 int eq = label.indexOf('=');

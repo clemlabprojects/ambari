@@ -131,6 +131,12 @@ class CommandServiceIngressTlsStepTest {
      * ({@code keepValidLeaf}) or as "Renew TLS" does (not), runs it and returns the step's final status.
      */
     private CommandStatusEntity runSelfSign(String host, boolean replaceExisting, boolean keepValidLeaf) {
+        return runSelfSign(host, replaceExisting, keepValidLeaf, "ambariInternal", null);
+    }
+
+    /** {@link #runSelfSign(String, boolean, boolean)} signing with the given CA. */
+    private CommandStatusEntity runSelfSign(String host, boolean replaceExisting, boolean keepValidLeaf, String caMode,
+                                            String caName) {
         String id = "op-" + UUID.randomUUID();
         CommandEntity root = new CommandEntity();
         root.setId(id);
@@ -146,7 +152,7 @@ class CommandServiceIngressTlsStepTest {
         dataStore.store(root);
 
         String stepId = planFactory.appendIngressTlsSelfSignStep(root, REL, NS, SECRET, host,
-                List.of(REL + "." + NS + ".svc"), "ambariInternal", null, 90, replaceExisting, keepValidLeaf);
+                List.of(REL + "." + NS + ".svc"), caMode, caName, 90, replaceExisting, keepValidLeaf);
         root.setChildListJson(gson.toJson(List.of(stepId)));
         dataStore.store(root);
 
@@ -195,6 +201,23 @@ class CommandServiceIngressTlsStepTest {
     }
 
     // ------------------------------------------------------------------ the self-sign step
+
+    @Test
+    void aLeafIsSignedByACompanyCaTheViewKeepsWithoutReadingItFromTheCluster() throws Exception {
+        String[] ca = CaRegistryServiceTest.issuingCa("Corp Issuing CA");
+        // Uploaded while the default cluster cannot be read: the view keeps the CA itself.
+        new CaRegistryService(ctx, mock(KubernetesService.class)).upload("corp", ca[0], ca[1], "");
+
+        CommandStatusEntity step = runSelfSign(HOST, false, false, "companyUploaded", "corp");
+
+        assertEquals(CommandState.SUCCEEDED.name(), step.getState(), step.getMessage());
+        assertEquals("CN=Corp Issuing CA", leaf(current()).getIssuerX500Principal().getName());
+        assertEquals("companyUploaded", current().getMetadata().getLabels().get("ambari.clemlab.com/ca-mode"));
+        assertTrue(client.secrets().inAnyNamespace().list().getItems().stream()
+                .noneMatch(s -> s.getData() != null && ca[1].equals(new String(Base64.getDecoder()
+                        .decode(String.valueOf(s.getData().get("tls.key"))), StandardCharsets.UTF_8))),
+                "the CA key is written to no cluster");
+    }
 
     @Test
     void theSelfSignStepRefusesASecretKdpsDidNotIssue() {

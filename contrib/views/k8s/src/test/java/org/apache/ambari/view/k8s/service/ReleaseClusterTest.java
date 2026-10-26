@@ -226,7 +226,7 @@ class ReleaseClusterTest {
   }
 
   @Test
-  void aDeployToAnotherClusterCannotUseTheCompanyCaOrManagedTruststoresYet() {
+  void aDeployToAnotherClusterMayUseTheCompanyCaButNotManagedTruststoresYet() {
     view.as("lead");
     new org.apache.ambari.view.k8s.service.cluster.ClusterRegistry(new org.apache.ambari.view.k8s.store.InstanceSettings(
         view.context)).save(new org.apache.ambari.view.k8s.service.cluster.KubernetesCluster("prod", "Production", "",
@@ -236,10 +236,10 @@ class ReleaseClusterTest {
     try {
       prod.checkDeployCluster(prodRequest());
 
+      // The view keeps the Company CAs and signs the leaf itself, whatever the cluster.
       HelmDeployRequest companyCa = prodRequest();
       companyCa.setIngressTlsSelfSign(Map.of("mode", "companyUploaded", "caName", "corp"));
-      assertTrue(assertThrows(IllegalStateException.class, () -> prod.checkDeployCluster(companyCa)).getMessage()
-          .contains("Company CA"));
+      prod.checkDeployCluster(companyCa);
 
       HelmDeployRequest truststores = prodRequest();
       truststores.setTruststoreRefs(List.of("analytics/corp-trust"));

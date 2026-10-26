@@ -17,6 +17,9 @@ import org.apache.ambari.view.k8s.service.CaRegistryService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.NamespaceScope;
 import org.apache.ambari.view.k8s.service.PkiNamespaces;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRegistry;
+import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,10 +32,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * REST endpoints for the Company Issuing CA registry. Backed by
- * {@link CaRegistryService}; each CA is persisted as a K8s Secret in a privileged
- * namespace (default {@code ambari-pki}, set in the view settings). A call KDPS may not make
- * in that namespace answers 403 with what to do.
+ * REST endpoints for the Company Issuing CA registry. Backed by {@link CaRegistryService}: the view keeps each CA, its
+ * private key encrypted with the Ambari master key, for every Kubernetes cluster it deploys to. Promoting a CA to a
+ * cert-manager ClusterIssuer names the cluster it is written to.
  *
  * <p>Mounted at {@code /resources/api/pki/cas}. All mutating endpoints require the
  * standard view write permission ({@link AuthHelper#checkWritePermission()}).
@@ -100,8 +102,8 @@ public class CaRegistryResource {
     }
 
     /**
-     * The registry entries, with where they are kept and whether KDPS may add one there.
-     * Body: {items, namespace, canWrite, message?}.
+     * The registry entries, and whether the caller may add one: an administrator, the view keeping the CAs itself.
+     * Body: {items, canWrite}.
      */
     @GET
     @Produces(MediaType.APPLICATION_JSON)
@@ -109,15 +111,9 @@ public class CaRegistryResource {
         CaRegistryService service = service();
         try {
             List<CaRegistryService.CaEntry> entries = service.list();
-            String namespace = service.registryNamespace();
-            boolean canWrite = kubernetesService.canI("create", "", "secrets", null, null, namespace);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("items", entries);
-            out.put("namespace", namespace);
-            out.put("canWrite", canWrite);
-            if (!canWrite) {
-                out.put("message", PkiNamespaces.forbiddenMessage(namespace));
-            }
+            out.put("canWrite", authHelper.canConfigure());
             return Response.ok(out).build();
         } catch (Exception ex) {
             return failure(service, "list", ex);
@@ -156,6 +152,8 @@ public class CaRegistryResource {
             String description = strOrNull(body.get("description"));
             CaRegistryService.CaEntry entry = service.upload(caName, caCertPem, caKeyPem, description);
             return Response.status(Response.Status.CREATED).entity(entry).build();
+        } catch (org.apache.ambari.view.k8s.security.MasterKeyUnavailableException noKey) {
+            return noKey.getResponse();
         } catch (IllegalArgumentException iae) {
             return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception ex) {
@@ -180,14 +178,13 @@ public class CaRegistryResource {
     }
 
     /**
-     * Promote an uploaded Company CA to a cert-manager.io ClusterIssuer.
-     * Creates a {@code ClusterIssuer} of kind {@code ca} that references the existing
-     * {@code kubernetes.io/tls} Secret in {@code ambari-pki}, so any service installed
-     * via the {@code signedByClusterIssuer} TLS mode can issue leaves chained to the
-     * same Company root the admin already uploaded. Idempotent: re-promoting overwrites.
+     * Promote an uploaded Company CA to a cert-manager.io ClusterIssuer on a cluster ({@code cluster}, the default
+     * one when absent). Writes the CA to cert-manager's namespace there and creates a {@code ClusterIssuer} of kind
+     * {@code ca} naming it, so any service installed on that cluster via the {@code signedByClusterIssuer} TLS mode can
+     * issue leaves chained to the same Company root. Idempotent: re-promoting overwrites.
      *
      * Response payload:
-     * <pre>{ "caName": "...", "clusterIssuerName": "clemlab-...", "ready": false }</pre>
+     * <pre>{ "caName": "...", "clusterIssuerName": "clemlab-...", "cluster": "...", "ready": false }</pre>
      * The {@code ready} flag is read once just after apply — cert-manager may take
      * a second or two to reconcile. The Cluster Security page polls the discovery
      * endpoint for the live status.
@@ -195,22 +192,27 @@ public class CaRegistryResource {
     @POST
     @Path("{name}/promote-to-cluster-issuer")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response promoteToClusterIssuer(@PathParam("name") String caName) {
+    public Response promoteToClusterIssuer(@PathParam("name") String caName, @QueryParam("cluster") String cluster) {
         authHelper.checkConfigurationPermission();
         CaRegistryService service = service();
+        KubernetesService target;
+        if (cluster == null || cluster.isBlank() || ClusterRef.DEFAULT_ID.equals(cluster.trim())) {
+            target = kubernetesService;
+        } else if (new ClusterRegistry(new InstanceSettings(viewContext)).find(cluster.trim()).isPresent()) {
+            target = KubernetesService.get(viewContext, ClusterRef.of(cluster.trim()));
+        } else {
+            return Response.status(Response.Status.NOT_FOUND)
+                    .entity(Map.of("error", "KDPS knows no cluster '" + cluster + "'.")).build();
+        }
         try {
-            CaRegistryService.CaEntry entry = service.get(caName);
-            // ClusterIssuer name we use: "clemlab-<sanitized-caName>". Keep predictable
-            // so re-promotes don't proliferate issuers and the wizard's discovery list
-            // shows a stable name.
-            String issuerName = "clemlab-" + caName.toLowerCase().replaceAll("[^a-z0-9-]", "-");
-            kubernetesService.applyCertManagerClusterIssuerFromCa(issuerName, entry.namespace(), entry.secretName());
+            String issuerName = service.promote(caName, target);
             // Best-effort: poll once for readiness so the UI shows a useful value
             // immediately. The discovery endpoint will tell the truth on next refresh.
-            boolean ready = kubernetesService.isClusterIssuerReady(issuerName);
+            boolean ready = target.isClusterIssuerReady(issuerName);
             return Response.ok(Map.of(
                     "caName", caName,
                     "clusterIssuerName", issuerName,
+                    "cluster", target.cluster().id(),
                     "ready", ready
             )).build();
         } catch (IllegalArgumentException iae) {

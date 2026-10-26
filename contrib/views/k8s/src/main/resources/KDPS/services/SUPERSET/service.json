@@ -1321,7 +1321,7 @@
           "type": "secret-discovery",
           "lookupLabel": "ambari.clemlab.com/resource-type=issuing-ca",
           "excludeFromValues": true,
-          "help": "Pick a Company Issuing CA from the PKI registry. The view mints a leaf TLS cert signed by this CA before installing the chart. CAs are stored as Kubernetes Secrets in the `ambari-pki` namespace labeled `ambari.clemlab.com/resource-type=issuing-ca`. Upload CAs via Cluster security → Certificate Authorities.",
+          "help": "Pick a Company Issuing CA from the PKI registry. The view mints a leaf TLS cert signed by this CA before installing the chart. KDPS keeps the CAs for every cluster it deploys to, and signs the leaf itself: the CA key is never written to the release's cluster. Upload CAs via Security → Certificate Authorities.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "signedByCompanyCA"
