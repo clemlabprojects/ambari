@@ -250,6 +250,16 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
         putImpalaEnvProperty("impala_disable_kudu", "false" if "KUDU" in services_list else "true")
         putImpalaEnvProperty("enable_ranger", "true" if "RANGER" in services_list else "false")
 
+        # Hue runs Impala queries as the logged-in user: with Ranger, Impala must let the Hue user delegate
+        if "HUE" in services_list and "RANGER" in services_list:
+            hue_user = getServiceConfigProperty("hue-env", "hue_user", "hue") or "hue"
+            proxy_entries = [entry.strip() for entry in
+                             str(getServiceConfigProperty("impala-env", "impala_proxy_user_config", "")).split(";")
+                             if entry.strip()]
+            if hue_user not in [entry.split("=", 1)[0].strip() for entry in proxy_entries]:
+                proxy_entries.append("{0}=*".format(hue_user))
+                putImpalaEnvProperty("impala_proxy_user_config", ";".join(proxy_entries))
+
         # When Atlas is in the cluster, enable Impala lineage emission so the
         # IMPALA_ATLAS_EXTRACTOR component has files to forward to Kafka.  The
         # C++ impalad writes lineage JSON to this dir; the extractor daemon

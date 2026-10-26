@@ -162,6 +162,22 @@ hive_conf_dir=/etc/hive/conf
   {% endif %}
 {% endif %}
 
+{% if has_impala %}
+[impala]
+server_host={{hue_impala_server_host}}
+server_port={{hue_impala_server_port}}
+impersonation_enabled={{hue_impala_impersonation_enabled}}
+  {% if kerberos_enabled %}
+impala_principal={{hue_impala_principal}}
+  {% endif %}
+  {% if hue_impala_ssl_enabled %}
+  [[ssl]]
+  enabled=true
+  cacerts={{hue_impala_ssl_cacerts}}
+  validate={{'true' if hue_impala_ssl_cacerts else 'false'}}
+  {% endif %}
+{% endif %}
+
 {% if has_oozie %}
 [liboozie]
 remote_data_dir={{hue_remote_data_dir}}

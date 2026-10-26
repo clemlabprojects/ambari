@@ -565,6 +565,28 @@ if has_hbase:
 else:
   hue_app_blacklist += ",hbase"
 
+## Impala settings
+impala_daemon_hosts = default("/clusterHostInfo/impala_daemon_hosts", [])
+has_impala = bool(impala_daemon_hosts)
+if has_impala:
+  impala_env = config['configurations']['impala-env']
+  impala_load_balancer_enabled = str(impala_env.get('enable_load_balancer', 'false')).lower() == 'true'
+  if impala_load_balancer_enabled and impala_env.get('impala_load_balancer_host', '') not in ('', '_HOST'):
+    hue_impala_server_host = impala_env['impala_load_balancer_host']
+  else:
+    hue_impala_server_host = sorted(impala_daemon_hosts)[0]
+  hue_impala_server_port = impala_env.get('impala_hs2_port', '21050')
+  if security_enabled:
+    hue_impala_principal = impala_env.get('impala_principal_name', '').replace('_HOST', hue_impala_server_host.lower())
+  # impersonation needs Impala to let Hue delegate (--authorized_proxy_user_config, set with Ranger)
+  impala_proxy_users = [entry.split('=', 1)[0].strip() for entry in impala_env.get('impala_proxy_user_config', '').split(';')]
+  hue_impala_impersonation_enabled = str(impala_env.get('enable_ranger', 'false')).lower() == 'true' and \
+                                     hue_user in impala_proxy_users
+  hue_impala_ssl_enabled = str(impala_env.get('client_services_ssl_enabled', 'false')).lower() == 'true'
+  if hue_impala_ssl_enabled:
+    hue_impala_ssl_cacerts = impala_env.get('ssl_client_ca_certificate', '')
+  hue_app_blacklist = ','.join(app for app in hue_app_blacklist.split(',') if app.strip() != 'impala')
+
 ## Zookeeper Settings
 zookeeper_hosts_list = default("/clusterHostInfo/zookeeper_server_hosts", None)
 has_zookeeper = zookeeper_hosts_list != None
