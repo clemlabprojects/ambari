@@ -78,6 +78,7 @@ import io.fabric8.kubernetes.client.internal.SSLUtils;
 import io.fabric8.kubernetes.client.utils.Serialization;
 
 import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.dto.RenderConfigSpec;
 import org.apache.ambari.view.k8s.model.*;
 import org.apache.ambari.view.k8s.model.kube.KubeNamespace;
@@ -153,8 +154,10 @@ import static java.util.Base64.getEncoder;
 public class KubernetesService {
 
     private static final Logger LOG = LoggerFactory.getLogger(KubernetesService.class);
-    // Singleton cache per view instance to avoid reinitializing K8s client repeatedly
+    // One service per view instance and cluster, to avoid reinitializing K8s client repeatedly
     private static final java.util.concurrent.ConcurrentMap<String, KubernetesService> INSTANCES = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The cluster this service connects to; the default one for a service built around a given client. */
+    private ClusterRef cluster = ClusterRef.DEFAULT;
     
     // Volatile: replaced by a fully built client on reconnection while other request threads read it.
     private volatile KubernetesClient client;
@@ -316,17 +319,62 @@ public class KubernetesService {
             = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * Returns (or creates) the singleton {@code KubernetesService} for the given view instance,
-     * and schedules a one-time async monitoring bootstrap if the service is configured. The service is
-     * kept even when it could not connect yet, so that later requests retry under its back-off.
+     * Returns (or creates) the {@code KubernetesService} of the default cluster of the given view instance, and
+     * schedules a one-time async monitoring bootstrap if the service is configured. The service is kept even when it
+     * could not connect yet, so that later requests retry under its back-off.
+     *
+     * <p>For the code that does not name its cluster yet: new code calls {@link #get(ViewContext, ClusterRef)}, and
+     * {@code KubernetesServiceCallersTest} fails when the callers of this method grow.</p>
      *
      * @param ctx the Ambari view context identifying the view instance
-     * @return the shared {@code KubernetesService} for this view instance
+     * @return the shared {@code KubernetesService} of the default cluster of this view instance
      */
     public static KubernetesService get(ViewContext ctx) {
-        KubernetesService svc = INSTANCES.computeIfAbsent(ctx.getInstanceName(), k -> new KubernetesService(ctx));
-        svc.scheduleMonitoringBootstrapAsync();
+        return get(ctx, ClusterRef.DEFAULT);
+    }
+
+    /**
+     * Returns (or creates) the {@code KubernetesService} of a cluster of the given view instance. Only the default
+     * cluster's service bootstraps monitoring: the other clusters' monitoring comes with their day-2 operations.
+     *
+     * @param ctx     the Ambari view context identifying the view instance
+     * @param cluster the cluster to connect to
+     * @return the shared {@code KubernetesService} of this view instance and cluster
+     */
+    public static KubernetesService get(ViewContext ctx, ClusterRef cluster) {
+        KubernetesService svc = INSTANCES.computeIfAbsent(instanceKey(ctx, cluster),
+                k -> new KubernetesService(ctx, cluster));
+        if (cluster.isDefault()) {
+            svc.scheduleMonitoringBootstrapAsync();
+        }
         return svc;
+    }
+
+    /**
+     * Drops the service of a cluster that was removed, and closes its connection once calls still using it are over.
+     *
+     * @param ctx     the Ambari view context identifying the view instance
+     * @param cluster the cluster that was removed
+     */
+    public static void forget(ViewContext ctx, ClusterRef cluster) {
+        KubernetesService svc = INSTANCES.remove(instanceKey(ctx, cluster));
+        if (svc != null) {
+            synchronized (svc) {
+                svc.retire(svc.client);
+                svc.client = null;
+                svc.isConfigured = false;
+            }
+        }
+    }
+
+    /** The key of a cluster's service: the view instance's name for the default cluster, as before several clusters. */
+    private static String instanceKey(ViewContext ctx, ClusterRef cluster) {
+        return cluster.isDefault() ? ctx.getInstanceName() : ctx.getInstanceName() + "/" + cluster.id();
+    }
+
+    /** The cluster this service connects to. */
+    public ClusterRef cluster() {
+        return cluster;
     }
 
     /**
@@ -390,8 +438,20 @@ public class KubernetesService {
      * @param viewContext the Ambari view context providing configuration properties and the instance settings
      */
     public KubernetesService(ViewContext viewContext) {
+        this(viewContext, ClusterRef.DEFAULT);
+    }
+
+    /**
+     * Connects to a cluster from the configuration saved for it, as {@link #KubernetesService(ViewContext)} does for
+     * the default cluster.
+     *
+     * @param viewContext the Ambari view context providing configuration properties and the instance settings
+     * @param cluster     the cluster to connect to
+     */
+    public KubernetesService(ViewContext viewContext, ClusterRef cluster) {
         this.viewContext = viewContext;
-        this.configurationService = new ViewConfigurationService(viewContext, podServiceAccount);
+        this.cluster = java.util.Objects.requireNonNull(cluster, "cluster");
+        this.configurationService = new ViewConfigurationService(viewContext, podServiceAccount, cluster);
         this.helmClient = new HelmClientDefault();
         this.repositoryService = new HelmRepositoryService(viewContext, helmClient);
         this.helmService = new HelmService(viewContext, helmClient, () -> namespaceScope);
@@ -4833,7 +4893,7 @@ public class KubernetesService {
      * @throws Exception when the saved configuration cannot be read or turned into a client
      */
     KubernetesClient buildClientFromSavedConfiguration() throws Exception {
-        this.configurationService = new ViewConfigurationService(viewContext, podServiceAccount);
+        this.configurationService = new ViewConfigurationService(viewContext, podServiceAccount, cluster);
         boolean openShiftLogin = configurationService.isOpenShiftLogin();
         boolean inCluster = configurationService.isInClusterServiceAccount();
         String kubeconfigContent;
@@ -4869,7 +4929,9 @@ public class KubernetesService {
                     "The saved kubeconfig cannot be used. " + e.getMessage() + " Upload a new kubeconfig.", e);
         }
         java.util.List<String> allClusterCaData = collectAllClusterCaData(kubeconfigModel);
-        if (!allClusterCaData.isEmpty()) {
+        // Only the default cluster's CAs go into the JVM default SSL context, which every HTTPS call of the server
+        // trusts: another cluster's CAs are trusted by that cluster's own client only (buildTrustingClient).
+        if (!allClusterCaData.isEmpty() && cluster.isDefault()) {
             installKubeconfigCasIntoJvmDefaultSslContext(allClusterCaData);
         }
 
