@@ -64,7 +64,7 @@ App.KerberosWizardStep1Controller = Em.Controller.extend({
       return true;
     }
 
-    return selectedOption.get('preConditions').someBy('satisfied', false);
+    return selectedOption.get('preConditions').someProperty('satisfied', false);
   }.property('enableKerberos', 'configureOidc', 'selectedOption.preConditions.@each.satisfied'),
 
   options: Em.A([

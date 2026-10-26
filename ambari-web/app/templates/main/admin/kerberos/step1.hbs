@@ -31,13 +31,13 @@
         <h5>{{t admin.kerberos.wizard.step1.security.switches.header}}</h5>
         <div class="checkbox">
           <label>
-            {{input type="checkbox" checked=enableKerberos}}
+            {{view Ember.Checkbox checkedBinding="controller.enableKerberos"}}
             {{t admin.kerberos.wizard.step1.security.switch.enableKerberos}}
           </label>
         </div>
         <div class="checkbox">
           <label>
-            {{input type="checkbox" checked=configureOidc disabled=isOidcServiceUnavailable}}
+            {{view Ember.Checkbox checkedBinding="controller.configureOidc" disabledBinding="controller.isOidcServiceUnavailable"}}
             {{t admin.kerberos.wizard.step1.security.switch.configureOidc}}
           </label>
         </div>
