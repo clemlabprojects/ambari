@@ -660,8 +660,8 @@ App.WizardStep7Controller = Em.Controller.extend(App.ServerValidatorMixin, App.E
     services.forEach(function(serviceName) {
       var pluginEnabledPropertyName = 'ranger-' + serviceName.toLowerCase() + '-plugin-enabled';
       var pluginEnabledProperty = rangerServiceConfigs.findProperty('name', pluginEnabledPropertyName);
-      //Kafka and Storm plugins need to be enabled only if cluster is kerberized
-      if (pluginEnabledProperty && (serviceName === 'STORM' || serviceName === 'KAFKA')) {
+      //Kafka, Storm and Kudu plugins need to be enabled only if cluster is kerberized
+      if (pluginEnabledProperty && ['STORM', 'KAFKA', 'KUDU'].contains(serviceName)) {
         if (App.get('isKerberosEnabled')) {
           Em.set(pluginEnabledProperty, 'value', 'Yes');
         }
