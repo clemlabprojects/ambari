@@ -582,9 +582,17 @@ class ImpalaBase(Script):
             env["HADOOP_CONF_DIR"] = params.hadoop_conf_dir
         self._prepend_classpath_entry(env, "CLASSPATH", params.impala_conf_dir)
         self._prepend_classpath_entry(env, "HADOOP_CLASSPATH", params.impala_conf_dir)
-        ranger_classpath_dirs = [
-            os.path.join(params.impala_home_daemon, "lib"),
-            os.path.join(params.impala_home_daemon, "lib", "jars"),
+        # odp-select only creates the per-component links, all pointing to the versioned impala tree that holds
+        # the plugin jars (lib/ranger-impala-plugin-impl); current/impala and current/ranger-* may not exist.
+        ranger_classpath_dirs = []
+        for impala_home in (params.impala_home_daemon, params.impala_home_catalog, params.impala_home_statestore):
+            ranger_classpath_dirs += [
+                os.path.join(impala_home, "lib"),
+                os.path.join(impala_home, "lib", "jars"),
+                os.path.join(impala_home, "lib", "ranger-impala-plugin-impl"),
+                os.path.join(impala_home, "lib", "ranger-hive-plugin-impl"),
+            ]
+        ranger_classpath_dirs += [
             os.path.join(params.stack_root, "current", "impala", "lib"),
             os.path.join(params.stack_root, "current", "impala", "lib", "ranger-impala-plugin-impl"),
             os.path.join(params.stack_root, "current", "ranger-impala-plugin", "lib"),

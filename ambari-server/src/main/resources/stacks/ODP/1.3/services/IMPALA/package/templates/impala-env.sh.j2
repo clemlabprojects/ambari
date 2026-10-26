@@ -35,9 +35,22 @@ HADOOP_CLASSPATH="${IMPALA_CONF_DIR}${HADOOP_CLASSPATH:+:${HADOOP_CLASSPATH}}"
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-{{impala_env['impala_service_java_options']}}}"
 
 # Ensure Ranger Impala plugin and audit destination jars are visible to Impala JVMs.
+# odp-select only creates the per-component links (impala-daemon, impala-catalog-service, impala-state-store), all
+# pointing to the versioned impala tree that holds the plugin jars; the current/impala and current/ranger-* entries
+# below only exist on some older layouts and are skipped when absent.
 for ranger_cp_dir in \
   "{{impala_home_daemon}}/lib" \
   "{{impala_home_daemon}}/lib/jars" \
+  "{{impala_home_daemon}}/lib/ranger-impala-plugin-impl" \
+  "{{impala_home_daemon}}/lib/ranger-hive-plugin-impl" \
+  "{{impala_home_catalog}}/lib" \
+  "{{impala_home_catalog}}/lib/jars" \
+  "{{impala_home_catalog}}/lib/ranger-impala-plugin-impl" \
+  "{{impala_home_catalog}}/lib/ranger-hive-plugin-impl" \
+  "{{impala_home_statestore}}/lib" \
+  "{{impala_home_statestore}}/lib/jars" \
+  "{{impala_home_statestore}}/lib/ranger-impala-plugin-impl" \
+  "{{impala_home_statestore}}/lib/ranger-hive-plugin-impl" \
   "{{stack_root}}/current/impala/lib" \
   "{{stack_root}}/current/impala/lib/ranger-impala-plugin-impl" \
   "{{stack_root}}/current/ranger-impala-plugin/lib" \
