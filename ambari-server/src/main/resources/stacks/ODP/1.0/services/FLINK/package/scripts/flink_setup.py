@@ -99,10 +99,11 @@ def flink_setup(env, type, upgrade_type = None, action = None):
     elif type == 'historyserver':  
       ## logging options
       props = params.flink_history_server_properties
-      if params.stack_version_formatted and check_stack_feature(StackFeature.FLINK_CONFIG_YAML_SUPPORT, params.stack_version_formatted):
-        props['security']['kerberos']['login']['principal'] = props['security']['kerberos']['login']['principal'].replace('_HOST', socket.getfqdn().lower())
-      else:
-        props['security.kerberos.login.principal'] = props['security.kerberos.login.principal'].replace('_HOST', socket.getfqdn().lower())
+      if params.security_enabled:
+        if params.stack_version_formatted and check_stack_feature(StackFeature.FLINK_CONFIG_YAML_SUPPORT, params.stack_version_formatted):
+          props['security']['kerberos']['login']['principal'] = props['security']['kerberos']['login']['principal'].replace('_HOST', socket.getfqdn().lower())
+        else:
+          props['security.kerberos.login.principal'] = props['security.kerberos.login.principal'].replace('_HOST', socket.getfqdn().lower())
       
       logback_content=InlineTemplate(params.flink_logback_hs_content)
               
