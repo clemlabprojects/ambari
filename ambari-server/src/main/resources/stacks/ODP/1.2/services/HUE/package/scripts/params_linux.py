@@ -173,31 +173,17 @@ if dfs_ha_enabled:
 # cluster id
 hue_runtime_cluster_id = config['clusterLevelParams']['cluster_name']
 
-def buildUrlElement(protocol, hdfs_host, port, servicePath) :
-  # openTag = "<url>"
-  # closeTag = "</url>"
-  # proto = protocol + "://"
-  # newLine = "\n"
-  openTag = ""
-  closeTag = ""
-  proto = protocol + "://"
-  newLine = ","
-  if hdfs_host is None or port is None:
-      return ""
-  else:
-    return openTag + proto + hdfs_host + ":" + port + servicePath + closeTag + newLine
-
-namenode_host_keys = namenode_port_map.keys();
+# Hue takes a single WebHDFS URL: HttpFS when installed (below), otherwise the first NameNode
 webhdfs_service_urls = ""
-if len(namenode_host_keys) > 0:
-    for host in namenode_host_keys:
-      webhdfs_service_urls += buildUrlElement(hdfs_scheme, host, namenode_port_map[host], "/webhdfs")
+if len(namenode_port_map) > 0:
+  webhdfs_host = sorted(namenode_port_map.keys())[0]
+  webhdfs_service_urls = '{0}://{1}:{2}/webhdfs/v1'.format(hdfs_scheme, webhdfs_host, namenode_port_map[webhdfs_host])
 elif has_namenode:
-  webhdfs_service_urls = buildUrlElement(hdfs_scheme, namenode_hosts[0], namenode_http_port, "/webhdfs")
+  webhdfs_service_urls = '{0}://{1}:{2}/webhdfs/v1'.format(hdfs_scheme, namenode_hosts[0], namenode_http_port)
 
 
 httpfs_hosts = default("/clusterHostInfo/httpfs_gateway_hosts", None)
-httpfs_port = 14000
+httpfs_port = default('/configurations/httpfs-env/httpfs_http_port', 14000)
 
 if check_stack_feature(StackFeature.HDFS_SUPPORTS_HTTPFS, version_for_stack_feature_checks):
   httpfs_ssl_enabled = default('/configurations/httpfs-site/httpfs.ssl.enabled', False)
