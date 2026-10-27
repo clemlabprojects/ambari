@@ -21,6 +21,7 @@ limitations under the License.
 import sys
 import fileinput
 import shutil
+import glob
 import os
 import socket
 
@@ -101,10 +102,19 @@ def setup_spark(env, type, upgrade_type = None, action = None):
   )
 
   # create spark-env.sh in etc/conf dir
+  spark_env_template = params.spark_env_sh
+  if params.security_enabled:
+    # The SPNEGO UI filter (Hadoop AuthenticationFilter) also exists in hadoop-client-api, shaded onto a relocated
+    # javax.servlet.Filter that Jetty rejects; jars/* gives no order, so put the unshaded hadoop-auth first for the
+    # daemons (the launcher places SPARK_DAEMON_CLASSPATH ahead of jars/*)
+    hadoop_auth_jars = sorted(glob.glob(os.path.join(params.spark_home, 'jars', 'hadoop-auth-*.jar')))
+    if hadoop_auth_jars:
+      spark_env_template += ('\nexport SPARK_DAEMON_CLASSPATH="%s${SPARK_DAEMON_CLASSPATH:+:$SPARK_DAEMON_CLASSPATH}"\n'
+                             % hadoop_auth_jars[-1])
   File(os.path.join(params.spark_conf, 'spark-env.sh'),
        owner=params.spark_user,
        group=params.spark_group,
-       content=InlineTemplate(params.spark_env_sh),
+       content=InlineTemplate(spark_env_template),
        mode=0o644,
   )
 
