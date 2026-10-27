@@ -18,6 +18,7 @@ limitations under the License.
 """
 import os
 
+from resource_management.core.logger import Logger
 from resource_management.libraries.functions.default import default
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions import conf_select
@@ -286,6 +287,24 @@ if polaris_auth_type not in ("internal", "external", "mixed"):
 
 # Persist normalized auth mode into generated application.properties.
 application_properties["polaris.authentication.type"] = polaris_auth_type
+
+# External credentials need an external identity provider and an external authorizer:
+# Polaris refuses to start otherwise.
+polaris_credential_mode = str(application_properties.get("polaris.authentication.credential-mode", "internal")).strip().lower()
+polaris_authorization_type = str(application_properties.get("polaris.authorization.type", "internal")).strip().lower()
+if polaris_credential_mode == "external" and (polaris_auth_type == "internal" or polaris_authorization_type == "internal"):
+  Logger.warning(
+    "polaris.authentication.credential-mode=external needs OIDC authentication and the Ranger authorizer "
+    "(authentication={0}, authorization={1}); using internal.".format(polaris_auth_type, polaris_authorization_type)
+  )
+  polaris_credential_mode = "internal"
+if polaris_credential_mode not in ("internal", "external"):
+  polaris_credential_mode = "internal"
+application_properties["polaris.authentication.credential-mode"] = polaris_credential_mode
+if polaris_credential_mode == "external":
+  # external principals are named by the token only: Polaris warns about an id claim
+  application_properties.pop("polaris.oidc.principal-mapper.id-claim-path", None)
+
 
 # OIDC is mapped from cluster-level oidc-env when enabled, with explicit
 # override knobs preserved for custom/external IdP topologies.

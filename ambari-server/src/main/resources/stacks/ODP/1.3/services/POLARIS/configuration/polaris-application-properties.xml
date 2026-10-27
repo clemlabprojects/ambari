@@ -407,6 +407,26 @@
   </property>
 
   <property>
+    <name>polaris.authentication.credential-mode</name>
+    <display-name>Credential Mode</display-name>
+    <value>internal</value>
+    <description>internal: every caller must be a principal stored in Polaris, with roles granted in Polaris.
+      external: callers authenticated by the OIDC identity provider are not stored in Polaris; their name and roles
+      come from the token (principal and role mapping below) and are authorized by Ranger. Polaris internal tokens
+      (root, service principals) stay internal. Only applied with OIDC authentication and the Ranger authorizer;
+      internal is used otherwise, since Polaris refuses to start in external mode without an external authorizer.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry><value>internal</value></entry>
+        <entry><value>external</value></entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
     <name>polaris.authentication.token-service.type</name>
     <display-name>Token Service Type</display-name>
     <value>default</value>
@@ -619,15 +639,18 @@
   <property>
     <name>polaris.oidc.principal-roles-mapper.filter</name>
     <display-name>Principal Roles Filter</display-name>
-    <value>^(?!profile$|email$).*</value>
-    <description>Regex filter applied to incoming token roles before mapping to Polaris roles.</description>
+    <value>^polaris_.+$</value>
+    <description>Regex filter applied to incoming token roles before mapping to Polaris roles. Only identity provider
+      roles meant for Polaris may pass: every role that passes must be a principal role granted to the principal,
+      otherwise the sign-in is rejected. Identity providers add roles of their own to every token (Keycloak:
+      default-roles-&lt;realm&gt;, offline_access, uma_authorization).</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
   <property>
     <name>polaris.oidc.principal-roles-mapper.mappings[0].regex</name>
     <display-name>Principal Roles Mapping Regex</display-name>
-    <value>^.*$</value>
+    <value>^polaris_(.+)$</value>
     <description>Regex pattern applied to each role that passes the filter.</description>
     <on-ambari-upgrade add="false"/>
   </property>
@@ -635,8 +658,9 @@
   <property>
     <name>polaris.oidc.principal-roles-mapper.mappings[0].replacement</name>
     <display-name>Principal Roles Mapping Replacement</display-name>
-    <value>PRINCIPAL_ROLE:$0</value>
-    <description>Replacement expression used to build mapped Polaris role names from matched roles.</description>
+    <value>PRINCIPAL_ROLE:$1</value>
+    <description>Replacement expression used to build mapped Polaris role names from matched roles. With the default
+      filter and regex, the identity provider role polaris_catalog_admin selects the principal role catalog_admin.</description>
     <on-ambari-upgrade add="false"/>
   </property>
 
