@@ -451,7 +451,7 @@ polaris_service_url = "{0}://{1}:{2}".format(polaris_protocol, polaris_service_h
 # Ozone topology discovery and integration toggles used by Polaris Ozone
 # bootstrap logic (secret retrieval, ACL mode, default catalog endpoint).
 ozone_manager_hosts = sorted(default("/clusterHostInfo/ozone_manager_hosts", []))
-ozone_s3g_hosts = sorted(default("/clusterHostInfo/ozone_s3g_hosts", []))
+ozone_s3g_hosts = sorted(default("/clusterHostInfo/ozone_s3_gateway_hosts", []))
 ozone_site = config.get('configurations', {}).get('ozone-site', {})
 has_ozone_service = len(ozone_manager_hosts) > 0 or "ozone.s3g.http-address" in ozone_site or "ozone.s3g.https-address" in ozone_site
 ozone_cmd = format("{stack_root}/current/ozone-client/bin/ozone")
@@ -480,8 +480,11 @@ if has_ozone_service and not polaris_ozone_s3_endpoint:
   ozone_s3g_https_port = str(default("/configurations/ozone-site/ozone.s3g.https-port", "9879")).strip() or "9879"
   ozone_s3g_http_port = str(default("/configurations/ozone-site/ozone.s3g.http-port", "9878")).strip() or "9878"
 
+  # the S3 Gateway serves HTTPS only when Ozone's HTTP policy asks for it (HTTP_ONLY by default); its
+  # https-address is set either way
+  ozone_http_policy = str(default("/configurations/ozone-site/ozone.http.policy", "HTTP_ONLY")).strip().upper()
   endpoint_candidate = ""
-  if ozone_s3g_https_address:
+  if ozone_s3g_https_address and ozone_http_policy in ("HTTPS_ONLY", "HTTP_AND_HTTPS"):
     endpoint_candidate = "https://{0}:{1}".format(ozone_s3g_https_address.split(":", 1)[0], ozone_s3g_https_port)
   elif ozone_s3g_http_address:
     endpoint_candidate = "http://{0}:{1}".format(ozone_s3g_http_address.split(":", 1)[0], ozone_s3g_http_port)
