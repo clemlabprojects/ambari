@@ -268,7 +268,8 @@ if has_hbase_masters:
 repo_info = config['hostLevelParams']['repoInfo']
 service_repo_info = default("/hostLevelParams/service_repo_info",None)
 
-user_to_groups_dict = {}
+# users without a configured user-groups mapping (e.g. kudu_user) get the cluster group, like their gid
+user_to_groups_dict = collections.defaultdict(lambda: [user_group])
 
 #Append new user-group mapping to the dict
 try:

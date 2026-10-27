@@ -44,8 +44,8 @@ def setup_users():
       )
 
     for user in params.user_list:
-      if params.has_hue:
-        Logger.info('Skipping setting uid for hue user as unicorn need specific uid/gid')
+      if params.has_hue and user == params.hue_user:
+        # the Hue (gunicorn) user keeps the uid/gid it was created with
         continue
       User(user,
            uid = get_uid(user) if params.override_uid == "true" else None,
