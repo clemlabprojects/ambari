@@ -446,6 +446,12 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
       else:
         ozone_user = 'ozone'
       ## Ranger Logic
+      # the plugin follows Ranger's switch for Ozone (ranger-env), as for the other services
+      ranger_env = self.getServicesSiteProperties(services, 'ranger-env') or {}
+      if 'ranger-env' in configurations:
+        ranger_env = dict(ranger_env, **configurations['ranger-env']['properties'])
+      if "RANGER" in servicesList and 'ranger-ozone-plugin-enabled' in ranger_env:
+        putOzoneRangerPluginPropertes('ranger-ozone-plugin-enabled', ranger_env['ranger-ozone-plugin-enabled'])
       ranger_ozone_plugin_enabled = ''
       if 'ranger-ozone-plugin-properties' in configurations and 'ranger-ozone-plugin-enabled' in configurations['ranger-ozone-plugin-properties']['properties']:
         ranger_ozone_plugin_enabled = configurations['ranger-ozone-plugin-properties']['properties']['ranger-ozone-plugin-enabled']
