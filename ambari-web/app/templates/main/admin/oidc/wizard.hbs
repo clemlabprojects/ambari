@@ -38,6 +38,18 @@
             <p class="step-name">{{t admin.oidc.wizard.step3.header}}</p>
           </a>
         </li>
+        <li {{bindAttr class="isStep4:active view.isStep4Disabled:disabled view.isStep4Completed:completed"}}>
+          <a href="javascript:void(null);" {{action gotoStep4 target="controller"}}>
+            <i class="step-marker"><span class="step-index">4</span></i>
+            <p class="step-name">{{t admin.oidc.wizard.step4.header}}</p>
+          </a>
+        </li>
+        <li {{bindAttr class="isStep5:active view.isStep5Disabled:disabled view.isStep5Completed:completed"}}>
+          <a href="javascript:void(null);" {{action gotoStep5 target="controller"}}>
+            <i class="step-marker"><span class="step-index">5</span></i>
+            <p class="step-name">{{t admin.oidc.wizard.step5.header}}</p>
+          </a>
+        </li>
       </ul>
     </div>
     {{outlet}}

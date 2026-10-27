@@ -20,12 +20,12 @@
   <h4 class="step-title">{{t admin.oidc.wizard.step1.header}}</h4>
   <p class="step-description">{{t admin.oidc.wizard.step1.description}}</p>
 
-  <div class="alert {{#if controller.isOidcServiceInstalled}}alert-success{{else}}alert-warning{{/if}}">
+  <div {{bindAttr class=":alert controller.isOidcServiceInstalled:alert-success:alert-info"}}>
     {{#if controller.isOidcServiceInstalled}}
       <span class="glyphicon glyphicon-ok"></span>
       {{t admin.oidc.wizard.step1.oidcServiceInstalled}}
     {{else}}
-      <span class="glyphicon glyphicon-warning-sign"></span>
+      <span class="glyphicon glyphicon-info-sign"></span>
       {{t admin.oidc.wizard.step1.oidcServiceNotInstalled}}
     {{/if}}
   </div>
@@ -37,7 +37,7 @@
     <li>{{t admin.oidc.wizard.step1.point3}}</li>
   </ul>
 
-  <div class="wizard-footer">
+  <div class="wizard-footer clearfix">
     <button class="btn btn-success pull-right" {{action next target="controller"}}>
       {{t common.next}} &rarr;
     </button>

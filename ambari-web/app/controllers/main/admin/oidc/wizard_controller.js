@@ -22,7 +22,7 @@ App.OidcEnableWizardController = App.WizardController.extend({
 
   name: 'oidcEnableWizardController',
 
-  totalSteps: 3,
+  totalSteps: 5,
 
   /**
    * @type {string}
@@ -39,8 +39,7 @@ App.OidcEnableWizardController = App.WizardController.extend({
     adminPassword: '',
     realm: '',
     issuerUrl: '',
-    verifyTls: true,
-    restartServices: false
+    verifyTls: true
   }),
 
   /**
@@ -67,7 +66,27 @@ App.OidcEnableWizardController = App.WizardController.extend({
   loadMap: {
     '1': [],
     '2': [],
-    '3': []
+    '3': [],
+    '4': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.loadTasksStatuses();
+          this.loadTasksRequestIds();
+          this.loadRequestIds();
+        }
+      }
+    ],
+    '5': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.loadTasksStatuses();
+          this.loadTasksRequestIds();
+          this.loadRequestIds();
+        }
+      }
+    ]
   },
 
   finish: function () {

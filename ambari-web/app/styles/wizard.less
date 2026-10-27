@@ -1315,3 +1315,22 @@
     font-size: 10px !important;
   }
 }
+
+// Enable OIDC wizard: footer inside the content column, keep the same gray margin below it as on its sides
+.wizard .wizard-body .wizard-content > .wizard-footer.clearfix {
+  margin-bottom: 15px;
+}
+
+// Wizard inputs: placeholders lighter than typed values, so examples do not read as filled-in fields
+.wizard .form-control::placeholder {
+  color: #aab0b8;
+  font-style: italic;
+}
+
+// Enable OIDC wizard step 3: align the restart checkbox with its label
+.wizard .wizard-body .wizard-content .alert .checkbox-inline input[type="checkbox"] + label::before {
+  top: 2px !important;
+}
+.wizard .wizard-body .wizard-content .alert .checkbox-inline input[type="checkbox"]:checked + label::after {
+  top: -2px !important;
+}

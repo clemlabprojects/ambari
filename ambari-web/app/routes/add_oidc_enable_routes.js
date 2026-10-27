@@ -125,6 +125,57 @@ module.exports = App.WizardRoute.extend({
 
     backTransition: function (router) {
       router.transitionTo('step2');
+    },
+
+    nextTransition: function (router) {
+      router.transitionTo('step4');
+    }
+  }),
+
+  step4: App.StepRoute.extend({
+    route: '/step4',
+
+    connectOutlets: function (router) {
+      var controller = router.get('oidcEnableWizardController');
+      controller.dataLoading().done(function () {
+        controller.setCurrentStep('4');
+        controller.setLowerStepsDisable(4);
+        controller.loadAllPriorSteps().done(function () {
+          controller.connectOutlet('oidcEnableWizardStep4', controller.get('content'));
+        });
+      });
+    },
+
+    unroutePath: function () {
+      return false;
+    },
+
+    nextTransition: function (router) {
+      router.transitionTo('step5');
+    }
+  }),
+
+  step5: App.StepRoute.extend({
+    route: '/step5',
+
+    connectOutlets: function (router) {
+      var controller = router.get('oidcEnableWizardController');
+      controller.dataLoading().done(function () {
+        controller.setCurrentStep('5');
+        controller.setLowerStepsDisable(5);
+        controller.loadAllPriorSteps().done(function () {
+          controller.connectOutlet('oidcEnableWizardStep5', controller.get('content'));
+        });
+      });
+    },
+
+    unroutePath: function () {
+      return false;
+    },
+
+    nextTransition: function (router) {
+      var controller = router.get('oidcEnableWizardController');
+      controller.resetOnClose(controller, 'main.admin.adminOidc.index');
     }
   })
 });

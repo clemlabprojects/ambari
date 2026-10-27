@@ -25,7 +25,7 @@
       <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.adminUrl}} <span class="text-danger">*</span></label>
       <div class="col-sm-7">
         {{view Em.TextField valueBinding="controller.adminUrl" class="form-control"
-          placeholder="https://keycloak.example.com"}}
+          placeholder="e.g. https://keycloak.example.com"}}
       </div>
     </div>
     <div class="form-group">
@@ -56,7 +56,7 @@
       <label class="col-sm-4 control-label">{{t admin.oidc.wizard.step2.issuerUrl}}</label>
       <div class="col-sm-7">
         {{view Em.TextField valueBinding="controller.issuerUrl" class="form-control"
-          placeholder="https://keycloak.example.com/realms/myrealm"}}
+          placeholderBinding="controller.issuerUrlPlaceholder"}}
       </div>
     </div>
     <div class="form-group">
@@ -82,31 +82,30 @@
         {{view App.CheckboxView checkedBinding="controller.verifyTls"}}
       </div>
     </div>
+    <div class="form-group" style="margin-top: 12px;">
+      <div class="col-sm-offset-4 col-sm-7">
+        <button class="btn btn-default" {{action testConnection target="controller"}}
+          {{bindAttr disabled="controller.isTesting"}}>
+          {{#if controller.isTesting}}
+            <span class="spinner spinner-sm"></span>
+          {{/if}}
+          {{t admin.oidc.wizard.step2.testConnectionBtn}}
+        </button>
+        {{#if controller.isTestSuccess}}
+          <span class="text-success" style="margin-left: 8px;">
+            <span class="glyphicon glyphicon-ok"></span> {{controller.testMessage}}
+          </span>
+        {{/if}}
+        {{#if controller.isTestError}}
+          <span class="text-danger" style="margin-left: 8px;">
+            <span class="glyphicon glyphicon-remove"></span> {{controller.testMessage}}
+          </span>
+        {{/if}}
+      </div>
+    </div>
   </form>
 
-  <div class="form-group" style="margin-top: 12px;">
-    <div class="col-sm-offset-4 col-sm-7">
-      <button class="btn btn-default" {{action testConnection target="controller"}}
-        {{bindAttr disabled="controller.isTesting"}}>
-        {{#if controller.isTesting}}
-          <span class="spinner spinner-sm"></span>
-        {{/if}}
-        {{t admin.oidc.wizard.step2.testConnectionBtn}}
-      </button>
-      {{#if controller.isTestSuccess}}
-        <span class="text-success" style="margin-left: 8px;">
-          <span class="glyphicon glyphicon-ok"></span> {{controller.testMessage}}
-        </span>
-      {{/if}}
-      {{#if controller.isTestError}}
-        <span class="text-danger" style="margin-left: 8px;">
-          <span class="glyphicon glyphicon-remove"></span> {{controller.testMessage}}
-        </span>
-      {{/if}}
-    </div>
-  </div>
-
-  <div class="wizard-footer">
+  <div class="wizard-footer clearfix">
     <button class="btn btn-default pull-left" {{action back target="controller"}}>
       &larr; {{t common.back}}
     </button>

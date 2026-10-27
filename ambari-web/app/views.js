@@ -249,6 +249,8 @@ require('views/main/admin/oidc/wizard_view');
 require('views/main/admin/oidc/step1_view');
 require('views/main/admin/oidc/step2_view');
 require('views/main/admin/oidc/step3_view');
+require('views/main/admin/oidc/step4_view');
+require('views/main/admin/oidc/step5_view');
 require('views/main/admin/oidc/disable_view');
 require('views/main/admin/kerberos/disable_view');
 require('views/main/admin/kerberos/wizard_view');

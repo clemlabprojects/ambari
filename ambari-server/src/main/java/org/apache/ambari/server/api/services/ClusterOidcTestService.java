@@ -139,7 +139,8 @@ public class ClusterOidcTestService {
   @POST
   @ApiIgnore
   @Produces("application/json")
-  @Consumes("application/json")
+  // ContentTypeOverrideFilter turns application/json into text/plain for every API request
+  @Consumes({MediaType.TEXT_PLAIN, MediaType.APPLICATION_JSON})
   public Response testOidcConnection(@Context HttpHeaders headers, String body) {
     Cluster cluster;
     try {

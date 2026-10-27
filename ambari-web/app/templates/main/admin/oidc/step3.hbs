@@ -36,7 +36,7 @@
       </tr>
       <tr>
         <td><strong>{{t admin.oidc.wizard.step2.issuerUrl}}</strong></td>
-        <td>{{controller.wizardController.content.issuerUrl}}</td>
+        <td>{{controller.effectiveIssuerUrl}}</td>
       </tr>
       <tr>
         <td><strong>{{t admin.oidc.wizard.step2.adminUsername}}</strong></td>
@@ -50,13 +50,10 @@
   </table>
 
   <div class="alert alert-info" style="margin-top: 16px;">
-    <p>
-      {{view App.CheckboxView classNames="checkbox-inline" checkedBinding="controller.restartServices"
-        labelTranslate="admin.oidc.wizard.step3.restartAfter"}}
-    </p>
+    {{t admin.oidc.wizard.step3.nextSteps}}
   </div>
 
-  <div class="wizard-footer">
+  <div class="wizard-footer clearfix">
     <button class="btn btn-default pull-left" {{action back target="controller"}}>
       &larr; {{t common.back}}
     </button>

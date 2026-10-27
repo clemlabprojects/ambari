@@ -441,6 +441,10 @@ var urls = {
     'real': '/clusters/{name}',
     'type': 'DELETE'
   },
+  'common.service.info': {
+    'real': '/clusters/{clusterName}/services/{serviceName}?fields=ServiceInfo/state',
+    'mock': ''
+  },
   'common.delete.service': {
     'real': '/clusters/{clusterName}/services/{serviceName}',
     'mock': '/data/services/ambari.json',
@@ -983,6 +987,8 @@ var urls = {
     type: 'POST',
     'format': function(data) {
       return {
+        // the server answers with an empty body, which jQuery 3 fails to parse as JSON
+        dataType: 'text',
         data: JSON.stringify({
           Credential: data.resource
         })
@@ -996,6 +1002,8 @@ var urls = {
     'type': 'PUT',
     'format': function(data) {
       return {
+        // the server answers with an empty body, which jQuery 3 fails to parse as JSON
+        dataType: 'text',
         data: JSON.stringify({
           Credential: data.resource
         })
@@ -1552,6 +1560,8 @@ var urls = {
     'type': 'PUT',
     'format': function (data) {
       return {
+        // the server answers with an empty body, which jQuery 3 fails to parse as JSON
+        dataType: 'text',
         data: JSON.stringify({
           Clusters: {
             desired_config: {
@@ -1693,6 +1703,10 @@ var urls = {
   'admin.kerberize.cluster_descriptor.stack': {
     'real': '/clusters/{clusterName}/kerberos_descriptors/STACK',
     'mock': '/data/wizard/kerberos/stack_descriptors.json'
+  },
+  'admin.oidc.staleHostComponents': {
+    'real': '/clusters/{clusterName}/host_components?HostRoles/stale_configs=true&HostRoles/service_name.in({services})&fields=HostRoles/component_name&minimal_response=true',
+    'mock': ''
   },
   'admin.oidc.descriptor.composite': {
     'real': '/clusters/{clusterName}/oidc_descriptors/COMPOSITE',

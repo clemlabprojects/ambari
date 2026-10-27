@@ -17,6 +17,19 @@
  */
 var App = require('app');
 
+/**
+ * Read/write alias: Em.computed.alias of ember_computed.js is read-only, so values set by a bound field
+ * would never reach the wizard content.
+ */
+function contentProperty(path) {
+  return function (key, value) {
+    if (arguments.length > 1) {
+      this.set(path, value);
+    }
+    return this.get(path);
+  }.property(path);
+}
+
 App.OidcEnableWizardStep2Controller = Em.Controller.extend({
 
   name: 'oidcEnableWizardStep2Controller',
@@ -28,15 +41,27 @@ App.OidcEnableWizardStep2Controller = Em.Controller.extend({
   wizardController: null,
 
   // Two-way bindings to wizard content
-  adminUrl: Em.computed.alias('wizardController.content.adminUrl'),
-  adminRealm: Em.computed.alias('wizardController.content.adminRealm'),
-  adminClientId: Em.computed.alias('wizardController.content.adminClientId'),
-  adminClientSecret: Em.computed.alias('wizardController.content.adminClientSecret'),
-  adminUsername: Em.computed.alias('wizardController.content.adminUsername'),
-  adminPassword: Em.computed.alias('wizardController.content.adminPassword'),
-  realm: Em.computed.alias('wizardController.content.realm'),
-  issuerUrl: Em.computed.alias('wizardController.content.issuerUrl'),
-  verifyTls: Em.computed.alias('wizardController.content.verifyTls'),
+  adminUrl: contentProperty('wizardController.content.adminUrl'),
+  adminRealm: contentProperty('wizardController.content.adminRealm'),
+  adminClientId: contentProperty('wizardController.content.adminClientId'),
+  adminClientSecret: contentProperty('wizardController.content.adminClientSecret'),
+  adminUsername: contentProperty('wizardController.content.adminUsername'),
+  adminPassword: contentProperty('wizardController.content.adminPassword'),
+  realm: contentProperty('wizardController.content.realm'),
+  issuerUrl: contentProperty('wizardController.content.issuerUrl'),
+  verifyTls: contentProperty('wizardController.content.verifyTls'),
+
+  /**
+   * Issuer URL Ambari uses when the field is left blank: {admin URL}/realms/{target realm}
+   * @type {string}
+   */
+  issuerUrlPlaceholder: function () {
+    var adminUrl = (this.get('adminUrl') || '').trim().replace(/\/+$/, '');
+    var realm = (this.get('realm') || '').trim();
+    var defaultUrl = (adminUrl || Em.I18n.t('admin.oidc.wizard.step2.issuerUrl.placeholder.adminUrl')) + '/realms/' +
+      (realm || Em.I18n.t('admin.oidc.wizard.step2.issuerUrl.placeholder.realm'));
+    return Em.I18n.t('admin.oidc.wizard.step2.issuerUrl.placeholder').format(defaultUrl);
+  }.property('adminUrl', 'realm'),
 
   /**
    * Whether the admin credential will survive Ambari restarts; drives the hint shown under it.
@@ -115,5 +140,14 @@ App.OidcEnableWizardStep2Controller = Em.Controller.extend({
     if (!this.get('isSubmitDisabled')) {
       App.router.send('next');
     }
+  },
+
+  // Back/Next buttons of the template
+  next: function () {
+    this.submit();
+  },
+
+  back: function () {
+    App.router.send('back');
   }
 });
