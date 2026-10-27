@@ -687,6 +687,30 @@ if has_ranger_admin:
       ozone_ranger_plugin_config['tag.download.auth.users'] = ozone_user
       ozone_ranger_plugin_config['policy.grantrevoke.auth.users'] = ozone_user
 
+    # Services Ambari connects to Ozone S3 use the S3 volume as their own user: the Hive Metastore
+    # (tables stored on S3) and Polaris (its Ozone catalog). Ranger creates these policies once, with
+    # the repository.
+    ozone_s3_volume = default("/configurations/ozone-site/ozone.s3g.volume.name", "s3v")
+    ozone_s3_service_users = []
+    if default("/clusterHostInfo/hive_metastore_hosts", []):
+      ozone_s3_service_users.append(default("/configurations/hive-env/hive_user", "hive"))
+    if default("/clusterHostInfo/polaris_server_hosts", []):
+      ozone_s3_service_users.append(default("/configurations/polaris-env/polaris_user", "polaris"))
+    if ozone_s3_service_users:
+      ozone_ranger_plugin_config.update({
+        'setup.additional.default.policies': 'true',
+        'default-policy.1.name': 'S3 volume - service users',
+        'default-policy.1.resource.volume': ozone_s3_volume,
+        'default-policy.1.policyItem.1.users': ','.join(ozone_s3_service_users),
+        'default-policy.1.policyItem.1.accessTypes': 'read,list,create',
+        'default-policy.2.name': 'S3 buckets and keys - service users',
+        'default-policy.2.resource.volume': ozone_s3_volume,
+        'default-policy.2.resource.bucket': '*',
+        'default-policy.2.resource.key': '*',
+        'default-policy.2.policyItem.1.users': ','.join(ozone_s3_service_users),
+        'default-policy.2.policyItem.1.accessTypes': 'read,write,create,list,delete',
+      })
+
     # hbase_ranger_plugin_config['setup.additional.default.policies'] = "true"
     # hbase_ranger_plugin_config['default-policy.1.name'] = "Service Check User Policy for Hbase"
     # hbase_ranger_plugin_config['default-policy.1.resource.table'] = "ambarismoketest"
