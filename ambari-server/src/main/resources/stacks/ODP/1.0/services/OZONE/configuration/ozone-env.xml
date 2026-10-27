@@ -55,6 +55,18 @@
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
+    <name>ozone_jna_tmpdir</name>
+    <display-name>Native Library Extraction Directory</display-name>
+    <value>/var/lib/hadoop-ozone/jna</value>
+    <description>Directory where the Ozone services extract native libraries (JNA, used by the Ranger plugin), passed as
+      -Djna.tmpdir. Must be on a filesystem that allows execution (not mounted noexec); Ambari creates it for the Ozone
+      user.</description>
+    <value-attributes>
+      <type>directory</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>ozone_principal_name</name>
     <description>Ozone principal name</description>
     <property-type>KERBEROS_PRINCIPAL</property-type>
@@ -957,6 +969,9 @@
             #export OZONE_HEAPSIZE_MAX={{ozone_heapsize}}
             #export OZONE_HEAPSIZE_MIN={{ozone_heapsize}}
             export OZONE_OPTS="${OZONE_OPTS} -Djava.net.preferIPv4Stack=true"
+            # JNA (Ranger plugin) extracts its native libraries there instead of under the user's home, which
+            # can be on a noexec filesystem (/run on Ubuntu): the Ozone Manager then failed to start
+            export OZONE_OPTS="${OZONE_OPTS} -Djna.tmpdir={{ozone_jna_tmpdir}}"
             # ODP: normalized log4j file name (service-component-user-host) via ${odp.log.file} in ozone-log4j-*.
             # Set here (sourced inside the daemon login shell) - the Ambari Execute environment is stripped by su.
             # Global fallback; the per-role OZONE_*_OPTS below win (applied last by the launcher).

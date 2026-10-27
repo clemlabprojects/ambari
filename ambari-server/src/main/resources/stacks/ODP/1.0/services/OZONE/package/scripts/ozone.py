@@ -76,6 +76,12 @@ def ozone(name=None):
       create_parents = True,
       mode=0o777
   )
+  Directory(params.ozone_jna_tmpdir,
+      owner=params.ozone_user,
+      group=params.user_group,
+      create_parents = True,
+      mode=0o755
+  )
   
   if name == "ozone-manager":
     if params.om_ssl_enabled:

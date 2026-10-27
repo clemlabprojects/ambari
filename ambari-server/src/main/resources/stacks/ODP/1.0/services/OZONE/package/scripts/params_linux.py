@@ -168,6 +168,7 @@ pid_dir = config['configurations']['ozone-env']['ozone_pid_dir_prefix']
 log_dir = config['configurations']['ozone-env']['ozone_log_dir_prefix']
 ozone_http_dir = config['configurations']['ozone-site']['ozone.http.basedir']
 java_io_tmpdir = default("/configurations/ozone-env/ozone_java_io_tmpdir", "/tmp")
+ozone_jna_tmpdir = default("/configurations/ozone-env/ozone_jna_tmpdir", "/var/lib/hadoop-ozone/jna")
 dfs_data_dirs = config['configurations']['ozone-site']['hdds.datanode.dir']
 data_dir_mount_file = "/var/lib/ambari-agent/data/datanode/hdds_data_dir_mount.hist"
 ozone_dn_ratis_dir = config['configurations']['ozone-site']['dfs.container.ratis.datanode.storage.dir']
