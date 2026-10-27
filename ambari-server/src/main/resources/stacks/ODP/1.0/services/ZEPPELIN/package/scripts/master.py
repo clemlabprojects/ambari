@@ -139,7 +139,13 @@ class Master(Script):
               group=params.zeppelin_group
               )
     # write out zeppelin-env.sh
-    env_content = InlineTemplate(params.zeppelin_env_content)
+    zeppelin_env_template = params.zeppelin_env_content
+    if params.security_enabled:
+      # Zeppelin 0.12 reads the server keytab of its HDFS notebook/config storage from the environment only,
+      # not from zeppelin-site.xml
+      zeppelin_env_template += ('\nexport ZEPPELIN_SERVER_KERBEROS_KEYTAB="{{zeppelin_kerberos_keytab}}"'
+                                '\nexport ZEPPELIN_SERVER_KERBEROS_PRINCIPAL="{{zeppelin_kerberos_principal}}"\n')
+    env_content = InlineTemplate(zeppelin_env_template)
     File(format("{params.conf_dir}/zeppelin-env.sh"), content=env_content,
          owner=params.zeppelin_user, group=params.zeppelin_group)
 
