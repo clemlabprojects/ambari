@@ -21,6 +21,7 @@ import org.apache.ambari.view.DataStore;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.service.HelmService;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
@@ -118,6 +119,7 @@ class FluxGitOpsBackendImageRegistryTest {
             return null;
         }).when(ds).store(any(K8sReleaseEntity.class));
         when(ds.find(eq(K8sReleaseEntity.class), anyString())).thenAnswer(inv -> releases.get((String) inv.getArgument(1)));
+        when(ds.findAll(eq(K8sReleaseEntity.class), isNull())).thenAnswer(inv -> new java.util.ArrayList<>(releases.values()));
 
         k8s = mock(KubernetesService.class);
         when(k8s.readOpaqueSecretKeyAsString(anyString(), anyString(), anyString())).thenAnswer(inv ->
@@ -133,7 +135,12 @@ class FluxGitOpsBackendImageRegistryTest {
     }
 
     private FluxGitOpsBackend backend() throws Exception {
-        FluxGitOpsBackend backend = new FluxGitOpsBackend(tmp.resolve("flux"), k8s, ctx);
+        return backend(ClusterRef.DEFAULT);
+    }
+
+    /** The backend of the releases of a Kubernetes cluster. */
+    private FluxGitOpsBackend backend(ClusterRef cluster) throws Exception {
+        FluxGitOpsBackend backend = new FluxGitOpsBackend(tmp.resolve("flux"), k8s, ctx, cluster);
         backend.setPullRequests(new FakePullRequests());
         Field f = FluxGitOpsBackend.class.getDeclaredField("helmService");
         f.setAccessible(true);
@@ -213,6 +220,20 @@ class FluxGitOpsBackendImageRegistryTest {
         assertContains(keda, "    global:\n      image:\n        registry: \"" + MIRROR + "\"\n");
         assertFalse(keda.contains("imagePullSecrets"), keda);
         assertEquals("registry-credentials", request.getSecretName(), "the request keeps its Secret name for later deploys");
+    }
+
+    @Test
+    void theSameReleaseOnTwoClustersGoesToTheFolderOfEachClusterWhenNoPrefixIsGiven() throws Exception {
+        backend().apply(request("TRINO"), null);
+        backend(ClusterRef.of("k8s21")).apply(request("TRINO"), null);
+
+        // The default cluster's folder, as before clusters were named, and one for k8s21, as Flux bootstrap lays them out.
+        String onDefault = published(RELEASE_DIR + "/helmrelease.yaml");
+        String onK8s21 = published("clusters/k8s21/" + NS + "/" + RELEASE + "/helmrelease.yaml");
+        assertNotNull(onDefault);
+        assertEquals(onDefault, onK8s21);
+        assertEquals("clusters/k8s21/" + NS + "/" + RELEASE,
+                releases.get(K8sReleaseEntity.idOf(ClusterRef.of("k8s21"), NS, RELEASE)).getGitPath());
     }
 
     @Test

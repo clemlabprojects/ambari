@@ -2632,7 +2632,16 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (storedPath != null && !storedPath.isBlank()) {
             return releaseDirectory(storedPath, namespace, release);
         }
-        return targetPath("clusters/default", namespace, release);
+        return targetPath(defaultPathPrefix(cluster), namespace, release);
+    }
+
+    /**
+     * The path prefix of a release whose deploy gives none: {@code clusters/<cluster id>}, one folder per cluster as
+     * Flux bootstrap lays them out, so the same release on two clusters never shares a folder. The default cluster's
+     * is {@code clusters/default}, as before clusters were named.
+     */
+    public static String defaultPathPrefix(ClusterRef cluster) {
+        return "clusters/" + cluster.id();
     }
 
     /**
@@ -4453,7 +4462,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         return "The Git directory of release " + namespace + "/" + release + ", '" + releaseDir + "', " + relation
                 + " of release " + DeployRequestValidator.shown(otherRelease) + ", '" + otherDir + "', so KDPS"
                 + " writes nothing there: each release needs a directory of its own, neither inside nor above"
-                + " another release's. Choose a path prefix that gives it one, such as the default clusters/default.";
+                + " another release's. Choose a path prefix that gives it one, such as clusters/<cluster id>, the default.";
     }
 
     /**

@@ -28,6 +28,7 @@ import { namespaceRules, releaseNameRules } from '../../utils/nameRules';
 import GitSshFields from '../common/GitSshFields';
 import { savedRepoGitFields } from '../../utils/gitSsh';
 import { listGitOpsProfiles, type GitOpsProfile, type KubernetesCluster } from '../../api/client';
+import { useTargetCluster } from '../../context/TargetClusterContext';
 import { DEPLOYMENT_MODE_LABELS, DIRECT_HELM, GITOPS_FLUX, GITOPS_LAYOUT, savedGitRepos, writesToGit } from '../../utils/deploymentModes';
 
 interface InstallStepProps {
@@ -62,6 +63,8 @@ const InstallStep: React.FC<InstallStepProps> = ({
   kubernetesClusters = [],
 }) => {
   const [form] = Form.useForm();
+  // The cluster chosen above: a Flux release left without a path prefix goes to its folder.
+  const targetCluster = useTargetCluster();
 
   /**
    * Merge source object into destination deeply, preserving nested objects and
@@ -244,8 +247,9 @@ const InstallStep: React.FC<InstallStepProps> = ({
                   <Input placeholder={DEFAULT_BASE_BRANCH} />
                 </Form.Item>
                 {deploymentMode === GITOPS_FLUX && (<>
-                  <Form.Item name={['git','pathPrefix']} label="Path prefix">
-                    <Input placeholder="clusters/default" />
+                  <Form.Item name={['git','pathPrefix']} label="Path prefix"
+                    tooltip="Left blank: clusters/<cluster id>, one folder per Kubernetes cluster, as Flux bootstrap lays them out.">
+                    <Input placeholder={`clusters/${targetCluster || 'default'}`} />
                   </Form.Item>
                   <Form.Item name={['git','commitMode']} label="Commit mode" initialValue="DIRECT_COMMIT">
                     <Select>

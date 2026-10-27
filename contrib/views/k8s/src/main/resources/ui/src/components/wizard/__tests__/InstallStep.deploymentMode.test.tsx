@@ -18,6 +18,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import InstallStep from '../InstallStep';
+import { TargetClusterContext } from '../../../context/TargetClusterContext';
 
 jest.mock('../../../api/client', () => ({
   getClusterCapabilities: jest.fn(() => Promise.resolve({ platform: 'kubernetes' })),
@@ -68,6 +69,20 @@ describe('InstallStep deployment mode', () => {
     renderGeneral({ upgrade: true, deployedMode: 'DIRECT_HELM', deploymentMode: 'DIRECT_HELM' });
     expect(screen.getByRole('radio', { name: 'GitOps with Flux' })).toBeEnabled();
     expect(screen.getByRole('radio', { name: 'GitOps with a repository layout' })).toBeEnabled();
+  });
+
+  it('a Flux release left without a path prefix goes to the folder of its cluster', () => {
+    const { unmount } = renderGeneral({ deploymentMode: 'FLUX_GITOPS' });
+    expect(screen.getByPlaceholderText('clusters/default')).toBeInTheDocument();
+    unmount();
+    render(
+      <TargetClusterContext.Provider value="k8s21">
+        <InstallStep definition={{}} mode="general" onChange={() => undefined}
+          data={{ releaseName: 'trino', namespace: 'trino', deploymentMode: 'FLUX_GITOPS',
+            git: { repoUrl: 'https://git.example.org/platform/gitops.git' } }} />
+      </TargetClusterContext.Provider>,
+    );
+    expect(screen.getByPlaceholderText('clusters/k8s21')).toBeInTheDocument();
   });
 
   it('a repository layout asks for its profile and the repository, not the Flux settings', async () => {
