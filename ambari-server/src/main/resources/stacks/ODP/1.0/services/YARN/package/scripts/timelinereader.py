@@ -27,8 +27,10 @@ from resource_management.libraries.functions.stack_features import check_stack_f
 from resource_management.libraries.functions import check_process_status
 from resource_management.libraries.functions.format import format
 from resource_management.core.logger import Logger
+from resource_management.core import shell
+from resource_management.core.exceptions import Fail
 
-from yarn import yarn
+from yarn import yarn, setup_system_services
 from service import service
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
@@ -71,6 +73,34 @@ class ApplicationTimelineReader(Script):
     yarn(name='apptimelinereader')
     if not params.use_external_hbase and not params.is_hbase_system_service_launch:
        configure_hbase(env)
+
+  def reset_ats_hbase(self, env):
+    """
+    Destroys the ats-hbase YARN service so that the ResourceManager launches it again, from the yarnfile of the
+    current security mode, when it next becomes active. YARN launches the system service only when it does not
+    exist, so a service started before Kerberos was enabled (or disabled) keeps its old definition until it is
+    reset. HBase data in hbase.rootdir is kept.
+    """
+    import params
+    env.set_params(params)
+    if params.use_external_hbase or not params.is_hbase_system_service_launch:
+      raise Fail("ats-hbase is not run as a YARN system service on this cluster (external or embedded HBase), "
+                 "nothing to reset")
+
+    # rewrite the yarnfile the ResourceManager launches from, for the current security mode
+    setup_system_services(params.hadoop_conf_dir)
+    params.HdfsResource(None, action="execute")
+
+    yarn_cmd = format("{stack_root}/current/hadoop-yarn-client/bin/yarn")
+    kinit = params.yarn_hbase_kinit_cmd if params.security_enabled else ""
+    Logger.info("Destroying the ats-hbase YARN service")
+    code, out = shell.call(format("{kinit} {yarn_cmd} app -destroy ats-hbase"), user=params.yarn_hbase_user,
+                           logoutput=True)
+    if code != 0:
+      raise Fail("ats-hbase could not be destroyed (exit code {0}), see the output above".format(code))
+    Logger.info("ats-hbase destroyed. Restart the ResourceManager(s) from Ambari: the active ResourceManager "
+                "launches ats-hbase again from the current yarnfile.")
+
 
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
 class ApplicationTimelineReaderWindows(ApplicationTimelineReader):

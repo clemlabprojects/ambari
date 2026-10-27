@@ -43,6 +43,18 @@
             <scriptType>PYTHON</scriptType>
             <timeout>1200</timeout>
           </commandScript>
+          <customCommands>
+            <!-- Destroy the ats-hbase YARN service, e.g. after Kerberos is enabled or disabled: the ResourceManager
+                 launches the system service again from the current yarnfile when it becomes active -->
+            <customCommand>
+              <name>RESET_ATS_HBASE</name>
+              <commandScript>
+                <script>scripts/timelinereader.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>1200</timeout>
+              </commandScript>
+            </customCommand>
+          </customCommands>
           <!-- ATSv2 backend i.e Hbase requires HDFS as dependency -->
           <dependencies>
             <dependency>

@@ -42,6 +42,9 @@ OK_MESSAGE = "The HBase application reported a '{0}' state in {1:.3f}s"
 MESSAGE_WITH_STATE_AND_INSTANCES = "The application reported a '{0}' state in {1:.3f}s. [Live: {2}, Desired: {3}]"
 CRITICAL_MESSAGE_WITH_STATE = "The HBase application reported a '{0}' state. Check took {1:.3f}s"
 CRITICAL_MESSAGE = "ats-hbase service information could not be retrieved"
+RESET_HINT = ("If Kerberos was enabled or disabled after ATSv2 was set up, the ats-hbase YARN service still runs "
+                "with its previous definition: run YARN > Actions > Run Reset Ats Hbase, then restart the "
+                "ResourceManager(s).")
 
 
 SECURITY_ENABLED_KEY = '{{cluster-env/security_enabled}}'
@@ -203,8 +206,8 @@ def execute(configurations={}, parameters={}, host_name=None):
                 total_time = time.time() - start_time
                 alert_label = CRITICAL_MESSAGE_WITH_STATE.format(retrieved_ats_hbase_app_state, total_time)
     except:
-        alert_label = traceback.format_exc()
-        traceback.format_exc()
+        error = traceback.format_exc().strip().splitlines()[-1]
+        alert_label = "{0} ({1}). {2}".format(CRITICAL_MESSAGE, error, RESET_HINT)
         result_code = CRITICAL_RESULT_CODE
     return (result_code, [alert_label])
 
