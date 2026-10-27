@@ -180,7 +180,7 @@
             {
               "name": "ozone_datanode_ozone",
               "principal": {
-                "value": "dn/_HOST@${realm}",
+                "value": "hdds/_HOST@${realm}",
                 "type" : "service",
                 "configuration": "ozone-site/dfs.datanode.kerberos.principal",
                 "local_username": "${ozone-env/ozone_user}"

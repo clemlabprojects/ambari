@@ -21,9 +21,17 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.orm.DBAccessor;
+import org.apache.ambari.server.orm.dao.ArtifactDAO;
+import org.apache.ambari.server.orm.entities.ArtifactEntity;
+import org.apache.ambari.server.state.kerberos.KerberosComponentDescriptor;
+import org.apache.ambari.server.state.kerberos.KerberosDescriptor;
+import org.apache.ambari.server.state.kerberos.KerberosDescriptorFactory;
+import org.apache.ambari.server.state.kerberos.KerberosIdentityDescriptor;
+import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,6 +64,12 @@ public class UpgradeCatalog282 extends AbstractUpgradeCatalog {
   static final String CLUSTERS_TABLE = "clusters";
   static final String CLUSTERS_CLUSTER_ID_COLUMN = "cluster_id";
 
+  static final String OZONE_SERVICE = "OZONE";
+  static final String OZONE_DATANODE_COMPONENT = "OZONE_DATANODE";
+  static final String OZONE_DATANODE_IDENTITY = "ozone_datanode_ozone";
+  static final String OZONE_DATANODE_PREVIOUS_PRINCIPAL = "dn/_HOST@${realm}";
+  static final String OZONE_DATANODE_PRINCIPAL = "hdds/_HOST@${realm}";
+
   @Inject
   public UpgradeCatalog282(Injector injector) {
     super(injector);
@@ -83,6 +97,44 @@ public class UpgradeCatalog282 extends AbstractUpgradeCatalog {
 
   @Override
   protected void executeDMLUpdates() throws AmbariException, SQLException {
+    updateKerberosDescriptorArtifacts();
+  }
+
+  /**
+   * Brings the stored Kerberos descriptor of each cluster in line with the 2.8.2 stack descriptor: the
+   * Ozone DataNode principal moved from dn/_HOST, shared with the HDFS DataNode (so auth_to_local mapped
+   * it to the HDFS user), to hdds/_HOST. A principal customized by the administrator is left alone. The
+   * new principal is used from the next keytab regeneration on, which needs a restart of Ozone.
+   */
+  @Override
+  protected void updateKerberosDescriptorArtifact(ArtifactDAO artifactDAO, ArtifactEntity artifactEntity)
+      throws AmbariException {
+    Map<String, Object> data = (artifactEntity == null) ? null : artifactEntity.getArtifactData();
+    if (data == null) {
+      return;
+    }
+    KerberosDescriptor kerberosDescriptor = new KerberosDescriptorFactory().createInstance(data);
+    if (kerberosDescriptor != null && updateOzoneDataNodePrincipal(kerberosDescriptor)) {
+      artifactEntity.setArtifactData(kerberosDescriptor.toMap());
+      artifactDAO.merge(artifactEntity);
+    }
+  }
+
+  /**
+   * @return whether the Ozone DataNode principal was changed
+   */
+  boolean updateOzoneDataNodePrincipal(KerberosDescriptor kerberosDescriptor) {
+    KerberosServiceDescriptor ozone = kerberosDescriptor.getService(OZONE_SERVICE);
+    KerberosComponentDescriptor dataNode = (ozone == null) ? null : ozone.getComponent(OZONE_DATANODE_COMPONENT);
+    KerberosIdentityDescriptor identity = (dataNode == null) ? null : dataNode.getIdentity(OZONE_DATANODE_IDENTITY);
+    if (identity == null || identity.getPrincipalDescriptor() == null
+        || !OZONE_DATANODE_PREVIOUS_PRINCIPAL.equals(identity.getPrincipalDescriptor().getValue())) {
+      return false;
+    }
+    LOG.info("Changing the Ozone DataNode principal from {} to {}", OZONE_DATANODE_PREVIOUS_PRINCIPAL,
+        OZONE_DATANODE_PRINCIPAL);
+    identity.getPrincipalDescriptor().setValue(OZONE_DATANODE_PRINCIPAL);
+    return true;
   }
 
   private void createOidcClientTable() throws SQLException {
