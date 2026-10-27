@@ -465,11 +465,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * What a deploy with a file profile writes: the chart's files, as its repository publishes them, for the profile's
      * chart path, and the files its rules render around it, with the operator's edits.
      *
-     * @param chartDir   the chart path in the repository, {@code null} when the profile copies no chart
-     * @param chartFiles the chart's files by path inside the chart
+     * @param chartDir     the chart path in the repository, {@code null} when the profile copies no chart
+     * @param chartFiles   the chart's files by path inside the chart
+     * @param releaseFiles the files of the release the deploy writes, which its record keeps for its uninstall
+     * @param moved        the files of the release an earlier deploy wrote that this one no longer writes (the
+     *                     profile's paths changed): removed by the same change
      */
     private record ProfilePlan(String repositoryUrl, Path chartDir, Map<String, byte[]> chartFiles,
-                               List<ProfileRenderer.RenderedFile> files) {}
+                               List<ProfileRenderer.RenderedFile> files, List<String> releaseFiles,
+                               List<String> moved) {}
 
     /**
      * Plans a deploy with a file profile against the branch checked out in {@code repoDir}. The deploy writes this plan;
@@ -478,7 +482,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private ProfilePlan planProfileFiles(GitOpsProfile profile, Path repoDir, String namespace, String release,
                                          String serviceKey, String repoName, String chart, String version,
                                          GitOpsSecretValues.Split split, String valuesSecretName,
-                                         Map<String, String> fileEdits) throws IOException {
+                                         Map<String, String> fileEdits, List<String> recordedFiles)
+            throws IOException {
         HelmRepoEntity repo = checkChartSource(repoName);
         String repositoryUrl;
         if (isOciRepository(repoName)) {
@@ -526,7 +531,23 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 }
             }
         }
-        return new ProfilePlan(repositoryUrl, chartDir, chartFiles, files);
+        // The files of the release this deploy writes, and those an earlier one wrote where the profile no longer puts
+        // them: the paths of the profile changed since.
+        List<String> releaseFiles = ProfileRenderer.instancePaths(profile, ctx);
+        List<String> moved = new ArrayList<>();
+        for (String recorded : recordedFiles == null ? List.<String>of() : recordedFiles) {
+            String path;
+            try {
+                path = ProfileRenderer.repositoryPath(recorded, "a recorded file");
+            } catch (IllegalArgumentException unusable) {
+                continue;
+            }
+            if (!releaseFiles.contains(path) && files.stream().noneMatch(f -> f.path().equals(path))
+                    && Files.isRegularFile(repoDir.resolve(path), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                moved.add(path);
+            }
+        }
+        return new ProfilePlan(repositoryUrl, chartDir, chartFiles, files, releaseFiles, moved);
     }
 
     /**
@@ -540,10 +561,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
     private java.util.function.Predicate<Path> writeProfileFiles(GitOpsProfile profile, GitClient gitClient, Path repoDir, List<Path> writtenFiles,
                                    String namespace, String release, String serviceKey, String repoName, String chart,
                                    String version, GitOpsSecretValues.Split split, String valuesSecretName,
-                                   Map<String, String> fileEdits)
+                                   Map<String, String> fileEdits, List<String> recordedFiles, List<String> releaseFiles)
             throws IOException {
         ProfilePlan plan = planProfileFiles(profile, repoDir, namespace, release, serviceKey, repoName, chart, version,
-                split, valuesSecretName, fileEdits);
+                split, valuesSecretName, fileEdits, recordedFiles);
         Path chartDir = plan.chartDir();
         java.util.function.Predicate<Path> chartFile = null;
         if (chartDir != null) {
@@ -572,6 +593,14 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             gitClient.writeFile(path, file.content());
             writtenFiles.add(path);
         }
+        if (!plan.moved().isEmpty()) {
+            Set<Path> moved = new java.util.LinkedHashSet<>();
+            plan.moved().forEach(p -> moved.add(Path.of(p)));
+            gitClient.write(new GitClient.Change(Map.of(), moved));
+            logFluxInfo(namespace, release, "apply", "Removed %s, which the profile %s no longer writes for the release",
+                    String.join(", ", plan.moved()), profile.name);
+        }
+        releaseFiles.addAll(plan.releaseFiles());
         logFluxInfo(namespace, release, "apply", "Wrote the release with GitOps profile %s%s", profile.name,
                 chartDir != null ? ", chart " + chart + " " + version + " in " + chartDir : "");
         return chartFile;
@@ -743,10 +772,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 checkProfileApartFromOtherClusters(profile, repoUrl);
             }
             ProfilePlan plan = planProfileFiles(profile, checkout, namespace, release, serviceKey, repoName, chart,
-                    version, split, valuesSecretName, git.getFileEdits());
+                    version, split, valuesSecretName, git.getFileEdits(),
+                    existingMeta != null ? existingMeta.getGitProfileFiles() : List.of());
             String chartPath = plan.chartDir() == null ? null : plan.chartDir().toString().replace('\\', '/');
             List<ProfilePreview.PreviewFile> files = ProfilePreview.files(profile, chartPath, plan.chartFiles(),
-                    plan.files(), checkout);
+                    plan.files(), checkout, plan.moved());
+            if (!plan.moved().isEmpty()) {
+                notes.add("The profile now writes the release elsewhere: the deploy removes " + String.join(", ",
+                        plan.moved()) + ", which an earlier deploy wrote.");
+            }
             return new ProfilePreview.Preview(profile.name, repoUrl == null ? null : GitClient.redact(repoUrl),
                     git.getBaseBranch(), chart, version, chartPath, files, notes);
         } finally {
@@ -1862,6 +1896,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         List<PendingDependency> pendingDeps = new ArrayList<>();
         // Every file this deploy writes, searched for passwords and secrets before the commit.
         List<Path> writtenFiles = new ArrayList<>();
+        // The files of the release a file profile writes, which its record keeps for its uninstall.
+        List<String> profileFiles = new ArrayList<>();
         if (filesProfile != null) {
             refuseDependenciesToInstall(filesProfile, request, context, planned);
         } else if (request.getDependencies() != null && !request.getDependencies().isEmpty()) {
@@ -2165,7 +2201,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         java.util.function.Predicate<Path> chartFile = null;
         if (filesProfile != null) {
             chartFile = writeProfileFiles(filesProfile, gitClient, repoDir, writtenFiles, namespace, release, serviceKey,
-                    repoName, chartInSource, version, split, valuesSecretName, git.getFileEdits());
+                    repoName, chartInSource, version, split, valuesSecretName, git.getFileEdits(),
+                    existingMeta != null ? existingMeta.getGitProfileFiles() : List.of(), profileFiles);
         } else {
             // The chart source of the release, and the Secrets Flux reads it with, written before the commit.
             ChartSource source = chartSource(repoName, release, namespace, targetDir.resolve(HELM_REPOSITORY_FILE),
@@ -2299,7 +2336,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
                                 baseToRecord, git.getCommitMode(), prUrl, prNumber, prState, specDigest);
                         releaseMetadataService.recordGitProfile(namespace, release,
-                                filesProfile != null ? filesProfile.name : null);
+                                filesProfile != null ? filesProfile.name : null, profileFiles);
                     } catch (Exception ex) {
                         LOG.warn("Failed to record the Git state of {}/{}: {}", namespace, release, ex.toString());
                     }
@@ -2395,7 +2432,8 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             // removal that waited for its merge.
             releaseMetadataService.recordGitChange(namespace, release, firstNonBlank(recordedBranch, branch),
                     baseToRecord, git.getCommitMode(), prUrl, prNumber, prState, specDigest);
-            releaseMetadataService.recordGitProfile(namespace, release, filesProfile != null ? filesProfile.name : null);
+            releaseMetadataService.recordGitProfile(namespace, release, filesProfile != null ? filesProfile.name : null,
+                    profileFiles);
             if (alias != null && recordedAlias != null && !alias.equalsIgnoreCase(recordedAlias)) {
                 forgetReplacedAlias(recordedAlias, namespace, release);
             }
@@ -3098,11 +3136,15 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     + "', which no longer exists, so KDPS cannot tell which files are its own and nothing was removed."
                     + " Save the profile again, then uninstall the release.");
         }
+        // The files the release's last deploy wrote, whatever the profile has become since; for a release recorded before
+        // KDPS kept them, those the profile renders for it now.
         List<Path> paths = new ArrayList<>();
-        for (String path : ProfileRenderer.instancePaths(profile, new ProfileRenderer.RenderContext(releaseName,
-                namespace, meta.getServiceKey(), meta.getChartRef(), meta.getVersion(), null, Map.of(), List.of(),
-                List.of(namespace), viewContext.getUsername(), java.time.Instant.now(), null, cluster.id()))) {
-            paths.add(Path.of(path));
+        List<String> recorded = meta.getGitProfileFiles();
+        for (String path : !recorded.isEmpty() ? recorded : ProfileRenderer.instancePaths(profile,
+                new ProfileRenderer.RenderContext(releaseName, namespace, meta.getServiceKey(), meta.getChartRef(),
+                        meta.getVersion(), null, Map.of(), List.of(), List.of(namespace), viewContext.getUsername(),
+                        java.time.Instant.now(), null, cluster.id()))) {
+            paths.add(Path.of(ProfileRenderer.repositoryPath(path, "a file of " + releaseName)));
         }
         String base = recordedBaseBranch(meta);
         GitSecrets secrets = recordedGitSecrets(meta);

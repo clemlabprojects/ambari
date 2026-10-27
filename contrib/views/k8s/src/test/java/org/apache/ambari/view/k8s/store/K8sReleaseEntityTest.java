@@ -41,6 +41,24 @@ import org.junit.Test;
 public class K8sReleaseEntityTest {
 
     @Test
+    public void theFilesOfAProfileReleaseAreKeptWithItsGitStateWhileTheyFit() {
+        K8sReleaseEntity e = new K8sReleaseEntity();
+        e.setGitRepoUrl("https://git.example.org/platform/gitops.git");
+        e.setGitProfileFiles(List.of("environments/k8s21/analytics/values.yaml", "environments/k8s21/analytics/app.yaml"));
+        assertEquals(List.of("environments/k8s21/analytics/values.yaml", "environments/k8s21/analytics/app.yaml"),
+                e.getGitProfileFiles());
+
+        // A list too long for the column is not kept: the uninstall renders the files from the profile, as before.
+        String longPath = "environments/" + "x".repeat(200) + "/values.yaml";
+        e.setGitProfileFiles(java.util.Collections.nCopies(10, longPath));
+        assertEquals(List.of(), e.getGitProfileFiles());
+        assertEquals("the other Git attributes stay", "https://git.example.org/platform/gitops.git", e.getGitRepoUrl());
+
+        e.setGitProfileFiles(null);
+        assertEquals(List.of(), e.getGitProfileFiles());
+    }
+
+    @Test
     public void testTableAndAccess() {
         Table table = K8sReleaseEntity.class.getAnnotation(Table.class);
         assertNotNull("Table annotation missing", table);

@@ -397,6 +397,58 @@ public class FluxGitOpsBackendProfileTest {
         assertFalse("the secret values KDPS kept are gone", secretPayloads.containsKey(analyticsSecret));
     }
 
+    /** The profile with its values file moved under the cluster, as the multi-cluster refusal asks. */
+    private void movedUnderTheCluster() {
+        GitOpsProfile p = profiles.get("environments");
+        p.files.get(0).path = "environments/{{ cluster }}/{{ namespace }}/values.yaml";
+        profiles.save(p);
+    }
+
+    @Test
+    public void anUninstallAfterTheProfilesPathsChangedRemovesTheFilesTheDeployWrote() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        backend().apply(request(), null);
+        assertEquals(List.of("environments/analytics/values.yaml"),
+                releases.values().iterator().next().getGitProfileFiles());
+        movedUnderTheCluster();
+
+        backend().destroy("analytics", "trino");
+
+        assertNull("the file the deploy wrote is gone", published("main", "environments/analytics/values.yaml"));
+        assertNotNull("the team's file stays", published("main", "OWNERS.md"));
+    }
+
+    @Test
+    public void aRedeployAfterTheProfilesPathsChangedMovesTheFileAndThePreviewSaysSo() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        backend().apply(request(), null);
+        movedUnderTheCluster();
+
+        ProfilePreview.Preview preview = backend().previewProfile(request(), null, null);
+        backend().apply(request(), null);
+
+        assertEquals(ProfilePreview.CHANGE_REMOVED, file(preview, "environments/analytics/values.yaml").change());
+        assertEquals(ProfilePreview.CHANGE_NEW, file(preview, "environments/default/analytics/values.yaml").change());
+        assertTrue(preview.notes().toString(), preview.notes().stream()
+                .anyMatch(n -> n.contains("removes environments/analytics/values.yaml")));
+        // One copy of the release, where the profile now puts it, and the record follows.
+        assertNull(published("main", "environments/analytics/values.yaml"));
+        assertNotNull(published("main", "environments/default/analytics/values.yaml"));
+        assertEquals(List.of("environments/default/analytics/values.yaml"),
+                releases.values().iterator().next().getGitProfileFiles());
+    }
+
+    @Test
+    public void aReleaseRecordedBeforeTheFilesWereKeptIsUninstalledFromTheProfileAsItIs() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        backend().apply(request(), null);
+        releases.values().iterator().next().setGitProfileFiles(null);
+
+        backend().destroy("analytics", "trino");
+
+        assertNull(published("main", "environments/analytics/values.yaml"));
+    }
+
     @Test
     public void anUninstallByPullRequestWaitsForItsMergeThenFinishes() throws Exception {
         environmentsProfile(GitOpsProfile.DELIVERY_PULL_REQUEST);

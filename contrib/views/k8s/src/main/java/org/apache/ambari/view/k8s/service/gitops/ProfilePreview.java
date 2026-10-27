@@ -105,6 +105,16 @@ public final class ProfilePreview {
      */
     public static List<PreviewFile> files(GitOpsProfile profile, String chartDir, Map<String, byte[]> chartFiles,
                                           List<ProfileRenderer.RenderedFile> files, Path repoDir) throws IOException {
+        return files(profile, chartDir, chartFiles, files, repoDir, List.of());
+    }
+
+    /**
+     * As {@link #files(GitOpsProfile, String, Map, List, Path)}, with the files of the release an earlier deploy wrote
+     * where the profile no longer puts them: the deploy removes them.
+     */
+    public static List<PreviewFile> files(GitOpsProfile profile, String chartDir, Map<String, byte[]> chartFiles,
+                                          List<ProfileRenderer.RenderedFile> files, Path repoDir, List<String> moved)
+            throws IOException {
         Map<String, PreviewFile> out = new TreeMap<>();
         if (chartDir != null) {
             for (Map.Entry<String, byte[]> file : chartFiles.entrySet()) {
@@ -141,9 +151,11 @@ public final class ProfilePreview {
             if (text != null) {
                 shown += bytes.length;
             }
+            boolean goes = underChart || moved.contains(path);
             out.put(path, new PreviewFile(path, underChart ? ORIGIN_CHART : ORIGIN_REPOSITORY,
-                    // The chart is replaced as a whole: a file the new version does not have goes.
-                    underChart ? CHANGE_REMOVED : CHANGE_UNCHANGED, null, false,
+                    // The chart is replaced as a whole: a file the new version does not have goes. So does a file of
+                    // the release the profile now writes elsewhere.
+                    goes ? CHANGE_REMOVED : CHANGE_UNCHANGED, null, false,
                     !underChart && ProfileRenderer.isProtected(profile, path), bytes != null && isBinary(bytes), text,
                     null));
         }

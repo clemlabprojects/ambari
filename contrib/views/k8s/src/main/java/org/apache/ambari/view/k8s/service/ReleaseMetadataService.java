@@ -495,9 +495,18 @@ public class ReleaseMetadataService {
      */
     /** Records the GitOps output profile a release is written into Git with; {@code null} for the Flux layout. */
     public void recordGitProfile(String namespace, String releaseName, String profile) {
+        recordGitProfile(namespace, releaseName, profile, null);
+    }
+
+    /**
+     * Records the GitOps output profile a release is written into Git with ({@code null} for the Flux layout) and the
+     * files of the release the deploy wrote with it, which its uninstall removes ({@code null} or empty: none kept).
+     */
+    public void recordGitProfile(String namespace, String releaseName, String profile, java.util.List<String> files) {
         K8sReleaseEntity e = find(namespace, releaseName);
         if (e == null) return;
         e.setGitProfile(profile);
+        e.setGitProfileFiles(profile == null ? null : files);
         releaseRepository.update(e);
     }
 

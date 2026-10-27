@@ -582,6 +582,24 @@ public class K8sReleaseEntity extends BaseModel {
         putGitMeta("commitMode", gitCommitMode);
     }
 
+    /** The longest list of profile files kept: beyond, the column would leave no room for the other Git attributes. */
+    static final int MAX_PROFILE_FILES_LENGTH = 1500;
+
+    /**
+     * The files of the release the last deploy with a GitOps profile wrote, by repository path: what its uninstall
+     * removes, whatever the profile has become since. Empty for a release recorded before KDPS kept them, or whose list
+     * was too long to keep: its files are then rendered from the profile as it is.
+     */
+    public List<String> getGitProfileFiles() {
+        String files = gitMeta().get("profileFiles");
+        return files == null || files.isBlank() ? List.of() : List.of(files.split("\n"));
+    }
+
+    public void setGitProfileFiles(List<String> files) {
+        String joined = files == null ? null : String.join("\n", files);
+        putGitMeta("profileFiles", joined != null && joined.length() <= MAX_PROFILE_FILES_LENGTH ? joined : null);
+    }
+
     public String getGitPrUrl() {
         return gitMeta().get("prUrl");
     }
