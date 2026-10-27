@@ -429,9 +429,17 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
         self.logger.warning("Skipping OM host-based Ozone recommendations: no OZONE_MANAGER hosts were found.")
 
       dnHosts = len(self.getHostsWithComponent("OZONE", "OZONE_DATANODE", services, hosts) or [])
-      # update ozone replication to size of dnHosts
-      replicationReco = min(3, dnHosts)
+      # Ratis replicates to ONE or THREE DataNodes only: THREE needs three of them
+      replicationReco = 3 if dnHosts >= 3 else 1
       putOzoneSiteProperty("ozone.replication", replicationReco)
+      # the server-side default applies to clients that do not choose one, the S3 Gateway included:
+      # above the number of DataNodes, no pipeline can be formed and every write waits until it fails
+      putOzoneSiteProperty("ozone.server.default.replication", replicationReco)
+      if 0 < dnHosts < 3:
+        # SCM leaves safe mode only once enough DataNodes registered and a Ratis/THREE pipeline is healthy:
+        # with fewer than three DataNodes it would stay in safe mode and refuse every write
+        putOzoneSiteProperty("hdds.scm.safemode.min.datanode", dnHosts)
+        putOzoneSiteProperty("hdds.scm.safemode.pipeline-availability.check", "false")
 
       if 'ozone-env' in services['configurations'] and 'ozone_user' in services['configurations']['ozone-env']['properties']:
         ozone_user = services['configurations']['ozone-env']['properties']['ozone_user']
