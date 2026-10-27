@@ -43,6 +43,18 @@ jest.mock('@monaco-editor/react', () => ({
   DiffEditor: () => <pre />,
 }));
 
+// The page renders its tables, drawers and editors in jsdom, which takes several seconds for a fresh test runner
+// (3.7 s warm on a developer machine, 8 s cold, GitHub's runners always cold): far over jest's 5 s default.
+jest.setTimeout(30_000);
+
+/** Opens the page, then the example profile. */
+const openExample = async () => {
+  render(<MemoryRouter><GitOpsProfilesPage /></MemoryRouter>);
+  expect(await screen.findByText('gitops-example')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('gitops-example'));
+  expect(await screen.findByText('Settings')).toBeInTheDocument();
+};
+
 describe('the GitOps profiles page', () => {
   it('opens on the list of profiles, and a profile only once chosen', async () => {
     render(<MemoryRouter><GitOpsProfilesPage /></MemoryRouter>);
@@ -59,15 +71,18 @@ describe('the GitOps profiles page', () => {
     // The first file is open in the editor.
     expect(screen.getByDisplayValue('environments/{{ namespace }}/values.yaml')).toBeInTheDocument();
 
-    // The fields reference opens from the header, and from the file it adds a field to the path.
+    fireEvent.click(screen.getByRole('button', { name: /GitOps profiles/ }));
+    expect(await screen.findByRole('button', { name: /New profile/ })).toBeInTheDocument();
+  });
+
+  it('opens the fields reference from the header, and from a file adds a field to its path', async () => {
+    await openExample();
+
     fireEvent.click(screen.getByRole('button', { name: /Fields and filters/ }));
     expect(await screen.findByText('secretValues.secretName')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getAllByRole('button', { name: /question-circle/ }).find(b => !/Fields and filters/.test(b.textContent || ''))!);
     fireEvent.click((await screen.findAllByRole('button', { name: 'Path' }))[0]);
     expect(screen.getByDisplayValue('environments/{{ namespace }}/values.yaml{{ release }}')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /GitOps profiles/ }));
-    expect(await screen.findByRole('button', { name: /New profile/ })).toBeInTheDocument();
   });
 });
