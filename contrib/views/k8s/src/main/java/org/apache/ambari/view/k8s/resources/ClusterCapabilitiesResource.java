@@ -29,12 +29,13 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Reports cluster-level capability flags so the UI can drive its
  * discovery-driven flows (TLS modes, secret stores, OpenShift Route
- * detection, …). The result is cached for {@link #TTL_MILLIS} ms to
+ * detection, …). The result is cached for {@link #TTL_MILLIS} ms, for each cluster, to
  * avoid hitting the K8s API on every page navigation.
  *
  * Probes performed (all cheap, all GET-on-CRD):
@@ -52,7 +53,8 @@ public class ClusterCapabilitiesResource {
     /** TTL for the cached capability snapshot. */
     private static final long TTL_MILLIS = 60_000L;
 
-    private static final AtomicReference<CachedCapabilities> CACHE = new AtomicReference<>();
+    /** The capabilities of each cluster, by its id: another cluster is never answered with one cluster's. */
+    private static final ConcurrentMap<String, CachedCapabilities> CACHE = new ConcurrentHashMap<>();
 
     private final KubernetesService kubernetesService;
 
@@ -63,13 +65,14 @@ public class ClusterCapabilitiesResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     public Response getCapabilities() {
-        CachedCapabilities cached = CACHE.get();
+        String cluster = kubernetesService.cluster() == null ? "default" : kubernetesService.cluster().id();
+        CachedCapabilities cached = CACHE.get(cluster);
         long now = System.currentTimeMillis();
         if (cached != null && (now - cached.fetchedAt) < TTL_MILLIS) {
             return Response.ok(cached.payload).build();
         }
         Map<String, Object> payload = probe();
-        CACHE.set(new CachedCapabilities(payload, now));
+        CACHE.put(cluster, new CachedCapabilities(payload, now));
         return Response.ok(payload).build();
     }
 
@@ -155,7 +158,7 @@ public class ClusterCapabilitiesResource {
      * Cluster Security page). Public so future code paths can poke it from the same JVM.
      */
     public static void invalidate() {
-        CACHE.set(null);
+        CACHE.clear();
     }
 
     private static final class CachedCapabilities {
