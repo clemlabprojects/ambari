@@ -128,6 +128,8 @@ class FluxGitOpsBackendImageRegistryTest {
             return null;
         }).when(k8s).createOrUpdateOpaqueSecret(anyString(), anyString(), anyString(), any(byte[].class), anyMap(), any(), any());
         helm = mock(HelmService.class);
+        // The chart repositories have credentials: KDPS creates each pull Secret.
+        when(helm.ensureImagePullSecretFromRepo(any(), any(), any(), any())).thenReturn(true);
     }
 
     private FluxGitOpsBackend backend() throws Exception {
@@ -188,6 +190,29 @@ class FluxGitOpsBackendImageRegistryTest {
         assertFalse(helmRelease.contains("quay.io"), helmRelease);
         assertFalse(helmRelease.contains("name: \"registry.clemlab.com"), helmRelease);
         verify(helm).ensureImagePullSecretFromRepo("charts", NS, "registry-credentials", null);
+    }
+
+    @Test
+    void withoutAPullSecretOnTheClusterTheReleaseAndItsDependenciesNameNone() throws Exception {
+        // A chart repository without credentials, and nobody created the Secrets: nothing to name.
+        when(helm.ensureImagePullSecretFromRepo(any(), any(), any(), any())).thenReturn(false);
+        HelmDeployRequest request = request("TRINO");
+        LinkedHashMap<String, Object> dependencies = new LinkedHashMap<>();
+        dependencies.put("keda", new LinkedHashMap<>(Map.of("chart", "keda", "chartVersion", "2.18.0",
+                "namespace", "keda", "secretName", "regcred",
+                "imageRepository", "registry.clemlab.com/clemlabprojects",
+                "imageGlobalRegistryProperty", "global.image.registry")));
+        request.setDependencies(dependencies);
+
+        backend().apply(request, null);
+
+        String helmRelease = published(RELEASE_DIR + "/helmrelease.yaml");
+        assertContains(helmRelease, "      imageRegistry: \"" + MIRROR + "\"\n");
+        assertFalse(helmRelease.contains("imagePullSecrets"), helmRelease);
+        String keda = published(SHARED_DIR + "/keda/keda-helmrelease.yaml");
+        assertContains(keda, "    global:\n      image:\n        registry: \"" + MIRROR + "\"\n");
+        assertFalse(keda.contains("imagePullSecrets"), keda);
+        assertEquals("registry-credentials", request.getSecretName(), "the request keeps its Secret name for later deploys");
     }
 
     @Test

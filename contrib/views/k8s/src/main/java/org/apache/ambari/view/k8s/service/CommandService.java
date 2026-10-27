@@ -11264,9 +11264,10 @@ public class CommandService {
                     String releaseName = (String) childParams.get("releaseName");
                     if (secretName != null) {
                         LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
-                        this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
-                        overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-                        ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, childParams.get("serviceKey"), overrideProperties);
+                        if (this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts)) {
+                            overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
+                            ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, childParams.get("serviceKey"), overrideProperties);
+                        }
                     }
                     if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
                         // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
@@ -13207,9 +13208,10 @@ public class CommandService {
 
         if (secretName != null) {
             LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, serviceAccounts);
-            this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts);
-            overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
-            ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, depParams.get("serviceKey"), overrideProperties);
+            if (this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, serviceAccounts)) {
+                overrideProperties.put("imagePullSecrets[0].name", (String) secretName);
+                ImageRegistryOverrides.applyImagePullSecretTargets(this.ctx, secretName, depParams.get("serviceKey"), overrideProperties);
+            }
         }
         if (imageGlobalRegistryProperty != null && !imageGlobalRegistryProperty.isEmpty()) {
             // Dependency charts (KEDA, keytab webhook) must pull images from the SAME
@@ -13277,8 +13279,9 @@ public class CommandService {
         Object secretName = childParams.get("secretName");
         if (secretName != null) {
             LOG.info("Ensuring image pull secret: {} in namespace: {} for service accounts: {} ", secretName, namespace, null);
-            this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null);
-            ImageRegistryOverrides.addReleasePullSecret(this.ctx, secretName, childParams.get("serviceKey"), image);
+            if (this.helmService.ensureImagePullSecretFromRepo(repoId, namespace, (String) secretName, null)) {
+                ImageRegistryOverrides.addReleasePullSecret(this.ctx, secretName, childParams.get("serviceKey"), image);
+            }
         }
         image.put(registryProperty, registry);
         LOG.info("Execution Action {}: Injecting in values.yaml global image registry property: {} with value: {}",

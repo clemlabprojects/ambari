@@ -170,6 +170,8 @@ class CommandServiceGitOpsDeployTest {
         helm = mock(HelmService.class, RETURNS_DEEP_STUBS);
         when(helm.getRepositoryService().showValuesAsMap(any(), any(), any())).thenReturn(new LinkedHashMap<>());
         when(helm.getRepositoryService().getEffectiveImageRegistry(any())).thenReturn("registry.example.org");
+        // The chart repositories have credentials: KDPS creates each pull Secret.
+        when(helm.ensureImagePullSecretFromRepo(any(), any(), any(), any())).thenReturn(true);
 
         service = new CommandService(ctx, helm, k8s);
         // Its background sweep of operation files reads ctx: let it finish before the tests stub ctx further.
@@ -558,6 +560,35 @@ class CommandServiceGitOpsDeployTest {
                 "    sidecar:\n      image: \"registry.example.org/example/sidecar:1.0\"\n")) {
             assertTrue(helmRelease.contains(expected), expected + " in\n" + helmRelease);
         }
+    }
+
+    @Test
+    void withoutAPullSecretOnTheClusterADirectAndAGitOpsDeployNameNone() throws Exception {
+        // A chart repository without credentials, and nobody created regcred in the namespace: nothing to name.
+        when(helm.ensureImagePullSecretFromRepo(any(), any(), any(), any())).thenReturn(false);
+        Map<String, String> directOverrides = new LinkedHashMap<>();
+        doAnswer(inv -> {
+            directOverrides.putAll(inv.getArgument(4));
+            return null;
+        }).when(helm).deployOrUpgrade(anyString(), eq(rel), eq(NS), anyMap(), anyMap(), any(), any(), any(),
+                eq(false), any());
+        String directId = plan(request("DIRECT_HELM", "main"), false);
+        run(directId);
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(directId, CommandType.HELM_DEPLOY),
+                statusOf(step(directId, CommandType.HELM_DEPLOY)).getMessage());
+
+        fluxAppliesTheCommit("True", "InstallSucceeded", "Helm install succeeded");
+        String id = plan(request("FLUX_GITOPS", "main"), true);
+        run(id);
+
+        assertEquals(CommandState.SUCCEEDED.name(), stateOf(id, CommandType.GITOPS_COMMIT),
+                statusOf(step(id, CommandType.GITOPS_COMMIT)).getMessage());
+        assertEquals("registry.example.org", directOverrides.get("global.imageRegistry"));
+        assertTrue(directOverrides.keySet().stream().noneMatch(k -> k.contains("imagePullSecrets")
+                || k.equals("workers.registry.secretName")), directOverrides.toString());
+        String helmRelease = published("main", releaseDir() + "/helmrelease.yaml");
+        assertTrue(helmRelease.contains("      imageRegistry: \"registry.example.org\"\n"), helmRelease);
+        assertFalse(helmRelease.contains("regcred"), helmRelease);
     }
 
     @Test

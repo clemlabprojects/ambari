@@ -1293,8 +1293,11 @@ public class HelmService {
      * @param namespace              the Kubernetes namespace where the secret will be created
      * @param secretName             the desired name of the imagePullSecret
      * @param serviceAccountsToPatch list of service account names to patch with the secret; may be {@code null}
+     * @return whether the Secret is there for the release to name: created or refreshed from the repository's
+     *         credentials, or, for a repository without credentials, one already in the namespace (provided by an
+     *         administrator). False means the release names no pull Secret and its images are pulled anonymously.
      */
-    public void ensureImagePullSecretFromRepo(String repoId,
+    public boolean ensureImagePullSecretFromRepo(String repoId,
                                               String namespace,
                                               String secretName,
                                               List<String> serviceAccountsToPatch) {
@@ -1309,15 +1312,18 @@ public class HelmService {
         final String username = repoEntity.getUsername();
         final String password = repositoryService.readPlainSecret(repoEntity);
 
+        KubernetesService kubernetesService = KubernetesService.get(this.viewContext, cluster);
         // If the repo is marked anonymous, we still create a secret only if creds exist; else skip
         if (repositoryService.isAnonymous(repoEntity) && (username == null || username.isBlank() || password == null || password.isBlank())) {
-            LOG.info("Repo {} is anonymous and no creds found → skipping imagePullSecret creation.", repoId);
-            return;
+            boolean provided = kubernetesService.getSecret(namespace, secretName) != null;
+            LOG.info("Repo {} is anonymous and no creds found → skipping imagePullSecret creation; {}/{} {}.", repoId,
+                    namespace, secretName, provided ? "exists and is used" : "does not exist and is not used");
+            return provided;
         }
         LOG.info("Ensuring imagePullSecret '{}' in namespace '{}' for repoId '{}' (registry server: '{}')",
                 secretName, namespace, repoId, registryServer);
-        KubernetesService kubernetesService = KubernetesService.get(this.viewContext, cluster);
         kubernetesService.ensureImagePullSecretWithUsernameAndPassword(repoId,namespace,secretName,username,password,registryServer,serviceAccountsToPatch);
+        return true;
     }
 
     /**

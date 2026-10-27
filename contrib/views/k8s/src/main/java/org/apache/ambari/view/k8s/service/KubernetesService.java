@@ -2005,26 +2005,27 @@ public class KubernetesService {
             // Ensure image pull secret for private registries and inject into values
             try {
                 String pullSecretName = "regcred";
-                this.helmService.ensureImagePullSecretFromRepo(repoId, ns, pullSecretName, null);
-                List<Map<String, String>> imagePullSecretRefs = List.of(Map.of("name", pullSecretName));
-                overrides.put("imagePullSecrets", imagePullSecretRefs);
-                Map<String, Object> global = (Map<String, Object>) overrides.computeIfAbsent("global", k -> new LinkedHashMap<String, Object>());
-                global.put("imagePullSecrets", imagePullSecretRefs);
-                // Some subcharts do not honor global.imagePullSecrets; set explicit paths to avoid image pull failures.
-                List<String> imagePullSecretOverrideKeys = List.of(
-                        "kube-state-metrics.imagePullSecrets",
-                        "kube-state-metrics.serviceAccount.imagePullSecrets",
-                        "prometheus-node-exporter.imagePullSecrets",
-                        "prometheus-node-exporter.serviceAccount.imagePullSecrets",
-                        "prometheus-windows-exporter.imagePullSecrets",
-                        "prometheus-windows-exporter.serviceAccount.imagePullSecrets",
-                        "grafana.imagePullSecrets"
-                );
-                for (String overrideKey : imagePullSecretOverrideKeys) {
-                    overrides.put(overrideKey, imagePullSecretRefs);
+                if (this.helmService.ensureImagePullSecretFromRepo(repoId, ns, pullSecretName, null)) {
+                    List<Map<String, String>> imagePullSecretRefs = List.of(Map.of("name", pullSecretName));
+                    overrides.put("imagePullSecrets", imagePullSecretRefs);
+                    Map<String, Object> global = (Map<String, Object>) overrides.computeIfAbsent("global", k -> new LinkedHashMap<String, Object>());
+                    global.put("imagePullSecrets", imagePullSecretRefs);
+                    // Some subcharts do not honor global.imagePullSecrets; set explicit paths to avoid image pull failures.
+                    List<String> imagePullSecretOverrideKeys = List.of(
+                            "kube-state-metrics.imagePullSecrets",
+                            "kube-state-metrics.serviceAccount.imagePullSecrets",
+                            "prometheus-node-exporter.imagePullSecrets",
+                            "prometheus-node-exporter.serviceAccount.imagePullSecrets",
+                            "prometheus-windows-exporter.imagePullSecrets",
+                            "prometheus-windows-exporter.serviceAccount.imagePullSecrets",
+                            "grafana.imagePullSecrets"
+                    );
+                    for (String overrideKey : imagePullSecretOverrideKeys) {
+                        overrides.put(overrideKey, imagePullSecretRefs);
+                    }
+                    LOG.info("Injected imagePullSecrets override for monitoring bootstrap repoId={} secret={} keys={}",
+                            repoId, pullSecretName, imagePullSecretOverrideKeys);
                 }
-                LOG.info("Injected imagePullSecrets override for monitoring bootstrap repoId={} secret={} keys={}",
-                        repoId, pullSecretName, imagePullSecretOverrideKeys);
             } catch (Exception ex) {
                 LOG.warn("Failed to ensure image pull secret for monitoring repoId {}: {}", repoId, ex.getMessage());
             }

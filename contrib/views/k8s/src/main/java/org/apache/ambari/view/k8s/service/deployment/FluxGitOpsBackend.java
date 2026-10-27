@@ -706,7 +706,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         } catch (Exception ex) {
             LOG.warn("Failed to resolve dynamic tokens for the preview of {}: {}", release, ex.toString());
         }
-        releaseImageOverrides(request, repoName, serviceKey, values, overrides, operatorOverrides);
+        releaseImageOverrides(request, request.getSecretName(), repoName, serviceKey, values, overrides, operatorOverrides);
         secrets.addMarkedOverrides(overrides);
         applyOverridesToValues(values, overrides);
         values.remove("_ov");
@@ -1827,11 +1827,18 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // 3. Ensure the image pull secret exists. The values reference it with the repository's image registry, once
         //    the overrides are known (releaseImageOverrides). A planned deploy's step ensured it, and the planned
         //    overrides reference it exactly as the Helm install would.
+        String pullSecret = request.getSecretName();
         if (planned == null && request.getSecretName() != null && !request.getSecretName().isBlank()) {
             try {
                 String effectiveRepoId = firstNonBlank(request.getRepoId(), repoName);
-                helmService.ensureImagePullSecretFromRepo(effectiveRepoId, namespace, request.getSecretName(), null);
-                logFluxInfo(namespace, release, "automation", "Ensured image pull secret %s/%s", namespace, request.getSecretName());
+                if (helmService.ensureImagePullSecretFromRepo(effectiveRepoId, namespace, request.getSecretName(), null)) {
+                    logFluxInfo(namespace, release, "automation", "Ensured image pull secret %s/%s", namespace, request.getSecretName());
+                } else {
+                    // Nothing to create (a repository without credentials) and none provided: the values name none.
+                    logFluxInfo(namespace, release, "automation", "No image pull secret %s/%s: images are pulled anonymously",
+                            namespace, request.getSecretName());
+                    pullSecret = null;
+                }
             } catch (Exception ex) {
                 LOG.warn("Failed to ensure image pull secret {}/{}: {}", namespace, request.getSecretName(), ex.getMessage());
                 // Continue - secret might already exist
@@ -2093,7 +2100,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // The repository's image registry and the image pull Secret, as a direct deploy passes them to Helm. A planned
         // deploy's overrides hold them already.
         if (planned == null) {
-            releaseImageOverrides(request, repoName, serviceKey, mergedValues, explicitOverrides, operatorOverrides);
+            releaseImageOverrides(request, pullSecret, repoName, serviceKey, mergedValues, explicitOverrides, operatorOverrides);
         }
         // The security profile's passwords are marked until the overrides are applied: record them first.
         secrets.addMarkedOverrides(explicitOverrides);
@@ -5061,9 +5068,10 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * service definition adds (OpenMetadata's Airflow and OpenSearch). What the operator set explicitly is kept; the
      * image paths then follow the registry the operator chose.
      *
+     * @param pullSecret        the image pull Secret the values name, or null when the cluster has none for the release
      * @param operatorOverrides the operator's own overrides ({@code _ov}), which win
      */
-    private void releaseImageOverrides(HelmDeployRequest request, String repoName, String serviceKey,
+    private void releaseImageOverrides(HelmDeployRequest request, String pullSecret, String repoName, String serviceKey,
                                        Map<String, Object> values, Map<String, String> overrides,
                                        Map<String, String> operatorOverrides) {
         String registryProperty = firstNonBlank(request.getImageGlobalRegistryProperty(),
@@ -5073,7 +5081,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (registry != null) {
             image.put(registryProperty, registry);
         }
-        ImageRegistryOverrides.addReleasePullSecret(viewContext, request.getSecretName(), serviceKey, image);
+        ImageRegistryOverrides.addReleasePullSecret(viewContext, pullSecret, serviceKey, image);
         for (Map.Entry<String, String> setting : image.entrySet()) {
             if (operatorOverrides.containsKey(setting.getKey())) {
                 LOG.info("Keeping the explicit override {} of {}/{} rather than the chart repository's {}",
@@ -5110,15 +5118,18 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                     if (account instanceof String s && !s.isBlank()) serviceAccounts.add(s);
                 });
             }
+            boolean present = true;
             try {
-                helmService.ensureImagePullSecretFromRepo(repoId, namespace, secretName, serviceAccounts);
+                present = helmService.ensureImagePullSecretFromRepo(repoId, namespace, secretName, serviceAccounts);
             } catch (Exception ex) {
                 LOG.warn("Failed to ensure image pull secret {}/{} for dependency {}: {}", namespace, secretName, name,
                         ex.getMessage());
             }
-            overrides.put("imagePullSecrets[0].name", secretName);
-            ImageRegistryOverrides.applyImagePullSecretTargets(viewContext, secretName, spec.get("serviceKey"),
-                    overrides);
+            if (present) {
+                overrides.put("imagePullSecrets[0].name", secretName);
+                ImageRegistryOverrides.applyImagePullSecretTargets(viewContext, secretName, spec.get("serviceKey"),
+                        overrides);
+            }
         }
         return overrides;
     }
