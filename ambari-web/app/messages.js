@@ -1956,6 +1956,17 @@ Em.I18n.translations = {
 
   'admin.misc.header': 'Service Users and Groups',
   'admin.misc.nothingToShow': 'No user accounts to display',
+  'admin.misc.accountManagement': 'Account management',
+  'admin.misc.manageGroupMemberships': 'Use Ambari to Manage Group Memberships',
+  'admin.misc.manageGroupMemberships.help': 'Before every command, Ambari creates the missing service accounts and groups and sets their groups (the cluster group as primary group). Turn it off when the accounts are provisioned outside Ambari.',
+  'admin.misc.manageUids': 'Have Ambari manage UIDs',
+  'admin.misc.manageUids.help': 'Ambari creates the service accounts with the UIDs configured for them.',
+  'admin.misc.edit.warning': 'Changing a service account of an installed cluster does not move anything that belongs to the previous account: data and directory ownership (HDFS, Ozone, local directories), Kerberos keytabs and their auth_to_local mapping, Ranger policies, proxy-user settings (hadoop.proxyuser.&lt;user&gt;.*). Plan these steps before saving.',
+  'admin.misc.save.header': 'Save service accounts',
+  'admin.misc.save.body': 'The following changes will be saved:',
+  'admin.misc.save.change': '{0}: {1} → {2}',
+  'admin.misc.save.userWarning': '<p>Then, for every changed account: create it on the hosts (Ambari does it when it manages the group memberships), give it the data and directories of the previous account, regenerate the Kerberos keytabs (<b>Admin &gt; Kerberos &gt; Regenerate Keytabs</b>), update the Ranger policies and proxy-user settings that name the previous account, and restart the services with stale configurations.</p>',
+  'admin.misc.save.note': 'Service accounts changed from Admin > Service Accounts',
 
   'admin.serviceAutoStart.title': "Service Auto Start",
   'admin.serviceAutoStart.header.text': "Ambari services can be configured to start automatically on system boot. Each service can be configured to start all components, masters and workers, or selectively.",
