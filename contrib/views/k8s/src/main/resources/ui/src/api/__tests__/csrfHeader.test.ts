@@ -145,7 +145,8 @@ describe('client calls to the Ambari REST API', () => {
   it('reaches the API from every exported function that is not a local helper', () => {
     // Helpers that make no request at all. A new exported call that the argument shapes above do not
     // get to fetch() shows up here, so that it is not silently left out of the check.
-    const localHelpers = ['withCsrfHeader', 'handleAuthExpiry', 'needsLogin', 'masterKeyRefusal', 'onCluster'];
+    const localHelpers = ['withCsrfHeader', 'handleAuthExpiry', 'needsLogin', 'masterKeyRefusal', 'onCluster',
+      'ProtectedClusterError'];
     const neverCalled = Object.entries(client)
       .filter(([name, value]) => typeof value === 'function' && !localHelpers.includes(name))
       .map(([name]) => name)

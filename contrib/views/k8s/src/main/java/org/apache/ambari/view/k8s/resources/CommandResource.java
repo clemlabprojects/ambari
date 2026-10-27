@@ -32,7 +32,10 @@ import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.CommandLogService;
 import org.apache.ambari.view.k8s.service.IngressTlsSecretGuard;
 import org.apache.ambari.view.k8s.service.KeytabRequestPolicy;
+import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.WebHookConfigurationService;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
+import org.apache.ambari.view.k8s.service.cluster.ProtectedClusters;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
 import org.apache.ambari.view.k8s.service.helm.HelmOperationRegistry;
@@ -145,7 +148,16 @@ public class CommandResource {
       // resuming this command later loop back to ambari-server directly rather than through whatever
       // reverse proxy the user happened to be on. See AmbariLoopbackUrlResolver.
       // Planned and run by the operations of the cluster the deploy names, on that cluster's connection.
-      String id = CommandService.forDeploy(viewContext, req).submitDeploy(req, repoId,
+      CommandService operations = CommandService.forDeploy(viewContext, req);
+      // Redeploying a release a protected cluster already runs is an upgrade there: the operator names the cluster.
+      ClusterRef target = CommandService.kubernetesClusterOf(req);
+      if (req.getNamespace() != null && req.getReleaseName() != null && ProtectedClusters.isProtected(viewContext, target)
+              && new ReleaseMetadataService(viewContext, target).find(req.getNamespace(), req.getReleaseName()) != null) {
+        ProtectedClusters.require(viewContext, target, ui == null ? null
+                : ui.getQueryParameters().getFirst(ProtectedClusters.PARAM),
+                "the upgrade of " + req.getNamespace() + "/" + req.getReleaseName());
+      }
+      String id = operations.submitDeploy(req, repoId,
               version, kubeContext, this.getCommandsUrl(ui), headers.getRequestHeaders(),
               AmbariLoopbackUrlResolver.resolveApiBaseUri(viewContext), this.ambariAliasResolver);
       return Response.status(Response.Status.ACCEPTED)
@@ -159,6 +171,9 @@ public class CommandResource {
               .build();
     } catch (IngressTlsSecretGuard.ReplacementNotConfirmedException unconfirmed) {
       return tlsReplacementNotConfirmed(unconfirmed);
+    } catch (ProtectedClusters.NotConfirmedException unconfirmed) {
+      LOG.warn("submitDeploy refused (409): {}", unconfirmed.getMessage());
+      return unconfirmed.response();
     } catch (IllegalArgumentException | IllegalStateException validation) {
       LOG.warn("submitDeploy rejected (400): {}", validation.getMessage());
       return Response.status(Response.Status.BAD_REQUEST)

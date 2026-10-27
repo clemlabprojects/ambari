@@ -28,6 +28,7 @@ import yaml from 'yaml';
 
 import { previewGitOpsProfile, type GitOpsPreview, getStackService, getStackConfigs, submitHelmDeploy, getHelmRepos, getSecurityConfig, type SecurityProfiles, getReleaseValues, getReleaseTlsState, getContexts, getResolvedContext, getContextAdvice, type PlatformContext, type ResolvedContext, listTruststores, type TruststoreSummary, listKubernetesClusters, type KubernetesCluster } from '../api/client';
 import { TargetClusterContext } from '../context/TargetClusterContext';
+import { CANCELLED, confirmingProtectedCluster } from '../components/common/protectedCluster';
 import type { HelmRepo } from '../types';
 import InstallStep from '../components/wizard/InstallStep';
 import ConfigurationStep from '../components/wizard/ConfigurationStep';
@@ -975,7 +976,12 @@ const ServiceWizardPage: React.FC = () => {
           const versionOverride = targetChartVersion();
           if (versionOverride) params.set('version', versionOverride);
 
-          const accepted = await submitHelmDeploy(deployRequestBody(finalValues, atlasRestartAuthorized, replaceExistingTls), params);
+          // An upgrade on a protected cluster asks the operator the cluster's name.
+          const accepted = await confirmingProtectedCluster((confirm) => {
+            if (confirm) params.set('confirmCluster', confirm);
+            return submitHelmDeploy(deployRequestBody(finalValues, atlasRestartAuthorized, replaceExistingTls), params);
+          });
+          if (accepted === CANCELLED) return;
       // A GitOps deploy says where its change goes in Git; the operations window then shows the commit and pull request.
       message.success(deploySubmittedMessage('Deployment', accepted), accepted?.mode === 'FLUX_GITOPS' ? 8 : undefined);
       setLastCommandId(accepted.id);
