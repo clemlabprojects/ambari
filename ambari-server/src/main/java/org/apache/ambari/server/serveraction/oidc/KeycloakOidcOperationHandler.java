@@ -23,7 +23,10 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -48,6 +51,13 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 public class KeycloakOidcOperationHandler implements OidcOperationHandler {
+  /**
+   * Client attributes recording the redirect URIs and web origins Ambari applied, as JSON arrays: the next provisioning
+   * replaces only these entries, so entries added in Keycloak are kept.
+   */
+  static final String MANAGED_REDIRECT_URIS_ATTRIBUTE = "ambari.managed.redirect_uris";
+  static final String MANAGED_WEB_ORIGINS_ATTRIBUTE = "ambari.managed.web_origins";
+
   private Client client;
   private PrincipalKeyCredential adminCredential;
   private OidcProviderConfiguration configuration;
@@ -77,13 +87,15 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
       : realm;
 
     String token = getAdminAccessToken();
-    String clientInternalId = getClientInternalId(token, targetRealm, descriptor.getClientId());
-    if (clientInternalId == null) {
+    JsonObject existing = findClient(token, targetRealm, descriptor.getClientId());
+    String clientInternalId;
+    if (existing == null) {
       createClient(token, targetRealm, descriptor);
       clientInternalId = getClientInternalId(token, targetRealm, descriptor.getClientId());
     } else {
       // re-provisioning applies the descriptor again (redirect URIs, web origins, flows...)
-      updateClient(token, targetRealm, clientInternalId, descriptor);
+      clientInternalId = getAsString(existing, "id");
+      updateClient(token, targetRealm, clientInternalId, descriptor, existing);
     }
 
     ensureProtocolMappers(token, targetRealm, clientInternalId, descriptor.getProtocolMappers());
@@ -167,6 +179,14 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
   }
 
   private String getClientInternalId(String token, String realm, String clientId) throws OidcOperationException {
+    JsonObject existing = findClient(token, realm, clientId);
+    return (existing == null) ? null : getAsString(existing, "id");
+  }
+
+  /**
+   * @return the representation of the client, or null when the realm has no client with this client id
+   */
+  private JsonObject findClient(String token, String realm, String clientId) throws OidcOperationException {
     String endpoint = String.format("%s/admin/realms/%s/clients", normalizeBaseUrl(configuration.getBaseUrl()), realm);
     Response response = client.target(endpoint)
       .queryParam("clientId", clientId)
@@ -185,9 +205,12 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
       return null;
     }
 
-    JsonObject client = results.get(0).getAsJsonObject();
-    JsonElement id = client.get("id");
-    return (id == null) ? null : id.getAsString();
+    return results.get(0).getAsJsonObject();
+  }
+
+  private static String getAsString(JsonObject object, String name) {
+    JsonElement value = object.get(name);
+    return (value == null || value.isJsonNull()) ? null : value.getAsString();
   }
 
   private void createClient(String token, String realm, OidcClientDescriptor descriptor) throws OidcOperationException {
@@ -196,7 +219,7 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
     Response response = client.target(endpoint)
       .request(MediaType.APPLICATION_JSON_TYPE)
       .header("Authorization", "Bearer " + token)
-      .post(Entity.json(toClientPayload(descriptor, true).toString()));
+      .post(Entity.json(toClientPayload(descriptor, null).toString()));
 
     if (response.getStatus() == 409) {
       return;
@@ -211,9 +234,11 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
 
   /**
    * Updates an existing client with the settings of the descriptor. Only the flags the descriptor declares are sent,
-   * so flags tuned in Keycloak are kept, as is the client secret.
+   * so flags tuned in Keycloak are kept, as is the client secret; redirect URIs and web origins added in Keycloak
+   * are kept too (see {@link #mergeManaged}).
    */
-  private void updateClient(String token, String realm, String internalId, OidcClientDescriptor descriptor)
+  private void updateClient(String token, String realm, String internalId, OidcClientDescriptor descriptor,
+                            JsonObject existing)
     throws OidcOperationException {
     String endpoint = String.format("%s/admin/realms/%s/clients/%s",
       normalizeBaseUrl(configuration.getBaseUrl()), realm, internalId);
@@ -221,7 +246,7 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
     Response response = client.target(endpoint)
       .request(MediaType.APPLICATION_JSON_TYPE)
       .header("Authorization", "Bearer " + token)
-      .put(Entity.json(toClientPayload(descriptor, false).toString()));
+      .put(Entity.json(toClientPayload(descriptor, existing).toString()));
 
     if (response.getStatus() / 100 != 2) {
       String message = response.readEntity(String.class);
@@ -231,10 +256,11 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
   }
 
   /**
-   * @param create true for a new client: flags the descriptor does not declare get their defaults; on an update they
-   *               are left out
+   * @param existing the current representation of the client, or null for a new client: flags the descriptor does not
+   *                 declare get their defaults on a new client and are left out on an update
    */
-  private JsonObject toClientPayload(OidcClientDescriptor descriptor, boolean create) {
+  JsonObject toClientPayload(OidcClientDescriptor descriptor, JsonObject existing) {
+    boolean create = existing == null;
     JsonObject payload = new JsonObject();
     payload.addProperty("clientId", descriptor.getClientId());
     payload.addProperty("protocol", "openid-connect");
@@ -243,30 +269,88 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
     addFlag(payload, "directAccessGrantsEnabled", descriptor.isDirectAccessGrantsEnabled(), true, create);
     addFlag(payload, "standardFlowEnabled", descriptor.isStandardFlowEnabled(), false, create);
 
-    if (descriptor.getRedirectUris() != null) {
-      JsonArray redirectUris = new JsonArray();
-      for (String uri : descriptor.getRedirectUris()) {
-        redirectUris.add(uri);
-      }
-      payload.add("redirectUris", redirectUris);
-    }
-
-    if (descriptor.getWebOrigins() != null) {
-      JsonArray webOrigins = new JsonArray();
-      for (String origin : descriptor.getWebOrigins()) {
-        webOrigins.add(origin);
-      }
-      payload.add("webOrigins", webOrigins);
-    }
-
+    JsonObject attributes = new JsonObject();
     if (descriptor.getAttributes() != null) {
-      JsonObject attributes = new JsonObject();
       for (Map.Entry<String, String> entry : descriptor.getAttributes().entrySet()) {
         attributes.addProperty(entry.getKey(), entry.getValue());
       }
+    }
+    addManagedList(payload, attributes, existing, "redirectUris", MANAGED_REDIRECT_URIS_ATTRIBUTE,
+      descriptor.getRedirectUris());
+    addManagedList(payload, attributes, existing, "webOrigins", MANAGED_WEB_ORIGINS_ATTRIBUTE,
+      descriptor.getWebOrigins());
+    if (attributes.size() > 0) {
       payload.add("attributes", attributes);
     }
     return payload;
+  }
+
+  /**
+   * Sends the list the descriptor declares, merged into the current Keycloak list on an update, and records the
+   * declared entries as managed by Ambari. A list the descriptor does not declare is left as it is in Keycloak.
+   */
+  private void addManagedList(JsonObject payload, JsonObject attributes, JsonObject existing, String field,
+                              String managedAttribute, List<String> declared) {
+    if (declared == null) {
+      return;
+    }
+    List<String> values = declared;
+    if (existing != null) {
+      JsonObject existingAttributes = existing.has("attributes") && existing.get("attributes").isJsonObject()
+        ? existing.getAsJsonObject("attributes") : new JsonObject();
+      values = mergeManaged(toStringList(existing.get(field)),
+        toStringList(parseJsonArray(getAsString(existingAttributes, managedAttribute))), declared);
+    }
+    payload.add(field, toJsonArray(values));
+    attributes.addProperty(managedAttribute, toJsonArray(declared).toString());
+  }
+
+  /**
+   * The current entries, minus the entries Ambari applied last time, plus the declared ones: entries added in
+   * Keycloak are kept, and entries Ambari applied that are no longer declared are removed. Without a record of the
+   * previous run (a client provisioned by an older Ambari) nothing is removed.
+   */
+  static List<String> mergeManaged(Collection<String> current, Collection<String> previouslyManaged,
+                                   Collection<String> declared) {
+    Set<String> merged = new LinkedHashSet<>();
+    for (String value : current) {
+      if (!previouslyManaged.contains(value) || declared.contains(value)) {
+        merged.add(value);
+      }
+    }
+    merged.addAll(declared);
+    return new ArrayList<>(merged);
+  }
+
+  private static JsonElement parseJsonArray(String value) {
+    if (value == null || value.trim().isEmpty()) {
+      return null;
+    }
+    try {
+      return new JsonParser().parse(value);
+    } catch (RuntimeException e) {
+      return null;
+    }
+  }
+
+  private static List<String> toStringList(JsonElement element) {
+    List<String> values = new ArrayList<>();
+    if (element != null && element.isJsonArray()) {
+      for (JsonElement value : element.getAsJsonArray()) {
+        if (value != null && !value.isJsonNull()) {
+          values.add(value.getAsString());
+        }
+      }
+    }
+    return values;
+  }
+
+  private static JsonArray toJsonArray(Collection<String> values) {
+    JsonArray array = new JsonArray();
+    for (String value : values) {
+      array.add(value);
+    }
+    return array;
   }
 
   private void addFlag(JsonObject payload, String name, Boolean value, boolean defaultValue, boolean create) {

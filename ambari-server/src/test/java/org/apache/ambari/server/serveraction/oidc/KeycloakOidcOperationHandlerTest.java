@@ -27,6 +27,8 @@ import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,8 +40,12 @@ import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
+import org.apache.ambari.server.state.oidc.OidcClientDescriptor;
 import org.junit.Before;
 import org.junit.Test;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import junit.framework.Assert;
 
@@ -227,6 +233,64 @@ public class KeycloakOidcOperationHandlerTest {
     cfg.put("access.token.claim", "true");
     m.put("config", cfg);
     return m;
+  }
+
+  @Test
+  public void testMergeManagedKeepsEntriesAddedInKeycloakAndDropsStaleOnes() {
+    List<String> merged = KeycloakOidcOperationHandler.mergeManaged(
+      Arrays.asList("https://old-host/*", "https://lb.example.com/*", "https://kept-host/*"),
+      Arrays.asList("https://old-host/*", "https://kept-host/*"),
+      Arrays.asList("https://kept-host/*", "https://new-host/*"));
+
+    Assert.assertEquals(Arrays.asList("https://lb.example.com/*", "https://kept-host/*", "https://new-host/*"), merged);
+  }
+
+  @Test
+  public void testMergeManagedWithoutRecordRemovesNothing() {
+    List<String> merged = KeycloakOidcOperationHandler.mergeManaged(
+      Arrays.asList("https://old-host/*", "https://lb.example.com/*"),
+      Collections.<String>emptyList(),
+      Collections.singletonList("https://new-host/*"));
+
+    Assert.assertEquals(Arrays.asList("https://old-host/*", "https://lb.example.com/*", "https://new-host/*"), merged);
+  }
+
+  @Test
+  public void testCreatePayloadRecordsManagedLists() {
+    JsonObject payload = handler.toClientPayload(descriptor(Arrays.asList("https://host/*"), Arrays.asList("+")), null);
+
+    Assert.assertEquals("[\"https://host/*\"]", payload.getAsJsonArray("redirectUris").toString());
+    JsonObject attributes = payload.getAsJsonObject("attributes");
+    Assert.assertEquals("[\"https://host/*\"]",
+      attributes.get(KeycloakOidcOperationHandler.MANAGED_REDIRECT_URIS_ATTRIBUTE).getAsString());
+    Assert.assertEquals("[\"+\"]", attributes.get(KeycloakOidcOperationHandler.MANAGED_WEB_ORIGINS_ATTRIBUTE).getAsString());
+    Assert.assertEquals("descriptor-value", attributes.get("descriptor.attribute").getAsString());
+    Assert.assertTrue(payload.has("standardFlowEnabled"));
+  }
+
+  @Test
+  public void testUpdatePayloadMergesIntoExistingClient() {
+    JsonObject existing = new JsonParser().parse("{\"id\": \"" + CLIENT_ID + "\","
+      + " \"redirectUris\": [\"https://old-host/*\", \"https://lb.example.com/*\"],"
+      + " \"webOrigins\": [\"https://lb.example.com\"],"
+      + " \"attributes\": {\"" + KeycloakOidcOperationHandler.MANAGED_REDIRECT_URIS_ATTRIBUTE
+      + "\": \"[\\\"https://old-host/*\\\"]\"}}").getAsJsonObject();
+
+    JsonObject payload = handler.toClientPayload(descriptor(Arrays.asList("https://new-host/*"), null), existing);
+
+    Assert.assertEquals("[\"https://lb.example.com/*\",\"https://new-host/*\"]",
+      payload.getAsJsonArray("redirectUris").toString());
+    Assert.assertEquals("[\"https://new-host/*\"]", payload.getAsJsonObject("attributes")
+      .get(KeycloakOidcOperationHandler.MANAGED_REDIRECT_URIS_ATTRIBUTE).getAsString());
+    // not declared by the descriptor: left as they are in Keycloak
+    Assert.assertFalse(payload.has("webOrigins"));
+    Assert.assertFalse(payload.getAsJsonObject("attributes").has(KeycloakOidcOperationHandler.MANAGED_WEB_ORIGINS_ATTRIBUTE));
+    Assert.assertFalse(payload.has("standardFlowEnabled"));
+  }
+
+  private static OidcClientDescriptor descriptor(List<String> redirectUris, List<String> webOrigins) {
+    return new OidcClientDescriptor("test", "test-client", null, null, null, null, null, redirectUris, webOrigins,
+      Collections.singletonMap("descriptor.attribute", "descriptor-value"), null, null, null);
   }
 
   private static void setField(Object target, String fieldName, Object value) {
