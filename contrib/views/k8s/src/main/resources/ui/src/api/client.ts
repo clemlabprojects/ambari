@@ -284,22 +284,23 @@ export interface SecurityConfig {
 }
 
 // Workloads browsing helpers (namespaces, pods, services, logs)
-export const getNamespaces = async (): Promise<KubeNamespace[]> => {
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces`, { credentials: 'include' });
+/** The namespaces, workloads and objects of the viewed cluster: `cluster` names it, the default one when absent. */
+export const getNamespaces = async (cluster?: string): Promise<KubeNamespace[]> => {
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
-export const getPods = async (ns: string, labelSelector?: string): Promise<KubePod[]> => {
+export const getPods = async (ns: string, labelSelector?: string, cluster?: string): Promise<KubePod[]> => {
   const params = new URLSearchParams();
   if (labelSelector) params.set('labelSelector', labelSelector);
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods?${params.toString()}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/pods?${params.toString()}`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
-export const getServices = async (ns: string, labelSelector?: string): Promise<KubeService[]> => {
+export const getServices = async (ns: string, labelSelector?: string, cluster?: string): Promise<KubeService[]> => {
   const params = new URLSearchParams();
   if (labelSelector) params.set('labelSelector', labelSelector);
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services?${params.toString()}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/services?${params.toString()}`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -316,9 +317,9 @@ export interface DeploymentRow {
   creationTimestamp: string | null;
 }
 
-export const listDeployments = async (namespace?: string): Promise<DeploymentRow[]> => {
+export const listDeployments = async (namespace?: string, cluster?: string): Promise<DeploymentRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await apiFetch(`${API_BASE_URL}/workloads/deployments${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/deployments${qs}`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -330,9 +331,9 @@ export interface ConfigMapRow {
   creationTimestamp: string | null;
 }
 
-export const listConfigMaps = async (namespace?: string): Promise<ConfigMapRow[]> => {
+export const listConfigMaps = async (namespace?: string, cluster?: string): Promise<ConfigMapRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await apiFetch(`${API_BASE_URL}/workloads/configmaps${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/configmaps${qs}`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -346,9 +347,9 @@ export interface IngressRow {
   creationTimestamp: string | null;
 }
 
-export const listIngresses = async (namespace?: string): Promise<IngressRow[]> => {
+export const listIngresses = async (namespace?: string, cluster?: string): Promise<IngressRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await apiFetch(`${API_BASE_URL}/workloads/ingresses${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/ingresses${qs}`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
@@ -366,17 +367,17 @@ export interface RouteRow {
   creationTimestamp: string | null;
 }
 
-export const listRoutes = async (namespace?: string): Promise<RouteRow[]> => {
+export const listRoutes = async (namespace?: string, cluster?: string): Promise<RouteRow[]> => {
   const qs = namespace && namespace !== '*' ? `?namespace=${encodeURIComponent(namespace)}` : '';
-  const res = await apiFetch(`${API_BASE_URL}/workloads/routes${qs}`, { credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/routes${qs}`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
-export const getPodLogs = async (ns: string, pod: string, container?: string, tailLines?: number): Promise<string> => {
+export const getPodLogs = async (ns: string, pod: string, container?: string, tailLines?: number, cluster?: string): Promise<string> => {
   const params = new URLSearchParams();
   if (container) params.set('container', container);
   if (tailLines) params.set('tailLines', tailLines.toString());
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/log?${params.toString()}`, {
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/log?${params.toString()}`, cluster)}`, {
     credentials: 'include'
   });
   if (!res.ok) {
@@ -386,24 +387,24 @@ export const getPodLogs = async (ns: string, pod: string, container?: string, ta
   return res.text();
 };
 
-export const getNamespaceEvents = async (ns: string): Promise<KubeEvent[]> => {
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/events`, { credentials: 'include' });
+export const getNamespaceEvents = async (ns: string, cluster?: string): Promise<KubeEvent[]> => {
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/events`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
-export const getPodEvents = async (ns: string, pod: string): Promise<KubeEvent[]> => {
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/events`, { credentials: 'include' });
+export const getPodEvents = async (ns: string, pod: string, cluster?: string): Promise<KubeEvent[]> => {
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/events`, cluster)}`, { credentials: 'include' });
   return handleApiResponse(res);
 };
 
-export const describePod = async (ns: string, pod: string): Promise<string> => {
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/describe`, { credentials: 'include' });
+export const describePod = async (ns: string, pod: string, cluster?: string): Promise<string> => {
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/describe`, cluster)}`, { credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
   return res.text();
 };
 
-export const describeService = async (ns: string, svc: string): Promise<string> => {
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/services/${encodeURIComponent(svc)}/describe`, { credentials: 'include' });
+export const describeService = async (ns: string, svc: string, cluster?: string): Promise<string> => {
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/services/${encodeURIComponent(svc)}/describe`, cluster)}`, { credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
   return res.text();
 };
@@ -412,16 +413,16 @@ export const describeService = async (ns: string, svc: string): Promise<string> 
  * Deletes a pod. Without `graceSeconds` the pod shuts down within its own grace period; a grace period of 0
  * force-deletes it and the server only accepts that together with `force`.
  */
-export const deletePod = async (ns: string, pod: string, graceSeconds?: number, force?: boolean): Promise<void> => {
+export const deletePod = async (ns: string, pod: string, graceSeconds?: number, force?: boolean, cluster?: string): Promise<void> => {
   const params = new URLSearchParams();
   if (graceSeconds != null) params.set('graceSeconds', graceSeconds.toString());
   if (force) params.set('force', 'true');
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}?${params.toString()}`, { method: 'DELETE', credentials: 'include' });
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}?${params.toString()}`, cluster)}`, { method: 'DELETE', credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
 };
 
-export const restartPod = async (ns: string, pod: string): Promise<void> => {
-  const res = await apiFetch(`${API_BASE_URL}/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/restart`, { method: 'POST', credentials: 'include' });
+export const restartPod = async (ns: string, pod: string, cluster?: string): Promise<void> => {
+  const res = await apiFetch(`${API_BASE_URL}${onCluster(`/workloads/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/restart`, cluster)}`, { method: 'POST', credentials: 'include' });
   if (!res.ok) throw new Error(await res.text());
 };
 
@@ -821,10 +822,11 @@ export async function checkHelmRepo(id: string) {
   return handleApiResponse(response);
 }
 
-export async function installMonitoring(repoId?: string, force?: boolean) {
+export async function installMonitoring(repoId?: string, force?: boolean, cluster?: string) {
   const qs = new URLSearchParams();
   if (repoId) qs.set('repoId', repoId);
   if (force) qs.set('force', 'true');
+  if (cluster && cluster !== 'default') qs.set('cluster', cluster);
   const query = qs.toString() ? `?${qs.toString()}` : '';
   const response = await apiFetch(`${API_BASE_URL}/helm/monitoring/install${query}`, {
     method: 'POST',
@@ -842,12 +844,12 @@ export async function resetMonitoringCache() {
 }
 
 
-export const getClusterEvents = async () => {
+export const getClusterEvents = async (cluster?: string) => {
   if (IS_DEV) {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return getMockClusterEvents();
   }
-  const response = await apiFetch(`${API_BASE_URL}/cluster/events`);
+  const response = await apiFetch(`${API_BASE_URL}${onCluster('/cluster/events', cluster)}`);
   return handleApiResponse(response);
 };
 
@@ -1078,7 +1080,7 @@ export const getDiscoveredSecretStores = async (includeNotReady = false, cluster
     return handleApiResponse(response);
 }
 
-export const getClusterStats = async (forceRefresh = false) => {
+export const getClusterStats = async (forceRefresh = false, cluster?: string) => {
   if (IS_DEV) {
     if (sessionStorage.getItem('isUnconfigured')) {
       throw new Error('unconfigured');
@@ -1087,7 +1089,7 @@ export const getClusterStats = async (forceRefresh = false) => {
   }
   const params = new URLSearchParams();
   if (forceRefresh) params.set('forceRefresh', 'true');
-  const response = await apiFetch(`${API_BASE_URL}/cluster/stats?${params.toString()}`);
+  const response = await apiFetch(`${API_BASE_URL}${onCluster(`/cluster/stats?${params.toString()}`, cluster)}`);
   return handleApiResponse(response);
 };
 
@@ -1175,16 +1177,16 @@ export async function refreshDependencies() {
   }
 }
 
-export const getComponentStatuses = async () => {
+export const getComponentStatuses = async (cluster?: string) => {
   if (IS_DEV) {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return getMockComponentStatuses();
   }
-  const response = await apiFetch(`${API_BASE_URL}/cluster/componentstatuses`);
+  const response = await apiFetch(`${API_BASE_URL}${onCluster('/cluster/componentstatuses', cluster)}`);
   return handleApiResponse(response);
 };
 
-export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = false) => {
+export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = false, cluster?: string) => {
     if (IS_DEV) {
         if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
         return getMockHelmReleases();
@@ -1192,7 +1194,7 @@ export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = fals
     // managedOnly filters to KDPS-managed releases SERVER-SIDE (before pagination) so managed
     // releases that sort onto a later page are not hidden by a page-local client filter.
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset), managedOnly: String(managedOnly) });
-    const response = await apiFetch(`${API_BASE_URL}/helm/releases?${params.toString()}`, { credentials: 'include' });
+    const response = await apiFetch(`${API_BASE_URL}${onCluster(`/helm/releases?${params.toString()}`, cluster)}`, { credentials: 'include' });
     return handleApiResponse(response);
 };
 
@@ -1525,11 +1527,13 @@ export interface ClusterLiveness {
  * 200 with a {@link ClusterLiveness} body (probe failures are reported in `state`, not as HTTP errors),
  * so this call itself does not throw for a dead token — the caller inspects `state`.
  */
-export const getClusterLiveness = async (): Promise<ClusterLiveness> => {
+export const getClusterLiveness = async (cluster?: string): Promise<ClusterLiveness> => {
   if (IS_DEV) {
     return { state: 'CONNECTED', message: 'dev mock' };
   }
-  return fetchJson<ClusterLiveness>('/cluster/liveness');
+  return !cluster || cluster === 'default'
+    ? fetchJson<ClusterLiveness>('/cluster/liveness')
+    : getNamedClusterLiveness(cluster);
 };
 
 export const getHelmRepos = () => {
@@ -1558,13 +1562,13 @@ export const getKubeconfigContent = async (): Promise<string> => {
   return response.text();
 };
 
-export const getNodes = async (limit = 200, offset = 0) => {
+export const getNodes = async (limit = 200, offset = 0, cluster?: string) => {
   if (IS_DEV) {
     if (sessionStorage.getItem('isUnconfigured')) throw new Error('unconfigured');
     return { items: getMockNodes(), total: getMockNodes().length };
   }
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  const response = await apiFetch(`${API_BASE_URL}/nodes?${params.toString()}`);
+  const response = await apiFetch(`${API_BASE_URL}${onCluster(`/nodes?${params.toString()}`, cluster)}`);
   return handleApiResponse(response);
 };
 

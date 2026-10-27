@@ -43,6 +43,7 @@ import {
 import { useCapabilities } from '../components/ServiceInstallationModal/capabilities';
 import type { KubeNamespace, KubePod, KubeService, KubeEvent } from '../types/KubeTypes';
 import { useNamespace, ALL_NAMESPACES } from '../context/NamespaceContext';
+import { useViewedCluster } from '../context/ViewedClusterContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { DownloadOutlined } from '@ant-design/icons';
 import { ReloadOutlined } from '@ant-design/icons';
@@ -112,6 +113,8 @@ const WorkloadsPage: React.FC = () => {
   // this one. The page keeps its own state because the user can still drill
   // into a single namespace from the in-page Select for ad-hoc queries.
   const { namespace: globalNamespace } = useNamespace();
+  // The workloads shown are those of the cluster chosen in the top bar.
+  const { cluster } = useViewedCluster();
   // Tab data sets fetched lazily; we only call the listing endpoint when the
   // operator actually opens the tab (avoids cluster-wide list spam on first paint).
   const [deployments, setDeployments] = useState<DeploymentRow[]>([]);
@@ -140,7 +143,7 @@ const WorkloadsPage: React.FC = () => {
     }
     void (async () => {
       try {
-        const ns = await getNamespaces();
+        const ns = await getNamespaces(cluster);
         setNamespaces(ns);
         if (!ns || ns.length === 0) {
           setNamespace(undefined);
@@ -162,24 +165,24 @@ const WorkloadsPage: React.FC = () => {
         console.error(err);
       }
     })();
-  }, [location]);
+  }, [location, cluster]);
 
   const refreshAll = useCallback(() => {
     if (!namespace) return;
     setLoadingPods(true);
-    void getPods(namespace, labelSelector || undefined)
+    void getPods(namespace, labelSelector || undefined, cluster)
       .then(setPods)
       .finally(() => setLoadingPods(false));
 
     setLoadingSvc(true);
-    void getServices(namespace, labelSelector || undefined)
+    void getServices(namespace, labelSelector || undefined, cluster)
       .then(setServices)
       .finally(() => setLoadingSvc(false));
     setNamespaceEventsLoading(true);
-    void getNamespaceEvents(namespace)
+    void getNamespaceEvents(namespace, cluster)
       .then(setNamespaceEvents)
       .finally(() => setNamespaceEventsLoading(false));
-  }, [namespace, labelSelector]);
+  }, [namespace, labelSelector, cluster]);
 
   useEffect(() => {
     refreshAll();
@@ -199,7 +202,7 @@ const WorkloadsPage: React.FC = () => {
     setDescribeLoading(true);
     setDescribeTitle(`${kind === 'pod' ? 'Pod' : 'Service'}: ${name}`);
     try {
-      const content = kind === 'pod' ? await describePod(namespace, name) : await describeService(namespace, name);
+      const content = kind === 'pod' ? await describePod(namespace, name, cluster) : await describeService(namespace, name, cluster);
       setDescribeContent(content);
     } catch (err: any) {
       setDescribeContent(err?.message || 'Failed to load describe');
@@ -214,7 +217,7 @@ const WorkloadsPage: React.FC = () => {
     setPodEventsFor(podName);
     setPodEventsVisible(true);
     try {
-      const ev = await getPodEvents(namespace, podName);
+      const ev = await getPodEvents(namespace, podName, cluster);
       setPodEvents(ev);
     } catch (err) {
       message.error('Failed to load pod events');
@@ -228,9 +231,9 @@ const WorkloadsPage: React.FC = () => {
     try {
       // Without a grace period the pod shuts down within its own, so its preStop hook and database shutdown run;
       // only a pod that is already Terminating can be forced out.
-      await deletePod(namespace, podName, force ? 0 : undefined, force);
+      await deletePod(namespace, podName, force ? 0 : undefined, force, cluster);
       message.success('Pod delete requested');
-      void getPods(namespace, labelSelector || undefined).then(setPods);
+      void getPods(namespace, labelSelector || undefined, cluster).then(setPods);
     } catch (err: any) {
       message.error(err?.message || 'Delete failed');
     }
@@ -239,12 +242,12 @@ const WorkloadsPage: React.FC = () => {
   const onRestartPod = async (podName: string) => {
     if (!namespace) return;
     try {
-      await restartPod(namespace, podName);
+      await restartPod(namespace, podName, cluster);
       message.success('Restart requested');
       // Refresh immediately to pick up new pod names after restart
-      void getPods(namespace, labelSelector || undefined).then(setPods);
+      void getPods(namespace, labelSelector || undefined, cluster).then(setPods);
       setNamespaceEventsLoading(true);
-      void getNamespaceEvents(namespace).then(setNamespaceEvents).finally(() => setNamespaceEventsLoading(false));
+      void getNamespaceEvents(namespace, cluster).then(setNamespaceEvents).finally(() => setNamespaceEventsLoading(false));
     } catch (err: any) {
       message.error(err?.message || 'Restart failed');
     }
@@ -293,9 +296,9 @@ const WorkloadsPage: React.FC = () => {
   const fetchLogs = async (p: KubePod, container?: string) => {
     setLogLoading(true);
     try {
-      let logs = await getPodLogs(p.namespace, p.name, container, 500);
+      let logs = await getPodLogs(p.namespace, p.name, container, 500, cluster);
       if (!logs) {
-        logs = await getPodLogs(p.namespace, p.name, container);
+        logs = await getPodLogs(p.namespace, p.name, container, undefined, cluster);
       }
       setLogContent(logs);
     } catch (err: any) {
@@ -407,28 +410,28 @@ const WorkloadsPage: React.FC = () => {
   useEffect(() => {
     if (activeTab !== 'deployments') return;
     setDeploymentsLoading(true);
-    listDeployments(namespaceForList).then(setDeployments).catch(() => setDeployments([])).finally(() => setDeploymentsLoading(false));
-  }, [activeTab, namespaceForList]);
+    listDeployments(namespaceForList, cluster).then(setDeployments).catch(() => setDeployments([])).finally(() => setDeploymentsLoading(false));
+  }, [activeTab, namespaceForList, cluster]);
 
   useEffect(() => {
     if (activeTab !== 'configmaps') return;
     setConfigMapsLoading(true);
-    listConfigMaps(namespaceForList).then(setConfigMaps).catch(() => setConfigMaps([])).finally(() => setConfigMapsLoading(false));
-  }, [activeTab, namespaceForList]);
+    listConfigMaps(namespaceForList, cluster).then(setConfigMaps).catch(() => setConfigMaps([])).finally(() => setConfigMapsLoading(false));
+  }, [activeTab, namespaceForList, cluster]);
 
   useEffect(() => {
     if (activeTab !== 'ingresses') return;
     setIngressesLoading(true);
-    listIngresses(namespaceForList).then(setIngresses).catch(() => setIngresses([])).finally(() => setIngressesLoading(false));
-  }, [activeTab, namespaceForList]);
+    listIngresses(namespaceForList, cluster).then(setIngresses).catch(() => setIngresses([])).finally(() => setIngressesLoading(false));
+  }, [activeTab, namespaceForList, cluster]);
 
   useEffect(() => {
     // Eager-load Routes on OpenShift (not gated on the active tab) so the tab's count badge is
     // correct on arrival — e.g. when navigating in from a release — instead of showing 0 until clicked.
     if (!isOpenShift) return;
     setRoutesLoading(true);
-    listRoutes(namespaceForList).then(setRoutes).catch(() => setRoutes([])).finally(() => setRoutesLoading(false));
-  }, [namespaceForList, isOpenShift]);
+    listRoutes(namespaceForList, cluster).then(setRoutes).catch(() => setRoutes([])).finally(() => setRoutesLoading(false));
+  }, [namespaceForList, isOpenShift, cluster]);
 
   const deploymentColumns = [
     { title: 'Namespace', dataIndex: 'namespace', sorter: (a: DeploymentRow, b: DeploymentRow) => (a.namespace || '').localeCompare(b.namespace || '') },

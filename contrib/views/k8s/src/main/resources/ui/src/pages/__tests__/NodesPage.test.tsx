@@ -22,13 +22,27 @@ jest.mock('../../api/client', () => ({ getNodes: jest.fn() }));
 jest.mock('../../context/ClusterStatusContext', () => ({
   useClusterStatus: () => ({ status: 'connected' }),
 }));
+let mockViewedCluster: string | undefined;
+jest.mock('../../context/ViewedClusterContext', () => ({
+  useViewedCluster: () => ({ cluster: mockViewedCluster }),
+}));
 
 import { getNodes } from '../../api/client';
 import NodesPage from '../NodesPage';
 
 /** Nodes page: an account limited to its own projects gets an explanation instead of an error. */
 describe('NodesPage', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockViewedCluster = undefined;
+  });
+
+  it('lists the nodes of the cluster chosen in the top bar', async () => {
+    mockViewedCluster = 'prod';
+    (getNodes as jest.Mock).mockResolvedValue({ items: [], total: 0 });
+    render(<NodesPage />);
+    await waitFor(() => expect(getNodes).toHaveBeenCalledWith(50, 0, 'prod'));
+  });
 
   it('says nodes are not visible to a restricted account', async () => {
     (getNodes as jest.Mock).mockResolvedValue({ items: [], total: 0, restricted: true });

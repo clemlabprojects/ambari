@@ -122,7 +122,7 @@ class KubeServiceMasterKeyTest {
     // A kubeconfig saved before the upgrade cannot be decrypted, so the service has no connection.
     when(k8s.getClusterStats(false)).thenThrow(new MasterKeyUnavailableException());
 
-    assertMasterKeyRefusal(withoutMasterKey().getClusterStats(false));
+    assertMasterKeyRefusal(withoutMasterKey().getClusterStats(false, null));
   }
 
   @Test

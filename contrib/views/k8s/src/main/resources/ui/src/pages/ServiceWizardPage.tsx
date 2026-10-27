@@ -52,6 +52,7 @@ import { contextChoiceNeeded } from './contextChoice';
 import { federationManualGrantNotice, federationMayTurnOnFileAuth, federationRefusalNotice, federationWritesAtlasUserStore } from './atlasFederationAuth';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
 import { useClusterStatus } from '../context/ClusterStatusContext';
+import { useViewedCluster } from '../context/ViewedClusterContext';
 
 const { Text } = Typography;
 
@@ -132,6 +133,8 @@ const ServiceWizardPage: React.FC = () => {
   const [showOpsModal, setShowOpsModal] = useState(false);
   const [lastCommandId, setLastCommandId] = useState<string | undefined>(undefined);
   const { refresh: refreshCluster } = useClusterStatus();
+  // A new release goes, unless the operator chooses otherwise, to the cluster shown in the top bar.
+  const { cluster: viewedCluster } = useViewedCluster();
 
   const upgradeState = (location.state as any)?.mode === 'upgrade' ? (location.state as any) : undefined;
   const isUpgrade = !!upgradeState;
@@ -191,6 +194,9 @@ const ServiceWizardPage: React.FC = () => {
               ? 'default'
               : loadedContexts[0].id;
             setContextChosen(!contextChoiceNeeded(!!upgradeState, loadedContexts.length));
+            if (!upgradeState && viewedCluster) {
+              initial.kubernetesCluster = viewedCluster;
+            }
             if (upgradeState) {
               initial.releaseName = upgradeState.releaseName || initial.releaseName;
               initial.namespace = upgradeState.namespace || initial.namespace;

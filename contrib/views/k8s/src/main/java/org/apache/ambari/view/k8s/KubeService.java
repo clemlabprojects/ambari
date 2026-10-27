@@ -1091,9 +1091,11 @@ public class KubeService {
     @GET
     @Path("/cluster/stats")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getClusterStats(@QueryParam("forceRefresh") @DefaultValue("false") boolean forceRefresh) {
+    public Response getClusterStats(@QueryParam("forceRefresh") @DefaultValue("false") boolean forceRefresh,
+                                    @QueryParam("cluster") String cluster) {
+        ClusterRef target = requestedCluster(cluster);
         try {
-            return Response.ok(getKubernetesService().getClusterStats(forceRefresh)).build();
+            return Response.ok(kubernetesService(target).getClusterStats(forceRefresh)).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -1103,10 +1105,12 @@ public class KubeService {
     @Path("/nodes")
     @Produces(MediaType.APPLICATION_JSON)
     public Response getNodes(@QueryParam("limit") @DefaultValue("200") int limit,
-                             @QueryParam("offset") @DefaultValue("0") int offset) {
+                             @QueryParam("offset") @DefaultValue("0") int offset,
+                             @QueryParam("cluster") String cluster) {
+        ClusterRef target = requestedCluster(cluster);
         try {
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            var page = getKubernetesService().getNodes(limit, offset);
+            var page = kubernetesService(target).getNodes(limit, offset);
             // An account limited to its own projects may not read nodes: an empty list the page can explain, not an error.
             Map<String, Object> body = new java.util.LinkedHashMap<>();
             body.put("items", page.items());
@@ -1134,21 +1138,24 @@ public class KubeService {
     @GET
     @Path("/cluster/events")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getClusterEvents(@Context HttpHeaders headers) {
+    public Response getClusterEvents(@Context HttpHeaders headers, @QueryParam("cluster") String cluster) {
+        ClusterRef target = requestedCluster(cluster);
         try {
-            // Read-only users only see the events of the namespaces of releases deployed from KDPS, as on the
-            // Workloads page.
+            // Read-only users only see the events of the namespaces of releases deployed from KDPS on the cluster, as
+            // on the Workloads page.
             java.util.Set<String> onlyNamespaces = null;
             if (!new AuthHelper(viewContext, headers).canWrite()) {
                 onlyNamespaces = new java.util.HashSet<>();
-                for (var release : new org.apache.ambari.view.k8s.service.ReleaseMetadataService(viewContext).findAll()) {
-                    if (release != null && release.getNamespace() != null) {
+                for (var release : new org.apache.ambari.view.k8s.service.ReleaseMetadataService(viewContext, target)
+                        .findAll()) {
+                    if (release != null && release.getNamespace() != null && target.equals(release.clusterRef())) {
                         onlyNamespaces.add(release.getNamespace());
                     }
                 }
             }
             var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            return Response.ok(mapper.writeValueAsString(getKubernetesService().getClusterEvents(onlyNamespaces))).build();
+            return Response.ok(mapper.writeValueAsString(kubernetesService(target).getClusterEvents(onlyNamespaces)))
+                    .build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -1157,9 +1164,10 @@ public class KubeService {
     @GET
     @Path("/cluster/componentstatuses")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getComponentStatuses() {
+    public Response getComponentStatuses(@QueryParam("cluster") String cluster) {
+        ClusterRef target = requestedCluster(cluster);
         try {
-            return Response.ok(getKubernetesService().getComponentStatuses()).build();
+            return Response.ok(kubernetesService(target).getComponentStatuses()).build();
         } catch (Exception e) {
             return handleError(e);
         }
@@ -1169,8 +1177,9 @@ public class KubeService {
      * Workloads sub-resource: namespaces/pods/services/logs.
      */
     @Path("/workloads")
-    public WorkloadsResource getWorkloads(@Context HttpHeaders headers) {
-        return new WorkloadsResource(viewContext, headers);
+    public WorkloadsResource getWorkloads(@Context HttpHeaders headers, @QueryParam("cluster") String cluster) {
+        ClusterRef target = requestedCluster(cluster);
+        return new WorkloadsResource(viewContext, headers, target, kubernetesService(target));
     }
 
     /**

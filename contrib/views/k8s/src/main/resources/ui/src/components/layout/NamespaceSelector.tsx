@@ -22,6 +22,8 @@ import { ApartmentOutlined } from '@ant-design/icons';
 import { useNamespace } from '../../context/NamespaceContext';
 import { getNamespaces } from '../../api/client';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
+import { useViewedCluster } from '../../context/ViewedClusterContext';
+import { ALL_NAMESPACES } from '../../context/NamespaceContext';
 
 /**
  * Topbar namespace selector. Lists all namespaces from the cluster and
@@ -33,17 +35,26 @@ import { useClusterStatus } from '../../context/ClusterStatusContext';
 const NamespaceSelector: React.FC = () => {
   const { status } = useClusterStatus();
   const { namespace, setNamespace } = useNamespace();
+  const { cluster } = useViewedCluster();
   const [namespaces, setNamespaces] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
     if (status !== 'connected') { setNamespaces([]); return; }
     setLoading(true);
-    getNamespaces()
+    getNamespaces(cluster)
       .then(ns => setNamespaces((ns || []).map((n: any) => n.name).filter(Boolean).sort()))
       .catch(() => setNamespaces([]))
       .finally(() => setLoading(false));
-  }, [status]);
+  }, [status, cluster]);
+
+  // A namespace of one cluster may not exist on another: every namespace, once another cluster is chosen.
+  const shownCluster = React.useRef(cluster);
+  React.useEffect(() => {
+    if (shownCluster.current === cluster) return;
+    shownCluster.current = cluster;
+    setNamespace(ALL_NAMESPACES);
+  }, [cluster, setNamespace]);
 
   if (status !== 'connected') return null;
 

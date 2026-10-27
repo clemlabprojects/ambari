@@ -21,6 +21,7 @@ import React, { createContext, useState, useEffect, useContext } from 'react';
 import type { ServiceDefinition, ClusterStats, ComponentStatus, ClusterEvent, ClusterNode, HelmReleasePage } from '../types';
 import { isViewConfigured, getClusterStats, getComponentStatuses, getClusterEvents, getNodes, getHelmReleases, getMonitoringDiscovery, getClusterLiveness } from '../api/client';
 import { invalidateCapabilities } from '../components/ServiceInstallationModal/capabilities';
+import { useViewedCluster } from './ViewedClusterContext';
 
 // 'disconnected' = the view IS configured but its stored credentials no longer authenticate against
 // the cluster (token revoked/expired) or the API is unreachable. Distinct from 'unconfigured' (no
@@ -78,6 +79,26 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
   const statusRef = React.useRef<Status>('loading');
   React.useEffect(() => { statusRef.current = status; }, [status]);
 
+  // The cluster the pages show (undefined: the default one). Read through a ref by the callbacks below, which the
+  // heartbeat keeps; a change of cluster fetches its data again.
+  const { cluster, viewed } = useViewedCluster();
+  const clusterRef = React.useRef<string | undefined>(cluster);
+  const clusterNameRef = React.useRef<string | undefined>(viewed?.name);
+  clusterRef.current = cluster;
+  clusterNameRef.current = viewed?.name;
+
+  /**
+   * "No connection" on another cluster than the default one: that cluster is not connected, the view is not
+   * unconfigured (the setup screen is the default cluster's).
+   */
+  const noConnectionToViewedCluster = (): boolean => {
+    if (!clusterRef.current) return false;
+    setConnectionMessage(`KDPS has no connection to the cluster ${clusterNameRef.current || clusterRef.current} yet: an `
+      + 'administrator saves one on the Kubernetes Clusters page.');
+    setStatus('disconnected');
+    return true;
+  };
+
   const setClusterStatus = (newStatus: Status) => {
     setStatus(newStatus);
   }
@@ -105,21 +126,22 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
     setError(null);
     try {
       // Kick off stats but don't block the rest of the UI
-      getClusterStats(forceRefresh)
+      const viewedCluster = clusterRef.current;
+      getClusterStats(forceRefresh, viewedCluster)
         .then(setStats)
         .catch((e: any) => {
           if (e?.message === 'unconfigured') {
-            setStatus('unconfigured');
+            if (!noConnectionToViewedCluster()) setStatus('unconfigured');
           } else {
             console.warn('Stats fetch failed', e);
           }
         });
 
       const results = await Promise.allSettled([
-        getComponentStatuses(),
-        getClusterEvents(),
-        getNodes(),
-        getHelmReleases(),
+        getComponentStatuses(viewedCluster),
+        getClusterEvents(viewedCluster),
+        getNodes(200, 0, viewedCluster),
+        getHelmReleases(20, 0, false, viewedCluster),
       ]);
 
       const [componentsRes, eventsRes, nodesRes, helmRes] = results;
@@ -141,12 +163,12 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
         setStatus((prev) => (prev === 'unconfigured' || prev === 'error') ? prev : 'connected');
       } else {
         try {
-          const health = await getClusterLiveness();
+          const health = await getClusterLiveness(viewedCluster);
           if (health.state === 'CONNECTED') {
             setConnectionMessage(null);
             setStatus('connected');
           } else if (health.state === 'UNCONFIGURED') {
-            setStatus('unconfigured');
+            if (!noConnectionToViewedCluster()) setStatus('unconfigured');
           } else {
             console.warn('All cluster calls failed and liveness probe reports', health.state, '-', health.message);
             setConnectionMessage(health.message);
@@ -161,14 +183,14 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
 
       // Update monitoring bootstrap state
       try {
-        const disc = await getMonitoringDiscovery();
+        const disc = await getMonitoringDiscovery(viewedCluster);
         setMonitoringState({ state: (disc as any)?.state, message: (disc as any)?.message });
       } catch (e:any) {
         // ignore; keep previous state
       }
     } catch (e: any) {
       if (e.message === 'unconfigured') {
-        setStatus('unconfigured');
+        if (!noConnectionToViewedCluster()) setStatus('unconfigured');
       } else {
         setStatus('error');
         setError(e.message);
@@ -199,7 +221,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
 
     let health;
     try {
-      health = await getClusterLiveness();
+      health = await getClusterLiveness(clusterRef.current);
     } catch (e) {
       // Probe request to Ambari itself failed (not a cluster-auth signal) — ignore this tick.
       console.warn('Liveness probe request failed', e);
@@ -216,7 +238,7 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       setStatus('connected');
     } else if (health.state === 'UNCONFIGURED') {
-      setStatus('unconfigured');
+      if (!noConnectionToViewedCluster()) setStatus('unconfigured');
     } else {
       // UNAUTHENTICATED or UNREACHABLE.
       if (prev !== 'disconnected') {
@@ -253,6 +275,15 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
     void init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // keep empty on purpose
+
+  // Another cluster viewed: its data, once the view is set up (the setup screen is the default cluster's).
+  const firstCluster = React.useRef(true);
+  useEffect(() => {
+    if (firstCluster.current) { firstCluster.current = false; return; }
+    if (statusRef.current === 'unconfigured' || statusRef.current === 'configuring') return;
+    invalidateCapabilities();
+    void fetchData(true);
+  }, [cluster, fetchData]);
 
   return (
     <ClusterStatusContext.Provider value={{

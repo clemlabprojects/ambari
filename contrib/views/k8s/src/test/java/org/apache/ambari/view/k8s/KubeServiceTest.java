@@ -58,7 +58,7 @@ class KubeServiceTest {
     f.setAccessible(true);
     f.set(api, ctx);
 
-        Response r = api.getClusterStats(false);
+        Response r = api.getClusterStats(false, null);
     assertEquals(200, r.getStatus());
     assertEquals(stats, r.getEntity());
 
@@ -79,7 +79,7 @@ class KubeServiceTest {
     when(k8s.getClusterStats(false)).thenThrow(new KubernetesService.NotConnectedException(
         "KDPS is not connected to the cluster: it could not connect with the saved configuration and tries again in 30 s."));
 
-    Response r = api().getClusterStats(false);
+    Response r = api().getClusterStats(false, null);
     // 412, or that text, makes the UI show the first-run configuration page and stop probing the connection.
     assertEquals(503, r.getStatus());
     assertFalse(String.valueOf(r.getEntity()).contains("not configured with a kubeconfig"));
@@ -89,7 +89,7 @@ class KubeServiceTest {
   void aViewThatWasNeverConfiguredIsStillAnsweredAsUnconfigured() throws Exception {
     when(k8s.getClusterStats(false)).thenThrow(new IllegalStateException("The view is not configured with a kubeconfig."));
 
-    assertEquals(412, api().getClusterStats(false).getStatus());
+    assertEquals(412, api().getClusterStats(false, null).getStatus());
   }
 
   @Test
@@ -733,7 +733,7 @@ class KubeServiceTest {
     KubeService api = apiAsViewAdmin(workDir);
     when(k8s.getNodes(200, 0)).thenReturn(new KubernetesService.NodePage(java.util.List.of(), 0, true));
 
-    Response r = api.getNodes(200, 0);
+    Response r = api.getNodes(200, 0, null);
 
     assertEquals(200, r.getStatus());
     com.fasterxml.jackson.databind.JsonNode body = new com.fasterxml.jackson.databind.ObjectMapper().readTree((String) r.getEntity());
@@ -749,7 +749,7 @@ class KubeServiceTest {
     when(k8s.getNodes(200, 0)).thenReturn(new KubernetesService.NodePage(java.util.List.of(), 3, false));
 
     com.fasterxml.jackson.databind.JsonNode body = new com.fasterxml.jackson.databind.ObjectMapper()
-        .readTree((String) api.getNodes(200, 0).getEntity());
+        .readTree((String) api.getNodes(200, 0, null).getEntity());
 
     assertEquals(3, body.get("total").asInt());
     assertFalse(body.has("restricted"));
@@ -761,7 +761,7 @@ class KubeServiceTest {
     KubeService api = apiAsViewAdmin(workDir);
     when(k8s.getComponentStatuses()).thenThrow(forbidden());
 
-    Response refused = api.getComponentStatuses();
+    Response refused = api.getComponentStatuses(null);
     assertEquals(403, refused.getStatus());
     // Marked as coming from the cluster, so the UI does not take a refusal that mentions a token for a lapsed login.
     assertTrue(String.valueOf(refused.getEntity()).startsWith("K8S_FORBIDDEN: "));

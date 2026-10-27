@@ -26,6 +26,7 @@ import {
   uploadClusterKubeconfig, type ClusterLiveness, type KubeconfigContext, type KubernetesCluster,
 } from '../api/client';
 import { usePermissions } from '../hooks/usePermissions';
+import { useViewedCluster } from '../context/ViewedClusterContext';
 import { serverMessage } from '../utils/serverMessage';
 
 const { Title, Paragraph, Text } = Typography;
@@ -244,6 +245,8 @@ const ClusterModal: React.FC<{ cluster: KubernetesCluster | 'new' | null; onClos
 const KubernetesClustersPage: React.FC = () => {
   const { permissions } = usePermissions();
   const canConfigure = !!permissions?.canConfigure;
+  // The top-bar selector lists the clusters too: told of every change.
+  const { reloadClusters } = useViewedCluster();
   const [clusters, setClusters] = React.useState<KubernetesCluster[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -257,6 +260,7 @@ const KubernetesClustersPage: React.FC = () => {
     try {
       const list = await listKubernetesClusters();
       setClusters(list);
+      void reloadClusters();
       setLiveness(Object.fromEntries(list.filter(c => c.configured).map(c => [c.id, 'checking' as const])));
       // One probe per cluster, each answering on its own.
       list.filter(c => c.configured).forEach(c => {
@@ -269,7 +273,7 @@ const KubernetesClustersPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [reloadClusters]);
 
   React.useEffect(() => { void load(); }, [load]);
 
