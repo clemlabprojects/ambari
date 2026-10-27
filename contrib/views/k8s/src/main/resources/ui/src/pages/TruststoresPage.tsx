@@ -176,9 +176,9 @@ const TruststoresPage: React.FC = () => {
         See <Text code>docs/OUTBOUND_TLS_TRUSTSTORE.md</Text> for the schema.
       </Paragraph>
       <Paragraph type="secondary">
-        Truststores you create are <Text strong>shared</Text> (kept in the truststore project set in Cluster Settings,
-        any release can trust them) or belong to a <Text strong>project</Text> (only the releases of that project can
-        trust them). A default truststore is trusted by every release it is available to.
+        Truststores you create are <Text strong>shared</Text> (kept by KDPS, any release on any Kubernetes cluster can
+        trust them) or belong to a <Text strong>project</Text> (only the releases of that project can trust them). A
+        default truststore is trusted by every release it is available to.
       </Paragraph>
 
       <Card

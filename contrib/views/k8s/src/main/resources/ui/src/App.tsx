@@ -39,6 +39,7 @@ const WorkloadsPage = React.lazy(() => import('./pages/WorkloadsPage'));
 const CatalogPage = React.lazy(() => import('./pages/CatalogPage'));
 const OperatorsPage = React.lazy(() => import('./pages/OperatorsPage'));
 const TruststoresPage = React.lazy(() => import('./pages/TruststoresPage'));
+const KubernetesClustersPage = React.lazy(() => import('./pages/KubernetesClustersPage'));
 const GlobalSecurityPage = React.lazy(() => import('./pages/GlobalSecurityPage'));
 const GlobalConfigurationsPage = React.lazy(() => import('./pages/GlobalConfigurationsPage'));
 const CertificateAuthoritiesPage = React.lazy(() => import('./pages/CertificateAuthoritiesPage'));
@@ -111,6 +112,7 @@ const AppRouter: React.FC = () => {
               backend enforces the same roles on every call (keep CONFIGURE_ONLY_ROUTES in utils/permissions.ts in sync). */}
           <Route path="/services/:serviceName" element={<RequirePermission requires="canWrite"><ServiceWizardPage /></RequirePermission>} />
           <Route path="/configuration" element={<RequirePermission requires="canConfigure"><ConfigurationPage /></RequirePermission>} />
+          <Route path="/kubernetes-clusters" element={<KubernetesClustersPage />} />
           <Route path="/global-security" element={<RequirePermission requires="canConfigure"><GlobalSecurityPage /></RequirePermission>} />
           <Route path="/certificate-authorities" element={<CertificateAuthoritiesPage />} />
           <Route path="/truststores" element={<RequirePermission requires="canConfigure"><TruststoresPage /></RequirePermission>} />

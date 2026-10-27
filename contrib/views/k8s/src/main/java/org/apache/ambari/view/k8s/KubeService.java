@@ -993,6 +993,8 @@ public class KubeService {
             ViewConfigurationService configuration = configService(cluster.ref());
             view.put("configured", configuration.isConfigured());
             view.put("authMode", configuration.getAuthMode());
+            // Shown on the cluster: its API server's certificate is not verified.
+            view.put("insecure", configuration.isConfigured() && configuration.skipsTlsVerification());
         } catch (RuntimeException e) {
             LOG.warn("/clusters: the connection of cluster '{}' cannot be read: {}", cluster.id(), e.toString());
             view.put("configured", false);

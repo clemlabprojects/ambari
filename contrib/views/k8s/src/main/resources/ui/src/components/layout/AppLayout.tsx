@@ -36,6 +36,7 @@ import {
   ProfileOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
+  ClusterOutlined,
   ShopOutlined,
   ThunderboltOutlined,
   ApiOutlined,
@@ -78,6 +79,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/operators': 'Operators',
   '/managed-configs': 'Config Profiles',
   '/configuration': 'Cluster Settings',
+  '/kubernetes-clusters': 'Kubernetes Clusters',
 };
 
 /** Section label lookup so breadcrumb shows "Security › Certificate Authorities"
@@ -99,6 +101,7 @@ const ROUTE_SECTIONS: Record<string, string> = {
   '/trino-catalogs': 'Administration',
   '/managed-configs': 'Administration',
   '/configuration': 'Administration',
+  '/kubernetes-clusters': 'Administration',
 };
 
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -217,6 +220,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         { key: '/contexts', icon: <ApiOutlined />, label: <NavLink to="/contexts">Platform Contexts</NavLink> },
         { key: '/trino-catalogs', icon: <DatabaseOutlined />, label: <NavLink to="/trino-catalogs">Trino Catalogs</NavLink> },
         { key: '/managed-configs', icon: <ProfileOutlined />, label: <NavLink to="/managed-configs">Config Profiles</NavLink> },
+        { key: '/kubernetes-clusters', icon: <ClusterOutlined />, label: <NavLink to="/kubernetes-clusters">Kubernetes Clusters</NavLink> },
         { key: '/configuration', icon: <SettingOutlined />, label: <NavLink to="/configuration">Cluster Settings</NavLink> },
       ],
     },
