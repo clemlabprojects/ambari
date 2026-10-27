@@ -26,7 +26,7 @@ App.OidcServicesMixin = Em.Mixin.create({
 
   /**
    * Installed services that declare OIDC clients in the composite OIDC descriptor.
-   * @returns {$.Deferred} resolved with the service names (empty when none or on error)
+   * @returns {$.Deferred} resolved with the service names (empty when none), rejected when the descriptor cannot be read
    */
   loadOidcServiceNames: function () {
     var dfd = $.Deferred();
@@ -44,7 +44,7 @@ App.OidcServicesMixin = Em.Mixin.create({
         return installed.contains(service.name) && (service.clients || []).length > 0;
       }).mapProperty('name').uniq());
     }).fail(function () {
-      dfd.resolve([]);
+      dfd.reject();
     });
     return dfd.promise();
   },
@@ -56,7 +56,9 @@ App.OidcServicesMixin = Em.Mixin.create({
    */
   restartOidcServices: function () {
     var self = this;
-    this.loadOidcServiceNames().done(function (serviceNames) {
+    this.loadOidcServiceNames().fail(function () {
+      self.onTaskError();
+    }).done(function (serviceNames) {
       if (!serviceNames.length) {
         self.onTaskCompleted();
         return;
@@ -89,9 +91,23 @@ App.OidcServicesMixin = Em.Mixin.create({
     });
   },
 
+  /**
+   * Services stopped by stopOidcServices, started again by startOidcServices: once the OIDC service is removed, the
+   * descriptor may no longer list them.
+   * @type {string[]|null}
+   */
+  stoppedOidcServiceNames: null,
+
   stopOidcServices: function () {
     var self = this;
-    this.loadOidcServiceNames().done(function (serviceNames) {
+    this.loadOidcServiceNames().fail(function () {
+      self.onTaskError();
+    }).done(function (oidcServiceNames) {
+      // services already stopped stay stopped at the end of the flow
+      var serviceNames = oidcServiceNames.filter(function (serviceName) {
+        return App.Service.find(serviceName).get('workStatus') === 'STARTED';
+      });
+      self.set('stoppedOidcServiceNames', serviceNames);
       if (!serviceNames.length) {
         self.onTaskCompleted();
       } else {
@@ -102,12 +118,21 @@ App.OidcServicesMixin = Em.Mixin.create({
 
   startOidcServices: function () {
     var self = this;
-    this.loadOidcServiceNames().done(function (serviceNames) {
+    var stopped = this.get('stoppedOidcServiceNames');
+    var start = function (serviceNames) {
       if (!serviceNames.length) {
         self.onTaskCompleted();
       } else {
         self.startServices(true, serviceNames, true);
       }
-    });
+    };
+    if (stopped) {
+      start(stopped);
+    } else {
+      // the page was reloaded after the stop: fall back to the services with OIDC clients
+      this.loadOidcServiceNames().fail(function () {
+        self.onTaskError();
+      }).done(start);
+    }
   }
 });

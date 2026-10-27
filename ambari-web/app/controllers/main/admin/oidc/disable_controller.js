@@ -17,22 +17,26 @@
  */
 
 var App = require('app');
+var credentialsUtils = require('utils/credentials');
 require('controllers/main/admin/kerberos/progress_controller');
 
 /**
  * Drives the OIDC un-provisioning flow:
- *   1. Stop all affected services (those that have OIDC clients).
- *   2. Delete OIDC clients from the external provider via ConfigureOidcServerAction(DELETE).
- *   3. Start all services again.
+ *   1. Stop the services that have OIDC clients.
+ *   2. Delete OIDC clients from the external provider via ConfigureOidcServerAction(DELETE), which also reverts
+ *      the configuration provisioning set.
+ *   3. Remove the OIDC service (oidc-env, OIDC Clients) and the Keycloak admin credential, as disabling Kerberos
+ *      removes the KERBEROS service: a later enable starts clean, e.g. against another Keycloak.
+ *   4. Start those services again.
  *
  * This mirrors the Kerberos disable controller pattern but is lighter: we do not need
  * ZooKeeper-first sequencing, and we do not delete an OIDC service component.
  */
-App.OidcDisableController = App.KerberosProgressPageController.extend(App.WizardEnableDone, {
+App.OidcDisableController = App.KerberosProgressPageController.extend(App.WizardEnableDone, App.OidcServicesMixin, {
 
   name: 'oidcDisableController',
   clusterDeployState: 'DEFAULT',
-  commands: ['stopAllServices', 'deleteOidcClients', 'startAllServices'],
+  commands: ['stopOidcServices', 'deleteOidcClients', 'deleteOidcService', 'startOidcServices'],
 
   tasksMessagesPrefix: 'admin.oidc.disable.step',
 
@@ -42,10 +46,6 @@ App.OidcDisableController = App.KerberosProgressPageController.extend(App.Wizard
     this.loadTasksRequestIds();
     this.loadRequestIds();
     this._super();
-  },
-
-  stopAllServices: function() {
-    this.stopServices([], false);
   },
 
   deleteOidcClients: function() {
@@ -65,8 +65,47 @@ App.OidcDisableController = App.KerberosProgressPageController.extend(App.Wizard
     });
   },
 
-  startAllServices: function() {
-    this.startServices(true);
-  }
+  deleteOidcService: function() {
+    var self = this;
+    var clusterName = App.get('clusterName');
+    // both deletes answer with an empty body, which jQuery reports as a failure: judge them by status
+    var statusOf = function(first, second, third) {
+      return (third && third.status !== undefined) ? third.status : (first && first.status);
+    };
+    var isDone = function(status) {
+      return (status >= 200 && status < 300) || status === 404;
+    };
+    App.ajax.send({
+      name: 'credentials.delete',
+      sender: this,
+      data: {
+        clusterName: clusterName,
+        alias: credentialsUtils.ALIAS.OIDC_CREDENTIALS
+      },
+      error: '_onOidcDeleteError'
+    }).always(function(first, second, third) {
+      if (!isDone(statusOf(first, second, third))) {
+        self.onTaskError();
+        return;
+      }
+      App.ajax.send({
+        name: 'common.delete.service',
+        sender: self,
+        data: {
+          clusterName: clusterName,
+          serviceName: 'OIDC'
+        },
+        error: '_onOidcDeleteError'
+      }).always(function(first, second, third) {
+        if (isDone(statusOf(first, second, third))) {
+          self.onTaskCompleted();
+        } else {
+          self.onTaskError();
+        }
+      });
+    });
+  },
+
+  _onOidcDeleteError: Em.K
 
 });

@@ -265,6 +265,12 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
             buildReplacementMap(cluster, existingConfigurations, providerConfiguration, null, null));
           actionLog.writeStdOut(String.format("Queued service-level OIDC configuration updates for service %s",
             serviceDescriptor.getName()));
+        } else if (isDeleteOperation(operation) && serviceDescriptor.getConfigurations() != null && serviceInstalled) {
+          revertConfigurations(serviceDescriptor.getConfigurations(),
+            configHelper.getDefaultProperties(cluster.getDesiredStackVersion(), serviceDescriptor.getName()),
+            propertiesToSet, propertiesToRemove, configTypes);
+          actionLog.writeStdOut(String.format("Queued revert of service-level OIDC configuration for service %s",
+            serviceDescriptor.getName()));
         }
 
         if (serviceDescriptor.getClients() == null) {
@@ -323,6 +329,14 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
               } catch (AmbariException e) {
                 throw new OidcOperationException("Failed to remove OIDC client secret from credential store", e);
               }
+            }
+            if (clientDescriptor.getConfigurations() != null && serviceInstalled) {
+              revertConfigurations(clientDescriptor.getConfigurations(),
+                configHelper.getDefaultProperties(cluster.getDesiredStackVersion(), serviceDescriptor.getName()),
+                propertiesToSet, propertiesToRemove, configTypes);
+              actionLog.writeStdOut(String.format(
+                "Queued revert of OIDC configuration for service=%s, clientId=%s", serviceDescriptor.getName(),
+                resolvedClientId));
             }
             LOG.info("OIDC client '{}' deleted in realm '{}' for service '{}'",
               resolvedClientId, resolvedRealm, serviceDescriptor.getName());
@@ -398,7 +412,7 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
     if (!configTypes.isEmpty()) {
       String configNote = getCommandParameterValue(getCommandParameters(), UPDATE_CONFIGURATION_NOTE);
       if (StringUtils.isEmpty(configNote)) {
-        configNote = "Provisioning OIDC clients";
+        configNote = isDeleteOperation(operation) ? "Removing OIDC clients" : "Provisioning OIDC clients";
       }
       LOG.info("Applying OIDC config updates for cluster {} ({} config type(s), note='{}')",
         clusterName, configTypes.size(), configNote);
@@ -630,6 +644,44 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
    * @param replacements replacement map for variable resolution
    * @throws AmbariException if variable replacement fails
    */
+  /**
+   * Undoes descriptor configuration overlays when OIDC clients are deleted, as disabling Kerberos undoes its
+   * identities: every property the descriptor sets goes back to its stack default, or is removed when the stack
+   * has none.
+   *
+   * @param configurations configuration overlays from descriptor
+   * @param stackDefaults stack default values of the service, by config type
+   * @param propertiesToSet target map of config-type -&gt; property updates
+   * @param propertiesToRemove target map of config-type -&gt; properties to remove
+   * @param configTypes accumulator of config types touched in this action
+   */
+  private void revertConfigurations(Collection<Map<String, Map<String, String>>> configurations,
+                                    Map<String, Map<String, String>> stackDefaults,
+                                    Map<String, Map<String, String>> propertiesToSet,
+                                    Map<String, Collection<String>> propertiesToRemove,
+                                    Set<String> configTypes) {
+    for (Map<String, Map<String, String>> configuration : configurations) {
+      if (configuration == null) {
+        continue;
+      }
+      for (Map.Entry<String, Map<String, String>> entry : configuration.entrySet()) {
+        String configType = entry.getKey();
+        if (configType == null || entry.getValue() == null) {
+          continue;
+        }
+        Map<String, String> defaults = (stackDefaults == null) ? null : stackDefaults.get(configType);
+        configTypes.add(configType);
+        for (String propertyName : entry.getValue().keySet()) {
+          if (defaults != null && defaults.containsKey(propertyName)) {
+            propertiesToSet.computeIfAbsent(configType, k -> new HashMap<>()).put(propertyName, defaults.get(propertyName));
+          } else {
+            propertiesToRemove.computeIfAbsent(configType, k -> new HashSet<>()).add(propertyName);
+          }
+        }
+      }
+    }
+  }
+
   private void applyConfigurations(Collection<Map<String, Map<String, String>>> configurations,
                                    Map<String, Map<String, String>> propertiesToSet,
                                    Set<String> configTypes,
