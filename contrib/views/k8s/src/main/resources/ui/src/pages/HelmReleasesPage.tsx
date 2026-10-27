@@ -37,6 +37,7 @@ import { offeredOnPlatform } from './catalogPlatforms';
 import type { MenuProps } from 'antd';
 import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
+import { useViewedCluster } from '../context/ViewedClusterContext';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
@@ -81,6 +82,8 @@ const ExternalCleanupChoice: React.FC<{
 
 const HelmReleasesPage: React.FC = () => {
   const { status, refresh, nodes, events } = useClusterStatus();
+  // The releases listed are those of the cluster chosen in the top bar.
+  const { cluster: viewedCluster } = useViewedCluster();
   const navigate = useNavigate();
   const [serviceDefinitions, setServiceDefinitions] = useState<AvailableServices>({});
   const [servicesLoaded, setServicesLoaded] = useState(false);
@@ -226,7 +229,7 @@ const HelmReleasesPage: React.FC = () => {
       const offset = (pageNum - 1) * size;
       // Filter to KDPS-managed releases server-side (before pagination) unless "Show all" is on, so
       // managed releases that sort onto a later page are not hidden by a page-local filter.
-      const releasesResponse = await getHelmReleases(size, offset, managedOnly);
+      const releasesResponse = await getHelmReleases(size, offset, managedOnly, viewedCluster);
       const items = releasesResponse.items || [];
       setHelmReleases(items);
       setTotalReleases(releasesResponse.total || 0);
@@ -256,11 +259,19 @@ const HelmReleasesPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [pageIndex, pageSize, showAllReleases]);
+  }, [pageIndex, pageSize, showAllReleases, viewedCluster]);
 
   useEffect(() => {
     void fetchReleases(1, pageSize);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Another cluster chosen in the top bar: its releases, from the first page.
+  const listedCluster = React.useRef(viewedCluster);
+  useEffect(() => {
+    if (listedCluster.current === viewedCluster) return;
+    listedCluster.current = viewedCluster;
+    void fetchReleases(1, pageSize);
+  }, [viewedCluster]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Redeploys a release from this page: an upgrade, for which a protected cluster asks the operator its name. */
   const redeploy = (payload: ReturnType<typeof releaseRedeployPayload>) =>

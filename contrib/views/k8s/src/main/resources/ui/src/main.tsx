@@ -24,6 +24,7 @@ import App from './App.tsx';
 import './fonts.css';
 import './index.css';
 import { ClusterStatusProvider } from './context/ClusterStatusContext.tsx';
+import { ViewedClusterProvider } from './context/ViewedClusterContext';
 import { ThemeModeProvider, useThemeMode } from './context/ThemeModeContext.tsx';
 import { ReduceMotionProvider, useReduceMotion } from './context/ReduceMotionContext.tsx';
 
@@ -106,9 +107,11 @@ const ThemedRoot: React.FC = () => {
         },
       }}
     >
-      <ClusterStatusProvider>
-        <App />
-      </ClusterStatusProvider>
+      <ViewedClusterProvider>
+        <ClusterStatusProvider>
+          <App />
+        </ClusterStatusProvider>
+      </ViewedClusterProvider>
     </ConfigProvider>
   );
 };

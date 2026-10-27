@@ -85,7 +85,7 @@ describe('WorkloadsPage pod actions', () => {
     expect(await screen.findByText('Restart pod trino-worker-0?')).toBeTruthy();
     expect(restartPod).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Restart' }));
-    await waitFor(() => expect(restartPod).toHaveBeenCalledWith('analytics', 'trino-worker-0'));
+    await waitFor(() => expect(restartPod).toHaveBeenCalledWith('analytics', 'trino-worker-0', undefined));
   });
 
   it('asks before deleting a pod and leaves the grace period to the pod', async () => {
@@ -97,7 +97,7 @@ describe('WorkloadsPage pod actions', () => {
     expect(screen.queryByText('Force delete (no grace period)')).toBeNull();
     expect(deletePod).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(deletePod).toHaveBeenCalledWith('analytics', 'trino-worker-0', undefined, false));
+    await waitFor(() => expect(deletePod).toHaveBeenCalledWith('analytics', 'trino-worker-0', undefined, false, undefined));
   });
 
   it('does not delete when the confirmation is cancelled', async () => {
@@ -124,6 +124,6 @@ describe('WorkloadsPage pod actions', () => {
     await user.click(await screen.findByText('Force delete (no grace period)'));
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
-    await waitFor(() => expect(deletePod).toHaveBeenCalledWith('analytics', 'db-0', 0, true));
+    await waitFor(() => expect(deletePod).toHaveBeenCalledWith('analytics', 'db-0', 0, true, undefined));
   });
 });

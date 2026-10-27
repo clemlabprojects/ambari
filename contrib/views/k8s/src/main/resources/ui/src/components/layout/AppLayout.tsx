@@ -45,12 +45,14 @@ import {
   ThunderboltFilled,
 } from '@ant-design/icons';
 import { useClusterStatus } from '../../context/ClusterStatusContext';
+import { useViewedCluster } from '../../context/ViewedClusterContext';
 import { useThemeMode } from '../../context/ThemeModeContext';
 import { useReduceMotion } from '../../context/ReduceMotionContext';
 import BackgroundOperationsModal from '../common/BackgroundOperationsModal';
 import { CONFIGURE_ONLY_ROUTES } from '../../utils/permissions';
 import { usePermissions } from '../../hooks/usePermissions';
 import NamespaceSelector from './NamespaceSelector';
+import ClusterSelector from './ClusterSelector';
 import ProductTour, { markTourSeen, shouldStartTour } from './ProductTour';
 import { listCommands, getClusterCapabilities, pingSession } from '../../api/client';
 import './AppLayout.css';
@@ -122,13 +124,16 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // that gates the OpenShift-only deploy fields. Surfaced in the brand so the operator can see at
   // a glance which platform KDPS detected — and so a mis-detection is immediately visible.
   const [platform, setPlatform] = React.useState<string | null>(null);
+  const { cluster: viewedCluster, viewed, clusters } = useViewedCluster();
+  // With several clusters, the connection shown is the viewed cluster's: say which.
+  const clusterPrefix = clusters.length > 1 && viewed ? `${viewed.name}: ` : '';
   React.useEffect(() => {
     let alive = true;
-    getClusterCapabilities()
+    getClusterCapabilities(viewedCluster)
       .then(c => { if (alive) setPlatform(c?.platform ?? null); })
       .catch(() => { if (alive) setPlatform(null); });
     return () => { alive = false; };
-  }, []);
+  }, [viewedCluster]);
 
   // Collapse state survives reloads. Read once on mount; ignore parse errors.
   const [collapsed, setCollapsed] = React.useState<boolean>(() => {
@@ -318,6 +323,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
           <div className="header-right">
             <Space size={8} align="center">
+              <ClusterSelector />
               <NamespaceSelector />
               {platform && (
                 <Tooltip title="Detected target platform">
@@ -331,7 +337,7 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               )}
               {status === 'connected' && <Tag color="green" style={{ margin: 0 }}><span className="kdps-live-dot" />CONNECTED</Tag>}
               {status === 'disconnected' && (
-                <Tooltip title={connectionMessage || 'The cluster connection is down. Re-login on the Cluster settings page.'}>
+                <Tooltip title={clusterPrefix + (connectionMessage || 'The cluster connection is down. Re-login on the Cluster settings page.')}>
                   <Tag color="orange" style={{ margin: 0 }}>DISCONNECTED</Tag>
                 </Tooltip>
               )}

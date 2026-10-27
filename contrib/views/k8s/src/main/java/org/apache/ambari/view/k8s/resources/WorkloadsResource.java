@@ -25,6 +25,7 @@ import org.apache.ambari.view.k8s.model.kube.KubeServiceDTO;
 import org.apache.ambari.view.k8s.model.kube.KubeEventDTO;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.store.K8sReleaseEntity;
 import org.slf4j.Logger;
@@ -64,6 +65,9 @@ public class WorkloadsResource {
     private final ViewContext ctx;
     /** Headers of the request this resource serves: the role check asks Ambari with the caller's credentials. */
     private final HttpHeaders callerHeaders;
+    /** The cluster whose workloads are shown, and its service. */
+    private final ClusterRef cluster;
+    private final KubernetesService kubernetesService;
     private AuthHelper authHelper;
 
     /**
@@ -73,8 +77,23 @@ public class WorkloadsResource {
      * @param callerHeaders headers of the request; {@code null} when unknown
      */
     public WorkloadsResource(ViewContext ctx, HttpHeaders callerHeaders) {
+        this(ctx, callerHeaders, ClusterRef.DEFAULT, null);
+    }
+
+    /**
+     * Creates the resource for one request, on the workloads of one cluster.
+     *
+     * @param ctx               active Ambari view context
+     * @param callerHeaders     headers of the request; {@code null} when unknown
+     * @param cluster           the cluster whose workloads are shown
+     * @param kubernetesService that cluster's service; {@code null} to look it up on first use
+     */
+    public WorkloadsResource(ViewContext ctx, HttpHeaders callerHeaders, ClusterRef cluster,
+                             KubernetesService kubernetesService) {
         this.ctx = ctx;
         this.callerHeaders = callerHeaders;
+        this.cluster = cluster;
+        this.kubernetesService = kubernetesService;
     }
 
     /** The caller's KDPS role for this request, looked up at most once. */
@@ -86,7 +105,7 @@ public class WorkloadsResource {
     }
 
     private KubernetesService kube() {
-        return KubernetesService.get(ctx);
+        return kubernetesService != null ? kubernetesService : KubernetesService.get(ctx, cluster);
     }
 
     /**
@@ -98,8 +117,8 @@ public class WorkloadsResource {
             return null;
         }
         Set<String> namespaces = new HashSet<>();
-        for (K8sReleaseEntity release : new ReleaseMetadataService(ctx).findAll()) {
-            if (release != null && release.getNamespace() != null) {
+        for (K8sReleaseEntity release : new ReleaseMetadataService(ctx, cluster).findAll()) {
+            if (release != null && release.getNamespace() != null && cluster.equals(release.clusterRef())) {
                 namespaces.add(release.getNamespace());
             }
         }

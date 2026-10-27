@@ -20,6 +20,7 @@
 import React from 'react';
 import { Typography, Table, Progress, Tag, Skeleton, Result, message } from 'antd';
 import { useClusterStatus } from '../context/ClusterStatusContext';
+import { useViewedCluster } from '../context/ViewedClusterContext';
 import { getNodes } from '../api/client';
 import StatusTag from '../components/common/StatusTag';
 import './Page.css';
@@ -28,6 +29,7 @@ const { Title } = Typography;
 
 const NodesPage: React.FC = () => {
     const { status } = useClusterStatus();
+    const { cluster } = useViewedCluster();
     const [nodes, setNodes] = React.useState<any[]>([]);
     const [total, setTotal] = React.useState(0);
     const [page, setPage] = React.useState(1);
@@ -39,7 +41,7 @@ const NodesPage: React.FC = () => {
         setLoading(true);
         try {
             const offset = (p - 1) * ps;
-            const res = await getNodes(ps, offset);
+            const res = await getNodes(ps, offset, cluster);
             setRestricted((res as any)?.restricted === true);
             const items = (res as any)?.items || res;
             setNodes(items || []);
@@ -51,11 +53,12 @@ const NodesPage: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    }, [page, pageSize]);
+    }, [page, pageSize, cluster]);
 
+    // The nodes of the cluster chosen in the top bar, again when another is chosen.
     React.useEffect(() => {
         void fetchPage(1, pageSize);
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [cluster]); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (status === 'error') {
         return <Result status="warning" title="Node data not available." subTitle="Unable to retrieve cluster information." />;

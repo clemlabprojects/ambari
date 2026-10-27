@@ -220,6 +220,12 @@ class KubeServiceClustersTest {
     // The releases of a cluster, and every action on them, are reached by naming it.
     WebApplicationException releases = assertThrows(WebApplicationException.class, () -> lead.helm(null, "prod", null));
     assertEquals(404, releases.getResponse().getStatus());
+    // So are its workloads, nodes, events and figures.
+    for (Supplier<Object> call : List.<Supplier<Object>>of(() -> lead.getWorkloads(null, "prod"),
+        () -> lead.getNodes(200, 0, "prod"), () -> lead.getClusterEvents(null, "prod"),
+        () -> lead.getClusterStats(false, "prod"), () -> lead.getComponentStatuses("prod"))) {
+      assertEquals(404, assertThrows(WebApplicationException.class, call::get).getResponse().getStatus());
+    }
     assertFalse(new ViewConfigurationService(ctx, pod, PROD).isConfigured(), "nothing saved for an unknown cluster");
     assertEquals(400, lead.saveCluster(null, "Prod", Map.of("name", "x")).getStatus());
   }

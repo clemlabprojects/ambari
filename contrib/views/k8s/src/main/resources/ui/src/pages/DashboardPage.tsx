@@ -23,6 +23,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, L
 import { CheckCircleTwoTone, CloseCircleTwoTone, InfoCircleTwoTone, WarningTwoTone, ClockCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useClusterStatus } from '../context/ClusterStatusContext';
+import { useViewedCluster } from '../context/ViewedClusterContext';
 import { installMonitoring, getMonitoringDiscovery } from '../api/client';
 import PermissionGuard from '../components/common/PermissionGuard';
 import './Page.css';
@@ -31,6 +32,7 @@ const { Title, Text, Paragraph } = Typography;
 
 const DashboardPage: React.FC = () => {
     const { status, stats, components, events, monitoringState, refresh } = useClusterStatus();
+    const { cluster } = useViewedCluster();
     const navigate = useNavigate();
 
     // If the connection failed, display a message instead of content.
@@ -139,9 +141,9 @@ const DashboardPage: React.FC = () => {
                           size="small"
                           onClick={async () => {
                             try {
-                              await installMonitoring();
+                              await installMonitoring(undefined, undefined, cluster);
                               message.success('Monitoring bootstrap requested');
-                              await getMonitoringDiscovery().catch(() => {});
+                              await getMonitoringDiscovery(cluster).catch(() => {});
                               await refresh();
                             } catch (e:any) {
                               message.error(e?.message || 'Bootstrap failed');
