@@ -30,6 +30,7 @@ import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.TruststoreRegistryService;
 import org.apache.ambari.view.k8s.service.NamespaceScope;
 import org.apache.ambari.view.k8s.service.PkiNamespaces;
+import org.apache.ambari.view.k8s.service.cluster.ProtectedClusters;
 import org.apache.ambari.view.k8s.service.ViewConfigurationService;
 import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.service.cluster.ClusterRegistry;
@@ -1224,8 +1225,9 @@ public class KubeService {
      * {@code cluster} query parameter, the default one when it names none.
      */
     @Path("/helm")
-    public HelmResource helm(@Context HttpHeaders headers, @QueryParam("cluster") String cluster) {
-        return new HelmResource(viewContext, headers, requestedCluster(cluster));
+    public HelmResource helm(@Context HttpHeaders headers, @QueryParam("cluster") String cluster,
+                             @QueryParam(ProtectedClusters.PARAM) String confirmCluster) {
+        return new HelmResource(viewContext, headers, requestedCluster(cluster), confirmCluster);
     }
 
     @Path("commands")

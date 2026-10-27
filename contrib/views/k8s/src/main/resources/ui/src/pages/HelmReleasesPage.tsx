@@ -47,6 +47,7 @@ import { useCapabilities } from '../components/ServiceInstallationModal/capabili
 import TrinoCatalogsModal from '../components/common/TrinoCatalogsModal';
 import RangerPolicyModal from '../components/common/RangerPolicyModal';
 import TrinoAutoscalingModal from '../components/common/TrinoAutoscalingModal';
+import { CANCELLED, confirmingProtectedCluster } from '../components/common/protectedCluster';
 import { atlasFixRestartOffered } from './atlasFederationAuth';
 import './Page.css';
 
@@ -261,6 +262,14 @@ const HelmReleasesPage: React.FC = () => {
     void fetchReleases(1, pageSize);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Redeploys a release from this page: an upgrade, for which a protected cluster asks the operator its name. */
+  const redeploy = (payload: ReturnType<typeof releaseRedeployPayload>) =>
+    confirmingProtectedCluster((confirm) => {
+      const params = new URLSearchParams();
+      if (confirm) params.set('confirmCluster', confirm);
+      return submitHelmDeploy(payload as any, params);
+    });
+
     /**
      * Re-apply the security profile for a release by re-submitting its current
      * values, at its current chart version and platform context. This triggers
@@ -273,7 +282,8 @@ const HelmReleasesPage: React.FC = () => {
       try {
         const currentValues = await getReleaseValues(release.namespace, release.name, release.kubernetesCluster);
         const payload = releaseRedeployPayload(release, currentValues, gitOptionsForRelease(release));
-        const response = await submitHelmDeploy(payload as any);
+        const response = await redeploy(payload);
+        if (response === CANCELLED) return;
         if (response?.id) {
           setWatchedCommandId(response.id);
           setIsCommandDrawerOpen(true);
@@ -293,7 +303,8 @@ const HelmReleasesPage: React.FC = () => {
    * Used by the worker autoscaling action.
    */
   const redeployWithValues = async (release: HelmRelease, values: any) => {
-    const response = await submitHelmDeploy(releaseRedeployPayload(release, values, gitOptionsForRelease(release)) as any);
+    const response = await redeploy(releaseRedeployPayload(release, values, gitOptionsForRelease(release)));
+    if (response === CANCELLED) return;
     if (response?.id) {
       setWatchedCommandId(response.id);
       setIsCommandDrawerOpen(true);
@@ -312,7 +323,8 @@ const HelmReleasesPage: React.FC = () => {
     try {
       const currentValues = await getReleaseValues(release.namespace, release.name, release.kubernetesCluster);
       const payload = releaseRedeployPayload(release, currentValues, gitOptionsForRelease(release));
-      const response = await submitHelmDeploy(payload as any);
+      const response = await redeploy(payload);
+      if (response === CANCELLED) return;
       if (response?.id) {
         setWatchedCommandId(response.id);
         setIsCommandDrawerOpen(true);
@@ -594,7 +606,9 @@ const HelmReleasesPage: React.FC = () => {
   const performRollbackToRevision = useCallback(async (release: HelmRelease, revision: number) => {
     setRollingBackRevision(revision);
     try {
-      await rollbackReleaseToRevision(release.namespace, release.name, revision, release.kubernetesCluster);
+      const done = await confirmingProtectedCluster((confirm) =>
+        rollbackReleaseToRevision(release.namespace, release.name, revision, release.kubernetesCluster, confirm));
+      if (done === CANCELLED) return;
       message.success(`Rolled back ${release.name} to revision ${revision}`);
       setHistoryModalRelease(null);
       void refreshReleaseStatus(release, { notifyOnError: false });
@@ -624,7 +638,9 @@ const HelmReleasesPage: React.FC = () => {
       onOk: async () => {
         const hide = message.loading(`Upgrading ${release.name} to ${targetVersion}...`, 0);
         try {
-          const response = await upgradeReleaseChart(release.namespace, release.name, targetVersion, release.kubernetesCluster);
+          const response = await confirmingProtectedCluster((confirm) =>
+            upgradeReleaseChart(release.namespace, release.name, targetVersion, release.kubernetesCluster, confirm));
+          if (response === CANCELLED) return;
           if (response?.id) {
             setWatchedCommandId(response.id);
             setIsCommandDrawerOpen(true);
@@ -937,11 +953,15 @@ const HelmReleasesPage: React.FC = () => {
               cancelText: 'Cancel',
               onOk: async () => {
                 try {
-                  const params = new URLSearchParams();
-                  if (record.repoId) params.set('repoId', record.repoId);
-                  if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
-                  params.set('externalCleanup', choice.mode);
-                  const notes = await uninstallHelm(record.name, record.namespace, params, record.kubernetesCluster);
+                  const notes = await confirmingProtectedCluster((confirm) => {
+                    const params = new URLSearchParams();
+                    if (record.repoId) params.set('repoId', record.repoId);
+                    if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
+                    params.set('externalCleanup', choice.mode);
+                    if (confirm) params.set('confirmCluster', confirm);
+                    return uninstallHelm(record.name, record.namespace, params, record.kubernetesCluster);
+                  });
+                  if (notes === CANCELLED) return;
                   if (notes?.pendingDelete) {
                     // A GitOps release removed through a pull request keeps running until it is merged.
                     Modal.info({

@@ -442,6 +442,37 @@ export function masterKeyRefusal(status: number, text: string): string | null {
   }
 }
 
+/** The code of a refusal on a protected cluster: the action needs the cluster's name, typed by the operator. */
+export const PROTECTED_CLUSTER_NOT_CONFIRMED = 'PROTECTED_CLUSTER_NOT_CONFIRMED';
+
+/** An uninstall, rollback or upgrade refused on a protected cluster until the operator types the cluster's name. */
+export class ProtectedClusterError extends Error {
+  /** The cluster whose name the operator types. */
+  readonly cluster: { id: string; name: string };
+
+  constructor(message: string, cluster: { id: string; name: string }) {
+    super(message);
+    this.name = 'ProtectedClusterError';
+    this.cluster = cluster;
+  }
+}
+
+/** The refusal on a protected cluster an answer carries, if it is one. */
+const protectedClusterRefusal = (status: number, text: string): ProtectedClusterError | null => {
+  if (status !== 409) return null;
+  try {
+    const body = JSON.parse(text);
+    return body?.code === PROTECTED_CLUSTER_NOT_CONFIRMED && body.cluster
+      ? new ProtectedClusterError(String(body.error || ''), body.cluster) : null;
+  } catch {
+    return null;
+  }
+};
+
+/** A path of the API carrying the cluster's name the operator typed, when there is one. */
+const confirmingCluster = (path: string, confirmCluster?: string): string =>
+  !confirmCluster ? path : `${path}${path.includes('?') ? '&' : '?'}confirmCluster=${encodeURIComponent(confirmCluster)}`;
+
 async function fetchJson<T = unknown>(
   path: string,
   options: RequestInit = {}
@@ -456,6 +487,8 @@ async function fetchJson<T = unknown>(
     if (handleAuthExpiry(response.status, text)) throw new Error('Session expired — redirecting to Ambari login');
     const noMasterKey = masterKeyRefusal(response.status, text);
     if (noMasterKey) throw new Error(noMasterKey);
+    const unconfirmed = protectedClusterRefusal(response.status, text);
+    if (unconfirmed) throw unconfirmed;
     throw new Error(`HTTP ${response.status} – ${text || response.statusText}`);
   }
   if (response.status === 204) return undefined as unknown as T; // No-content
@@ -1325,18 +1358,20 @@ export const triggerReplayableAction = async (
  * Upgrade a deployed release to a new chart version in place. Backend preserves the
  * deployed values and only changes the chart version. Returns the background command id.
  */
-export const upgradeReleaseChart = async (namespace: string, releaseName: string, version: string, cluster?: string) => {
+export const upgradeReleaseChart = async (namespace: string, releaseName: string, version: string, cluster?: string,
+                                          confirmCluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/chart-upgrade?version=${encodeURIComponent(version)}`;
-  return fetchJson<{ id: string; href?: string }>(onCluster(requestPath, cluster), { method: 'POST' });
+  return fetchJson<{ id: string; href?: string }>(confirmingCluster(onCluster(requestPath, cluster), confirmCluster), { method: 'POST' });
 };
 
 /**
  * Roll back a deployed release to a specific Helm revision picked by the operator.
  * Returns 200 on success with the revision that was applied.
  */
-export const rollbackReleaseToRevision = async (namespace: string, releaseName: string, revision: number, cluster?: string) => {
+export const rollbackReleaseToRevision = async (namespace: string, releaseName: string, revision: number, cluster?: string,
+                                                confirmCluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/rollback?revision=${revision}`;
-  return fetchJson<{ ok?: boolean; revision?: number }>(onCluster(requestPath, cluster), { method: 'POST' });
+  return fetchJson<{ ok?: boolean; revision?: number }>(confirmingCluster(onCluster(requestPath, cluster), confirmCluster), { method: 'POST' });
 };
 
 export interface HelmHistoryEntry {
@@ -1615,6 +1650,9 @@ export async function submitHelmDeploy(payload: {
     } catch {
       try { detail = `: ${await response.text()}`; } catch { /* keep empty */ }
     }
+    if (response.status === 409 && body?.code === PROTECTED_CLUSTER_NOT_CONFIRMED && body.cluster) {
+      throw new ProtectedClusterError(String(body.error || ''), body.cluster);
+    }
     const err = new Error(`Submit failed: ${response.status}${detail}`);
     (err as any).status = response.status;
     // A refusal the wizard can resolve by asking the operator (an existing ingress certificate Secret to replace)
@@ -1744,9 +1782,15 @@ export async function uninstallHelm(
     // release must be deployed again with its Git token before KDPS can remove it from Git.
     let detail = '';
     try {
-      const body: any = await response.json();
+      const text = await response.text();
+      const unconfirmed = protectedClusterRefusal(response.status, text);
+      if (unconfirmed) throw unconfirmed;
+      const body: any = JSON.parse(text);
       detail = body?.error ? `: ${body.error}` : '';
-    } catch { /* keep the status only */ }
+    } catch (e) {
+      if (e instanceof ProtectedClusterError) throw e;
+      /* keep the status only */
+    }
     throw new Error(`Uninstall failed: ${response.status}${detail}`);
   }
   // The body is empty when there is nothing to report.

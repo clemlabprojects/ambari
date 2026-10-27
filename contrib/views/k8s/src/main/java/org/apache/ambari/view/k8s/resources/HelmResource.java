@@ -25,6 +25,7 @@ import com.marcnuri.helm.Release;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
+import org.apache.ambari.view.k8s.service.cluster.ProtectedClusters;
 import org.apache.ambari.view.k8s.model.HelmReleaseDTO;
 import org.apache.ambari.view.k8s.model.ReleaseEndpointDTO;
 import org.apache.ambari.view.k8s.model.HelmReleasesResponse;
@@ -91,6 +92,8 @@ public class HelmResource {
     private final AuthHelper authHelper;
     /** The Kubernetes cluster whose releases this resource lists and changes. */
     private final ClusterRef cluster;
+    /** The cluster's name as the operator typed it, which an action on a protected cluster needs. */
+    private final String confirmCluster;
 
     // Lightweight in-memory cache for releases to avoid hammering Helm/K8s on frequent polls
     private static final Map<String, CachedReleases> RELEASE_CACHE = new ConcurrentHashMap<>();
@@ -115,8 +118,22 @@ public class HelmResource {
      * @param cluster       the cluster whose releases are listed and changed
      */
     public HelmResource(ViewContext context, HttpHeaders callerHeaders, ClusterRef cluster) {
+        this(context, callerHeaders, cluster, null);
+    }
+
+    /**
+     * Creates the resource for one request, acting on the releases of one cluster.
+     *
+     * @param context        active Ambari view context
+     * @param callerHeaders  headers of the request; the role check asks Ambari with the caller's credentials
+     * @param cluster        the cluster whose releases are listed and changed
+     * @param confirmCluster the cluster's name as the operator typed it ({@link ProtectedClusters#PARAM}); an
+     *                       uninstall, rollback or upgrade on a protected cluster needs it
+     */
+    public HelmResource(ViewContext context, HttpHeaders callerHeaders, ClusterRef cluster, String confirmCluster) {
         this.viewContext = context;
         this.cluster = java.util.Objects.requireNonNull(cluster, "cluster");
+        this.confirmCluster = confirmCluster;
         this.configService = new ViewConfigurationService(viewContext, cluster);
         this.kubernetesService = KubernetesService.get(viewContext, cluster);
         this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService,
@@ -129,6 +146,21 @@ public class HelmResource {
     /** The cluster this resource acts on; the default one for a resource built without one (a test's). */
     private ClusterRef cluster() {
         return cluster != null ? cluster : ClusterRef.DEFAULT;
+    }
+
+    /**
+     * Refuses an action on a protected cluster the request does not confirm with the cluster's name.
+     *
+     * @return the refusal to answer, or {@code null} when the action may go on
+     */
+    private Response unconfirmed(String action) {
+        try {
+            ProtectedClusters.require(viewContext, cluster(), confirmCluster, action);
+            return null;
+        } catch (ProtectedClusters.NotConfirmedException refused) {
+            LOG.warn("Refused on a protected cluster: {}", refused.getMessage());
+            return refused.response();
+        }
     }
 
     /** Helm, on this resource's cluster. */
@@ -1278,6 +1310,10 @@ public class HelmResource {
             }
             ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(namespace, releaseName),
                     namespace, releaseName, "a Helm rollback");
+            Response notConfirmed = unconfirmed("the rollback of " + namespace + "/" + releaseName);
+            if (notConfirmed != null) {
+                return notConfirmed;
+            }
             LOG.info("Rolling back release {}/{} to revision {}", namespace, releaseName, revision);
             helm().rollback(namespace, releaseName, revision, getKubeconfigContents());
             RELEASE_CACHE.clear();
@@ -1415,6 +1451,10 @@ public class HelmResource {
                                         @Context UriInfo uriInfo) {
         try {
             authHelper.checkWritePermission();
+            Response notConfirmed = unconfirmed("the upgrade of " + namespace + "/" + releaseName);
+            if (notConfirmed != null) {
+                return notConfirmed;
+            }
             LOG.info("Submitting chart upgrade for release {}/{} → version {}", namespace, releaseName, targetVersion);
             String commandId = commandService.submitReleaseUpgrade(
                     namespace,
@@ -1476,6 +1516,13 @@ public class HelmResource {
             ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(deployRequest.getNamespace(),
                     deployRequest.getReleaseName()), deployRequest.getNamespace(), deployRequest.getReleaseName(),
                     "a Helm upgrade");
+            if (releaseMetadataService.find(deployRequest.getNamespace(), deployRequest.getReleaseName()) != null) {
+                Response notConfirmed = unconfirmed("the upgrade of " + deployRequest.getNamespace() + "/"
+                        + deployRequest.getReleaseName());
+                if (notConfirmed != null) {
+                    return notConfirmed;
+                }
+            }
             if (kubeContext == null) {
                 kubeContext = getKubeconfigContents();
             }
@@ -1515,6 +1562,11 @@ public class HelmResource {
         authHelper.checkWritePermission();
         if (upgradeRequest == null) {
             throw new IllegalArgumentException("Empty request");
+        }
+        Response notConfirmed = unconfirmed("the upgrade of " + upgradeRequest.getNamespace() + "/"
+                + upgradeRequest.getReleaseName());
+        if (notConfirmed != null) {
+            throw new WebApplicationException(notConfirmed);
         }
         try {
             // Flux would put back what Git holds at its next reconcile.
@@ -1704,6 +1756,10 @@ public class HelmResource {
                     + gitOverride + "'. A GitOps release is removed from the Git repository, branch and path recorded"
                     + " for it, with the Git credential KDPS saved for it; they cannot be given with the request."))
                     .build();
+        }
+        Response notConfirmed = unconfirmed("the uninstall of " + namespace + "/" + releaseName);
+        if (notConfirmed != null) {
+            return notConfirmed;
         }
         ExternalCleanup.Mode externalMode;
         try {
@@ -2053,6 +2109,10 @@ public class HelmResource {
                             @QueryParam("name") String releaseName,
                             @QueryParam("revision") int revision) {
         authHelper.checkWritePermission();
+        Response notConfirmed = unconfirmed("the rollback of " + namespace + "/" + releaseName);
+        if (notConfirmed != null) {
+            return notConfirmed;
+        }
         try {
             ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(namespace, releaseName),
                     namespace, releaseName, "a Helm rollback");
