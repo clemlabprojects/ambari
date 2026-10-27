@@ -305,6 +305,7 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
             clientDescriptor.isDirectAccessGrantsEnabled(),
             clientDescriptor.isStandardFlowEnabled(),
             clientDescriptor.getRedirectUris(),
+            clientDescriptor.getWebOrigins(),
             clientDescriptor.getAttributes(),
             clientDescriptor.getConfigurations(),
             // Preserve provider-specific mapper payloads after resolving the

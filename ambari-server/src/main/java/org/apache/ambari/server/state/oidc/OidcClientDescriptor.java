@@ -32,6 +32,7 @@ public class OidcClientDescriptor {
   static final String KEY_DIRECT_ACCESS_GRANTS_ENABLED = "direct_access_grants_enabled";
   static final String KEY_STANDARD_FLOW_ENABLED = "standard_flow_enabled";
   static final String KEY_REDIRECT_URIS = "redirect_uris";
+  static final String KEY_WEB_ORIGINS = "web_origins";
   static final String KEY_ATTRIBUTES = "attributes";
   static final String KEY_CONFIGURATIONS = "configurations";
   static final String KEY_SECRET_ALIAS = "secret_alias";
@@ -45,6 +46,11 @@ public class OidcClientDescriptor {
   private Boolean directAccessGrantsEnabled;
   private Boolean standardFlowEnabled;
   private List<String> redirectUris;
+  /**
+   * Origins allowed to call Keycloak from a browser (CORS), e.g. a single-page console exchanging its
+   * authorization code. Keycloak values apply: {@code *} for any origin, {@code +} for the redirect URI origins.
+   */
+  private List<String> webOrigins;
   private Map<String, String> attributes;
   private List<Map<String, Map<String, String>>> configurations;
   private String secretAlias;
@@ -60,7 +66,7 @@ public class OidcClientDescriptor {
   public OidcClientDescriptor(String name, String clientId, String realm, Boolean publicClient,
                               Boolean serviceAccountsEnabled, Boolean directAccessGrantsEnabled,
                               Boolean standardFlowEnabled, List<String> redirectUris,
-                              Map<String, String> attributes,
+                              List<String> webOrigins, Map<String, String> attributes,
                               List<Map<String, Map<String, String>>> configurations, String secretAlias,
                               List<Map<String, Object>> protocolMappers) {
     this.name = name;
@@ -71,6 +77,7 @@ public class OidcClientDescriptor {
     this.directAccessGrantsEnabled = directAccessGrantsEnabled;
     this.standardFlowEnabled = standardFlowEnabled;
     this.redirectUris = redirectUris;
+    this.webOrigins = webOrigins;
     this.attributes = attributes;
     this.configurations = configurations;
     this.secretAlias = secretAlias;
@@ -87,6 +94,7 @@ public class OidcClientDescriptor {
       directAccessGrantsEnabled = OidcDescriptorUtils.getBooleanValue(data, KEY_DIRECT_ACCESS_GRANTS_ENABLED);
       standardFlowEnabled = OidcDescriptorUtils.getBooleanValue(data, KEY_STANDARD_FLOW_ENABLED);
       redirectUris = OidcDescriptorUtils.getStringList(data.get(KEY_REDIRECT_URIS));
+      webOrigins = OidcDescriptorUtils.getStringList(data.get(KEY_WEB_ORIGINS));
       attributes = OidcDescriptorUtils.getStringMap(data.get(KEY_ATTRIBUTES));
       configurations = OidcDescriptorUtils.getConfigurations(data.get(KEY_CONFIGURATIONS));
       secretAlias = OidcDescriptorUtils.getStringValue(data, KEY_SECRET_ALIAS);
@@ -124,6 +132,10 @@ public class OidcClientDescriptor {
 
   public List<String> getRedirectUris() {
     return redirectUris;
+  }
+
+  public List<String> getWebOrigins() {
+    return webOrigins;
   }
 
   public Map<String, String> getAttributes() {
@@ -171,6 +183,9 @@ public class OidcClientDescriptor {
     }
     if (redirectUris != null) {
       data.put(KEY_REDIRECT_URIS, new ArrayList<>(redirectUris));
+    }
+    if (webOrigins != null) {
+      data.put(KEY_WEB_ORIGINS, new ArrayList<>(webOrigins));
     }
     if (attributes != null) {
       data.put(KEY_ATTRIBUTES, new TreeMap<>(attributes));

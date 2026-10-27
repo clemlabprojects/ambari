@@ -81,6 +81,9 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
     if (clientInternalId == null) {
       createClient(token, targetRealm, descriptor);
       clientInternalId = getClientInternalId(token, targetRealm, descriptor.getClientId());
+    } else {
+      // re-provisioning applies the descriptor again (redirect URIs, web origins, flows...)
+      updateClient(token, targetRealm, clientInternalId, descriptor);
     }
 
     ensureProtocolMappers(token, targetRealm, clientInternalId, descriptor.getProtocolMappers());
@@ -190,34 +193,10 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
   private void createClient(String token, String realm, OidcClientDescriptor descriptor) throws OidcOperationException {
     String endpoint = String.format("%s/admin/realms/%s/clients", normalizeBaseUrl(configuration.getBaseUrl()), realm);
 
-    JsonObject payload = new JsonObject();
-    payload.addProperty("clientId", descriptor.getClientId());
-    payload.addProperty("protocol", "openid-connect");
-    payload.addProperty("publicClient", getBooleanOrDefault(descriptor.isPublicClient(), false));
-    payload.addProperty("serviceAccountsEnabled", getBooleanOrDefault(descriptor.isServiceAccountsEnabled(), true));
-    payload.addProperty("directAccessGrantsEnabled", getBooleanOrDefault(descriptor.isDirectAccessGrantsEnabled(), true));
-    payload.addProperty("standardFlowEnabled", getBooleanOrDefault(descriptor.isStandardFlowEnabled(), false));
-
-    if (descriptor.getRedirectUris() != null) {
-      JsonArray redirectUris = new JsonArray();
-      for (String uri : descriptor.getRedirectUris()) {
-        redirectUris.add(uri);
-      }
-      payload.add("redirectUris", redirectUris);
-    }
-
-    if (descriptor.getAttributes() != null) {
-      JsonObject attributes = new JsonObject();
-      for (Map.Entry<String, String> entry : descriptor.getAttributes().entrySet()) {
-        attributes.addProperty(entry.getKey(), entry.getValue());
-      }
-      payload.add("attributes", attributes);
-    }
-
     Response response = client.target(endpoint)
       .request(MediaType.APPLICATION_JSON_TYPE)
       .header("Authorization", "Bearer " + token)
-      .post(Entity.json(payload.toString()));
+      .post(Entity.json(toClientPayload(descriptor, true).toString()));
 
     if (response.getStatus() == 409) {
       return;
@@ -227,6 +206,72 @@ public class KeycloakOidcOperationHandler implements OidcOperationHandler {
       String message = response.readEntity(String.class);
       throw new OidcOperationException(String.format("Failed to create Keycloak client %s (status %s): %s",
         descriptor.getClientId(), response.getStatus(), message));
+    }
+  }
+
+  /**
+   * Updates an existing client with the settings of the descriptor. Only the flags the descriptor declares are sent,
+   * so flags tuned in Keycloak are kept, as is the client secret.
+   */
+  private void updateClient(String token, String realm, String internalId, OidcClientDescriptor descriptor)
+    throws OidcOperationException {
+    String endpoint = String.format("%s/admin/realms/%s/clients/%s",
+      normalizeBaseUrl(configuration.getBaseUrl()), realm, internalId);
+
+    Response response = client.target(endpoint)
+      .request(MediaType.APPLICATION_JSON_TYPE)
+      .header("Authorization", "Bearer " + token)
+      .put(Entity.json(toClientPayload(descriptor, false).toString()));
+
+    if (response.getStatus() / 100 != 2) {
+      String message = response.readEntity(String.class);
+      throw new OidcOperationException(String.format("Failed to update Keycloak client %s (status %s): %s",
+        descriptor.getClientId(), response.getStatus(), message));
+    }
+  }
+
+  /**
+   * @param create true for a new client: flags the descriptor does not declare get their defaults; on an update they
+   *               are left out
+   */
+  private JsonObject toClientPayload(OidcClientDescriptor descriptor, boolean create) {
+    JsonObject payload = new JsonObject();
+    payload.addProperty("clientId", descriptor.getClientId());
+    payload.addProperty("protocol", "openid-connect");
+    addFlag(payload, "publicClient", descriptor.isPublicClient(), false, create);
+    addFlag(payload, "serviceAccountsEnabled", descriptor.isServiceAccountsEnabled(), true, create);
+    addFlag(payload, "directAccessGrantsEnabled", descriptor.isDirectAccessGrantsEnabled(), true, create);
+    addFlag(payload, "standardFlowEnabled", descriptor.isStandardFlowEnabled(), false, create);
+
+    if (descriptor.getRedirectUris() != null) {
+      JsonArray redirectUris = new JsonArray();
+      for (String uri : descriptor.getRedirectUris()) {
+        redirectUris.add(uri);
+      }
+      payload.add("redirectUris", redirectUris);
+    }
+
+    if (descriptor.getWebOrigins() != null) {
+      JsonArray webOrigins = new JsonArray();
+      for (String origin : descriptor.getWebOrigins()) {
+        webOrigins.add(origin);
+      }
+      payload.add("webOrigins", webOrigins);
+    }
+
+    if (descriptor.getAttributes() != null) {
+      JsonObject attributes = new JsonObject();
+      for (Map.Entry<String, String> entry : descriptor.getAttributes().entrySet()) {
+        attributes.addProperty(entry.getKey(), entry.getValue());
+      }
+      payload.add("attributes", attributes);
+    }
+    return payload;
+  }
+
+  private void addFlag(JsonObject payload, String name, Boolean value, boolean defaultValue, boolean create) {
+    if (value != null || create) {
+      payload.addProperty(name, getBooleanOrDefault(value, defaultValue));
     }
   }
 
