@@ -233,14 +233,6 @@ limitations under the License.
 
     </property>
     <property>
-        <name>impala_user</name>
-        <value>impala</value>
-        <property-type>USER</property-type>
-        <description>User impala catalog/state-store/daemon runs as</description>
-    <on-ambari-upgrade add="true"/>
-
-    </property>
-    <property>
         <name>impala_group</name>
         <value>hadoop</value>
         <property-type>GROUP</property-type>
