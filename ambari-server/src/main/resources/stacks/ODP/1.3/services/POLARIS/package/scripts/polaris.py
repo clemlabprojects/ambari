@@ -38,6 +38,7 @@ from resource_management.core.source import DownloadSource, InlineTemplate, Temp
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.get_user_call_output import get_user_call_output
 from resource_management.libraries.resources.properties_file import PropertiesFile
+from resource_management.libraries.resources.xml_config import XmlConfig
 
 
 def configure_polaris(component_type='server'):
@@ -74,6 +75,16 @@ def configure_polaris(component_type='server'):
                  group=params.user_group,
                  mode=0o640
                  )
+
+  if params.polaris_hive_federation:
+    XmlConfig("hive-site.xml",
+              conf_dir=params.polaris_conf_dir,
+              configurations=params.polaris_hive_site,
+              owner=params.polaris_user,
+              group=params.user_group,
+              mode=0o644)
+  else:
+    File(format("{polaris_conf_dir}/hive-site.xml"), action="delete")
 
   if component_type == 'console':
     configure_console()

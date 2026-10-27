@@ -16,7 +16,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import json
 import os
+import re
 
 from resource_management.core.logger import Logger
 from resource_management.libraries.functions.default import default
@@ -305,6 +307,55 @@ if polaris_credential_mode == "external":
   # external principals are named by the token only: Polaris warns about an id claim
   application_properties.pop("polaris.oidc.principal-mapper.id-claim-path", None)
 
+# Hive Metastore federation: Iceberg's HiveCatalog in Polaris reads the metastore client settings
+# from hive-site.xml on the Polaris classpath (the conf dir), written when federation is enabled
+# and the cluster has a Hive Metastore. HIVE connections only support IMPLICIT authentication:
+# Polaris talks to the metastore as its own (Kerberos) identity.
+HIVE_METASTORE_CLIENT_KEYS = [
+  "hive.metastore.uris",
+  "hive.metastore.sasl.enabled",
+  "hive.metastore.kerberos.principal",
+  "hive.metastore.client.socket.timeout",
+]
+# Ambari Web cannot load a property name containing double quotes, so the stack defines features as
+# polaris.features.<NAME>; application.properties needs the quoted form polaris.features."<NAME>",
+# the one of Polaris' bundled defaults (both forms together fail the configuration validation).
+FEDERATION_FEATURE = 'polaris.features."ENABLE_CATALOG_FEDERATION"'
+CONNECTION_TYPES_FEATURE = 'polaris.features."SUPPORTED_CATALOG_CONNECTION_TYPES"'
+AUTHENTICATION_TYPES_FEATURE = 'polaris.features."SUPPORTED_EXTERNAL_CATALOG_AUTHENTICATION_TYPES"'
+
+for _key in [k for k in application_properties if re.match(r'^polaris\.features\.[A-Z0-9_]+$', k)]:
+  application_properties.setdefault('polaris.features."{0}"'.format(_key.split('.')[-1]), application_properties[_key])
+  del application_properties[_key]
+
+
+def _add_feature_list_value(properties, key, default_values, value):
+  """Adds value to a JSON list feature, starting from default_values when it is not set."""
+  try:
+    values = json.loads(properties.get(key) or "null") or list(default_values)
+  except ValueError:
+    Logger.warning("{0} is not a JSON list; setting it to its default plus {1}.".format(key, value))
+    values = list(default_values)
+  if value not in values:
+    values.append(value)
+  properties[key] = json.dumps(values, separators=(",", ":"))
+
+
+hive_metastore_hosts = default("/clusterHostInfo/hive_metastore_hosts", [])
+polaris_federation_enabled = str(application_properties.get(FEDERATION_FEATURE, "false")).strip().lower() == "true"
+polaris_hive_federation = polaris_federation_enabled and len(hive_metastore_hosts) > 0
+polaris_hive_site = {}
+if polaris_hive_federation:
+  hive_site = default("/configurations/hive-site", {})
+  polaris_hive_site = {k: hive_site[k] for k in HIVE_METASTORE_CLIENT_KEYS if k in hive_site}
+  _add_feature_list_value(application_properties, CONNECTION_TYPES_FEATURE, ["ICEBERG_REST"], "HIVE")
+  # not Polaris' default list: with federation enabled, Polaris refuses to start when a listed type
+  # has no credential vendor (GCP has none in ODP)
+  _add_feature_list_value(application_properties, AUTHENTICATION_TYPES_FEATURE, ["OAUTH"], "IMPLICIT")
+  if security_enabled and polaris_authorization_type != "ranger":
+    # the Ranger authorizer logs the Polaris JVM in with its keytab; nothing else does
+    Logger.warning("Hive federation on a Kerberized cluster needs polaris.authorization.type=ranger: "
+                   "the metastore connection uses the Kerberos login of the Ranger authorizer.")
 
 # OIDC is mapped from cluster-level oidc-env when enabled, with explicit
 # override knobs preserved for custom/external IdP topologies.

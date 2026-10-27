@@ -407,6 +407,22 @@
   </property>
 
   <property>
+    <name>polaris.features.ENABLE_CATALOG_FEDERATION</name>
+    <display-name>Catalog Federation</display-name>
+    <value>false</value>
+    <description>Enables external catalogs that federate to another catalog. When the cluster has a Hive Metastore,
+      HIVE connections (IMPLICIT authentication: Polaris uses its own Kerberos identity) are added to
+      polaris.features.SUPPORTED_CATALOG_CONNECTION_TYPES and the metastore client settings are written to
+      hive-site.xml in the Polaris configuration directory. Tables of a federated Hive catalog must be stored on
+      S3-compatible storage (Ozone S3): Polaris has no HDFS storage type. On a Kerberized cluster the metastore
+      connection uses the Kerberos login of the Ranger authorizer (polaris.authorization.type=ranger).</description>
+    <value-attributes>
+      <type>boolean</type>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
+
+  <property>
     <name>polaris.authentication.credential-mode</name>
     <display-name>Credential Mode</display-name>
     <value>internal</value>
