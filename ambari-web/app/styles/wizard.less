@@ -1234,3 +1234,84 @@
     border-color: #999999;
   }
 }
+// Kerberos wizard step 1: security scope cards
+.security-scope-cards {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 15px;
+  .security-scope-card {
+    flex: 1 1 0;
+    padding: 12px 15px;
+    border: 2px solid #ddd;
+    border-radius: 4px;
+    background-color: #fff;
+    cursor: pointer;
+    p {
+      margin: 6px 0 0 0;
+    }
+    &:hover {
+      border-color: #9ccbe3;
+    }
+    &.selected {
+      border-color: #1491c1;
+      background-color: #f2f9fc;
+    }
+    &.disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+      &:hover {
+        border-color: #ddd;
+      }
+    }
+  }
+  .security-scope-card-title {
+    font-weight: bold;
+    font-size: 14px;
+  }
+  .security-scope-check {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    margin-right: 6px;
+    border: 1px solid #999;
+    border-radius: 3px;
+    vertical-align: text-bottom;
+    text-align: center;
+    font-size: 12px;
+    line-height: 16px;
+    color: #fff;
+  }
+  .selected .security-scope-check {
+    border-color: #1491c1;
+    background-color: #1491c1;
+  }
+  .security-scope-selected {
+    float: right;
+    font-size: 12px;
+    font-weight: normal;
+    color: #1491c1;
+  }
+}
+
+// Kerberos wizard step 1: prerequisite checkboxes (KDC and OIDC lists), larger box with a visible border
+#kerberos-step1-prerequisites-body,
+#kerberos-step1-oidc-prerequisites-body {
+  input[type="checkbox"] + label::before {
+    top: 3px !important;
+    width: 14px;
+    height: 14px;
+    border-width: 2px;
+    border-color: #8a93a0;
+    background-color: #fff;
+  }
+  input[type="checkbox"]:checked + label::before {
+    border-color: #1491c1;
+    background-color: #1491c1;
+  }
+  input[type="checkbox"]:checked + label::after,
+  label[checked="checked"]::after {
+    top: 2px !important;
+    left: 3px !important;
+    font-size: 10px !important;
+  }
+}

@@ -29,22 +29,31 @@
     <div class="panel-body">
       <div id="kerberos-step1-options-body">
         <h5>{{t admin.kerberos.wizard.step1.security.switches.header}}</h5>
-        <div class="checkbox">
-          <label>
-            {{view Ember.Checkbox checkedBinding="controller.enableKerberos"}}
-            {{t admin.kerberos.wizard.step1.security.switch.enableKerberos}}
-          </label>
+        <div class="security-scope-cards">
+          <div {{bindAttr class=":security-scope-card enableKerberos:selected"}} {{action toggleKerberosScope target="controller"}}>
+            <div class="security-scope-card-title">
+              <span {{bindAttr class=":security-scope-check :glyphicon enableKerberos:glyphicon-ok"}}></span>
+              {{t common.kerberos}}
+              {{#if enableKerberos}}<span class="security-scope-selected">{{t admin.kerberos.wizard.step1.security.scope.selected}}</span>{{/if}}
+            </div>
+            <p>{{t admin.kerberos.wizard.step1.security.scope.kerberos.description}}</p>
+            <p class="text-muted">{{t admin.kerberos.wizard.step1.security.scope.kerberos.needs}}</p>
+          </div>
+          <div {{bindAttr class=":security-scope-card configureOidc:selected isOidcServiceUnavailable:disabled"}} {{action toggleOidcScope target="controller"}}>
+            <div class="security-scope-card-title">
+              <span {{bindAttr class=":security-scope-check :glyphicon configureOidc:glyphicon-ok"}}></span>
+              {{t admin.kerberos.wizard.step1.security.scope.oidc.title}}
+              {{#if configureOidc}}<span class="security-scope-selected">{{t admin.kerberos.wizard.step1.security.scope.selected}}</span>{{/if}}
+            </div>
+            <p>{{t admin.kerberos.wizard.step1.security.scope.oidc.description}}</p>
+            {{#if isOidcServiceUnavailable}}
+              <p class="text-muted">{{t admin.kerberos.wizard.step1.security.switch.configureOidc.unavailable}}</p>
+            {{else}}
+              <p class="text-muted">{{t admin.kerberos.wizard.step1.security.scope.oidc.needs}}</p>
+            {{/if}}
+          </div>
         </div>
-        <div class="checkbox">
-          <label>
-            {{view Ember.Checkbox checkedBinding="controller.configureOidc" disabledBinding="controller.isOidcServiceUnavailable"}}
-            {{t admin.kerberos.wizard.step1.security.switch.configureOidc}}
-          </label>
-        </div>
-        {{#if isOidcServiceUnavailable}}
-          <p class="text-muted">{{t admin.kerberos.wizard.step1.security.switch.configureOidc.unavailable}}</p>
-        {{/if}}
-        <br/>
+        <div {{bindAttr class=":alert scopeSummaryWarning:alert-warning:alert-info"}} id="kerberos-step1-scope-summary">{{scopeSummary}}</div>
         {{#if enableKerberos}}
           {{t admin.kerberos.wizard.step1.body.text}}
           {{#each option in options}}
@@ -72,6 +81,20 @@
                 labelBinding="condition.displayText"
               }}
             {{/unless}}
+          {{/each}}
+        </div>
+      {{/if}}
+      {{#if configureOidc}}
+        <div class="alert alert-info" id="kerberos-step1-oidc-prerequisites-body">
+          <h5>{{t admin.kerberos.wizard.step1.security.scope.oidc.title}}:</h5>
+          <b>{{t admin.kerberos.wizard.step1.prerequisites.label}}</b> <br/> <br/>
+          {{#each condition in oidcPreConditions}}
+            {{view App.CheckboxView
+              classNames="checkbox"
+              checkedBinding="condition.checked"
+              labelClassNames="kerberos-step1-prerequiste-checkboxes"
+              labelBinding="condition.displayText"
+            }}
           {{/each}}
         </div>
       {{/if}}

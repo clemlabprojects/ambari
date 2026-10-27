@@ -39,7 +39,8 @@ App.KerberosWizardStep1Controller = Em.Controller.extend({
 
   enableKerberos: true,
 
-  configureOidc: true,
+  // OIDC is opt-in: Enable Kerberos configures Kerberos only unless the operator also ticks OIDC
+  configureOidc: false,
 
   isOidcServiceAvailable: function() {
     return App.StackService.find().someProperty('serviceName', 'OIDC');
@@ -47,11 +48,47 @@ App.KerberosWizardStep1Controller = Em.Controller.extend({
 
   isOidcServiceUnavailable: Em.computed.not('isOidcServiceAvailable'),
 
+  toggleKerberosScope: function () {
+    this.toggleProperty('enableKerberos');
+  },
+
+  toggleOidcScope: function () {
+    if (this.get('isOidcServiceAvailable')) {
+      this.toggleProperty('configureOidc');
+    }
+  },
+
+  scopeSummaryWarning: function () {
+    return !this.get('enableKerberos') && !this.get('configureOidc');
+  }.property('enableKerberos', 'configureOidc'),
+
+  /**
+   * What the wizard is about to configure, shown under the scope cards
+   * @type {string}
+   */
+  scopeSummary: function () {
+    var enableKerberos = this.get('enableKerberos');
+    var configureOidc = this.get('configureOidc');
+    if (!enableKerberos && !configureOidc) {
+      return Em.I18n.t('admin.kerberos.wizard.step1.security.scope.summary.none');
+    }
+    var scopes = enableKerberos && configureOidc ? 'both' : (enableKerberos ? 'kerberos' : 'oidc');
+    var summary = Em.I18n.t('admin.kerberos.wizard.step1.security.scope.summary.' + scopes);
+    if (enableKerberos && !configureOidc && this.get('isOidcServiceAvailable')) {
+      summary += ' ' + Em.I18n.t('admin.kerberos.wizard.step1.security.scope.summary.oidcLater');
+    }
+    return summary;
+  }.property('enableKerberos', 'configureOidc', 'isOidcServiceAvailable'),
+
   isSubmitDisabled: function() {
     var enableKerberos = this.get('enableKerberos');
     var configureOidc = this.get('configureOidc');
 
     if (!enableKerberos && !configureOidc) {
+      return true;
+    }
+
+    if (configureOidc && this.get('oidcPreConditions').someProperty('satisfied', false)) {
       return true;
     }
 
@@ -65,7 +102,29 @@ App.KerberosWizardStep1Controller = Em.Controller.extend({
     }
 
     return selectedOption.get('preConditions').someProperty('satisfied', false);
-  }.property('enableKerberos', 'configureOidc', 'selectedOption.preConditions.@each.satisfied'),
+  }.property('enableKerberos', 'configureOidc', 'selectedOption.preConditions.@each.satisfied', 'oidcPreConditions.@each.satisfied'),
+
+  /**
+   * Prerequisites of the OIDC scope, checked like the KDC ones before Next is enabled
+   * @type {PreCondition[]}
+   */
+  oidcPreConditions: [
+    PreCondition.create({
+      displayText: Em.I18n.t('admin.kerberos.wizard.step1.option.oidc.condition.1')
+    }),
+    PreCondition.create({
+      displayText: Em.I18n.t('admin.kerberos.wizard.step1.option.oidc.condition.2')
+    }),
+    PreCondition.create({
+      displayText: Em.I18n.t('admin.kerberos.wizard.step1.option.oidc.condition.3')
+    }),
+    PreCondition.create({
+      displayText: Em.I18n.t('admin.kerberos.wizard.step1.option.oidc.condition.4')
+    }),
+    PreCondition.create({
+      displayText: Em.I18n.t('admin.kerberos.wizard.step1.option.oidc.condition.5')
+    })
+  ],
 
   options: Em.A([
     Em.Object.create({
@@ -177,9 +236,6 @@ App.KerberosWizardStep1Controller = Em.Controller.extend({
     }
     this.set('enableKerberos', !!enableKerberos);
 
-    if (Em.isNone(configureOidc)) {
-      configureOidc = this.get('isOidcServiceAvailable');
-    }
     if (!this.get('isOidcServiceAvailable')) {
       configureOidc = false;
     }

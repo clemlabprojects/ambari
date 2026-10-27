@@ -287,7 +287,7 @@ App.KerberosWizardStep2Controller = App.WizardStep7Controller.extend(App.KDCCred
   applyOIDCConfigsFilter: function(configs) {
     var oidcSecretConfig = configs.findProperty('name', 'oidc_admin_client_secret');
     if (oidcSecretConfig) {
-      oidcSecretConfig.setProperties({
+      Em.setProperties(oidcSecretConfig, {
         isVisible: false,
         isRequired: false,
         isRequiredByAgent: false

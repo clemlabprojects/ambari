@@ -72,7 +72,7 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
     serviceName: 'KERBEROS',
     kerberosOption: null,
     enableKerberos: true,
-    configureOidc: true,
+    configureOidc: false,
     cluster: null,
     services: [],
     advancedServiceConfig: null,
@@ -81,7 +81,7 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
   }),
 
   shouldConfigureOidc: function() {
-    if (this.get('content.configureOidc') === false) {
+    if (!this.get('content.configureOidc')) {
       return false;
     }
 
@@ -219,10 +219,6 @@ App.KerberosWizardController = App.WizardController.extend(App.InstallComponent,
 
     if (Em.isNone(enableKerberos)) {
       enableKerberos = true;
-    }
-
-    if (Em.isNone(configureOidc)) {
-      configureOidc = App.StackService.find().someProperty('serviceName', 'OIDC');
     }
 
     if (!App.StackService.find().someProperty('serviceName', 'OIDC')) {
