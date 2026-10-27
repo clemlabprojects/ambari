@@ -2,7 +2,7 @@
   "label": "Trino",
   "chart": "trinodb/trino",
   "secretName": "registry-credentials",
-  "version": "1.43.20",
+  "version": "1.43.21",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
@@ -2323,7 +2323,7 @@
           "defaultValue": true,
           "excludeFromValues": true,
           "seedFromValue": "server.config.https.enabled",
-          "help": "On by default: Trino terminates TLS itself (keystore signed by the internal CA). The OpenShift Route then uses passthrough, and internal clients (Superset, dbt, OpenMetadata) must use https on the HTTPS port. Turned off, TLS stops at the edge: authenticated traffic, tokens included, crosses the pod network in clear text, and 'Let KDPS manage catalogs' (Custom catalogs) is turned off, since Trino only accepts password logins over HTTPS."
+          "help": "On by default: Trino terminates TLS itself (keystore signed by the internal CA). On OpenShift the Route serves the ingress certificate and re-encrypts to Trino, checking Trino's certificate against the internal CA; internal clients (Superset, dbt, OpenMetadata) must use https on the HTTPS port. Turned off, TLS stops at the edge: authenticated traffic, tokens included, crosses the pod network in clear text, and 'Let KDPS manage catalogs' (Custom catalogs) is turned off, since Trino only accepts password logins over HTTPS."
         },
         {
           "name": "tls.https.autoGenerate",
