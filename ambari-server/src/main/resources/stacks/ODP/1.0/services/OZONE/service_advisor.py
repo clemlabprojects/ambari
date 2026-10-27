@@ -467,6 +467,52 @@ class OzoneRecommender(service_advisor.ServiceAdvisor):
         putOzoneSiteProperty("ozone.scm.default.service.id", defaultSCMServiceName)
         putOzoneSiteProperty("ozone.scm.ratis.enable", "true")
 
+    self.recommendS3AForOzoneS3Gateway(configurations, services)
+
+  def recommendS3AForOzoneS3Gateway(self, configurations, services):
+    """
+    Points the S3A connector of the cluster (core-site) at the Ozone S3 Gateway, so that Hadoop
+    clients (Hive Metastore, Spark, ...) reach s3a:// locations stored in Ozone, and gives the Hive
+    Metastore its Ozone S3 identity (the Hive user; the secret is the fs.s3a.secret.key password of
+    hive-site, installed on Ozone when the Metastore starts). Nothing is recommended when S3A already
+    points at another store (AWS S3, ...): its buckets can still be routed to Ozone with
+    fs.s3a.bucket.<bucket>.endpoint.
+    """
+    s3g_hosts = self.getComponentHostNames(services, "OZONE", "OZONE_S3_GATEWAY")
+    if not s3g_hosts or "core-site" not in services["configurations"]:
+      return
+
+    ozone_site = self.getSiteProperties(services["configurations"], "ozone-site") or {}
+    # the gateway serves HTTPS only when Ozone's HTTP policy asks for it (HTTP_ONLY by default)
+    https = str(ozone_site.get("ozone.http.policy", "HTTP_ONLY")).strip().upper() in ("HTTPS_ONLY", "HTTP_AND_HTTPS")
+    if https:
+      port = str(ozone_site.get("ozone.s3g.https-port", "9879")).strip() or "9879"
+    else:
+      port = str(ozone_site.get("ozone.s3g.http-port", "9878")).strip() or "9878"
+    ozone_endpoint = "{0}://{1}:{2}".format("https" if https else "http", sorted(s3g_hosts)[0], port)
+
+    core_site = services["configurations"]["core-site"]["properties"]
+    endpoint = str(core_site.get("fs.s3a.endpoint", "") or "").strip()
+    if endpoint and not any("://{0}:".format(host) in endpoint for host in s3g_hosts):
+      return
+
+    if not endpoint:
+      putCoreSiteProperty = self.putProperty(configurations, "core-site", services)
+      putCoreSiteProperty("fs.s3a.endpoint", ozone_endpoint)
+      # Ozone S3 buckets are addressed by path, not by virtual host
+      putCoreSiteProperty("fs.s3a.path.style.access", "true")
+    if not str(core_site.get("fs.s3.impl", "") or "").strip():
+      # Iceberg tables (Polaris, Trino, Spark) are usually located at s3://, a scheme Hadoop has no
+      # filesystem for: the Hive Metastore checks such locations through S3A
+      self.putProperty(configurations, "core-site", services)("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+
+    if "hive-site" in services["configurations"]:
+      hive_site = services["configurations"]["hive-site"]["properties"]
+      if not str(hive_site.get("fs.s3a.access.key", "") or "").strip():
+        hive_env = self.getSiteProperties(services["configurations"], "hive-env") or {}
+        putHiveSiteProperty = self.putProperty(configurations, "hive-site", services)
+        putHiveSiteProperty("fs.s3a.access.key", hive_env.get("hive_user", "hive"))
+
   def is_kerberos_enabled(self, configurations, services):
     """
     Tests if Ozone has Kerberos enabled by first checking the recommended changes and then the

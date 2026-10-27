@@ -547,6 +547,23 @@ limitations under the License.
     <on-ambari-upgrade add="false"/>
   </property>
 
+  <property>
+    <name>fs.s3a.secret.key</name>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <display-name>S3A Secret Key</display-name>
+    <description>Secret of the S3A access key (fs.s3a.access.key) used by Hive for s3a:// locations. With an Ozone S3
+      Gateway in the cluster, the access key is the Ozone S3 identity of the Hive Metastore and the Metastore installs
+      this secret on Ozone when it starts.</description>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+      <hidden>HIVE_CLIENT,CONFIG_DOWNLOAD</hidden>
+      <keystore>true</keystore>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
   <property require-input="true">
     <name>javax.jdo.option.ConnectionPassword</name>
     <value/>

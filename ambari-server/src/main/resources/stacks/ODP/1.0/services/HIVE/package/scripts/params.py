@@ -379,6 +379,26 @@ if has_namenode:
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 
 kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executable_search_paths', None))
+
+# S3A credential of the Hive Metastore for S3 locations stored in Ozone (see hive_ozone_s3.py)
+ozone_s3g_hosts = default("/clusterHostInfo/ozone_s3_gateway_hosts", [])
+hive_s3a_access_key = str(default("/configurations/hive-site/fs.s3a.access.key", "") or "").strip()
+hive_s3a_secret_key = ""
+if ozone_s3g_hosts and hive_s3a_access_key:
+  if credential_store_enabled and 'hadoop.security.credential.provider.path' in config['configurations']['hive-site']:
+    hive_s3a_secret_key = str(get_password_from_credential_store(
+      'fs.s3a.secret.key',
+      config['configurations']['hive-site']['hadoop.security.credential.provider.path'],
+      config['configurations']['hive-site']['credentialStoreClassPath'],
+      ambari_java_home, config['ambariLevelParams']['jdk_location']) or "").strip()
+  else:
+    hive_s3a_secret_key = str(default("/configurations/hive-site/fs.s3a.secret.key", "") or "").strip()
+hive_ozone_s3_credential_enabled = bool(ozone_s3g_hosts and hive_s3a_access_key and hive_s3a_secret_key)
+ozone_cmd = format("{stack_root}/current/ozone-client/bin/ozone")
+ozone_user = default("/configurations/ozone-env/ozone_user", "ozone")
+ozone_admin_principal = default("/configurations/ozone-env/ozone_principal_name", "")
+ozone_admin_keytab = default("/configurations/ozone-env/ozone_user_keytab", "")
+ozone_om_service_id = str(default("/configurations/ozone-site/ozone.om.internal.service.id", "") or "").strip()
 hive_metastore_keytab_path = config['configurations']['hive-site']['hive.metastore.kerberos.keytab.file']
 hive_metastore_principal = config['configurations']['hive-site']['hive.metastore.kerberos.principal']
 

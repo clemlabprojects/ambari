@@ -842,10 +842,14 @@ def create_core_site_xml(conf_dir):
               mode=0o644
     )
   elif params.has_ozone_manager:
+    # Without HDFS, the core-site of the CORE service (default filesystem, S3A settings, ...) completes
+    # the Ozone client settings.
+    core_site = dict(params.config['configurations']['ozone-core-site'])
+    core_site.update(params.config['configurations'].get('core-site', {}))
     XmlConfig("core-site.xml",
       conf_dir=conf_dir,
-      configurations=params.config['configurations']['ozone-core-site'],
-      configuration_attributes=params.config['configurationAttributes']['core-site'],
+      configurations=core_site,
+      configuration_attributes=params.config['configurationAttributes'].get('core-site', {}),
       owner=params.hive_user,
       group=params.user_group,
       mode=0o644

@@ -23,6 +23,7 @@ import os
 # Local Imports
 from hive import refresh_yarn, create_hive_hdfs_dirs, create_hive_metastore_schema, create_metastore_schema, hive, jdbc_connector
 from hive_service import hive_service
+from hive_ozone_s3 import ensure_ozone_s3_credential
 from setup_ranger_hive import setup_ranger_hive_metastore_service
 from setup_ranger_hive import setup_ranger_hive_metastore_plugin
 
@@ -58,6 +59,7 @@ class HiveMetastore(Script):
 
     # writing configurations on start required for securtity
     self.configure(env)
+    ensure_ozone_s3_credential()
     if params.init_metastore_schema:
       create_metastore_schema() # execute without config lock
 
