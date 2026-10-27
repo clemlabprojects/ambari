@@ -127,7 +127,7 @@ _authentication = 'simple'
 hadoop_security_authorization = ''
 hadoop_security_auth_to_local = 'DEFAULT'
 for k, v in config['configurations']['ozone-core-site'].items():
-  if k is 'hadoop.security.authentication':
+  if k == 'hadoop.security.authentication':
     _authentication = v
 hadoop_security_authorization = config['configurations']['ozone-core-site']['hadoop.security.authorization']
 hadoop_security_auth_to_local = config['configurations']['ozone-core-site']['hadoop.security.auth_to_local']
