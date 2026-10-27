@@ -5994,7 +5994,7 @@ public class CommandService {
         ReleaseTlsService tlsSvc = new ReleaseTlsService(ctx, kubernetesService);
         List<Map<String, Object>> entries = tlsSvc.describe(namespace, releaseName);
         if (entries.isEmpty()) {
-            throw new IllegalArgumentException("No Ingress objects found for " + namespace + "/" + releaseName);
+            throw new IllegalArgumentException("No Ingress or OpenShift Route found for " + namespace + "/" + releaseName);
         }
 
         final String commandId = UUID.randomUUID().toString();
@@ -6024,13 +6024,22 @@ public class CommandService {
         rootCommand.setParamsJson(gson.toJson(rootParams));
 
         List<String> childIds = new ArrayList<>();
-        int planned = 0, skippedExternal = 0;
+        int planned = 0, skippedExternal = 0, passthrough = 0;
+        // A Secret an Ingress and a Route both read is renewed once; a Route holding a copy of its certificate serves the
+        // renewed one only once the release is rendered again.
+        Set<String> renewed = new java.util.HashSet<>();
+        List<String> copiedTo = new ArrayList<>();
         for (Map<String, Object> e : entries) {
+            if ("passthrough".equals(e.get("status"))) passthrough++;
             String source = String.valueOf(e.getOrDefault("source", "external"));
             String secretName = (String) e.get("secretName");
             List<?> hosts = (List<?>) e.getOrDefault("hosts", List.of());
             String primaryHost = hosts.isEmpty() ? "" : String.valueOf(hosts.get(0));
             if (secretName == null || secretName.isBlank() || primaryHost.isBlank()) continue;
+            if (Boolean.TRUE.equals(e.get("copiedToRoute")) && !"external".equals(source)) {
+                copiedTo.add(String.valueOf(e.get("routeName")));
+            }
+            if (!renewed.add(secretName)) continue;
 
             switch (source) {
                 case "k8s-view-self-signed" -> {
@@ -6061,12 +6070,19 @@ public class CommandService {
 
         if (planned == 0) {
             throw new IllegalStateException("Nothing to renew for " + namespace + "/" + releaseName
-                    + (skippedExternal > 0 ? " (all " + skippedExternal + " TLS Secret(s) are operator-managed)" : ""));
+                    + (skippedExternal > 0 ? " (all " + skippedExternal + " TLS Secret(s) are operator-managed)" : "")
+                    + (passthrough > 0 ? " (its OpenShift Route passes TLS through: the service serves its own"
+                            + " certificate)" : ""));
         }
 
         rootCommand.setChildListJson(gson.toJson(childIds));
         store(rootStatus);
         store(rootCommand);
+        if (!copiedTo.isEmpty()) {
+            appendCommandLog(commandId, "The OpenShift Route(s) " + String.join(", ", copiedTo) + " hold a copy of the"
+                    + " certificate (OpenShift without external certificates on Routes): Resync " + releaseName
+                    + " once the renewal is done, so that they serve the renewed certificate.");
+        }
         LOG.info("TLS_RENEW: planned {} step(s), skipped {} external secret(s) for {}/{}",
                 planned, skippedExternal, namespace, releaseName);
         scheduleNow(commandId);

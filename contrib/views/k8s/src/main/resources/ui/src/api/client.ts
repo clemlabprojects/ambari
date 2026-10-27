@@ -1396,17 +1396,23 @@ export const getReleaseHistory = async (namespace: string, releaseName: string, 
 
 /**
  * Per-host TLS state for a release. Returns one entry per Ingress × TLS Secret
- * combo describing source (k8s-view-self-signed / cert-manager / external-secrets / external),
+ * combo, and one per OpenShift Route, describing source (k8s-view-self-signed / cert-manager / external-secrets / external),
  * status (valid / expiring-warning / expiring-soon / expired / no-tls / secret-missing),
  * issuer, expiry, SANs. Drives the TLS column + Renew button on the Releases page.
  */
 export interface ReleaseTlsEntry {
-  ingressName: string;
+  /** What exposes the release: an Ingress, or an OpenShift Route. */
+  kind?: 'Ingress' | 'Route';
+  ingressName?: string;
+  routeName?: string;
   namespace: string;
   secretName: string | null;
   hosts: string[];
   source?: 'k8s-view-self-signed' | 'cert-manager' | 'external-secrets' | 'external';
-  status: 'valid' | 'expiring-warning' | 'expiring-soon' | 'expired' | 'no-tls' | 'secret-missing' | 'no-tls-crt' | 'no-cert-in-secret' | 'read-error';
+  /** passthrough: an OpenShift Route that lets the service serve its own certificate. */
+  status: 'valid' | 'expiring-warning' | 'expiring-soon' | 'expired' | 'no-tls' | 'passthrough' | 'secret-missing' | 'no-tls-crt' | 'no-cert-in-secret' | 'read-error';
+  /** A Route holding a copy of the certificate: it serves a renewed one only after a Resync of the release. */
+  copiedToRoute?: boolean;
   issuer?: string;
   subject?: string;
   notBefore?: string;
@@ -1422,6 +1428,12 @@ export interface ReleaseTlsEntry {
   /** external only: KDPS wrote this Secret from a certificate and key uploaded at deploy time. */
   uploaded?: boolean;
 }
+/** Schedules the renewal of a release's certificates, on its cluster: the operation's id. */
+export const renewReleaseTls = (namespace: string, releaseName: string, cluster?: string) =>
+  fetchJson<{ id: string }>(onCluster(
+    `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/tls/renew`, cluster),
+  { method: 'POST' });
+
 export const getReleaseTlsState = async (namespace: string, releaseName: string, cluster?: string): Promise<ReleaseTlsEntry[]> => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/tls`;
   return fetchJson<ReleaseTlsEntry[]>(onCluster(requestPath, cluster));

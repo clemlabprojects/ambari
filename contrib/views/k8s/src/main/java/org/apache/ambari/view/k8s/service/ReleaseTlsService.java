@@ -39,7 +39,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Reports the TLS state of a Helm release: which Ingresses are exposed, which
+ * Reports the TLS state of a Helm release: which Ingresses and OpenShift Routes are exposed, which
  * TLS Secrets they reference, who issued each leaf, when it expires, and which
  * provisioning system delivered it.
  *
@@ -106,34 +106,122 @@ public class ReleaseTlsService {
                 List<String> hosts = tls.getHosts() == null ? List.of() : tls.getHosts();
                 Map<String, Object> entry = baseEntry(ing.getMetadata().getName(), namespace, secretName);
                 entry.put("hosts", hosts);
-                try {
-                    Secret secret = kubernetesService.getSecret(namespace, secretName);
-                    if (secret == null) {
-                        entry.put("status", "secret-missing");
-                        result.add(entry);
-                        continue;
-                    }
-                    String source = inferSource(secret);
-                    entry.put("source", source);
-                    describeOrigin(secret, source, entry);
-                    parseAndPopulate(secret, entry);
-                } catch (Exception ex) {
-                    LOG.warn("Failed to read/parse TLS Secret {}/{}: {}", namespace, secretName, ex.toString());
-                    entry.put("status", "read-error");
-                    entry.put("error", ex.getMessage());
-                }
+                describeSecret(namespace, secretName, entry);
                 result.add(entry);
             }
         }
+        describeRoutes(namespace, releaseName, result);
         return result;
+    }
+
+    /**
+     * The OpenShift Routes of the release, one entry each. A Route reading its certificate from a Secret
+     * ({@code spec.tls.externalCertificate}) is reported from that Secret, as an Ingress's. A Route holding a copy of
+     * the certificate is reported from the copy, with the Secret it was copied from when one in the namespace holds
+     * the same certificate ({@code copiedToRoute}: the Route serves a renewed certificate only once the release is
+     * rendered again). A passthrough Route serves the certificate of the service itself: nothing to renew there.
+     */
+    private void describeRoutes(String namespace, String releaseName, List<Map<String, Object>> result) {
+        List<Map<String, Object>> routes;
+        try {
+            routes = kubernetesService.listRoutesForRelease(namespace, releaseName);
+        } catch (Exception ex) {
+            LOG.warn("Failed to list Routes for {}/{}: {}", namespace, releaseName, ex.toString());
+            return;
+        }
+        for (Map<String, Object> route : routes) {
+            Map<String, Object> spec = map(route.get("spec"));
+            Map<String, Object> tls = map(spec.get("tls"));
+            String host = spec.get("host") == null ? "" : String.valueOf(spec.get("host"));
+            String external = map(tls.get("externalCertificate")).get("name") instanceof String n && !n.isBlank()
+                    ? n : null;
+            Map<String, Object> entry = routeEntry(String.valueOf(route.get("name")), namespace, external, host);
+            String termination = tls.get("termination") == null ? null : String.valueOf(tls.get("termination"));
+            if (termination == null || termination.isBlank()) {
+                entry.put("status", "no-tls");
+            } else if ("passthrough".equals(termination)) {
+                entry.put("status", "passthrough");
+            } else if (external != null) {
+                describeSecret(namespace, external, entry);
+            } else if (tls.get("certificate") instanceof String copy && !copy.isBlank()) {
+                describeCopy(namespace, copy, entry);
+            } else {
+                // The router serves its own default certificate.
+                entry.put("status", "no-tls");
+            }
+            result.add(entry);
+        }
+    }
+
+    /** Reports the certificate a Route holds a copy of, and the Secret of the namespace it was copied from. */
+    private void describeCopy(String namespace, String copy, Map<String, Object> entry) {
+        try {
+            X509Certificate leaf = leafOf(copy.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            if (leaf == null) {
+                entry.put("status", "no-cert-in-secret");
+                return;
+            }
+            entry.put("copiedToRoute", true);
+            for (Secret secret : kubernetesService.listCertificateSecrets(namespace)) {
+                String crt = secret.getData() == null ? null : secret.getData().get("tls.crt");
+                X509Certificate held = crt == null ? null : leafOf(Base64.getDecoder().decode(crt));
+                if (held != null && java.util.Arrays.equals(held.getEncoded(), leaf.getEncoded())) {
+                    entry.put("secretName", secret.getMetadata().getName());
+                    String source = inferSource(secret);
+                    entry.put("source", source);
+                    describeOrigin(secret, source, entry);
+                    break;
+                }
+            }
+            populate(leaf, entry);
+        } catch (Exception ex) {
+            LOG.warn("Failed to read the certificate of Route {}/{}: {}", namespace, entry.get("routeName"), ex.toString());
+            entry.put("status", "read-error");
+            entry.put("error", ex.getMessage());
+        }
+    }
+
+    /** Reports the Secret an Ingress or a Route reads its certificate from. */
+    private void describeSecret(String namespace, String secretName, Map<String, Object> entry) {
+        try {
+            Secret secret = kubernetesService.getSecret(namespace, secretName);
+            if (secret == null) {
+                entry.put("status", "secret-missing");
+                return;
+            }
+            String source = inferSource(secret);
+            entry.put("source", source);
+            describeOrigin(secret, source, entry);
+            parseAndPopulate(secret, entry);
+        } catch (Exception ex) {
+            LOG.warn("Failed to read/parse TLS Secret {}/{}: {}", namespace, secretName, ex.toString());
+            entry.put("status", "read-error");
+            entry.put("error", ex.getMessage());
+        }
     }
 
     private Map<String, Object> baseEntry(String ingressName, String namespace, String secretName) {
         Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("kind", "Ingress");
         entry.put("ingressName", ingressName);
         entry.put("namespace", namespace);
         entry.put("secretName", secretName);
         return entry;
+    }
+
+    private Map<String, Object> routeEntry(String routeName, String namespace, String secretName, String host) {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("kind", "Route");
+        entry.put("routeName", routeName);
+        entry.put("namespace", namespace);
+        entry.put("secretName", secretName);
+        entry.put("hosts", host.isBlank() ? List.of() : List.of(host));
+        return entry;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> map(Object o) {
+        return o instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
     }
 
     private String inferSource(Secret secret) {
@@ -170,21 +258,29 @@ public class ReleaseTlsService {
             entry.put("status", "no-tls-crt");
             return;
         }
-        byte[] pemBytes = Base64.getDecoder().decode(data.get("tls.crt"));
+        X509Certificate leaf = leafOf(Base64.getDecoder().decode(data.get("tls.crt")));
+        if (leaf == null) {
+            entry.put("status", "no-cert-in-secret");
+            return;
+        }
+        populate(leaf, entry);
+    }
+
+    /**
+     * The leaf of a PEM certificate or chain, or null when it holds none. tls.crt may contain a chain (leaf +
+     * intermediates): the leaf, first by convention, is what browsers validate against the SANs and what the operator
+     * most cares about for expiry / issuer.
+     */
+    private static X509Certificate leafOf(byte[] pemBytes) throws Exception {
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
-        // tls.crt may contain a chain (leaf + intermediates). We report the *leaf* —
-        // that's what browsers validate against the SANs and what the operator
-        // most cares about for expiry / issuer.
         Collection<?> certs;
         try (var in = new ByteArrayInputStream(pemBytes)) {
             certs = cf.generateCertificates(in);
         }
-        if (certs == null || certs.isEmpty()) {
-            entry.put("status", "no-cert-in-secret");
-            return;
-        }
-        // First cert in a PEM chain is the leaf by convention.
-        X509Certificate leaf = (X509Certificate) certs.iterator().next();
+        return certs == null || certs.isEmpty() ? null : (X509Certificate) certs.iterator().next();
+    }
+
+    private static void populate(X509Certificate leaf, Map<String, Object> entry) throws Exception {
         Instant notBefore = leaf.getNotBefore().toInstant();
         Instant notAfter = leaf.getNotAfter().toInstant();
         Instant now = Instant.now();

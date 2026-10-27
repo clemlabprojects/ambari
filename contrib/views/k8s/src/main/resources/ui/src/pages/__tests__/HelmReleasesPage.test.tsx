@@ -25,6 +25,7 @@ jest.mock('../../api/client', () => ({
   getClusterCapabilities: jest.fn(),
   getHelmReleases: jest.fn(),
   getReleaseTlsState: jest.fn(),
+  renewReleaseTls: jest.fn(),
   getReleaseStatus: jest.fn(),
   uninstallHelm: jest.fn(),
   getReleaseKdpsObjects: jest.fn(),
@@ -41,7 +42,7 @@ jest.mock('../../context/ClusterStatusContext', () => ({
 import {
   getAvailableServices, getClusterCapabilities, getHelmReleases, getReleaseActionRefusals, getReleaseHistory,
   getReleaseExternalRegistrations, getReleaseKdpsObjects, getReleaseStatus, getReleaseTlsState,
-  rollbackReleaseToRevision, uninstallHelm,
+  renewReleaseTls, rollbackReleaseToRevision, uninstallHelm,
 } from '../../api/client';
 import { invalidateCapabilities } from '../../components/ServiceInstallationModal/capabilities';
 import { PermissionsContext } from '../../context/PermissionsContext';
@@ -493,5 +494,58 @@ describe('HelmReleasesPage release of a service this build no longer ships', () 
     }
     expect(screen.getByRole('menuitem', { name: /Revision history/ }).getAttribute('aria-disabled')).not.toBe('true');
     expect(screen.getByRole('menuitem', { name: /Uninstall/ }).getAttribute('aria-disabled')).not.toBe('true');
+  });
+});
+
+/**
+ * On OpenShift the release is exposed by a Route: the TLS column shows it, and Renew goes to the release's cluster.
+ */
+describe('HelmReleasesPage TLS of a release exposed by an OpenShift Route', () => {
+  const user = userEvent.setup();
+  const trino = {
+    id: 'trino', name: 'trino', namespace: 'analytics', chart: 'trino-1.43.21', version: '1.43.21',
+    status: 'deployed', managedByUi: true, deploymentMode: 'DIRECT_HELM', kubernetesCluster: 'prod',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    invalidateCapabilities();
+    (getAvailableServices as jest.Mock).mockResolvedValue({});
+    (getClusterCapabilities as jest.Mock).mockResolvedValue({ platform: 'openshift' });
+    (getHelmReleases as jest.Mock).mockResolvedValue({ items: [trino], total: 1 });
+    (getReleaseStatus as jest.Mock).mockResolvedValue({});
+    (getReleaseActionRefusals as jest.Mock).mockResolvedValue({ refusals: {} });
+    (renewReleaseTls as jest.Mock).mockResolvedValue({ id: 'op-1' });
+  });
+
+  it('renews the certificate of the Route on the release\'s cluster', async () => {
+    (getReleaseTlsState as jest.Mock).mockResolvedValue([{
+      kind: 'Route', routeName: 'trino-coordinator', namespace: 'analytics', secretName: 'trino-ingress-tls',
+      hosts: ['trino.apps.example.org'], source: 'k8s-view-self-signed', status: 'valid', daysUntilExpiry: 300,
+    }]);
+    render(
+      <PermissionsContext.Provider value={{ permissions: { canWrite: true, canConfigure: true } as any, loading: false }}>
+        <MemoryRouter><HelmReleasesPage /></MemoryRouter>
+      </PermissionsContext.Provider>);
+
+    expect(await screen.findByText('300d')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Renew' }));
+
+    await waitFor(() => expect(renewReleaseTls).toHaveBeenCalledWith('analytics', 'trino', 'prod'));
+    expect(getReleaseTlsState).toHaveBeenCalledWith('analytics', 'trino', 'prod');
+  });
+
+  it('a passthrough Route shows the service serves its own certificate, with nothing to renew', async () => {
+    (getReleaseTlsState as jest.Mock).mockResolvedValue([{
+      kind: 'Route', routeName: 'trino-coordinator', namespace: 'analytics', secretName: null,
+      hosts: ['trino.apps.example.org'], status: 'passthrough',
+    }]);
+    render(
+      <PermissionsContext.Provider value={{ permissions: { canWrite: true, canConfigure: true } as any, loading: false }}>
+        <MemoryRouter><HelmReleasesPage /></MemoryRouter>
+      </PermissionsContext.Provider>);
+
+    expect(await screen.findByText('passthrough')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Renew' })).toBeNull();
   });
 });

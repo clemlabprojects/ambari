@@ -5976,6 +5976,45 @@ public class KubernetesService {
                 .toList();
     }
 
+    /**
+     * The OpenShift Routes of a Helm release, each as its {@code metadata} (name) and {@code spec} maps: by the
+     * {@code app.kubernetes.io/instance} label, else by a name starting with the release's, as
+     * {@link #listIngressesForRelease}. Empty on a cluster that serves no Routes.
+     */
+    public List<Map<String, Object>> listRoutesForRelease(String namespace, String releaseName) {
+        checkConfiguration();
+        if (namespace == null || namespace.isBlank() || releaseName == null || releaseName.isBlank()
+                || !isOpenShiftCluster()) {
+            return java.util.Collections.emptyList();
+        }
+        var op = client.genericKubernetesResources(ROUTE_RDC).inNamespace(namespace);
+        var routes = op.withLabel("app.kubernetes.io/instance", releaseName).list().getItems();
+        if (routes.isEmpty()) {
+            String prefix = releaseName.toLowerCase(java.util.Locale.ROOT);
+            routes = op.list().getItems().stream()
+                    .filter(r -> r.getMetadata() != null && r.getMetadata().getName() != null
+                            && r.getMetadata().getName().toLowerCase(java.util.Locale.ROOT).startsWith(prefix))
+                    .toList();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (var route : routes) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("name", route.getMetadata().getName());
+            r.put("spec", asMap(route.getAdditionalProperties().get("spec")));
+            out.add(r);
+        }
+        return out;
+    }
+
+    /** The Secrets of a namespace holding a certificate: of type {@code kubernetes.io/tls}, or with a {@code tls.crt}. */
+    public List<Secret> listCertificateSecrets(String namespace) {
+        checkConfiguration();
+        if (namespace == null || namespace.isBlank()) return java.util.Collections.emptyList();
+        return client.secrets().inNamespace(namespace).list().getItems().stream()
+                .filter(KubernetesService::isCertificateSecret)
+                .toList();
+    }
+
     // -------------------------------------------------------------------------
     // cert-manager + external-secrets generic CR helpers
     // -------------------------------------------------------------------------

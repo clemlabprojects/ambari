@@ -20,9 +20,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress, Radio } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { getAvailableServices, getReleaseValues, uninstallHelm, getReleaseKdpsObjects, getReleaseExternalRegistrations, type ExternalCleanupMode, type ExternalCleanupReport, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
+import { getAvailableServices, getReleaseValues, uninstallHelm, getReleaseKdpsObjects, getReleaseExternalRegistrations, type ExternalCleanupMode, type ExternalCleanupReport, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, renewReleaseTls, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { EXTERNAL_CLEANUP_CHOICES, UNINSTALL_POLARIS_REVOCATION, uninstallExternalRemovals, uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
-import { API_BASE_URL, apiFetch } from '../api/client';
 import type { HelmHistoryEntry } from '../api/client';
 import { getPods, listDeployments, type DeploymentRow } from '../api/client';
 import type { KubePod } from '../types/KubeTypes';
@@ -1078,12 +1077,7 @@ const HelmReleasesPage: React.FC = () => {
       );
       const onRenew = async () => {
         try {
-          const res = await apiFetch(
-            `${API_BASE_URL}/helm/releases/${encodeURIComponent(release.namespace)}/${encodeURIComponent(release.name)}/tls/renew`,
-            { method: 'POST' }
-          );
-          if (!res.ok) throw new Error(await res.text());
-          const body = await res.json();
+          const body = await renewReleaseTls(release.namespace, release.name, release.kubernetesCluster);
           message.success('TLS renewal scheduled');
           setWatchedCommandId(body.id);
           setIsCommandDrawerOpen(true);
@@ -1100,6 +1094,7 @@ const HelmReleasesPage: React.FC = () => {
               'expiring-soon': 'warning',
               expired: 'error',
               'no-tls': 'default',
+              passthrough: 'default',
               'secret-missing': 'error',
               'no-tls-crt': 'error',
               'no-cert-in-secret': 'error',
@@ -1118,7 +1113,9 @@ const HelmReleasesPage: React.FC = () => {
                 : e.status;
             const tip = (
               <div>
-                <div><b>Status:</b> {e.status}</div>
+                {e.kind === 'Route' && <div><b>OpenShift Route:</b> {e.routeName}</div>}
+                <div><b>Status:</b> {e.status === 'passthrough' ? 'passthrough: the service serves its own certificate' : e.status}</div>
+                {e.copiedToRoute && <div>The Route holds a copy of this certificate: after a renewal, Resync the release so that it serves the new one.</div>}
                 {e.source && <div><b>Source:</b> {sourceLabel[e.source] ?? e.source}</div>}
                 {e.issuer && <div><b>Issuer:</b> {e.issuer}</div>}
                 {e.notAfter && <div><b>Expires:</b> {new Date(e.notAfter).toLocaleString()}</div>}

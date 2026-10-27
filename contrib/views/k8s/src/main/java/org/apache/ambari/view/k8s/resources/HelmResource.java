@@ -1421,7 +1421,8 @@ public class HelmResource {
                     .submitReleaseTlsRenewal(namespace, releaseName,
                             headers.getRequestHeaders(), uriInfo.getBaseUri());
             return Response.ok(Map.of("id", commandId)).build();
-        } catch (IllegalArgumentException iae) {
+        } catch (IllegalArgumentException | IllegalStateException iae) {
+            // Nothing found or nothing KDPS renews: what the operator reads.
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(Map.of("error", iae.getMessage())).build();
         } catch (Exception ex) {
