@@ -411,6 +411,9 @@
       fi
       export HADOOP_CLASSPATH=${HADOOP_CLASSPATH}${JAVA_JDBC_LIBS}
 
+      # Hadoop tools (cloud storage connectors) added to the classpath of the Hadoop commands and daemons
+      export HADOOP_OPTIONAL_TOOLS="{{hadoop_optional_tools}}"
+
       # Setting path to hdfs command line
       export HADOOP_LIBEXEC_DIR={{hadoop_libexec_dir}}
 

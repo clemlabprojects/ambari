@@ -161,6 +161,7 @@ nfsgateway_heapsize = config['configurations']['hadoop-env']['nfsgateway_heapsiz
 mapred_pid_dir_prefix = default("/configurations/mapred-env/mapred_pid_dir_prefix","/var/run/hadoop-mapreduce")
 mapred_log_dir_prefix = default("/configurations/mapred-env/mapred_log_dir_prefix","/var/log/hadoop-mapreduce")
 hadoop_env_sh_template = config['configurations']['hadoop-env']['content']
+hadoop_optional_tools = default("/configurations/core-env/hadoop_optional_tools", "")
 
 #users and groups
 hbase_user = config['configurations']['hbase-env']['hbase_user']

@@ -435,6 +435,7 @@ else:
   hive_heapsize = config['configurations']['hive-site']['hive.heapsize']
 
 hive_metastore_heapsize = config['configurations']['hive-env']['hive.metastore.heapsize']
+hadoop_optional_tools = default("/configurations/core-env/hadoop_optional_tools", "")
 
 java64_home = config['ambariLevelParams']['java_home']
 ambari_java_home = config['ambariLevelParams']['ambari_java_home']

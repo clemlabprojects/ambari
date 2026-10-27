@@ -17,6 +17,19 @@
 -->
 <configuration supports_adding_forbidden="true">
   <property>
+    <name>hadoop_optional_tools</name>
+    <display-name>Hadoop Optional Tools</display-name>
+    <value>hadoop-aws,hadoop-gcs</value>
+    <description>Hadoop tools added to the classpath of every Hadoop command and daemon (HADOOP_OPTIONAL_TOOLS, in
+      hadoop-env.sh and hive-env.sh),
+      e.g. the cloud storage connectors: hadoop-aws (S3A, also for Ozone S3), hadoop-gcs (Google Cloud Storage),
+      hadoop-azure (ABFS/WASB). Empty to add none.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>core_filesystem_type</name>
     <display-name>Default Cluster Filesystem</display-name>
     <description>Select the default filesystem used to generate core-site fs.defaultFS.</description>
