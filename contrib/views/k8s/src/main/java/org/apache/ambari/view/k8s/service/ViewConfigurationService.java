@@ -612,6 +612,41 @@ public class ViewConfigurationService {
     public boolean isOpenShiftInsecure() { return Boolean.parseBoolean(settings.get(key(OS_INSECURE_KEY))); }
 
     /**
+     * Whether KDPS connects to this cluster without verifying its API server's certificate: an OpenShift login saved as
+     * "insecure", or a kubeconfig whose cluster (of the context KDPS connects with) sets {@code insecure-skip-tls-verify}.
+     * The pod's ServiceAccount always verifies.
+     */
+    public boolean skipsTlsVerification() {
+        String mode = getAuthMode();
+        if (AUTH_MODE_OPENSHIFT_LOGIN.equals(mode)) {
+            return isOpenShiftInsecure();
+        }
+        if (AUTH_MODE_IN_CLUSTER.equals(mode)) {
+            return false;
+        }
+        String kubeconfig = getKubeconfigContents();
+        if (kubeconfig == null || kubeconfig.isBlank()) {
+            return false;
+        }
+        try {
+            io.fabric8.kubernetes.api.model.Config model = io.fabric8.kubernetes.client.utils.Serialization
+                    .unmarshal(kubeconfig, io.fabric8.kubernetes.api.model.Config.class);
+            String context = getContextToConnectWith();
+            String contextName = context != null && !context.isBlank() ? context : model.getCurrentContext();
+            String clusterName = model.getContexts() == null ? null : model.getContexts().stream()
+                    .filter(c -> c.getName() != null && c.getName().equals(contextName) && c.getContext() != null)
+                    .map(c -> c.getContext().getCluster()).findFirst().orElse(null);
+            return model.getClusters() != null && model.getClusters().stream()
+                    .anyMatch(c -> c.getName() != null && c.getName().equals(clusterName) && c.getCluster() != null
+                            && Boolean.TRUE.equals(c.getCluster().getInsecureSkipTlsVerify()));
+        } catch (RuntimeException unreadable) {
+            LOG.warn("The kubeconfig of cluster {} cannot be read to tell whether it verifies TLS: {}", cluster,
+                    unreadable.toString());
+            return false;
+        }
+    }
+
+    /**
      * Synthesize a kubeconfig (with a freshly-minted token) for the stored OpenShift login. Used by the
      * helm client and anywhere a kubeconfig string is expected.
      */

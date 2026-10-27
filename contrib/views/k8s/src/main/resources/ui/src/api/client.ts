@@ -1451,10 +1451,64 @@ export interface KubernetesCluster {
   default: boolean;
   configured: boolean;
   authMode?: string;
+  /** KDPS connects without verifying the API server's certificate (kubeconfig or OpenShift login set so). */
+  insecure?: boolean;
 }
 
 /** The clusters KDPS knows, the default one first. */
 export const listKubernetesClusters = async (): Promise<KubernetesCluster[]> => fetchJson<KubernetesCluster[]>('/clusters');
+
+/** Adds a cluster, or describes again one KDPS knows. Administrators only. */
+export const saveKubernetesCluster = (id: string, cluster: { name: string; description?: string; protected: boolean }) =>
+  fetchJson<KubernetesCluster>(`/clusters/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(cluster) });
+
+/** Removes a cluster and forgets its connection; refused while KDPS has releases on it. Administrators only. */
+export const removeKubernetesCluster = (id: string) =>
+  fetchJson<{ message: string }>(`/clusters/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+/** Whether KDPS reaches a cluster with its saved connection now; never throws for an unreachable cluster. */
+export const getNamedClusterLiveness = (id: string): Promise<ClusterLiveness> =>
+  fetchJson<ClusterLiveness>(`/clusters/${encodeURIComponent(id)}/liveness`);
+
+/** Saves a kubeconfig as a cluster's connection. Administrators only. */
+export const uploadClusterKubeconfig = async (id: string, kubeconfig: Blob): Promise<string> => {
+  const response = await apiFetch(`${API_BASE_URL}/clusters/${encodeURIComponent(id)}/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    credentials: 'include',
+    body: kubeconfig,
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let reason = text;
+    try { reason = JSON.parse(text)?.error || text; } catch { /* plain text */ }
+    throw new Error(reason || `HTTP ${response.status}`);
+  }
+  try { return JSON.parse(text)?.message || 'Kubeconfig saved'; } catch { return text || 'Kubeconfig saved'; }
+};
+
+/** The contexts of a cluster's uploaded kubeconfig. Administrators only. */
+export const getClusterKubeconfigContexts = (id: string): Promise<KubeconfigContext[]> =>
+  fetchJson<KubeconfigContext[]>(`/clusters/${encodeURIComponent(id)}/contexts`);
+
+/** The kubeconfig context KDPS connects to a cluster with. Administrators only. */
+export const selectClusterKubeconfigContext = (id: string, context: string) =>
+  fetchJson<{ message: string }>(`/clusters/${encodeURIComponent(id)}/context`, {
+    method: 'POST',
+    body: JSON.stringify({ context }),
+  });
+
+/** Saves an OpenShift login as a cluster's connection; another cluster than the default needs its CA or "insecure". */
+export const saveClusterOpenShiftLogin = (id: string, login: OpenShiftLogin) =>
+  fetchJson<{ message: string }>(`/clusters/${encodeURIComponent(id)}/openshift-login`, {
+    method: 'POST',
+    body: JSON.stringify(login),
+  });
+
+/** Connects to a cluster with the Ambari pod's ServiceAccount (only the cluster Ambari's pod runs in). */
+export const connectClusterWithInClusterServiceAccount = (id: string) =>
+  fetchJson<{ message: string; username?: string | null; note?: string }>(
+    `/clusters/${encodeURIComponent(id)}/in-cluster`, { method: 'POST' });
 
 /**
  * Live connectivity outcome from the backend `/cluster/liveness` probe. Unlike `isViewConfigured`

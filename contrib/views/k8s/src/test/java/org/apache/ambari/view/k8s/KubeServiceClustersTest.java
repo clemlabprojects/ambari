@@ -159,13 +159,29 @@ class KubeServiceClustersTest {
       List<Map<String, Object>> clusters = (List<Map<String, Object>>) r.getEntity();
       assertEquals(List.of("default", "prod"), clusters.stream().map(c -> c.get("id")).toList());
       Map<String, Object> prod = clusters.get(1);
-      assertEquals(Set.of("id", "name", "description", "protected", "default", "configured", "authMode"), prod.keySet());
+      assertEquals(Set.of("id", "name", "description", "protected", "default", "configured", "authMode", "insecure"),
+          prod.keySet());
       assertEquals(true, prod.get("configured"));
+      assertEquals(false, prod.get("insecure"), "its API server's certificate is verified");
       assertEquals(true, prod.get("protected"));
       assertEquals(false, clusters.get(0).get("configured"), "the default cluster has no connection yet");
       assertFalse(String.valueOf(clusters).contains("prod-secret-token"));
       assertFalse(String.valueOf(clusters).contains("prod-oc"));
     }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aClusterWhoseConnectionSkipsTlsVerificationSaysSo() throws Exception {
+    addProd();
+    new ViewConfigurationService(ctx, pod, PROD).saveKubeconfigFile(new ByteArrayInputStream(KUBECONFIG
+        .replace("{server: 'https://prod-oc:6443'}", "{server: 'https://prod-oc:6443', insecure-skip-tls-verify: true}")
+        .getBytes(StandardCharsets.UTF_8)), "kubeconfig.yaml");
+
+    List<Map<String, Object>> clusters = (List<Map<String, Object>>) api("ops").listClusters().getEntity();
+
+    assertEquals(true, clusters.get(1).get("insecure"));
+    assertEquals(false, clusters.get(0).get("insecure"), "the default cluster has no connection yet");
   }
 
   @Test
