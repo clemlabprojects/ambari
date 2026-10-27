@@ -31,6 +31,7 @@ import org.apache.ambari.view.k8s.service.HelmService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
 import org.apache.ambari.view.k8s.service.TrinoCatalogService;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.deployment.GitPullRequests;
 import org.apache.ambari.view.k8s.service.deployment.ReleaseHeldInGitException;
@@ -117,6 +118,8 @@ public class TrinoCatalogRuntimeService {
     }
 
     private final ViewContext ctx;
+    /** The cluster of the releases whose catalogs are managed. */
+    private final ClusterRef cluster;
     private final KubernetesService kubernetesService;
     private final GitOpsRedeploy gitOpsRedeploy;
 
@@ -129,13 +132,25 @@ public class TrinoCatalogRuntimeService {
      *                       saved to such a release only through Upgrade/Config
      */
     public TrinoCatalogRuntimeService(ViewContext ctx, GitOpsRedeploy gitOpsRedeploy) {
+        this(ctx, ClusterRef.DEFAULT, gitOpsRedeploy);
+    }
+
+    /**
+     * @param cluster        the cluster of the releases whose catalogs are managed
+     * @param gitOpsRedeploy commits the values of a release deployed with Flux GitOps to Git; without it, a catalog is
+     *                       saved to such a release only through Upgrade/Config
+     */
+    public TrinoCatalogRuntimeService(ViewContext ctx, ClusterRef cluster, GitOpsRedeploy gitOpsRedeploy) {
         this.ctx = ctx;
-        this.kubernetesService = KubernetesService.get(ctx);
+        this.cluster = cluster;
+        this.kubernetesService = KubernetesService.get(ctx, cluster);
         this.gitOpsRedeploy = gitOpsRedeploy;
     }
 
     TrinoCatalogRuntimeService(ViewContext ctx, KubernetesService kubernetesService, GitOpsRedeploy gitOpsRedeploy) {
         this.ctx = ctx;
+        this.cluster = kubernetesService == null || kubernetesService.cluster() == null
+                ? ClusterRef.DEFAULT : kubernetesService.cluster();
         this.kubernetesService = kubernetesService;
         this.gitOpsRedeploy = gitOpsRedeploy;
     }
@@ -148,7 +163,7 @@ public class TrinoCatalogRuntimeService {
         t.namespace = namespace; t.release = release;
         t.values = kubernetesService.getHelmReleaseValues(namespace, release);
         if (t.values == null) t.values = Collections.emptyMap();
-        t.metadata = new ReleaseMetadataService(ctx).find(namespace, release);
+        t.metadata = new ReleaseMetadataService(ctx, cluster).find(namespace, release);
         String unavailable = serviceUserUnavailable(t.values, "Catalog management", namespace + "/" + release);
         if (unavailable != null) throw new IllegalStateException(unavailable);
         Object port = ConfigResolutionService.getByDottedPath(t.values, "server.config.https.port");
@@ -340,9 +355,9 @@ public class TrinoCatalogRuntimeService {
      * @throws org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend.GitOpsBusyException when another change
      *         of the release is being submitted to Git; nothing was changed
      */
-    private static <T> T aloneInGit(Target t, boolean saved, Supplier<T> change) {
+    private <T> T aloneInGit(Target t, boolean saved, Supplier<T> change) {
         if (!saved || !heldInGit(t)) return change.get();
-        return CommandService.submittingGitOpsChange(t.namespace, t.release, change);
+        return CommandService.submittingGitOpsChange(cluster, t.namespace, t.release, change);
     }
 
     /**
@@ -759,7 +774,7 @@ public class TrinoCatalogRuntimeService {
             out.put("commandId", commandId);
             return out;
         }
-        HelmService helm = new HelmService(ctx);
+        HelmService helm = new HelmService(ctx, cluster);
         // deployOrUpgrade holds the release for the whole upgrade, refusing it if another operation started since.
         helm.deployOrUpgrade(t.metadata.getChartRef(), t.release, t.namespace, values, Collections.emptyMap(),
                 kubernetesService.getConfigurationService().getKubeconfigContents(),
@@ -776,7 +791,7 @@ public class TrinoCatalogRuntimeService {
     private void forgetCatalogRef(Target t, String name) {
         Map<String, Map<String, String>> refs = refsOf(t.metadata);
         if (refs.remove(name) == null) return;
-        new ReleaseMetadataService(ctx).forgetCatalogRef(t.namespace, t.release, name);
+        new ReleaseMetadataService(ctx, cluster).forgetCatalogRef(t.namespace, t.release, name);
         t.metadata.setCatalogRefsJson(TrinoCatalogService.toRefsJson(refs));
     }
 

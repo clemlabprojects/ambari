@@ -33,6 +33,7 @@ export interface HelmRelease {
   catalogRefs?: Record<string, { id: string; hash: string }>; // reusable Trino catalogs attached at deploy time (name -> ref)
   catalogManagement?: boolean | null; // Trino: false when the Catalogs action cannot run (no 'Let KDPS manage catalogs' or no internal HTTPS)
   truststoreRefs?: string[]; // truststores selected at deploy time (absent: never recorded)
+  kubernetesCluster?: string; // id of the Kubernetes cluster the release is on; every action on it is sent there
   repoId?: string;
   chartRef?: string;
   securityProfile?: string;

@@ -45,6 +45,12 @@ describe('releaseRedeployPayload', () => {
     expect(payload).not.toHaveProperty('version');
   });
 
+  it('redeploys a release on the cluster it is on, and names none for the default cluster', () => {
+    expect(releaseRedeployPayload({ ...release, kubernetesCluster: 'prod' }, {})).toHaveProperty('kubernetesCluster', 'prod');
+    expect(releaseRedeployPayload({ ...release, kubernetesCluster: 'default' }, {})).not.toHaveProperty('kubernetesCluster');
+    expect(releaseRedeployPayload(release, {})).not.toHaveProperty('kubernetesCluster');
+  });
+
   it('leaves out what the release does not know, so the backend uses the recorded release', () => {
     const payload = releaseRedeployPayload({ ...release, chartRef: undefined, platformContextId: undefined }, {});
 

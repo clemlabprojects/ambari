@@ -100,17 +100,17 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
   const [persist, setPersist] = useState(true);
   const [schemas, setSchemas] = useState<{ name: string; list: string[] } | null>(null);
 
-  const ns = release?.namespace || ''; const rel = release?.name || '';
+  const ns = release?.namespace || ''; const rel = release?.name || ''; const cluster = release?.kubernetesCluster;
   const wording = catalogSaveWording(release);
   const template = useMemo(() => CATALOG_TEMPLATES.find(t => t.id === templateId)!, [templateId]);
 
   const load = useCallback(async () => {
     if (!release) return;
     setLoading(true); setError(null);
-    try { setRows(await listReleaseCatalogs(ns, rel)); }
+    try { setRows(await listReleaseCatalogs(ns, rel, cluster)); }
     catch (e) { setError(errorText(e)); }
     finally { setLoading(false); }
-  }, [release, ns, rel]);
+  }, [release, ns, rel, cluster]);
 
   useEffect(() => { if (release) { setRows([]); setSchemas(null); setCreating(false); setGalleryOpen(false); void load(); } }, [release, load]);
 
@@ -130,7 +130,7 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
     const properties = template.id === 'generic' ? String(v.__raw || '') : (preview || previewFor(template, v));
     setBusy('create');
     try {
-      const r = await createReleaseCatalog(ns, rel, { name, properties, persist });
+      const r = await createReleaseCatalog(ns, rel, { name, properties, persist }, cluster);
       if (r.committedToGit) message.success(`Catalog '${r.name}' created. ${wording.saved(r.name, r)}`, 8);
       else message.success(`Catalog '${r.name}' created${r.persisted ? ' and saved to the release' : ' (runtime only)'}`);
       setCreating(false); form.resetFields(); setPreview('');
@@ -142,7 +142,7 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
   const doDrop = async (c: ReleaseCatalog) => {
     setBusy(c.name);
     try {
-      const r = await dropReleaseCatalog(ns, rel, c.name, wording.forgetOnDrop(c));
+      const r = await dropReleaseCatalog(ns, rel, c.name, wording.forgetOnDrop(c), cluster);
       message.success(r.committedToGit ? wording.removed(c.name) : `Catalog '${c.name}' dropped`);
       await load();
     }
@@ -151,13 +151,13 @@ export default function TrinoCatalogsModal({ release, onClose }: { release: Helm
   };
   const doTest = async (c: ReleaseCatalog) => {
     setBusy(c.name);
-    try { const r = await testReleaseCatalog(ns, rel, c.name); setSchemas({ name: c.name, list: r.schemas || [] }); }
+    try { const r = await testReleaseCatalog(ns, rel, c.name, cluster); setSchemas({ name: c.name, list: r.schemas || [] }); }
     catch (e) { message.error(errorText(e), 10); }
     finally { setBusy(null); }
   };
   const doAdopt = async (c: ReleaseCatalog) => {
     setBusy(c.name);
-    try { const r = await adoptReleaseCatalog(ns, rel, c.name); message.success(wording.saved(c.name, r)); await load(); }
+    try { const r = await adoptReleaseCatalog(ns, rel, c.name, cluster); message.success(wording.saved(c.name, r)); await load(); }
     catch (e) { message.error(errorText(e), 10); }
     finally { setBusy(null); }
   };

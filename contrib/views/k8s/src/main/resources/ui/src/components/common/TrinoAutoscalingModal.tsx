@@ -82,7 +82,7 @@ const TrinoAutoscalingModal: React.FC<Props> = ({ release, onClose, onApply }) =
   React.useEffect(() => {
     setValues(null); setScaling(null); setError(null);
     if (!release) return;
-    getReleaseValues(release.namespace, release.name)
+    getReleaseValues(release.namespace, release.name, release.kubernetesCluster)
       .then((v: any) => {
         // No values would mean redeploying the release with nothing but its scaling: refuse rather than wipe it.
         if (!usableReleaseValues(v)) {

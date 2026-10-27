@@ -176,7 +176,7 @@ const HelmReleasesPage: React.FC = () => {
     const key = releaseKey(release);
     setStatusRefreshing((previous) => ({ ...previous, [key]: true }));
     try {
-      const latestStatus = await getReleaseStatus(release.namespace, release.name);
+      const latestStatus = await getReleaseStatus(release.namespace, release.name, release.kubernetesCluster);
       setStatusByRelease((previous) => ({ ...previous, [key]: latestStatus }));
     } catch (err: any) {
       if (options?.notifyOnError) {
@@ -241,7 +241,7 @@ const HelmReleasesPage: React.FC = () => {
         .filter((r) => r.managedByUi || r.deploymentMode === 'FLUX_GITOPS')
         .forEach((r) => {
           const key = `${r.namespace}/${r.name}`;
-          getReleaseTlsState(r.namespace, r.name)
+          getReleaseTlsState(r.namespace, r.name, r.kubernetesCluster)
             .then((entries) => setTlsByRelease((prev) => ({ ...prev, [key]: entries })))
             .catch(() => setTlsByRelease((prev) => ({ ...prev, [key]: [] })));
         });
@@ -271,7 +271,7 @@ const HelmReleasesPage: React.FC = () => {
     const refreshSecurityProfile = async (release: HelmRelease) => {
       const hide = message.loading('Refreshing security profile...', 0);
       try {
-        const currentValues = await getReleaseValues(release.namespace, release.name);
+        const currentValues = await getReleaseValues(release.namespace, release.name, release.kubernetesCluster);
         const payload = releaseRedeployPayload(release, currentValues, gitOptionsForRelease(release));
         const response = await submitHelmDeploy(payload as any);
         if (response?.id) {
@@ -310,7 +310,7 @@ const HelmReleasesPage: React.FC = () => {
   const resyncRelease = async (release: HelmRelease, reason: string) => {
     const hide = message.loading(reason, 0);
     try {
-      const currentValues = await getReleaseValues(release.namespace, release.name);
+      const currentValues = await getReleaseValues(release.namespace, release.name, release.kubernetesCluster);
       const payload = releaseRedeployPayload(release, currentValues, gitOptionsForRelease(release));
       const response = await submitHelmDeploy(payload as any);
       if (response?.id) {
@@ -339,7 +339,7 @@ const HelmReleasesPage: React.FC = () => {
   const triggerAdopt = async (release: HelmRelease) => {
     const hide = message.loading(`Adopting ${release.name}...`, 0);
     try {
-      await adoptRelease(release.namespace, release.name);
+      await adoptRelease(release.namespace, release.name, release.kubernetesCluster);
       message.success(`Adopted ${release.name} into the KDPS view`);
       await fetchReleases();
     } catch (e: any) {
@@ -356,7 +356,7 @@ const HelmReleasesPage: React.FC = () => {
   const triggerRetryReconcile = async (release: HelmRelease) => {
     const hide = message.loading(`Asking Flux to retry ${release.name}...`, 0);
     try {
-      await retryReleaseReconcile(release.namespace, release.name);
+      await retryReleaseReconcile(release.namespace, release.name, release.kubernetesCluster);
       message.success(`Flux was asked to retry ${release.name}`);
       void refreshReleaseStatus(release, { notifyOnError: true });
     } catch (e: any) {
@@ -369,7 +369,7 @@ const HelmReleasesPage: React.FC = () => {
   const triggerKeytabRegeneration = async (release: HelmRelease) => {
     const hide = message.loading(`Regenerating keytabs for ${release.name}...`, 0);
     try {
-      const response = await regenerateReleaseKeytabs(release.namespace, release.name);
+      const response = await regenerateReleaseKeytabs(release.namespace, release.name, release.kubernetesCluster);
       if (response?.id) {
         setWatchedCommandId(response.id);
         setIsCommandDrawerOpen(true);
@@ -397,7 +397,7 @@ const HelmReleasesPage: React.FC = () => {
     if (warning?.path) {
       let values: any = null;
       try {
-        values = await getReleaseValues(release.namespace, release.name);
+        values = await getReleaseValues(release.namespace, release.name, release.kubernetesCluster);
       } catch {
         // Values unreadable: run without the question; the step reports the switch state itself.
       }
@@ -419,7 +419,7 @@ const HelmReleasesPage: React.FC = () => {
   const runServiceReplayableAction = async (release: HelmRelease, action: ReplayableAction) => {
     const hide = message.loading(`${action.label} for ${release.name}...`, 0);
     try {
-      const response = await triggerReplayableAction(release.namespace, release.name, action.endpoint);
+      const response = await triggerReplayableAction(release.namespace, release.name, action.endpoint, release.kubernetesCluster);
       if (response?.id) {
         setWatchedCommandId(response.id);
         setIsCommandDrawerOpen(true);
@@ -441,7 +441,7 @@ const HelmReleasesPage: React.FC = () => {
   const triggerRangerRepositoryReapply = async (release: HelmRelease) => {
     const hide = message.loading(`Reapplying Ranger repository for ${release.name}...`, 0);
     try {
-      const response = await reapplyReleaseRangerRepository(release.namespace, release.name);
+      const response = await reapplyReleaseRangerRepository(release.namespace, release.name, release.kubernetesCluster);
       if (response?.id) {
         setWatchedCommandId(response.id);
         setIsCommandDrawerOpen(true);
@@ -458,30 +458,30 @@ const HelmReleasesPage: React.FC = () => {
 
   // Read-only Atlas-federation config-drift check. Surfaces operator-side Atlas changes (file auth
   // off, federation user removed/renamed, password rotated, pending restart) that break federation.
-  const [atlasCheck, setAtlasCheck] = useState<{ open: boolean; loading: boolean; releaseName: string; report: AtlasFederationCheck | null }>(
+  const [atlasCheck, setAtlasCheck] = useState<{ open: boolean; loading: boolean; releaseName: string; report: AtlasFederationCheck | null; cluster?: string }>(
     { open: false, loading: false, releaseName: '', report: null });
   // Live progress of the one-click "Fix & restart Atlas" action (re-assert config + ATLAS_SERVER restart).
   const [fixRestart, setFixRestart] = useState<{ running: boolean; requestId: number | null; percent: number; status: string }>(
     { running: false, requestId: null, percent: 0, status: '' });
   const runAtlasFederationCheck = async (release: HelmRelease) => {
     setFixRestart({ running: false, requestId: null, percent: 0, status: '' });
-    setAtlasCheck({ open: true, loading: true, releaseName: release.name, report: null });
+    setAtlasCheck({ open: true, loading: true, releaseName: release.name, report: null, cluster: release.kubernetesCluster });
     try {
-      const report = await checkReleaseAtlasFederation(release.namespace, release.name);
-      setAtlasCheck({ open: true, loading: false, releaseName: release.name, report });
+      const report = await checkReleaseAtlasFederation(release.namespace, release.name, release.kubernetesCluster);
+      setAtlasCheck({ open: true, loading: false, releaseName: release.name, report, cluster: release.kubernetesCluster });
     } catch (e: any) {
       message.error(e?.message || 'Atlas federation config check failed');
       setAtlasCheck({ open: false, loading: false, releaseName: '', report: null });
     }
   };
-  const runFixRestart = async (namespace: string, releaseName: string) => {
+  const runFixRestart = async (namespace: string, releaseName: string, cluster?: string) => {
     setFixRestart({ running: true, requestId: null, percent: 0, status: 'submitting' });
     try {
-      const res = await fixRestartAtlasFederation(namespace, releaseName);
+      const res = await fixRestartAtlasFederation(namespace, releaseName, cluster);
       setFixRestart({ running: true, requestId: res.requestId, percent: 0, status: 'IN_PROGRESS' });
       const poll = async () => {
         try {
-          const p = await getAmbariRequestProgress(namespace, releaseName, res.requestId);
+          const p = await getAmbariRequestProgress(namespace, releaseName, res.requestId, cluster);
           const st = (p.status || '').toUpperCase();
           const pct = Math.round(p.progressPercent || 0);
           if (['COMPLETED', 'FAILED', 'ABORTED', 'TIMEDOUT'].includes(st)) {
@@ -492,7 +492,7 @@ const HelmReleasesPage: React.FC = () => {
               message.error(`Atlas restart ${st}`);
             }
             try {
-              const report = await checkReleaseAtlasFederation(namespace, releaseName);
+              const report = await checkReleaseAtlasFederation(namespace, releaseName, cluster);
               setAtlasCheck((prev) => ({ ...prev, open: true, loading: false, report }));
             } catch { /* leave prior report */ }
             return;
@@ -514,7 +514,7 @@ const HelmReleasesPage: React.FC = () => {
     const triggerOidcRegistration = async (release: HelmRelease) => {
     const hide = message.loading(`Registering OIDC client for ${release.name}...`, 0);
     try {
-      const response = await registerReleaseOidcClient(release.namespace, release.name);
+      const response = await registerReleaseOidcClient(release.namespace, release.name, release.kubernetesCluster);
       if (response?.id) {
         setWatchedCommandId(response.id);
         setIsCommandDrawerOpen(true);
@@ -576,7 +576,7 @@ const HelmReleasesPage: React.FC = () => {
     setHistoryError(undefined);
     setHistoryLoading(true);
     try {
-      const entries = await getReleaseHistory(release.namespace, release.name);
+      const entries = await getReleaseHistory(release.namespace, release.name, release.kubernetesCluster);
       // Newest first so the current revision sits at the top.
       const sorted = [...(entries || [])].sort((a, b) => (b.revision ?? 0) - (a.revision ?? 0));
       setHistoryEntries(sorted);
@@ -594,7 +594,7 @@ const HelmReleasesPage: React.FC = () => {
   const performRollbackToRevision = useCallback(async (release: HelmRelease, revision: number) => {
     setRollingBackRevision(revision);
     try {
-      await rollbackReleaseToRevision(release.namespace, release.name, revision);
+      await rollbackReleaseToRevision(release.namespace, release.name, revision, release.kubernetesCluster);
       message.success(`Rolled back ${release.name} to revision ${revision}`);
       setHistoryModalRelease(null);
       void refreshReleaseStatus(release, { notifyOnError: false });
@@ -624,7 +624,7 @@ const HelmReleasesPage: React.FC = () => {
       onOk: async () => {
         const hide = message.loading(`Upgrading ${release.name} to ${targetVersion}...`, 0);
         try {
-          const response = await upgradeReleaseChart(release.namespace, release.name, targetVersion);
+          const response = await upgradeReleaseChart(release.namespace, release.name, targetVersion, release.kubernetesCluster);
           if (response?.id) {
             setWatchedCommandId(response.id);
             setIsCommandDrawerOpen(true);
@@ -703,7 +703,7 @@ const HelmReleasesPage: React.FC = () => {
     // Asks the backend, when the menu of a release opens, which repair actions its platform context cannot perform.
     const loadActionRefusals = async (record: HelmRelease) => {
       try {
-        const answer = await getReleaseActionRefusals(record.namespace, record.name);
+        const answer = await getReleaseActionRefusals(record.namespace, record.name, record.kubernetesCluster);
         setActionRefusals(prev => ({ ...prev, [`${record.namespace}/${record.name}`]: answer?.refusals || {} }));
       } catch {
         // The actions stay enabled; running one says why it cannot run.
@@ -819,6 +819,8 @@ const HelmReleasesPage: React.FC = () => {
                 catalogRefs: record.catalogRefs,
                 // Truststores selected at deploy time, so Upgrade/Config re-selects them.
                 truststoreRefs: record.truststoreRefs,
+                // The cluster the release is on: the upgrade goes there.
+                kubernetesCluster: record.kubernetesCluster,
               },
             });
           }
@@ -902,7 +904,7 @@ const HelmReleasesPage: React.FC = () => {
             const signInRemovals = uninstallSignInRemovals(record, serviceDefinition?.oidc);
             let kdpsObjects: string[] = [];
             try {
-              kdpsObjects = await getReleaseKdpsObjects(record.name, record.namespace);
+              kdpsObjects = await getReleaseKdpsObjects(record.name, record.namespace, record.kubernetesCluster);
             } catch {
               // Not listed: the uninstall still removes them, and its result says which.
             }
@@ -911,7 +913,7 @@ const HelmReleasesPage: React.FC = () => {
             const modes: ExternalCleanupMode[] = ['credentials', 'all', 'none'];
             const previewOf = async (m: ExternalCleanupMode) => {
               try {
-                return await getReleaseExternalRegistrations(record.name, record.namespace, m);
+                return await getReleaseExternalRegistrations(record.name, record.namespace, m, record.kubernetesCluster);
               } catch {
                 return null; // Not listed: the uninstall still does it, and its result says what was done.
               }
@@ -939,7 +941,7 @@ const HelmReleasesPage: React.FC = () => {
                   if (record.repoId) params.set('repoId', record.repoId);
                   if (record.deploymentMode) params.set('deploymentMode', record.deploymentMode);
                   params.set('externalCleanup', choice.mode);
-                  const notes = await uninstallHelm(record.name, record.namespace, params);
+                  const notes = await uninstallHelm(record.name, record.namespace, params, record.kubernetesCluster);
                   if (notes?.pendingDelete) {
                     // A GitOps release removed through a pull request keeps running until it is merged.
                     Modal.info({
@@ -1700,7 +1702,7 @@ const HelmReleasesPage: React.FC = () => {
                         disabled={fixRestart.running}
                         onClick={() => {
                           const ns = atlasCheck.report?.namespace;
-                          if (ns) { runFixRestart(ns, atlasCheck.releaseName); }
+                          if (ns) { runFixRestart(ns, atlasCheck.releaseName, atlasCheck.cluster); }
                           else { message.error('Release namespace unknown — reopen the check.'); }
                         }}
                       >

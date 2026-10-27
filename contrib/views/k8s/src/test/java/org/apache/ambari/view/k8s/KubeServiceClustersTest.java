@@ -201,6 +201,9 @@ class KubeServiceClustersTest {
     assertNotFound(() -> lead.getNamedClusterLiveness("prod"));
     assertNotFound(() -> lead.checkIsClusterConfigured("../default"));
     assertNotFound(() -> lead.removeCluster(null, "prod"));
+    // The releases of a cluster, and every action on them, are reached by naming it.
+    WebApplicationException releases = assertThrows(WebApplicationException.class, () -> lead.helm(null, "prod"));
+    assertEquals(404, releases.getResponse().getStatus());
     assertFalse(new ViewConfigurationService(ctx, pod, PROD).isConfigured(), "nothing saved for an unknown cluster");
     assertEquals(400, lead.saveCluster(null, "Prod", Map.of("name", "x")).getStatus());
   }

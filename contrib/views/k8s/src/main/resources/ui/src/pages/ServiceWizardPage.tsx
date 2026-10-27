@@ -207,6 +207,10 @@ const ServiceWizardPage: React.FC = () => {
               if (Array.isArray(upgradeState.truststoreRefs)) {
                 initial.truststoreRefs = upgradeState.truststoreRefs;
               }
+              // The release stays on its cluster: discovery, the values read back and the upgrade go there.
+              if (upgradeState.kubernetesCluster && upgradeState.kubernetesCluster !== 'default') {
+                initial.kubernetesCluster = upgradeState.kubernetesCluster;
+              }
               // Re-select the KDPS context the release was deployed against so context bindings resolve
               // against the right target on upgrade, instead of the ambari-managed default seeded above.
               // Guard on existence: if that context was since deleted, keep the default rather than
@@ -301,6 +305,9 @@ const ServiceWizardPage: React.FC = () => {
               // and create a new release instead of upgrading the running one.
               if (upgradeState?.namespace) initial.namespace = upgradeState.namespace;
               if (upgradeState?.releaseName) initial.releaseName = upgradeState.releaseName;
+              if (upgradeState?.kubernetesCluster && upgradeState.kubernetesCluster !== 'default') {
+                initial.kubernetesCluster = upgradeState.kubernetesCluster;
+              }
               // Preserve the DEPLOYED chart + version so the "Chart (override)" field is populated and
               // the upgrade re-uses the running chart (e.g. clemlab-trino) instead of the service.json
               // default (trinodb/trino), which would silently switch charts.
@@ -315,7 +322,7 @@ const ServiceWizardPage: React.FC = () => {
                 if (ids.length) initial.customCatalogs = { ...(initial.customCatalogs || {}), refs: ids };
               }
               try {
-                const deployed = await getReleaseValues(initial.namespace, initial.releaseName);
+                const deployed = await getReleaseValues(initial.namespace, initial.releaseName, initial.kubernetesCluster);
                 if (deployed && typeof deployed === 'object' && Object.keys(deployed).length > 0) {
                   deepMerge(initial, deployed); // deployed values win over defaults
                   // Fields kept out of the values (the Superset SECRET_KEY) come back from where the release keeps them.
@@ -337,7 +344,7 @@ const ServiceWizardPage: React.FC = () => {
                   // serving plain HTTP starts on "None": there is no certificate to keep).
                   if (seedKeepCurrentTls(svcDef?.form, initial, deployed)) {
                     const deployedTlsSecret = deployed?.ingress?.tlsSecret ? String(deployed.ingress.tlsSecret) : undefined;
-                    getReleaseTlsState(initial.namespace, initial.releaseName)
+                    getReleaseTlsState(initial.namespace, initial.releaseName, initial.kubernetesCluster)
                       .then((entries) => setCurrentIngressTls(describeCurrentIngressTls(entries, deployedTlsSecret)))
                       .catch(() => setCurrentIngressTls(null));
                   }

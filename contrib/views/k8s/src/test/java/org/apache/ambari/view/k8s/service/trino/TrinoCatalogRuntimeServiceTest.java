@@ -542,7 +542,7 @@ class TrinoCatalogRuntimeServiceTest {
 
     @Test
     void aCatalogIsNotSavedToAFluxManagedReleaseWithoutAWayToCommitIt() {
-        TrinoCatalogRuntimeService service = new TrinoCatalogRuntimeService(null, null, null);
+        TrinoCatalogRuntimeService service = new TrinoCatalogRuntimeService(null, (KubernetesService) null, null);
 
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 () -> service.persistCatalog(gitOpsTarget(), "pg", "connector.name=postgresql"));

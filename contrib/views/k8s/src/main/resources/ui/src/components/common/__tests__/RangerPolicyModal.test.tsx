@@ -22,7 +22,8 @@ import { createReleaseRangerPolicy } from '../../../api/client';
 
 jest.mock('../../../api/client');
 
-const release: any = { name: 'trino-sec', namespace: 'trino-sec', serviceKey: 'TRINO' };
+// On another cluster than the default one: the policy is created for the release there.
+const release: any = { name: 'trino-sec', namespace: 'trino-sec', serviceKey: 'TRINO', kubernetesCluster: 'prod' };
 
 describe('RangerPolicyModal', () => {
   it('maps a resource mask into the backend request shape', () => {
@@ -47,7 +48,7 @@ describe('RangerPolicyModal', () => {
     await userEvent.type(screen.getByPlaceholderText('alice'), 'admin');
     await userEvent.click(screen.getByRole('button', { name: 'Create policy' }));
     await waitFor(() => expect(createReleaseRangerPolicy).toHaveBeenCalledWith('trino-sec', 'trino-sec',
-      expect.objectContaining({ target: 'resource', policyType: 0, users: 'admin', accessTypes: 'select' })));
+      expect.objectContaining({ target: 'resource', policyType: 0, users: 'admin', accessTypes: 'select' }), 'prod'));
     expect(await screen.findByText(/Policy 'p' on 'trino-ns'/)).toBeInTheDocument();
   });
 });
