@@ -37,7 +37,7 @@ import { deepMerge } from '../components/ServiceInstallationModal/bindings';
 import { seedFieldsFromRelease } from '../components/ServiceInstallationModal/seedFromRelease';
 import { gitOptionsToSubmit } from '../utils/gitOpsBranches';
 import { deploySubmittedMessage } from '../components/common/operationOutcome';
-import { useCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
+import { useClusterCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
 import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
 import { requiredUnlessAnyErrors } from '../components/ServiceInstallationModal/requiredUnless';
@@ -61,10 +61,6 @@ const ServiceWizardPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { token } = theme.useToken();
-  // Detected target platform (kubernetes|openshift); threaded into the binding engine so
-  // service.json can branch on it (e.g. Trino KEDA: Thanos+bearer on OpenShift).
-  const caps = useCapabilities();
-  const platform = caps?.platform;
   const [current, setCurrent] = useState(0);
   
   // Data
@@ -96,6 +92,11 @@ const ServiceWizardPage: React.FC = () => {
   // What the wizard discovers is read on the cluster it deploys to; undefined is the default cluster.
   const chosenCluster: string | undefined = (installValues as any)?.kubernetesCluster;
   const targetCluster = chosenCluster && chosenCluster !== 'default' ? chosenCluster : undefined;
+  // The platform (kubernetes|openshift) of the cluster deployed to, threaded into the binding engine so service.json
+  // can branch on it (e.g. Trino KEDA: Thanos+bearer on OpenShift). Read here, outside the TargetClusterContext this
+  // page provides, so it names the cluster itself.
+  const caps = useClusterCapabilities(targetCluster);
+  const platform = caps?.platform;
   const [managedTruststores, setManagedTruststores] = useState<TruststoreSummary[]>([]);
   useEffect(() => {
     // The shared truststores, and the project ones of the cluster the release goes to.

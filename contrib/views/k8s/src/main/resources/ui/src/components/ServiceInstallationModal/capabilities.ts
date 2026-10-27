@@ -53,8 +53,12 @@ export const invalidateCapabilities = (): void => {
 /** Shared capabilities hook: one cached probe drives OpenShift/CRD-aware field gating and
  *  the platform-conditional binding engine alike. Re-probes on {@link invalidateCapabilities}
  *  (e.g. a cluster reconnect) via a lightweight subscription + local refresh counter. */
-export const useCapabilities = (): ClusterCapabilities | undefined => {
-  const key = useTargetCluster() || '';
+export const useCapabilities = (): ClusterCapabilities | undefined => useClusterCapabilities(useTargetCluster());
+
+/** The capabilities of a named cluster (undefined for the default one), for a component that chooses the cluster
+ *  itself instead of reading it from {@link TargetClusterContext}: the deploy wizard, which provides that context. */
+export const useClusterCapabilities = (cluster: string | undefined): ClusterCapabilities | undefined => {
+  const key = cluster || '';
   const [caps, setCaps] = React.useState<ClusterCapabilities | undefined>(lastResolvedByCluster.get(key));
   const [refreshTick, setRefreshTick] = React.useState(0);
 
