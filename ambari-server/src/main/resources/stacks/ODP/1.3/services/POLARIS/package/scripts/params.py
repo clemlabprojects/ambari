@@ -798,15 +798,15 @@ if enable_ranger_polaris:
     'polaris.rest.address': polaris_repository_url,
     'commonNameForCertificate': ranger_plugin_properties['common.name.for.certificate'],
     'ambari.service.check.user': policy_user,
+    # Set with or without Kerberos: the repository is only created once, and Kerberos may be
+    # enabled later; Ranger then only lets these users download the policies.
+    'policy.download.auth.users': polaris_user,
+    'tag.download.auth.users': polaris_user,
   }
 
   custom_ranger_service_config = generate_ranger_service_config(ranger_plugin_properties)
   if len(custom_ranger_service_config) > 0:
     polaris_repository_configuration.update(custom_ranger_service_config)
-
-  if security_enabled:
-    polaris_repository_configuration['policy.download.auth.users'] = polaris_user
-    polaris_repository_configuration['tag.download.auth.users'] = polaris_user
 
   polaris_ranger_plugin_repo = {
     'isEnabled': 'true',

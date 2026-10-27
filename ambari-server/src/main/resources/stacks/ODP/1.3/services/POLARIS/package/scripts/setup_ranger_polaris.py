@@ -157,7 +157,73 @@ def setup_ranger_polaris():
                       cred_lib_path_override=cred_lib_path_override,
                       cred_setup_prefix_override=cred_setup_prefix_override)
 
+  _ensure_polaris_repo_download_users(ranger_admin_v2_obj)
   _ensure_polaris_admin_policies(ranger_admin_v2_obj)
+
+
+POLARIS_REPO_DOWNLOAD_USER_KEYS = ['policy.download.auth.users', 'tag.download.auth.users']
+
+
+def _ensure_polaris_repo_download_users(ranger_admin_v2_obj):
+  """Ensure the Polaris service user may download the policies and tags of the Ranger repository.
+
+  setup_ranger_plugin only creates a missing repository: one created before Kerberos was enabled
+  lacks these users, and Ranger then answers 403 to every download of the Kerberized plugin."""
+  import params
+
+  ranger_admin_user = str(params.ranger_admin_username).strip()
+  ranger_admin_password = str(params.ranger_admin_password)
+  if not ranger_admin_user or not ranger_admin_password:
+    Logger.warning("Ranger admin credentials are empty; skipping Polaris Ranger repository download users check.")
+    return
+
+  repo_url = ranger_admin_v2_obj.url_repos_pub + "/name/" + urllib.parse.quote(params.repo_name, safe="")
+  status_code, repo = _ranger_http(repo_url, ranger_admin_user, ranger_admin_password, method="GET")
+  if status_code != 200 or not isinstance(repo, dict) or not isinstance(repo.get("configs"), dict):
+    Logger.warning(
+      "Failed to read Ranger repository '{0}' (HTTP status={1}); skipping download users check.".format(
+        params.repo_name, status_code
+      )
+    )
+    return
+
+  configs = repo["configs"]
+  changed = False
+  for key in POLARIS_REPO_DOWNLOAD_USER_KEYS:
+    users = [u.strip() for u in str(configs.get(key, "")).split(",") if u.strip()]
+    if params.polaris_user not in users:
+      configs[key] = ",".join(users + [params.polaris_user])
+      changed = True
+  if not changed:
+    Logger.info(
+      "Polaris user '{0}' already downloads the policies of Ranger repository '{1}'.".format(
+        params.polaris_user, params.repo_name
+      )
+    )
+    return
+
+  # Ranger masks the repository password in responses: send the configured one back.
+  desired_password = params.polaris_ranger_plugin_repo.get("configs", {}).get("password")
+  if desired_password:
+    configs["password"] = desired_password
+  status_code, body = _ranger_http(
+    ranger_admin_v2_obj.url_repos_pub + "/" + str(repo["id"]),
+    ranger_admin_user,
+    ranger_admin_password,
+    method="PUT",
+    payload=repo
+  )
+  if status_code not in (200, 201):
+    raise Fail(
+      "Failed to update Ranger repository '{0}'. HTTP status={1}, response={2}".format(
+        params.repo_name, status_code, _to_text(body)
+      )
+    )
+  Logger.info(
+    "Updated Ranger repository '{0}': Polaris user '{1}' may download its policies and tags.".format(
+      params.repo_name, params.polaris_user
+    )
+  )
 
 
 def _ensure_polaris_admin_policies(ranger_admin_v2_obj):
