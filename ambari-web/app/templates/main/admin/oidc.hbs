@@ -25,10 +25,19 @@
             class="btn btn-success" {{bindAttr disabled="controller.isKerberosButtonsDisabled"}}>
             {{t admin.oidc.button.manageCredentials}}
           </button>
-          <button href="#" {{action runOidcProvisioning target="controller"}}
-            class="btn btn-success" {{bindAttr disabled="controller.isKerberosButtonsDisabled"}}>
-            {{t admin.oidc.button.runProvisioning}}
-          </button>
+          {{#if controller.isOidcEnabled}}
+            <button href="#" {{action runOidcProvisioning target="controller"}}
+              class="btn btn-success" {{bindAttr disabled="controller.isKerberosButtonsDisabled"}}>
+              {{t admin.oidc.button.runProvisioning}}
+            </button>
+            <button class="btn btn-danger" {{action disableOidc target="controller"}}>
+              {{t admin.oidc.button.disableOidc}}
+            </button>
+          {{else}}
+            <button class="btn btn-primary" {{action enableOidc target="controller"}}>
+              {{t admin.oidc.button.enableOidc}}
+            </button>
+          {{/if}}
           <br/>
           <button href="#" {{action makeConfigsEditable target="controller"}}
             {{bindAttr class="controller.isEditMode:hidden :btn :btn-default :pull-right"}}>
@@ -54,28 +63,17 @@
           {{#if App.supports.enableToggleKerberos}}
             <a class="btn btn-padding btn-success admin-enable-security-btn" {{action checkAndStartKerberosWizard target="controller"}}>{{t admin.oidc.button.enableSecurity}} </a>
             <a class="btn btn-padding btn-success admin-enable-security-btn" {{action showManageOIDCCredentialsPopup target="controller"}}>{{t admin.oidc.button.manageCredentials}} </a>
+            {{#if controller.isOidcEnabled}}
+              <a class="btn btn-padding btn-danger admin-enable-security-btn" {{action disableOidc target="controller"}}>{{t admin.oidc.button.disableOidc}}</a>
+            {{else}}
+              <a class="btn btn-padding btn-primary admin-enable-security-btn" {{action enableOidc target="controller"}}>{{t admin.oidc.button.enableOidc}}</a>
+            {{/if}}
             <br/>
           {{/if}}
         {{/isAuthorized}}
       </p>
     </div>
   {{/if}}
-
-  {{#isAuthorized "CLUSTER.TOGGLE_KERBEROS"}}
-    {{#if App.supports.enableToggleKerberos}}
-      <div style="margin-bottom: 8px;">
-        {{#if controller.isOidcEnabled}}
-          <button class="btn btn-danger" {{action disableOidc target="controller"}}>
-            {{t admin.oidc.button.disableOidc}}
-          </button>
-        {{else}}
-          <button class="btn btn-primary" {{action enableOidc target="controller"}}>
-            {{t admin.oidc.button.enableOidc}}
-          </button>
-        {{/if}}
-      </div>
-    {{/if}}
-  {{/isAuthorized}}
 
   <div class="oidc-clients-section" style="margin-top:24px;">
     <h4>{{t admin.oidc.clients.title}}</h4>

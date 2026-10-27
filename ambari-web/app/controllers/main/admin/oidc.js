@@ -91,6 +91,11 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
     }).then(function(data) {
       var rawProps = (data && data.OidcDescriptor && data.OidcDescriptor.oidc_descriptor) || {};
       self.set('isOidcEnabled', !!rawProps['oidc_admin_url']);
+      self.set('oidcEnv', rawProps);
+      // the clients table may have loaded first: resolve its ${oidc_realm} now
+      if (self.get('oidcDescriptorData')) {
+        self._onLoadOidcClientsSuccess(self.get('oidcDescriptorData'));
+      }
       var configs = Object.keys(rawProps).map(function(name) {
         return App.ServiceConfigProperty.create({
           name: name,
@@ -131,6 +136,7 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
 
   _onLoadOidcClientsSuccess: function(data) {
     var self = this;
+    this.set('oidcDescriptorData', data);
     var clients = [];
     var descriptor = data && data.OidcDescriptor && data.OidcDescriptor.oidc_descriptor;
     var services = descriptor && descriptor.services;
@@ -178,7 +184,9 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
    * ${cluster_name} is always available; other unrecognised variables are left as-is.
    */
   _resolveDescriptorVars: function(value) {
-    return value.replace(/\$\{cluster_name\}/g, App.get('clusterName') || '');
+    return value
+      .replace(/\$\{cluster_name\}/g, App.get('clusterName') || '')
+      .replace(/\$\{oidc_realm\}/g, this.get('oidcEnv.oidc_realm') || '${oidc_realm}');
   },
 
   _onLoadOidcClientsError: function() {
@@ -236,54 +244,13 @@ App.MainAdminOidcController = App.MainAdminKerberosController.extend({
     return App.showManageOidcCredentialsPopup();
   },
 
+  /**
+   * Run OIDC Provisioning in its own progress page: register the Keycloak clients, then restart the services with
+   * OIDC clients that need it.
+   */
   runOidcProvisioning: function() {
-    var self = this;
-    return App.ModalPopup.show({
-      restartServices: false,
-      header: Em.I18n.t('admin.oidc.button.runProvisioning'),
-      bodyClass: Em.View.extend({
-        templateName: require('templates/main/admin/oidc_provisioning_restart_popup')
-      }),
-      onPrimary: function() {
-        this._super();
-        self._runOidcProvisioningRequest(this.get('restartServices'));
-      }
-    });
+    App.router.transitionTo('main.admin.adminOidc.adminOidcProvision');
   },
-
-  _runOidcProvisioningRequest: function(restartAfter) {
-    var securityType = this.get('securityEnabled') ? 'KERBEROS' : 'NONE';
-    var self = this;
-    return App.ajax.send({
-      name: 'admin.configure.oidc.only',
-      sender: this,
-      data: {
-        clusterName: App.get('clusterName'),
-        data: {
-          Clusters: {
-            security_type: securityType
-          }
-        }
-      }
-    }).done(function() {
-      App.router.get('userSettingsController').dataLoading('show_bg').done(function(initValue) {
-        if (initValue) {
-          App.router.get('backgroundOperationsController').showPopup();
-        }
-      });
-      self.set('needsRestartAfterProvisioning', restartAfter);
-      self.loadStep();
-    });
-  },
-
-  restartAfterOidcProvisioning: function() {
-    if (!App.router.get('backgroundOperationsController.runningOperationsCount')) {
-      if (this.get('needsRestartAfterProvisioning')) {
-        this.set('needsRestartAfterProvisioning', false);
-        App.router.get('mainServiceController').restartAllServices();
-      }
-    }
-  }.observes('controllers.backgroundOperationsController.runningOperationsCount'),
 
   /**
    * Show protocol mapper detail popup for the given client.

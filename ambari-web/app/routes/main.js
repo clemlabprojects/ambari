@@ -595,7 +595,8 @@ module.exports = Em.Route.extend(App.RouterRedirections, {
       }),
 
       adminOidcEnable: require('routes/add_oidc_enable_routes'),
-      adminOidcDisable: require('routes/add_oidc_disable_routes')
+      adminOidcDisable: require('routes/add_oidc_disable_routes'),
+      adminOidcProvision: require('routes/add_oidc_provision_routes')
     }),
 
     stackAndUpgrade: Em.Route.extend({

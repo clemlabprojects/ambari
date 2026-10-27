@@ -107,6 +107,7 @@ require('controllers/main/admin/oidc/progress_controller');
 require('controllers/main/admin/oidc/step4_controller');
 require('controllers/main/admin/oidc/step5_controller');
 require('controllers/main/admin/oidc/disable_controller');
+require('controllers/main/admin/oidc/provision_controller');
 require('controllers/main/admin/kerberos/wizard_controller');
 require('controllers/main/admin/kerberos/disable_controller');
 require('controllers/main/admin/kerberos/progress_controller');

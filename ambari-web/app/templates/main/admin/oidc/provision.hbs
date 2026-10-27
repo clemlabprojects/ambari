@@ -15,9 +15,8 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 }}
-
-<p class="alert alert-warning restart-services">{{t admin.oidc.provisioning.popup.restart.body}}</p>
-<p>
-  {{view App.CheckboxView classNames="checkbox" checkedBinding="view.parentView.restartServices"
-    labelTranslate="admin.oidc.provisioning.popup.restart.checkbox"}}
-</p>
+<div class="wizard">
+  <div class="row col-sm-12">
+    {{template "templates/common/progress"}}
+  </div>
+</div>

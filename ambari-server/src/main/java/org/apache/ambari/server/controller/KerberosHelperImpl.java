@@ -386,8 +386,8 @@ public class KerberosHelperImpl implements KerberosHelper {
       ? oidcOperation
       : ConfigureOidcServerAction.OPERATION_ENSURE;
     String note = ConfigureOidcServerAction.OPERATION_DELETE.equalsIgnoreCase(operation)
-      ? "Remove OIDC clients"
-      : "Provision OIDC clients";
+      ? "Remove OIDC Clients"
+      : "Provision OIDC Clients";
     return configureOidc(cluster, requestStageContainer, null, operation, note);
   }
 
@@ -407,6 +407,8 @@ public class KerberosHelperImpl implements KerberosHelper {
         null,
         requestFactory,
         actionManager);
+      // a request of its own (OIDC only): name it after the operation, not after its first stage
+      requestStageContainer.setRequestContext(updateConfigurationNote);
     }
 
     Map<String, Set<String>> clusterHostInfo = StageUtils.getClusterHostInfo(cluster);
