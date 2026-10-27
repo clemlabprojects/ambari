@@ -834,9 +834,9 @@ export const getClusterServices = async (serviceType: string): Promise<ClusterSe
 /**
  * Discover monitoring stack (kube-prometheus-stack) and return namespace/release.
  */
-/** A path of the API on a cluster: unchanged for the default cluster (no cluster named). */
+/** A path of the API on a cluster: unchanged for the default cluster (none named, or named `default`). */
 export const onCluster = (path: string, cluster?: string): string =>
-  !cluster ? path : `${path}${path.includes('?') ? '&' : '?'}cluster=${encodeURIComponent(cluster)}`;
+  !cluster || cluster === 'default' ? path : `${path}${path.includes('?') ? '&' : '?'}cluster=${encodeURIComponent(cluster)}`;
 
 export const getMonitoringDiscovery = async (cluster?: string): Promise<{
   namespace: string; release: string; url?: string; queryUrl?: string;
@@ -1166,8 +1166,8 @@ export const getHelmReleases = async (limit = 20, offset = 0, managedOnly = fals
 /**
  * Fetches the latest backend-aggregated status for a release via Flux/Helm backends.
  */
-export const getReleaseStatus = async (namespace: string, releaseName: string): Promise<HelmRelease> => {
-  const response = await apiFetch(`${API_BASE_URL}/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/status`, {
+export const getReleaseStatus = async (namespace: string, releaseName: string, cluster?: string): Promise<HelmRelease> => {
+  const response = await apiFetch(`${API_BASE_URL}${onCluster(`/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/status`, cluster)}`, {
     credentials: 'include',
     cache: 'no-store'
   });
@@ -1178,9 +1178,9 @@ export const getReleaseStatus = async (namespace: string, releaseName: string): 
  * Trigger an idempotent keytab regeneration workflow for a deployed release.
  * The backend schedules a background command and returns its id for tracking.
  */
-export const regenerateReleaseKeytabs = async (namespace: string, releaseName: string) => {
+export const regenerateReleaseKeytabs = async (namespace: string, releaseName: string, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/keytabs`;
-  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+  return fetchJson<{ id: string; href?: string }>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 
 /**
@@ -1188,9 +1188,9 @@ export const regenerateReleaseKeytabs = async (namespace: string, releaseName: s
  * Secret(s) so it appears in the Releases default filter. For releases installed before automatic
  * tagging existed (or by another tool). Idempotent; namespace-scoped.
  */
-export const adoptRelease = async (namespace: string, releaseName: string) => {
+export const adoptRelease = async (namespace: string, releaseName: string, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/adopt`;
-  return fetchJson<{ adopted: boolean; taggedSecrets: number }>(requestPath, { method: 'POST' });
+  return fetchJson<{ adopted: boolean; taggedSecrets: number }>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 
 /**
@@ -1198,18 +1198,18 @@ export const adoptRelease = async (namespace: string, releaseName: string) => {
  * fixed outside Git), without a new commit. Resolves once the request is on the HelmRelease; Flux then reports the
  * outcome in the release's status.
  */
-export const retryReleaseReconcile = async (namespace: string, releaseName: string) => {
+export const retryReleaseReconcile = async (namespace: string, releaseName: string, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/retry-reconcile`;
-  return fetchJson<{ requested: boolean; requestedAt: string }>(requestPath, { method: 'POST' });
+  return fetchJson<{ requested: boolean; requestedAt: string }>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 
 /**
  * Re-register the OIDC client in Keycloak for a deployed release.
  * Idempotent: updates the existing client if it already exists.
  */
-export const registerReleaseOidcClient = async (namespace: string, releaseName: string) => {
+export const registerReleaseOidcClient = async (namespace: string, releaseName: string, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/oidc`;
-  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+  return fetchJson<{ id: string; href?: string }>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 
 /**
@@ -1217,18 +1217,18 @@ export const registerReleaseOidcClient = async (namespace: string, releaseName: 
  * cannot run for a deployed release: the platform context it runs on cannot perform them, or it was deployed without
  * OIDC login. An action left out can run.
  */
-export const getReleaseActionRefusals = async (namespace: string, releaseName: string) => {
+export const getReleaseActionRefusals = async (namespace: string, releaseName: string, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/availability`;
-  return fetchJson<{ refusals: Record<string, string> }>(requestPath);
+  return fetchJson<{ refusals: Record<string, string> }>(onCluster(requestPath, cluster));
 };
 
 /**
  * Re-apply the Ranger repository configuration for a deployed release.
  * The backend replays the same install-time Ranger action without a Helm upgrade.
  */
-export const reapplyReleaseRangerRepository = async (namespace: string, releaseName: string) => {
+export const reapplyReleaseRangerRepository = async (namespace: string, releaseName: string, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/ranger`;
-  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+  return fetchJson<{ id: string; href?: string }>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 
 /** One Atlas-federation config-drift check result. */
@@ -1261,9 +1261,10 @@ export interface AtlasFederationCheck {
 export const checkReleaseAtlasFederation = async (
   namespace: string,
   releaseName: string,
+  cluster?: string,
 ): Promise<AtlasFederationCheck> => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/atlas-federation-check`;
-  return fetchJson<AtlasFederationCheck>(requestPath, { method: 'GET' });
+  return fetchJson<AtlasFederationCheck>(onCluster(requestPath, cluster), { method: 'GET' });
 };
 
 /** Result of the one-click "Fix & restart Atlas" action — returns the Ambari request id to poll. */
@@ -1289,18 +1290,20 @@ export interface AmbariRequestProgress {
 export const fixRestartAtlasFederation = async (
   namespace: string,
   releaseName: string,
+  cluster?: string,
 ): Promise<AtlasFixRestartResult> => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/atlas-federation-fix-restart`;
-  return fetchJson<AtlasFixRestartResult>(requestPath, { method: 'POST' });
+  return fetchJson<AtlasFixRestartResult>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 /** Poll an Ambari request's status + progress percent. */
 export const getAmbariRequestProgress = async (
   namespace: string,
   releaseName: string,
   requestId: number,
+  cluster?: string,
 ): Promise<AmbariRequestProgress> => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/ambari-request/${requestId}`;
-  return fetchJson<AmbariRequestProgress>(requestPath, { method: 'GET' });
+  return fetchJson<AmbariRequestProgress>(onCluster(requestPath, cluster), { method: 'GET' });
 };
 
 /**
@@ -1312,27 +1315,28 @@ export const triggerReplayableAction = async (
   namespace: string,
   releaseName: string,
   endpoint: string,
+  cluster?: string,
 ) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/${endpoint}`;
-  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+  return fetchJson<{ id: string; href?: string }>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 
 /**
  * Upgrade a deployed release to a new chart version in place. Backend preserves the
  * deployed values and only changes the chart version. Returns the background command id.
  */
-export const upgradeReleaseChart = async (namespace: string, releaseName: string, version: string) => {
+export const upgradeReleaseChart = async (namespace: string, releaseName: string, version: string, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/chart-upgrade?version=${encodeURIComponent(version)}`;
-  return fetchJson<{ id: string; href?: string }>(requestPath, { method: 'POST' });
+  return fetchJson<{ id: string; href?: string }>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 
 /**
  * Roll back a deployed release to a specific Helm revision picked by the operator.
  * Returns 200 on success with the revision that was applied.
  */
-export const rollbackReleaseToRevision = async (namespace: string, releaseName: string, revision: number) => {
+export const rollbackReleaseToRevision = async (namespace: string, releaseName: string, revision: number, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/actions/rollback?revision=${revision}`;
-  return fetchJson<{ ok?: boolean; revision?: number }>(requestPath, { method: 'POST' });
+  return fetchJson<{ ok?: boolean; revision?: number }>(onCluster(requestPath, cluster), { method: 'POST' });
 };
 
 export interface HelmHistoryEntry {
@@ -1348,9 +1352,9 @@ export interface HelmHistoryEntry {
  * Fetch the Helm revision history for a release so the UI can render the picker
  * modal that drives `rollbackReleaseToRevision`.
  */
-export const getReleaseHistory = async (namespace: string, releaseName: string) => {
+export const getReleaseHistory = async (namespace: string, releaseName: string, cluster?: string) => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/history`;
-  return fetchJson<HelmHistoryEntry[]>(requestPath);
+  return fetchJson<HelmHistoryEntry[]>(onCluster(requestPath, cluster));
 };
 
 /**
@@ -1381,9 +1385,9 @@ export interface ReleaseTlsEntry {
   /** external only: KDPS wrote this Secret from a certificate and key uploaded at deploy time. */
   uploaded?: boolean;
 }
-export const getReleaseTlsState = async (namespace: string, releaseName: string): Promise<ReleaseTlsEntry[]> => {
+export const getReleaseTlsState = async (namespace: string, releaseName: string, cluster?: string): Promise<ReleaseTlsEntry[]> => {
   const requestPath = `/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/tls`;
-  return fetchJson<ReleaseTlsEntry[]>(requestPath);
+  return fetchJson<ReleaseTlsEntry[]>(onCluster(requestPath, cluster));
 };
 
 /**
@@ -1686,8 +1690,8 @@ export interface KdpsObjectsCleanup {
  * The objects KDPS created for a release outside its chart, which its uninstall removes, as `<Kind>/<name>`: what the
  * uninstall confirmation lists. Empty when there are none or they cannot be listed.
  */
-export async function getReleaseKdpsObjects(name: string, namespace: string): Promise<string[]> {
-  const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/kdps-objects`;
+export async function getReleaseKdpsObjects(name: string, namespace: string, cluster?: string): Promise<string[]> {
+  const url = `${API_BASE_URL}${onCluster(`/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/kdps-objects`, cluster)}`;
   const response = await apiFetch(url, { method: 'GET' });
   if (!response.ok) return [];
   const body: any = await response.json().catch(() => ({}));
@@ -1702,9 +1706,10 @@ export async function getReleaseExternalRegistrations(
   name: string,
   namespace: string,
   mode: ExternalCleanupMode,
+  cluster?: string,
 ): Promise<ExternalCleanupReport | null> {
-  const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`
-    + `/external-registrations?mode=${encodeURIComponent(mode)}`;
+  const url = `${API_BASE_URL}${onCluster(`/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`
+    + `/external-registrations?mode=${encodeURIComponent(mode)}`, cluster)}`;
   const response = await apiFetch(url, { method: 'GET' });
   if (!response.ok) return null;
   const body: any = await response.json().catch(() => null);
@@ -1728,8 +1733,10 @@ export async function getReleaseExternalRegistrations(
 export async function uninstallHelm(
   name: string,
   namespace: string,
-  params: URLSearchParams = new URLSearchParams()
+  params: URLSearchParams = new URLSearchParams(),
+  cluster?: string,
 ): Promise<UninstallNotes> {
+  if (cluster && cluster !== 'default') params.set('cluster', cluster);
   const url = `${API_BASE_URL}/helm/release/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}?${params.toString()}`;
   const response = await apiFetch(url, { method: 'DELETE' });
   if (!response.ok) {
@@ -1848,9 +1855,8 @@ export const deleteManagedConfig = async (name: string, namespace: string) => {
  * Fetches the current user-supplied values for a specific Helm release.
  * Maps to Backend: GET /api/v1/helm/{namespace}/{releaseName}/values
  */
-export const getReleaseValues = async (namespace: string, releaseName: string): Promise<any> => {
-  // Construct the URL. Adjust the base path ('./api/v1') if your setup differs.
-  const url = `${API_BASE_URL}/helm/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/values`;
+export const getReleaseValues = async (namespace: string, releaseName: string, cluster?: string): Promise<any> => {
+  const url = `${API_BASE_URL}${onCluster(`/helm/${encodeURIComponent(namespace)}/${encodeURIComponent(releaseName)}/values`, cluster)}`;
   
   const response = await apiFetch(url, {
     method: 'GET',
@@ -2055,13 +2061,14 @@ export interface CatalogSaved {
   commandId?: string;
 }
 const relCat = (ns: string, rel: string) => `/helm/releases/${encodeURIComponent(ns)}/${encodeURIComponent(rel)}/catalogs`;
-export const listReleaseCatalogs = (ns: string, rel: string): Promise<ReleaseCatalog[]> => fetchJson<ReleaseCatalog[]>(relCat(ns, rel));
-export const createReleaseCatalog = (ns: string, rel: string, body: { name: string; properties: string; persist: boolean }) =>
-  fetchJson<{ name: string; connector?: string; live: boolean; persisted?: boolean } & CatalogSaved>(relCat(ns, rel), { method: 'POST', body: JSON.stringify(body) });
-export const dropReleaseCatalog = (ns: string, rel: string, name: string, forget = true) =>
-  fetchJson<{ name: string } & CatalogSaved>(`${relCat(ns, rel)}/${encodeURIComponent(name)}?forget=${forget}`, { method: 'DELETE' });
-export const testReleaseCatalog = (ns: string, rel: string, name: string) =>
-  fetchJson<{ schemas: string[] }>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/test`, { method: 'POST' });
+export const listReleaseCatalogs = (ns: string, rel: string, cluster?: string): Promise<ReleaseCatalog[]> =>
+  fetchJson<ReleaseCatalog[]>(onCluster(relCat(ns, rel), cluster));
+export const createReleaseCatalog = (ns: string, rel: string, body: { name: string; properties: string; persist: boolean }, cluster?: string) =>
+  fetchJson<{ name: string; connector?: string; live: boolean; persisted?: boolean } & CatalogSaved>(onCluster(relCat(ns, rel), cluster), { method: 'POST', body: JSON.stringify(body) });
+export const dropReleaseCatalog = (ns: string, rel: string, name: string, forget = true, cluster?: string) =>
+  fetchJson<{ name: string } & CatalogSaved>(onCluster(`${relCat(ns, rel)}/${encodeURIComponent(name)}?forget=${forget}`, cluster), { method: 'DELETE' });
+export const testReleaseCatalog = (ns: string, rel: string, name: string, cluster?: string) =>
+  fetchJson<{ schemas: string[] }>(onCluster(`${relCat(ns, rel)}/${encodeURIComponent(name)}/test`, cluster), { method: 'POST' });
 /** Releases → "Ranger policy…": one Ranger policy (allow / mask / row filter) on a Trino release's repo or its tag service. */
 export type RangerPolicyRequest = {
   target: 'resource' | 'tag';
@@ -2083,12 +2090,12 @@ export type RangerPolicyResult = {
   rangerServiceName: string; policyName: string; policyType: number; accessTypes: string;
   via: 'ambari-server-action' | 'context-ranger-rest'; policyId?: number; requestId?: number; rangerUrl?: string;
 };
-export const createReleaseRangerPolicy = (ns: string, rel: string, body: RangerPolicyRequest) =>
-  fetchJson<RangerPolicyResult>(`/helm/releases/${encodeURIComponent(ns)}/${encodeURIComponent(rel)}/actions/ranger-policy`,
+export const createReleaseRangerPolicy = (ns: string, rel: string, body: RangerPolicyRequest, cluster?: string) =>
+  fetchJson<RangerPolicyResult>(onCluster(`/helm/releases/${encodeURIComponent(ns)}/${encodeURIComponent(rel)}/actions/ranger-policy`, cluster),
     { method: 'POST', body: JSON.stringify(body) });
 
-export const adoptReleaseCatalog = (ns: string, rel: string, name: string) =>
-  fetchJson<{ name: string; properties: string } & CatalogSaved>(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, { method: 'POST' });
+export const adoptReleaseCatalog = (ns: string, rel: string, name: string, cluster?: string) =>
+  fetchJson<{ name: string; properties: string } & CatalogSaved>(onCluster(`${relCat(ns, rel)}/${encodeURIComponent(name)}/adopt`, cluster), { method: 'POST' });
 
 // ---------------------------------------------------------------------------
 // GitOps output profiles: how a GitOps deploy writes a release into Git (the built-in Flux layout, or file rules

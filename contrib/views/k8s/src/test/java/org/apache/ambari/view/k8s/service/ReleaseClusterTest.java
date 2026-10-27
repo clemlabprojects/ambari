@@ -167,6 +167,26 @@ class ReleaseClusterTest {
     return new CommandService(view.context, mock(HelmService.class), prodCluster, PROD);
   }
 
+  @Test
+  void aReleaseActionRunsOnTheReleasesClusterAndSaysSo() throws Exception {
+    view.as("lead");
+    new ReleaseMetadataService(view.context, PROD).recordInstallOrUpgrade(NS, RELEASE, "TRINO", null, "clemlab/trino",
+        "charts", "1.0", null, null, null, null, null, null, "DIRECT_HELM", null, null, null, null, null, null, null,
+        null, null);
+    CommandService prod = prodOperations(true);
+    try {
+      String id = prod.submitReleaseUpgrade(NS, RELEASE, "2.0", null, java.net.URI.create("http://ambari:8080/"));
+
+      assertEquals("prod", view.dataStore.find(CommandEntity.class, id).getKubernetesCluster());
+      assertEquals("prod", prod.getStatus(id).kubernetesCluster);
+      // The default cluster has no such release: its operations do not reach the one on prod.
+      assertThrows(IllegalArgumentException.class, () -> service.submitReleaseUpgrade(NS, RELEASE, "2.0", null,
+          java.net.URI.create("http://ambari:8080/")));
+    } finally {
+      prod.shutdown();
+    }
+  }
+
   private HelmDeployRequest prodRequest() {
     HelmDeployRequest request = new HelmDeployRequest();
     request.setKubernetesCluster("prod");

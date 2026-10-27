@@ -114,6 +114,8 @@ describe('HelmReleasesPage uninstall through a pull request', () => {
     id: 'trino', name: 'trino', namespace: 'analytics', chart: 'trino-1.43.14', version: '1.43.14',
     status: 'deployed', managedByUi: true, deploymentMode: 'FLUX_GITOPS', gitCommitMode: 'PR_MODE',
     gitBaseBranch: 'main', gitRepoUrl: 'https://git.example.org/platform/gitops.git',
+    // On another cluster than the default one: its uninstall is sent there.
+    kubernetesCluster: 'prod',
   };
 
   beforeEach(() => {
@@ -150,7 +152,7 @@ describe('HelmReleasesPage uninstall through a pull request', () => {
     expect(screen.getByText(/The release keeps running until it is merged/)).toBeTruthy();
     expect(screen.getByRole('link', { name: 'https://git.example.org/platform/gitops/pulls/7' })).toBeTruthy();
     expect(screen.queryByText('Release trino uninstalled successfully.')).toBeNull();
-    expect(uninstallHelm).toHaveBeenCalledWith('trino', 'analytics', expect.any(URLSearchParams));
+    expect(uninstallHelm).toHaveBeenCalledWith('trino', 'analytics', expect.any(URLSearchParams), 'prod');
   });
 });
 
@@ -208,7 +210,7 @@ describe('HelmReleasesPage uninstall outcome', () => {
 
     expect(within(confirm).getByText(/deletes what it created for this release outside its chart: Secret\/trino-keytab,/))
       .toBeTruthy();
-    expect(getReleaseKdpsObjects).toHaveBeenCalledWith('trino', 'analytics');
+    expect(getReleaseKdpsObjects).toHaveBeenCalledWith('trino', 'analytics', undefined);
   });
 
   it('still asks to confirm when the objects cannot be listed', async () => {
@@ -319,7 +321,7 @@ describe('HelmReleasesPage repair actions', () => {
     const buttons = within(row).getAllByRole('button');
     await user.click(buttons[buttons.length - 1]);
 
-    await waitFor(() => expect(getReleaseActionRefusals).toHaveBeenCalledWith('analytics', 'trino'));
+    await waitFor(() => expect(getReleaseActionRefusals).toHaveBeenCalledWith('analytics', 'trino', undefined));
     const keytabs = await screen.findByRole('menuitem', { name: /Regenerate keytabs/ });
     await waitFor(() => expect(keytabs.getAttribute('aria-disabled')).toBe('true'));
     const oidc = screen.getByRole('menuitem', { name: /Re-register OIDC client/ });
@@ -429,7 +431,7 @@ describe('HelmReleasesPage GitOps release not installed by Flux yet', () => {
       </PermissionsContext.Provider>);
     await screen.findByText('trino');
     await waitFor(() => expect(getAvailableServices).toHaveBeenCalled());
-    await waitFor(() => expect(getReleaseStatus).toHaveBeenCalledWith('analytics', 'trino'));
+    await waitFor(() => expect(getReleaseStatus).toHaveBeenCalledWith('analytics', 'trino', undefined));
     await act(async () => { await Promise.resolve(); });
 
     const row = screen.getByText('trino').closest('tr') as HTMLElement;

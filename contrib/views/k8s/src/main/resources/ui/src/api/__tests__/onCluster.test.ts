@@ -21,6 +21,7 @@ import { onCluster } from '../client';
 describe('onCluster', () => {
   it('leaves a path of the default cluster unchanged and names another cluster', () => {
     expect(onCluster('/discovery/keda')).toBe('/discovery/keda');
+    expect(onCluster('/discovery/keda', 'default')).toBe('/discovery/keda');
     expect(onCluster('/discovery/keda', 'prod')).toBe('/discovery/keda?cluster=prod');
     expect(onCluster('/cluster/capabilities?fresh=1', 'prod')).toBe('/cluster/capabilities?fresh=1&cluster=prod');
   });

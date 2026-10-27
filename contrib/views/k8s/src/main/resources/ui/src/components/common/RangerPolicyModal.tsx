@@ -87,7 +87,7 @@ export default function RangerPolicyModal({ release, onClose }: { release: HelmR
     try { values = await form.validateFields(); } catch { return; }
     setBusy(true); setError(null); setResult(null);
     try {
-      const r = await createReleaseRangerPolicy(release.namespace, release.name, toRequest(values));
+      const r = await createReleaseRangerPolicy(release.namespace, release.name, toRequest(values), release.kubernetesCluster);
       setResult(r);
       message.success(`Ranger policy '${r.policyName}' applied on '${r.rangerServiceName}'`);
     } catch (e: any) {

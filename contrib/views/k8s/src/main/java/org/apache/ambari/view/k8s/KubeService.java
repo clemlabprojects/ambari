@@ -1219,11 +1219,13 @@ public class KubeService {
         return Response.serverError().entity(e.getMessage()).build();
     }
     
-    /** Sub-resource for /helm/* under /resources/api */
+    /**
+     * Sub-resource for /helm/* under /resources/api: the releases of the cluster the request names in its
+     * {@code cluster} query parameter, the default one when it names none.
+     */
     @Path("/helm")
-    public HelmResource helm(@Context HttpHeaders headers) {
-        // Pass the ViewContext so HelmResource can access DataStore, properties, etc.
-        return new HelmResource(viewContext, headers);
+    public HelmResource helm(@Context HttpHeaders headers, @QueryParam("cluster") String cluster) {
+        return new HelmResource(viewContext, headers, requestedCluster(cluster));
     }
 
     @Path("commands")

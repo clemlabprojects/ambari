@@ -41,6 +41,9 @@ export function releaseRedeployPayload(release: HelmRelease, values: any, git?: 
     repoId: release.repoId,
     deploymentMode: release.deploymentMode,
     git,
+    // Redeployed on the cluster the release is on.
+    ...(release.kubernetesCluster && release.kubernetesCluster !== 'default'
+      ? { kubernetesCluster: release.kubernetesCluster } : {}),
   };
 }
 

@@ -14723,6 +14723,11 @@ public class CommandService {
     }
 
     private void store(CommandEntity e) {
+        // An operation runs on the cluster of the instance that plans it: its history says where, and a resume after a
+        // restart of Ambari is routed there. The default cluster's keep no cluster, as before.
+        if ((e.getKubernetesCluster() == null || e.getKubernetesCluster().isBlank()) && !kubernetesCluster().isDefault()) {
+            e.setKubernetesCluster(kubernetesCluster().id());
+        }
         try {
             String rawParams = e.getParamsJson();
             if (rawParams != null && !CommandParamsStore.isFileReference(rawParams)) {

@@ -89,6 +89,8 @@ public class HelmResource {
     private final CommandService commandService;
     private final ReleaseMetadataService releaseMetadataService;
     private final AuthHelper authHelper;
+    /** The Kubernetes cluster whose releases this resource lists and changes. */
+    private final ClusterRef cluster;
 
     // Lightweight in-memory cache for releases to avoid hammering Helm/K8s on frequent polls
     private static final Map<String, CachedReleases> RELEASE_CACHE = new ConcurrentHashMap<>();
@@ -96,19 +98,42 @@ public class HelmResource {
 
 
     /**
-     * Creates the resource for one request.
+     * Creates the resource of the default cluster for one request.
      *
      * @param context       active Ambari view context
      * @param callerHeaders headers of the request; the role check asks Ambari with the caller's credentials
      */
     public HelmResource(ViewContext context, HttpHeaders callerHeaders) {
+        this(context, callerHeaders, ClusterRef.DEFAULT);
+    }
+
+    /**
+     * Creates the resource for one request, acting on the releases of one cluster.
+     *
+     * @param context       active Ambari view context
+     * @param callerHeaders headers of the request; the role check asks Ambari with the caller's credentials
+     * @param cluster       the cluster whose releases are listed and changed
+     */
+    public HelmResource(ViewContext context, HttpHeaders callerHeaders, ClusterRef cluster) {
         this.viewContext = context;
-        this.configService = new ViewConfigurationService(viewContext);
-        this.kubernetesService = KubernetesService.get(viewContext);
-        this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService, viewContext);
-        this.commandService = CommandService.get(viewContext);
-        this.releaseMetadataService = new ReleaseMetadataService(viewContext);
+        this.cluster = java.util.Objects.requireNonNull(cluster, "cluster");
+        this.configService = new ViewConfigurationService(viewContext, cluster);
+        this.kubernetesService = KubernetesService.get(viewContext, cluster);
+        this.fluxGitOpsBackend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(), this.kubernetesService,
+                viewContext, cluster);
+        this.commandService = CommandService.get(viewContext, cluster);
+        this.releaseMetadataService = new ReleaseMetadataService(viewContext, cluster);
         this.authHelper = new AuthHelper(viewContext, callerHeaders);
+    }
+
+    /** The cluster this resource acts on; the default one for a resource built without one (a test's). */
+    private ClusterRef cluster() {
+        return cluster != null ? cluster : ClusterRef.DEFAULT;
+    }
+
+    /** Helm, on this resource's cluster. */
+    private HelmService helm() {
+        return new HelmService(viewContext, cluster());
     }
 
     /**
@@ -135,7 +160,7 @@ public class HelmResource {
                                     @QueryParam("force") @DefaultValue("false") boolean force) {
     authHelper.checkWritePermission();
     try {
-      var info = KubernetesService.get(viewContext).ensureMonitoringInstalled(repoId, force);
+      var info = kubernetesService.ensureMonitoringInstalled(repoId, force);
       if (info == null) {
         return Response.serverError().entity(Map.of("error", "Monitoring install failed or not configured")).build();
       }
@@ -153,7 +178,7 @@ public class HelmResource {
     public Response resetMonitoring() {
         authHelper.checkWritePermission();
         try {
-            KubernetesService.get(viewContext).resetMonitoringCache();
+            kubernetesService.resetMonitoringCache();
             return Response.ok(Map.of("status", "reset")).build();
         } catch (Exception e) {
             return Response.serverError().entity(Map.of("error", e.getMessage())).build();
@@ -219,9 +244,8 @@ public class HelmResource {
         // source failing) or no longer lists (a merged removal): listed from their record, before the paging, so the
         // page shows what they wait for, their pull request and their Uninstall.
         final java.util.Set<String> notInHelm = new java.util.HashSet<>();
-        // The releases of the cluster this page lists: Helm lists the default one's, until the page lets the operator
-        // choose the cluster.
-        final ClusterRef listedCluster = ClusterRef.DEFAULT;
+        // The releases of the cluster this resource acts on, as Helm lists them there.
+        final ClusterRef listedCluster = cluster();
         for (HelmReleaseDTO recorded : gitOpsReleasesNotListed(listedCluster, namespace, metaByKey.keySet(),
                 recordedReleases())) {
             String key = recorded.namespace + "/" + recorded.name;
@@ -426,7 +450,7 @@ public class HelmResource {
 
     /** The releases Helm lists, in {@code namespace} or, when it is {@code null}, in every namespace it can read. */
     List<Release> helmReleases(String namespace) {
-        return new HelmService(viewContext).list(namespace, getKubeconfigContents());
+        return helm().list(namespace, getKubeconfigContents());
     }
 
     /** Every release KDPS recorded; none when the records cannot be read (logged). */
@@ -761,7 +785,7 @@ public class HelmResource {
     public Response listTrinoCatalogs(@PathParam("namespace") String namespace, @PathParam("release") String releaseName) {
         try {
             List<org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.CatalogView> catalogs =
-                    new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+                    new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext, cluster(), null)
                             .list(namespace, releaseName, viewContext.getUsername());
             // The properties come from the release values, which only those who may redeploy the release can read.
             if (!authHelper.canWrite()) {
@@ -791,7 +815,7 @@ public class HelmResource {
     /** The live catalog editor, saving the catalogs of a release deployed with Flux GitOps through {@code redeploy}. */
     org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService catalogEditor(
             org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.GitOpsRedeploy redeploy) {
-        return new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext, redeploy);
+        return new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext, cluster(), redeploy);
     }
 
     /**
@@ -816,6 +840,10 @@ public class HelmResource {
         return new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService.GitOpsRedeploy() {
             @Override
             public String submit(HelmDeployRequest request) {
+                // Redeployed on the cluster the release is on.
+                if (!cluster().isDefault()) {
+                    request.setKubernetesCluster(cluster().id());
+                }
                 try {
                     return commandService.submitDeploy(request, request.getRepoId(), null, null,
                             uriInfo == null ? null : getCommandsUrl(uriInfo),
@@ -911,7 +939,7 @@ public class HelmResource {
                                      @PathParam("name") String name) {
         authHelper.checkWritePermission();
         try {
-            return Response.ok(java.util.Map.of("schemas", new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext)
+            return Response.ok(java.util.Map.of("schemas", new org.apache.ambari.view.k8s.service.trino.TrinoCatalogRuntimeService(viewContext, cluster(), null)
                     .test(namespace, releaseName, name, viewContext.getUsername()))).build();
         } catch (SecurityException se) {
             return Response.status(Response.Status.FORBIDDEN).entity(java.util.Map.of("error", se.getMessage())).build();
@@ -1251,7 +1279,7 @@ public class HelmResource {
             ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(namespace, releaseName),
                     namespace, releaseName, "a Helm rollback");
             LOG.info("Rolling back release {}/{} to revision {}", namespace, releaseName, revision);
-            new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
+            helm().rollback(namespace, releaseName, revision, getKubeconfigContents());
             RELEASE_CACHE.clear();
             return Response.ok(Map.of("ok", true, "revision", revision)).build();
         } catch (ForbiddenException fe) {
@@ -1326,10 +1354,8 @@ public class HelmResource {
     public Response getReleaseTlsState(@PathParam("namespace") String namespace,
                                        @PathParam("release") String releaseName) {
         try {
-            org.apache.ambari.view.k8s.service.KubernetesService ks =
-                    org.apache.ambari.view.k8s.service.KubernetesService.get(viewContext);
             org.apache.ambari.view.k8s.service.ReleaseTlsService svc =
-                    new org.apache.ambari.view.k8s.service.ReleaseTlsService(viewContext, ks);
+                    new org.apache.ambari.view.k8s.service.ReleaseTlsService(viewContext, kubernetesService);
             return Response.ok(svc.describe(namespace, releaseName)).build();
         } catch (Exception ex) {
             LOG.warn("Failed to describe TLS state for {}/{}: {}", namespace, releaseName, ex.toString());
@@ -1355,7 +1381,7 @@ public class HelmResource {
                                     @Context UriInfo uriInfo) {
         authHelper.checkWritePermission();
         try {
-            String commandId = org.apache.ambari.view.k8s.service.CommandService.get(viewContext)
+            String commandId = commandService
                     .submitReleaseTlsRenewal(namespace, releaseName,
                             headers.getRequestHeaders(), uriInfo.getBaseUri());
             return Response.ok(Map.of("id", commandId)).build();
@@ -1457,7 +1483,7 @@ public class HelmResource {
             HiddenReleaseValues.restore(deployRequest.getValues(), () -> kubernetesService.getHelmReleaseValues(
                     deployRequest.getNamespace(), deployRequest.getReleaseName()));
             
-            HelmService helmService = new HelmService(viewContext);
+            HelmService helmService = helm();
             Release deployedRelease = helmService.deployOrUpgrade(
                 deployRequest, kubeContext, repositoryId, chartVersion
               );
@@ -1524,7 +1550,7 @@ public class HelmResource {
 
         Release upgradedRelease;
         try {
-            upgradedRelease = new HelmService(viewContext)
+            upgradedRelease = helm()
                     .deployOrUpgrade(deployRequest, getKubeconfigContents(),
                                    upgradeRequest.getRepoId(), upgradeRequest.getVersion());
         } catch (HelmOperationRegistry.ReleaseBusyException busy) {
@@ -1563,8 +1589,8 @@ public class HelmResource {
         return releaseDto;
     }
 
-    private static List<HelmReleaseDTO> getCachedReleases(String namespace) {
-        String key = namespace == null ? "__ALL__" : namespace;
+    private static List<HelmReleaseDTO> getCachedReleases(ClusterRef cluster, String namespace) {
+        String key = cluster.id() + "/" + (namespace == null ? "__ALL__" : namespace);
         CachedReleases cached = RELEASE_CACHE.get(key);
         if (cached == null) return null;
         if (System.currentTimeMillis() - cached.timestampMs > RELEASE_CACHE_TTL_MILLIS) {
@@ -1574,8 +1600,8 @@ public class HelmResource {
         return cached.releases;
     }
 
-    private static void putCachedReleases(String namespace, List<HelmReleaseDTO> releases) {
-        String key = namespace == null ? "__ALL__" : namespace;
+    private static void putCachedReleases(ClusterRef cluster, String namespace, List<HelmReleaseDTO> releases) {
+        String key = cluster.id() + "/" + (namespace == null ? "__ALL__" : namespace);
         RELEASE_CACHE.put(key, new CachedReleases(System.currentTimeMillis(), releases));
     }
 
@@ -2030,7 +2056,7 @@ public class HelmResource {
         try {
             ReleaseHeldInGitException.refuseIfHeldInGit(releaseMetadataService.find(namespace, releaseName),
                     namespace, releaseName, "a Helm rollback");
-            new HelmService(viewContext).rollback(namespace, releaseName, revision, getKubeconfigContents());
+            helm().rollback(namespace, releaseName, revision, getKubeconfigContents());
         } catch (HelmOperationRegistry.ReleaseBusyException | ReleaseHeldInGitException conflict) {
             return Response.status(Response.Status.CONFLICT)
                     .entity(Map.of("error", conflict.getMessage()))
