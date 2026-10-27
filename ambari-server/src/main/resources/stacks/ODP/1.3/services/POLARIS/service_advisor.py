@@ -245,17 +245,7 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       if insecure_requests not in ("enabled", "redirect", "disabled"):
         put_app_props("quarkus.http.insecure-requests", "redirect")
 
-      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-file", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.key-store-file", "/etc/polaris/conf/tls/polaris-server-keystore.p12")
-      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-file-type", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.key-store-file-type", "PKCS12")
-      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-key-alias", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.key-store-key-alias", "polaris")
-
-      if not str(app_props.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.trust-store-file", "/etc/polaris/conf/tls/polaris-server-truststore.p12")
-      if not str(app_props.get("quarkus.http.ssl.certificate.trust-store-file-type", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.trust-store-file-type", "PKCS12")
+      self._recommendPolarisTlsStoreDefaults(app_props, put_app_props)
     else:
       if str(polaris_env.get("polaris_protocol", "http")).strip().lower() == "https":
         put_polaris_env("polaris_protocol", "http")
@@ -263,16 +253,20 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       # Keep TLS-specific keys populated in Ambari config for UX consistency,
       # but params.py still strips them from effective runtime properties when
       # Polaris TLS is disabled.
-      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-file", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.key-store-file", "/etc/polaris/conf/tls/polaris-server-keystore.p12")
-      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-file-type", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.key-store-file-type", "PKCS12")
-      if not str(app_props.get("quarkus.http.ssl.certificate.key-store-key-alias", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.key-store-key-alias", "polaris")
-      if not str(app_props.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.trust-store-file", "/etc/polaris/conf/tls/polaris-server-truststore.p12")
-      if not str(app_props.get("quarkus.http.ssl.certificate.trust-store-file-type", "")).strip():
-        put_app_props("quarkus.http.ssl.certificate.trust-store-file-type", "PKCS12")
+      self._recommendPolarisTlsStoreDefaults(app_props, put_app_props)
+
+  def _recommendPolarisTlsStoreDefaults(self, app_props, put_app_props):
+    # The cluster-wide stores laid down for every service (HDFS, YARN, ...). Each host's keystore holds one key entry
+    # whose alias is the host FQDN, so no alias is recommended: Quarkus uses the only entry.
+    defaults = (
+      ("quarkus.http.ssl.certificate.key-store-file", "/etc/security/serverKeys/keystore.jks"),
+      ("quarkus.http.ssl.certificate.key-store-file-type", "JKS"),
+      ("quarkus.http.ssl.certificate.trust-store-file", "/etc/security/serverKeys/truststore.jks"),
+      ("quarkus.http.ssl.certificate.trust-store-file-type", "JKS"),
+    )
+    for name, value in defaults:
+      if not str(app_props.get(name, "")).strip():
+        put_app_props(name, value)
 
   def recommendPolarisAuthConfigurations(self, configurations, services):
     polaris_env = self._get_site_properties(configurations, services, "polaris-env")
@@ -755,20 +749,7 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
           )
         })
 
-      for tls_key in (
-        "quarkus.http.ssl.certificate.key-store-file",
-        "quarkus.http.ssl.certificate.key-store-file-type",
-        "quarkus.http.ssl.certificate.key-store-key-alias",
-        "quarkus.http.ssl.certificate.trust-store-file",
-        "quarkus.http.ssl.certificate.trust-store-file-type",
-      ):
-        if str(properties.get(tls_key, "")).strip():
-          validation_items.append({
-            "config-name": tls_key,
-            "item": self.getErrorItem(
-              "{0} must be empty when polaris_ssl_enabled=false".format(tls_key)
-            )
-          })
+      # The TLS store settings may stay filled in: params.py drops them from the runtime properties without TLS.
 
     ssl_port = str(properties.get("quarkus.http.ssl-port", "")).strip()
     if ssl_port and not ssl_port.isdigit():

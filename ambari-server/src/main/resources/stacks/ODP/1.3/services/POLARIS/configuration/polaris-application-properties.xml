@@ -90,7 +90,7 @@
   <property>
     <name>quarkus.http.ssl.certificate.key-store-file</name>
     <display-name>TLS Keystore File</display-name>
-    <value>/etc/polaris/conf/tls/polaris-server-keystore.p12</value>
+    <value>/etc/security/serverKeys/keystore.jks</value>
     <description>Absolute path to the server TLS keystore file (PKCS12/JKS). Required when TLS is enabled.</description>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -98,7 +98,7 @@
   <property>
     <name>quarkus.http.ssl.certificate.key-store-file-type</name>
     <display-name>TLS Keystore Type</display-name>
-    <value>PKCS12</value>
+    <value>JKS</value>
     <description>Format of the TLS keystore file referenced by TLS Keystore File.</description>
     <value-attributes>
       <type>value-list</type>
@@ -120,15 +120,18 @@
   <property>
     <name>quarkus.http.ssl.certificate.key-store-key-alias</name>
     <display-name>TLS Keystore Key Alias</display-name>
-    <value>polaris</value>
-    <description>Alias of the private key entry in the keystore used for HTTPS.</description>
+    <value></value>
+    <description>Alias of the private key entry in the keystore used for HTTPS. Leave empty when the keystore has a single key entry, as the cluster keystore (alias = host FQDN) does.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
 
   <property>
     <name>quarkus.http.ssl.certificate.trust-store-file</name>
     <display-name>TLS Truststore File</display-name>
-    <value>/etc/polaris/conf/tls/polaris-server-truststore.p12</value>
+    <value>/etc/security/serverKeys/truststore.jks</value>
     <description>Absolute path to the TLS truststore file used to validate client/peer certificates when configured.</description>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -136,7 +139,7 @@
   <property>
     <name>quarkus.http.ssl.certificate.trust-store-file-type</name>
     <display-name>TLS Truststore Type</display-name>
-    <value>PKCS12</value>
+    <value>JKS</value>
     <description>Format of the TLS truststore file referenced by TLS Truststore File.</description>
     <value-attributes>
       <type>value-list</type>

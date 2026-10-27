@@ -255,6 +255,9 @@ if polaris_ssl_enabled:
   if not str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file-type", "")).strip():
     application_properties["quarkus.http.ssl.certificate.trust-store-file-type"] = "JKS"
 
+  # an empty alias means "the only key entry": do not hand Quarkus a blank value
+  if not str(application_properties.get("quarkus.http.ssl.certificate.key-store-key-alias", "")).strip():
+    application_properties.pop("quarkus.http.ssl.certificate.key-store-key-alias", None)
   application_properties["quarkus.http.ssl.certificate.key-store-password"] = "${POLARIS_SSL_KEYSTORE_PASSWORD}"
   if str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
     application_properties["quarkus.http.ssl.certificate.trust-store-password"] = "${POLARIS_SSL_TRUSTSTORE_PASSWORD}"

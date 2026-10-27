@@ -16,8 +16,8 @@
           "type": "https",
           "checks": [
             {
-              "property": "polaris_protocol",
-              "desired": "https",
+              "property": "polaris_ssl_enabled",
+              "desired": "true",
               "site": "polaris-env"
             }
           ]
