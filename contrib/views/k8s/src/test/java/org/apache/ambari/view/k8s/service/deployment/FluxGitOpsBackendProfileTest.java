@@ -23,6 +23,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.security.TestMasterKeys;
 import org.apache.ambari.view.k8s.service.KubernetesService;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.service.gitops.ChartFetcher;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfile;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfileStore;
@@ -43,6 +44,7 @@ import org.junit.rules.TemporaryFolder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -132,6 +134,7 @@ public class FluxGitOpsBackendProfileTest {
             return null;
         }).when(ds).store(any(K8sReleaseEntity.class));
         when(ds.find(eq(K8sReleaseEntity.class), anyString())).thenAnswer(inv -> releases.get((String) inv.getArgument(1)));
+        when(ds.findAll(eq(K8sReleaseEntity.class), isNull())).thenAnswer(inv -> new ArrayList<>(releases.values()));
 
         k8s = mock(KubernetesService.class);
         when(k8s.readOpaqueSecretKeyAsString(anyString(), anyString(), anyString())).thenAnswer(inv ->
@@ -193,7 +196,12 @@ public class FluxGitOpsBackendProfileTest {
     }
 
     private FluxGitOpsBackend backend() throws Exception {
-        FluxGitOpsBackend backend = new FluxGitOpsBackend(fluxRoot, k8s, ctx);
+        return backend(ClusterRef.DEFAULT);
+    }
+
+    /** The backend of the releases of a Kubernetes cluster. */
+    private FluxGitOpsBackend backend(ClusterRef cluster) throws Exception {
+        FluxGitOpsBackend backend = new FluxGitOpsBackend(fluxRoot, k8s, ctx, cluster);
         java.lang.reflect.Field field = FluxGitOpsBackend.class.getDeclaredField("gitCredentialService");
         field.setAccessible(true);
         field.set(backend, credentials);
@@ -493,6 +501,50 @@ public class FluxGitOpsBackendProfileTest {
     /** The values Secret of the test release, as the deploy names it. */
     private static String secretName() {
         return "trino-kdps-values";
+    }
+
+    @Test
+    public void aProfileNamingTheClusterWritesTheSameValuesForTwoClustersEachInItsOwnFile() throws Exception {
+        GitOpsProfile p = environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        p.files.get(0).path = "clusters/{{ cluster }}/{{ namespace }}/values.yaml";
+        profiles.save(p);
+        ClusterRef k8s21 = ClusterRef.of("k8s21");
+
+        ProfilePreview.Preview preview = backend(k8s21).previewProfile(request(), null, null);
+        backend().apply(request(), null);
+        backend(k8s21).apply(request(), null);
+
+        String onDefault = published("main", "clusters/default/analytics/values.yaml");
+        String onK8s21 = published("main", "clusters/k8s21/analytics/values.yaml");
+        assertNotNull(onDefault);
+        // The same deploy request on two clusters: the same values, each cluster's in its own file.
+        assertEquals(onDefault, onK8s21);
+        assertEquals("the preview of k8s21 is what its deploy wrote", onK8s21,
+                file(preview, "clusters/k8s21/analytics/values.yaml").content());
+    }
+
+    @Test
+    public void aProfileWritingAFileAlikeForEveryClusterIsRefusedForASecondCluster() throws Exception {
+        environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        backend().apply(request(), null);
+        Map<String, String> before = publishedFiles("main");
+        ClusterRef k8s21 = ClusterRef.of("k8s21");
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> backend(k8s21).apply(request(), null));
+        IllegalArgumentException previewRefused = assertThrows(IllegalArgumentException.class,
+                () -> backend(k8s21).previewProfile(request(), null, null));
+        // Refused when the deploy is submitted, before anything is prepared on k8s21.
+        IllegalArgumentException submitRefused = assertThrows(IllegalArgumentException.class,
+                () -> backend(k8s21).checkCommittable(request(), null));
+
+        for (IllegalArgumentException e : List.of(refused, previewRefused, submitRefused)) {
+            assertTrue(e.getMessage(), e.getMessage().contains("environments/{{ namespace }}/values.yaml")
+                    && e.getMessage().contains("cluster default") && e.getMessage().contains("{{ cluster }}"));
+        }
+        assertEquals("nothing written for k8s21", before, publishedFiles("main"));
+        // The default cluster, the only one using the profile in this repository, deploys as before.
+        backend().apply(request(), null);
     }
 
     @Test

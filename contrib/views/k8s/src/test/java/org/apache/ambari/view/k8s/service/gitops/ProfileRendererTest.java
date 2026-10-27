@@ -41,7 +41,7 @@ class ProfileRendererTest {
         values.put("version", "1.10");
         return new ProfileRenderer.RenderContext("analytics", "team-a", "TRINO", "clemlab-trino", "1.43.20",
                 "oci://registry.example.org/charts", values, List.of("registry.example.org/trino:476"),
-                List.of("team-a", "team-b"), "operator1", Instant.parse("2026-10-19T10:00:00Z"), null);
+                List.of("team-a", "team-b"), "operator1", Instant.parse("2026-10-19T10:00:00Z"), null, "k8s21");
     }
 
     private static GitOpsProfile.FileRule rule(String path, String mode, String content) {
@@ -65,6 +65,28 @@ class ProfileRendererTest {
                 "{\"environments\": {{ instances | toJson }}, \"regions\": {{ vars.regions }}}\n"));
         p.protect.add("docs/**");
         return p;
+    }
+
+    @Test
+    void aPathAndATemplateCanNameTheClusterDeployedTo() {
+        GitOpsProfile p = environmentsLayout();
+        p.files.add(rule("clusters/{{ cluster }}/{{ namespace }}/values.yaml", GitOpsProfile.MODE_ALWAYS,
+                "cluster: {{ cluster }}\n"));
+
+        ProfileRenderer.RenderedFile file = ProfileRenderer.render(p, context(), List.of()).get(3);
+
+        assertEquals("clusters/k8s21/team-a/values.yaml", file.path());
+        assertEquals("cluster: k8s21\n", file.content());
+    }
+
+    @Test
+    void theFilesWrittenAlikeForEveryClusterAreTheAlwaysOnesNotNamingIt() {
+        GitOpsProfile p = environmentsLayout();
+        p.files.add(rule("clusters/{{cluster}}/{{ namespace }}/values.yaml", GitOpsProfile.MODE_ALWAYS, "x"));
+        p.files.add(rule("clusters/{{ cluster }}/kustomization.yaml", GitOpsProfile.MODE_ALWAYS, "x"));
+
+        // The README and the index are created once, then the team's: two clusters never overwrite them.
+        assertEquals(List.of("environments/{{ namespace }}/values.yaml"), ProfileRenderer.pathsNotNamingTheCluster(p));
     }
 
     @Test
@@ -98,7 +120,7 @@ class ProfileRendererTest {
         Map<String, Object> leaking = new LinkedHashMap<>(context().values());
         leaking.put("ldap", Map.of("bindPassword", PASSWORD));
         ProfileRenderer.RenderContext ctx = new ProfileRenderer.RenderContext("analytics", "team-a", "TRINO",
-                "clemlab-trino", "1.43.20", "oci://x", leaking, List.of(), List.of(), "op", Instant.now(), null);
+                "clemlab-trino", "1.43.20", "oci://x", leaking, List.of(), List.of(), "op", Instant.now(), null, "default");
 
         IllegalStateException refused = assertThrows(IllegalStateException.class,
                 () -> ProfileRenderer.render(p, ctx, List.of(PASSWORD)));

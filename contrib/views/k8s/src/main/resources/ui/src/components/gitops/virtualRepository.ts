@@ -24,6 +24,8 @@ export interface ExampleDeploy {
   namespace: string;
   chart?: string;
   version?: string;
+  /** The id of the Kubernetes cluster deployed to. */
+  cluster?: string;
 }
 
 /** What a node of the explorer is. */
@@ -49,7 +51,7 @@ export interface RepositoryEntry {
 const TOKEN = /\{\{\s*([^|}]+?)\s*((?:\|[^|}]+)*)\s*\}\}/g;
 
 /** The fields a path can name, in the order the explorer offers them. */
-export const PATH_FIELDS = ['namespace', 'release', 'service', 'chart.name'] as const;
+export const PATH_FIELDS = ['cluster', 'namespace', 'release', 'service', 'chart.name'] as const;
 
 /**
  * A rule's path with the example deploy's names in place of its fields. A field the page cannot fill (one the server
@@ -62,6 +64,7 @@ export function examplePath(path: string, profile: GitOpsProfile, example: Examp
     const known: Record<string, string | undefined> = {
       release: example.release,
       namespace: example.namespace,
+      cluster: example.cluster,
       'chart.name': example.chart,
       'chart.version': example.version,
       chartPath: profile.chartPath,

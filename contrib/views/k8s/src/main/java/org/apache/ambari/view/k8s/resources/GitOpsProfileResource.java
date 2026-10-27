@@ -20,8 +20,11 @@ package org.apache.ambari.view.k8s.resources;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.security.AuthHelper;
+import org.apache.ambari.view.k8s.service.CommandService;
 import org.apache.ambari.view.k8s.service.KubernetesService;
 import org.apache.ambari.view.k8s.service.ReleaseMetadataService;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
+import org.apache.ambari.view.k8s.service.cluster.ClusterRegistry;
 import org.apache.ambari.view.k8s.service.deployment.DeploymentContext;
 import org.apache.ambari.view.k8s.service.deployment.FluxGitOpsBackend;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfile;
@@ -191,8 +194,14 @@ public class GitOpsProfileResource {
             return badRequest("The preview needs the deploy request.");
         }
         try {
+            // Rendered for the cluster the deploy goes to: its id fills {{ cluster }}, and its releases are its own.
+            ClusterRef cluster = CommandService.kubernetesClusterOf(body.request);
+            if (!cluster.isDefault() && new ClusterRegistry(new InstanceSettings(viewContext)).find(cluster.id()).isEmpty()) {
+                return badRequest("KDPS knows no Kubernetes cluster '" + cluster + "'.");
+            }
             FluxGitOpsBackend backend = new FluxGitOpsBackend(new PathConfig(viewContext).workDir(),
-                    kubernetesService, viewContext);
+                    cluster.isDefault() ? kubernetesService : KubernetesService.get(viewContext, cluster), viewContext,
+                    cluster);
             // The caller's Ambari server, as for a deploy: the cluster's Kerberos state decides a value.
             DeploymentContext context = new DeploymentContext(body.request.getRepoId(), body.request.getVersion(), null,
                     null, callerHeaders != null ? callerHeaders.getRequestHeaders() : null,

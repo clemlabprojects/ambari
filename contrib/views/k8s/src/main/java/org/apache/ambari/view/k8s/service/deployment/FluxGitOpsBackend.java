@@ -495,11 +495,11 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         collectStrings(split.secretValues(), secretValues);
         ProfileRenderer.RenderContext base = new ProfileRenderer.RenderContext(release, namespace, serviceKey, chart,
                 version, repositoryUrl, split.publicValues(), ProfileRenderer.images(split.publicValues()),
-                List.of(namespace), viewContext.getUsername(), java.time.Instant.now(), valuesSecretName);
+                List.of(namespace), viewContext.getUsername(), java.time.Instant.now(), valuesSecretName, cluster.id());
         // The other instances the repository holds, so that a file listing every instance has all of them.
         ProfileRenderer.RenderContext ctx = new ProfileRenderer.RenderContext(release, namespace, serviceKey, chart,
                 version, repositoryUrl, base.values(), base.images(), ProfileRenderer.instances(profile, base, repoDir),
-                base.deployedBy(), base.timestamp(), valuesSecretName);
+                base.deployedBy(), base.timestamp(), valuesSecretName, cluster.id());
         // Rendered before the chart is downloaded: a template error stops the deploy at once.
         List<ProfileRenderer.RenderedFile> files = ProfilePreview.withEdits(
                 ProfileRenderer.render(profile, ctx, secretValues), fileEdits,
@@ -738,6 +738,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                                 && Boolean.TRUE.equals(git.getTrustHostKeyOnFirstUse()));
                 gitClient.sync();
                 gitClient.requireOnServer(git.getBaseBranch(), "the preview shows the change to that branch");
+            }
+            if (repoUrl != null) {
+                checkProfileApartFromOtherClusters(profile, repoUrl);
             }
             ProfilePlan plan = planProfileFiles(profile, checkout, namespace, release, serviceKey, repoName, chart,
                     version, split, valuesSecretName, git.getFileEdits());
@@ -1320,8 +1323,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * Refuses a GitOps deploy that could not be committed, before anything is prepared for it: no Git repository, no
      * credentials to push to it, a working branch other than the base branch for a direct commit, a pull request on a
      * Git server KDPS cannot open one on, no chart repository or chart version, a release directory inside or above
-     * that of another release KDPS deployed to the repository, a chart repository that needs credentials KDPS does not
-     * have. The checks {@link #commit} makes, without touching Git or changing the request.
+     * that of another release KDPS deployed to the repository, a file profile another cluster's releases use without
+     * naming the cluster, a chart repository that needs credentials KDPS does not have. The checks {@link #commit}
+     * makes, without touching Git or changing the request.
      *
      * @throws IllegalArgumentException naming what is missing
      * @throws IllegalStateException    when a chart repository is not configured in KDPS, or needs credentials KDPS
@@ -1352,6 +1356,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         GitOpsProfile profile = deployProfile(firstNonBlank(given.getProfile(),
                 existingMeta != null ? existingMeta.getGitProfile() : null), existingMeta, request.getReleaseName());
         boolean files = GitOpsProfile.KIND_FILES.equals(profile.kind);
+        if (files) {
+            checkProfileApartFromOtherClusters(profile, repoUrl);
+        }
         String commitMode = files ? profileCommitMode(profile)
                 : firstNonBlank(given.getCommitMode(), existingMeta != null ? existingMeta.getGitCommitMode() : null);
         checkWorkingBranch(commitMode, files ? null : given.getBranch(),
@@ -1725,6 +1732,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         String storedPath = existingMeta != null ? existingMeta.getGitPath() : null;
         Path targetDir = resolveTargetPath(pathOverride, storedPath, namespace, release);
         checkApartFromRecordedReleases(targetDir, repoUrl, namespace, release);
+        if (filesProfile != null) {
+            checkProfileApartFromOtherClusters(filesProfile, repoUrl);
+        }
         Path sharedDir = sharedDirectory(targetDir);
 
         // Resolve credentials: prefer provided, else the release's stored ones. A new one, given in clear or by the
@@ -3091,7 +3101,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         List<Path> paths = new ArrayList<>();
         for (String path : ProfileRenderer.instancePaths(profile, new ProfileRenderer.RenderContext(releaseName,
                 namespace, meta.getServiceKey(), meta.getChartRef(), meta.getVersion(), null, Map.of(), List.of(),
-                List.of(namespace), viewContext.getUsername(), java.time.Instant.now(), null))) {
+                List.of(namespace), viewContext.getUsername(), java.time.Instant.now(), null, cluster.id()))) {
             paths.add(Path.of(path));
         }
         String base = recordedBaseBranch(meta);
@@ -4389,6 +4399,34 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                         otherRelease));
             }
         }
+    }
+
+    /**
+     * Refuses a deploy with a file profile to a Git repository where another Kubernetes cluster's releases were written
+     * with the same profile, when a file the profile always writes does not name the cluster ({@code {{ cluster }}}):
+     * the two clusters would write the same file, each deploy overwriting the other's. A profile used by one cluster is
+     * not concerned.
+     *
+     * @throws IllegalArgumentException naming the file and the other cluster
+     */
+    void checkProfileApartFromOtherClusters(GitOpsProfile profile, String repoUrl) {
+        List<String> shared = ProfileRenderer.pathsNotNamingTheCluster(profile);
+        if (shared.isEmpty()) {
+            return;
+        }
+        releaseMetadataService.findAll().stream()
+                .filter(other -> other != null && !cluster.equals(other.clusterRef())
+                        && profile.name.equals(other.getGitProfile())
+                        && sameRepository(repoUrl, other.getGitRepoUrl()))
+                .map(K8sReleaseEntity::clusterRef)
+                .min(java.util.Comparator.comparing(ClusterRef::id))
+                .ifPresent(other -> {
+                    throw new IllegalArgumentException("The GitOps profile " + profile.name + " writes "
+                            + DeployRequestValidator.shown(shared.get(0)) + " for every Kubernetes cluster, and this"
+                            + " repository already holds releases of the cluster " + other.id() + " written with it:"
+                            + " the two clusters would overwrite each other's file. Add {{ cluster }} to the path of"
+                            + " that file on the GitOps profiles page, or use another profile or repository.");
+                });
     }
 
     /**

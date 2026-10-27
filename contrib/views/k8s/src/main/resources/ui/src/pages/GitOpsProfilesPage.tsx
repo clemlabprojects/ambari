@@ -27,6 +27,7 @@ import type { HelmRepo } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { serverMessage } from '../utils/serverMessage';
 import FieldsHelp from '../components/gitops/FieldsHelp';
+import { useViewedCluster } from '../context/ViewedClusterContext';
 import FileExplorer, { PathSegment } from '../components/gitops/FileExplorer';
 import { FileView } from '../components/gitops/RepositoryPreview';
 import { changeLabel, editorLanguage } from '../components/gitops/previewTree';
@@ -51,11 +52,13 @@ interface Sample {
   repoUrl: string;
   baseBranch: string;
   authToken: string;
+  /** The Kubernetes cluster deployed to, by id: what {{ cluster }} renders to. */
+  cluster: string;
 }
 
 const DEFAULT_SAMPLE: Sample = {
   releaseName: 'trino', namespace: 'analytics', chart: 'trino', version: '', valuesYaml: 'server:\n  workers: 2\n',
-  repoUrl: '', baseBranch: 'main', authToken: '',
+  repoUrl: '', baseBranch: 'main', authToken: '', cluster: 'default',
 };
 
 /** The GitOps profiles: the list, and one profile opened from it (?profile=<name>). */
@@ -210,7 +213,8 @@ const ProfileEditor: React.FC<EditorProps> = ({ saved, initial, canConfigure, on
   const updateRule = (i: number, patch: Partial<GitOpsFileRule>) =>
     setDraft(d => ({ ...d, files: d.files.map((r, j) => (j === i ? { ...r, ...patch } : r)) }));
 
-  const example = { release: sample.releaseName, namespace: sample.namespace, chart: sample.chart, version: sample.version };
+  const example = { release: sample.releaseName, namespace: sample.namespace, chart: sample.chart, version: sample.version,
+    cluster: sample.cluster };
   const entries = files ? repositoryEntries(draft, example, preview, emptyFolders) : [];
   const nodes = repositoryTree(entries);
   const stale = !!preview && previewedFor !== JSON.stringify({ draft, sample });
@@ -256,6 +260,7 @@ const ProfileEditor: React.FC<EditorProps> = ({ saved, initial, canConfigure, on
         repoId: sample.repoId,
         version: sample.version || undefined,
         deploymentMode: 'FLUX_GITOPS',
+        kubernetesCluster: sample.cluster && sample.cluster !== 'default' ? sample.cluster : undefined,
         values,
         git: { repoUrl: sample.repoUrl || undefined, baseBranch: sample.baseBranch || undefined, authToken: sample.authToken || undefined, profile: draft.name },
       }, forSaving(draft));
@@ -579,6 +584,7 @@ const PreviewDialog: React.FC<{
   onRun: () => void; onClose: () => void;
 }> = ({ open, sample, set, running, error, onRun, onClose }) => {
   const [helmRepos, setHelmRepos] = React.useState<HelmRepo[]>([]);
+  const { clusters } = useViewedCluster();
   React.useEffect(() => {
     if (open) getHelmRepos().then(r => setHelmRepos(r || [])).catch(() => setHelmRepos([]));
   }, [open]);
@@ -596,6 +602,14 @@ const PreviewDialog: React.FC<{
         <Row gutter={16}>
           <Col span={12}><Form.Item label="Release name"><Input value={sample.releaseName} onChange={e => set({ releaseName: e.target.value })} /></Form.Item></Col>
           <Col span={12}><Form.Item label="Namespace"><Input value={sample.namespace} onChange={e => set({ namespace: e.target.value })} /></Form.Item></Col>
+          {clusters.length > 1 && (
+            <Col span={12}>
+              <Form.Item label="Kubernetes cluster" extra="What {{ cluster }} stands for.">
+                <Select value={sample.cluster} onChange={v => set({ cluster: v })} aria-label="example cluster"
+                  options={clusters.map(c => ({ value: c.id, label: `${c.name} (${c.id})` }))} />
+              </Form.Item>
+            </Col>
+          )}
         </Row>
         <Typography.Text strong>Chart</Typography.Text>
         <Row gutter={16}>

@@ -22,9 +22,10 @@ import { blankProfile } from '../profileDraft';
 describe('the fields a profile can use', () => {
   it('lists the fields KDPS fills in, with the example deploy, then the profile variables', () => {
     const p = { ...blankProfile('environments'), variables: { team: 'data', ' ': 'ignored' } };
-    const rows = fieldRows(p, { release: 'trino', namespace: 'analytics', chart: 'trino', version: '1.43.20' });
+    const rows = fieldRows(p, { release: 'trino', namespace: 'analytics', chart: 'trino', version: '1.43.20', cluster: 'k8s21' });
     const byField = Object.fromEntries(rows.map(r => [r.field, r.example]));
     expect(byField.namespace).toBe('analytics');
+    expect(byField.cluster).toBe('k8s21');
     expect(byField['chart.version']).toBe('1.43.20');
     expect(byField.chartPath).toBe('chart');
     expect(byField['secretValues.secretName']).toBe('trino-kdps-values');

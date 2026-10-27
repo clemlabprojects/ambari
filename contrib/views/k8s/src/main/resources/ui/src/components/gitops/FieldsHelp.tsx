@@ -34,6 +34,8 @@ export function fieldRows(profile: GitOpsProfile, example: ExampleDeploy): Field
   const rows: FieldRow[] = [
     { field: 'release', holds: 'The name of the release.', example: example.release },
     { field: 'namespace', holds: 'The namespace of the release. A path naming it gives one file per environment.', example: example.namespace },
+    { field: 'cluster', holds: 'The id of the Kubernetes cluster deployed to (default for the default one). A profile used for several clusters names it in every file it always writes, so that each cluster has its own.',
+      example: example.cluster },
     { field: 'service', holds: 'The KDPS service deployed, such as TRINO or SUPERSET.' },
     { field: 'chart.name', holds: 'The chart deployed, as its repository names it.', example: example.chart },
     { field: 'chart.version', holds: 'Its version.', example: example.version || undefined },

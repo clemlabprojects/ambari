@@ -46,13 +46,17 @@ public final class ProfileRenderer {
 
     /**
      * What a deploy gives the templates. {@code values} are the chart values without their secret values: the
-     * caller passes the public half of the deploy's split (see {@code GitOpsSecretValues}).
+     * caller passes the public half of the deploy's split (see {@code GitOpsSecretValues}). {@code cluster} is the id
+     * of the Kubernetes cluster deployed to ({@code default} for the default cluster).
      */
     public record RenderContext(String release, String namespace, String service, String chartName,
                                 String chartVersion, String chartRepository, Map<String, Object> values,
                                 List<String> images, List<String> instances, String deployedBy, Instant timestamp,
-                                String valuesSecret) {
+                                String valuesSecret, String cluster) {
     }
+
+    /** A path naming the cluster deployed to. */
+    private static final Pattern CLUSTER_FIELD = Pattern.compile("\\{\\{\\s*cluster\\b");
 
     /** A file to write: its path relative to the repository root, its content, and its write mode. */
     public record RenderedFile(String path, String content, String mode) {
@@ -255,6 +259,21 @@ public final class ProfileRenderer {
         return out;
     }
 
+    /**
+     * The paths of the {@code always} rules that do not name the cluster: for every cluster a deploy with the profile
+     * writes the same file there, so the releases of two clusters would overwrite each other's.
+     */
+    public static List<String> pathsNotNamingTheCluster(GitOpsProfile profile) {
+        List<String> out = new ArrayList<>();
+        for (GitOpsProfile.FileRule rule : profile.files == null ? List.<GitOpsProfile.FileRule>of() : profile.files) {
+            if (rule != null && rule.path != null && GitOpsProfile.MODE_ALWAYS.equals(rule.mode)
+                    && !CLUSTER_FIELD.matcher(rule.path).find()) {
+                out.add(rule.path);
+            }
+        }
+        return out;
+    }
+
     /** Stands for the namespace while the files of other instances are looked for. */
     private static final String NAMESPACE_MARK = "kdpsnamespacemark0";
 
@@ -270,7 +289,7 @@ public final class ProfileRenderer {
         List<Pattern> patterns = new ArrayList<>();
         RenderContext marked = new RenderContext(ctx.release(), NAMESPACE_MARK, ctx.service(), ctx.chartName(),
                 ctx.chartVersion(), ctx.chartRepository(), Map.of(), List.of(), List.of(), ctx.deployedBy(),
-                ctx.timestamp(), ctx.valuesSecret());
+                ctx.timestamp(), ctx.valuesSecret(), ctx.cluster());
         Map<String, Object> context = context(profile, marked);
         for (GitOpsProfile.FileRule rule : profile.files == null ? List.<GitOpsProfile.FileRule>of() : profile.files) {
             if (rule == null || rule.path == null || !GitOpsProfile.MODE_ALWAYS.equals(rule.mode)
@@ -348,6 +367,7 @@ public final class ProfileRenderer {
         Map<String, Object> c = new LinkedHashMap<>();
         c.put("release", ctx.release());
         c.put("namespace", ctx.namespace());
+        c.put("cluster", ctx.cluster());
         c.put("service", ctx.service());
         Map<String, Object> chart = new LinkedHashMap<>();
         chart.put("name", ctx.chartName());

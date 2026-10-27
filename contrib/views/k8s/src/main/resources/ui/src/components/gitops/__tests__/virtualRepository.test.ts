@@ -40,6 +40,10 @@ describe('the files of a profile, as an explorer shows them', () => {
     expect(examplePath('environments/{{ namespace }}/{{ release }}.yaml', profile(), example)).toBe('environments/analytics/trino.yaml');
     expect(examplePath('teams/{{ vars.team }}/x', profile(), example)).toBe('teams/data/x');
     expect(examplePath('{{ chartPath }}-values/{{ timestamp }}.yaml', profile(), example)).toBe('chart-values/{{ timestamp }}.yaml');
+    // The cluster of the example; left as written when the example names none.
+    expect(examplePath('clusters/{{ cluster }}/{{ namespace }}.yaml', profile(), { ...example, cluster: 'k8s21' }))
+      .toBe('clusters/k8s21/analytics.yaml');
+    expect(examplePath('clusters/{{ cluster }}/x', profile(), example)).toBe('clusters/{{ cluster }}/x');
   });
 
   it('lists each file by its path as the profile writes it, and the chart folder', () => {
