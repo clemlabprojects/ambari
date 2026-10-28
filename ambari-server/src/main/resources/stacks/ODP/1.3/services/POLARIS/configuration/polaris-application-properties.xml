@@ -587,8 +587,8 @@
   <property>
     <name>quarkus.oidc.application-type</name>
     <display-name>OIDC Application Type</display-name>
-    <value>hybrid</value>
-    <description>Quarkus OIDC application type. service validates bearer tokens; web-app enables browser login flows.</description>
+    <value>service</value>
+    <description>Quarkus OIDC application type. service validates bearer tokens and answers 401 without one (the Polaris console and engines send bearer tokens); web-app enables browser login flows; hybrid redirects token-less requests to the login page.</description>
     <value-attributes>
       <type>value-list</type>
       <entries>

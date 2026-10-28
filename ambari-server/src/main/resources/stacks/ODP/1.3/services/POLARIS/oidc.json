@@ -70,7 +70,7 @@
                 "quarkus.oidc.auth-server-url": "${auth_server_url}",
                 "quarkus.oidc.client-id": "${client_id}",
                 "quarkus.oidc.credentials.secret": "${client_secret}",
-                "quarkus.oidc.application-type": "hybrid",
+                "quarkus.oidc.application-type": "service",
                 "quarkus.http.cors": "true"
               }
             }
