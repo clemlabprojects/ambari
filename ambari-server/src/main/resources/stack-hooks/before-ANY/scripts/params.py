@@ -193,6 +193,28 @@ hue_server_hosts  = default("/clusterHostInfo/hue_server_hosts", [])
 # get the correct version to use for checking stack features
 version_for_stack_feature_checks = get_stack_feature_version(config)
 
+# JDK major versions the stack version requires outside upgrades (ODP 1.3.2.0+: primary JDK 17,
+# secondary JDK 21); upgrades select and validate them in the upgrade wizard instead
+required_primary_java_major = None
+required_secondary_java_major = None
+stack_features_json = default("/configurations/cluster-env/stack_features", None)
+stack_name = default("/clusterLevelParams/stack_name", None)
+if stack_features_json and stack_name and default("/commandParams/upgrade_direction", None) is None \
+    and check_stack_feature("upgrade_java_home_selection", version_for_stack_feature_checks):
+  for stack_feature in json.loads(stack_features_json).get(stack_name, {}).get("stack_features", []):
+    if stack_feature.get("name") == "upgrade_java_home_selection":
+      required_primary_java_major = stack_feature.get("primary_java_major")
+      required_secondary_java_major = stack_feature.get("secondary_java_major")
+
+# Only installs and (re)starts are refused on a wrong JDK; stopping or decommissioning must still work
+enforce_java_runtime = config['roleCommand'] in ("INSTALL", "START") or \
+  (config['roleCommand'] == "CUSTOM_COMMAND" and default("/commandParams/custom_command", None) == "RESTART")
+
+# The JDK this command's component runs on (metainfo javaHomeSelector), and the secondary JDK
+java_home_selector = default("/hostLevelParams/java_home_selector", None) or default("/commandParams/java_home_selector", None) \
+  or default("/ambariLevelParams/java_home_selector", None)
+secondary_java_home = default("/hostLevelParams/secondary_java_home", None) or default("/ambariLevelParams/secondary_java_home", None)
+
 
 has_namenode = len(namenode_hosts) > 0
 has_hdfs_clients = len(hdfs_client_hosts) > 0

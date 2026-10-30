@@ -221,6 +221,43 @@ def setup_java():
   if params.ambari_java_home and params.ambari_java_home != params.java_home:
     __setup_java(custom_java_home=params.ambari_java_home, custom_jdk_name=params.ambari_jdk_name)
 
+def check_java_runtime():
+  """
+  Fail early when a Java home does not have the JDK major version the stack version requires
+  (ODP 1.3.2.0+: JDK 17 primary, JDK 21 secondary), instead of letting components fail later
+  on class file versions. The secondary JDK is checked for the components that run on it.
+  Commands other than installs and (re)starts only log the problem, so services can still be stopped.
+  """
+  import params
+  if not params.required_primary_java_major:
+    return
+
+  try:
+    __check_java_major(params.java_home, params.required_primary_java_major, "primary", "--java-home")
+    if params.java_home_selector == "secondary_java_home" and params.required_secondary_java_major:
+      __check_java_major(params.secondary_java_home, params.required_secondary_java_major, "secondary",
+                         "--secondary-java-home")
+  except Fail as error:
+    if params.enforce_java_runtime:
+      raise
+    Logger.warning(str(error))
+
+def __check_java_major(java_home, required_major, role, setup_option):
+  fix =format("Set it with 'ambari-server setup {setup_option}=<JDK {required_major} home>' on the Ambari Server, "
+               "restart Ambari Server, then restart the services.")
+  if not java_home:
+    raise Fail(format("ODP {stack_version_unformatted} requires JDK {required_major} as the {role} Java home, "
+                      "but none is configured. {fix}"))
+
+  code, output = shell.call((os.path.join(java_home, "bin", "java"), "-version"), timeout=20, quiet=True)
+  match = re.search(r'(?:openjdk|java) version "(\d+)(?:\.(\d+))?', output)
+  if code or not match:
+    raise Fail(format("Cannot determine the Java version of the {role} Java home {java_home}: {output}"))
+  major = int(match.group(2) if match.group(1) == "1" else match.group(1))
+  if major != int(required_major):
+    raise Fail(format("ODP {stack_version_unformatted} requires JDK {required_major} as the {role} Java home, "
+                      "but {java_home} is JDK {major}. {fix}"))
+
 def __setup_java(custom_java_home, custom_jdk_name):
   """
   Installs jdk using specific params, that comes from ambari-server
