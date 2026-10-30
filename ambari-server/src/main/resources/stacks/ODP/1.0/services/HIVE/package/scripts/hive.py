@@ -333,6 +333,8 @@ def __is_hdfs_acls_enabled():
   import params
 
   hdfs_protocol = params.fs_root.startswith("hdfs://")
+  if not hdfs_protocol:
+    return False
 
   return_code, stdout, _ = get_user_call_output("hdfs getconf -confKey dfs.namenode.acls.enabled",
                                                 user = params.hdfs_user)
@@ -445,7 +447,7 @@ def setup_metastore():
 def refresh_yarn():
   import params
 
-  if params.enable_ranger_hive or not params.doAs:
+  if params.enable_ranger_hive or not params.doAs or not params.has_resourcemanager:
     return
 
   YARN_REFRESHED_FILE = "/etc/hive/yarn.refreshed"
@@ -601,13 +603,15 @@ def fill_conf_dir(component_conf_dir):
             mode=mode_identified_for_dir
   )
 
-  XmlConfig("mapred-site.xml",
-            conf_dir=component_conf_dir,
-            configurations=params.config['configurations']['mapred-site'],
-            configuration_attributes=params.config['configurationAttributes']['mapred-site'],
-            owner=params.hive_user,
-            group=params.user_group,
-            mode=mode_identified_for_file)
+  # MapReduce is not installed on a metastore-only cluster
+  if 'mapred-site' in params.config['configurations']:
+    XmlConfig("mapred-site.xml",
+              conf_dir=component_conf_dir,
+              configurations=params.config['configurations']['mapred-site'],
+              configuration_attributes=params.config['configurationAttributes']['mapred-site'],
+              owner=params.hive_user,
+              group=params.user_group,
+              mode=mode_identified_for_file)
 
 
   File(format("{component_conf_dir}/hive-default.xml.template"),
