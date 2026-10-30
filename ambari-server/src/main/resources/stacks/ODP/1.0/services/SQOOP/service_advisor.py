@@ -154,8 +154,7 @@ class SqoopRecommender(service_advisor.ServiceAdvisor):
   def recommendSqoopConfigurationsFromHDP23(self, configurations, clusterData, services, hosts):
     putSqoopSiteProperty = self.putProperty(configurations, "sqoop-site", services)
     putSqoopEnvProperty = self.putProperty(configurations, "sqoop-env", services)
-    preferred_fs_type = self.getCoreFilesystemType(configurations, services)
-    sqoop_fs_type = self.getConfigProperty(configurations, services, "sqoop-env", "sqoop_filesystem_type", preferred_fs_type)
+    sqoop_fs_type = self.getSelectedFilesystemType(configurations, services, "sqoop-env", "sqoop_filesystem_type")
     putSqoopEnvProperty("sqoop_filesystem_type", sqoop_fs_type)
 
     enable_external_atlas_for_sqoop = False

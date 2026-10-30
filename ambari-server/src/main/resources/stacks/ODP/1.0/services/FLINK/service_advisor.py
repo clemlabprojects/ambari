@@ -194,8 +194,7 @@ class FlinkRecommender(service_advisor.ServiceAdvisor):
     #Logger.info("No Recommendation vailable for Flink Recommendation Stack advisor")
     #            (self.__class__.__name__, inspect.stack()[0][3]))
 
-    preferred_fs_type = self.getCoreFilesystemType(configurations, services)
-    flink_fs_type = self.getConfigProperty(configurations, services, "flink-env", "flink_filesystem_type", preferred_fs_type)
+    flink_fs_type = self.getSelectedFilesystemType(configurations, services, "flink-env", "flink_filesystem_type")
     putFlinkEnvProperty("flink_filesystem_type", flink_fs_type)
 
     if 'flink-conf' in services["configurations"]:
@@ -251,7 +250,7 @@ class FlinkValidator(service_advisor.ServiceAdvisor):
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     include_hdfs = "HDFS" in servicesList
     defaultFS = services["configurations"]['flink-conf']["properties"]["fs.default-scheme"]
-    flinkFsType = self.getConfigProperty(configurations, services, "flink-env", "flink_filesystem_type", self.getCoreFilesystemType(configurations, services))
+    flinkFsType = self.getSelectedFilesystemType(configurations, services, "flink-env", "flink_filesystem_type")
     validationItems = []
     if include_hdfs and str(flinkFsType).upper() == "HDFS" and defaultFS.startswith('file:///'):
       # TODO: Memory Settings Recommendation

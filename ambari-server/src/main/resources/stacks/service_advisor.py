@@ -292,7 +292,7 @@ class ServiceAdvisor(DefaultStackAdvisor):
       selectorPropertyName,
       self.getCoreFilesystemType(configurations, services)
     )
-    return str(selectorValue).upper()
+    return self.getInstalledFilesystemType(services, selectorValue)
 
   def getHdfsDefaultFs(self, configurations, services):
     nameServices = self.getConfigProperty(configurations, services, "hdfs-site", "dfs.internal.nameservices")
@@ -368,17 +368,23 @@ class ServiceAdvisor(DefaultStackAdvisor):
       return "OZONE"
     return "EXTERNAL"
 
+  def getInstalledFilesystemType(self, services, fsType):
+    """
+    Return fsType, or the preferred filesystem when fsType names a service that is not installed
+    (the HDFS stack defaults of the filesystem selectors on a cluster without HDFS).
+    """
+    fsType = str(fsType).upper()
+    if fsType in ("HDFS", "OZONE") and fsType not in self.get_services_list(services):
+      return self.getPreferredFilesystemType(services)
+    return fsType
+
   def getCoreFilesystemType(self, configurations, services):
     """
     Return cluster-wide filesystem preference from CORE service when available.
     """
     coreFsType = self.getConfigProperty(configurations, services, "core-env", "core_filesystem_type")
     if coreFsType:
-      coreFsType = str(coreFsType).upper()
-      servicesList = self.get_services_list(services)
-      if coreFsType in ("HDFS", "OZONE") and "HDFS" not in servicesList and "OZONE" not in servicesList:
-        return "EXTERNAL"
-      return coreFsType
+      return self.getInstalledFilesystemType(services, coreFsType)
     return self.getPreferredFilesystemType(services)
 
   def getOzoneDefaultFs(self, services, configurations):

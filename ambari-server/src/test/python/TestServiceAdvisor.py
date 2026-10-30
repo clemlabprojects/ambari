@@ -101,6 +101,46 @@ class TestServiceAdvisor(TestCase):
 
     self.assertEqual("EXTERNAL", self.serviceAdvisor.getCoreFilesystemType({}, services))
 
+  def test_filesystemSelectorsFallBackToOzoneWithoutHdfs(self):
+    services = {
+      "services": [{"StackServices": {"service_name": "OZONE"}}, {"StackServices": {"service_name": "HIVE"}}],
+      "configurations": {
+        "core-env": {
+          "properties": {
+            "core_filesystem_type": "HDFS"
+          }
+        },
+        "hive-env": {
+          "properties": {
+            "hive_filesystem_type": "HDFS"
+          }
+        },
+        "ozone-site": {
+          "properties": {
+            "ozone.om.service.ids": "omservice"
+          }
+        }
+      }
+    }
+
+    self.assertEqual("OZONE", self.serviceAdvisor.getCoreFilesystemType({}, services))
+    self.assertEqual("OZONE", self.serviceAdvisor.getSelectedFilesystemType({}, services, "hive-env", "hive_filesystem_type"))
+    self.assertEqual("ofs://omservice", self.serviceAdvisor.getServiceDefaultFs({}, services, "hive-env", "hive_filesystem_type"))
+
+  def test_filesystemSelectorKeepsInstalledChoice(self):
+    services = {
+      "services": [{"StackServices": {"service_name": "HDFS"}}, {"StackServices": {"service_name": "OZONE"}}],
+      "configurations": {
+        "core-env": {
+          "properties": {
+            "core_filesystem_type": "OZONE"
+          }
+        }
+      }
+    }
+
+    self.assertEqual("OZONE", self.serviceAdvisor.getCoreFilesystemType({}, services))
+
   def test_getServiceDefaultFsForExternal(self):
     services = {
       "services": [{"StackServices": {"service_name": "YARN"}}],
