@@ -387,6 +387,44 @@ class ServiceAdvisor(DefaultStackAdvisor):
       return self.getInstalledFilesystemType(services, coreFsType)
     return self.getPreferredFilesystemType(services)
 
+  def getOzonePathProblem(self, path, default_fs):
+    """
+    Why a path cannot hold data in Ozone, else None (also for paths outside Ozone). Ozone stores data in
+    buckets of volumes: ofs://<om service>/<volume>/<bucket>/..., o3fs://<bucket>.<volume>[.<om>]/... or
+    a path without scheme on an Ozone default filesystem; volume and bucket names are 3 to 63 lowercase
+    letters, digits, '-' or '.', starting and ending with a letter or a digit.
+    """
+    path = str(path or "").strip()
+    if not path:
+      return None
+    scheme_match = re.match(r"^([a-z0-9]+)://([^/]*)(.*)$", path)
+    default_match = re.match(r"^([a-z0-9]+)://([^/]*)", str(default_fs or "").strip())
+    if scheme_match:
+      scheme, authority, path_part = scheme_match.groups()
+    elif default_match:
+      scheme, authority, path_part = default_match.group(1), default_match.group(2), path
+    else:
+      return None
+
+    if scheme == "ofs":
+      parts = [part for part in path_part.split("/") if part]
+      if len(parts) < 2:
+        return "{0} must be inside an Ozone bucket: ofs://<om service>/<volume>/<bucket>/<path>".format(path)
+      names = [("volume", parts[0]), ("bucket", parts[1])]
+    elif scheme == "o3fs":
+      host_parts = authority.split(":")[0].split(".")
+      if len(host_parts) < 2:
+        return "{0} must name its Ozone bucket and volume: o3fs://<bucket>.<volume>.<om service>/<path>".format(path)
+      names = [("volume", host_parts[1]), ("bucket", host_parts[0])]
+    else:
+      return None
+
+    for kind, name in names:
+      if not re.match(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", name) or ".." in name or ".-" in name or "-." in name:
+        return "'{0}' in {1} is not a valid Ozone {2} name: 3 to 63 lowercase letters, digits, '-' or '.', " \
+               "starting and ending with a letter or a digit".format(name, path, kind)
+    return None
+
   def getOzoneDefaultFs(self, services, configurations):
     """
     Build a stable Ozone filesystem URI from service configs.

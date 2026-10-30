@@ -926,6 +926,14 @@ class HiveValidator(service_advisor.ServiceAdvisor):
                                   "If Hive using SQL Anywhere db." \
                                   " {0} needs to be set to {1}".format(prop_name,prop_value))})
 
+    # Warehouse in Ozone: Hive needs a valid Ozone volume and bucket (Ranger policies are set per bucket)
+    if self.getSelectedFilesystemType(configurations, services, "hive-env", "hive_filesystem_type") == "OZONE":
+      default_fs = self.getConfigProperty(configurations, services, "core-site", "fs.defaultFS", "")
+      for prop_name in ("hive.metastore.warehouse.dir", "hive.metastore.warehouse.external.dir"):
+        problem = self.getOzonePathProblem(properties.get(prop_name), default_fs)
+        if problem:
+          validationItems.append({"config-name": prop_name, "item": self.getWarnItem(problem)})
+
     return self.toConfigurationValidationProblems(validationItems, "hive-site")
 
 

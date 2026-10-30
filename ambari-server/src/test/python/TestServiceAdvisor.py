@@ -141,6 +141,18 @@ class TestServiceAdvisor(TestCase):
 
     self.assertEqual("OZONE", self.serviceAdvisor.getCoreFilesystemType({}, services))
 
+  def test_getOzonePathProblem(self):
+    problem = self.serviceAdvisor.getOzonePathProblem
+    self.assertIsNone(problem("/warehouse/tablespace/managed/hive", "ofs://omservice"))
+    self.assertIsNone(problem("ofs://omservice/warehouse/tablespace/external/hive", "hdfs://nn:8020"))
+    self.assertIsNone(problem("o3fs://tablespace.warehouse.omservice/managed/hive", "hdfs://nn:8020"))
+    self.assertIsNone(problem("/warehouse/tablespace/managed/hive", "hdfs://nn:8020"))
+    self.assertIsNone(problem("s3a://bucket/warehouse", "ofs://omservice"))
+    self.assertIn("must be inside an Ozone bucket", problem("/warehouse", "ofs://omservice"))
+    self.assertIn("must name its Ozone bucket and volume", problem("o3fs://warehouse/managed", "hdfs://nn:8020"))
+    self.assertIn("not a valid Ozone bucket name", problem("/warehouse/Table_Space/managed", "ofs://omservice"))
+    self.assertIn("not a valid Ozone volume name", problem("/wh/tablespace/managed", "ofs://omservice"))
+
   def test_getServiceDefaultFsForExternal(self):
     services = {
       "services": [{"StackServices": {"service_name": "YARN"}}],
