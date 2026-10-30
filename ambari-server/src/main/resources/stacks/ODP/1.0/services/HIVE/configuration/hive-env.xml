@@ -376,6 +376,12 @@ if [ "$SERVICE" = "hiveserver2" ]; then
 
 fi
 
+# Client tools (beeline, schematool, ...): at least {{hive_client_heapsize}} MB, the Hive launcher default (256 MB) is
+# too small once they initialize the Ozone filesystem; a larger HADOOP_HEAPSIZE is kept
+if [ "$SERVICE" != "metastore" ] &amp;&amp; [ "$SERVICE" != "hiveserver2" ] &amp;&amp; [[ "$HADOOP_HEAPSIZE" =~ ^[0-9]+$ ]] &amp;&amp; [ "$HADOOP_HEAPSIZE" -lt {{hive_client_heapsize}} ]; then
+  export HADOOP_HEAPSIZE={{hive_client_heapsize}}
+fi
+
 export HADOOP_CLIENT_OPTS="$HADOOP_CLIENT_OPTS  -Xms${HADOOP_HEAPSIZE}m -Xmx${HADOOP_HEAPSIZE}m"
 export HADOOP_CLIENT_OPTS="$HADOOP_CLIENT_OPTS{{heap_dump_opts}}"
 

@@ -465,6 +465,8 @@ else:
   hive_heapsize = config['configurations']['hive-site']['hive.heapsize']
 
 hive_metastore_heapsize = config['configurations']['hive-env']['hive.metastore.heapsize']
+# minimum heap (MB) of the Hive client tools in hive-env.sh (see the schematool heap below)
+hive_client_heapsize = 1024
 # schematool heap (MB): the 256 MB Hive launcher default is too small once it initializes the Ozone
 # filesystem; fixed instead of the Metastore heap, which can be large on production clusters
 hive_schematool_heapsize = 1024
