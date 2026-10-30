@@ -764,11 +764,18 @@ def setup_isolated_hadoop_conf(component_conf_dir):
   # hadoop-env: inherit the shared hadoop-env (OPTS / krb5 / native / classpath)
   # then pin the JDK this Hive component must run under. java64_home is already
   # resolved to the secondary JDK when secondary_java_home is active.
+  hadoop_env = ("if [ -f %s/hadoop-env.sh ]; then . %s/hadoop-env.sh; fi\n"
+                "export JAVA_HOME=%s\n"
+                % (params.hadoop_conf_dir, params.hadoop_conf_dir, params.java64_home))
+  if 'ozone-site' in params.config['configurations']:
+    # The Hadoop client has no ofs:// / o3fs:// filesystem: add the Ozone one (not the shaded
+    # -client jar, which fails against the Ozone Manager)
+    hadoop_env += ("for ozone_fs_jar in %s/current/ozone-client/share/ozone/lib/ozone-filesystem-hadoop3-[0-9]*.jar; do\n"
+                   "  [ -f \"$ozone_fs_jar\" ] && export HADOOP_CLASSPATH=\"${HADOOP_CLASSPATH:+$HADOOP_CLASSPATH:}$ozone_fs_jar\"\n"
+                   "done\n" % params.stack_root)
   File(os.path.join(hadoop_conf_dir, "hadoop-env.sh"),
        owner=params.hive_user, group=params.user_group, mode=0o755,
-       content=("if [ -f %s/hadoop-env.sh ]; then . %s/hadoop-env.sh; fi\n"
-                "export JAVA_HOME=%s\n"
-                % (params.hadoop_conf_dir, params.hadoop_conf_dir, params.java64_home)))
+       content=hadoop_env)
 
 def jdbc_connector(target, hive_previous_jdbc_jar):
   """
