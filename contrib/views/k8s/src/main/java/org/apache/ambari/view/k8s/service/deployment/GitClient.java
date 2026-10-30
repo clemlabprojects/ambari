@@ -80,7 +80,8 @@ import java.util.UUID;
  * Pure-Java git wrapper built on JGit — no OS {@code git} binary required (more portable/robust) and
  * a single {@link TransportConfigCallback} hook where SSH and the outbound proxy are attached.
  *
- * <p>Auth: HTTPS remotes use the token as the username (matching the old {@code https://token@host}),
+ * <p>Auth: HTTPS remotes send the token as the password of the user {@value #TOKEN_USER}, the form every Git host takes
+ * (GitLab and Azure DevOps refuse a token given as the username; GitHub and Gitea take either),
  * SSH remotes use the provided private key in memory (no key file on disk). Over SSH, the Git server must present a
  * host key configured for the repository ({@link #withHostKeys}): any other is refused, as is a server whose key KDPS
  * cannot check, with a message showing the key it presented ({@link GitHostKeys}). Nothing is read from the SSH
@@ -92,6 +93,12 @@ import java.util.UUID;
  */
 public class GitClient {
     private static final Logger LOG = LoggerFactory.getLogger(GitClient.class);
+
+    /**
+     * The user an HTTPS access token is sent with, as its password. GitLab takes any user next to a token and documents
+     * this one; GitHub, Gitea and Azure DevOps ignore the user.
+     */
+    static final String TOKEN_USER = "oauth2";
 
     /** Seconds a clone, fetch or push may go without any data from the server, unless set otherwise. */
     public static final int DEFAULT_TIMEOUT_SECONDS = 120;
@@ -235,8 +242,7 @@ public class GitClient {
                 plaintextWarningLogged = true;
                 LOG.warn("Git repository {} is reached over plain HTTP: the access token travels unencrypted", redact(repoUrl));
             }
-            // Token as username, empty password (works for GitHub/GitLab/Gitea tokens and mirrors token@host).
-            return new UsernamePasswordCredentialsProvider(authToken, "");
+            return new UsernamePasswordCredentialsProvider(TOKEN_USER, authToken);
         }
         return null;
     }
