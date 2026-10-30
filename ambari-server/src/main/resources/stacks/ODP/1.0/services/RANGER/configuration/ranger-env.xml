@@ -193,9 +193,9 @@
   </property>
     <property>
     <name>ranger-ozone-plugin-enabled</name>
-    <value>No</value>
+    <value>Yes</value>
     <display-name>Ozone Ranger Plugin</display-name>
-    <description>Enable Ozone Ranger plugin</description>
+    <description>Enable Ozone Ranger plugin (on by default for new installs; existing clusters keep their value)</description>
     <value-attributes>
       <overridable>false</overridable>
       <type>value-list</type>
