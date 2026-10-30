@@ -818,6 +818,8 @@ ranger_admin_hosts = default("/clusterHostInfo/ranger_admin_hosts", [])
 has_ranger_admin = not len(ranger_admin_hosts) == 0
 impala_catalogd_hosts = default("/clusterHostInfo/impala_catalog_service_hosts", [])
 has_impala_catalogd = not len(impala_catalogd_hosts) == 0
+# Impala reads and writes Hive tables as its service user (see the warehouse ACLs in hive.py)
+hive_impala_user = default("/configurations/impala-env/impala_user", "impala") if has_impala_catalogd else None
 
 
 # ranger hive plugin enabled property

@@ -338,6 +338,11 @@ def create_hive_hdfs_dirs():
               user = params.hdfs_user)
       Execute(format("hdfs dfs -setfacl -m default:user:{hive_user}:rwx {managed_dir}"),
               user = params.hdfs_user)
+      if params.hive_impala_user:
+        # The managed warehouse is private to Hive (700): Impala needs it, and inherits it on new tables
+        for warehouse_dir in (external_dir, managed_dir):
+          Execute(format("hdfs dfs -setfacl -m user:{hive_impala_user}:rwx,default:user:{hive_impala_user}:rwx {warehouse_dir}"),
+                  user = params.hdfs_user)
     else:
       Logger.info(format("Could not set default ACLs for HDFS directories {external_dir} and {managed_dir} as ACLs are not enabled!"))
   else:
