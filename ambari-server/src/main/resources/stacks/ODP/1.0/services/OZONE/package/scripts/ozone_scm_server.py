@@ -99,12 +99,6 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     env.set_params(params)
     from setup_credential_ozone import setup_credential_ozone
     self.configure(env) # for security
-    File(os.path.join(params.ozone_topology_file),
-        owner='root',
-        group='root',
-        mode=0o755,
-        content=Template("ozone_topology_script.py")
-    )
     if params.scm_ssl_enabled:
       passwords =  [
         {'alias': 'ssl.server.keystore.password', 'value': format('{ozone_scm_tls_ssl_keystore_password}')},

@@ -82,6 +82,15 @@ def ozone(name=None):
       create_parents = True,
       mode=0o755
   )
+
+  # ozone-site names this rack script: every host loading ozone-site (servers, clients, Hive) runs it
+  if params.ozone_topology_file:
+    File(params.ozone_topology_file,
+        owner='root',
+        group='root',
+        mode=0o755,
+        content=Template("ozone_topology_script.py")
+    )
   
   if name == "ozone-manager":
     if params.om_ssl_enabled:
