@@ -123,6 +123,22 @@ def hive(name=None):
   if name == 'metastore':
     setup_metastore()
 
+def hiveserver2_site():
+  """
+  hiveserver2-site, with the JDK Hive runs on as JAVA_HOME of its Tez ApplicationMasters and tasks when it is
+  not the stack JDK the NodeManagers run on (Hive 4 classes do not load on the primary JDK).
+  """
+  import params
+
+  hiveserver2_site_config = dict(get_config("hiveserver2-site") or {})
+  if params.hive_tez_java_home:
+    for prop_name in ("tez.am.launch.env", "tez.task.launch.env"):
+      launch_env = hiveserver2_site_config.get(prop_name, params.tez_site.get(prop_name, ""))
+      entries = [entry.strip() for entry in str(launch_env or "").split(",")
+                 if entry.strip() and not entry.strip().startswith("JAVA_HOME=")]
+      hiveserver2_site_config[prop_name] = ",".join(entries + ["JAVA_HOME=" + params.hive_tez_java_home])
+  return hiveserver2_site_config
+
 def setup_hiveserver2():
   import params
 
@@ -139,7 +155,7 @@ def setup_hiveserver2():
         content=InlineTemplate(params.hive_env_sh_template),
         mode=0o755
     )
-    hiveserver2_site_config = get_config("hiveserver2-site")
+    hiveserver2_site_config = hiveserver2_site()
     hive_config = dict(params.hive_site_config)
     if hiveserver2_site_config:
       hive_config.update(hiveserver2_site_config)
@@ -167,7 +183,7 @@ def setup_hiveserver2():
   )
   XmlConfig("hiveserver2-site.xml",
             conf_dir=params.hive_server_conf_dir,
-            configurations=params.config['configurations']['hiveserver2-site'],
+            configurations=hiveserver2_site(),
             configuration_attributes=params.config['configurationAttributes']['hiveserver2-site'],
             owner=params.hive_user,
             group=params.user_group,

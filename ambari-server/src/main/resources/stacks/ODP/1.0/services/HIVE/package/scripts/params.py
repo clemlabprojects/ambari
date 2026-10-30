@@ -495,6 +495,11 @@ if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_sta
   if resolved_java_home:
     java64_home = resolved_java_home
 
+# Hive's Tez ApplicationMasters and tasks must run on the JDK Hive runs on (the secondary JDK on ODP 1.3.2.0+),
+# not on the JDK of the NodeManagers: HiveServer2 adds it to their launch environment (hive.py)
+hive_tez_java_home = java64_home if java64_home != config['ambariLevelParams']['java_home'] else None
+tez_site = default("/configurations/tez-site", {})
+
 # When active (ODP 1.3.2.0+), Hive renders its own hadoop conf dir
 # (<hive conf>/hadoop-conf) carrying java64_home via its own hadoop-env.sh, and
 # the Hive launcher points HADOOP_CONF_DIR there - so Hive runs under java64_home
