@@ -188,7 +188,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     Assert.assertEquals("secret", appUpdates.get("quarkus.oidc.credentials.secret"));
     Assert.assertEquals("https://keycloak.example.com/realms/example",
       appUpdates.get("quarkus.oidc.auth-server-url"));
-    Assert.assertEquals("hybrid", appUpdates.get("quarkus.oidc.application-type"));
+    Assert.assertEquals("service", appUpdates.get("quarkus.oidc.application-type"));
     Assert.assertEquals("true", appUpdates.get("quarkus.oidc.tenant-enabled"));
     Assert.assertEquals("admin", userCapture.getValue());
 
@@ -294,7 +294,7 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     Assert.assertEquals("secret", appUpdates.get("quarkus.oidc.credentials.secret"));
     Assert.assertEquals("https://keycloak.example.com/realms/example",
       appUpdates.get("quarkus.oidc.auth-server-url"));
-    Assert.assertEquals("hybrid", appUpdates.get("quarkus.oidc.application-type"));
+    Assert.assertEquals("service", appUpdates.get("quarkus.oidc.application-type"));
     Assert.assertEquals("true", appUpdates.get("quarkus.oidc.tenant-enabled"));
     Assert.assertEquals("admin", userCapture.getValue());
   }
