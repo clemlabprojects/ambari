@@ -19,6 +19,7 @@ limitations under the License.
 """
 import os
 import functools
+from urllib.parse import urlparse
 import status_params
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 
@@ -688,9 +689,11 @@ if has_ranger_admin:
       ozone_ranger_plugin_config['tag.download.auth.users'] = ozone_user
       ozone_ranger_plugin_config['policy.grantrevoke.auth.users'] = ozone_user
 
+    # Default policies Ranger creates once, with the repository: (name, resources, users, access types)
+    ozone_default_policies = []
+
     # Services Ambari connects to Ozone S3 use the S3 volume as their own user: the Hive Metastore
-    # (tables stored on S3) and Polaris (its Ozone catalog). Ranger creates these policies once, with
-    # the repository.
+    # (tables stored on S3) and Polaris (its Ozone catalog).
     ozone_s3_volume = default("/configurations/ozone-site/ozone.s3g.volume.name", "s3v")
     ozone_s3_service_users = []
     if default("/clusterHostInfo/hive_metastore_hosts", []):
@@ -698,19 +701,39 @@ if has_ranger_admin:
     if default("/clusterHostInfo/polaris_server_hosts", []):
       ozone_s3_service_users.append(default("/configurations/polaris-env/polaris_user", "polaris"))
     if ozone_s3_service_users:
-      ozone_ranger_plugin_config.update({
-        'setup.additional.default.policies': 'true',
-        'default-policy.1.name': 'S3 volume - service users',
-        'default-policy.1.resource.volume': ozone_s3_volume,
-        'default-policy.1.policyItem.1.users': ','.join(ozone_s3_service_users),
-        'default-policy.1.policyItem.1.accessTypes': 'read,list,create',
-        'default-policy.2.name': 'S3 buckets and keys - service users',
-        'default-policy.2.resource.volume': ozone_s3_volume,
-        'default-policy.2.resource.bucket': '*',
-        'default-policy.2.resource.key': '*',
-        'default-policy.2.policyItem.1.users': ','.join(ozone_s3_service_users),
-        'default-policy.2.policyItem.1.accessTypes': 'read,write,create,list,delete',
-      })
+      ozone_default_policies.append(('S3 volume - service users', {'volume': ozone_s3_volume},
+                                     ozone_s3_service_users, 'read,list,create'))
+      ozone_default_policies.append(('S3 buckets and keys - service users', {'volume': ozone_s3_volume, 'bucket': '*', 'key': '*'},
+                                     ozone_s3_service_users, 'read,write,create,list,delete'))
+
+    # Hive storing its warehouse in Ozone: Ranger does not fall back to Ozone ACLs, so the Hive user
+    # needs the volume and bucket of its warehouse and home directories (ofs://<om>/<volume>/<bucket>/...)
+    if default("/clusterHostInfo/hive_metastore_hosts", []) \
+        and str(default("/configurations/hive-env/hive_filesystem_type", "")).upper() == "OZONE":
+      hive_user_name = default("/configurations/hive-env/hive_user", "hive")
+      hive_ozone_buckets = []
+      for hive_path in (default("/configurations/hive-site/hive.metastore.warehouse.dir", None),
+                        default("/configurations/hive-site/hive.metastore.warehouse.external.dir", None),
+                        format("/user/{hive_user_name}")):
+        hive_url = urlparse(str(hive_path or ""))
+        hive_path_parts = [part for part in hive_url.path.split("/") if part]
+        if hive_url.scheme in ("", "ofs") and len(hive_path_parts) >= 2 and tuple(hive_path_parts[:2]) not in hive_ozone_buckets:
+          hive_ozone_buckets.append(tuple(hive_path_parts[:2]))
+      for hive_volume, hive_bucket in hive_ozone_buckets:
+        ozone_default_policies.append(('Hive warehouse - volume {0}'.format(hive_volume), {'volume': hive_volume},
+                                       [hive_user_name], 'read,list'))
+        ozone_default_policies.append(('Hive warehouse - {0}/{1}'.format(hive_volume, hive_bucket),
+                                       {'volume': hive_volume, 'bucket': hive_bucket, 'key': '*'},
+                                       [hive_user_name], 'read,write,create,list,delete'))
+
+    if ozone_default_policies:
+      ozone_ranger_plugin_config['setup.additional.default.policies'] = 'true'
+      for policy_index, (policy_name, policy_resources, policy_users, policy_access) in enumerate(ozone_default_policies, 1):
+        ozone_ranger_plugin_config['default-policy.{0}.name'.format(policy_index)] = policy_name
+        for resource_name, resource_value in policy_resources.items():
+          ozone_ranger_plugin_config['default-policy.{0}.resource.{1}'.format(policy_index, resource_name)] = resource_value
+        ozone_ranger_plugin_config['default-policy.{0}.policyItem.1.users'.format(policy_index)] = ','.join(policy_users)
+        ozone_ranger_plugin_config['default-policy.{0}.policyItem.1.accessTypes'.format(policy_index)] = policy_access
 
     # hbase_ranger_plugin_config['setup.additional.default.policies'] = "true"
     # hbase_ranger_plugin_config['default-policy.1.name'] = "Service Check User Policy for Hbase"
