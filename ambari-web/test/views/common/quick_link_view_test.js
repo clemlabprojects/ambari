@@ -180,6 +180,13 @@ describe('App.QuickViewLinks', function () {
         urlParams: ''
       });
     });
+    it("shows no links when no quick-link component is installed", function () {
+      App.HostComponent.find.returns([]);
+      quickViewLinks.set('showNoLinks', false);
+      quickViewLinks.getQuickLinksHosts();
+      expect(testHelpers.findAjaxRequest('name', 'hosts.for_quick_links')).to.not.exist;
+      expect(quickViewLinks.get('showNoLinks')).to.be.true;
+    });
     it("call $.ajax, HBASE service", function () {
       quickViewLinks.set('content.serviceName', 'HBASE');
       quickViewLinks.getQuickLinksHosts();

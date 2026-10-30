@@ -204,6 +204,8 @@ App.QuickLinksView = Em.View.extend({
       }).mapProperty('hostName').uniq();
 
     if (hosts.length === 0) {
+      // none of the quick-link components is installed (e.g. Hive without HiveServer2): no links, no spinner
+      this.set('showNoLinks', true);
       return $.Deferred().reject().promise();
     }
 
