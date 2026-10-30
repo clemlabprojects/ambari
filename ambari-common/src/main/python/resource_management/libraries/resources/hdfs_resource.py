@@ -76,7 +76,15 @@ class HdfsResource(Resource):
   user = ResourceArgument()
   hadoop_bin_dir = ResourceArgument()
   hadoop_conf_dir = ResourceArgument()
-  
+
+  """
+  Path to the 'ozone' launcher, for clusters whose default filesystem is Ozone without HDFS:
+  the Hadoop client then has no ofs:// filesystem, so the resources are managed on the
+  Ozone client classpath instead of with 'hadoop jar'. java_home is the JDK used to run it.
+  """
+  ozone_cmd = ResourceArgument()
+  java_home = ResourceArgument()
+
   """
   Path to file which contains '\n'-separated list of hdfs resources, which should not
   be managed. (simply any action to be skipped on it)

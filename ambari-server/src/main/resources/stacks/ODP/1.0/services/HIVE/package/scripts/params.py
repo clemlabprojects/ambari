@@ -646,6 +646,10 @@ default_fs = config['configurations']['core-site']['fs.defaultFS']
 
 dfs_type = default("/clusterLevelParams/dfs_type", "")
 
+# Without HDFS the Hadoop client has no ofs:// filesystem: HdfsResource runs on the Ozone client
+# classpath, with the primary JDK the Ozone client runs on
+hdfs_resource_ozone_cmd = ozone_cmd if not has_namenode and urlparse(default_fs).scheme in ("ofs", "o3fs") else None
+
 import functools
 #create partial functions with common arguments for every HdfsResource call
 #to create hdfs directory we need to call params.HdfsResource in code
@@ -662,7 +666,9 @@ HdfsResource = functools.partial(
   hdfs_site = hdfs_site,
   default_fs = default_fs,
   immutable_paths = get_not_managed_resources(),
-  dfs_type = dfs_type
+  dfs_type = dfs_type,
+  ozone_cmd = hdfs_resource_ozone_cmd,
+  java_home = config['ambariLevelParams']['java_home']
  )
 
 
