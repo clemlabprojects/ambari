@@ -329,9 +329,9 @@
   </property>
   <property>
     <name>ranger-polaris-plugin-enabled</name>
-    <value>No</value>
+    <value>Yes</value>
     <display-name>Polaris Ranger Plugin</display-name>
-    <description>Enable Polaris Ranger plugin</description>
+    <description>Enable Polaris Ranger plugin (on by default for new installs; existing clusters keep their value)</description>
     <value-attributes>
       <overridable>false</overridable>
       <type>value-list</type>
