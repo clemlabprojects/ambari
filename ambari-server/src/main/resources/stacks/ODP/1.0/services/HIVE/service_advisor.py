@@ -174,13 +174,32 @@ class HiveServiceAdvisor(service_advisor.ServiceAdvisor):
       "HIVE_METASTORE": {6: 1, 31: 2, "else": 4}
     })
 
+  def getHostsForMasterComponent(self, services, hosts, component, hostsList):
+    # A Metastore-only Hive (no YARN or Tez) gets no HiveServer2, unless it was placed explicitly
+    if component["StackServiceComponents"]["component_name"] == "HIVE_SERVER" \
+        and not self.isComponentHostsPopulated(component) \
+        and not {"YARN", "TEZ"}.issubset(self.get_services_list(services)):
+      return []
+    return super(HiveServiceAdvisor, self).getHostsForMasterComponent(services, hosts, component, hostsList)
+
   def getServiceComponentLayoutValidations(self, services, hosts):
     """
     Get a list of errors.
     Must be overriden in child class.
     """
 
-    return self.getServiceComponentCardinalityValidations(services, hosts, "HIVE")
+    items = self.getServiceComponentCardinalityValidations(services, hosts, "HIVE")
+
+    # YARN and Tez are not required by a Metastore-only Hive, only by HiveServer2
+    installed_services = self.get_services_list(services)
+    missing_services = [s for s in ("YARN", "TEZ") if s not in installed_services]
+    if missing_services:
+      for component in ("HIVE_SERVER", "HIVE_SERVER_INTERACTIVE"):
+        if self.getHostsWithComponent("HIVE", component, services, hosts):
+          items.append({"type": 'host-component', "level": 'ERROR', "component-name": component,
+                        "message": "{0} requires the {1} service(s). Add them, or remove {0} to deploy a "
+                                   "Metastore-only Hive.".format(component, " and ".join(missing_services))})
+    return items
 
   def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
     """

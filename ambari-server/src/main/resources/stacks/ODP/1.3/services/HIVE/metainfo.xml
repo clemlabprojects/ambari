@@ -28,7 +28,16 @@
         </component>
         <component>
           <name>HIVE_SERVER</name>
+          <!-- Optional: a Metastore-only Hive (Iceberg catalog) has no HiveServer2 -->
+          <cardinality>0+</cardinality>
           <javaHomeSelector>secondary_java_home</javaHomeSelector>
+          <dependencies>
+            <!-- HiveServer2 runs its queries on YARN; the Metastore alone does not need it -->
+            <dependency>
+              <name>YARN/RESOURCEMANAGER</name>
+              <scope>cluster</scope>
+            </dependency>
+          </dependencies>
           <commandScript>
             <script>scripts/hive_server.py</script>
             <scriptType>PYTHON</scriptType>
@@ -39,12 +48,24 @@
         <component>
           <name>HIVE_SERVER_INTERACTIVE</name>
           <javaHomeSelector>secondary_java_home</javaHomeSelector>
+          <dependencies>
+            <!-- HiveServer2 runs its queries on YARN; the Metastore alone does not need it -->
+            <dependency>
+              <name>YARN/RESOURCEMANAGER</name>
+              <scope>cluster</scope>
+            </dependency>
+          </dependencies>
         </component>
         <component>
           <name>HIVE_CLIENT</name>
           <javaHomeSelector>secondary_java_home</javaHomeSelector>
         </component>
       </components>
+      <!-- YARN and Tez are required by HiveServer2 only (component dependencies and service advisor) -->
+      <requiredServices>
+        <service>CORE</service>
+        <service>ZOOKEEPER</service>
+      </requiredServices>
     </service>
   </services>
 </metainfo>
