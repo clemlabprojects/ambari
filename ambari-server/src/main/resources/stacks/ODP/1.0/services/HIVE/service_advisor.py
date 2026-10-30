@@ -265,6 +265,21 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     self.HIVE_INTERACTIVE_SITE = "hive-interactive-site"
 
 
+  def getHiveOzoneScratchDir(self, configurations, services):
+    """
+    Ozone's /tmp is a volume of per-user buckets that Ranger cannot keep apart: with the warehouse in Ozone,
+    the Hive scratch directory moves from the /tmp/hive default into the Hive home bucket, covered by the
+    Hive Ozone policies. None when Hive is not on Ozone or the scratch directory was chosen by the user.
+    """
+    if self.getSelectedFilesystemType(configurations, services, "hive-env", "hive_filesystem_type") != "OZONE":
+      return None
+    scratchdir = self.getConfigProperty(configurations, services, "hive-site", "hive.exec.scratchdir", "/tmp/hive")
+    if self.extractPathSuffix(scratchdir) != "/tmp/hive":
+      return None
+    hive_user = self.getConfigProperty(configurations, services, "hive-env", "hive_user", "hive")
+    return self.buildPathForServiceFilesystem(configurations, services, "hive-env", "hive_filesystem_type",
+                                              "/user/{0}/scratch".format(hive_user))
+
   def recommendHiveConfigurationsFromHDP30(self, configurations, clusterData, services, hosts):
     hiveSiteProperties = self.getSiteProperties(services["configurations"], "hive-site")
     hiveEnvProperties = self.getSiteProperties(services["configurations"], "hive-env")
@@ -325,6 +340,10 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
           property_name,
           self.buildPathForServiceFilesystem(configurations, services, "hive-env", "hive_filesystem_type", default_value)
         )
+
+    hive_ozone_scratchdir = self.getHiveOzoneScratchDir(configurations, services)
+    if hive_ozone_scratchdir:
+      putHiveSiteProperty("hive.exec.scratchdir", hive_ozone_scratchdir)
 
     containerSize = clusterData["mapMemory"] if clusterData["mapMemory"] > 2048 else int(clusterData["reduceMemory"])
     containerSize = min(clusterData["containers"] * clusterData["ramPerContainer"], containerSize)
@@ -933,6 +952,10 @@ class HiveValidator(service_advisor.ServiceAdvisor):
         problem = self.getOzonePathProblem(properties.get(prop_name), default_fs)
         if problem:
           validationItems.append({"config-name": prop_name, "item": self.getWarnItem(problem)})
+      if self.isOzoneTmpPath(properties.get("hive.exec.scratchdir"), default_fs):
+        validationItems.append({"config-name": "hive.exec.scratchdir", "item": self.getWarnItem(
+          "Ozone's /tmp needs a volume open to all users. Keep the Hive scratch directory in a Hive bucket, "
+          "for example /user/{0}/scratch.".format(self.getConfigProperty(configurations, services, "hive-env", "hive_user", "hive")))})
 
     return self.toConfigurationValidationProblems(validationItems, "hive-site")
 

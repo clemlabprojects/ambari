@@ -425,6 +425,12 @@ class ServiceAdvisor(DefaultStackAdvisor):
                "starting and ending with a letter or a digit".format(name, path, kind)
     return None
 
+  def isOzoneTmpPath(self, path, default_fs):
+    """True for a path in Ozone's /tmp mount (ofs://<om>/tmp/..., or /tmp/... on an ofs default filesystem)."""
+    path = str(path or "").strip()
+    scheme = (path if "://" in path else str(default_fs or "")).split("://")[0]
+    return scheme == "ofs" and self.extractPathSuffix(path or "/").startswith("/tmp/")
+
   def getOzoneDefaultFs(self, services, configurations):
     """
     Build a stable Ozone filesystem URI from service configs.

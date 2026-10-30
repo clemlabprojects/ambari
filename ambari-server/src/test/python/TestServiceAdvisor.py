@@ -153,6 +153,12 @@ class TestServiceAdvisor(TestCase):
     self.assertIn("not a valid Ozone bucket name", problem("/warehouse/Table_Space/managed", "ofs://omservice"))
     self.assertIn("not a valid Ozone volume name", problem("/wh/tablespace/managed", "ofs://omservice"))
 
+  def test_isOzoneTmpPath(self):
+    self.assertTrue(self.serviceAdvisor.isOzoneTmpPath("/tmp/hive", "ofs://omservice"))
+    self.assertTrue(self.serviceAdvisor.isOzoneTmpPath("ofs://omservice/tmp/hive", "hdfs://nn:8020"))
+    self.assertFalse(self.serviceAdvisor.isOzoneTmpPath("/user/hive/scratch", "ofs://omservice"))
+    self.assertFalse(self.serviceAdvisor.isOzoneTmpPath("/tmp/hive", "hdfs://nn:8020"))
+
   def test_getServiceDefaultFsForExternal(self):
     services = {
       "services": [{"StackServices": {"service_name": "YARN"}}],

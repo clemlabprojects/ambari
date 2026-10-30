@@ -91,6 +91,28 @@ class TestOdpHiveServiceAdvisor(TestCase):
 
     self.assertEqual(1, len(advisor.getHostsForMasterComponent(services, self.hosts, hive_server, ["h1", "h2"])))
 
+  def scratchdir_services(self, service_names, hive_filesystem_type, scratchdir):
+    services = self.services(service_names, {"HIVE_METASTORE": ["h1"]})
+    services["configurations"] = {
+      "core-env": {"properties": {"core_filesystem_type": hive_filesystem_type}},
+      "hive-env": {"properties": {"hive_filesystem_type": hive_filesystem_type, "hive_user": "hive"}},
+      "hive-site": {"properties": {"hive.exec.scratchdir": scratchdir}},
+      "ozone-site": {"properties": {"ozone.om.service.ids": "omservice"}},
+    }
+    return services
+
+  def test_scratchdir_moves_from_ozone_tmp_into_the_hive_bucket(self):
+    recommender = self.service_advisor_impl.HiveRecommender()
+    services = self.scratchdir_services(["CORE", "ZOOKEEPER", "OZONE"], "OZONE", "/tmp/hive")
+    self.assertEqual("/user/hive/scratch", recommender.getHiveOzoneScratchDir({}, services))
+
+  def test_scratchdir_chosen_by_the_user_or_on_hdfs_is_kept(self):
+    recommender = self.service_advisor_impl.HiveRecommender()
+    services = self.scratchdir_services(["CORE", "ZOOKEEPER", "OZONE"], "OZONE", "/warehouse/tablespace/scratch")
+    self.assertIsNone(recommender.getHiveOzoneScratchDir({}, services))
+    services = self.scratchdir_services(["CORE", "ZOOKEEPER", "HDFS"], "HDFS", "/tmp/hive")
+    self.assertIsNone(recommender.getHiveOzoneScratchDir({}, services))
+
   def test_hiveserver2_with_yarn_and_tez_is_valid(self):
     services = self.services(["CORE", "ZOOKEEPER", "HDFS", "YARN", "TEZ"],
                              {"HIVE_METASTORE": ["h1"], "HIVE_SERVER": ["h2"], "HIVE_CLIENT": ["h1", "h2"]})

@@ -85,7 +85,8 @@ def hive_ozone_buckets(paths, default_fs):
     bucket = None
     if scheme == "ofs":
       parts = [part for part in url.path.split("/") if part]
-      if len(parts) >= 2:
+      # ofs://<om>/tmp is the per-user tmp mount (bucket names derived from the user): not a Hive bucket
+      if len(parts) >= 2 and parts[0] != "tmp":
         bucket = (parts[0], parts[1])
     elif scheme == "o3fs":
       host_parts = netloc.split(":")[0].split(".")

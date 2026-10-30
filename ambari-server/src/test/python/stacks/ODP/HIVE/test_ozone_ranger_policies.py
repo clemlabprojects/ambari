@@ -81,6 +81,10 @@ class TestHiveOzoneBuckets(unittest.TestCase):
     self.assertEqual([("warehouse", "tablespace")], ozone_ranger.hive_ozone_buckets(
       ["o3fs://tablespace.warehouse.omservice/managed/hive", "/external/hive"], "o3fs://tablespace.warehouse.omservice"))
 
+  def test_the_per_user_tmp_mount_is_not_a_hive_bucket(self):
+    self.assertEqual([("user", "hive")], ozone_ranger.hive_ozone_buckets(
+      ["/tmp/hive", "ofs://omservice/tmp/hive", "/user/hive/scratch"], "ofs://omservice"))
+
   def test_paths_outside_ozone_or_above_the_bucket_level_are_skipped(self):
     self.assertEqual([], ozone_ranger.hive_ozone_buckets(
       ["/warehouse/tablespace/managed/hive", "s3a://bucket/hive", "ofs://omservice/warehouse", None],

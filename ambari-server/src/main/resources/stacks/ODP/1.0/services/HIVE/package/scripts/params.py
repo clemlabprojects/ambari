@@ -660,7 +660,7 @@ hdfs_resource_ozone_cmd = ozone_cmd if not has_namenode and urlparse(default_fs)
 hive_ozone_ranger_enabled = has_ozone_manager and \
   str(default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")).strip().lower() == "yes"
 hive_ozone_ranger_buckets = hive_ozone_buckets(
-  [hive_metastore_warehouse_dir, hive_metastore_warehouse_external_dir, hive_hdfs_user_dir], default_fs)
+  [hive_metastore_warehouse_dir, hive_metastore_warehouse_external_dir, hive_hdfs_user_dir, hive_exec_scratchdir], default_fs)
 hive_ozone_ranger_url = str(default("/configurations/admin-properties/policymgr_external_url", "") or "").strip().rstrip("/")
 hive_ozone_ranger_service = str(default("/configurations/ranger-ozone-security/ranger.plugin.ozone.service.name", "") or "").strip()
 if not hive_ozone_ranger_service or hive_ozone_ranger_service == "{{repo_name}}":
