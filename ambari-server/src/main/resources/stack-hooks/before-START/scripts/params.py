@@ -95,7 +95,9 @@ java_exec = "{0}/bin/java".format(java_home) if java_home is not None else "/bin
 #users and groups
 has_hadoop_env = 'hadoop-env' in config['configurations']
 mapred_user = config['configurations']['mapred-env']['mapred_user']
-hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
+# Clusters without HDFS (Ozone as default filesystem) have no hadoop-env: the Hadoop client
+# files the hooks write (core-site.xml, ...) are then owned by root.
+hdfs_user = config['configurations']['hadoop-env']['hdfs_user'] if has_hadoop_env else 'root'
 yarn_user = config['configurations']['yarn-env']['yarn_user']
 
 user_group = config['configurations']['cluster-env']['user_group']

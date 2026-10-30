@@ -36,7 +36,7 @@ def setup_hadoop():
   )
 
   #directories
-  if params.has_namenode or params.dfs_type == 'HCFS':
+  if params.has_namenode or (params.dfs_type == 'HCFS' and params.has_hadoop_env):
     Directory(params.hdfs_log_dir_prefix,
               create_parents = True,
               owner='root',
@@ -135,7 +135,7 @@ def setup_configs():
   """
   import params
 
-  if params.has_namenode or params.dfs_type == 'HCFS':
+  if params.has_namenode or (params.dfs_type == 'HCFS' and params.has_hadoop_env):
     if os.path.exists(params.hadoop_conf_dir):
       File(params.task_log4j_properties_location,
            content=StaticFile("task-log4j.properties"),
