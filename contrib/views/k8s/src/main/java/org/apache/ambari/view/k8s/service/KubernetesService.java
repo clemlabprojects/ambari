@@ -4779,6 +4779,17 @@ public class KubernetesService {
     }
 
     /**
+     * Why the last OpenShift username/password login of this connection failed, or {@code null} when it did not or
+     * the connection is not such a login: what the operator needs after a save that could not connect (an
+     * unreachable OAuth server, a refused password, a certificate).
+     */
+    public synchronized String lastOpenShiftLoginFailure() {
+        OpenShiftLoginProvider provider = configurationService == null ? null
+                : configurationService.getOpenShiftLoginProvider();
+        return provider == null ? null : provider.getLastFailure();
+    }
+
+    /**
      * Builds the client from the currently saved configuration if there is none yet.
      *
      * @return {@code true} when a client exists afterwards

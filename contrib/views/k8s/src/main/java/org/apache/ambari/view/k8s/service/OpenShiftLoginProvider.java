@@ -115,7 +115,7 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
             try {
                 mint();
             } catch (Exception e) {
-                lastFailure = e.getMessage();
+                lastFailure = failureOf(e);
                 LOG.error("Failed to obtain an OpenShift token for user '{}' at {}: {}", username, apiUrl, e.toString());
             }
             return token;
@@ -136,7 +136,7 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
             try {
                 mint();
             } catch (Exception e) {
-                lastFailure = e.getMessage();
+                lastFailure = failureOf(e);
                 LOG.error("Failed to refresh OpenShift token: {}", e.toString());
             }
             return token;
@@ -322,6 +322,31 @@ public class OpenShiftLoginProvider implements OAuthTokenProvider {
             }
         }
         return false;
+    }
+
+    /**
+     * Why a login failed, for the operator. A server that cannot be reached often fails without a message (the
+     * HTTP client's ConnectException has none), so its cause is named instead of leaving the reason blank.
+     */
+    private String failureOf(Exception e) {
+        if (e.getMessage() != null && !e.getMessage().isBlank()) {
+            return e.getMessage();
+        }
+        // The first exception of the chain that says something, else the outermost one: the innermost of a refused
+        // connection is a ClosedChannelException, which says less than the ConnectException around it.
+        String what = e.getClass().getSimpleName();
+        boolean io = false;
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            io |= t instanceof java.io.IOException;
+            if (t.getMessage() != null && !t.getMessage().isBlank() && what.equals(e.getClass().getSimpleName())) {
+                what = t.getClass().getSimpleName() + ": " + t.getMessage();
+            }
+        }
+        if (!io) {
+            return "The OpenShift login failed (" + what + ").";
+        }
+        return "Could not reach the OpenShift API or OAuth server from the Ambari server (" + what + "). Check that "
+                + "the Ambari server reaches " + apiUrl + " and the OAuth server it names.";
     }
 
     private static String rootMessage(Throwable e) {

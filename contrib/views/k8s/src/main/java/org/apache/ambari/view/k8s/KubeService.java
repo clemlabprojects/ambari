@@ -500,10 +500,14 @@ public class KubeService {
                     .entity(Collections.singletonMap("error", e.getMessage())).build();
         }
         try {
-            boolean ok = kubernetesService(cluster).forceReloadClient();
-            if (!ok) {
-                return Response.status(502)
-                        .entity(Collections.singletonMap("error", "Saved, but could not connect — check URL/credentials and that the cluster allows password login (oc login -u -p).")).build();
+            KubernetesService service = kubernetesService(cluster);
+            if (!service.forceReloadClient()) {
+                // The reason of the login that was just made: the hint alone sent operators to oc login, which tells
+                // them no more when the OAuth server is out of reach.
+                String why = service.lastOpenShiftLoginFailure();
+                return Response.status(502).entity(Collections.singletonMap("error", why != null && !why.isBlank()
+                        ? "Saved, but could not connect: " + why
+                        : "Saved, but could not connect — check URL/credentials and that the cluster allows password login (oc login -u -p).")).build();
             }
         } catch (Exception e) {
             LOG.warn("/cluster/openshift-login: client reload failed: {}", e.toString());

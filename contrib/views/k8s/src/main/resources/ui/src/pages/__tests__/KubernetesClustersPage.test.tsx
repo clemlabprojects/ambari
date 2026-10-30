@@ -27,11 +27,13 @@ jest.mock('../../api/client', () => ({
   getClusterKubeconfigContexts: jest.fn(),
   selectClusterKubeconfigContext: jest.fn(),
   saveClusterOpenShiftLogin: jest.fn(),
+  testOpenShiftLogin: jest.fn(),
   connectClusterWithInClusterServiceAccount: jest.fn(),
 }));
 
 import {
-  getNamedClusterLiveness, listKubernetesClusters, removeKubernetesCluster, saveKubernetesCluster,
+  getNamedClusterLiveness, listKubernetesClusters, removeKubernetesCluster, saveClusterOpenShiftLogin,
+  saveKubernetesCluster, testOpenShiftLogin,
 } from '../../api/client';
 import { PermissionsContext } from '../../context/PermissionsContext';
 import KubernetesClustersPage, { CLUSTER_ID, connectionLabel } from '../KubernetesClustersPage';
@@ -123,6 +125,44 @@ describe('KubernetesClustersPage', () => {
 
     expect(await screen.findByText('Production was not removed')).toBeTruthy();
     expect(screen.getByText(/KDPS still has releases on the cluster 'prod': analytics\/trino/)).toBeTruthy();
+  });
+
+  /** Fills the OpenShift login of the Development cluster, which has no connection yet. */
+  const fillOpenShiftLogin = async () => {
+    (getNamedClusterLiveness as jest.Mock).mockResolvedValue({ state: 'CONNECTED', message: '' });
+    page(true);
+    await user.click(within(await row('Development')).getByRole('button', { name: 'Connection' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Connection of Development' });
+    await user.click(within(dialog).getByText('OpenShift login'));
+    await user.type(within(dialog).getByLabelText('API server'), 'https://api.dev.example.com:6443');
+    await user.type(within(dialog).getByLabelText('User'), 'kdps-deployer');
+    await user.type(within(dialog).getByLabelText('Password'), 's3cret');
+    await user.click(within(dialog).getByText(/Do not verify the API server's certificate/));
+    await user.click(within(dialog).getByRole('button', { name: /Test and save the login/ }));
+    return dialog;
+  };
+
+  it('tries the OpenShift login before saving it, and keeps why it failed in the dialog', async () => {
+    const why = 'Could not reach the OpenShift API or OAuth server from the Ambari server (ConnectException).';
+    (testOpenShiftLogin as jest.Mock).mockResolvedValue({ ok: false, error: why });
+
+    const dialog = await fillOpenShiftLogin();
+
+    expect(await within(dialog).findByText('The login did not work; nothing was saved')).toBeTruthy();
+    expect(within(dialog).getByText(why)).toBeTruthy();
+    expect(testOpenShiftLogin).toHaveBeenCalledWith({ apiUrl: 'https://api.dev.example.com:6443',
+      username: 'kdps-deployer', password: 's3cret', caData: undefined, insecure: true });
+    expect(saveClusterOpenShiftLogin).not.toHaveBeenCalled();
+  });
+
+  it('saves an OpenShift login that worked', async () => {
+    (testOpenShiftLogin as jest.Mock).mockResolvedValue({ ok: true, message: 'Authenticated to OpenShift as kdps-deployer.' });
+    (saveClusterOpenShiftLogin as jest.Mock).mockResolvedValue({ message: 'OpenShift login configured for kdps-deployer' });
+
+    await fillOpenShiftLogin();
+
+    await waitFor(() => expect(saveClusterOpenShiftLogin).toHaveBeenCalledWith('dev', { apiUrl:
+      'https://api.dev.example.com:6443', username: 'kdps-deployer', password: 's3cret', caData: undefined, insecure: true }));
   });
 
   it('names the connection and takes only usable identifiers', () => {

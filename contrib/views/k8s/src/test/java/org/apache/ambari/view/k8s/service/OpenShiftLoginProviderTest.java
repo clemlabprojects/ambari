@@ -110,6 +110,21 @@ class OpenShiftLoginProviderTest {
     }
 
     @Test
+    void aServerOutOfReachIsNamedInTheFailureRatherThanLeftBlank() throws Exception {
+        int closed;
+        try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
+            closed = socket.getLocalPort();
+        }
+        OpenShiftLoginProvider provider =
+                new OpenShiftLoginProvider("https://127.0.0.1:" + closed, "kdps", "s3cret", "", true);
+
+        assertNull(provider.refresh());
+        String why = provider.getLastFailure();
+        assertNotNull(why);
+        assertTrue(why.contains("ConnectException") || why.contains("Connection refused"), why);
+    }
+
+    @Test
     void skipTlsVerificationIsHonouredOnlyWhenTicked() throws Exception {
         openShift();
         OpenShiftLoginProvider provider = new OpenShiftLoginProvider(server.ipUrl(), "kdps", "s3cret", "", true);

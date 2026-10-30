@@ -23,7 +23,7 @@ import { ClusterOutlined, DeleteOutlined, EditOutlined, LinkOutlined, PlusOutlin
 import {
   connectClusterWithInClusterServiceAccount, getClusterKubeconfigContexts, getNamedClusterLiveness, listKubernetesClusters,
   removeKubernetesCluster, saveClusterOpenShiftLogin, saveKubernetesCluster, selectClusterKubeconfigContext,
-  uploadClusterKubeconfig, type ClusterLiveness, type KubeconfigContext, type KubernetesCluster,
+  testOpenShiftLogin, uploadClusterKubeconfig, type ClusterLiveness, type KubeconfigContext, type KubernetesCluster,
 } from '../api/client';
 import { usePermissions } from '../hooks/usePermissions';
 import { useViewedCluster } from '../context/ViewedClusterContext';
@@ -64,12 +64,15 @@ const ConnectionModal: React.FC<{ cluster: KubernetesCluster | null; onClose: (s
   const [mode, setMode] = React.useState<ConnectionMode>('kubeconfig');
   const [busy, setBusy] = React.useState(false);
   const [contexts, setContexts] = React.useState<KubeconfigContext[]>([]);
+  // Why the OpenShift login failed, kept in the dialog: the reason is often longer than a toast stays.
+  const [loginError, setLoginError] = React.useState<string | null>(null);
   const [form] = Form.useForm();
 
   React.useEffect(() => {
     if (!cluster) return;
     setMode((cluster.authMode as ConnectionMode) || 'kubeconfig');
     setContexts([]);
+    setLoginError(null);
     form.resetFields();
   }, [cluster, form]);
 
@@ -104,11 +107,28 @@ const ConnectionModal: React.FC<{ cluster: KubernetesCluster | null; onClose: (s
     }
   };
 
+  // The login is tried before it is saved, as on the Cluster settings page: a failure then says why (an OAuth server
+  // out of reach, a refused password, a certificate) and nothing is saved.
   const saveOpenShift = async () => {
     const v = await form.validateFields();
-    await run(() => saveClusterOpenShiftLogin(cluster.id, {
+    const login = {
       apiUrl: v.apiUrl, username: v.username, password: v.password, caData: v.caData || undefined, insecure: !!v.insecure,
-    }));
+    };
+    setLoginError(null);
+    setBusy(true);
+    let tested: { ok: boolean; error?: string };
+    try {
+      tested = await testOpenShiftLogin(login);
+    } catch (e) {
+      tested = { ok: false, error: serverMessage(e) };
+    }
+    if (!tested.ok) {
+      setLoginError(tested.error || 'The OpenShift login failed.');
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    await run(() => saveClusterOpenShiftLogin(cluster.id, login));
   };
 
   return (
@@ -165,7 +185,11 @@ const ConnectionModal: React.FC<{ cluster: KubernetesCluster | null; onClose: (s
               })]}>
               <Checkbox>Do not verify the API server's certificate (shown on the cluster)</Checkbox>
             </Form.Item>
-            <Button type="primary" loading={busy} onClick={saveOpenShift}>Save the login</Button>
+            {loginError && (
+              <Alert type="error" showIcon style={{ marginBottom: 12 }} message="The login did not work; nothing was saved"
+                description={loginError} />
+            )}
+            <Button type="primary" loading={busy} onClick={saveOpenShift}>Test and save the login</Button>
           </Form>
         )}
 

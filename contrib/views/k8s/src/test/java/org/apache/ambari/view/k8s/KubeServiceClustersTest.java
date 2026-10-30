@@ -258,6 +258,24 @@ class KubeServiceClustersTest {
   }
 
   @Test
+  void anOpenShiftLoginThatCannotConnectSaysWhyRatherThanPointingToOcLogin() throws Exception {
+    addProd();
+    int closed;
+    try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
+      closed = socket.getLocalPort();
+    }
+
+    Response answer = api("lead").saveClusterOpenShiftLogin(null, "prod", Map.of("apiUrl",
+        "https://127.0.0.1:" + closed, "username", "kdps", "password", "secret", "insecure", "true"));
+
+    assertEquals(502, answer.getStatus());
+    String error = String.valueOf(((Map<?, ?>) answer.getEntity()).get("error"));
+    assertTrue(error.startsWith("Saved, but could not connect: "), error);
+    assertTrue(error.contains("Connect"), error);
+    assertFalse(error.contains("oc login"), error);
+  }
+
+  @Test
   void aClusterWithReleasesCannotBeRemoved() throws Exception {
     addProd();
     uploadToProd();
