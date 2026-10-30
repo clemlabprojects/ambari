@@ -239,9 +239,17 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     }
   };
 
+  // Whether the operator opened or closed an operation since the modal opened: from then on nothing is opened for them.
+  const operatorChoseRef = React.useRef(false);
+  // Whether the watched operation was opened once it ended with something to read.
+  const endOpenedRef = React.useRef(false);
+
   useEffect(() => {
     if (open) {
-      setSelectedId(watchCommandId || null);
+      // Nothing is open at first: an operation's steps and logs are read once the operator opens it.
+      setSelectedId(null);
+      operatorChoseRef.current = false;
+      endOpenedRef.current = false;
       setSelectedStatus(null);
       setStepMap({});
       loadPage(true);
@@ -386,21 +394,17 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     if (!logStateRef.current[record.id]?.content) void loadLogs(record.id, true);
   };
 
+  // The watched operation opens once, when it ended with something to read (a change waiting for a merge, where to read
+  // a generated password): the reason the modal stays open. Never while it runs, and never once the operator opened or
+  // closed an operation: the 2s refresh must not take them away from the one they are reading.
   useEffect(() => {
-    if (!open || !watchCommandId) return;
-    const watchedCommandRow = commands.find((row) => row.id === watchCommandId);
-    if (!watchedCommandRow) return;
-    if (selectedId === watchedCommandRow.id) return;
-    // Auto-select the watched command so the operator sees its steps + logs without extra clicks.
-    void selectOperation(watchedCommandRow);
+    if (!open || !watchCommandId || endOpenedRef.current || operatorChoseRef.current) return;
+    const watched = commands.find((row) => row.id === watchCommandId);
+    if (!watched || !isTerminal(watched)) return;
+    if (!waitingForMerge(watched) && operationNotices(watched).length === 0) return;
+    endOpenedRef.current = true;
+    if (selectedIdRef.current !== watched.id) void selectOperation(watched);
   }, [open, watchCommandId, commands]);
-
-  // When nothing is watched, auto-select the most recent operation so the detail panel + logs are
-  // shown by default instead of an empty pane.
-  useEffect(() => {
-    if (!open || selectedId || commands.length === 0) return;
-    void selectOperation(commands[0]);
-  }, [open, commands, selectedId]);
 
   // (The Logs panel shows the operation's aggregate root log directly — no per-step auto-selection.)
 
@@ -461,6 +465,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
   // Accordion toggle: opening a panel loads its steps + logs; closing clears the selection so the
   // 2s poller stops tailing it.
   const onAccordionChange = (key: string | string[]) => {
+    operatorChoseRef.current = true;
     const id = Array.isArray(key) ? key[0] : key;
     if (!id) {
       setSelectedId(null);
@@ -615,6 +620,10 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
                   </Typography.Text>
                   {op.state === 'SUCCEEDED' && waitingForMerge(op) && (
                     <Tag color="gold" style={{ margin: 0, flexShrink: 0 }}>WAITING FOR MERGE</Tag>
+                  )}
+                  {/* Notices are read in the operation's body, which stays closed until opened. */}
+                  {operationNotices(op).length > 0 && (
+                    <Tag color="gold" style={{ margin: 0, flexShrink: 0 }}>NOTICE</Tag>
                   )}
                   {/* Fixed columns, so the state, progress, time and action line up from one operation to the next
                       whether or not it has an action. */}

@@ -155,12 +155,51 @@ describe('BackgroundOperationsModal', () => {
 
     render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={committed.id} />);
 
+    // A running operation is not opened for the operator: they open it.
+    await userEvent.click(await screen.findByText('Install release trino with GitOps'));
     await screen.findByText('Committed to Git');
     expect(screen.getByText('Commit 3f0c9a52e7d1 · Branch main · Pull request (merged)')).toBeTruthy();
     expect(screen.getByText('Open the pull request').closest('a')?.getAttribute('href'))
       .toBe('https://git.example.org/platform/gitops/pulls/7');
     expect(screen.queryByText('Committed to Git, not applied yet')).toBeNull();
   }, 10000);
+
+  const running = (id: string, title: string) => ({ id, state: 'RUNNING', percent: 30, step: 0, message: title,
+    type: 'K8S_MANAGER_RELEASE_DEPLOY', hasChildren: true, createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString() }) as any;
+
+  it('opens no operation by itself, the running one it watches included', async () => {
+    const deploy = running('cmd-run', 'Install release trino with GitOps');
+    (listCommands as jest.Mock).mockResolvedValue([deploy]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(deploy);
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={deploy.id} />);
+
+    await screen.findByText('Install release trino with GitOps');
+    await act(async () => { await new Promise((r) => setTimeout(r, 2500)); });
+    expect(document.querySelector('.ant-collapse-item-active')).toBeNull();
+    expect(listChildCommands).not.toHaveBeenCalled();
+    expect(getCommandLogs).not.toHaveBeenCalled();
+  }, 10000);
+
+  it('keeps the operation the operator opened open across refreshes, while another one runs', async () => {
+    const deploy = running('cmd-run', 'Install release trino with GitOps');
+    const older = { ...gitOpsDeploy(), id: 'cmd-old', message: 'Install release superset' };
+    (listCommands as jest.Mock).mockResolvedValue([deploy, older]);
+    (getCommandStatus as jest.Mock).mockImplementation(async (id: string) => (id === deploy.id ? deploy : older));
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} watchCommandId={deploy.id} />);
+    await userEvent.click(await screen.findByText('Install release superset'));
+    await waitFor(() => expect(document.querySelector('.ant-collapse-item-active')?.textContent)
+      .toContain('Install release superset'));
+
+    await act(async () => { await new Promise((r) => setTimeout(r, 4500)); });
+
+    const active = document.querySelectorAll('.ant-collapse-item-active');
+    expect(active.length).toBe(1);
+    expect(active[0].textContent).toContain('Install release superset');
+    expect(listChildCommands).not.toHaveBeenCalledWith(deploy.id);
+  }, 15000);
 
   it('closes on a deploy that ended applied', async () => {
     const applied = gitOpsDeploy();
