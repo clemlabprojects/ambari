@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { oidcLoginWithoutProfile, unauthenticatedExposure } from '../unauthenticatedExposure';
+import { oidcLoginWithoutProfile, passwordLoginWithoutProfile, unauthenticatedExposure } from '../unauthenticatedExposure';
+import { applyFormDefaults } from '../chartValues';
 
 /**
  * Security profiles are opt-in, so a deploy without one publishes Trino with no authentication at all (any client
@@ -72,6 +73,31 @@ describe('unauthenticatedExposure', () => {
   it('does not warn for a service that declares no exposure risk', () => {
     const def = { ...TRINO, securityCoupling: { ...TRINO.securityCoupling, unauthenticatedExposure: undefined } };
     expect(unauthenticatedExposure(def, exposed(), PROFILES, NO_IDP as any)).toBeNull();
+  });
+
+  it('does not warn for Trino with its KDPS login, the default: Trino then asks every client for a password', () => {
+    const defaults: any = {};
+    applyFormDefaults(TRINO.form, defaults);
+    expect(defaults.kdps.serviceUser.enabled).toBe(true);
+    expect(passwordLoginWithoutProfile(TRINO, exposed(defaults))).toBe(true);
+    expect(unauthenticatedExposure(TRINO, exposed(defaults), PROFILES, NO_IDP as any)).toBeNull();
+  });
+
+  it('warns for Trino with its KDPS login turned off, or hidden with internal HTTPS off', () => {
+    const off = exposed({ tls: { https: { enabled: true } }, kdps: { serviceUser: { enabled: false } } });
+    expect(unauthenticatedExposure(TRINO, off, PROFILES, NO_IDP as any)).not.toBeNull();
+    const noHttps = exposed({ tls: { https: { enabled: false } }, kdps: { serviceUser: { enabled: true } } });
+    expect(passwordLoginWithoutProfile(TRINO, noHttps)).toBe(false);
+    expect(unauthenticatedExposure(TRINO, noHttps, PROFILES, NO_IDP as any)).not.toBeNull();
+  });
+
+  it('tells the operator the KDPS login and where its password is', () => {
+    const find = (fields: any[]): any => fields.reduce((hit: any, f: any) =>
+      hit || (f.name === 'kdps.serviceUser.enabled' ? f : f.type === 'group' ? find(f.fields || []) : undefined), undefined);
+    const help = find(TRINO.form).help;
+    expect(help).toContain('kdps is its only login');
+    expect(help).toContain('-kdps-service-user');
+    expect(help).toContain('(key password)');
   });
 
   it('does not guess the mode of a profile the wizard could not load', () => {

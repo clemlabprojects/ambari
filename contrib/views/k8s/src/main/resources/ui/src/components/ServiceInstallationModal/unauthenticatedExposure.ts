@@ -17,13 +17,16 @@
  */
 
 import type { ResolvedContext } from '../../api/client';
+import { getAtStr } from './bindings';
+import { conditionMet } from './requiredUnless';
+import type { FieldCondition } from './requiredUnless';
 
 /**
  * A service published outside the cluster without sign-in.
  *
  * Security profiles are opt-in: a deploy without one (or with a profile whose mode is "none") leaves the chart on its
- * own authentication, which for Trino is none at all (any client names the user it runs as), and for Superset and
- * OpenMetadata only their local accounts. That is fine inside the cluster, but once the Ingress (a Route on OpenShift)
+ * own authentication, which for Trino is none at all (any client names the user it runs as) unless its KDPS login is
+ * on, and for Superset and OpenMetadata only their local accounts. That is fine inside the cluster, but once the Ingress (a Route on OpenShift)
  * is on, anyone who reaches the address gets the same access. The wizard says so and deploys only once the operator
  * confirmed it. A service opts in with service.json `securityCoupling.unauthenticatedExposure`, the sentence saying
  * what that access is.
@@ -51,10 +54,35 @@ export function oidcLoginWithoutProfile(def: any, context: ResolvedContext | nul
   return text(context?.resolvedFields?.['oidc.clientRegistration']).toLowerCase() === 'true';
 }
 
+/** The form field named `name`, groups included. */
+const findField = (fields: any[] | undefined, name: string): any => {
+  for (const f of fields || []) {
+    if (f?.name === name) return f;
+    const inner = f?.type === 'group' ? findField(f.fields, name) : undefined;
+    if (inner) return inner;
+  }
+  return undefined;
+};
+
+/**
+ * Whether the service asks every client for a password even without a security profile: service.json
+ * `securityCoupling.passwordLoginField` names the switch that turns such a login on. Trino's KDPS login
+ * (`kdps.serviceUser.enabled`) is one: Trino then accepts password logins only, and without a profile its one login
+ * is kdps, an administrator whose password KDPS keeps in a Secret. The switch counts while it is on and shown: a field
+ * hidden by its `condition` is turned off.
+ */
+export function passwordLoginWithoutProfile(def: any, form: any): boolean {
+  const name = text(def?.securityCoupling?.passwordLoginField);
+  if (!name || getAtStr(form, name) !== true) return false;
+  const condition = findField(def?.form, name)?.condition as FieldCondition | undefined;
+  return conditionMet(condition, condition ? getAtStr(form, condition.field) : undefined);
+}
+
 /**
  * The warning for a deploy that publishes the service without sign-in, or null when there is nothing to warn about:
  * the service does not declare the risk, its Ingress is off, a security profile with an authentication mode is
- * selected, or the platform context signs users in through its identity provider anyway.
+ * selected, the platform context signs users in through its identity provider anyway, or the service asks for a
+ * password anyway (see passwordLoginWithoutProfile).
  *
  * @param def       the service definition (service.json)
  * @param form      the wizard's form values
@@ -74,6 +102,7 @@ export function unauthenticatedExposure(def: any, form: any, profiles: Record<st
     if (mode && mode !== 'none') return null;
   }
   if (oidcLoginWithoutProfile(def, context)) return null;
+  if (passwordLoginWithoutProfile(def, form)) return null;
 
   const label = text(def?.label) || 'This service';
   const host = text(form?.ingress?.host);

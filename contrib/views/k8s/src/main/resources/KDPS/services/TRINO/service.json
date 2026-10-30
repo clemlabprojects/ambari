@@ -3122,7 +3122,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Adds a dedicated Trino login for KDPS (a file password user beside your LDAP/OIDC/Kerberos setup) and grants it 'impersonate' in Ranger. The Catalogs action on the release then runs CREATE/DROP CATALOG as you, so Ranger decides what you may do. Needs chart 1.43.13 or later and 'Enable internal HTTPS' (Internal HTTPS, on by default): Trino only accepts password logins over HTTPS, so this option is hidden and turned off while internal HTTPS is off."
+          "help": "Adds a dedicated Trino login for KDPS (a file password user beside your LDAP/OIDC/Kerberos setup) and grants it 'impersonate' in Ranger. The Catalogs action on the release then runs CREATE/DROP CATALOG as you, so Ranger decides what you may do. Needs chart 1.43.13 or later and 'Enable internal HTTPS' (Internal HTTPS, on by default): Trino only accepts password logins over HTTPS, so this option is hidden and turned off while internal HTTPS is off. With it on, Trino asks every client for a password: without a security profile, kdps is its only login, an administrator. KDPS generates its password into the Secret ending in -kdps-service-user in the release namespace (key password)."
         },
         {
           "name": "customCatalogs.refs",
@@ -3231,6 +3231,7 @@
   ],
   "securityCoupling": {
     "requireIngress": true,
+    "passwordLoginField": "kdps.serviceUser.enabled",
     "unauthenticatedExposure": "Without sign-in Trino trusts the user name each client sends: anyone who reaches this address can run queries as any user, administrators included, and Ranger authorizes that name.",
     "minTlsMode": "signedByAmbariCA",
     "tlsProvisioning": "k8s-view"
