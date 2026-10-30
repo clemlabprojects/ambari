@@ -17,7 +17,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import service_advisor
+from importlib.machinery import SourceFileLoader
+import os
+import traceback
+
+# The stack advisor loads the services alphabetically: CORE comes first, before any other
+# service advisor has loaded the base module, so it is loaded here by path (as the others do)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+STACKS_DIR = os.path.join(SCRIPT_DIR, "../../../../")
+PARENT_FILE = os.path.join(STACKS_DIR, "service_advisor.py")
+try:
+  if "BASE_SERVICE_ADVISOR" in os.environ:
+    PARENT_FILE = os.environ["BASE_SERVICE_ADVISOR"]
+  with open(PARENT_FILE, "rb") as fp:
+    service_advisor = SourceFileLoader('service_advisor', PARENT_FILE).load_module()
+except Exception as e:
+  traceback.print_exc()
 
 
 class CoreServiceAdvisor(service_advisor.ServiceAdvisor):

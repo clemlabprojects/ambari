@@ -403,7 +403,8 @@ class ServiceAdvisor(DefaultStackAdvisor):
     if service_id:
       return "ofs://{0}".format(service_id)
 
-    return "ofs://omservice1"
+    # Before the Ozone recommendations ran: the OM service id the Ozone advisor sets by default
+    return "ofs://omservice"
 
   def getServiceDefaultFs(self, configurations, services, selectorConfigType, selectorPropertyName):
     """
