@@ -209,8 +209,7 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
         port = spark3_defaults.get("spark.history.ui.port", "18082")
       putSparkProperty("spark.yarn.historyServer.address", f"{sjh_hosts[0]}:{port}")
 
-    preferred_fs_type = self.getCoreFilesystemType(configurations, services)
-    spark3_fs_type = self.getConfigProperty(configurations, services, "spark3-env", "spark3_filesystem_type", preferred_fs_type)
+    spark3_fs_type = self.getSelectedFilesystemType(configurations, services, "spark3-env", "spark3_filesystem_type")
     putSparkEnvProperty("spark3_filesystem_type", spark3_fs_type)
 
     spark_queue = self.recommendYarnQueue(services, "spark3-defaults", "spark.yarn.queue")
@@ -426,7 +425,7 @@ class Spark3Validator(service_advisor.ServiceAdvisor):
 
   def validateSpark3DefaultsFromHDP25(self, properties, recommendedDefaults, configurations, services, hosts):
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
-    spark3FsType = self.getConfigProperty(configurations, services, "spark3-env", "spark3_filesystem_type", self.getCoreFilesystemType(configurations, services))
+    spark3FsType = self.getSelectedFilesystemType(configurations, services, "spark3-env", "spark3_filesystem_type")
     validationItems = [
       {
         "config-name": 'spark.yarn.queue',

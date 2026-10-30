@@ -282,7 +282,7 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       # For Ranger version 0.4.0
       servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
       putRangerEnvProperty = self.putProperty(configurations, "ranger-env", services)
-      ranger_audit_fs_type = self.getConfigProperty(configurations, services, "ranger-env", "ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))
+      ranger_audit_fs_type = self.getSelectedFilesystemType(configurations, services, "ranger-env", "ranger_audit_filesystem_type")
       putRangerEnvProperty("ranger_audit_filesystem_type", ranger_audit_fs_type)
       current_ranger_audit_dir = self.getConfigProperty(configurations, services, "ranger-env", "xasecure.audit.destination.hdfs.dir", "")
       include_filesystem_audit = (
@@ -480,7 +480,7 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
       putRangerAdminProperty('ranger.audit.solr.zookeepers', 'NONE')
 
     # Recommend ranger.audit.solr.zookeepers and xasecure.audit.destination.hdfs.dir
-    ranger_audit_fs_type = self.getConfigProperty(configurations, services, "ranger-env", "ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))
+    ranger_audit_fs_type = self.getSelectedFilesystemType(configurations, services, "ranger-env", "ranger_audit_filesystem_type")
     putRangerEnvProperty('ranger_audit_filesystem_type', ranger_audit_fs_type)
     current_ranger_audit_dir = self.getConfigProperty(configurations, services, "ranger-env", "xasecure.audit.destination.hdfs.dir", "")
     include_filesystem_audit = (
@@ -733,7 +733,7 @@ class RangerRecommender(service_advisor.ServiceAdvisor):
           xasecure_audit_destination_hdfs = services['configurations']['ranger-env']['properties']['xasecure.audit.destination.hdfs']
 
         atlas_audit_fs_type = str(
-          self.getConfigProperty(configurations, services, "ranger-env", "ranger_audit_filesystem_type", self.getCoreFilesystemType(configurations, services))
+          self.getSelectedFilesystemType(configurations, services, "ranger-env", "ranger_audit_filesystem_type")
         ).upper()
         include_filesystem_audit = (
           (atlas_audit_fs_type == "HDFS" and "HDFS" in servicesList) or

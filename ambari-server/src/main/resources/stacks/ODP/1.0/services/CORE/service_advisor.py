@@ -29,6 +29,14 @@ class CoreServiceAdvisor(service_advisor.ServiceAdvisor):
     if not current_default_fs:
       return True
 
+    # A blueprint carries the stack default (hdfs://localhost:8020) and no changed configurations:
+    # rewrite core-site when its scheme does not match the selected filesystem.
+    core_fs_type = self.getCoreFilesystemType(configurations, services)
+    scheme = str(current_default_fs).split("://")[0].lower()
+    # viewfs:// is a valid HDFS default filesystem (federation mount table)
+    if (core_fs_type == "OZONE" and scheme not in ("ofs", "o3fs")) or (core_fs_type == "HDFS" and scheme not in ("hdfs", "viewfs")):
+      return True
+
     # Keep old behavior for generic core-site edits: do not rewrite core-site unless
     # the CORE-owned filesystem selector changed.
     for changed_config in changed_configs:

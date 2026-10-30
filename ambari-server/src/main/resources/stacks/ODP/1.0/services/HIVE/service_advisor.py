@@ -292,8 +292,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
       except Exception:
         impala_user = "impala"
 
-    preferred_fs_type = self.getCoreFilesystemType(configurations, services)
-    hive_fs_type = self.getConfigProperty(configurations, services, "hive-env", "hive_filesystem_type", preferred_fs_type)
+    hive_fs_type = self.getSelectedFilesystemType(configurations, services, "hive-env", "hive_filesystem_type")
     putHiveEnvProperty("hive_filesystem_type", hive_fs_type)
 
     if self.isConfigPropertyChanged(services, "hive-env", "hive_filesystem_type"):
