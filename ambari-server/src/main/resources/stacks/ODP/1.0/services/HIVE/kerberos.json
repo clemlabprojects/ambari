@@ -35,6 +35,10 @@
                     "name": "HIVE_METASTORE",
                     "identities": [
                         {
+                            "name": "hive_hive_metastore_ozone",
+                            "reference": "/OZONE/ozone"
+                        },
+                        {
                             "name": "hive_app_timeline_server_yarn",
                             "reference": "/YARN/APP_TIMELINE_SERVER/app_timeline_server_yarn"
                         },
@@ -53,6 +57,10 @@
                 {
                     "name": "HIVE_SERVER",
                     "identities": [
+                        {
+                            "name": "hive_hive_server_ozone",
+                            "reference": "/OZONE/ozone"
+                        },
                         {
                             "name": "hive_hive_server_hdfs",
                             "reference": "/HDFS/NAMENODE/hdfs"
@@ -113,6 +121,10 @@
                 {
                     "name": "HIVE_SERVER_INTERACTIVE",
                     "identities": [
+                        {
+                            "name": "hive_hive_server_interactive_ozone",
+                            "reference": "/OZONE/ozone"
+                        },
                         {
                             "name": "hive_hive_server_interactive_hdfs",
                             "reference": "/HDFS/NAMENODE/hdfs"

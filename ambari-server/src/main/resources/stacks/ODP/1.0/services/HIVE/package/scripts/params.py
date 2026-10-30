@@ -129,6 +129,9 @@ namenode_hosts = default("/clusterHostInfo/namenode_hosts", [])
 ozone_manager_hosts = default("/clusterHostInfo/ozone_manager_hosts", [])
 has_namenode = len(namenode_hosts) > 0
 has_ozone_manager = len(ozone_manager_hosts) > 0
+# Clusters without HDFS (Ozone as default filesystem) have no hadoop-env
+has_hadoop_env = 'hadoop-env' in config['configurations']
+has_resourcemanager = len(default("/clusterHostInfo/resourcemanager_hosts", [])) > 0
 
 # starting on stacks where HSI is supported, we need to begin using the 'hive2' schematool
 hive_server2_hive_dir = None
@@ -374,8 +377,7 @@ smoke_test_path = format("{tmp_dir}/hiveserver2Smoke.sh")
 smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
 smokeuser_principal = config['configurations']['cluster-env']['smokeuser_principal_name']
 
-if has_namenode:
-  fs_root = config['configurations']['core-site']['fs.defaultFS']
+fs_root = config['configurations']['core-site']['fs.defaultFS']
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 
 kinit_path_local = get_kinit_path(default('/configurations/kerberos-env/executable_search_paths', None))
@@ -433,7 +435,8 @@ start_hiveserver2_script = 'startHiveserver2.sh.j2'
 start_metastore_script = 'startMetastore.sh'
 hive_metastore_pid = status_params.hive_metastore_pid
 
-hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
+# HdfsResource runs as the HDFS superuser, or as the Ozone admin when HDFS is not installed
+hdfs_user = config['configurations']['hadoop-env']['hdfs_user'] if has_hadoop_env else ozone_user
 yarn_user = config['configurations']['yarn-env']['yarn_user']
 user_group = config['configurations']['cluster-env']['user_group']
 artifact_dir = format("{tmp_dir}/AMBARI-artifacts/")
@@ -540,8 +543,12 @@ tez_hook_proto_base_directory = format("{hive_metastore_warehouse_external_dir}/
 
 
 #for create_hdfs_directory
-hdfs_user_keytab = config['configurations']['hadoop-env']['hdfs_user_keytab']
-hdfs_principal_name = default('/configurations/hadoop-env/hdfs_principal_name', 'missing_principal').replace("_HOST", hostname)
+if has_hadoop_env:
+  hdfs_user_keytab = config['configurations']['hadoop-env']['hdfs_user_keytab']
+  hdfs_principal_name = default('/configurations/hadoop-env/hdfs_principal_name', 'missing_principal').replace("_HOST", hostname)
+else:
+  hdfs_user_keytab = ozone_admin_keytab
+  hdfs_principal_name = (ozone_admin_principal or 'missing_principal').replace("_HOST", hostname)
 
 # Tez-related properties
 tez_user = config['configurations']['tez-env']['tez_user']
@@ -628,9 +635,8 @@ security_param = "true" if security_enabled else "false"
 
 
 
-hdfs_site = config['configurations']['hdfs-site']
-if has_namenode:
-  default_fs = config['configurations']['core-site']['fs.defaultFS']
+hdfs_site = default('/configurations/hdfs-site', {})
+default_fs = config['configurations']['core-site']['fs.defaultFS']
 
 dfs_type = default("/clusterLevelParams/dfs_type", "")
 
