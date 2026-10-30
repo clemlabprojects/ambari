@@ -193,10 +193,15 @@ def setup_hadoop_env():
     Directory(params.hadoop_dir, mode=0o755)
 
     # write out hadoop-env.sh, but only if the directory exists
-    if os.path.exists(params.hadoop_conf_dir):
+    if params.has_hadoop_env and os.path.exists(params.hadoop_conf_dir):
       File(os.path.join(params.hadoop_conf_dir, 'hadoop-env.sh'), owner=tc_owner,
         group=params.user_group,
         content=InlineTemplate(params.hadoop_env_sh_template))
+    elif os.path.exists(params.hadoop_conf_dir):
+      # Without HDFS the Hadoop client still needs the cluster JDK, not the first JDK the launcher finds
+      File(os.path.join(params.hadoop_conf_dir, 'hadoop-env.sh'), owner=tc_owner,
+        group=params.user_group,
+        content=format("export JAVA_HOME={java_home}\n"))
 
     # Create tmp dir for java.io.tmpdir
     # Handle a situation when /tmp is set to noexec

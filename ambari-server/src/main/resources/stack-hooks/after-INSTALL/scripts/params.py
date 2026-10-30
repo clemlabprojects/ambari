@@ -94,7 +94,10 @@ mapred_pid_dir_prefix = default("/configurations/mapred-env/mapred_pid_dir_prefi
 mapred_log_dir_prefix = default("/configurations/mapred-env/mapred_log_dir_prefix","/var/log/hadoop-mapreduce")
 
 #users and groups
-hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
+# Clusters without HDFS (Ozone as default filesystem) have no hadoop-env: the Hadoop client
+# files the hooks write (core-site.xml, ...) are then owned by root.
+has_hadoop_env = 'hadoop-env' in config['configurations']
+hdfs_user = config['configurations']['hadoop-env']['hdfs_user'] if has_hadoop_env else 'root'
 user_group = config['configurations']['cluster-env']['user_group']
 
 namenode_hosts = default("/clusterHostInfo/namenode_hosts", [])

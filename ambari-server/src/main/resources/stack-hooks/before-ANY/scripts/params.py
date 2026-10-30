@@ -74,7 +74,10 @@ ambari_java_home = default("/commandParams/ambari_java_home", None)
 ambari_jdk_name = default("/commandParams/ambari_jdk_name", None)
 
 security_enabled = config['configurations']['cluster-env']['security_enabled']
-hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
+# Clusters without HDFS (Ozone as default filesystem) have no hadoop-env: the Hadoop client
+# files the hooks write (core-site.xml, ...) are then owned by root.
+has_hadoop_env = 'hadoop-env' in config['configurations']
+hdfs_user = config['configurations']['hadoop-env']['hdfs_user'] if has_hadoop_env else 'root'
 
 # Some datanode settings
 dfs_dn_addr = default('/configurations/hdfs-site/dfs.datanode.address', None)
