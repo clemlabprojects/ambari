@@ -246,7 +246,7 @@ def __check_java_major(java_home, required_major, role, setup_option):
   fix =format("Set it with 'ambari-server setup {setup_option}=<JDK {required_major} home>' on the Ambari Server, "
                "restart Ambari Server, then restart the services.")
   if not java_home:
-    raise Fail(format("ODP {stack_version_unformatted} requires JDK {required_major} as the {role} Java home, "
+    raise Fail(format("ODP {java_requirement_stack_version} requires JDK {required_major} as the {role} Java home, "
                       "but none is configured. {fix}"))
 
   code, output = shell.call((os.path.join(java_home, "bin", "java"), "-version"), timeout=20, quiet=True)
@@ -255,7 +255,7 @@ def __check_java_major(java_home, required_major, role, setup_option):
     raise Fail(format("Cannot determine the Java version of the {role} Java home {java_home}: {output}"))
   major = int(match.group(2) if match.group(1) == "1" else match.group(1))
   if major != int(required_major):
-    raise Fail(format("ODP {stack_version_unformatted} requires JDK {required_major} as the {role} Java home, "
+    raise Fail(format("ODP {java_requirement_stack_version} requires JDK {required_major} as the {role} Java home, "
                       "but {java_home} is JDK {major}. {fix}"))
 
 def __setup_java(custom_java_home, custom_jdk_name):

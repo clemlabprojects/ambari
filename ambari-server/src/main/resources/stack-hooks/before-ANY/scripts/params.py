@@ -199,8 +199,14 @@ required_primary_java_major = None
 required_secondary_java_major = None
 stack_features_json = default("/configurations/cluster-env/stack_features", None)
 stack_name = default("/clusterLevelParams/stack_name", None)
+# Installs of a new cluster carry no command version, only the bare stack version (1.3): use the
+# repository version being installed (1.3.2.0-xx) instead
+java_requirement_version = version_for_stack_feature_checks
+if len(str(java_requirement_version or "").split(".")) < 4:
+  java_requirement_version = default("/repositoryFile/repoVersion", None) or java_requirement_version
+java_requirement_stack_version = format_stack_version(java_requirement_version) or stack_version_unformatted
 if stack_features_json and stack_name and default("/commandParams/upgrade_direction", None) is None \
-    and check_stack_feature("upgrade_java_home_selection", version_for_stack_feature_checks):
+    and check_stack_feature("upgrade_java_home_selection", java_requirement_version):
   for stack_feature in json.loads(stack_features_json).get(stack_name, {}).get("stack_features", []):
     if stack_feature.get("name") == "upgrade_java_home_selection":
       required_primary_java_major = stack_feature.get("primary_java_major")

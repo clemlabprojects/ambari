@@ -45,7 +45,8 @@ class TestBeforeAnyJavaRuntime(unittest.TestCase):
 
   def setUp(self):
     self.params = ModuleType("params")
-    self.params.stack_version_unformatted = "1.3.2.0"
+    self.params.stack_version_unformatted = "1.3"
+    self.params.java_requirement_stack_version = "1.3.2.0"
     self.params.required_primary_java_major = 17
     self.params.required_secondary_java_major = 21
     self.params.java_home = "/jdk17"
@@ -74,7 +75,7 @@ class TestBeforeAnyJavaRuntime(unittest.TestCase):
     self.params.java_home = "/jdk8"
     with self.assertRaises(Fail) as error:
       self.check()
-    self.assertIn("requires JDK 17 as the primary Java home, but /jdk8 is JDK 8", str(error.exception))
+    self.assertIn("ODP 1.3.2.0 requires JDK 17 as the primary Java home, but /jdk8 is JDK 8", str(error.exception))
     self.assertIn("--java-home", str(error.exception))
 
   def test_stop_only_warns_on_a_wrong_jdk(self):
