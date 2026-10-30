@@ -239,6 +239,10 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
     }
   };
 
+  // The reads of the open operation in progress ('steps:<id>', 'logs:<id>'), and the ended operations whose steps were
+  // read after they ended: the 2 s refresh reads nothing that has not changed, and nothing twice at once.
+  const inFlightRef = React.useRef<Set<string>>(new Set());
+  const stepsFinalRef = React.useRef<Set<string>>(new Set());
   // Whether the operator opened or closed an operation since the modal opened: from then on nothing is opened for them.
   const operatorChoseRef = React.useRef(false);
   // Whether the watched operation was opened once it ended with something to read.
@@ -250,6 +254,7 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
       setSelectedId(null);
       operatorChoseRef.current = false;
       endOpenedRef.current = false;
+      stepsFinalRef.current = new Set();
       setSelectedStatus(null);
       setStepMap({});
       loadPage(true);
@@ -307,12 +312,20 @@ const BackgroundOperationsModal: React.FC<BackgroundOperationsModalProps> = ({ o
             const running = !isTerminal(row) && (row.state === 'RUNNING' || row.state === 'PENDING');
             // Stream the operation's aggregate log (root command id) every tick. While the op is
             // running we force (eof=false) so it keeps following as new output is appended.
+            // One read at a time: on a slow server, reads started every 2 s pile up, take the browser's few
+            // connections to the server and hold every other request of the page behind them.
             const logInfo = logStateRef.current[openId];
-            if (!logInfo?.loading && (running || !logInfo?.eof)) {
-              void loadLogs(openId, false, true, running);
+            if (!logInfo?.loading && (running || !logInfo?.eof) && !inFlightRef.current.has('logs:' + openId)) {
+              inFlightRef.current.add('logs:' + openId);
+              void loadLogs(openId, false, true, running).finally(() => inFlightRef.current.delete('logs:' + openId));
             }
-            // Refresh steps in the background (fire-and-forget) so it can't block the log stream.
-            void fetchSteps(openId);
+            // Refresh steps in the background (fire-and-forget) so it can't block the log stream: while the
+            // operation runs, and once more after it ended, never twice at the same time.
+            if ((running || !stepsFinalRef.current.has(openId)) && !inFlightRef.current.has('steps:' + openId)) {
+              if (!running) stepsFinalRef.current.add(openId);
+              inFlightRef.current.add('steps:' + openId);
+              void fetchSteps(openId).finally(() => inFlightRef.current.delete('steps:' + openId));
+            }
           }
         } catch {
           // ignore poll errors

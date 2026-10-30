@@ -201,6 +201,20 @@ describe('BackgroundOperationsModal', () => {
     expect(listChildCommands).not.toHaveBeenCalledWith(deploy.id);
   }, 15000);
 
+  it('reads the steps of an ended operation once, not on every refresh', async () => {
+    const failed = { ...gitOpsDeploy(), id: 'cmd-failed', state: 'FAILED', message: 'Install release trino with GitOps' };
+    (listCommands as jest.Mock).mockResolvedValue([failed]);
+    (getCommandStatus as jest.Mock).mockResolvedValue(failed);
+
+    render(<BackgroundOperationsModal open onClose={() => undefined} />);
+    await userEvent.click(await screen.findByText('Install release trino with GitOps'));
+    await waitFor(() => expect(listChildCommands).toHaveBeenCalledWith(failed.id));
+
+    // Three refreshes later: the open operation ended, so its steps were read when it was opened and once after.
+    await act(async () => { await new Promise((r) => setTimeout(r, 6500)); });
+    expect((listChildCommands as jest.Mock).mock.calls.filter(([id]) => id === failed.id).length).toBeLessThanOrEqual(2);
+  }, 15000);
+
   it('closes on a deploy that ended applied', async () => {
     const applied = gitOpsDeploy();
     (listCommands as jest.Mock).mockResolvedValue([applied]);
