@@ -31,6 +31,7 @@ from ambari_commons.credential_store_helper import get_password_from_credential_
 from ambari_commons.os_check import OSCheck
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 from resource_management.core.exceptions import Fail
+from resource_management.core.logger import Logger
 from resource_management.core.shell import checked_call
 from resource_management.core.utils import PasswordString
 from resource_management.libraries import functions
@@ -388,11 +389,16 @@ hive_s3a_access_key = str(default("/configurations/hive-site/fs.s3a.access.key",
 hive_s3a_secret_key = ""
 if ozone_s3g_hosts and hive_s3a_access_key:
   if credential_store_enabled and 'hadoop.security.credential.provider.path' in config['configurations']['hive-site']:
-    hive_s3a_secret_key = str(get_password_from_credential_store(
-      'fs.s3a.secret.key',
-      config['configurations']['hive-site']['hadoop.security.credential.provider.path'],
-      config['configurations']['hive-site']['credentialStoreClassPath'],
-      ambari_java_home, config['ambariLevelParams']['jdk_location']) or "").strip()
+    # an empty secret is not stored, so the alias is missing until fs.s3a.secret.key is set
+    try:
+      hive_s3a_secret_key = str(get_password_from_credential_store(
+        'fs.s3a.secret.key',
+        config['configurations']['hive-site']['hadoop.security.credential.provider.path'],
+        config['configurations']['hive-site']['credentialStoreClassPath'],
+        ambari_java_home, config['ambariLevelParams']['jdk_location']) or "").strip()
+    except Fail as error:
+      Logger.warning("Ozone S3 credential disabled, fs.s3a.secret.key cannot be read: {0}".format(error))
+      hive_s3a_secret_key = ""
   else:
     hive_s3a_secret_key = str(default("/configurations/hive-site/fs.s3a.secret.key", "") or "").strip()
 hive_ozone_s3_credential_enabled = bool(ozone_s3g_hosts and hive_s3a_access_key and hive_s3a_secret_key)
