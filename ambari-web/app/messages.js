@@ -28,7 +28,7 @@ Em.I18n.translations = {
   'admin.upgrade.java.introduction': 'Starting with ODP {0}, the component runtime requirements are:',
   'admin.upgrade.java.minimum': 'Minimum JDK {0}',
   'admin.upgrade.java.primaryComponents': 'HDFS, YARN, MapReduce2, HBase, ZooKeeper, Kafka, Atlas, Ranger, Ranger KMS, Knox and Ozone.',
-  'admin.upgrade.java.secondaryComponents': 'Hive (Metastore, HiveServer2 and clients), Spark3 (History Server, Thrift Server, clients and Livy), Oozie, NiFi, NiFi Registry and Polaris.',
+  'admin.upgrade.java.secondaryComponents': 'Hive (Metastore, HiveServer2 and clients), Spark3 (History Server, Thrift Server, clients and Livy), Impala, Oozie, NiFi, NiFi Registry and Polaris.',
   'admin.upgrade.java.explanation': 'Install both JDKs at identical absolute paths on every cluster host, including the Ambari Server host. Select the indicated JDK major versions; a newer major is not automatically supported. Application containers, including Hive/Tez and Spark jobs, also require a compatible runtime.',
   'admin.upgrade.java.activation': 'The selected JDK paths are activated during the upgrade, after stopping old services and before switching repositories. At that step they are persisted in ambari.properties. Validation here does not change the active Java homes or Ambari Server\'s own JDK.',
   'admin.upgrade.java.primary': 'Primary Java home',
