@@ -464,6 +464,9 @@ else:
   hive_heapsize = config['configurations']['hive-site']['hive.heapsize']
 
 hive_metastore_heapsize = config['configurations']['hive-env']['hive.metastore.heapsize']
+# schematool heap (MB): the 256 MB Hive launcher default is too small once it initializes the Ozone
+# filesystem; fixed instead of the Metastore heap, which can be large on production clusters
+hive_schematool_heapsize = 1024
 hadoop_optional_tools = default("/configurations/core-env/hadoop_optional_tools", "")
 
 java64_home = config['ambariLevelParams']['java_home']

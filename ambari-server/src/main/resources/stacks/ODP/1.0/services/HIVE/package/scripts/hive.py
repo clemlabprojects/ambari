@@ -488,8 +488,10 @@ def create_hive_metastore_schema():
   Logger.info("Hive schematool settings (sys DB): timeout={0}s, tries={1}, try_sleep={2}s".format(
       schema_tool_timeout, schema_tool_tries, schema_tool_try_sleep))
 
+  # schematool heap: see hive_schematool_heapsize
   create_hive_schema_cmd = format("export JAVA_HOME={java64_home} ; "
                                   "export HIVE_CONF_DIR={hive_conf_dir} ; "
+                                  "export HADOOP_HEAPSIZE={hive_schematool_heapsize} ; "
                                   "timeout {schema_tool_timeout}s "
                                   "{hive_schematool_bin}/schematool -initSchema "
                                   "-dbType hive "
@@ -500,6 +502,7 @@ def create_hive_metastore_schema():
 
   check_hive_schema_created_cmd = as_user(format("export JAVA_HOME={java64_home} ; "
                                           "export HIVE_CONF_DIR={hive_conf_dir} ; "
+                                          "export HADOOP_HEAPSIZE={hive_schematool_heapsize} ; "
                                           "timeout {schema_tool_timeout}s "
                                           "{hive_schematool_bin}/schematool -info "
                                           "-dbType hive "
@@ -555,8 +558,10 @@ def create_metastore_schema():
     hive_conf_dir = params.hive_metastore_conf_dir
   Logger.info("Hive schematool settings (metastore DB): timeout={0}s, tries={1}, try_sleep={2}s".format(
       schema_tool_timeout, schema_tool_tries, schema_tool_try_sleep))
+  # schematool heap: see hive_schematool_heapsize
   create_schema_cmd = format("export JAVA_HOME={java64_home} ; "
                              "export HIVE_CONF_DIR={hive_conf_dir} ; "
+                             "export HADOOP_HEAPSIZE={hive_schematool_heapsize} ; "
                              "timeout {schema_tool_timeout}s "
                              "{hive_schematool_bin}/schematool -initSchema "
                              "-dbType {hive_metastore_db_type} "
@@ -565,6 +570,7 @@ def create_metastore_schema():
 
   check_schema_created_cmd = as_user(format("export JAVA_HOME={java64_home} ; "
                                     "export HIVE_CONF_DIR={hive_conf_dir} ; "
+                                    "export HADOOP_HEAPSIZE={hive_schematool_heapsize} ; "
                                     "timeout {schema_tool_timeout}s "
                                     "{hive_schematool_bin}/schematool -info "
                                     "-dbType {hive_metastore_db_type} "
