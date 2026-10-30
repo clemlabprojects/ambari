@@ -1351,6 +1351,8 @@ th[data-qa="confirm-hosts-table-heading-cell"] label[checked="checked"]:after {
 }
 .navigation-bar-fit-height .navigation-bar-container .side-nav-menu {
   overflow-y: auto;
+  /* .nav is a wrapping flex container: keep the items at the top instead of spreading them over the fixed height */
+  align-content: flex-start;
 }
 .notifications-group {
   position: relative;
