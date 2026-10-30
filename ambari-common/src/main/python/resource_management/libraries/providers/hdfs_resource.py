@@ -42,6 +42,7 @@ from resource_management.libraries.functions.hdfs_utils import is_https_enabled_
 
 JSON_PATH = '/var/lib/ambari-agent/tmp/hdfs_resources_{timestamp}.json'
 JAR_PATH = '/var/lib/ambari-agent/lib/fast-hdfs-resource.jar'
+JAR_MAIN_CLASS = 'org.apache.ambari.fast_hdfs_resource.Runner'
 LOCAL_FILE_HDFS_CLI_THRESHOLD = 1 * 1024 * 1024 * 1024
 
 
@@ -155,6 +156,7 @@ class HdfsResourceJar:
     logoutput = main_resource.resource.logoutput
     principal_name = main_resource.resource.principal_name
     jar_path=JAR_PATH
+    main_class=JAR_MAIN_CLASS
     timestamp = time.time()
     json_path=format(JSON_PATH)
 
@@ -167,13 +169,25 @@ class HdfsResourceJar:
          content = json.dumps(env.config['hdfs_files'])
     )
 
-    # Execute jar to create/delete resources in hadoop
-    hadoop_bin = _get_hadoop_binary(hadoop_bin_dir)
+    ozone_cmd = main_resource.resource.ozone_cmd
+    if ozone_cmd:
+      # Without HDFS the Hadoop client has no ofs:// filesystem: run the jar on the Ozone client
+      # classpath, placed first so it wins over the Hadoop classes bundled in the jar
+      java_home = main_resource.resource.java_home
+      java_bin = os.path.join(java_home, "bin", "java") if java_home else "java"
+      Execute(format("ozone_cp=$({ozone_cmd} --config {hadoop_conf_dir} classpath ozone-tools | tail -n 1) && [ -n \"$ozone_cp\" ] && "
+                     "{java_bin} -cp \"$ozone_cp:{jar_path}\" {main_class} {json_path}"),
+              user=user,
+              logoutput=logoutput,
+      )
+    else:
+      # Execute jar to create/delete resources in hadoop
+      hadoop_bin = _get_hadoop_binary(hadoop_bin_dir)
 
-    Execute(format("{hadoop_bin} --config {hadoop_conf_dir} jar {jar_path} {json_path}"),
-            user=user,
-            logoutput=logoutput,
-    )
+      Execute(format("{hadoop_bin} --config {hadoop_conf_dir} jar {jar_path} {json_path}"),
+              user=user,
+              logoutput=logoutput,
+      )
 
     # Clean
     env.config['hdfs_files'] = []
