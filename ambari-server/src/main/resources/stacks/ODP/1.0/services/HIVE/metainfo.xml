@@ -46,6 +46,17 @@
             <scriptType>PYTHON</scriptType>
             <timeout>1200</timeout>
           </commandScript>
+          <customCommands>
+            <!-- Ranger policies of the Hive warehouse in Ozone, also ensured on Metastore start -->
+            <customCommand>
+              <name>CREATE_OZONE_RANGER_POLICIES</name>
+              <commandScript>
+                <script>scripts/hive_metastore.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>600</timeout>
+              </commandScript>
+            </customCommand>
+          </customCommands>
           <logs>
             <log>
               <logId>hive_metastore</logId>

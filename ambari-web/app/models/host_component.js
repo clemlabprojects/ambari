@@ -455,6 +455,13 @@ App.HostComponentActionMap = {
         cssClass: 'glyphicon glyphicon-stop',
         disabled: false
       },
+      CREATE_OZONE_RANGER_POLICIES: {
+        action: 'createOzoneRangerPolicies',
+        customCommand: 'CREATE_OZONE_RANGER_POLICIES',
+        context: Em.I18n.t('services.service.actions.run.createOzoneRangerPolicies'),
+        label: Em.I18n.t('services.service.actions.run.createOzoneRangerPolicies'),
+        cssClass: 'glyphicon glyphicon-lock'
+      },
       RESTART_LLAP: {
         action: 'restartLLAP',
         customCommand: 'RESTART_LLAP',

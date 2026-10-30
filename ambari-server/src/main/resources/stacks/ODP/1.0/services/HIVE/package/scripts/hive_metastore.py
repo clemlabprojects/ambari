@@ -24,6 +24,7 @@ import os
 from hive import refresh_yarn, create_hive_hdfs_dirs, create_hive_metastore_schema, create_metastore_schema, hive, jdbc_connector
 from hive_service import hive_service
 from hive_ozone_s3 import ensure_ozone_s3_credential
+from hive_ozone_ranger import setup_hive_ozone_ranger_policies
 from setup_ranger_hive import setup_ranger_hive_metastore_service
 from setup_ranger_hive import setup_ranger_hive_metastore_plugin
 
@@ -56,6 +57,8 @@ class HiveMetastore(Script):
 
     refresh_yarn()
     create_hive_hdfs_dirs()
+    # also when the Ozone Ranger plugin was enabled after Hive was installed
+    setup_hive_ozone_ranger_policies()
 
     # writing configurations on start required for securtity
     self.configure(env)
@@ -81,6 +84,11 @@ class HiveMetastore(Script):
     import params
     env.set_params(params)
     hive(name = 'metastore')
+
+  def create_ozone_ranger_policies(self, env):
+    import params
+    env.set_params(params)
+    setup_hive_ozone_ranger_policies(required=True)
 
   def status(self, env):
     import status_params

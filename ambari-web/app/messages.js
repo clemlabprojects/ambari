@@ -2287,6 +2287,7 @@ Em.I18n.translations = {
 
   // Hive Server Interactive custom command to restart LLAP
   'services.service.actions.run.restartLLAP':'Restart LLAP',
+  'services.service.actions.run.createOzoneRangerPolicies':'Create Ozone Ranger Policies',
   'services.service.actions.run.immediateStopHawqService.context':'Stop HAWQ Service (Immediate Mode)',
   'services.service.actions.run.immediateStopHawqService.label':'Stop HAWQ Service (Immediate Mode)',
   'services.service.actions.run.immediateStopHawqSegment.label':'Stop (Immediate Mode)',

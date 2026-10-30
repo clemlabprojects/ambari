@@ -257,6 +257,13 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
           });
         }
 
+        if (serviceName === 'HIVE' && App.Service.find().someProperty('serviceName', 'OZONE')) {
+          var hiveMetastoreComponent = App.StackServiceComponent.find().findProperty('componentName', 'HIVE_METASTORE');
+          if (hiveMetastoreComponent && (hiveMetastoreComponent.get('customCommands') || []).contains('CREATE_OZONE_RANGER_POLICIES')) {
+            options.push(actionMap.CREATE_OZONE_RANGER_POLICIES);
+          }
+        }
+
         if (serviceName === 'HIVE') {
           var hiveServerInteractiveComponent = App.StackServiceComponent.find().findProperty('componentName', 'HIVE_SERVER_INTERACTIVE');
           var isHiveInteractiveServerPresent = allMasters.contains('HIVE_SERVER_INTERACTIVE');

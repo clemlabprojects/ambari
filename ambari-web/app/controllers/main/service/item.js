@@ -727,6 +727,26 @@ App.MainServiceItemController = Em.Controller.extend(App.SupportClientConfigsDow
     App.showAlertPopup(Em.I18n.t('services.service.actions.run.yarnRefreshQueues.error'), error);
   },
 
+  createOzoneRangerPolicies: function () {
+    var self = this;
+    return App.showConfirmationPopup(function () {
+      App.ajax.send({
+        name: 'service.item.executeCustomCommand',
+        sender: self,
+        data: {
+          command: 'CREATE_OZONE_RANGER_POLICIES',
+          context: Em.I18n.t('services.service.actions.run.createOzoneRangerPolicies'),
+          hosts: App.HostComponent.find().filterProperty('componentName', 'HIVE_METASTORE').mapProperty('hostName').join(','),
+          serviceName: 'HIVE',
+          componentName: 'HIVE_METASTORE'
+        },
+        success: 'requestSuccessCallback',
+        error: 'requestErrorCallback',
+        showLoadingPopup: true
+      });
+    });
+  },
+
   restartLLAP: function () {
     var isRefreshQueueRequired, self = this;
     return App.showConfirmationPopup(function () {

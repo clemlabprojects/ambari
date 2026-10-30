@@ -32,6 +32,7 @@ from ambari_commons.os_check import OSCheck
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
+from hive_ozone_ranger import hive_ozone_buckets
 from resource_management.core.shell import checked_call
 from resource_management.core.utils import PasswordString
 from resource_management.libraries import functions
@@ -652,6 +653,18 @@ dfs_type = default("/clusterLevelParams/dfs_type", "")
 # Without HDFS the Hadoop client has no ofs:// filesystem: HdfsResource runs on the Ozone client
 # classpath, with the primary JDK the Ozone client runs on
 hdfs_resource_ozone_cmd = ozone_cmd if not has_namenode and urlparse(default_fs).scheme in ("ofs", "o3fs") else None
+
+# Ranger policies of the Hive warehouse in Ozone, when Ozone authorizes with Ranger (see hive_ozone_ranger.py)
+hive_ozone_ranger_enabled = has_ozone_manager and \
+  str(default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")).strip().lower() == "yes"
+hive_ozone_ranger_buckets = hive_ozone_buckets(
+  [hive_metastore_warehouse_dir, hive_metastore_warehouse_external_dir, hive_hdfs_user_dir], default_fs)
+hive_ozone_ranger_url = str(default("/configurations/admin-properties/policymgr_external_url", "") or "").strip().rstrip("/")
+hive_ozone_ranger_service = str(default("/configurations/ranger-ozone-security/ranger.plugin.ozone.service.name", "") or "").strip()
+if not hive_ozone_ranger_service or hive_ozone_ranger_service == "{{repo_name}}":
+  hive_ozone_ranger_service = str(config['clusterName']) + "_ozone"
+hive_ozone_ranger_admin_user = default("/configurations/ranger-env/admin_username", "admin")
+hive_ozone_ranger_admin_password = default("/configurations/ranger-env/admin_password", "")
 
 import functools
 #create partial functions with common arguments for every HdfsResource call

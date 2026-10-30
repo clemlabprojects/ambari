@@ -19,7 +19,6 @@ limitations under the License.
 """
 import os
 import functools
-from urllib.parse import urlparse
 import status_params
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 
@@ -705,26 +704,6 @@ if has_ranger_admin:
                                      ozone_s3_service_users, 'read,list,create'))
       ozone_default_policies.append(('S3 buckets and keys - service users', {'volume': ozone_s3_volume, 'bucket': '*', 'key': '*'},
                                      ozone_s3_service_users, 'read,write,create,list,delete'))
-
-    # Hive storing its warehouse in Ozone: Ranger does not fall back to Ozone ACLs, so the Hive user
-    # needs the volume and bucket of its warehouse and home directories (ofs://<om>/<volume>/<bucket>/...)
-    if default("/clusterHostInfo/hive_metastore_hosts", []) \
-        and str(default("/configurations/hive-env/hive_filesystem_type", "")).upper() == "OZONE":
-      hive_user_name = default("/configurations/hive-env/hive_user", "hive")
-      hive_ozone_buckets = []
-      for hive_path in (default("/configurations/hive-site/hive.metastore.warehouse.dir", None),
-                        default("/configurations/hive-site/hive.metastore.warehouse.external.dir", None),
-                        format("/user/{hive_user_name}")):
-        hive_url = urlparse(str(hive_path or ""))
-        hive_path_parts = [part for part in hive_url.path.split("/") if part]
-        if hive_url.scheme in ("", "ofs") and len(hive_path_parts) >= 2 and tuple(hive_path_parts[:2]) not in hive_ozone_buckets:
-          hive_ozone_buckets.append(tuple(hive_path_parts[:2]))
-      for hive_volume, hive_bucket in hive_ozone_buckets:
-        ozone_default_policies.append(('Hive warehouse - volume {0}'.format(hive_volume), {'volume': hive_volume},
-                                       [hive_user_name], 'read,list'))
-        ozone_default_policies.append(('Hive warehouse - {0}/{1}'.format(hive_volume, hive_bucket),
-                                       {'volume': hive_volume, 'bucket': hive_bucket, 'key': '*'},
-                                       [hive_user_name], 'read,write,create,list,delete'))
 
     if ozone_default_policies:
       ozone_ranger_plugin_config['setup.additional.default.policies'] = 'true'
