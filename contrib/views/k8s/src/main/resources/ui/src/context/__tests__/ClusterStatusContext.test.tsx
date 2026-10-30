@@ -70,8 +70,50 @@ describe('ClusterStatusProvider', () => {
 
     expect(await screen.findByText(/^status=disconnected message=KDPS has no connection to the cluster Development yet/))
       .toBeTruthy();
+    expect(client.getClusterLiveness).toHaveBeenCalledWith('dev');
+    expect(client.getNodes).not.toHaveBeenCalled();
+  });
+
+  it('reads the data of the viewed cluster once it answers', async () => {
+    mockViewedCluster = 'dev';
+    (client.isViewConfigured as jest.Mock).mockResolvedValue(true);
+    (client.getClusterLiveness as jest.Mock).mockResolvedValue({ state: 'CONNECTED', message: '' });
+    (client.getNodes as jest.Mock).mockResolvedValue({ items: [] });
+
+    render(<ClusterStatusProvider><Probe /></ClusterStatusProvider>);
+
+    expect(await screen.findByText('status=connected message=')).toBeTruthy();
     expect(client.getClusterStats).toHaveBeenCalledWith(true, 'dev');
     expect(client.getNodes).toHaveBeenCalledWith(200, 0, 'dev');
+  });
+
+  it('shows a cluster that does not answer disconnected as soon as the probe says so', async () => {
+    // A dead API server: every call waits for the Kubernetes client to give up, the probe included.
+    mockViewedCluster = undefined;
+    (client.isViewConfigured as jest.Mock).mockResolvedValue(true);
+    const never = () => new Promise(() => {});
+    for (const call of ['getClusterStats', 'getComponentStatuses', 'getClusterEvents', 'getNodes', 'getHelmReleases']) {
+      (client as any)[call].mockImplementation(never);
+    }
+    (client.getClusterLiveness as jest.Mock).mockResolvedValue({ state: 'UNREACHABLE', message: 'Get https://api:6443/version: EOF' });
+
+    render(<ClusterStatusProvider><Probe /></ClusterStatusProvider>);
+
+    expect(await screen.findByText('status=disconnected message=Get https://api:6443/version: EOF')).toBeTruthy();
+    expect(client.getComponentStatuses).not.toHaveBeenCalled();
+    expect(client.getMonitoringDiscovery).not.toHaveBeenCalled();
+  });
+
+  it('leaves the status to the cluster calls when the probe cannot be sent', async () => {
+    mockViewedCluster = undefined;
+    (client.isViewConfigured as jest.Mock).mockResolvedValue(true);
+    (client.getClusterLiveness as jest.Mock).mockRejectedValue(new Error('Failed to fetch'));
+    (client.getClusterStats as jest.Mock).mockResolvedValue({});
+    (client.getNodes as jest.Mock).mockResolvedValue({ items: [] });
+
+    render(<ClusterStatusProvider><Probe /></ClusterStatusProvider>);
+
+    expect(await screen.findByText('status=connected message=')).toBeTruthy();
   });
 
   it('keeps the setup screen for the default cluster without a connection', async () => {

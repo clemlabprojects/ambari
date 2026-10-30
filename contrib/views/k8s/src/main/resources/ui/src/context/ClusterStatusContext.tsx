@@ -20,6 +20,7 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import type { ServiceDefinition, ClusterStats, ComponentStatus, ClusterEvent, ClusterNode, HelmReleasePage } from '../types';
 import { isViewConfigured, getClusterStats, getComponentStatuses, getClusterEvents, getNodes, getHelmReleases, getMonitoringDiscovery, getClusterLiveness } from '../api/client';
+import type { ClusterLiveness } from '../api/client';
 import { invalidateCapabilities } from '../components/ServiceInstallationModal/capabilities';
 import { useViewedCluster } from './ViewedClusterContext';
 
@@ -125,8 +126,28 @@ export const ClusterStatusProvider: React.FC<{ children: React.ReactNode }> = ({
     setMainLoaderActive(true);
     setError(null);
     try {
-      // Kick off stats but don't block the rest of the UI
       const viewedCluster = clusterRef.current;
+      // The connection first: a cluster that does not answer is shown disconnected as soon as the probe says so,
+      // rather than after the calls below have each waited for it. Those calls would all fail; the heartbeat fetches
+      // them once the cluster answers again. A probe that cannot be sent leaves the status to the calls below.
+      let health: ClusterLiveness | null = null;
+      try {
+        health = await getClusterLiveness(viewedCluster);
+      } catch (probeErr) {
+        console.warn('Liveness probe request failed', probeErr);
+      }
+      if (health && health.state === 'UNCONFIGURED') {
+        if (!noConnectionToViewedCluster()) setStatus('unconfigured');
+        return;
+      }
+      if (health && health.state !== 'CONNECTED') {
+        console.warn('Cluster not connected:', health.state, '-', health.message);
+        setConnectionMessage(health.message);
+        setStatus('disconnected');
+        return;
+      }
+
+      // Kick off stats but don't block the rest of the UI
       getClusterStats(forceRefresh, viewedCluster)
         .then(setStats)
         .catch((e: any) => {
