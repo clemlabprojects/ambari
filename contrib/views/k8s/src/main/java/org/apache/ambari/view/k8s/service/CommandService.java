@@ -9692,11 +9692,14 @@ public class CommandService {
          *
          */
         if (gitOps) {
-            // Committed to Git instead of installed, then awaited until Flux reports the release Ready, so the
+            // Committed to Git instead of installed, then (Flux layout) awaited until Flux reports the release Ready, so the
             // post-deploy steps below find running pods as after a Helm install. No Helm dry run: the dependencies
             // whose resources the chart may use (KEDA, for one) are installed by Flux only after the commit; Flux
             // renders the chart itself and its message is reported if that fails.
-            this.commandPlanFactory.createGitOpsReleaseCommands(rootCommand,
+            // A deploy written with a GitOps profile is not Flux's to apply: the operation ends at its commit.
+            String profile = request.getGit() == null ? null : request.getGit().getProfile();
+            boolean fluxLayout = profile == null || profile.isBlank() || "flux".equals(profile.trim());
+            this.commandPlanFactory.createGitOpsReleaseCommands(rootCommand, fluxLayout,
                     gitOpsReadyTimeoutSeconds(request.getServiceKey()), FLUX_READY_POLL_SECONDS);
         } else {
             this.commandPlanFactory.createRealChartInstallationCommands(rootCommand, repoId, true);

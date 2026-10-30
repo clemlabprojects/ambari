@@ -99,18 +99,23 @@ public class CommandPlanFactory {
 
     /**
      * The GitOps end of a release deploy, in place of the Helm dry run and install: the commit of the HelmRelease
-     * (with the same parameters, dynamic values included, as the Helm install would get), then the wait for Flux to
-     * apply it.
+     * (with the same parameters, dynamic values included, as the Helm install would get), then, in the Flux layout,
+     * the wait for Flux to apply it. A deploy written with a GitOps profile ends at the commit: what reads the
+     * repository (a pipeline, Argo CD, an operator syncing by hand) deploys it, at a time KDPS does not know.
      *
      * @param cmd            root command
+     * @param waitForFlux    whether Flux applies the commit (the Flux layout), so the wait is planned
      * @param timeoutSeconds how long the wait lasts before it fails
      * @param pollSeconds    how often it reads the HelmRelease
      */
-    public void createGitOpsReleaseCommands(CommandEntity cmd, int timeoutSeconds, int pollSeconds) {
+    public void createGitOpsReleaseCommands(CommandEntity cmd, boolean waitForFlux, int timeoutSeconds, int pollSeconds) {
         Map<String, Object> params = rootParamsWithDynamicOverrides(cmd);
         String releaseName = (String) params.get("releaseName");
         String namespace = (String) params.get("namespace");
         appendReleaseStep(cmd, params, CommandType.GITOPS_COMMIT, "GitOps: commit HelmRelease " + releaseName + " to Git");
+        if (!waitForFlux) {
+            return;
+        }
 
         Map<String, Object> waitParams = new LinkedHashMap<>();
         waitParams.put("releaseName", releaseName);

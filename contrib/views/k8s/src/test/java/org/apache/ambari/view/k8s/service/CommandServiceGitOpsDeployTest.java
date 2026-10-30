@@ -476,6 +476,20 @@ class CommandServiceGitOpsDeployTest {
     }
 
     @Test
+    void aGitOpsProfileDeployEndsAtItsCommitWithNoWaitForFlux() {
+        // What reads the repository (Argo CD, a pipeline, an operator syncing by hand) deploys it, whenever it does.
+        HelmDeployRequest request = fullRequest("FLUX_GITOPS");
+        request.getGit().setProfile("argo-envs");
+
+        List<String> steps = stepTypes(plan(request, true));
+
+        assertTrue(steps.contains(CommandType.GITOPS_COMMIT.name()), steps.toString());
+        assertFalse(steps.contains(CommandType.FLUX_WAIT_READY.name()), steps.toString());
+        assertEquals(steps.indexOf(CommandType.GITOPS_COMMIT.name()) + 1,
+                steps.indexOf(CommandType.AMBARI_VIEW_PROVISION.name()), steps.toString());
+    }
+
+    @Test
     void aNewGitOpsReleaseIsRecordedByItsCommitNotWhenItIsPlanned() {
         plan(request("FLUX_GITOPS", "main"), true);
 
