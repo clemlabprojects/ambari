@@ -401,12 +401,100 @@ def optimizers(group=None):
 
 
 def ensure_optimizer():
-  """Starts the optimizer of the Ambari group when none is running."""
+  """Starts the optimizer of the Ambari group when none is running, unless optimizing is paused."""
   import params
 
+  if is_optimizing_paused():
+    Logger.warning("Optimizing is paused: no optimizer started. Run the Amoro service action "
+                   "'Resume Optimizing' to resume table maintenance.")
+    return
   if optimizers():
     return
   amoro_api("POST", "/optimize/optimizers", {"optimizerGroup": params.amoro_optimizer_group,
                                              "parallelism": params.amoro_optimizer_parallelism})
   Logger.info("Started an optimizer in the Amoro optimizer group '{0}' (parallelism {1}).".format(
     params.amoro_optimizer_group, params.amoro_optimizer_parallelism))
+
+
+# ---------------------------------------------------------------------------
+# Pause and resume of the optimizing (stack upgrade)
+# ---------------------------------------------------------------------------
+
+# Optimizing states of a table holding a process (planning and pending ones hold none yet).
+ACTIVE_OPTIMIZING_STATUSES = ("full", "major", "minor", "committing")
+# The flag the PAUSE_OPTIMIZING action leaves in the data dir: the server starts no optimizer while it
+# exists, and the "Amoro Optimizing Paused" alert reports it.
+PAUSED_FLAG = "optimizing.paused"
+
+
+def paused_flag():
+  import params
+  return os.path.join(params.amoro_data_dir, PAUSED_FLAG)
+
+
+def is_optimizing_paused():
+  return os.path.exists(paused_flag())
+
+
+def pause_optimizing(timeout=900):
+  """Stops the optimizing: no optimizer is left to poll tasks (Amoro plans only for a polling optimizer)
+  and the running processes are cancelled. Their persisted tasks hold Java-serialized Iceberg objects
+  a newer Iceberg cannot read, which is why a stack upgrade requires it."""
+  import params
+
+  File(paused_flag(), content="Optimizing paused by Ambari\n", owner=params.amoro_user,
+       group=params.user_group, mode=0o644)
+  for optimizer in optimizers(group="all"):
+    amoro_api("DELETE", "/optimize/optimizers/{0}".format(optimizer["jobId"]))
+    Logger.info("Released the optimizer {0} of the group '{1}'.".format(optimizer["jobId"], optimizer.get("groupName")))
+
+  deadline = time.time() + timeout
+  while True:
+    active = active_optimizing_tables()
+    if not active:
+      Logger.info("Optimizing is paused: no optimizer, no running optimizing process.")
+      return
+    for table in active:
+      for process in running_processes(table):
+        amoro_api("POST", "/catalogs/{0}/dbs/{1}/tables/{2}/optimizing-processes/{3}/cancel".format(
+          table["catalog"], table["database"], table["tableName"], process["processId"]))
+        Logger.info("Cancelled the optimizing process {0} of {1}.{2}.{3}.".format(
+          process["processId"], table["catalog"], table["database"], table["tableName"]))
+    if time.time() > deadline:
+      raise Fail("Optimizing processes are still active after {0}s: {1}".format(timeout, ", ".join(
+        "{catalog}.{database}.{tableName}".format(**table) for table in active)))
+    time.sleep(10)
+
+
+def resume_optimizing():
+  File(paused_flag(), action="delete")
+  ensure_optimizer_group()
+  ensure_optimizer()
+  Logger.info("Optimizing resumed.")
+
+
+def check_optimizing_paused():
+  """Fails unless the optimizing is paused (stack upgrade, before the restart of the server)."""
+  if not is_optimizing_paused():
+    raise Fail("Optimizing is not paused: run the Amoro service action 'Pause Optimizing', then retry.")
+  if optimizers(group="all"):
+    raise Fail("Optimizers are running although optimizing is paused: run 'Pause Optimizing' again, then retry.")
+  active = active_optimizing_tables()
+  if active:
+    raise Fail("Optimizing processes are still active: {0}. Run 'Pause Optimizing' again, then retry.".format(
+      ", ".join("{catalog}.{database}.{tableName}".format(**table) for table in active)))
+  Logger.info("Optimizing is paused.")
+
+
+def active_optimizing_tables():
+  """Table identifiers (catalog, database, tableName) holding an optimizing process."""
+  query = "&".join("actions%5B%5D=" + status for status in ACTIVE_OPTIMIZING_STATUSES)
+  result = amoro_api("GET", "/optimize/optimizerGroups/all/tables?page=1&pageSize=1000&" + query) or {}
+  return [table["tableIdentifier"] for table in result.get("list", [])
+          if table.get("optimizeStatus") in ACTIVE_OPTIMIZING_STATUSES]
+
+
+def running_processes(table):
+  result = amoro_api("GET", "/catalogs/{0}/dbs/{1}/tables/{2}/optimizing-processes?status=RUNNING&page=1&pageSize=100".format(
+    table["catalog"], table["database"], table["tableName"])) or {}
+  return result.get("list", [])

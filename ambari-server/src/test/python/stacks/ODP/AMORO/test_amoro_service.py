@@ -18,6 +18,7 @@ limitations under the License.
 
 import importlib.util
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -315,6 +316,66 @@ class TestAmoroAccess(unittest.TestCase):
   def test_nothing_without_ranger_plugins(self):
     self.assertEqual([], self.access(ranger_hdfs_enabled=False, ranger_ozone_enabled=False,
                                      has_polaris_ozone_catalog=True).access_policies())
+
+
+class TestAmoroPauseOptimizing(unittest.TestCase):
+
+  def amoro(self, tables):
+    import tempfile
+    amoro = load_amoro_scripts(amoro_data_dir=tempfile.mkdtemp(), amoro_user="amoro", user_group="hadoop",
+                               amoro_optimizer_group="local", amoro_optimizer_parallelism=2, amoro_optimizer_memory=2048)
+    amoro.File = lambda path, action="create", **kwargs: open(path, "w").close() if action == "create" else os.remove(path)
+    amoro.time.sleep = lambda seconds: None
+    amoro.calls = []
+    rounds = list(tables)
+
+    def amoro_api(method, path, body=None, timeout=60, raw_body=None, content_type=None):
+      amoro.calls.append((method, path.split("?")[0]))
+      if "/optimizers" in path and method == "GET":
+        return {"list": [] if amoro.released else [{"jobId": "j1", "groupName": "local"}]}
+      if method == "DELETE":
+        amoro.released = True
+      if "/tables?" in path:
+        return {"list": rounds.pop(0) if rounds else []}
+      if "/optimizing-processes?" in path:
+        return {"list": [{"processId": "42"}]}
+      return None
+    amoro.released = False
+    amoro.amoro_api = amoro_api
+    return amoro
+
+  TABLE = {"tableIdentifier": {"catalog": "hive", "database": "db", "tableName": "t"}, "optimizeStatus": "minor"}
+
+  def test_pause_releases_optimizers_and_cancels_processes(self):
+    amoro = self.amoro([[self.TABLE], []])
+    amoro.pause_optimizing()
+    self.assertTrue(amoro.is_optimizing_paused())
+    self.assertIn(("DELETE", "/optimize/optimizers/j1"), amoro.calls)
+    self.assertIn(("POST", "/catalogs/hive/dbs/db/tables/t/optimizing-processes/42/cancel"), amoro.calls)
+    amoro.check_optimizing_paused()
+
+  def test_pause_fails_when_processes_stay_active(self):
+    amoro = self.amoro([[self.TABLE]] * 3)
+    self.assertRaises(amoro.Fail, amoro.pause_optimizing, timeout=-1)
+
+  def test_paused_server_starts_no_optimizer_until_resumed(self):
+    amoro = self.amoro([])
+    amoro.pause_optimizing()
+    amoro.calls = []
+    amoro.ensure_optimizer()
+    self.assertEqual([], amoro.calls)
+    amoro.resume_optimizing()
+    self.assertFalse(amoro.is_optimizing_paused())
+    self.assertIn(("POST", "/optimize/optimizers"), amoro.calls)
+    self.assertRaises(amoro.Fail, amoro.check_optimizing_paused)
+
+  def test_alert_reports_the_paused_flag(self):
+    amoro = self.amoro([])
+    alert = load_module("alert_optimizing_paused", SERVICE / "package/alerts/alert_optimizing_paused.py")
+    configurations = {"{{amoro-env/amoro_data_dir}}": sys.modules["params"].amoro_data_dir}
+    self.assertEqual("OK", alert.execute(configurations)[0])
+    amoro.pause_optimizing()
+    self.assertEqual("WARNING", alert.execute(configurations)[0])
 
 
 class TestAmoroServiceAdvisor(unittest.TestCase):

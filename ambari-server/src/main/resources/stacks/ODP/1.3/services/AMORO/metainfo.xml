@@ -104,6 +104,22 @@
                 <timeout>600</timeout>
               </commandScript>
             </customCommand>
+            <customCommand>
+              <name>PAUSE_OPTIMIZING</name>
+              <commandScript>
+                <script>scripts/amoro_server.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>1200</timeout>
+              </commandScript>
+            </customCommand>
+            <customCommand>
+              <name>RESUME_OPTIMIZING</name>
+              <commandScript>
+                <script>scripts/amoro_server.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>600</timeout>
+              </commandScript>
+            </customCommand>
           </customCommands>
         </component>
       </components>

@@ -51,6 +51,18 @@
             }
           }
         }
+      },
+      {
+        "name": "amoro_optimizing_paused",
+        "label": "Amoro Optimizing Paused",
+        "description": "This host-level alert is triggered while the optimizing of Amoro is paused (service action Pause Optimizing, required by a stack upgrade): Amoro does not maintain the tables until Resume Optimizing.",
+        "interval": 1,
+        "scope": "HOST",
+        "enabled": true,
+        "source": {
+          "type": "SCRIPT",
+          "path": "ODP/1.3/services/AMORO/package/alerts/alert_optimizing_paused.py"
+        }
       }
     ]
   }

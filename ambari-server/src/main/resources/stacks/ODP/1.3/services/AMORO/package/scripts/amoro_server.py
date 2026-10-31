@@ -103,6 +103,20 @@ class AmoroServer(Script):
     env.set_params(params)
     amoro_access.setup_access(required=True)
 
+  def pause_optimizing(self, env):
+    """PAUSE_OPTIMIZING: releases the optimizers and cancels the running optimizing processes (stack upgrade)."""
+    import params
+    env.set_params(params)
+    amoro.wait_for_amoro(timeout=60)
+    amoro.pause_optimizing()
+
+  def resume_optimizing(self, env):
+    """RESUME_OPTIMIZING: starts the optimizer again."""
+    import params
+    env.set_params(params)
+    amoro.wait_for_amoro(timeout=60)
+    amoro.resume_optimizing()
+
   def status(self, env):
     import status_params
     env.set_params(status_params)
