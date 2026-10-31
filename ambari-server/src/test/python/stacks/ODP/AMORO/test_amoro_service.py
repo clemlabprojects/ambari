@@ -379,6 +379,49 @@ class TestAmoroServiceAdvisor(unittest.TestCase):
       "validateAmoroDbProperties", {"DB_FLAVOR": "MYSQL", "create_db_dbuser": "false", "db_password": "x"}, self.services()))
 
 
+class TestAmoroSecurity(unittest.TestCase):
+  advisor = load_amoro_advisor()
+
+  def services(self, kerberos="false", oidc=False, knox=True):
+    components = [{"StackServiceComponents": {"service_name": "AMORO", "component_name": "AMORO_SERVER",
+                                              "hostnames": ["h1"], "cardinality": "1", "component_category": "MASTER",
+                                              "display_name": "Amoro Management Service"}}]
+    services = [{"StackServices": {"service_name": "AMORO"}, "components": components}]
+    if knox:
+      services.append({"StackServices": {"service_name": "KNOX"}, "components": [
+        {"StackServiceComponents": {"service_name": "KNOX", "component_name": "KNOX_GATEWAY", "hostnames": ["h1"],
+                                    "cardinality": "1+", "component_category": "MASTER",
+                                    "display_name": "Knox Gateway"}}]})
+    configurations = {"cluster-env": {"properties": {"security_enabled": kerberos}}}
+    if oidc:
+      configurations["oidc-env"] = {"properties": {"oidc_admin_url": "https://kc:8443", "oidc_realm": "odp"}}
+    return {"services": services, "configurations": configurations}
+
+  HOSTS = {"items": [{"Hosts": {"host_name": "h1", "maintenance_state": "OFF"}}]}
+
+  def test_security_modes(self):
+    modes = self.advisor.get_amoro_security_modes
+    self.assertEqual([], modes({}, self.services()))
+    self.assertEqual(["Kerberos", "OIDC"], modes({}, self.services("true", True)))
+
+  def test_tls_is_recommended_and_required(self):
+    services = self.services(kerberos="true")
+    configurations = {}
+    self.advisor.AmoroRecommender().recommendAmoroConfigurations(configurations, {}, services, self.HOSTS)
+    self.assertEqual("true", configurations["amoro-site"]["properties"]["http-server.ssl.enabled"])
+    items = self.advisor.AmoroValidator().validateAmoroSiteProperties(
+      {"admin-password": "x", "http-server.ssl.enabled": "false"}, {}, services["configurations"], services, self.HOSTS)
+    self.assertIn(("http-server.ssl.enabled", "ERROR"), [(i["config-name"], i["level"]) for i in items])
+
+  def test_knox_is_required_when_secure(self):
+    def knox_errors(services):
+      return [item for item in self.advisor.AmoroServiceAdvisor().getServiceComponentLayoutValidations(services, self.HOSTS)
+              if "Knox" in item["message"]]
+    self.assertEqual(1, len(knox_errors(self.services(oidc=True, knox=False))))
+    self.assertEqual([], knox_errors(self.services(oidc=True, knox=True)))
+    self.assertEqual([], knox_errors(self.services(knox=False)))
+
+
 class TestAmoroServiceDefinition(unittest.TestCase):
 
   def properties(self, site):

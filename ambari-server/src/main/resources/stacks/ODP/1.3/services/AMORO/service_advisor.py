@@ -46,6 +46,17 @@ def get_property(configurations, services, site, name):
   return None
 
 
+def get_amoro_security_modes(configurations, services):
+  """Cluster security that requires the dashboard behind Knox and TLS: Kerberos and/or the cluster OIDC."""
+  modes = []
+  if str(get_property(configurations, services, "cluster-env", "security_enabled") or "false").strip().lower() == "true":
+    modes.append("Kerberos")
+  if (str(get_property(configurations, services, "oidc-env", "oidc_admin_url") or "").strip()
+      and str(get_property(configurations, services, "oidc-env", "oidc_realm") or "").strip()):
+    modes.append("OIDC")
+  return modes
+
+
 def jdbc_urls(db_flavor, db_host, db_port, db_name):
   """(driver class, Amoro JDBC URL, DBA JDBC URL) of a DB flavor."""
   host_port = db_host if ":" in db_host else "{0}:{1}".format(db_host, db_port)
@@ -62,7 +73,13 @@ def jdbc_urls(db_flavor, db_host, db_port, db_name):
 class AmoroServiceAdvisor(service_advisor.ServiceAdvisor):
 
   def getServiceComponentLayoutValidations(self, services, hosts):
-    return self.getServiceComponentCardinalityValidations(services, hosts, "AMORO")
+    items = self.getServiceComponentCardinalityValidations(services, hosts, "AMORO")
+    modes = get_amoro_security_modes({}, services)
+    if modes and not self.getHostsWithComponent("KNOX", "KNOX_GATEWAY", services, hosts):
+      items.append({"type": "host-component", "level": "ERROR", "component-name": "AMORO_SERVER",
+                    "message": "Amoro requires a Knox Gateway when {0} is enabled: users reach its dashboard "
+                               "through Knox.".format(" and ".join(modes))})
+    return items
 
   def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
     recommender = AmoroRecommender()
@@ -78,6 +95,8 @@ class AmoroRecommender(service_advisor.ServiceAdvisor):
   def recommendAmoroConfigurations(self, configurations, clusterData, services, hosts):
     self.recommendAmoroDatabaseConfigurations(configurations, services)
     self.recommendAmoroLdapConfigurations(configurations, services)
+    if get_amoro_security_modes(configurations, services):
+      self.putProperty(configurations, "amoro-site", services)("http-server.ssl.enabled", "true")
 
   def recommendAmoroDatabaseConfigurations(self, configurations, services):
     put_db_props = self.putProperty(configurations, "amoro-db-properties", services)
@@ -142,6 +161,11 @@ class AmoroValidator(service_advisor.ServiceAdvisor):
                     "item": self.getWarnItem("Dashboard roles come from LDAP groups: without an LDAP URL, only the "
                                              "built-in administrator can log in and role-based access is off.")})
 
+    modes = get_amoro_security_modes(configurations, services)
+    if modes and str(properties.get("http-server.ssl.enabled", "false")).lower() != "true":
+      items.append({"config-name": "http-server.ssl.enabled",
+                    "item": self.getErrorItem("The Amoro dashboard must use TLS when {0} is enabled: logins and "
+                                              "the REST credentials would travel in clear text.".format(" and ".join(modes)))})
     if str(properties.get("http-server.ssl.enabled", "false")).lower() == "true":
       for name in ("http-server.ssl.keystore-path", "http-server.ssl.keystore-password"):
         if not str(properties.get(name, "")).strip():

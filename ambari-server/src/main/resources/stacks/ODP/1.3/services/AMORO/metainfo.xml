@@ -143,6 +143,7 @@
         <config-type>amoro-db-properties</config-type>
         <config-type>amoro-log4j</config-type>
         <config-type>ranger-ugsync-site</config-type>
+        <config-type>oidc-env</config-type>
       </configuration-dependencies>
 
       <themes>
