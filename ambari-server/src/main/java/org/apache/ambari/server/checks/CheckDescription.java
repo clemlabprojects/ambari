@@ -353,6 +353,16 @@ public class CheckDescription {
                   "'python3 /var/lib/ambari-server/resources/scripts/migrate_legacy_livy.py --check' to review the " +
                   "migration, then the same command with --apply.").build());
 
+  public static CheckDescription AMORO_OPTIMIZING_PAUSED = new CheckDescription("AMORO_OPTIMIZING_PAUSED",
+      PrereqCheckType.SERVICE,
+      "Amoro optimizing must be paused",
+      new ImmutableMap.Builder<String, String>()
+          .put(AbstractCheckDescriptor.DEFAULT,
+              "Amoro optimizing is not paused on %s. Its optimizing processes hold Iceberg objects the upgraded " +
+                  "stack may not read: run the Amoro service action 'Pause Optimizing', wait for the alert " +
+                  "'Amoro Optimizing Paused' (up to a minute), then re-run the checks. Run 'Resume Optimizing' " +
+                  "once the upgrade is finalized.").build());
+
   public static CheckDescription JAVA_VERSION = new CheckDescription("JAVA_VERSION",
       PrereqCheckType.CLUSTER,
       "Verify Java version requirement",

@@ -117,6 +117,13 @@ class AmoroServer(Script):
     amoro.wait_for_amoro(timeout=60)
     amoro.resume_optimizing()
 
+  def check_optimizing_paused(self, env):
+    """Stack upgrade stage: fails unless the optimizing is paused."""
+    import params
+    env.set_params(params)
+    amoro.wait_for_amoro(timeout=60)
+    amoro.check_optimizing_paused()
+
   def status(self, env):
     import status_params
     env.set_params(status_params)

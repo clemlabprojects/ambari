@@ -24,6 +24,8 @@
     <!-- ODP: the deprecated LIVY2_SERVER must be migrated (scripts/migrate_legacy_livy.py) before upgrading. -->
     <check>org.apache.ambari.server.checks.LegacyLivyCheck</check>
     <check>org.apache.ambari.server.checks.LZOCheck</check>
+    <!-- ODP: Amoro optimizing must be paused (AMORO service action Pause Optimizing) before upgrading. -->
+    <check>org.apache.ambari.server.checks.AmoroOptimizingPausedCheck</check>
     <configuration>
       <!-- Configuration properties for all pre-reqs including required pre-reqs -->
       <check-properties name="org.apache.ambari.server.checks.HiveDynamicServiceDiscoveryCheck">
@@ -49,6 +51,15 @@
       <execute-stage service="STORM" component="NIMBUS" title="Stop Storm Topologies">
         <task xsi:type="manual">
           <message>Before continuing, please deactivate and kill any currently running topologies.</message>
+        </task>
+      </execute-stage>
+
+      <!-- Amoro must not hold optimizing processes across the upgrade: their persisted tasks are
+           Java-serialized Iceberg objects the target Iceberg may not read. -->
+      <execute-stage service="AMORO" component="AMORO_SERVER" title="Check Amoro Optimizing Is Paused">
+        <task xsi:type="execute" hosts="any">
+          <script>scripts/amoro_server.py</script>
+          <function>check_optimizing_paused</function>
         </task>
       </execute-stage>
 
@@ -81,6 +92,10 @@
 
       <service name="KNOX">
         <component>KNOX_GATEWAY</component>
+      </service>
+
+      <service name="AMORO">
+        <component>AMORO_SERVER</component>
       </service>
 
       <service name="OOZIE">
@@ -837,6 +852,15 @@
       </service>
     </group>
 
+    <group xsi:type="restart" name="AMORO" title="Amoro">
+      <service-check>false</service-check>
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service name="AMORO">
+        <component>AMORO_SERVER</component>
+      </service>
+    </group>
+
     <group name="SERVICE_CHECK_2" title="All Service Checks" xsi:type="service-check">
       <direction>UPGRADE</direction>
       <skippable>true</skippable>
@@ -851,6 +875,7 @@
         <service>ZEPPELIN</service>
         <service>OOZIE</service>
         <service>HUE</service>
+        <service>AMORO</service>
       </priority>
     </group>
 
@@ -916,6 +941,12 @@
         <direction>UPGRADE</direction>
         <task xsi:type="manual">
           <message>Please confirm you are ready to finalize.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="AMORO" component="AMORO_SERVER" title="Resume Amoro Optimizing">
+        <task xsi:type="manual">
+          <message>Amoro optimizing is still paused: once the cluster is finalized, run the Amoro service action Resume Optimizing so that Amoro maintains the tables again.</message>
         </task>
       </execute-stage>
 
@@ -1324,6 +1355,14 @@
 
     <service name="HUE">
       <component name="HUE_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="AMORO">
+      <component name="AMORO_SERVER">
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>

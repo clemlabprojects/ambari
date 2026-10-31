@@ -37,6 +37,8 @@
     <check>org.apache.ambari.server.checks.YarnTimelineServerStatePreservingCheck</check>
     <check>org.apache.ambari.server.checks.DruidHighAvailabilityCheck</check>
     <check>org.apache.ambari.server.checks.LZOCheck</check>
+    <!-- ODP: Amoro optimizing must be paused (AMORO service action Pause Optimizing) before upgrading. -->
+    <check>org.apache.ambari.server.checks.AmoroOptimizingPausedCheck</check>
 
     <configuration>
       <!-- Configuration properties for all pre-reqs including required pre-reqs -->
@@ -61,6 +63,15 @@
         <task xsi:type="execute" hosts="any">
           <script>scripts/pre_upgrade.py</script>
           <function>prepare</function>
+        </task>
+      </execute-stage>
+
+      <!-- Amoro must not hold optimizing processes across the upgrade: their persisted tasks are
+           Java-serialized Iceberg objects the target Iceberg may not read. -->
+      <execute-stage service="AMORO" component="AMORO_SERVER" title="Check Amoro Optimizing Is Paused">
+        <task xsi:type="execute" hosts="any">
+          <script>scripts/amoro_server.py</script>
+          <function>check_optimizing_paused</function>
         </task>
       </execute-stage>
     </group>
@@ -469,6 +480,15 @@
       </service>
     </group>
 
+    <group name="AMORO" title="Amoro">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="AMORO">
+        <component>AMORO_SERVER</component>
+      </service>
+    </group>
+
     <group name="SERVICE_CHECK_3" title="All Service Checks" xsi:type="service-check">
       <direction>UPGRADE</direction>
       <skippable>true</skippable>
@@ -574,6 +594,12 @@
         <direction>UPGRADE</direction>
         <task xsi:type="manual">
           <message>Please confirm you are ready to finalize.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="AMORO" component="AMORO_SERVER" title="Resume Amoro Optimizing">
+        <task xsi:type="manual">
+          <message>Amoro optimizing is still paused: once the cluster is finalized, run the Amoro service action Resume Optimizing so that Amoro maintains the tables again.</message>
         </task>
       </execute-stage>
 
@@ -1028,6 +1054,14 @@
           <task xsi:type="configure" id="odp_1_3_2_0_hue_impala_section"/>
         </pre-upgrade>
         <pre-downgrade/>
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="AMORO">
+      <component name="AMORO_SERVER">
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>
