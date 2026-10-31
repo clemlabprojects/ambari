@@ -38,6 +38,23 @@ except Exception:
   print("Failed to load parent")
 
 
+def get_polaris_security_modes(configurations, services):
+  """Cluster security that requires TLS on Polaris: Kerberos and/or OIDC (external or mixed authentication)."""
+  def get(site, name, default):
+    for source in (configurations, services.get("configurations", {})):
+      value = source.get(site, {}).get("properties", {}).get(name)
+      if value is not None:
+        return str(value).strip().lower()
+    return default
+
+  modes = []
+  if get("cluster-env", "security_enabled", "false") == "true":
+    modes.append("Kerberos")
+  if get("polaris-application-properties", "polaris.authentication.type", "internal") in ("external", "mixed"):
+    modes.append("OIDC")
+  return modes
+
+
 class PolarisServiceAdvisor(service_advisor.ServiceAdvisor):
 
   def getServiceComponentLayoutValidations(self, services, hosts):
@@ -60,8 +77,8 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     services_list = self.get_services_list(services)
 
-    self.recommendPolarisTlsConfigurations(configurations, services)
     self.recommendPolarisAuthConfigurations(configurations, services)
+    self.recommendPolarisTlsConfigurations(configurations, services)
     self.recommendPolarisOzoneBootstrapConfigurations(configurations, services, hosts)
     self.recommendPolarisDatabaseConfigurations(configurations, services)
     self.recommendPolarisMcpConfigurations(configurations, services, hosts)
@@ -201,6 +218,13 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       put_polaris_env("polaris_ssl_truststore_password", "changeit")
 
     ssl_enabled = str(polaris_env.get("polaris_ssl_enabled", "false")).strip().lower() == "true"
+
+    # Tokens and client secrets travel on every call: with Kerberos or OIDC, Polaris, MCP and Console serve TLS.
+    if get_polaris_security_modes(configurations, services):
+      ssl_enabled = True
+      put_polaris_env("polaris_ssl_enabled", "true")
+      put_polaris_env("polaris_mcp_tls_enabled", "true")
+      put_polaris_env("polaris_console_tls_enabled", "true")
 
     # MCP and Console default to the cluster-CA-signed PEMs that the ambari-api ansible
     # role lays down at /etc/security/serverKeys/. No auto-generation: operators are
@@ -814,6 +838,21 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
       })
 
     mcp_hosts = self.getHostsWithComponent("POLARIS", "POLARIS_MCP_SERVER", services, hosts)
+    security_modes = get_polaris_security_modes(configurations, services)
+    if security_modes:
+      tls_required = [("polaris_ssl_enabled", "Polaris")]
+      if mcp_hosts:
+        tls_required.append(("polaris_mcp_tls_enabled", "Polaris MCP Server"))
+      if self.getHostsWithComponent("POLARIS", "POLARIS_CONSOLE", services, hosts):
+        tls_required.append(("polaris_console_tls_enabled", "Polaris Console"))
+      for tls_property, component in tls_required:
+        if str(properties.get(tls_property, "false")).strip().lower() != "true":
+          validation_items.append({
+            "config-name": tls_property,
+            "item": self.getErrorItem("{0} must use TLS when {1} is enabled: tokens and client secrets would travel "
+                                      "in clear text".format(component, " and ".join(security_modes)))
+          })
+
     if mcp_hosts and mcp_transport == "stdio":
       validation_items.append({
         "config-name": "polaris_mcp_transport",
