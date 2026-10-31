@@ -697,7 +697,11 @@ def _unverified_ssl_ctx():
 # Ozone catalog bootstrap
 # ---------------------------------------------------------------------------
 
-def bootstrap_ozone_catalog():
+def bootstrap_ozone_catalog(required=False):
+  """
+  Creates the Ozone-backed Polaris catalog. On server start (required=False) a failure only logs a
+  warning; the BOOTSTRAP_OZONE_CATALOG action (required=True) fails with it.
+  """
   import params
 
   if not getattr(params, "has_ozone_service", False):
@@ -763,6 +767,8 @@ def bootstrap_ozone_catalog():
     Logger.info("Polaris Ozone catalog bootstrap completed (catalog={0}).".format(catalog_name))
 
   except Exception as err:
+    if required:
+      raise Fail("Polaris Ozone catalog bootstrap failed: {0}".format(err))
     Logger.warning("Polaris Ozone catalog bootstrap failed: {0}".format(err))
 
 

@@ -192,7 +192,7 @@ class PolarisServer(Script):
     import params
     env.set_params(params)
     Logger.info("Running manual Polaris custom command: BOOTSTRAP_OZONE_CATALOG")
-    bootstrap_ozone_catalog()
+    bootstrap_ozone_catalog(required=True)
 
   def provision_ozone_bucket(self, env):
     """PROVISION_OZONE_BUCKET, submitted by KDPS while provisioning a release's Polaris catalog.
