@@ -1056,6 +1056,9 @@ def _create_ranger_ozone_policy(access_id, volume_name, bucket_name):
     or ""
   ).strip().rstrip("/")
   service_name = str(ranger_ozone_security.get("ranger.plugin.ozone.service.name", "")).strip()
+  if not service_name or service_name == "{{repo_name}}":
+    # the Ozone plugin names its Ranger service <cluster>_ozone when the template default is kept
+    service_name = "{0}_ozone".format(params.config["clusterName"])
   admin_user = str(ranger_env.get("admin_username", "")).strip()
   admin_password = str(ranger_env.get("admin_password", "")).strip()
 
@@ -1084,8 +1087,8 @@ def _create_ranger_ozone_policy(access_id, volume_name, bucket_name):
     "resources": {
       "volume": {"values": [volume_name], "isExcludes": False, "isRecursive": False},
       "bucket": {"values": [bucket_name], "isExcludes": False, "isRecursive": False},
+      # Ranger's ozone service accepts [volume], [volume, bucket], [role] or [volume, bucket, key]
       "key": {"values": ["*"], "isExcludes": False, "isRecursive": False},
-      "prefix": {"values": ["*"], "isExcludes": False, "isRecursive": False},
     },
     "policyItems": [{
       "users": [access_id],
@@ -1094,10 +1097,13 @@ def _create_ranger_ozone_policy(access_id, volume_name, bucket_name):
       "delegateAdmin": True
     }]
   }
-  create_status, _ = _ranger_http("POST", create_url, admin_user, admin_password, json_body=body)
+  create_status, create_payload = _ranger_http("POST", create_url, admin_user, admin_password, json_body=body)
+  if create_status == 400 and "already exists" in str(create_payload):
+    Logger.info("A Ranger Ozone policy already covers {0}/{1}: {2}".format(volume_name, bucket_name, create_payload))
+    return
   if create_status not in (200, 201, 204, 409):
     raise Fail(
-      "Failed to create Ranger Ozone policy '{0}'. HTTP status={1}".format(policy_name, create_status)
+      "Failed to create Ranger Ozone policy '{0}'. HTTP status={1}: {2}".format(policy_name, create_status, create_payload)
     )
   Logger.info(
     "Created Ranger Ozone policy '{0}' for access id '{1}'.".format(policy_name, access_id)
