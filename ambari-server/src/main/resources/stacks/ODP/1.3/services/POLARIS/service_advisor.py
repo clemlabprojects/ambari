@@ -359,8 +359,6 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     if not str(polaris_env.get("polaris_ozone_principal_name", "")).strip():
       put_polaris_env("polaris_ozone_principal_name", "ozone-engine")
-    if not str(polaris_env.get("polaris_ozone_principal_secret", "")).strip():
-      put_polaris_env("polaris_ozone_principal_secret", "ozone-engine-secret")
     if not str(polaris_env.get("polaris_ozone_principal_role", "")).strip():
       put_polaris_env("polaris_ozone_principal_role", "ozone_engineers")
     if not str(polaris_env.get("polaris_ozone_catalog_name", "")).strip():
@@ -916,9 +914,20 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
           )
         })
 
+      ozone_secret = str(properties.get("polaris_ozone_principal_secret", "")).strip()
+      if not ozone_secret:
+        validation_items.append({
+          "config-name": "polaris_ozone_principal_secret",
+          "item": self.getErrorItem("polaris_ozone_principal_secret must be set when OZONE service is installed")
+        })
+      elif ozone_secret == "ozone-engine-secret":
+        validation_items.append({
+          "config-name": "polaris_ozone_principal_secret",
+          "item": self.getWarnItem("polaris_ozone_principal_secret is the former well-known default: replace it with a strong secret")
+        })
+
       required_ozone_props = [
         "polaris_ozone_principal_name",
-        "polaris_ozone_principal_secret",
         "polaris_ozone_catalog_name",
         "polaris_ozone_catalog_base_location",
         "polaris_ozone_catalog_allowed_locations",
