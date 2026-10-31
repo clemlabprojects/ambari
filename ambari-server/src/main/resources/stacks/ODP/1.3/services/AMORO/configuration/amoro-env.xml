@@ -1,0 +1,165 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration supports_adding_forbidden="true">
+  <property>
+    <name>amoro_user</name>
+    <display-name>Amoro User</display-name>
+    <value>amoro</value>
+    <property-type>USER</property-type>
+    <description>Amoro service user.</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+      <user-groups>
+        <property>
+          <type>cluster-env</type>
+          <name>user_group</name>
+        </property>
+      </user-groups>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>amoro_log_dir</name>
+    <display-name>Amoro Log Dir</display-name>
+    <value>/var/log/amoro</value>
+    <description>Directory of the Amoro Management Service and optimizer logs.</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>true</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>amoro_pid_dir</name>
+    <display-name>Amoro PID Dir</display-name>
+    <value>/var/run/amoro</value>
+    <description>Directory of the Amoro PID files.</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>false</overridable>
+      <editable-only-at-install>true</editable-only-at-install>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>amoro_data_dir</name>
+    <display-name>Amoro Data Dir</display-name>
+    <value>/var/lib/amoro</value>
+    <description>Amoro working directory (state files of the service actions).</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>amoro_conf_dir</name>
+    <display-name>Amoro Conf Dir</display-name>
+    <value>/etc/amoro/conf</value>
+    <description>Amoro configuration directory (config.yaml, jvm.properties, env.sh, log4j2.xml).</description>
+    <value-attributes>
+      <type>directory</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>amoro_server_heapsize</name>
+    <display-name>Amoro Management Service Heap Size</display-name>
+    <value>2048</value>
+    <description>Heap of the Amoro Management Service (MB).</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>512</minimum>
+      <maximum>65536</maximum>
+      <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>amoro_optimizer_group</name>
+    <display-name>Optimizer Group</display-name>
+    <value>local</value>
+    <description>Optimizer group (resource group) created by Ambari, running its optimizers in the local container of the Amoro Management Service host. Tables are optimized by the group of their catalog.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>amoro_optimizer_parallelism</name>
+    <display-name>Optimizer Parallelism</display-name>
+    <value>2</value>
+    <description>Number of optimizing threads of the optimizer started by Ambari.</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>64</maximum>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>amoro_optimizer_memory</name>
+    <display-name>Optimizer Memory</display-name>
+    <value>2048</value>
+    <description>Memory of the optimizer started by Ambari (MB).</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>512</minimum>
+      <maximum>65536</maximum>
+      <unit>MB</unit>
+      <increment-step>256</increment-step>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>amoro_admin_ldap_group_dn</name>
+    <display-name>Admin LDAP Group DN</display-name>
+    <value></value>
+    <description>Distinguished name of the LDAP group whose members administer Amoro (dashboard role SERVICE_ADMIN). The other LDAP users get the read-only VIEWER role.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>content</name>
+    <display-name>env.sh template</display-name>
+    <description>Environment of the Amoro Management Service and of its optimizers (conf/env.sh).</description>
+    <value>
+# Hadoop and Hive client configurations, added to the Amoro classpath.
+export HADOOP_CONF_DIR={{hadoop_conf_dir}}
+{% if has_hive %}
+export HIVE_CONF_DIR={{hive_conf_dir}}
+{% endif %}
+export AMORO_LOG_DIR={{amoro_log_dir}}
+export AMORO_PID_DIR={{amoro_pid_dir}}
+    </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

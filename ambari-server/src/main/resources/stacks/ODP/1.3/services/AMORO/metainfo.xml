@@ -1,0 +1,136 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<metainfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <schemaVersion>2.0</schemaVersion>
+  <services>
+    <service>
+      <name>AMORO</name>
+      <displayName>Amoro</displayName>
+      <comment>Apache Amoro: Iceberg table maintenance (self-optimizing, snapshot expiration, orphan files cleaning)</comment>
+      <version>0.9.0</version>
+
+      <components>
+        <component>
+          <name>AMORO_SERVER</name>
+          <displayName>Amoro Management Service</displayName>
+          <category>MASTER</category>
+          <cardinality>1</cardinality>
+          <!-- The stack Hive 4 jars Amoro is built against are Java 21 class files. -->
+          <javaHomeSelector>secondary_java_home</javaHomeSelector>
+          <versionAdvertised>false</versionAdvertised>
+          <dependencies>
+            <!-- Client configurations uploaded with the Hive catalog of Amoro. -->
+            <dependency>
+              <name>HIVE/HIVE_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+              <conditions>
+                <condition xsi:type="propertyExists">
+                  <configType>hive-site</configType>
+                  <property>hive.metastore.uris</property>
+                </condition>
+              </conditions>
+            </dependency>
+            <dependency>
+              <name>HDFS/HDFS_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+              <conditions>
+                <condition xsi:type="propertyExists">
+                  <configType>hdfs-site</configType>
+                  <property>dfs.namenode.http-address</property>
+                </condition>
+              </conditions>
+            </dependency>
+          </dependencies>
+          <commandScript>
+            <script>scripts/amoro_server.py</script>
+            <scriptType>PYTHON</scriptType>
+            <timeout>600</timeout>
+          </commandScript>
+          <logs>
+            <log>
+              <logId>amoro_server</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
+        </component>
+      </components>
+
+      <osSpecifics>
+        <osSpecific>
+          <osFamily>redhat8,redhat9,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <packages>
+            <package>
+              <name>amoro_${stack_version}</name>
+            </package>
+          </packages>
+        </osSpecific>
+        <osSpecific>
+          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24</osFamily>
+          <packages>
+            <package>
+              <name>amoro-${stack_version}</name>
+            </package>
+          </packages>
+        </osSpecific>
+      </osSpecifics>
+
+      <commandScript>
+        <script>scripts/service_check.py</script>
+        <scriptType>PYTHON</scriptType>
+        <timeout>300</timeout>
+      </commandScript>
+
+      <requiredServices>
+        <service>CORE</service>
+      </requiredServices>
+
+      <configuration-dependencies>
+        <config-type>amoro-env</config-type>
+        <config-type>amoro-site</config-type>
+        <config-type>amoro-db-properties</config-type>
+        <config-type>amoro-log4j</config-type>
+        <config-type>ranger-ugsync-site</config-type>
+      </configuration-dependencies>
+
+      <themes>
+        <theme>
+          <fileName>credentials.json</fileName>
+          <default>true</default>
+        </theme>
+        <theme>
+          <fileName>database.json</fileName>
+          <default>true</default>
+        </theme>
+      </themes>
+
+      <quickLinksConfigurations>
+        <quickLinksConfiguration>
+          <fileName>quicklinks.json</fileName>
+          <default>true</default>
+        </quickLinksConfiguration>
+      </quickLinksConfigurations>
+
+    </service>
+  </services>
+</metainfo>

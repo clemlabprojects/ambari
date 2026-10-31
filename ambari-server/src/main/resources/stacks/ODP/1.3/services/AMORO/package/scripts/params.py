@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+import socket
+
+from resource_management.libraries.functions import conf_select
+from resource_management.libraries.functions.constants import StackFeature
+from resource_management.libraries.functions.default import default
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.get_kinit_path import get_kinit_path
+from resource_management.libraries.functions.stack_features import check_stack_feature, get_stack_feature_version
+from resource_management.libraries.script.script import Script
+
+import status_params
+
+
+def _to_bool(value, default=False):
+  if value is None:
+    return default
+  return str(value).strip().lower() in ("true", "yes", "1", "on")
+
+
+config = Script.get_config()
+stack_root = Script.get_stack_root()
+
+version = default("/commandParams/version", None)
+version_for_stack_feature_checks = get_stack_feature_version(config)
+
+# Identities and JDK. The Hive 4 jars of the stack are Java 21 class files: AMORO_SERVER selects the
+# secondary JDK (javaHomeSelector), resolved as for HIVE and POLARIS.
+amoro_user = status_params.amoro_user
+user_group = config['configurations']['cluster-env']['user_group']
+java64_home = config['ambariLevelParams']['java_home']
+host_level_params = default("/hostLevelParams", {})
+ambari_level_params = default("/ambariLevelParams", {})
+command_params_map = default("/commandParams", {})
+java_home_selector = (
+  host_level_params.get("java_home_selector")
+  or command_params_map.get("java_home_selector")
+  or ambari_level_params.get("java_home_selector")
+  or "java_home"
+)
+amoro_java_home = java64_home
+if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
+  amoro_java_home = (host_level_params.get(java_home_selector)
+                     or ambari_level_params.get(java_home_selector)
+                     or java64_home)
+jdk_location = default("/ambariLevelParams/jdk_location", "/usr/share/java")
+custom_postgres_jdbc_name = default("/ambariLevelParams/custom_postgres_jdbc_name", None)
+custom_mysql_jdbc_name = default("/ambariLevelParams/custom_mysql_jdbc_name", None)
+
+security_enabled = _to_bool(default("/configurations/cluster-env/security_enabled", "false"))
+kinit_path_local = get_kinit_path(default("/configurations/kerberos-env/executable_search_paths", None))
+amoro_principal = str(default("/configurations/amoro-env/amoro_principal", "")).strip()
+amoro_principal = amoro_principal.replace("_HOST", config['agentLevelParams']['hostname'].lower())
+amoro_keytab = default("/configurations/amoro-env/amoro_keytab", "/etc/security/keytabs/amoro.service.keytab")
+
+# Layout: packaged installation (odp-select amoro-server), conf-select managed configuration.
+amoro_home = format("{stack_root}/current/amoro-server")
+amoro_conf_dir = default("/configurations/amoro-env/amoro_conf_dir", "/etc/amoro/conf")
+amoro_log_dir = default("/configurations/amoro-env/amoro_log_dir", "/var/log/amoro")
+amoro_pid_dir = status_params.amoro_pid_dir
+amoro_pid_file = status_params.amoro_pid_file
+amoro_data_dir = default("/configurations/amoro-env/amoro_data_dir", "/var/lib/amoro")
+amoro_server_heapsize = int(default("/configurations/amoro-env/amoro_server_heapsize", 2048))
+amoro_env_sh_template = config['configurations']['amoro-env']['content']
+amoro_log4j_template = config['configurations']['amoro-log4j']['content']
+
+amoro_optimizer_group = str(default("/configurations/amoro-env/amoro_optimizer_group", "local")).strip() or "local"
+amoro_optimizer_parallelism = int(default("/configurations/amoro-env/amoro_optimizer_parallelism", 2))
+amoro_optimizer_memory = int(default("/configurations/amoro-env/amoro_optimizer_memory", 2048))
+amoro_admin_ldap_group_dn = str(default("/configurations/amoro-env/amoro_admin_ldap_group_dn", "")).strip()
+
+# Amoro configuration ("ams" section of config.yaml).
+amoro_site = dict(config['configurations']['amoro-site'])
+amoro_admin_username = str(amoro_site.get("admin-username", "admin")).strip() or "admin"
+amoro_admin_password = str(amoro_site.get("admin-password", ""))
+amoro_http_port = int(amoro_site.get("http-server.bind-port", 1630))
+amoro_ssl_enabled = _to_bool(amoro_site.get("http-server.ssl.enabled"), False)
+amoro_protocol = "https" if amoro_ssl_enabled else "http"
+
+hostname = config['agentLevelParams']['hostname'].lower()
+amoro_server_hosts = sorted(default("/clusterHostInfo/amoro_server_hosts", []))
+amoro_server_host = amoro_server_hosts[0] if amoro_server_hosts else hostname
+# Amoro advertises its Thrift services on the address of the host (server-expose-host is an address
+# prefix, not a host name).
+try:
+  amoro_server_address = socket.gethostbyname(hostname)
+except Exception:
+  amoro_server_address = hostname
+amoro_url = format("{amoro_protocol}://{amoro_server_host}:{amoro_http_port}")
+
+# Database.
+amoro_db_properties = config['configurations']['amoro-db-properties']
+amoro_db_flavor = str(amoro_db_properties.get("DB_FLAVOR", "POSTGRES")).upper()
+amoro_create_db_dbuser = _to_bool(amoro_db_properties.get("create_db_dbuser"), True)
+amoro_db_host = str(amoro_db_properties.get("db_host", "localhost")).strip()
+amoro_db_port = str(amoro_db_properties.get("db_port", "5432")).strip()
+amoro_db_name = str(amoro_db_properties.get("db_name", "amoro")).strip()
+amoro_db_user = str(amoro_db_properties.get("db_user", "amoro")).strip()
+amoro_db_password = str(amoro_db_properties.get("db_password", ""))
+amoro_db_root_user = str(amoro_db_properties.get("db_root_user", "postgres")).strip()
+amoro_db_root_password = str(amoro_db_properties.get("db_root_password", ""))
+amoro_privelege_user_jdbc_url = str(amoro_db_properties.get("amoro_privelege_user_jdbc_url", "")).strip()
+# amoro.jdbc.driver and amoro.jdbc.url are recommended by the service advisor from the fields above.
+if amoro_db_flavor == "MYSQL":
+  amoro_jdbc_driver_class = "com.mysql.cj.jdbc.Driver"
+  amoro_jdbc_url = format("jdbc:mysql://{amoro_db_host}:{amoro_db_port}/{amoro_db_name}"
+                          "?useUnicode=true&characterEncoding=UTF8&autoReconnect=true&useAffectedRows=true")
+else:
+  amoro_jdbc_driver_class = "org.postgresql.Driver"
+  amoro_jdbc_url = format("jdbc:postgresql://{amoro_db_host}:{amoro_db_port}/{amoro_db_name}")
+amoro_jdbc_driver_class = str(amoro_db_properties.get("amoro.jdbc.driver", "")).strip() or amoro_jdbc_driver_class
+amoro_jdbc_url = str(amoro_db_properties.get("amoro.jdbc.url", "")).strip() or amoro_jdbc_url
+
+# Client configurations of the cluster (env.sh, Hive catalog of Amoro).
+hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
+hive_conf_dir = "/etc/hive/conf"
+has_hive = len(default("/clusterHostInfo/hive_metastore_hosts", [])) > 0

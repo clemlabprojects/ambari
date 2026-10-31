@@ -28,7 +28,7 @@ Em.I18n.translations = {
   'admin.upgrade.java.introduction': 'Starting with ODP {0}, the component runtime requirements are:',
   'admin.upgrade.java.minimum': 'Minimum JDK {0}',
   'admin.upgrade.java.primaryComponents': 'HDFS, YARN, MapReduce2, HBase, ZooKeeper, Kafka, Atlas, Ranger, Ranger KMS, Knox and Ozone.',
-  'admin.upgrade.java.secondaryComponents': 'Hive (Metastore, HiveServer2 and clients), Spark3 (History Server, Thrift Server, clients and Livy), Impala, Oozie, NiFi, NiFi Registry and Polaris.',
+  'admin.upgrade.java.secondaryComponents': 'Hive (Metastore, HiveServer2 and clients), Spark3 (History Server, Thrift Server, clients and Livy), Impala, Oozie, NiFi, NiFi Registry, Polaris and Amoro.',
   'admin.upgrade.java.explanation': 'Install both JDKs at identical absolute paths on every cluster host, including the Ambari Server host. Select the indicated JDK major versions; a newer major is not automatically supported. Application containers, including Hive/Tez and Spark jobs, also require a compatible runtime.',
   'admin.upgrade.java.activation': 'The selected JDK paths are activated during the upgrade, after stopping old services and before switching repositories. At that step they are persisted in ambari.properties. Validation here does not change the active Java homes or Ambari Server\'s own JDK.',
   'admin.upgrade.java.primary': 'Primary Java home',
@@ -2541,6 +2541,7 @@ Em.I18n.translations = {
     'download the {4} from {0}</a>. Once downloaded to the Ambari Server host, run: <br/>' +
     '<b>ambari-server setup --jdbc-db={1} --jdbc-driver=/path/to/{1}/{2}</b>',
   'services.service.config.database.msg.polaris.manualDbPrivileges': 'When <b>Setup Database and Database User</b> is set to No, administrators must pre-create the Polaris database/user and grant required privileges manually, including <b>USAGE, CREATE ON SCHEMA public</b> for the Polaris DB user.',
+  'services.service.config.database.msg.amoro.manualDbPrivileges': 'When <b>Setup Database and Database User</b> is set to No, administrators must pre-create the Amoro database/user and grant required privileges manually: the Amoro DB user creates its tables at the first start.',
 
   'services.service.widgets.list-widget.nothingSelected': 'Nothing selected',
 

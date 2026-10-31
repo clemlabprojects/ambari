@@ -1,0 +1,202 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<!-- Keys of the "ams" section of the Amoro config.yaml, rendered by Ambari into the Amoro conf dir. -->
+<configuration supports_adding_forbidden="true">
+  <property>
+    <name>admin-username</name>
+    <display-name>Amoro Admin Username</display-name>
+    <value>admin</value>
+    <description>Built-in administrator of Amoro. Ambari uses it for the REST API (catalog registration, optimizers, service check).</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>admin-password</name>
+    <display-name>Amoro Admin Password</display-name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <description>Password of the built-in administrator of Amoro. No default: choose a strong secret.</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>false</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>server-bind-host</name>
+    <value>0.0.0.0</value>
+    <description>Address the Amoro services listen on.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>http-server.bind-port</name>
+    <display-name>Dashboard Port</display-name>
+    <value>1630</value>
+    <description>Port of the Amoro dashboard and REST APIs (HTTP or HTTPS).</description>
+    <value-attributes>
+      <type>int</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>thrift-server.table-service.bind-port</name>
+    <display-name>Table Service Port</display-name>
+    <value>1260</value>
+    <description>Thrift port of the Amoro table service.</description>
+    <value-attributes>
+      <type>int</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>thrift-server.optimizing-service.bind-port</name>
+    <display-name>Optimizing Service Port</display-name>
+    <value>1261</value>
+    <description>Thrift port the optimizers connect to.</description>
+    <value-attributes>
+      <type>int</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>http-server.rest-auth-type</name>
+    <value>basic</value>
+    <description>Authentication of the REST APIs: basic (built-in administrator, used by Ambari), token or jwt. Dashboard users log in with the login provider below.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <entries>
+        <entry><value>basic</value></entry>
+        <entry><value>token</value></entry>
+        <entry><value>jwt</value></entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>http-server.login-auth-ldap-url</name>
+    <display-name>Dashboard LDAP URL</display-name>
+    <value></value>
+    <description>LDAP server(s) of the dashboard login (space-separated). When empty, only the built-in administrator can log in.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>http-server.login-auth-ldap-user-pattern</name>
+    <display-name>Dashboard LDAP User DN Pattern</display-name>
+    <value></value>
+    <description>DN of a dashboard user, {0} being the login name, for instance uid={0},cn=users,cn=accounts,dc=example,dc=com.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>http-server.authorization.enabled</name>
+    <display-name>Dashboard Role-Based Access</display-name>
+    <value>true</value>
+    <description>Dashboard RBAC: members of the admin LDAP group (amoro-env) are SERVICE_ADMIN, the other users get the default role.</description>
+    <value-attributes>
+      <type>boolean</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>http-server.authorization.default-role</name>
+    <display-name>Default Dashboard Role</display-name>
+    <value>VIEWER</value>
+    <description>Role of the LDAP users outside the admin group: VIEWER (read-only), or empty to refuse them.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>http-server.authorization.ldap-role-mapping.group-member-attribute</name>
+    <value>member</value>
+    <description>Attribute of the admin LDAP group listing its members.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>http-server.authorization.ldap-role-mapping.bind-dn</name>
+    <value></value>
+    <description>Optional DN binding to read the admin LDAP group (anonymous read when empty).</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>http-server.authorization.ldap-role-mapping.bind-password</name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <description>Password of the bind DN reading the admin LDAP group.</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>http-server.ssl.enabled</name>
+    <display-name>Enable Dashboard TLS</display-name>
+    <value>false</value>
+    <description>Serve the dashboard and REST APIs over HTTPS.</description>
+    <value-attributes>
+      <type>boolean</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>http-server.ssl.keystore-path</name>
+    <value>/etc/security/serverKeys/keystore.jks</value>
+    <description>Keystore holding the certificate of the dashboard (host key entry).</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>http-server.ssl.keystore-type</name>
+    <value>JKS</value>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>http-server.ssl.keystore-password</name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <description>Password of the dashboard keystore.</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

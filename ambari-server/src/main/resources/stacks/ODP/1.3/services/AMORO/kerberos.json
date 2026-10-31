@@ -1,0 +1,35 @@
+{
+  "services": [
+    {
+      "name": "AMORO",
+      "components": [
+        {
+          "name": "AMORO_SERVER",
+          "identities": [
+            {
+              "name": "amoro_service",
+              "principal": {
+                "value": "${amoro-env/amoro_user}/_HOST@${realm}",
+                "type": "service",
+                "configuration": "amoro-env/amoro_principal",
+                "local_username": "${amoro-env/amoro_user}"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/amoro.service.keytab",
+                "owner": {
+                  "name": "${amoro-env/amoro_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${cluster-env/user_group}",
+                  "access": ""
+                },
+                "configuration": "amoro-env/amoro_keytab"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "name": "default",
+  "description": "default quick links configuration",
+  "configuration": {
+    "protocol": {
+      "type": "HTTP_ONLY"
+    },
+    "links": [
+      {
+        "name": "amoro_dashboard",
+        "label": "Amoro Dashboard",
+        "component_name": "AMORO_SERVER",
+        "requires_user_name": "false",
+        "url": "%@://%@:%@/",
+        "protocol": {
+          "type": "https",
+          "checks": [
+            {
+              "property": "http-server.ssl.enabled",
+              "desired": "true",
+              "site": "amoro-site"
+            }
+          ]
+        },
+        "port": {
+          "http_property": "http-server.bind-port",
+          "http_default_port": "1630",
+          "https_property": "http-server.bind-port",
+          "https_default_port": "1630",
+          "regex": "^(\\d+)$",
+          "site": "amoro-site"
+        }
+      }
+    ]
+  }
+}

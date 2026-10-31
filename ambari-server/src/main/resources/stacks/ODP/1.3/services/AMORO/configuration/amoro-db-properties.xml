@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<configuration supports_final="false">
+  <property>
+    <name>create_db_dbuser</name>
+    <value>true</value>
+    <display-name>Setup Database and Database User</display-name>
+    <description>If set to Yes, Ambari creates the Amoro database and database user (PostgreSQL). This requires a Database Administrator username/password. If set to No, you must pre-create the database, user, and required grants (including CREATE on the Amoro database) before starting Amoro.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <overridable>false</overridable>
+      <entries>
+        <entry>
+          <value>true</value>
+          <label>Yes</label>
+        </entry>
+        <entry>
+          <value>false</value>
+          <label>No</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>DB_FLAVOR</name>
+    <value>POSTGRES</value>
+    <display-name>Amoro DB Flavor</display-name>
+    <description>Database flavor used by the Amoro Management Service.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+      <type>value-list</type>
+      <entries>
+        <entry>
+          <value>POSTGRES</value>
+          <label>POSTGRES</label>
+        </entry>
+        <entry>
+          <value>MYSQL</value>
+          <label>MYSQL</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>db_host</name>
+    <value>localhost</value>
+    <display-name>Amoro DB Host</display-name>
+    <description>Hostname of the database server.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>db_port</name>
+    <value>5432</value>
+    <display-name>Amoro DB Port</display-name>
+    <description>Database server port.</description>
+    <value-attributes>
+      <type>int</type>
+      <minimum>1</minimum>
+      <maximum>65535</maximum>
+      <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>DB_FLAVOR</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>amoro_privelege_user_jdbc_url</name>
+    <value>jdbc:postgresql://localhost:5432/postgres</value>
+    <display-name>JDBC connect string for root user</display-name>
+    <description>JDBC connect string used by the DBA/root user for DB bootstrap operations.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>DB_FLAVOR</name>
+      </property>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>db_host</name>
+      </property>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>db_port</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>db_root_user</name>
+    <value>postgres</value>
+    <display-name>Database Administrator (DBA) Username</display-name>
+    <description>Database admin user used to create the Amoro database and DB user.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property require-input="true">
+    <name>db_root_password</name>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <display-name>Database Administrator (DBA) Password</display-name>
+    <description>Database password for the database admin username.</description>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>db_name</name>
+    <value>amoro</value>
+    <display-name>Amoro DB Name</display-name>
+    <description>Database name for the Amoro Management Service.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>db_user</name>
+    <value>amoro</value>
+    <display-name>Amoro DB Username</display-name>
+    <description>Database username for the Amoro Management Service.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>amoro.jdbc.driver</name>
+    <value>org.postgresql.Driver</value>
+    <display-name>Amoro JDBC Driver Class</display-name>
+    <description>JDBC driver class of the Amoro database, recommended from the DB flavor.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>DB_FLAVOR</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property>
+    <name>amoro.jdbc.url</name>
+    <value>jdbc:postgresql://localhost:5432/amoro</value>
+    <display-name>Amoro JDBC URL</display-name>
+    <description>JDBC URL of the Amoro database, recommended from the DB flavor, host, port and name.</description>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <depends-on>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>DB_FLAVOR</name>
+      </property>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>db_host</name>
+      </property>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>db_port</name>
+      </property>
+      <property>
+        <type>amoro-db-properties</type>
+        <name>db_name</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="true"/>
+  </property>
+
+  <property require-input="true">
+    <name>db_password</name>
+    <value/>
+    <property-type>PASSWORD</property-type>
+    <display-name>Amoro DB Password</display-name>
+    <description>Database password for the Amoro Management Service.</description>
+    <value-attributes>
+      <type>password</type>
+      <overridable>false</overridable>
+      <empty-value-valid>false</empty-value-valid>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

@@ -630,6 +630,20 @@
           ]
         }
       },
+      "AMORO": {
+        "AMORO_SERVER": {
+          "STACK-SELECT-PACKAGE": "amoro-server",
+          "INSTALL": [
+            "amoro-server"
+          ],
+          "PATCH": [
+            "amoro-server"
+          ],
+          "STANDARD": [
+            "amoro-server"
+          ]
+        }
+      },
       "POLARIS": {
         "POLARIS_CLIENT": {
           "STACK-SELECT-PACKAGE": "polaris-server",
@@ -1116,6 +1130,12 @@
           "current_dir": "{0}/current/phoenix-client/conf"
         }
       ],
+      "amoro": [
+        {
+          "conf_dir": "/etc/amoro/conf",
+          "current_dir": "{0}/current/amoro-server/conf"
+        }
+      ],
       "polaris": [
         {
           "conf_dir": "/etc/polaris/conf",
@@ -1219,6 +1239,9 @@
       },
       "OOZIE": {
         "packages": ["oozie"]
+      },
+      "AMORO": {
+        "packages": ["amoro"]
       },
       "POLARIS": {
         "packages": ["polaris"]

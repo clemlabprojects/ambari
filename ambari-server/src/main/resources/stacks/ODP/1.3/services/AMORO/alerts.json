@@ -1,0 +1,57 @@
+{
+  "AMORO": {
+    "service": [],
+    "AMORO_SERVER": [
+      {
+        "name": "amoro_server_dashboard",
+        "label": "Amoro Dashboard",
+        "description": "This host-level alert is triggered if the dashboard and REST port of the Amoro Management Service is unreachable.",
+        "interval": 1,
+        "scope": "HOST",
+        "source": {
+          "type": "PORT",
+          "uri": "{{amoro-site/http-server.bind-port}}",
+          "default_port": 1630,
+          "reporting": {
+            "ok": {
+              "text": "TCP OK - {0:.3f}s response on port {1}"
+            },
+            "warning": {
+              "text": "TCP OK - {0:.3f}s response on port {1}",
+              "value": 1.5
+            },
+            "critical": {
+              "text": "Connection failed: {0} to {1}:{2}",
+              "value": 5.0
+            }
+          }
+        }
+      },
+      {
+        "name": "amoro_server_optimizing_service",
+        "label": "Amoro Optimizing Service",
+        "description": "This host-level alert is triggered if the Thrift port the optimizers connect to is unreachable.",
+        "interval": 1,
+        "scope": "HOST",
+        "source": {
+          "type": "PORT",
+          "uri": "{{amoro-site/thrift-server.optimizing-service.bind-port}}",
+          "default_port": 1261,
+          "reporting": {
+            "ok": {
+              "text": "TCP OK - {0:.3f}s response on port {1}"
+            },
+            "warning": {
+              "text": "TCP OK - {0:.3f}s response on port {1}",
+              "value": 1.5
+            },
+            "critical": {
+              "text": "Connection failed: {0} to {1}:{2}",
+              "value": 5.0
+            }
+          }
+        }
+      }
+    ]
+  }
+}

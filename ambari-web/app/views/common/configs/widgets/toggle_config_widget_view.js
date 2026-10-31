@@ -29,7 +29,13 @@ App.ToggleConfigWidgetView = App.ConfigWidgetView.extend({
   customWarningServiceMapping: [
     {
       serviceName: 'POLARIS',
-      configName: 'create_db_dbuser'
+      configName: 'create_db_dbuser',
+      messageKey: 'services.service.config.database.msg.polaris.manualDbPrivileges'
+    },
+    {
+      serviceName: 'AMORO',
+      configName: 'create_db_dbuser',
+      messageKey: 'services.service.config.database.msg.amoro.manualDbPrivileges'
     }
   ],
 
@@ -102,7 +108,8 @@ App.ToggleConfigWidgetView = App.ConfigWidgetView.extend({
   },
 
   addCustomWarningMessage: function () {
-    if (!this.isCustomWarningRequired()) {
+    var warning = this.isCustomWarningRequired();
+    if (!warning) {
       return;
     }
     this.set('config.additionalView', Em.View.extend({
@@ -113,7 +120,7 @@ App.ToggleConfigWidgetView = App.ConfigWidgetView.extend({
         return String(this.get('config.value')).toLowerCase() === 'false';
       }.property('config.value'),
       message: function () {
-        return Em.I18n.t('services.service.config.database.msg.polaris.manualDbPrivileges');
+        return Em.I18n.t(warning.messageKey);
       }.property(),
       config: this.get('config')
     }));

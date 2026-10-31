@@ -1,0 +1,297 @@
+{
+  "name": "database",
+  "description": "Database theme for Amoro service",
+  "configuration": {
+    "placement": {
+      "configuration-layout": "database",
+      "configs": [
+        {
+          "config": "amoro-db-properties/DB_FLAVOR",
+          "subsection-name": "amoro-db-row1-col1"
+        },
+        {
+          "config": "amoro-db-properties/db_name",
+          "subsection-name": "amoro-db-row1-col1"
+        },
+        {
+          "config": "amoro-db-properties/db_user",
+          "subsection-name": "amoro-db-row1-col1"
+        },
+        {
+          "config": "amoro-db-properties/db_host",
+          "subsection-name": "amoro-db-row1-col2"
+        },
+        {
+          "config": "amoro-db-properties/db_port",
+          "subsection-name": "amoro-db-row1-col2"
+        },
+        {
+          "config": "amoro-db-properties/db_password",
+          "subsection-name": "amoro-db-row1-col2"
+        },
+        {
+          "config": "amoro-db-properties/create_db_dbuser",
+          "subsection-name": "amoro-db-row2"
+        },
+        {
+          "config": "amoro-db-properties/amoro.jdbc.url",
+          "subsection-name": "amoro-db-row2"
+        },
+        {
+          "config": "amoro-db-properties/amoro.jdbc.driver",
+          "subsection-name": "amoro-db-row2"
+        },
+        {
+          "config": "amoro-db-properties/test_db_connection",
+          "subsection-name": "amoro-db-row2",
+          "property_value_attributes": {
+            "ui_only_property": true
+          },
+          "depends-on": [
+            {
+              "configs": [
+                "amoro-db-properties/create_db_dbuser"
+              ],
+              "if": "${amoro-db-properties/create_db_dbuser}",
+              "then": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "amoro-db-properties/db_root_user",
+          "subsection-name": "amoro-db-root-col1"
+        },
+        {
+          "config": "amoro-db-properties/amoro_privelege_user_jdbc_url",
+          "subsection-name": "amoro-db-root-col1"
+        },
+        {
+          "config": "amoro-db-properties/db_root_password",
+          "subsection-name": "amoro-db-root-col2"
+        },
+        {
+          "config": "amoro-db-properties/test_root_db_connection",
+          "subsection-name": "amoro-db-root-col1",
+          "property_value_attributes": {
+            "ui_only_property": true
+          }
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "amoro-db-properties/DB_FLAVOR",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "amoro-db-properties/db_name",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-db-properties/db_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-db-properties/db_host",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-db-properties/db_port",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-db-properties/db_password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "amoro-db-properties/create_db_dbuser",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "amoro-db-properties/amoro.jdbc.url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-db-properties/amoro.jdbc.driver",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-db-properties/db_root_user",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-db-properties/amoro_privelege_user_jdbc_url",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-db-properties/db_root_password",
+        "widget": {
+          "type": "password"
+        }
+      },
+      {
+        "config": "amoro-db-properties/test_db_connection",
+        "widget": {
+          "type": "test-db-connection",
+          "display-name": "Test Connection",
+          "required-properties": {
+            "jdbc.driver.class": "amoro-db-properties/amoro.jdbc.driver",
+            "jdbc.driver.url": "amoro-db-properties/amoro.jdbc.url",
+            "db.connection.source.host": "amoro-site/amoro_server_hosts",
+            "db.type": "amoro-db-properties/DB_FLAVOR",
+            "db.connection.destination.host": "amoro-db-properties/db_host",
+            "db.connection.user": "amoro-db-properties/db_user",
+            "db.connection.password": "amoro-db-properties/db_password"
+          }
+        }
+      },
+      {
+        "config": "amoro-db-properties/test_root_db_connection",
+        "widget": {
+          "type": "test-db-connection",
+          "display-name": "Test Connection",
+          "required-properties": {
+            "jdbc.driver.class": "amoro-db-properties/amoro.jdbc.driver",
+            "jdbc.driver.url": "amoro-db-properties/amoro_privelege_user_jdbc_url",
+            "db.connection.source.host": "amoro-site/amoro_server_hosts",
+            "db.type": "amoro-db-properties/DB_FLAVOR",
+            "db.connection.destination.host": "amoro-db-properties/db_host",
+            "db.connection.user": "amoro-db-properties/db_root_user",
+            "db.connection.password": "amoro-db-properties/db_root_password"
+          }
+        }
+      }
+    ],
+    "layouts": [
+      {
+        "name": "database",
+        "tabs": [
+          {
+            "name": "amoro-database",
+            "display-name": "Amoro",
+            "layout": {
+              "tab-columns": "2",
+              "tab-rows": "2",
+              "sections": [
+                {
+                  "name": "section-amoro-database",
+                  "display-name": "Database Configurations",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "3",
+                  "column-span": "2",
+                  "section-columns": "2",
+                  "section-rows": "3",
+                  "subsections": [
+                    {
+                      "name": "amoro-db-row1-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "amoro-db-row1-col2",
+                      "row-index": "0",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "amoro-db-row2",
+                      "row-index": "1",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "2"
+                    },
+                    {
+                      "name": "amoro-db-root-col1",
+                      "row-index": "2",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "amoro-db-properties/create_db_dbuser"
+                          ],
+                          "if": "${amoro-db-properties/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "amoro-db-root-col2",
+                      "row-index": "2",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "depends-on": [
+                        {
+                          "configs": [
+                            "amoro-db-properties/create_db_dbuser"
+                          ],
+                          "if": "${amoro-db-properties/create_db_dbuser}",
+                          "then": {
+                            "property_value_attributes": {
+                              "visible": true
+                            }
+                          },
+                          "else": {
+                            "property_value_attributes": {
+                              "visible": false
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
