@@ -276,6 +276,47 @@ class TestAmoroRangerPolicies(unittest.TestCase):
     self.assertNotIn("PUT", [method for method, _, _ in catalogs.requests])
 
 
+class TestAmoroAccess(unittest.TestCase):
+
+  def access(self, **overrides):
+    load_amoro_catalogs()
+    params = sys.modules["params"]
+    values = dict(default_fs="hdfs://ns1", hive_warehouse_dirs=["/warehouse/tablespace/managed/hive",
+                                                                "/warehouse/tablespace/external/hive"],
+                  has_polaris_ozone_catalog=False, polaris_catalog_base_location="s3://c1/polaris/",
+                  ranger_hdfs_enabled=True, ranger_hdfs_service="c1_hadoop",
+                  ranger_ozone_enabled=True, ranger_ozone_service="c1_ozone")
+    values.update(overrides)
+    for key, value in values.items():
+      setattr(params, key, value)
+    return load_module("amoro_access", SERVICE / "package/scripts/amoro_access.py")
+
+  def test_storage_locations(self):
+    access = self.access()
+    self.assertEqual(("hdfs", "/warehouse/x"), access.storage_location("/warehouse/x", "hdfs://ns1"))
+    self.assertEqual(("hdfs", "/w"), access.storage_location("hdfs://ns1:8020/w", "ofs://om"))
+    self.assertEqual(("ozone", ("vol", "bkt")), access.storage_location("/vol/bkt/warehouse", "ofs://om"))
+    self.assertEqual(("ozone", ("vol", "bkt")), access.storage_location("o3fs://bkt.vol.om/warehouse", "hdfs://ns1"))
+    self.assertEqual((None, None), access.storage_location("ofs://om/tmp/x", "hdfs://ns1"))
+
+  def test_hdfs_warehouse_is_one_recursive_policy(self):
+    self.assertEqual([("c1_hadoop", "amoro-hdfs-warehouse",
+                       {"path": ["/warehouse/tablespace/managed/hive", "/warehouse/tablespace/external/hive"]},
+                       ["read", "write", "execute"], ("path",))], self.access().access_policies())
+
+  def test_ozone_warehouse_and_polaris_bucket(self):
+    policies = self.access(default_fs="ofs://om", hive_warehouse_dirs=["/warehouse/hive/managed"],
+                           has_polaris_ozone_catalog=True).access_policies()
+    self.assertEqual([("amoro-ozone-s3v", {"volume": ["s3v"]}), ("amoro-ozone-warehouse", {"volume": ["warehouse"]}),
+                      ("amoro-ozone-warehouse-hive", {"volume": ["warehouse"], "bucket": ["hive"], "key": ["*"]}),
+                      ("amoro-ozone-s3v-c1", {"volume": ["s3v"], "bucket": ["c1"], "key": ["*"]})],
+                     [(name, resources) for _, name, resources, _, _ in policies])
+
+  def test_nothing_without_ranger_plugins(self):
+    self.assertEqual([], self.access(ranger_hdfs_enabled=False, ranger_ozone_enabled=False,
+                                     has_polaris_ozone_catalog=True).access_policies())
+
+
 class TestAmoroServiceAdvisor(unittest.TestCase):
   advisor = load_amoro_advisor()
 

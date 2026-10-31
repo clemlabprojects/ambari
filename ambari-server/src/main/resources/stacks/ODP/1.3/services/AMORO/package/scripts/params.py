@@ -184,3 +184,21 @@ has_ranger_admin = len(default("/clusterHostInfo/ranger_admin_hosts", [])) > 0
 ranger_admin_url = str(default("/configurations/admin-properties/policymgr_external_url", "")).strip().rstrip("/")
 ranger_admin_username = str(default("/configurations/ranger-env/admin_username", "")).strip()
 ranger_admin_password = str(default("/configurations/ranger-env/admin_password", ""))
+
+# Data access of the Amoro user (SETUP_ACCESS, start): Ranger policies on the Hive warehouse (HDFS or
+# Ozone) and on the bucket of the Polaris Ozone catalog.
+default_fs = str(default("/configurations/core-site/fs.defaultFS", "")).strip()
+hive_warehouse_dirs = [str(default("/configurations/hive-site/" + name, "")).strip() for name in (
+  "hive.metastore.warehouse.dir", "hive.metastore.warehouse.external.dir")] if has_hive else []
+hive_warehouse_dirs = [path for path in hive_warehouse_dirs if path]
+polaris_catalog_base_location = str(polaris_env.get("polaris_ozone_catalog_base_location", "")).strip()
+if has_polaris_ozone_catalog and not polaris_catalog_base_location:
+  polaris_catalog_base_location = "s3://{0}/polaris/".format(cluster_name.lower())
+ranger_hdfs_enabled = str(default("/configurations/ranger-hdfs-plugin-properties/ranger-hdfs-plugin-enabled", "No")).lower() == "yes"
+ranger_hdfs_service = str(default("/configurations/ranger-hdfs-security/ranger.plugin.hdfs.service.name", "")).strip()
+if not ranger_hdfs_service or ranger_hdfs_service == "{{repo_name}}":
+  ranger_hdfs_service = "{0}_hadoop".format(cluster_name)
+ranger_ozone_enabled = str(default("/configurations/ranger-ozone-plugin-properties/ranger-ozone-plugin-enabled", "No")).lower() == "yes"
+ranger_ozone_service = str(default("/configurations/ranger-ozone-security/ranger.plugin.ozone.service.name", "")).strip()
+if not ranger_ozone_service or ranger_ozone_service == "{{repo_name}}":
+  ranger_ozone_service = "{0}_ozone".format(cluster_name)

@@ -96,6 +96,14 @@
                 <timeout>600</timeout>
               </commandScript>
             </customCommand>
+            <customCommand>
+              <name>SETUP_ACCESS</name>
+              <commandScript>
+                <script>scripts/amoro_server.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>600</timeout>
+              </commandScript>
+            </customCommand>
           </customCommands>
         </component>
       </components>

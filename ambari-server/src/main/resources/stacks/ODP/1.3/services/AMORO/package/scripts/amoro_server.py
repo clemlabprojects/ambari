@@ -27,6 +27,7 @@ from resource_management.libraries.functions.stack_features import check_stack_f
 from resource_management.libraries.script.script import Script
 
 import amoro
+import amoro_access
 import amoro_catalogs
 
 # Main class of the optimizer JVMs the local container of the server launches (bin/optimizer.sh).
@@ -69,6 +70,7 @@ class AmoroServer(Script):
       amoro.ensure_optimizer()
     except Fail as error:
       Logger.warning("Amoro is running but its optimizer could not be set up: {0}".format(error))
+    amoro_access.setup_access()
     try:
       amoro_catalogs.register_catalogs()
     except Fail as error:
@@ -94,6 +96,12 @@ class AmoroServer(Script):
     env.set_params(params)
     amoro.wait_for_amoro(timeout=60)
     amoro_catalogs.register_catalogs(required=True)
+
+  def setup_access(self, env):
+    """SETUP_ACCESS: Ranger policies giving the Amoro user the data of the tables it maintains."""
+    import params
+    env.set_params(params)
+    amoro_access.setup_access(required=True)
 
   def status(self, env):
     import status_params
