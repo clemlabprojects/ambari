@@ -537,6 +537,15 @@ if "zeppelin-site" in config['configurations']:
   zeppelin_ws_urls += buildUrlElement("ws", host, port, "/ws")
   websocket_support = "true"
 
+# Amoro dashboard (Knox service role AMORO)
+amoro_ui_urls = ""
+if "amoro-site" in config['configurations']:
+  amoro_site = config['configurations']['amoro-site']
+  protocol = "https" if str(amoro_site.get("http-server.ssl.enabled", "false")).lower() == "true" else "http"
+  port = str(amoro_site.get("http-server.bind-port", "1630"))
+  for host in default("/clusterHostInfo/amoro_server_hosts", []):
+    amoro_ui_urls += buildUrlElement(protocol, host, port, "")
+
 if "topology" in config['configurations']:
   if 'ws://' in config['configurations']['topology']['content'] or 'wss://' in config['configurations']['topology']['content']:
     websocket_support = "true"

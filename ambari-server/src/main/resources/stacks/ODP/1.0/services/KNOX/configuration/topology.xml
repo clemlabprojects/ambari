@@ -129,6 +129,13 @@
                 {{zeppelin_ws_urls}}
             &lt;/service&gt;
 
+            {% if amoro_ui_urls %}
+            &lt;service&gt;
+                &lt;role&gt;AMORO&lt;/role&gt;
+                {{amoro_ui_urls}}
+            &lt;/service&gt;
+            {% endif %}
+
         &lt;/topology&gt;
     </value>
     <description>
