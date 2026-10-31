@@ -529,6 +529,9 @@ polaris_mcp_protocol = "https" if polaris_mcp_tls_enabled else (
   "http" if polaris_mcp_protocol_requested == "https" else polaris_mcp_protocol_requested
 )
 polaris_mcp_pid_file = format("{polaris_pid_dir}/polaris-mcp.pid")
+# Ambari-managed MCP config file, with no Polaris credentials: every tool call carries the caller's own
+# token, so Polaris authenticates and authorizes the caller rather than a service identity.
+polaris_mcp_config_file = format("{polaris_conf_dir}/polaris-mcp.env")
 
 polaris_mcp_base_url = default("/configurations/polaris-env/polaris_mcp_base_url", "").strip()
 if not polaris_mcp_base_url:

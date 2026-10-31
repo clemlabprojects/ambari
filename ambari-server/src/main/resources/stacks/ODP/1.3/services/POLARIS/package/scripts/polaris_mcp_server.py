@@ -40,6 +40,12 @@ class PolarisMcpServer(Script):
     import params
     env.set_params(params)
     configure_polaris('client')
+    File(params.polaris_mcp_config_file,
+         content="POLARIS_BASE_URL={0}\n".format(params.polaris_mcp_base_url),
+         owner=params.polaris_user,
+         group=params.user_group,
+         mode=0o640
+         )
 
   def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
@@ -65,6 +71,12 @@ class PolarisMcpServer(Script):
     no_op_test = format('test -f {polaris_mcp_pid_file} && ps -p `cat {polaris_mcp_pid_file}` >/dev/null 2>&1')
     start_cmd = format(
       'source {polaris_conf_dir}/polaris-env.sh; '
+      # The MCP server accepts calls without authentication: it must not hold any Polaris credentials,
+      # or it would act as that identity for anyone reaching its port. The packaged sample config file
+      # carries the quickstart root credentials, hence an Ambari-managed one.
+      'unset POLARIS_ADMIN_USER POLARIS_ADMIN_PASSWORD POLARIS_CLIENT_ID POLARIS_CLIENT_SECRET '
+      'POLARIS_API_TOKEN POLARIS_BEARER_TOKEN POLARIS_TOKEN `compgen -e POLARIS_REALM_`; '
+      'export POLARIS_CONFIG_FILE={polaris_mcp_config_file}; '
       'nohup {polaris_mcp_start_command} >> {polaris_log_dir}/polaris-mcp-bootstrap.log 2>&1 & '
       'echo $! > {polaris_mcp_pid_file}; '
       'sleep 2; '
