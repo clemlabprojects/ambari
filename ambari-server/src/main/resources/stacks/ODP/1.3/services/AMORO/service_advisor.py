@@ -157,6 +157,11 @@ class AmoroValidator(service_advisor.ServiceAdvisor):
       items.append({"config-name": "amoro_admin_ldap_group_dn",
                     "item": self.getWarnItem("No LDAP group is mapped to SERVICE_ADMIN: LDAP users only get the "
                                              "default role, administration needs the built-in administrator.")})
+    installed = self.get_services_list(services)
+    if "POLARIS" in installed and "OZONE" in installed and not str(properties.get("amoro_ozone_s3_secret", "")).strip():
+      items.append({"config-name": "amoro_ozone_s3_secret",
+                    "item": self.getWarnItem("Without an S3 secret, Ambari does not register the Ozone catalog of "
+                                             "Polaris in Amoro.")})
     for name in ("amoro_optimizer_parallelism", "amoro_optimizer_memory", "amoro_server_heapsize"):
       try:
         if int(properties.get(name, 1)) <= 0:

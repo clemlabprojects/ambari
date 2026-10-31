@@ -16,6 +16,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import os
 import socket
 
 from resource_management.libraries.functions import conf_select
@@ -132,3 +133,54 @@ amoro_jdbc_url = str(amoro_db_properties.get("amoro.jdbc.url", "")).strip() or a
 hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
 hive_conf_dir = "/etc/hive/conf"
 has_hive = len(default("/clusterHostInfo/hive_metastore_hosts", [])) > 0
+krb5_conf_path = "/etc/krb5.conf"
+amoro_truststore_path = str(default("/configurations/amoro-env/amoro_truststore_path", "")).strip()
+if amoro_truststore_path and not os.path.isfile(amoro_truststore_path):
+  amoro_truststore_path = ""
+amoro_truststore_type = str(default("/configurations/amoro-env/amoro_truststore_type", "JKS")).strip() or "JKS"
+
+# Catalogs registered by Ambari (REGISTER_CATALOGS, start): the Hive Metastore, and the Ozone
+# catalog Ambari manages in Polaris.
+amoro_hive_catalog_name = "hive"
+cluster_name = config['clusterName']
+
+polaris_env = default("/configurations/polaris-env", {})
+polaris_app_properties = default("/configurations/polaris-application-properties", {})
+polaris_server_hosts = sorted(default("/clusterHostInfo/polaris_server_hosts", []))
+ozone_manager_hosts = default("/clusterHostInfo/ozone_manager_hosts", [])
+has_polaris_ozone_catalog = bool(polaris_server_hosts) and bool(ozone_manager_hosts)
+polaris_catalog_name = str(polaris_env.get("polaris_ozone_catalog_name", "ozone")).strip() or "ozone"
+polaris_ssl_enabled = _to_bool(polaris_env.get("polaris_ssl_enabled"), False)
+if polaris_ssl_enabled:
+  polaris_port = str(polaris_app_properties.get("quarkus.http.ssl-port", "8443")).strip() or "8443"
+else:
+  polaris_port = str(polaris_app_properties.get("quarkus.http.port", "8181")).strip() or "8181"
+polaris_url = "{0}://{1}:{2}".format("https" if polaris_ssl_enabled else "http",
+                                     polaris_server_hosts[0] if polaris_server_hosts else "localhost", polaris_port)
+polaris_realm = (str(polaris_app_properties.get("polaris.realm-context.realms", "POLARIS")).split(",")[0].strip()
+                 or "POLARIS")
+polaris_realm_header = (str(polaris_app_properties.get("polaris.realm-context.header-name", "Polaris-Realm")).strip()
+                        or "Polaris-Realm")
+polaris_admin_username = str(polaris_env.get("polaris_admin_username", "")).strip()
+polaris_admin_password = str(polaris_env.get("polaris_admin_password", ""))
+polaris_authorization_type = str(polaris_app_properties.get("polaris.authorization.type", "internal")).strip().lower()
+polaris_ranger_service = str(default("/configurations/ranger-polaris-security/ranger.plugin.polaris.service.name", "")).strip()
+if not polaris_ranger_service or polaris_ranger_service == "{{repo_name}}":
+  polaris_ranger_service = "{0}_polaris".format(cluster_name)
+# The Polaris principal of Amoro carries the service user name, which Ranger policies grant.
+amoro_polaris_principal = amoro_user
+
+# Amoro reads and writes the Ozone catalog data with its own S3 credential (the Ozone catalog of
+# Polaris vends none): the S3 secret of the Amoro user, set on Ozone by Ambari.
+ozone_security_enabled = _to_bool(default("/configurations/ozone-site/ozone.security.enabled", "false"))
+ozone_cmd = format("{stack_root}/current/ozone-client/bin/ozone")
+ozone_om_service_id = str(default("/configurations/ozone-site/ozone.om.internal.service.id", "")).strip()
+if not ozone_om_service_id:
+  ozone_om_service_id = str(default("/configurations/ozone-site/ozone.om.service.ids", "")).split(",")[0].strip()
+amoro_ozone_s3_secret = str(default("/configurations/amoro-env/amoro_ozone_s3_secret", ""))
+
+# Ranger admin, for the policies granting the Amoro user (Polaris catalog, HDFS, Ozone).
+has_ranger_admin = len(default("/clusterHostInfo/ranger_admin_hosts", [])) > 0
+ranger_admin_url = str(default("/configurations/admin-properties/policymgr_external_url", "")).strip().rstrip("/")
+ranger_admin_username = str(default("/configurations/ranger-env/admin_username", "")).strip()
+ranger_admin_password = str(default("/configurations/ranger-env/admin_password", ""))

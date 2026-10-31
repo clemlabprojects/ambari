@@ -192,9 +192,13 @@ def _yaml_scalar(value):
 def jvm_properties():
   import params
 
-  return ("xms={0}\nxmx={0}\njmx.remote.port=\n"
-          "extra.options=\"-XX:NewRatio=1 -XX:SurvivorRatio=3 -XX:+ExitOnOutOfMemoryError\"\n"
-          ).format(params.amoro_server_heapsize)
+  options = "-XX:NewRatio=1 -XX:SurvivorRatio=3 -XX:+ExitOnOutOfMemoryError"
+  if params.amoro_truststore_path:
+    # The cluster CA, for the TLS clients of the server (Polaris). Not JAVA_TOOL_OPTIONS in env.sh: the
+    # scripts parse the first line "java -version" prints, which the JVM would replace by "Picked up ...".
+    options += " -Djavax.net.ssl.trustStore={0} -Djavax.net.ssl.trustStoreType={1}".format(
+      params.amoro_truststore_path, params.amoro_truststore_type)
+  return "xms={0}\nxmx={0}\njmx.remote.port=\nextra.options=\"{1}\"\n".format(params.amoro_server_heapsize, options)
 
 
 def amoro_environment():
@@ -336,16 +340,17 @@ public class AmoroJdbcSqlRunner {
 # REST API of the Amoro Management Service (built-in admin, basic authentication)
 # ---------------------------------------------------------------------------
 
-def amoro_api(method, path, body=None, timeout=60):
-  """Calls the REST API; returns the "result" of the response, raises Fail on an error."""
+def amoro_api(method, path, body=None, timeout=60, raw_body=None, content_type="application/json"):
+  """Calls the REST API with a JSON body (or raw_body); returns the "result" of the response, raises
+  Fail on an error."""
   import params
 
   headers = {
     "Authorization": "Basic " + base64.b64encode("{0}:{1}".format(
       params.amoro_admin_username, params.amoro_admin_password).encode("utf-8")).decode("utf-8"),
-    "Content-Type": "application/json",
+    "Content-Type": content_type,
   }
-  data = json.dumps(body).encode("utf-8") if body is not None else None
+  data = raw_body if raw_body is not None else (json.dumps(body).encode("utf-8") if body is not None else None)
   request = urllib.request.Request(params.amoro_url + "/api/ams/v1" + path, data=data, method=method, headers=headers)
   context = ssl._create_unverified_context() if params.amoro_url.startswith("https://") else None
   try:

@@ -145,6 +145,39 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>amoro_truststore_path</name>
+    <display-name>Truststore Path</display-name>
+    <value>/etc/security/clientKeys/all.jks</value>
+    <description>Truststore holding the cluster CA, used by the Amoro Management Service to reach Polaris over TLS. Ignored when the file does not exist on the Amoro host.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>amoro_truststore_type</name>
+    <display-name>Truststore Type</display-name>
+    <value>JKS</value>
+    <value-attributes>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>amoro_ozone_s3_secret</name>
+    <display-name>Amoro Ozone S3 Secret</display-name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <description>S3 secret of the Amoro user on the Ozone S3 gateway, set by Ambari when it registers the Ozone catalog of Polaris in Amoro: Amoro reads and writes the table files of that catalog with it. Required to register that catalog.</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>content</name>
     <display-name>env.sh template</display-name>
     <description>Environment of the Amoro Management Service and of its optimizers (conf/env.sh).</description>

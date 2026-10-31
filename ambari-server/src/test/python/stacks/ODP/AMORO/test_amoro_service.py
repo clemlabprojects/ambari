@@ -122,6 +122,14 @@ class TestAmoroConfig(unittest.TestCase):
     self.assertEqual({"enabled": True, "keystore-path": "/etc/security/serverKeys/keystore.jks", "keystore-type": "JKS",
                       "keystore-password": "changeit"}, config["ams"]["http-server"]["ssl"])
 
+  def test_jvm_properties_carry_the_truststore(self):
+    _, amoro = self.config(amoro_truststore_path="", amoro_truststore_type="JKS")
+    self.assertNotIn("trustStore", amoro.jvm_properties())
+    _, amoro = self.config(amoro_truststore_path="/etc/security/clientKeys/all.jks", amoro_truststore_type="JKS")
+    self.assertIn('+ExitOnOutOfMemoryError -Djavax.net.ssl.trustStore=/etc/security/clientKeys/all.jks '
+                  '-Djavax.net.ssl.trustStoreType=JKS"', amoro.jvm_properties())
+    self.assertTrue(amoro.jvm_properties().startswith("xms=2048\nxmx=2048\n"))
+
   def test_yaml_round_trip(self):
     try:
       import yaml
@@ -131,6 +139,141 @@ class TestAmoroConfig(unittest.TestCase):
       "http-server.login-auth-ldap-url": "ldap://ipa:389", "http-server.login-auth-ldap-user-pattern": "uid={0},dc=x",
       "admin-password": "a\"b: c#d"})
     self.assertEqual(json.loads(json.dumps(config)), yaml.safe_load(amoro.to_yaml(config)))
+
+
+def load_amoro_catalogs(**overrides):
+  """amoro_catalogs.py against a params module, with the Amoro REST API recorded instead of called."""
+  amoro = load_amoro_scripts()
+  params = sys.modules["params"]
+  defaults = dict(
+    has_hive=True, has_polaris_ozone_catalog=False, amoro_hive_catalog_name="hive", polaris_catalog_name="ozone",
+    hadoop_conf_dir="/etc/hadoop/conf", hive_conf_dir="/etc/hive/conf", security_enabled=True,
+    amoro_principal="amoro/edge.example.com@EXAMPLE.COM", amoro_keytab="/etc/security/keytabs/amoro.service.keytab",
+    krb5_conf_path="/etc/krb5.conf", amoro_user="amoro", amoro_optimizer_group="local",
+    amoro_polaris_principal="amoro", polaris_authorization_type="ranger", polaris_ranger_service="c1_polaris",
+    polaris_url="https://polaris:8443", polaris_realm="POLARIS", polaris_realm_header="Polaris-Realm",
+    ranger_admin_url="https://ranger:6182", ranger_admin_username="admin", ranger_admin_password="x")
+  defaults.update(overrides)
+  for key, value in defaults.items():
+    setattr(params, key, value)
+  module = load_module("amoro_catalogs", SERVICE / "package/scripts/amoro_catalogs.py")
+  sys.modules["amoro_catalogs"] = module
+  module.calls = []
+
+  def amoro_api(method, path, body=None, timeout=60, raw_body=None, content_type=None):
+    module.calls.append((method, path, body))
+    if path == "/catalogs" and method == "GET":
+      return [{"catalogName": name} for name in module.existing]
+    if path == "/files":
+      return {"id": str(len(module.calls))}
+    return None
+  module.existing = []
+  module.amoro.amoro_api = amoro_api
+  return module
+
+
+class TestAmoroCatalogs(unittest.TestCase):
+
+  def test_hive_catalog_uploads_configurations_and_keytab(self):
+    catalogs = load_amoro_catalogs()
+    catalogs.os.path.isfile = lambda path: True
+    uploads = []
+    catalogs.upload_file = lambda path: uploads.append(path) or "f{0}".format(len(uploads))
+    catalogs.register_catalogs(required=True)
+    method, path, body = catalogs.calls[-1]
+    self.assertEqual(("POST", "/catalogs"), (method, path))
+    self.assertEqual("hive", body["type"])
+    self.assertEqual(["ICEBERG"], body["tableFormatList"])
+    self.assertEqual({"storage.type": "Hadoop", "hadoop.core.site": "f1", "hadoop.hdfs.site": "f2", "hive.site": "f3"},
+                     body["storageConfig"])
+    self.assertEqual({"auth.type": "kerberos", "auth.kerberos.principal": "amoro/edge.example.com@EXAMPLE.COM",
+                      "auth.kerberos.keytab": "f4", "auth.kerberos.krb5": "f5"}, body["authConfig"])
+
+  def test_registered_catalogs_are_left_alone(self):
+    catalogs = load_amoro_catalogs()
+    catalogs.existing = ["hive"]
+    catalogs.register_catalogs(required=True)
+    self.assertEqual([("GET", "/catalogs", None)], catalogs.calls)
+
+  def test_existing_polaris_principal_gets_rotated_credentials(self):
+    catalogs = load_amoro_catalogs()
+    requests = []
+
+    def polaris_api(method, path, token=None, body=None, form=None, ok=(200, 201, 204)):
+      requests.append((method, path))
+      if path == "/api/management/v1/principals":
+        raise catalogs.PolarisError(409, "exists")
+      return {"credentials": {"clientId": "id", "clientSecret": "secret"}}
+    catalogs.polaris_api = polaris_api
+    self.assertEqual(("id", "secret"), catalogs.polaris_principal_credentials("token"))
+    self.assertEqual(("POST", "/api/management/v1/principals/amoro/rotate"), requests[-1])
+
+  def test_ranger_grants_one_policy_per_polaris_level(self):
+    catalogs = load_amoro_catalogs()
+    granted = []
+    catalogs.ensure_ranger_policy = lambda service, name, resources, user, accesses: granted.append((name, resources))
+    catalogs.grant_polaris_catalog("token", "ozone")
+    self.assertEqual([
+      ("amoro-polaris-ozone-catalog", {"root": ["*"], "catalog": ["ozone"]}),
+      ("amoro-polaris-ozone-namespace", {"root": ["*"], "catalog": ["ozone"], "namespace": ["*"]}),
+      ("amoro-polaris-ozone-table", {"root": ["*"], "catalog": ["ozone"], "namespace": ["*"], "table": ["*"]}),
+    ], granted)
+
+  def test_internal_authorization_grants_catalog_manage_content(self):
+    catalogs = load_amoro_catalogs(polaris_authorization_type="internal")
+    requests = []
+    catalogs.polaris_api = lambda method, path, token=None, body=None, form=None, ok=None: requests.append((method, path, body))
+    catalogs.grant_polaris_catalog("token", "ozone")
+    self.assertIn(("PUT", "/api/management/v1/catalogs/ozone/catalog-roles/amoro/grants",
+                   {"grant": {"type": "catalog", "privilege": "CATALOG_MANAGE_CONTENT"}}), requests)
+    self.assertEqual(("PUT", "/api/management/v1/principal-roles/amoro/catalog-roles/ozone", {"catalogRole": {"name": "amoro"}}),
+                     requests[-1])
+
+
+class TestAmoroRangerPolicies(unittest.TestCase):
+
+  def ranger(self, responses):
+    catalogs = load_amoro_catalogs()
+    catalogs.requests = []
+
+    def ranger_api(method, path, body=None):
+      catalogs.requests.append((method, path, body))
+      for (expected_method, prefix), response in responses:
+        if method == expected_method and path.startswith(prefix):
+          return response
+      raise AssertionError("unexpected {0} {1}".format(method, path))
+    catalogs.ranger_api = ranger_api
+    return catalogs
+
+  USER = (("GET", "/service/xusers/users"), (200, {"vXUsers": [{"name": "amoro"}]}))
+
+  def test_policy_is_created(self):
+    catalogs = self.ranger([self.USER, (("GET", "/service/public/v2/api/service/"), (200, [])),
+                            (("POST", "/service/public/v2/api/policy"), (200, {"id": 7}))])
+    catalogs.ensure_ranger_policy("c1_hadoop", "amoro-hdfs", {"path": ["/warehouse"]}, "amoro", ["read", "write"])
+    body = catalogs.requests[-1][2]
+    self.assertEqual({"path": {"values": ["/warehouse"], "isExcludes": False, "isRecursive": False}}, body["resources"])
+    self.assertEqual(["amoro"], body["policyItems"][0]["users"])
+
+  def test_grant_joins_the_policy_owning_the_resources(self):
+    owner = {"id": 3, "name": "all - path", "policyItems": [{"users": ["hive"], "accesses": [{"type": "read", "isAllowed": True}]}]}
+    catalogs = self.ranger([self.USER,
+                            (("GET", "/service/public/v2/api/service/c1_hadoop/policy?policyName=amoro-hdfs"), (200, [])),
+                            (("POST", "/service/public/v2/api/policy"),
+                             (400, {"msgDesc": "Another policy already exists for matching resource: policy-name=[all - path], service=[c1_hadoop]"})),
+                            (("GET", "/service/public/v2/api/service/c1_hadoop/policy?policyName=all%20-%20path"), (200, [owner])),
+                            (("PUT", "/service/public/v2/api/policy/3"), (200, {}))])
+    catalogs.ensure_ranger_policy("c1_hadoop", "amoro-hdfs", {"path": ["/warehouse"]}, "amoro", ["read"])
+    method, path, body = catalogs.requests[-1]
+    self.assertEqual(("PUT", "/service/public/v2/api/policy/3"), (method, path))
+    self.assertEqual([["hive"], ["amoro"]], [item["users"] for item in body["policyItems"]])
+
+  def test_existing_grant_is_not_repeated(self):
+    policy = {"id": 3, "name": "amoro-hdfs", "policyItems": [{"users": ["amoro"], "accesses": [
+      {"type": "read", "isAllowed": True}, {"type": "write", "isAllowed": True}]}]}
+    catalogs = self.ranger([self.USER, (("GET", "/service/public/v2/api/service/"), (200, [policy]))])
+    catalogs.ensure_ranger_policy("c1_hadoop", "amoro-hdfs", {"path": ["/warehouse"]}, "amoro", ["read"])
+    self.assertNotIn("PUT", [method for method, _, _ in catalogs.requests])
 
 
 class TestAmoroServiceAdvisor(unittest.TestCase):

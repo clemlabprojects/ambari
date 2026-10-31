@@ -27,6 +27,7 @@ from resource_management.libraries.functions.stack_features import check_stack_f
 from resource_management.libraries.script.script import Script
 
 import amoro
+import amoro_catalogs
 
 # Main class of the optimizer JVMs the local container of the server launches (bin/optimizer.sh).
 LOCAL_OPTIMIZER_CLASS = "org.apache.amoro.optimizer.standalone.StandaloneOptimizer"
@@ -68,6 +69,11 @@ class AmoroServer(Script):
       amoro.ensure_optimizer()
     except Fail as error:
       Logger.warning("Amoro is running but its optimizer could not be set up: {0}".format(error))
+    try:
+      amoro_catalogs.register_catalogs()
+    except Fail as error:
+      Logger.warning("Amoro is running but its catalogs could not be registered (retry with the "
+                     "Register Catalogs action): {0}".format(error))
 
   def stop(self, env, upgrade_type=None):
     import params
@@ -81,6 +87,13 @@ class AmoroServer(Script):
     # starts a new one at its next start.
     Execute(format("pkill -u {amoro_user} -f {LOCAL_OPTIMIZER_CLASS}"),
             only_if=format("pgrep -u {amoro_user} -f {LOCAL_OPTIMIZER_CLASS}"))
+
+  def register_catalogs(self, env):
+    """REGISTER_CATALOGS: registers the Hive Metastore and Polaris Ozone catalogs missing in Amoro."""
+    import params
+    env.set_params(params)
+    amoro.wait_for_amoro(timeout=60)
+    amoro_catalogs.register_catalogs(required=True)
 
   def status(self, env):
     import status_params

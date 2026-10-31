@@ -61,6 +61,20 @@
                 </condition>
               </conditions>
             </dependency>
+            <!-- ozone s3 getsecret/setsecret for the S3 credential of the Polaris Ozone catalog. -->
+            <dependency>
+              <name>OZONE/OZONE_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+              <conditions>
+                <condition xsi:type="propertyExists">
+                  <configType>ozone-site</configType>
+                  <property>ozone.om.http-address</property>
+                </condition>
+              </conditions>
+            </dependency>
           </dependencies>
           <commandScript>
             <script>scripts/amoro_server.py</script>
@@ -73,6 +87,16 @@
               <primary>true</primary>
             </log>
           </logs>
+          <customCommands>
+            <customCommand>
+              <name>REGISTER_CATALOGS</name>
+              <commandScript>
+                <script>scripts/amoro_server.py</script>
+                <scriptType>PYTHON</scriptType>
+                <timeout>600</timeout>
+              </commandScript>
+            </customCommand>
+          </customCommands>
         </component>
       </components>
 
