@@ -142,6 +142,17 @@ class TestAmoroConfig(unittest.TestCase):
     self.assertEqual(json.loads(json.dumps(config)), yaml.safe_load(amoro.to_yaml(config)))
 
 
+def _test_keytab():
+  import tempfile
+  handle = tempfile.NamedTemporaryFile(prefix="amoro-test-", suffix=".keytab", delete=False)
+  handle.write(b"\x05\x02test")
+  handle.close()
+  return handle.name
+
+
+TEST_KEYTAB = _test_keytab()
+
+
 def load_amoro_catalogs(**overrides):
   """amoro_catalogs.py against a params module, with the Amoro REST API recorded instead of called."""
   amoro = load_amoro_scripts()
@@ -149,7 +160,7 @@ def load_amoro_catalogs(**overrides):
   defaults = dict(
     has_hive=True, has_polaris_ozone_catalog=False, amoro_hive_catalog_name="hive", polaris_catalog_name="ozone",
     hadoop_conf_dir="/etc/hadoop/conf", hive_conf_dir="/etc/hive/conf", security_enabled=True,
-    amoro_principal="amoro/edge.example.com@EXAMPLE.COM", amoro_keytab="/etc/security/keytabs/amoro.service.keytab",
+    amoro_principal="amoro/edge.example.com@EXAMPLE.COM", amoro_keytab=TEST_KEYTAB,
     krb5_conf_path="/etc/krb5.conf", amoro_user="amoro", amoro_optimizer_group="local",
     amoro_polaris_principal="amoro", polaris_authorization_type="ranger", polaris_ranger_service="c1_polaris",
     polaris_url="https://polaris:8443", polaris_realm="POLARIS", polaris_realm_header="Polaris-Realm",
@@ -191,7 +202,7 @@ class TestAmoroCatalogs(unittest.TestCase):
                       "auth.kerberos.keytab": "f4", "auth.kerberos.krb5": "f5"}, body["authConfig"])
 
   def test_registered_catalogs_are_left_alone(self):
-    catalogs = load_amoro_catalogs()
+    catalogs = load_amoro_catalogs(security_enabled=False)
     catalogs.existing = ["hive"]
     catalogs.register_catalogs(required=True)
     self.assertEqual([("GET", "/catalogs", None)], catalogs.calls)
@@ -265,6 +276,68 @@ class TestAmoroCatalogs(unittest.TestCase):
                    {"grant": {"type": "catalog", "privilege": "CATALOG_MANAGE_CONTENT"}}), requests)
     self.assertEqual(("PUT", "/api/management/v1/principal-roles/amoro/catalog-roles/ozone", {"catalogRole": {"name": "amoro"}}),
                      requests[-1])
+
+
+class TestAmoroCatalogCredentialRefresh(unittest.TestCase):
+
+  def catalogs(self, detail, **overrides):
+    import tempfile
+    keytab = tempfile.NamedTemporaryFile(delete=False)
+    keytab.write(b"\x05\x02keytab-v1"); keytab.close()
+    catalogs = load_amoro_catalogs(amoro_keytab=keytab.name, **overrides)
+    catalogs.upload_file = lambda path: "id-" + os.path.basename(path)
+    catalogs.puts = []
+
+    def amoro_api(method, path, body=None, timeout=60, raw_body=None, content_type=None):
+      if method == "GET" and path == "/catalogs":
+        return [{"catalogName": detail["name"]}]
+      if method == "GET":
+        return json.loads(json.dumps(detail))
+      catalogs.puts.append((method, path, body))
+    catalogs.amoro.amoro_api = amoro_api
+    return catalogs, keytab.name
+
+  HIVE = {"name": "hive", "type": "hive", "optimizerGroup": "local", "tableFormatList": ["ICEBERG"], "tableProperties": {},
+          "properties": {}, "storageConfig": {"storage.type": "Hadoop", "hadoop.core.site": {"fileName": "core-site.xml"}},
+          "authConfig": {"auth.type": "KERBEROS"}}
+
+  def test_unchanged_keytab_leaves_the_catalog_alone(self):
+    catalogs, _ = self.catalogs(dict(self.HIVE))
+    detail = dict(self.HIVE, properties={catalogs.FINGERPRINT: catalogs.hive_credential_fingerprint()})
+    catalogs, _ = self.catalogs(detail)
+    catalogs.register_catalogs(required=True)
+    self.assertEqual([], catalogs.puts)
+
+  def test_regenerated_keytab_is_uploaded_again(self):
+    catalogs, keytab = self.catalogs(dict(self.HIVE, properties={"ambari.credential-fingerprint": "old", "x": "1"}))
+    catalogs.register_catalogs(required=True)
+    method, path, body = catalogs.puts[0]
+    self.assertEqual(("PUT", "/catalogs/hive"), (method, path))
+    self.assertEqual({"storage.type": "Hadoop"}, body["storageConfig"])
+    self.assertEqual("id-" + os.path.basename(keytab), body["authConfig"]["auth.kerberos.keytab"])
+    self.assertEqual("1", body["properties"]["x"])
+    self.assertEqual(catalogs.hive_credential_fingerprint(), body["properties"][catalogs.FINGERPRINT])
+
+  POLARIS = {"name": "ozone", "type": "rest", "optimizerGroup": "local", "tableFormatList": ["ICEBERG"], "tableProperties": {},
+             "properties": {"credential": "********", "uri": "https://polaris:8443/api/catalog", "ambari.credential-fingerprint": "old"},
+             "storageConfig": {"storage.type": "S3", "storage.s3.endpoint": "http://s3g:9878", "storage.s3.region": "us-east-1"},
+             "authConfig": {"auth.type": "AK/SK", "auth.ak_sk.access_key": "amoro", "auth.ak_sk.secret_key": "********"}}
+
+  def test_new_oidc_secret_updates_the_polaris_catalog(self):
+    catalogs, _ = self.catalogs(dict(self.POLARIS), has_hive=False, has_polaris_ozone_catalog=True, security_enabled=False,
+                                amoro_polaris_oidc=True, amoro_oidc_client_id="c1-amoro", amoro_oidc_client_secret="new")
+    catalogs.oidc_token_endpoint = lambda: "https://kc/token"
+    catalogs.register_catalogs(required=True)
+    body = catalogs.puts[0][2]
+    self.assertEqual("c1-amoro:new", body["properties"]["credential"])
+    self.assertEqual("https://polaris:8443/api/catalog", body["properties"]["uri"])
+    self.assertEqual("********", body["authConfig"]["auth.ak_sk.secret_key"])
+    self.assertEqual(self.POLARIS["storageConfig"], body["storageConfig"])
+
+  def test_polaris_issued_credential_is_not_refreshed(self):
+    catalogs, _ = self.catalogs(dict(self.POLARIS), has_hive=False, has_polaris_ozone_catalog=True, amoro_polaris_oidc=False)
+    catalogs.register_catalogs(required=True)
+    self.assertEqual([], catalogs.puts)
 
 
 class TestAmoroRangerPolicies(unittest.TestCase):

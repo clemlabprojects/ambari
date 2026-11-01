@@ -20,6 +20,7 @@ Registration of the cluster catalogs in Amoro: the Hive Metastore, and the Ozone
 manages in Polaris (with the Polaris principal of Amoro, its grants, and its Ozone S3 credential).
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -66,10 +67,10 @@ def register_catalogs(required=False):
 
   errors = []
   for name, register in registrations:
-    if name in existing:
-      Logger.info("Amoro catalog '{0}' is already registered.".format(name))
-      continue
     try:
+      if name in existing:
+        refresh_catalog_credentials(name)
+        continue
       register(name)
       Logger.info("Registered the Amoro catalog '{0}'.".format(name))
     except Fail as error:
@@ -95,15 +96,81 @@ def register_hive_catalog(name):
     elif key != "hadoop.hdfs.site":
       raise Fail("{0} is missing on this host.".format(path))
 
+  properties = {}
   if params.security_enabled:
-    auth = {"auth.type": "kerberos",
-            "auth.kerberos.principal": params.amoro_principal,
-            "auth.kerberos.keytab": upload_file(params.amoro_keytab),
-            "auth.kerberos.krb5": upload_file(params.krb5_conf_path)}
+    auth = hive_kerberos_auth()
+    properties[FINGERPRINT] = hive_credential_fingerprint()
   else:
     auth = {"auth.type": "simple", "auth.simple.hadoop_username": params.amoro_user}
 
-  amoro.amoro_api("POST", "/catalogs", catalog_body(name, "hive", storage, auth, {}))
+  amoro.amoro_api("POST", "/catalogs", catalog_body(name, "hive", storage, auth, properties))
+
+
+def hive_kerberos_auth():
+  import params
+
+  return {"auth.type": "kerberos",
+          "auth.kerberos.principal": params.amoro_principal,
+          "auth.kerberos.keytab": upload_file(params.amoro_keytab),
+          "auth.kerberos.krb5": upload_file(params.krb5_conf_path)}
+
+
+def hive_credential_fingerprint():
+  import params
+
+  with open(params.amoro_keytab, "rb") as keytab:
+    return fingerprint(keytab.read() + params.amoro_principal.encode("utf-8"))
+
+
+def fingerprint(data):
+  return hashlib.sha256(data if isinstance(data, bytes) else data.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Credentials of registered catalogs
+# ---------------------------------------------------------------------------
+
+# Catalog property holding the SHA-256 of the credentials Ambari last gave the catalog: Amoro keeps
+# them in its database and masks them in its API, so this is what start compares.
+FINGERPRINT = "ambari.credential-fingerprint"
+
+
+def refresh_catalog_credentials(name):
+  """Updates a registered catalog in place (tables and settings kept) when the credentials Ambari
+  manages changed: the keytab of the Hive catalog (Regenerate Keytabs), the OIDC client secret of the
+  Polaris catalog (OIDC reconfigured). Both are followed by a restart, which runs this."""
+  import params
+
+  if name == params.amoro_hive_catalog_name and params.security_enabled:
+    wanted = hive_credential_fingerprint()
+    detail = amoro.amoro_api("GET", "/catalogs/" + urllib.parse.quote(name, safe=""))
+    if (detail.get("properties") or {}).get(FINGERPRINT) == wanted:
+      return
+    # Without file ids the stored site files are kept.
+    update_catalog(detail, {"storage.type": "Hadoop"}, hive_kerberos_auth(), {FINGERPRINT: wanted})
+    Logger.info("Refreshed the Kerberos credentials of the Amoro catalog '{0}'.".format(name))
+  elif name == params.polaris_catalog_name and params.amoro_polaris_oidc:
+    auth_properties = polaris_catalog_auth()
+    wanted = fingerprint(auth_properties["credential"])
+    detail = amoro.amoro_api("GET", "/catalogs/" + urllib.parse.quote(name, safe=""))
+    if (detail.get("properties") or {}).get(FINGERPRINT) == wanted:
+      return
+    storage = {k: v for k, v in (detail.get("storageConfig") or {}).items() if isinstance(v, str)}
+    # The S3 secret comes back masked: Amoro keeps the stored one.
+    auth = {k: v for k, v in (detail.get("authConfig") or {}).items() if isinstance(v, str)}
+    auth_properties[FINGERPRINT] = wanted
+    update_catalog(detail, storage, auth, auth_properties)
+    Logger.info("Refreshed the OIDC credentials of the Amoro catalog '{0}'.".format(name))
+
+
+def update_catalog(detail, storage, auth, properties):
+  """PUT of a catalog from its details, with the given storage and auth configs and properties changes
+  (masked properties of the details are restored by Amoro)."""
+  body = {key: detail[key] for key in ("name", "type", "optimizerGroup", "tableFormatList", "tableProperties")}
+  body["properties"] = dict(detail.get("properties") or {}, **properties)
+  body["storageConfig"] = storage
+  body["authConfig"] = auth
+  amoro.amoro_api("PUT", "/catalogs/" + urllib.parse.quote(detail["name"], safe=""), body)
 
 
 def catalog_body(name, catalog_type, storage, auth, properties):
@@ -161,6 +228,7 @@ def register_polaris_catalog(name):
     "header." + params.polaris_realm_header: params.polaris_realm,
     "s3.path-style-access": str(storage_info.get("pathStyleAccess", True)).lower(),
   })
+  properties[FINGERPRINT] = fingerprint(properties["credential"])
   storage = {"storage.type": "S3", "storage.s3.endpoint": s3_endpoint, "storage.s3.region": s3_region}
   auth = {"auth.type": "ak/sk", "auth.ak_sk.access_key": access_key,
           "auth.ak_sk.secret_key": secret_key}
