@@ -262,7 +262,9 @@ def setup_ranger_db(stack_version=None, upgrade_type=None):
   copy_jdbc_connector(ranger_home)
 
   ModifyPropertiesFile(format("{ranger_home}/install.properties"),
-    properties = {'audit_store': params.ranger_audit_source_type},
+    properties = {'audit_store': params.ranger_audit_source_type,
+                  'is_override_db_connection_string': 'true' if params.ranger_db_override_jdbc_url else 'false',
+                  'db_override_jdbc_connection_string': params.ranger_db_override_jdbc_url},
     owner = params.unix_user,
   )
 

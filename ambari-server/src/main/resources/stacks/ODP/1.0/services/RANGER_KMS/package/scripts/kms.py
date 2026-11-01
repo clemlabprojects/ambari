@@ -66,6 +66,12 @@ def setup_kms_db(stack_version=None):
 
     copy_jdbc_connector(kms_home)
 
+    ModifyPropertiesFile(format("{kms_home}/install.properties"),
+      properties = {'is_override_db_connection_string': 'true' if params.ranger_kms_db_override_jdbc_url else 'false',
+                    'db_override_jdbc_connection_string': params.ranger_kms_db_override_jdbc_url},
+      owner = params.kms_user,
+    )
+
     env_dict = {'RANGER_KMS_HOME':kms_home, 'JAVA_HOME': params.java_home}
     if params.db_flavor.lower() == 'sqla':
       env_dict = {'RANGER_KMS_HOME':kms_home, 'JAVA_HOME': params.java_home, 'LD_LIBRARY_PATH':params.ld_library_path}

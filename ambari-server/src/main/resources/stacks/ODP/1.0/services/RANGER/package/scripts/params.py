@@ -218,6 +218,10 @@ if db_flavor.lower() == 'sqla':
 check_db_connection_jar_name = "DBConnectionVerification.jar"
 check_db_connection_jar = format("/usr/lib/ambari-agent/{check_db_connection_jar_name}")
 ranger_jdbc_connection_url = config["configurations"]["ranger-admin-site"]["ranger.jpa.jdbc.url"]
+# ODP: db_setup.py builds its own JDBC URL from db_host/db_name; a configured URL carrying connection
+# parameters (SSL: sslmode, sslrootcert, sslMode, trustCertificateKeyStoreUrl...) is passed to it as the
+# override connection string, so that the database setup connects like Ranger Admin does.
+ranger_db_override_jdbc_url = ranger_jdbc_connection_url if ("?" in ranger_jdbc_connection_url or ";" in ranger_jdbc_connection_url) else ""
 ranger_jdbc_driver = config["configurations"]["ranger-admin-site"]["ranger.jpa.jdbc.driver"]
 
 ranger_credential_provider_path = config["configurations"]["ranger-admin-site"]["ranger.credential.provider.path"]

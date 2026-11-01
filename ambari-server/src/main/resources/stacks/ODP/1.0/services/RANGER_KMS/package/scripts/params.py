@@ -263,6 +263,9 @@ if current_host in ranger_kms_hosts:
 check_db_connection_jar_name = "DBConnectionVerification.jar"
 check_db_connection_jar = format("/usr/lib/ambari-agent/{check_db_connection_jar_name}")
 ranger_kms_jdbc_connection_url = config['configurations']['dbks-site']['ranger.ks.jpa.jdbc.url']
+# ODP: db_setup.py builds its own JDBC URL from db_host/db_name; a configured URL carrying connection
+# parameters (SSL) is passed to it as the override connection string, like Ranger Admin.
+ranger_kms_db_override_jdbc_url = ranger_kms_jdbc_connection_url if ("?" in ranger_kms_jdbc_connection_url or ";" in ranger_kms_jdbc_connection_url) else ""
 ranger_kms_jdbc_driver = config['configurations']['dbks-site']['ranger.ks.jpa.jdbc.driver']
 
 jce_name = default("/ambariLevelParams/jce_name", None)
