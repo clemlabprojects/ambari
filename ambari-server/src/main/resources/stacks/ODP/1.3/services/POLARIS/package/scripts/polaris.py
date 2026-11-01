@@ -603,17 +603,17 @@ def _polaris_management_base_url():
 
 
 def _wait_for_polaris(base_url, realm, realm_header, attempts=20, sleep_s=2):
-  """Probe Quarkus's separate management interface (default :8182, plain HTTP, no realm
-  header required) instead of the application port — the latter rejects /q/health with
-  the realm-context filter when polaris.realm-context.require-header=true."""
+  """Probe Quarkus's separate management interface (default :8182, plain HTTP unless TLS is
+  configured for it, no realm header required) instead of the application port — the latter
+  rejects /q/health with the realm-context filter when polaris.realm-context.require-header=true."""
   import params
   host = str(getattr(params, "polaris_hostname", "") or "localhost")
   mgmt_port = str(params.application_properties.get("quarkus.management.port", "8182")).strip() or "8182"
-  url = "http://{0}:{1}/q/health/ready".format(host, mgmt_port)
+  url = "{0}://{1}:{2}/q/health/ready".format(params.polaris_management_protocol, host, mgmt_port)
   for _ in range(attempts):
     try:
       req = urllib.request.Request(url, method="GET")
-      with urllib.request.urlopen(req, timeout=3) as resp:
+      with urllib.request.urlopen(req, timeout=3, context=_unverified_ssl_ctx() if url.startswith("https://") else None) as resp:
         if 200 <= resp.status < 300:
           return True
     except Exception:

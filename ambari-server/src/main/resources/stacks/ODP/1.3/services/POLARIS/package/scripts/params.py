@@ -442,6 +442,11 @@ polaris_https_port = _to_int(default("/configurations/polaris-application-proper
 polaris_port = polaris_https_port if polaris_protocol == "https" else polaris_http_port
 # Quarkus management interface (health, metrics) is on a separate port when quarkus.management.enabled=true
 polaris_management_port = _to_int(default("/configurations/polaris-application-properties/quarkus.management.port", 8182), 8182)
+# The management interface serves plain HTTP, whatever polaris_protocol is, unless TLS is configured for it
+# (quarkus.management.ssl.* or a named TLS configuration, which Ambari never sets itself).
+polaris_management_protocol = "https" if any(
+  key.startswith("quarkus.management.ssl.") or key == "quarkus.management.tls-configuration-name"
+  for key in application_properties) else "http"
 
 polaris_hosts = sorted(default("/clusterHostInfo/polaris_server_hosts", []))
 polaris_service_host = polaris_hosts[0] if polaris_hosts else config['agentLevelParams']['hostname']
