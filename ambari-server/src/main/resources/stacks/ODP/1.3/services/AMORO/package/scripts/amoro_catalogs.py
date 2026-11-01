@@ -23,6 +23,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import shlex
 import ssl
 import urllib.error
@@ -138,8 +139,6 @@ def upload_file(path):
 def register_polaris_catalog(name):
   import params
 
-  if not params.amoro_ozone_s3_secret.strip():
-    raise Fail("amoro_ozone_s3_secret (amoro-env) is empty: Amoro needs it to read and write the Ozone catalog data.")
   if not params.polaris_admin_username or not params.polaris_admin_password:
     raise Fail("The Polaris administrator credentials (polaris-env) are not set.")
 
@@ -154,7 +153,7 @@ def register_polaris_catalog(name):
 
   client_id, client_secret = polaris_principal_credentials(token)
   grant_polaris_catalog(token, name)
-  access_key = ozone_s3_credential()
+  access_key, secret_key = ozone_s3_credential()
 
   properties = {
     "uri": params.polaris_url + "/api/catalog",
@@ -167,7 +166,7 @@ def register_polaris_catalog(name):
   }
   storage = {"storage.type": "S3", "storage.s3.endpoint": s3_endpoint, "storage.s3.region": s3_region}
   auth = {"auth.type": "ak/sk", "auth.ak_sk.access_key": access_key,
-          "auth.ak_sk.secret_key": params.amoro_ozone_s3_secret}
+          "auth.ak_sk.secret_key": secret_key}
   amoro.amoro_api("POST", "/catalogs", catalog_body(name, "rest", storage, auth, properties))
 
 
@@ -267,18 +266,21 @@ def grant_polaris_catalog(token, catalog):
 
 
 def ozone_s3_credential():
-  """Sets amoro_ozone_s3_secret as the S3 secret of the Amoro user on Ozone; returns its access key."""
+  """(access key, secret) of the Amoro user on the Ozone S3 gateway. The secret is generated and set on
+  Ozone here, then kept by the Amoro catalog only: registering the catalog again replaces it."""
   import params
 
+  secret = secrets.token_urlsafe(30)
   if not params.ozone_security_enabled:
     # Without Ozone security the S3 gateway checks no signature: the access key names the user.
-    return params.amoro_user
-  output = run_ozone(["s3", "getsecret", "-e"])
+    return params.amoro_user, secret
+  # getsecret creates the S3 identity of the principal (and prints its first secret, hence quiet).
+  output = run_ozone(["s3", "getsecret", "-e"], secret=True)
   match = re.search(r"AWS_ACCESS_KEY_ID=['\"]?([^'\"\s]+)", output) or re.search(r"awsAccessKey\s*[:=]\s*(\S+)", output)
   access_key = match.group(1) if match else params.amoro_principal
-  run_ozone(["s3", "setsecret", "-s", params.amoro_ozone_s3_secret, "-e"], secret=True)
-  Logger.info("Set the Ozone S3 secret of '{0}'.".format(access_key))
-  return access_key
+  run_ozone(["s3", "setsecret", "-s", secret, "-e"], secret=True)
+  Logger.info("Set a new Ozone S3 secret for '{0}'.".format(access_key))
+  return access_key, secret
 
 
 def run_ozone(args, secret=False):

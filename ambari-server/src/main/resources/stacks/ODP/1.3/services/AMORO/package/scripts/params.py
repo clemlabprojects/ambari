@@ -171,13 +171,12 @@ if not polaris_ranger_service or polaris_ranger_service == "{{repo_name}}":
 amoro_polaris_principal = amoro_user
 
 # Amoro reads and writes the Ozone catalog data with its own S3 credential (the Ozone catalog of
-# Polaris vends none): the S3 secret of the Amoro user, set on Ozone by Ambari.
+# Polaris vends none): a secret Ambari generates and sets on Ozone for the Amoro principal.
 ozone_security_enabled = _to_bool(default("/configurations/ozone-site/ozone.security.enabled", "false"))
 ozone_cmd = format("{stack_root}/current/ozone-client/bin/ozone")
 ozone_om_service_id = str(default("/configurations/ozone-site/ozone.om.internal.service.id", "")).strip()
 if not ozone_om_service_id:
   ozone_om_service_id = str(default("/configurations/ozone-site/ozone.om.service.ids", "")).split(",")[0].strip()
-amoro_ozone_s3_secret = str(default("/configurations/amoro-env/amoro_ozone_s3_secret", ""))
 
 # Ranger admin, for the policies granting the Amoro user (Polaris catalog, HDFS, Ozone).
 has_ranger_admin = len(default("/clusterHostInfo/ranger_admin_hosts", [])) > 0

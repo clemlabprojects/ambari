@@ -209,6 +209,26 @@ class TestAmoroCatalogs(unittest.TestCase):
     self.assertEqual(("id", "secret"), catalogs.polaris_principal_credentials("token"))
     self.assertEqual(("POST", "/api/management/v1/principals/amoro/rotate"), requests[-1])
 
+  def test_ozone_s3_secret_is_generated_and_set(self):
+    catalogs = load_amoro_catalogs(ozone_security_enabled=True)
+    commands = []
+
+    def run_ozone(args, secret=False):
+      commands.append((list(args), secret))
+      return "export AWS_ACCESS_KEY_ID='amoro/edge.example.com@EXAMPLE.COM'" if args[1] == "getsecret" else ""
+    catalogs.run_ozone = run_ozone
+    access_key, secret = catalogs.ozone_s3_credential()
+    self.assertEqual("amoro/edge.example.com@EXAMPLE.COM", access_key)
+    self.assertGreaterEqual(len(secret), 40)
+    self.assertEqual((["s3", "setsecret", "-s", secret, "-e"], True), commands[-1])
+    self.assertTrue(all(quiet for _, quiet in commands))
+    self.assertNotEqual(secret, catalogs.ozone_s3_credential()[1])
+
+  def test_ozone_without_security_needs_no_secret_on_ozone(self):
+    catalogs = load_amoro_catalogs(ozone_security_enabled=False)
+    catalogs.run_ozone = lambda args, secret=False: self.fail("no ozone command expected")
+    self.assertEqual("amoro", catalogs.ozone_s3_credential()[0])
+
   def test_ranger_grants_one_policy_per_polaris_level(self):
     catalogs = load_amoro_catalogs()
     granted = []

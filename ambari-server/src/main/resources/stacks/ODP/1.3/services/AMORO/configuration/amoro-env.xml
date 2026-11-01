@@ -164,19 +164,6 @@
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
-  <property require-input="false">
-    <name>amoro_ozone_s3_secret</name>
-    <display-name>Amoro Ozone S3 Secret</display-name>
-    <value></value>
-    <property-type>PASSWORD</property-type>
-    <description>S3 secret of the Amoro user on the Ozone S3 gateway, set by Ambari when it registers the Ozone catalog of Polaris in Amoro: Amoro reads and writes the table files of that catalog with it. Required to register that catalog.</description>
-    <value-attributes>
-      <type>password</type>
-      <empty-value-valid>true</empty-value-valid>
-      <overridable>false</overridable>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-  </property>
   <property>
     <name>content</name>
     <display-name>env.sh template</display-name>
