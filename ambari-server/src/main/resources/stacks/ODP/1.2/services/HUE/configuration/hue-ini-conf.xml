@@ -298,6 +298,16 @@
       <on-ambari-upgrade add="false"/>
     </property>
     <property>
+      <name>hue_db_options</name>
+      <display-name>Database Connection Options</display-name>
+      <value></value>
+      <description>JSON object of driver options for the Hue database connection, written as options= in the [[database]] section of hue.ini. SSL with server certificate verification, PostgreSQL: {"sslmode": "verify-full", "sslrootcert": "/path/to/ca.pem"}; MySQL/MariaDB: {"ssl": {"ca": "/path/to/ca.pem"}}.</description>
+      <value-attributes>
+        <empty-value-valid>true</empty-value-valid>
+      </value-attributes>
+      <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
       <name>hue_db_password</name>
       <display-name>Database Password</display-name>
       <value>hue123</value>

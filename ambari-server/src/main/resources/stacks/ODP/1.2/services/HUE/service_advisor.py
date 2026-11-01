@@ -19,6 +19,7 @@ limitations under the License.
 
 # Python imports
 import imp
+import json
 import os
 import traceback
 import re
@@ -284,7 +285,20 @@ class HueValidator(service_advisor.ServiceAdvisor):
     self.as_super = super(HueValidator, self)
     self.as_super.__init__(*args, **kwargs)
 
-    self.validators = []
+    self.validators = [("hue-ini-conf", self.validateHueIniConfConfigurations)]
+
+  def validateHueIniConfConfigurations(self, properties, recommendedDefaults, configurations, services, hosts):
+    items = []
+    options = str(properties.get("hue_db_options", "") or "").strip()
+    if options:
+      try:
+        valid = isinstance(json.loads(options), dict)
+      except ValueError:
+        valid = False
+      if not valid:
+        items.append({"config-name": "hue_db_options",
+                      "item": self.getErrorItem("Must be a JSON object, for instance {\"sslmode\": \"verify-full\"}.")})
+    return self.toConfigurationValidationProblems(items, "hue-ini-conf")
 
 
 

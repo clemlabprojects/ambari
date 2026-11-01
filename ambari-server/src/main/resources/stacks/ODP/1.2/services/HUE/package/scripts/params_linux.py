@@ -20,6 +20,7 @@ Ambari Agent
 """
 import os
 import status_params
+import hue_ini
 
 from resource_management.core.logger import Logger
 
@@ -609,6 +610,11 @@ if has_zookeeper:
 
 
 hue_ini_content = config['configurations']['hue-ini-template']['content']
+# ODP: driver options of the database connection (SSL: sslmode, sslrootcert...). A template predating
+# hue_db_options gets the options= line in its [[database]] section, unless that section already has one.
+hue_db_options = str(default('/configurations/hue-ini-conf/hue_db_options', '')).strip()
+if hue_db_options:
+  hue_ini_content = hue_ini.with_database_options(hue_ini_content)
 hue_log_redaction_file = format('{hue_conf_dir}/redaction-rules.json')
 hue_runtime_http_host = _hostname_lowercase
 hue_admin_username =  config['configurations']['hue-env']['hue_admin_username']

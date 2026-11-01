@@ -80,6 +80,9 @@ port={{hue_db_port}}
 user={{hue_db_username}}
 name={{hue_db_name}}
 password_script={{hue_runtime_database_password_script}}
+{% if hue_db_options %}
+options='{{hue_db_options}}'
+{% endif %}
 [[smtp]]
 host=localhost
 port=25
