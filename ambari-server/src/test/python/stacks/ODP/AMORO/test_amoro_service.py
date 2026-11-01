@@ -229,6 +229,22 @@ class TestAmoroCatalogs(unittest.TestCase):
     catalogs.run_ozone = lambda args, secret=False: self.fail("no ozone command expected")
     self.assertEqual("amoro", catalogs.ozone_s3_credential()[0])
 
+  def test_polaris_auth_uses_the_ambari_managed_oidc_client(self):
+    catalogs = load_amoro_catalogs(amoro_polaris_oidc=True, amoro_oidc_client_id="c1-amoro",
+                                   amoro_oidc_client_secret="s3cr3t", amoro_oidc_auth_server_url="https://kc/realms/odp")
+    catalogs.oidc_token_endpoint = lambda: "https://kc/realms/odp/protocol/openid-connect/token"
+    catalogs.polaris_principal_credentials = lambda token: self.fail("no Polaris-issued credential with OIDC")
+    self.assertEqual({"credential": "c1-amoro:s3cr3t", "scope": "openid",
+                      "oauth2-server-uri": "https://kc/realms/odp/protocol/openid-connect/token"},
+                     catalogs.polaris_catalog_auth("token"))
+
+  def test_polaris_auth_falls_back_to_a_polaris_issued_credential(self):
+    catalogs = load_amoro_catalogs(amoro_polaris_oidc=False)
+    catalogs.polaris_principal_credentials = lambda token: ("id", "secret")
+    self.assertEqual({"credential": "id:secret", "scope": "PRINCIPAL_ROLE:ALL",
+                      "oauth2-server-uri": "https://polaris:8443/api/catalog/v1/oauth/tokens"},
+                     catalogs.polaris_catalog_auth("token"))
+
   def test_ranger_grants_one_policy_per_polaris_level(self):
     catalogs = load_amoro_catalogs()
     granted = []
@@ -494,6 +510,15 @@ class TestAmoroSecurity(unittest.TestCase):
       {"admin-password": "x", "http-server.ssl.enabled": "false"}, {}, services["configurations"], services, self.HOSTS)
     self.assertIn(("http-server.ssl.enabled", "ERROR"), [(i["config-name"], i["level"]) for i in items])
 
+  def test_kerberos_without_oidc_warns_about_the_polaris_credential(self):
+    def warnings(services):
+      services["services"] += [{"StackServices": {"service_name": name}, "components": []} for name in ("POLARIS", "OZONE")]
+      items = self.advisor.AmoroValidator().validateAmoroEnvProperties({}, {}, services["configurations"], services, self.HOSTS)
+      return [item["config-name"] for item in items if item["config-name"] == "amoro_oidc_client_id"]
+    self.assertEqual(["amoro_oidc_client_id"], warnings(self.services(kerberos="true")))
+    self.assertEqual([], warnings(self.services(kerberos="true", oidc=True)))
+    self.assertEqual([], warnings(self.services()))
+
   def test_knox_is_required_when_secure(self):
     def knox_errors(services):
       return [item for item in self.advisor.AmoroServiceAdvisor().getServiceComponentLayoutValidations(services, self.HOSTS)
@@ -528,6 +553,17 @@ class TestAmoroServiceDefinition(unittest.TestCase):
     self.assertEqual("amoro-server", packages["stack-select"]["AMORO"]["AMORO_SERVER"]["STACK-SELECT-PACKAGE"])
     self.assertEqual([{"conf_dir": "/etc/amoro/conf", "current_dir": "{0}/current/amoro-server/conf"}],
                      packages["conf-select"]["amoro"])
+
+  def test_oidc_client_maps_to_the_amoro_user(self):
+    client = json.loads((SERVICE / "oidc.json").read_text())["services"][0]["clients"][0]
+    self.assertFalse(client["public_client"])
+    self.assertTrue(client["service_accounts_enabled"])
+    claim = [m for m in client["protocol_mappers"] if m["protocolMapper"] == "oidc-hardcoded-claim-mapper"][0]["config"]
+    self.assertEqual(("polaris.principal_name", "${amoro-env/amoro_user}"), (claim["claim.name"], claim["claim.value"]))
+    env = self.properties("amoro-env")
+    for name in client["configurations"][0]["amoro-env"]:
+      self.assertIn(name, env)
+    self.assertEqual("PASSWORD", env["amoro_oidc_client_secret"].findtext("property-type"))
 
   def test_kerberos_identity_is_published_to_amoro_env(self):
     identity = json.loads((SERVICE / "kerberos.json").read_text())["services"][0]["components"][0]["identities"][0]

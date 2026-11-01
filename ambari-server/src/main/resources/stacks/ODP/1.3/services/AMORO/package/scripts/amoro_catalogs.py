@@ -151,23 +151,48 @@ def register_polaris_catalog(name):
   if not s3_endpoint:
     raise Fail("The Polaris catalog '{0}' has no S3 endpoint.".format(name))
 
-  client_id, client_secret = polaris_principal_credentials(token)
+  properties = polaris_catalog_auth(token)
   grant_polaris_catalog(token, name)
   access_key, secret_key = ozone_s3_credential()
 
-  properties = {
+  properties.update({
     "uri": params.polaris_url + "/api/catalog",
     "warehouse": name,
-    "credential": "{0}:{1}".format(client_id, client_secret),
-    "scope": "PRINCIPAL_ROLE:ALL",
-    "oauth2-server-uri": params.polaris_url + "/api/catalog/v1/oauth/tokens",
     "header." + params.polaris_realm_header: params.polaris_realm,
     "s3.path-style-access": str(storage_info.get("pathStyleAccess", True)).lower(),
-  }
+  })
   storage = {"storage.type": "S3", "storage.s3.endpoint": s3_endpoint, "storage.s3.region": s3_region}
   auth = {"auth.type": "ak/sk", "auth.ak_sk.access_key": access_key,
           "auth.ak_sk.secret_key": secret_key}
   amoro.amoro_api("POST", "/catalogs", catalog_body(name, "rest", storage, auth, properties))
+
+
+def polaris_catalog_auth(token=None):
+  """OAuth properties of the Polaris catalog: the OIDC client of Amoro (token endpoint of the OIDC
+  provider) when Ambari manages one, else credentials Polaris issues (needs the Polaris admin token)."""
+  import params
+
+  if params.amoro_polaris_oidc:
+    return {"credential": "{0}:{1}".format(params.amoro_oidc_client_id, params.amoro_oidc_client_secret),
+            "oauth2-server-uri": oidc_token_endpoint(), "scope": "openid"}
+  client_id, client_secret = polaris_principal_credentials(token or polaris_admin_token())
+  return {"credential": "{0}:{1}".format(client_id, client_secret),
+          "oauth2-server-uri": params.polaris_url + "/api/catalog/v1/oauth/tokens", "scope": "PRINCIPAL_ROLE:ALL"}
+
+
+def oidc_token_endpoint():
+  """Token endpoint of the cluster OIDC provider, from its discovery document."""
+  import params
+
+  url = params.amoro_oidc_auth_server_url + "/.well-known/openid-configuration"
+  context = ssl._create_unverified_context() if url.startswith("https://") else None
+  try:
+    document = json.loads(urllib.request.urlopen(url, timeout=30, context=context).read().decode("utf-8"))
+  except (urllib.error.URLError, OSError, ValueError) as error:
+    raise Fail("Cannot read the OIDC discovery document {0}: {1}".format(url, error))
+  if not document.get("token_endpoint"):
+    raise Fail("The OIDC discovery document {0} has no token_endpoint.".format(url))
+  return document["token_endpoint"]
 
 
 def polaris_api(method, path, token=None, body=None, form=None, ok=(200, 201, 204)):

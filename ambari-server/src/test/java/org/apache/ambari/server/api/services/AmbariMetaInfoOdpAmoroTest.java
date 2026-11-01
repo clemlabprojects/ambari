@@ -103,6 +103,7 @@ public class AmbariMetaInfoOdpAmoroTest {
     }
     assertEquals("scripts/service_check.py", serviceInfo.getCommandScript().getScript());
     assertNotNull(serviceInfo.getKerberosDescriptorFile());
+    assertNotNull(serviceInfo.getOidcDescriptorFile());
     assertTrue(serviceInfo.getThemesMap().containsKey("credentials.json"));
     assertTrue(serviceInfo.getThemesMap().containsKey("database.json"));
 

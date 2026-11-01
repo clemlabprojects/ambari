@@ -164,6 +164,41 @@
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
+  <property require-input="false">
+    <name>amoro_oidc_client_id</name>
+    <display-name>OIDC Client ID</display-name>
+    <value></value>
+    <description>Client of Amoro in the cluster OIDC provider, set by Ambari when OIDC is enabled (oidc.json): Amoro authenticates to Polaris with it.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>amoro_oidc_client_secret</name>
+    <display-name>OIDC Client Secret</display-name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <description>Secret of the OIDC client of Amoro, managed by Ambari (credential store alias amoro.oidc.client.secret).</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
+    <name>amoro_oidc_auth_server_url</name>
+    <display-name>OIDC Issuer URL</display-name>
+    <value></value>
+    <description>Issuer URL of the cluster OIDC realm, set by Ambari when OIDC is enabled.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
   <property>
     <name>content</name>
     <display-name>env.sh template</display-name>

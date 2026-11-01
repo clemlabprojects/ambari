@@ -19,9 +19,11 @@
 package org.apache.ambari.server.serveraction.oidc;
 
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -308,9 +310,10 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
             clientDescriptor.getWebOrigins(),
             clientDescriptor.getAttributes(),
             clientDescriptor.getConfigurations(),
-            // Preserve provider-specific mapper payloads after resolving the
-            // client id and realm; the selected OIDC handler applies them.
-            clientDescriptor.getSecretAlias(), clientDescriptor.getProtocolMappers());
+            // Provider-specific mapper payloads, with their variables (for instance a
+            // ${service-env/user} hardcoded claim) resolved; the selected OIDC handler applies them.
+            clientDescriptor.getSecretAlias(), resolveProtocolMappers(clientDescriptor.getProtocolMappers(),
+              buildReplacementMap(cluster, existingConfigurations, providerConfiguration, null, resolvedRealm)));
           if (isDeleteOperation(operation)) {
             LOG.debug("Deleting OIDC client '{}' in realm '{}'", resolvedClientId, resolvedRealm);
             actionLog.writeStdOut(String.format(
@@ -556,6 +559,45 @@ public class ConfigureOidcServerAction extends AbstractServerAction {
    * @return resolved client id, or {@code null} if descriptor does not define one
    * @throws AmbariException if replacement fails
    */
+  /**
+   * Copies the protocol mappers of a client descriptor with the variables of their string values
+   * replaced, at any depth (mapper attributes and their config maps).
+   */
+  List<Map<String, Object>> resolveProtocolMappers(List<Map<String, Object>> protocolMappers,
+                                                   Map<String, Map<String, String>> replacements) {
+    if (protocolMappers == null) {
+      return null;
+    }
+    List<Map<String, Object>> resolved = new ArrayList<>();
+    for (Map<String, Object> mapper : protocolMappers) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> copy = (Map<String, Object>) resolveVariables(mapper, replacements);
+      resolved.add(copy);
+    }
+    return resolved;
+  }
+
+  private Object resolveVariables(Object value, Map<String, Map<String, String>> replacements) {
+    if (value instanceof String) {
+      return variableReplacementHelper.replaceVariables((String) value, replacements);
+    }
+    if (value instanceof Map) {
+      Map<Object, Object> copy = new LinkedHashMap<>();
+      for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+        copy.put(entry.getKey(), resolveVariables(entry.getValue(), replacements));
+      }
+      return copy;
+    }
+    if (value instanceof List) {
+      List<Object> copy = new ArrayList<>();
+      for (Object item : (List<?>) value) {
+        copy.add(resolveVariables(item, replacements));
+      }
+      return copy;
+    }
+    return value;
+  }
+
   private String resolveClientId(Cluster cluster, OidcClientDescriptor clientDescriptor,
                                  Map<String, Map<String, String>> configurations,
                                  OidcProviderConfiguration providerConfiguration) throws AmbariException {

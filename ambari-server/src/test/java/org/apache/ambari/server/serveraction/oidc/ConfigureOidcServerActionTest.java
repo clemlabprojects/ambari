@@ -24,6 +24,7 @@ import static org.easymock.EasyMock.expectLastCall;
 
 import java.io.File;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -89,6 +90,28 @@ public class ConfigureOidcServerActionTest extends EasyMockSupport {
     setField(action, "oidcOperationHandlerFactory", oidcOperationHandlerFactory);
     setField(action, "oidcClientDAO", oidcClientDAO);
     setField(action, "variableReplacementHelper", new VariableReplacementHelper());
+  }
+
+  @Test
+  public void testProtocolMapperVariablesAreResolved() {
+    Map<String, Object> config = new HashMap<>();
+    config.put("claim.name", "polaris.principal_name");
+    config.put("claim.value", "${amoro-env/amoro_user}");
+    Map<String, Object> mapper = new HashMap<>();
+    mapper.put("name", "polaris-principal-name");
+    mapper.put("protocolMapper", "oidc-hardcoded-claim-mapper");
+    mapper.put("config", config);
+    Map<String, Map<String, String>> replacements = new HashMap<>();
+    Map<String, String> amoroEnv = new HashMap<>();
+    amoroEnv.put("amoro_user", "amoro2");
+    replacements.put("amoro-env", amoroEnv);
+
+    List<Map<String, Object>> resolved = action.resolveProtocolMappers(Collections.singletonList(mapper), replacements);
+
+    Assert.assertEquals("amoro2", ((Map<?, ?>) resolved.get(0).get("config")).get("claim.value"));
+    Assert.assertEquals("polaris.principal_name", ((Map<?, ?>) resolved.get(0).get("config")).get("claim.name"));
+    Assert.assertEquals("${amoro-env/amoro_user}", config.get("claim.value"));
+    Assert.assertNull(action.resolveProtocolMappers(null, replacements));
   }
 
   @Test

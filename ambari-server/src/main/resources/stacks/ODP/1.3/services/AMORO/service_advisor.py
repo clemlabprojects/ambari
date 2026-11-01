@@ -181,6 +181,13 @@ class AmoroValidator(service_advisor.ServiceAdvisor):
       items.append({"config-name": "amoro_admin_ldap_group_dn",
                     "item": self.getWarnItem("No LDAP group is mapped to SERVICE_ADMIN: LDAP users only get the "
                                              "default role, administration needs the built-in administrator.")})
+    installed = self.get_services_list(services)
+    modes = get_amoro_security_modes(configurations, services)
+    if "POLARIS" in installed and "OZONE" in installed and "Kerberos" in modes and "OIDC" not in modes:
+      items.append({"config-name": "amoro_oidc_client_id",
+                    "item": self.getWarnItem("Kerberos is enabled without OIDC: Amoro authenticates to Polaris with a "
+                                             "secret Polaris issues, which Ambari does not manage. Enable OIDC so that "
+                                             "Ambari manages the OIDC client of Amoro.")})
     for name in ("amoro_optimizer_parallelism", "amoro_optimizer_memory", "amoro_server_heapsize"):
       try:
         if int(properties.get(name, 1)) <= 0:

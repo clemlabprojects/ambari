@@ -1,0 +1,58 @@
+{
+  "services": [
+    {
+      "name": "AMORO",
+      "clients": [
+        {
+          "name": "amoro",
+          "client_id": "${cluster_name}-amoro",
+          "realm": "${oidc_realm}",
+          "public_client": false,
+          "service_accounts_enabled": true,
+          "direct_access_grants_enabled": false,
+          "standard_flow_enabled": false,
+          "secret_alias": "amoro.oidc.client.secret",
+          "protocol_mappers": [
+            {
+              "name": "polaris-principal-name",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-hardcoded-claim-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "polaris.principal_name",
+                "claim.value": "${amoro-env/amoro_user}",
+                "jsonType.label": "String",
+                "id.token.claim": "false",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
+              }
+            },
+            {
+              "name": "polaris-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "polaris.roles",
+                "jsonType.label": "String",
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "false"
+              }
+            }
+          ],
+          "configurations": [
+            {
+              "amoro-env": {
+                "amoro_oidc_client_id": "${client_id}",
+                "amoro_oidc_client_secret": "${client_secret}",
+                "amoro_oidc_auth_server_url": "${auth_server_url}"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
