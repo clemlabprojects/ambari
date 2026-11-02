@@ -61,6 +61,33 @@
                 </condition>
               </conditions>
             </dependency>
+            <!-- spark-submit of the optimizers on YARN (Optimizer Container: spark). -->
+            <dependency>
+              <name>SPARK3/SPARK3_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+              <conditions>
+                <condition xsi:type="propertyExists">
+                  <configType>spark3-defaults</configType>
+                  <property>spark.yarn.queue</property>
+                </condition>
+              </conditions>
+            </dependency>
+            <dependency>
+              <name>YARN/YARN_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+              <conditions>
+                <condition xsi:type="propertyExists">
+                  <configType>yarn-site</configType>
+                  <property>yarn.resourcemanager.address</property>
+                </condition>
+              </conditions>
+            </dependency>
             <!-- ozone s3 getsecret/setsecret for the S3 credential of the Polaris Ozone catalog. -->
             <dependency>
               <name>OZONE/OZONE_CLIENT</name>

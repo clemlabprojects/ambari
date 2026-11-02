@@ -87,6 +87,11 @@ amoro_log4j_template = config['configurations']['amoro-log4j']['content']
 amoro_optimizer_group = str(default("/configurations/amoro-env/amoro_optimizer_group", "local")).strip() or "local"
 amoro_optimizer_parallelism = int(default("/configurations/amoro-env/amoro_optimizer_parallelism", 2))
 amoro_optimizer_memory = int(default("/configurations/amoro-env/amoro_optimizer_memory", 2048))
+# Optimizers as Spark applications on YARN ("spark") or processes on the Amoro host ("local").
+amoro_optimizer_container = str(default("/configurations/amoro-env/amoro_optimizer_container", "local")).strip().lower() or "local"
+amoro_optimizer_yarn_queue = str(default("/configurations/amoro-env/amoro_optimizer_yarn_queue", "default")).strip() or "default"
+amoro_optimizer_spark_driver_memory = int(default("/configurations/amoro-env/amoro_optimizer_spark_driver_memory", 1024))
+spark_home = format("{stack_root}/current/spark3-client")
 amoro_admin_ldap_group_dn = str(default("/configurations/amoro-env/amoro_admin_ldap_group_dn", "")).strip()
 
 # Amoro configuration ("ams" section of config.yaml).

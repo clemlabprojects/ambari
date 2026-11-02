@@ -36,6 +36,7 @@ from resource_management.core.source import DownloadSource, InlineTemplate
 LDAP_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.LdapPasswdAuthenticationProvider"
 DEFAULT_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.DefaultPasswdAuthenticationProvider"
 LOCAL_CONTAINER = "localContainer"
+SPARK_CONTAINER = "sparkContainer"
 
 
 def amoro():
@@ -139,12 +140,63 @@ def amoro_config():
     if key in site:
       site[key] = str(site[key]).lower() == "true"
 
-  container = {
+  containers = [{
     "name": LOCAL_CONTAINER,
     "container-impl": "org.apache.amoro.server.manager.LocalOptimizerContainer",
     "properties": {"export.JAVA_HOME": params.amoro_java_home},
+  }]
+  if params.amoro_optimizer_container == "spark":
+    containers.append(spark_container())
+  return {"ams": nest(site), "containers": containers}
+
+
+def spark_container():
+  """Container submitting the optimizers to YARN as Spark applications (cluster mode), from the Spark3
+  client of the Amoro host. The optimizer job and Amoro need the JDK of Amoro (Java 21 class files)."""
+  import params
+
+  properties = {
+    "spark-home": params.spark_home,
+    "master": "yarn",
+    "deploy-mode": "cluster",
+    "job-uri": os.path.join(params.amoro_home, "plugin/optimizer/spark/optimizer-job.jar"),
+    "export.JAVA_HOME": params.amoro_java_home,
+    "export.HADOOP_CONF_DIR": params.hadoop_conf_dir,
+    # The user the optimizer runs as, through spark-submit --proxy-user (without Kerberos: the
+    # hadoop.proxyuser settings of core-site allow it).
+    "export.HADOOP_USER_NAME": params.amoro_user,
+    "spark-conf.spark.yarn.queue": params.amoro_optimizer_yarn_queue,
+    "spark-conf.spark.yarn.appMasterEnv.JAVA_HOME": params.amoro_java_home,
+    "spark-conf.spark.executorEnv.JAVA_HOME": params.amoro_java_home,
+    # spark-submit returns once YARN accepted the application, instead of following it.
+    "spark-conf.spark.yarn.submit.waitAppCompletion": "false",
+    # Dynamic allocation (on by default in Amoro) without the YARN shuffle service: the optimizer
+    # shuffles nothing, its idle executors go back to YARN.
+    "spark-conf.spark.dynamicAllocation.shuffleTracking.enabled": "true",
   }
-  return {"ams": nest(site), "containers": [container]}
+  if params.security_enabled:
+    # Submitted with the keytab instead of --proxy-user, which also renews the delegation tokens.
+    properties["spark-conf.spark.kerberos.principal"] = params.amoro_principal
+    properties["spark-conf.spark.kerberos.keytab"] = params.amoro_keytab
+  return {"name": SPARK_CONTAINER,
+          "container-impl": "org.apache.amoro.server.manager.SparkOptimizerContainer",
+          "properties": properties}
+
+
+def optimizer_group_properties():
+  """Resources of the optimizers of the Ambari group: one optimizing thread per Spark executor, with
+  the memory per thread of the local optimizer."""
+  import params
+
+  properties = {"memory": str(params.amoro_optimizer_memory)}
+  if params.amoro_optimizer_container == "spark":
+    properties.update({
+      "spark-conf.spark.executor.cores": "1",
+      "spark-conf.spark.executor.memory": "{0}m".format(params.amoro_optimizer_memory),
+      "spark-conf.spark.driver.memory": "{0}m".format(params.amoro_optimizer_spark_driver_memory),
+      "spark-conf.spark.dynamicAllocation.maxExecutors": str(params.amoro_optimizer_parallelism),
+    })
+  return properties
 
 
 def nest(flat):
@@ -405,13 +457,14 @@ def wait_for_amoro(timeout=300):
 
 
 def ensure_optimizer_group():
-  """The optimizer group of Ambari, running its optimizers in the local container."""
+  """The optimizer group of Ambari, running its optimizers in the local or the Spark container."""
   import params
 
   groups = amoro_api("GET", "/optimize/resourceGroups") or []
   names = [(group.get("resourceGroup") or group).get("name") for group in groups if isinstance(group, dict)]
-  body = {"name": params.amoro_optimizer_group, "container": LOCAL_CONTAINER,
-          "properties": {"memory": str(params.amoro_optimizer_memory)}}
+  container = SPARK_CONTAINER if params.amoro_optimizer_container == "spark" else LOCAL_CONTAINER
+  body = {"name": params.amoro_optimizer_group, "container": container,
+          "properties": optimizer_group_properties()}
   if params.amoro_optimizer_group in names:
     amoro_api("PUT", "/optimize/resourceGroups", body)
   else:

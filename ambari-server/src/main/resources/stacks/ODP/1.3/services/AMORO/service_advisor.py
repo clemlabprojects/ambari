@@ -71,6 +71,17 @@ def jdbc_urls(db_flavor, db_host, db_port, db_name):
           "jdbc:postgresql://{0}/postgres".format(host_port))
 
 
+def optimizers_on_yarn_available(service_names):
+  """The Spark optimizer container needs YARN and the Spark3 client."""
+  return "YARN" in service_names and "SPARK3" in service_names
+
+
+def amoro_env_changed(services, name):
+  """Whether the operator just changed amoro-env/name (configuration change request)."""
+  return any(change.get("type") == "amoro-env" and change.get("name") == name
+             for change in services.get("changed-configurations", []))
+
+
 class AmoroServiceAdvisor(service_advisor.ServiceAdvisor):
 
   def getServiceComponentLayoutValidations(self, services, hosts):
@@ -96,6 +107,7 @@ class AmoroRecommender(service_advisor.ServiceAdvisor):
   def recommendAmoroConfigurations(self, configurations, clusterData, services, hosts):
     self.recommendAmoroDatabaseConfigurations(configurations, services)
     self.recommendAmoroLdapConfigurations(configurations, services)
+    self.recommendAmoroOptimizerContainer(configurations, services, hosts)
     if get_amoro_security_modes(configurations, services):
       self.putProperty(configurations, "amoro-site", services)("http-server.ssl.enabled", "true")
 
@@ -116,6 +128,27 @@ class AmoroRecommender(service_advisor.ServiceAdvisor):
     put_db_props("amoro.jdbc.driver", driver)
     put_db_props("amoro.jdbc.url", url)
     put_db_props("amoro_privelege_user_jdbc_url", root_url)
+
+  def recommendAmoroOptimizerContainer(self, configurations, services, hosts):
+    """The optimizers run on YARN when the cluster has YARN and Spark3, through spark-submit --proxy-user
+    of the Amoro user (without Kerberos), which the hadoop.proxyuser settings of core-site allow from
+    the Amoro host. The container stays an operator setting: no property depends on it."""
+    put_env = self.putProperty(configurations, "amoro-env", services)
+    on_yarn = optimizers_on_yarn_available(self.get_services_list(services))
+    container = str(get_property(configurations, services, "amoro-env", "amoro_optimizer_container") or "local").strip()
+    if on_yarn and container == "local" and not amoro_env_changed(services, "amoro_optimizer_container"):
+      container = "spark"
+    elif not on_yarn:
+      container = "local"
+    put_env("amoro_optimizer_container", container)
+    if container != "spark":
+      return
+    amoro_user = str(get_property(configurations, services, "amoro-env", "amoro_user") or "amoro").strip() or "amoro"
+    amoro_hosts = sorted(host["Hosts"]["host_name"] for host in
+                         (self.getHostsWithComponent("AMORO", "AMORO_SERVER", services, hosts) or []))
+    put_core = self.putProperty(configurations, "core-site", services)
+    put_core("hadoop.proxyuser.{0}.hosts".format(amoro_user), ",".join(amoro_hosts) or "*")
+    put_core("hadoop.proxyuser.{0}.users".format(amoro_user), amoro_user)
 
   def recommendAmoroLdapConfigurations(self, configurations, services):
     """The dashboard LDAP login defaults to the directory Ranger synchronizes users from."""
@@ -189,7 +222,12 @@ class AmoroValidator(service_advisor.ServiceAdvisor):
                     "item": self.getWarnItem("Kerberos is enabled without OIDC: Amoro authenticates to Polaris with a "
                                              "secret Polaris issues, which Ambari does not manage. Enable OIDC so that "
                                              "Ambari manages the OIDC client of Amoro.")})
-    for name in ("amoro_optimizer_parallelism", "amoro_optimizer_memory", "amoro_server_heapsize"):
+    if (str(properties.get("amoro_optimizer_container", "local")).strip() == "spark"
+        and not optimizers_on_yarn_available(installed)):
+      items.append({"config-name": "amoro_optimizer_container",
+                    "item": self.getErrorItem("The Spark optimizer container needs YARN and Spark3 in the cluster.")})
+    for name in ("amoro_optimizer_parallelism", "amoro_optimizer_memory", "amoro_server_heapsize",
+                 "amoro_optimizer_spark_driver_memory"):
       value = str(properties.get(name, 1))
       if name == "amoro_server_heapsize":
         # Ambari web saves the *_heapsize properties with an "m" (MB) suffix

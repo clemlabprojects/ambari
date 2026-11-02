@@ -70,6 +70,7 @@ def load_amoro_scripts(**overrides):
   params.amoro_db_password = "db'secret"
   params.amoro_java_home = "/usr/lib/jvm/java-21"
   params.amoro_server_heapsize = 2048
+  params.amoro_optimizer_container = "local"
   for key, value in overrides.items():
     if key == "site":
       params.amoro_site.update(value)
@@ -554,6 +555,82 @@ class TestAmoroOptimizerRestart(unittest.TestCase):
     amoro.release_optimizers()
     self.assertEqual([("DELETE", "/optimize/optimizers/j1"), ("DELETE", "/optimize/optimizers/j2")],
                      [call for call in amoro.calls if call[0] == "DELETE"])
+
+
+class TestAmoroOptimizersOnYarn(unittest.TestCase):
+  advisor = load_amoro_advisor()
+
+  SPARK = dict(amoro_optimizer_container="spark", spark_home="/usr/odp/current/spark3-client",
+               amoro_home="/usr/odp/current/amoro-server", hadoop_conf_dir="/etc/hadoop/conf", amoro_user="amoro",
+               amoro_optimizer_yarn_queue="optimize", amoro_optimizer_memory=2048, amoro_optimizer_parallelism=4,
+               amoro_optimizer_spark_driver_memory=1024, security_enabled=False)
+
+  def services(self, names, env=None, changed=None):
+    services = [{"StackServices": {"service_name": name}, "components": []} for name in names]
+    services.insert(0, {"StackServices": {"service_name": "AMORO"}, "components": [
+      {"StackServiceComponents": {"component_name": "AMORO_SERVER", "hostnames": ["ams.example.com"]}}]})
+    return {"services": services, "changed-configurations": changed or [],
+            "configurations": {"amoro-env": {"properties": dict(env or {})}}}
+
+  def recommend(self, services):
+    configurations = {}
+    hosts = {"items": [{"Hosts": {"host_name": "ams.example.com"}}]}
+    self.advisor.AmoroRecommender().recommendAmoroOptimizerContainer(configurations, services, hosts)
+    return configurations
+
+  def test_yarn_and_spark3_run_the_optimizers_on_yarn(self):
+    configurations = self.recommend(self.services(["YARN", "SPARK3"]))
+    self.assertEqual("spark", configurations["amoro-env"]["properties"]["amoro_optimizer_container"])
+    self.assertEqual({"hadoop.proxyuser.amoro.hosts": "ams.example.com", "hadoop.proxyuser.amoro.users": "amoro"},
+                     configurations["core-site"]["properties"])
+
+  def test_without_spark3_the_optimizers_stay_local(self):
+    configurations = self.recommend(self.services(["YARN"], env={"amoro_optimizer_container": "spark"}))
+    self.assertEqual("local", configurations["amoro-env"]["properties"]["amoro_optimizer_container"])
+    self.assertNotIn("core-site", configurations)
+
+  def test_the_operator_keeps_the_local_container(self):
+    changed = [{"type": "amoro-env", "name": "amoro_optimizer_container", "old_value": "spark"}]
+    configurations = self.recommend(self.services(["YARN", "SPARK3"], env={"amoro_optimizer_container": "local"},
+                                                  changed=changed))
+    self.assertEqual("local", configurations["amoro-env"]["properties"]["amoro_optimizer_container"])
+
+  def test_spark_container_needs_yarn_and_spark3(self):
+    def errors(names):
+      services = self.services(names)
+      items = self.advisor.AmoroValidator().validateAmoroEnvProperties(
+        {"amoro_optimizer_container": "spark"}, {}, services["configurations"], services, {"items": []})
+      return [item["config-name"] for item in items if item["config-name"] == "amoro_optimizer_container"]
+    self.assertEqual(["amoro_optimizer_container"], errors(["YARN"]))
+    self.assertEqual([], errors(["YARN", "SPARK3"]))
+
+  def test_spark_container_submits_to_yarn(self):
+    amoro = load_amoro_scripts(**self.SPARK)
+    containers = {c["name"]: c for c in amoro.amoro_config()["containers"]}
+    self.assertEqual(["localContainer", "sparkContainer"], sorted(containers))
+    spark = containers["sparkContainer"]
+    self.assertEqual("org.apache.amoro.server.manager.SparkOptimizerContainer", spark["container-impl"])
+    properties = spark["properties"]
+    self.assertEqual(("yarn", "cluster"), (properties["master"], properties["deploy-mode"]))
+    self.assertEqual("/usr/odp/current/amoro-server/plugin/optimizer/spark/optimizer-job.jar", properties["job-uri"])
+    self.assertEqual("amoro", properties["export.HADOOP_USER_NAME"])
+    self.assertEqual("optimize", properties["spark-conf.spark.yarn.queue"])
+    self.assertNotIn("spark-conf.spark.kerberos.keytab", properties)
+    self.assertEqual({"memory": "2048", "spark-conf.spark.executor.cores": "1", "spark-conf.spark.executor.memory": "2048m",
+                      "spark-conf.spark.driver.memory": "1024m", "spark-conf.spark.dynamicAllocation.maxExecutors": "4"},
+                     amoro.optimizer_group_properties())
+
+  def test_kerberos_submits_with_the_amoro_keytab(self):
+    amoro = load_amoro_scripts(**dict(self.SPARK, security_enabled=True, amoro_principal="amoro/ams@EXAMPLE.COM",
+                                      amoro_keytab="/etc/security/keytabs/amoro.service.keytab"))
+    properties = amoro.spark_container()["properties"]
+    self.assertEqual("amoro/ams@EXAMPLE.COM", properties["spark-conf.spark.kerberos.principal"])
+    self.assertEqual("/etc/security/keytabs/amoro.service.keytab", properties["spark-conf.spark.kerberos.keytab"])
+
+  def test_local_container_only_without_spark(self):
+    amoro = load_amoro_scripts(amoro_optimizer_memory=2048)
+    self.assertEqual(["localContainer"], [c["name"] for c in amoro.amoro_config()["containers"]])
+    self.assertEqual({"memory": "2048"}, amoro.optimizer_group_properties())
 
 
 class TestAmoroServiceAdvisor(unittest.TestCase):
