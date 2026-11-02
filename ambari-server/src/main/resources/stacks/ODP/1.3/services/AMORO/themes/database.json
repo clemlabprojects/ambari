@@ -168,7 +168,7 @@
           "required-properties": {
             "jdbc.driver.class": "amoro-db-properties/amoro.jdbc.driver",
             "jdbc.driver.url": "amoro-db-properties/amoro.jdbc.url",
-            "db.connection.source.host": "amoro-site/amoro_server_hosts",
+            "db.connection.source.host": "amoro-site/amoro_server_host",
             "db.type": "amoro-db-properties/DB_FLAVOR",
             "db.connection.destination.host": "amoro-db-properties/db_host",
             "db.connection.user": "amoro-db-properties/db_user",
@@ -184,7 +184,7 @@
           "required-properties": {
             "jdbc.driver.class": "amoro-db-properties/amoro.jdbc.driver",
             "jdbc.driver.url": "amoro-db-properties/amoro_privelege_user_jdbc_url",
-            "db.connection.source.host": "amoro-site/amoro_server_hosts",
+            "db.connection.source.host": "amoro-site/amoro_server_host",
             "db.type": "amoro-db-properties/DB_FLAVOR",
             "db.connection.destination.host": "amoro-db-properties/db_host",
             "db.connection.user": "amoro-db-properties/db_root_user",
