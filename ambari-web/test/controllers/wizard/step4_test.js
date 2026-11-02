@@ -1061,7 +1061,7 @@ describe('App.WizardStep4Controller', function () {
       StackLevelConfigurations: {
         property_value: JSON.stringify({profiles: [
           {name: 'warehouse', display_name: 'Data Warehouse', description: 'd', services: ['HDFS', 'YARN', 'HIVE', 'NOT_IN_STACK'],
-            security_services: ['RANGER', 'AMBARI_INFRA_SOLR']},
+            security_services: ['RANGER', 'AMBARI_INFRA_SOLR'], governance_services: ['ATLAS', 'HBASE', 'AMBARI_INFRA_SOLR']},
           {name: 'lakehouse', services: ['HIVE', 'ZOOKEEPER']},
           {display_name: 'no name, ignored', services: ['HIVE']},
           {name: 'no services, ignored'}
@@ -1127,6 +1127,25 @@ describe('App.WizardStep4Controller', function () {
       controller.applyClusterProfile(controller.get('clusterProfiles')[0]);
       controller.set('withSecurity', false);
       expect(selected()).to.eql(['HDFS', 'HIVE', 'YARN']);
+    });
+
+    it('selects the governance services of the profile when asked', function () {
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      controller.applyClusterProfile(controller.get('clusterProfiles')[0]);
+      expect(controller.get('isGovernanceAvailable')).to.be.true;
+      expect(selected()).to.not.include('ATLAS');
+      controller.set('withGovernance', true);
+      expect(selected()).to.eql(['AMBARI_INFRA_SOLR', 'ATLAS', 'HBASE', 'HDFS', 'HIVE', 'RANGER', 'YARN']);
+    });
+
+    it('drops governance on a profile without governance services', function () {
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      controller.applyClusterProfile(controller.get('clusterProfiles')[0]);
+      controller.set('withGovernance', true);
+      controller.applyClusterProfile(controller.get('clusterProfiles')[1]);
+      expect(controller.get('withGovernance')).to.be.false;
+      expect(controller.get('isGovernanceDisabled')).to.be.true;
+      expect(selected()).to.eql(['HIVE', 'ZOOKEEPER']);
     });
 
     it('is not offered and not loaded once services are installed', function () {

@@ -34,6 +34,13 @@
           {{/view}}
           <div class="clearfix"></div>
         </div>
+        <div class="cluster-profile-governance use-ambari-checkboxes">
+          {{#view App.CheckboxView data-qa="cluster-profile-governance" checkedBinding="controller.withGovernance"
+            disabledBinding="controller.isGovernanceDisabled"
+            labelTranslate="installer.step4.profiles.withGovernance" labelIdentifier="cluster-profile-governance"}}
+          {{/view}}
+          <div class="clearfix"></div>
+        </div>
         <div class="alert alert-info" style="margin: 12px 0 0;" {{QAAttr "cluster-profiles-info"}}>
           {{#each profile in controller.clusterProfiles}}
             <p {{QAAttr "cluster-profile-info"}}>
@@ -41,7 +48,8 @@
               {{profile.description}}
             </p>
           {{/each}}
-          <p style="margin-bottom: 0;">{{t installer.step4.profiles.securityInfo}}</p>
+          <p>{{t installer.step4.profiles.securityInfo}}</p>
+          <p style="margin-bottom: 0;">{{t installer.step4.profiles.governanceInfo}}</p>
         </div>
       </div>
     </div>

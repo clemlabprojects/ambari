@@ -62,7 +62,7 @@ App.WizardStep4Controller = Em.ArrayController.extend({
 
   /**
    * Cluster profiles the stack version defines (cluster-env/cluster_profiles, stack data): each one
-   * preselects services, with an optional list of security services.
+   * preselects services, with optional lists of security and governance services.
    * @type {Em.Object[]}
    */
   clusterProfiles: [],
@@ -72,6 +72,22 @@ App.WizardStep4Controller = Em.ArrayController.extend({
    * @type {bool}
    */
   withSecurity: true,
+
+  /**
+   * Whether applying a profile also selects its governance services
+   * @type {bool}
+   */
+  withGovernance: false,
+
+  /**
+   * Governance services can be included when the selected profile has some
+   * @type {bool}
+   */
+  isGovernanceAvailable: function () {
+    return this.get('selectedClusterProfile.governanceServices.length') > 0;
+  }.property('selectedClusterProfile.governanceServices.length'),
+
+  isGovernanceDisabled: Em.computed.not('isGovernanceAvailable'),
 
   /**
    * Profiles are offered on a new cluster only (no service installed yet)
@@ -126,6 +142,7 @@ App.WizardStep4Controller = Em.ArrayController.extend({
         description: profile.description || '',
         services: profile.services,
         securityServices: profile.security_services || [],
+        governanceServices: profile.governance_services || [],
         isSelected: false
       });
     }));
@@ -136,8 +153,8 @@ App.WizardStep4Controller = Em.ArrayController.extend({
   },
 
   /**
-   * Selects the services of a profile (and its security services when withSecurity) and unselects
-   * the others; services the stack does not have are ignored. The operator can change the selection,
+   * Selects the services of a profile (and its security services when withSecurity, its governance
+   * services when withGovernance) and unselects the others; services the stack does not have are ignored. The operator can change the selection,
    * which is then validated as usual.
    * @param {Em.Object|{context: Em.Object}} profile
    * @method applyClusterProfile
@@ -147,7 +164,9 @@ App.WizardStep4Controller = Em.ArrayController.extend({
     if (!profile) {
       return;
     }
-    var serviceNames = profile.get('services').concat(this.get('withSecurity') ? profile.get('securityServices') : []);
+    var serviceNames = profile.get('services')
+      .concat(this.get('withSecurity') ? profile.get('securityServices') : [])
+      .concat(this.get('withGovernance') ? profile.get('governanceServices') : []);
     var select = function (service) {
       service.set('isSelected', serviceNames.contains(service.get('serviceName')));
     };
@@ -159,17 +178,20 @@ App.WizardStep4Controller = Em.ArrayController.extend({
     this.get('clusterProfiles').forEach(function (item) {
       item.set('isSelected', item === profile);
     });
+    if (!profile.get('governanceServices.length')) {
+      this.set('withGovernance', false);
+    }
   },
 
   /**
-   * Re-applies the selected profile when its security services are switched on or off
+   * Re-applies the selected profile when its security or governance services are switched on or off
    */
   withSecurityObserver: function () {
     var profile = this.get('selectedClusterProfile');
     if (profile) {
       this.applyClusterProfile(profile);
     }
-  }.observes('withSecurity'),
+  }.observes('withSecurity', 'withGovernance'),
 
   /**
    * Services which are HDFS compatible

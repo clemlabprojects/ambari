@@ -113,6 +113,11 @@ public class AmbariMetaInfoOdpClusterProfilesTest {
       for (Object service : (List<?>) map.get("security_services")) {
         assertNotNull(metaInfo.getService("ODP", "1.3", (String) service));
       }
+      if (map.containsKey("governance_services")) {
+        for (Object service : (List<?>) map.get("governance_services")) {
+          assertNotNull(metaInfo.getService("ODP", "1.3", (String) service));
+        }
+      }
     }
     assertEquals(new HashSet<>(Arrays.asList("data_warehouse", "open_lakehouse", "hybrid")), names);
   }

@@ -20,6 +20,12 @@
         "AMBARI_INFRA_SOLR",
         "KNOX",
         "RANGER_KMS"
+      ],
+      "governance_services": [
+        "ATLAS",
+        "KAFKA",
+        "HBASE",
+        "AMBARI_INFRA_SOLR"
       ]
     },
     {
@@ -66,6 +72,12 @@
         "AMBARI_INFRA_SOLR",
         "KNOX",
         "RANGER_KMS"
+      ],
+      "governance_services": [
+        "ATLAS",
+        "KAFKA",
+        "HBASE",
+        "AMBARI_INFRA_SOLR"
       ]
     }
   ]

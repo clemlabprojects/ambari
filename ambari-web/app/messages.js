@@ -931,6 +931,8 @@ Em.I18n.translations = {
   'installer.step4.profiles.body':'Optionally start from a profile: it selects the services below, which you can still change.',
   'installer.step4.profiles.withSecurity':'Include security services',
   'installer.step4.profiles.securityInfo':'Security services: Ranger (authorization and audit) with Infra Solr, Knox (gateway), and Ranger KMS (HDFS encryption) on profiles with HDFS.',
+  'installer.step4.profiles.withGovernance':'Include governance services',
+  'installer.step4.profiles.governanceInfo':'Governance services, on profiles with HDFS: Atlas (metadata and lineage of Hive, Spark and Impala tables, Iceberg included) with Kafka, HBase and Infra Solr. Atlas stores its metadata in HBase, which requires HDFS.',
   'installer.step4.header':'Choose Services',
   'installer.step4.body':'Choose which services you want to install on your cluster.',
   'installer.step4.headerFS':'Choose File System',
