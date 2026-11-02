@@ -17,6 +17,27 @@
 }}
 
 <div id="step4" class="wizard-content col-md-9">
+  {{#if controller.isClusterProfilesVisible}}
+    <h4 class="step-title">{{t installer.step4.profiles.header}}</h4>
+    <p class="step-description">{{t installer.step4.profiles.body}}</p>
+    <div class="panel panel-default" {{QAAttr "cluster-profiles"}}>
+      <div class="panel-body">
+        <div class="btn-group">
+          {{#each profile in controller.clusterProfiles}}
+            <button type="button" {{QAAttr "cluster-profile"}} {{bindAttr class=":btn profile.isSelected:btn-primary:btn-default"}}
+              {{action applyClusterProfile profile target="controller"}}>{{profile.displayName}}</button>
+          {{/each}}
+        </div>
+        <div class="checkbox">
+          {{view App.CheckboxView data-qa="cluster-profile-security" checkedBinding="controller.withSecurity" labelTranslate="installer.step4.profiles.withSecurity"}}
+        </div>
+        {{#if controller.selectedClusterProfile}}
+          <p class="step-description">{{controller.selectedClusterProfile.description}}</p>
+        {{/if}}
+      </div>
+    </div>
+  {{/if}}
+
   <h4 class="step-title">{{t installer.step4.headerFS}}</h4>
   <p class="step-description">{{t installer.step4.bodyFS}}</p>
   <div class="panel panel-default">

@@ -23,6 +23,10 @@ App.WizardStep4View = Em.View.extend({
 
   templateName: require('templates/wizard/step4'),
 
+  didInsertElement: function () {
+    this.get('controller').loadClusterProfiles();
+  },
+
   toggleCheckBox: function(event) {
     if (event.context.get('isSelectionDisabled')) { return; }
     var isSelected = event.context.get('isSelected');

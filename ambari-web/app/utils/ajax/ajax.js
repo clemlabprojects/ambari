@@ -832,6 +832,11 @@ var urls = {
 
   /*************************STACK CONFIGS**************************************/
 
+  'wizard.step4.cluster_profiles': {
+    'real': '{stackVersionUrl}/configurations/cluster_profiles?fields=StackLevelConfigurations/property_value',
+    'mock': ''
+  },
+
   'configs.stack_configs.load.cluster_configs': {
     'real': '{stackVersionUrl}?fields=configurations/*,Versions/config_types/*',
     'mock': '/data/stacks/HDP-2.2/configurations.json'

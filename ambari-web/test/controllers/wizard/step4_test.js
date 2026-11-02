@@ -1055,4 +1055,98 @@ describe('App.WizardStep4Controller', function () {
     });
   });
 
+  describe('cluster profiles', function () {
+
+    var profilesResponse = {
+      StackLevelConfigurations: {
+        property_value: JSON.stringify({profiles: [
+          {name: 'warehouse', display_name: 'Data Warehouse', description: 'd', services: ['HDFS', 'YARN', 'HIVE', 'NOT_IN_STACK'],
+            security_services: ['RANGER', 'AMBARI_INFRA_SOLR']},
+          {name: 'lakehouse', services: ['HIVE', 'ZOOKEEPER']},
+          {display_name: 'no name, ignored', services: ['HIVE']},
+          {name: 'no services, ignored'}
+        ]})
+      }
+    };
+
+    function selected() {
+      return controller.filterProperty('isSelected', true).mapProperty('serviceName').sort();
+    }
+
+    it('keeps the profiles with a name and services', function () {
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      expect(controller.get('clusterProfiles').mapProperty('name')).to.eql(['warehouse', 'lakehouse']);
+      expect(controller.get('clusterProfiles')[1].get('displayName')).to.equal('lakehouse');
+      expect(controller.get('isClusterProfilesVisible')).to.be.true;
+    });
+
+    it('offers no profile when the stack value is not valid JSON', function () {
+      controller.loadClusterProfilesSuccess({StackLevelConfigurations: {property_value: '{'}});
+      expect(controller.get('clusterProfiles')).to.be.empty;
+      expect(controller.get('isClusterProfilesVisible')).to.be.false;
+    });
+
+    it('selects the services of the profile and its security services', function () {
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      controller.applyClusterProfile(controller.get('clusterProfiles')[0]);
+      expect(selected()).to.eql(['AMBARI_INFRA_SOLR', 'HDFS', 'HIVE', 'RANGER', 'YARN']);
+      expect(controller.get('selectedClusterProfile.name')).to.equal('warehouse');
+    });
+
+    it('accepts the event of the template action', function () {
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      controller.applyClusterProfile({context: controller.get('clusterProfiles')[1]});
+      expect(selected()).to.eql(['HIVE', 'ZOOKEEPER']);
+    });
+
+    it('selects services that were disabled until the profile selected HDFS', function () {
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      controller.setEach('isSelected', false);
+      controller.findProperty('serviceName', 'YARN').set('fsSelectionDisabled', true);
+      controller.findProperty('serviceName', 'HDFS').addObserver('isSelected', function () {
+        controller.findProperty('serviceName', 'YARN').set('fsSelectionDisabled', false);
+      });
+      controller.applyClusterProfile(controller.get('clusterProfiles')[0]);
+      expect(controller.findProperty('serviceName', 'YARN').get('isSelected')).to.be.true;
+    });
+
+    it('selects the file systems first, so that services requiring HDFS are kept', function () {
+      var order = [];
+      controller.forEach(function (service) {
+        service.addObserver('isSelected', function () { order.push(service.get('serviceName')); });
+      });
+      controller.setEach('isSelected', false);
+      order.length = 0;
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      controller.applyClusterProfile(controller.get('clusterProfiles')[0]);
+      expect(order[0]).to.equal('HDFS');
+    });
+
+    it('re-applies the selected profile when security is switched off', function () {
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      controller.applyClusterProfile(controller.get('clusterProfiles')[0]);
+      controller.set('withSecurity', false);
+      expect(selected()).to.eql(['HDFS', 'HIVE', 'YARN']);
+    });
+
+    it('is not offered and not loaded once services are installed', function () {
+      sinon.stub(App.ajax, 'send');
+      controller.findProperty('serviceName', 'HIVE').set('isInstalled', true);
+      controller.loadClusterProfiles();
+      expect(App.ajax.send.called).to.be.false;
+      controller.loadClusterProfilesSuccess(profilesResponse);
+      expect(controller.get('isClusterProfilesVisible')).to.be.false;
+      App.ajax.send.restore();
+    });
+
+    it('loads the profiles of the stack version', function () {
+      sinon.stub(App.ajax, 'send');
+      controller.loadClusterProfiles();
+      var args = App.ajax.send.args[0][0];
+      expect(args.name).to.equal('wizard.step4.cluster_profiles');
+      expect(args.error).to.equal('loadClusterProfilesError');
+      App.ajax.send.restore();
+    });
+  });
+
 });

@@ -1,0 +1,72 @@
+{
+  "profiles": [
+    {
+      "name": "data_warehouse",
+      "display_name": "Data Warehouse",
+      "description": "HDFS and YARN: Hive with HiveServer2 and Tez, Spark.",
+      "services": [
+        "CORE",
+        "ZOOKEEPER",
+        "AMBARI_METRICS",
+        "HDFS",
+        "YARN",
+        "MAPREDUCE2",
+        "TEZ",
+        "HIVE",
+        "SPARK3"
+      ],
+      "security_services": [
+        "RANGER",
+        "AMBARI_INFRA_SOLR",
+        "KNOX",
+        "RANGER_KMS"
+      ]
+    },
+    {
+      "name": "open_lakehouse",
+      "display_name": "Open Lakehouse",
+      "description": "Ozone object storage without HDFS or YARN: Iceberg tables in the Hive Metastore and Polaris, maintained by Amoro.",
+      "services": [
+        "CORE",
+        "ZOOKEEPER",
+        "AMBARI_METRICS",
+        "OZONE",
+        "HIVE",
+        "POLARIS",
+        "AMORO",
+        "DBT"
+      ],
+      "security_services": [
+        "RANGER",
+        "AMBARI_INFRA_SOLR",
+        "KNOX"
+      ]
+    },
+    {
+      "name": "hybrid",
+      "display_name": "Hybrid",
+      "description": "Data Warehouse and Open Lakehouse on one cluster: HDFS and Ozone, Hive, Spark, Polaris and Amoro.",
+      "services": [
+        "CORE",
+        "ZOOKEEPER",
+        "AMBARI_METRICS",
+        "HDFS",
+        "YARN",
+        "MAPREDUCE2",
+        "TEZ",
+        "HIVE",
+        "SPARK3",
+        "OZONE",
+        "POLARIS",
+        "AMORO",
+        "DBT"
+      ],
+      "security_services": [
+        "RANGER",
+        "AMBARI_INFRA_SOLR",
+        "KNOX",
+        "RANGER_KMS"
+      ]
+    }
+  ]
+}

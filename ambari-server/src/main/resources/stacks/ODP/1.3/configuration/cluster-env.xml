@@ -356,5 +356,20 @@ gpgcheck=0</value>
     <description>Timeout for safemode exit, during namenode rolling restart</description>
     <on-ambari-upgrade add="false"/>
   </property>
+  <!-- Cluster profiles of the install wizard (Choose Services): services preselected per profile. -->
+  <property>
+    <name>cluster_profiles</name>
+    <value/>
+    <description>Cluster profiles the install wizard offers to preselect services.</description>
+    <property-type>VALUE_FROM_PROPERTY_FILE</property-type>
+    <value-attributes>
+      <property-file-name>cluster_profiles.json</property-file-name>
+      <property-file-type>json</property-file-type>
+      <read-only>true</read-only>
+      <overridable>false</overridable>
+      <visible>false</visible>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
 </configuration>
 

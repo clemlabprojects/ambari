@@ -61,6 +61,117 @@ App.WizardStep4Controller = Em.ArrayController.extend({
   errorStack: [],
 
   /**
+   * Cluster profiles the stack version defines (cluster-env/cluster_profiles, stack data): each one
+   * preselects services, with an optional list of security services.
+   * @type {Em.Object[]}
+   */
+  clusterProfiles: [],
+
+  /**
+   * Whether applying a profile also selects its security services
+   * @type {bool}
+   */
+  withSecurity: true,
+
+  /**
+   * Profiles are offered on a new cluster only (no service installed yet)
+   * @type {bool}
+   */
+  isClusterProfilesVisible: function () {
+    return this.get('clusterProfiles.length') > 0 && !this.someProperty('isInstalled', true);
+  }.property('clusterProfiles.length', '@each.isInstalled'),
+
+  /**
+   * Profile last applied
+   * @type {Em.Object|null}
+   */
+  selectedClusterProfile: function () {
+    return this.get('clusterProfiles').findProperty('isSelected', true) || null;
+  }.property('clusterProfiles.@each.isSelected'),
+
+  /**
+   * Loads the cluster profiles of the stack version; a stack without profiles answers 404 and no
+   * profile is offered.
+   * @method loadClusterProfiles
+   */
+  loadClusterProfiles: function () {
+    this.set('clusterProfiles', []);
+    if (this.someProperty('isInstalled', true)) {
+      return null;
+    }
+    return App.ajax.send({
+      name: 'wizard.step4.cluster_profiles',
+      sender: this,
+      data: {
+        stackVersionUrl: App.get('stackVersionURL')
+      },
+      success: 'loadClusterProfilesSuccess',
+      error: 'loadClusterProfilesError'
+    });
+  },
+
+  loadClusterProfilesSuccess: function (data) {
+    var profiles = [];
+    try {
+      profiles = JSON.parse(Em.get(data, 'StackLevelConfigurations.property_value') || '{}').profiles || [];
+    } catch (e) {
+      console.error('Invalid cluster profiles of the stack: ' + e);
+    }
+    this.set('clusterProfiles', profiles.filter(function (profile) {
+      return profile.name && Array.isArray(profile.services);
+    }).map(function (profile) {
+      return Em.Object.create({
+        name: profile.name,
+        displayName: profile.display_name || profile.name,
+        description: profile.description || '',
+        services: profile.services,
+        securityServices: profile.security_services || [],
+        isSelected: false
+      });
+    }));
+  },
+
+  loadClusterProfilesError: function () {
+    this.set('clusterProfiles', []);
+  },
+
+  /**
+   * Selects the services of a profile (and its security services when withSecurity) and unselects
+   * the others; services the stack does not have are ignored. The operator can change the selection,
+   * which is then validated as usual.
+   * @param {Em.Object|{context: Em.Object}} profile
+   * @method applyClusterProfile
+   */
+  applyClusterProfile: function (profile) {
+    profile = profile && profile.context ? profile.context : profile;
+    if (!profile) {
+      return;
+    }
+    var serviceNames = profile.get('services').concat(this.get('withSecurity') ? profile.get('securityServices') : []);
+    var select = function (service) {
+      service.set('isSelected', serviceNames.contains(service.get('serviceName')));
+    };
+    // File systems first, then the other services: applyHdfsOnlyServiceConstraints disables (and
+    // unselects) the services requiring HDFS while HDFS is unselected, so which services can be selected
+    // is only known once the file systems of the profile are.
+    this.filterProperty('isInstalled', false).filterProperty('isDFS', true).filterProperty('isSelectionDisabled', false).forEach(select);
+    this.filterProperty('isInstalled', false).filterProperty('isDFS', false).filterProperty('isSelectionDisabled', false).forEach(select);
+    this.get('clusterProfiles').forEach(function (item) {
+      item.set('isSelected', item === profile);
+    });
+  },
+
+  /**
+   * Re-applies the selected profile when its security services are switched on or off
+   */
+  withSecurityObserver: function () {
+    var profile = this.get('selectedClusterProfile');
+    if (profile) {
+      this.applyClusterProfile(profile);
+    }
+  }.observes('withSecurity'),
+
+  /**
    * Services which are HDFS compatible
    */
   fileSystems: function() {
