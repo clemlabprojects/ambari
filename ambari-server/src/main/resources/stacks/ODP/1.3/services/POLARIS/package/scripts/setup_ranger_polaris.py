@@ -109,13 +109,11 @@ def setup_ranger_polaris():
   #      org.apache.hadoop.security.alias.CredentialShell (always present -- Hadoop is a Polaris dep);
   #   2. point both cred_lib_path_override (the -l classpath) and cred_setup_prefix_override (the helper
   #      path + -l) at it, so setup_ranger_plugin_keystore() invokes our helper instead of the missing one.
-  # CredentialShell needs only the Hadoop common jars on its classpath.
+  # CredentialShell runs from the Hadoop jars the Polaris server bundles: a Polaris host has no Hadoop
+  # package on a cluster without HDFS.
   stack_root = Script.get_stack_root()
   stack_version = get_stack_version('polaris-server')
-  cred_lib_path_override = (
-    '{root}/{ver}/hadoop/share/hadoop/common/*'
-    ':{root}/{ver}/hadoop/share/hadoop/common/lib/*'
-  ).format(root=stack_root, ver=stack_version)
+  cred_lib_path_override = '{root}/{ver}/polaris/server/lib/main/*'.format(root=stack_root, ver=stack_version)
 
   # Lay the helper down under the Polaris state dir (root-owned, 0755) before the keystore step runs.
   # It is invoked via "sudo" by setup_ranger_plugin_keystore(), and re-written on every configure so it
