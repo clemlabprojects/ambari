@@ -633,6 +633,64 @@ class TestAmoroOptimizersOnYarn(unittest.TestCase):
     self.assertEqual({"memory": "2048"}, amoro.optimizer_group_properties())
 
 
+class TestAmoroResourceRecommendations(unittest.TestCase):
+  advisor = load_amoro_advisor()
+
+  def test_server_heap_follows_the_host(self):
+    self.assertEqual([1024, 2048, 4096, 8192], [self.advisor.server_heap_mb(mb) for mb in (8192, 16384, 32768, 131072)])
+
+  def test_local_optimizer_takes_a_quarter_of_the_host(self):
+    resources = self.advisor.local_optimizer_resources
+    self.assertEqual((2048, 2), resources(16384, 4))
+    self.assertEqual((2048, 1), resources(8192, 2))
+    self.assertEqual((2048, 8), resources(65536, 32))
+    self.assertEqual((1024, 1), resources(4096, 2))
+
+  def test_spark_optimizer_fits_the_yarn_containers(self):
+    resources = self.advisor.yarn_optimizer_resources
+    self.assertEqual((2048, 3), resources(8192, 3 * 12288, 3 * 8))
+    self.assertEqual((1024, 2), resources(1536, 3 * 4096, 3 * 4))
+    self.assertEqual((2048, 32), resources(65536, 40 * 131072, 40 * 32))
+    self.assertEqual((2048, 2), resources(0, 0, 0))
+
+  def services(self, names, env=None, changed=None, yarn_site=None):
+    def component(service, name, hostnames):
+      return {"StackServiceComponents": {"service_name": service, "component_name": name, "hostnames": hostnames}}
+    services = [{"StackServices": {"service_name": "AMORO"}, "components": [component("AMORO", "AMORO_SERVER", ["ams"])]}]
+    if "YARN" in names:
+      services.append({"StackServices": {"service_name": "YARN"},
+                       "components": [component("YARN", "NODEMANAGER", ["w1", "w2", "w3"])]})
+    services += [{"StackServices": {"service_name": name}, "components": []} for name in names if name != "YARN"]
+    configurations = {"amoro-env": {"properties": dict(env or {})}, "yarn-site": {"properties": dict(yarn_site or {})}}
+    return {"services": services, "changed-configurations": changed or [], "configurations": configurations}
+
+  HOSTS = {"items": [{"Hosts": {"host_name": "ams", "total_mem": 16384 * 1024, "cpu_count": 4}}] +
+                    [{"Hosts": {"host_name": w, "total_mem": 16384 * 1024, "cpu_count": 8}} for w in ("w1", "w2", "w3")]}
+
+  def recommend(self, services):
+    configurations = {}
+    self.advisor.AmoroRecommender().recommendAmoroConfigurations(configurations, {}, services, self.HOSTS)
+    return configurations["amoro-env"]["properties"]
+
+  def test_local_resources_from_the_amoro_host(self):
+    env = self.recommend(self.services([]))
+    self.assertEqual(("local", "2048", "2048", "2"), (env["amoro_optimizer_container"], env["amoro_server_heapsize"],
+                                                      env["amoro_optimizer_memory"], env["amoro_optimizer_parallelism"]))
+
+  def test_spark_resources_from_yarn(self):
+    yarn_site = {"yarn.scheduler.maximum-allocation-mb": "8192", "yarn.nodemanager.resource.memory-mb": "12288",
+                 "yarn.nodemanager.resource.cpu-vcores": "8"}
+    env = self.recommend(self.services(["YARN", "SPARK3"], yarn_site=yarn_site))
+    self.assertEqual(("spark", "2048", "3"), (env["amoro_optimizer_container"], env["amoro_optimizer_memory"],
+                                              env["amoro_optimizer_parallelism"]))
+
+  def test_the_operator_value_is_kept(self):
+    changed = [{"type": "amoro-env", "name": "amoro_optimizer_parallelism", "old_value": "2"}]
+    env = self.recommend(self.services([], env={"amoro_optimizer_parallelism": "6"}, changed=changed))
+    self.assertNotIn("amoro_optimizer_parallelism", env)
+    self.assertEqual("2048", env["amoro_optimizer_memory"])
+
+
 class TestAmoroServiceAdvisor(unittest.TestCase):
   advisor = load_amoro_advisor()
 

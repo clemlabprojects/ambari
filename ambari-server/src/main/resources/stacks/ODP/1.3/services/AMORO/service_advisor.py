@@ -76,6 +76,44 @@ def optimizers_on_yarn_available(service_names):
   return "YARN" in service_names and "SPARK3" in service_names
 
 
+# Memory of one optimizing thread: Amoro rewrites data files of ~128 MB with Parquet and ORC writers.
+OPTIMIZER_THREAD_MB = 2048
+# Memory overhead YARN adds to each Spark executor container (spark.executor.memoryOverhead floor).
+SPARK_EXECUTOR_OVERHEAD_MB = 384
+
+
+def round_down(value, step=256):
+  return int(value) // step * step
+
+
+def server_heap_mb(host_mb):
+  """An eighth of the host memory (the server shares its master host), from 1 GB to 8 GB."""
+  return max(1024, min(8192, round_down(host_mb // 8)))
+
+
+def local_optimizer_resources(host_mb, cpus):
+  """(memory per thread, threads) of the local optimizer: a quarter of the host memory, at most one
+  thread per two cores and 8 threads."""
+  budget = host_mb // 4
+  memory = OPTIMIZER_THREAD_MB if budget >= OPTIMIZER_THREAD_MB else max(1024, round_down(budget))
+  threads = max(1, min(budget // memory, max(1, cpus // 2), 8))
+  return memory, threads
+
+
+def yarn_optimizer_resources(max_allocation_mb, cluster_mb, cluster_vcores):
+  """(memory per thread, threads) of the Spark optimizer: one executor (1 core) per thread fitting the
+  largest YARN container, threads for a quarter of the YARN memory and cores, from 2 to 32."""
+  memory = OPTIMIZER_THREAD_MB
+  if 0 < max_allocation_mb < OPTIMIZER_THREAD_MB + SPARK_EXECUTOR_OVERHEAD_MB:
+    memory = max(1024, round_down(max_allocation_mb - SPARK_EXECUTOR_OVERHEAD_MB))
+  if cluster_mb <= 0:
+    return memory, 2
+  threads = cluster_mb // 4 // (memory + SPARK_EXECUTOR_OVERHEAD_MB)
+  if cluster_vcores > 0:
+    threads = min(threads, cluster_vcores // 4)
+  return memory, max(2, min(32, threads))
+
+
 def amoro_env_changed(services, name):
   """Whether the operator just changed amoro-env/name (configuration change request)."""
   return any(change.get("type") == "amoro-env" and change.get("name") == name
@@ -108,6 +146,7 @@ class AmoroRecommender(service_advisor.ServiceAdvisor):
     self.recommendAmoroDatabaseConfigurations(configurations, services)
     self.recommendAmoroLdapConfigurations(configurations, services)
     self.recommendAmoroOptimizerContainer(configurations, services, hosts)
+    self.recommendAmoroResources(configurations, services, hosts)
     if get_amoro_security_modes(configurations, services):
       self.putProperty(configurations, "amoro-site", services)("http-server.ssl.enabled", "true")
 
@@ -149,6 +188,40 @@ class AmoroRecommender(service_advisor.ServiceAdvisor):
     put_core = self.putProperty(configurations, "core-site", services)
     put_core("hadoop.proxyuser.{0}.hosts".format(amoro_user), ",".join(amoro_hosts) or "*")
     put_core("hadoop.proxyuser.{0}.users".format(amoro_user), amoro_user)
+
+  def recommendAmoroResources(self, configurations, services, hosts):
+    """Heap of the server and resources of the optimizer, from the Amoro host and from YARN when the
+    optimizers run on it. Operator settings: a value the operator just changed is kept, and no property
+    depends on the host or YARN settings, so the recommendations only fill new installations."""
+    put_env = self.putProperty(configurations, "amoro-env", services)
+
+    def put(name, value):
+      if not amoro_env_changed(services, name):
+        put_env(name, str(value))
+
+    amoro_hosts = self.getHostsWithComponent("AMORO", "AMORO_SERVER", services, hosts) or []
+    if amoro_hosts:
+      host_mb = int(amoro_hosts[0]["Hosts"].get("total_mem", 0)) // 1024
+      cpus = int(amoro_hosts[0]["Hosts"].get("cpu_count", 0))
+      if host_mb > 0:
+        put("amoro_server_heapsize", server_heap_mb(host_mb))
+    container = str(get_property(configurations, services, "amoro-env", "amoro_optimizer_container") or "local").strip()
+    if container == "spark":
+      def yarn(name):
+        try:
+          return int(float(str(get_property(configurations, services, "yarn-site", name) or 0)))
+        except ValueError:
+          return 0
+      node_managers = len(self.getHostsWithComponent("YARN", "NODEMANAGER", services, hosts) or [])
+      memory, parallelism = yarn_optimizer_resources(
+        yarn("yarn.scheduler.maximum-allocation-mb"), node_managers * yarn("yarn.nodemanager.resource.memory-mb"),
+        node_managers * yarn("yarn.nodemanager.resource.cpu-vcores"))
+    elif amoro_hosts and host_mb > 0:
+      memory, parallelism = local_optimizer_resources(host_mb, cpus)
+    else:
+      return
+    put("amoro_optimizer_memory", memory)
+    put("amoro_optimizer_parallelism", parallelism)
 
   def recommendAmoroLdapConfigurations(self, configurations, services):
     """The dashboard LDAP login defaults to the directory Ranger synchronizes users from."""

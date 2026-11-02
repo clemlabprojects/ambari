@@ -84,7 +84,7 @@
     <name>amoro_server_heapsize</name>
     <display-name>Amoro Management Service Heap Size</display-name>
     <value>2048</value>
-    <description>Heap of the Amoro Management Service (MB).</description>
+    <description>Heap of the Amoro Management Service (MB). Recommended from the memory of its host.</description>
     <value-attributes>
       <type>int</type>
       <minimum>512</minimum>
@@ -156,7 +156,7 @@
     <name>amoro_optimizer_parallelism</name>
     <display-name>Optimizer Parallelism</display-name>
     <value>2</value>
-    <description>Number of optimizing threads of the optimizer started by Ambari.</description>
+    <description>Number of optimizing threads of the optimizer started by Ambari (Spark container: the maximum number of executors). Recommended from the cores of the Amoro host, or from the YARN capacity.</description>
     <value-attributes>
       <type>int</type>
       <minimum>1</minimum>
@@ -169,7 +169,7 @@
     <name>amoro_optimizer_memory</name>
     <display-name>Optimizer Memory</display-name>
     <value>2048</value>
-    <description>Memory of the optimizer started by Ambari (MB).</description>
+    <description>Memory per optimizing thread (MB). Local container: the optimizer process gets Optimizer Parallelism x this memory. Spark container: the memory of each Spark executor, which runs one thread. Recommended from the Amoro host, or from the YARN container limits.</description>
     <value-attributes>
       <type>int</type>
       <minimum>512</minimum>
