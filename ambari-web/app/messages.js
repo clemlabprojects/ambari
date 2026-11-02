@@ -930,6 +930,7 @@ Em.I18n.translations = {
   'installer.step4.profiles.header':'Cluster Profile',
   'installer.step4.profiles.body':'Optionally start from a profile: it selects the services below, which you can still change.',
   'installer.step4.profiles.withSecurity':'Include security services',
+  'installer.step4.profiles.securityInfo':'Security services: Ranger (authorization and audit) with Infra Solr, Knox (gateway), and Ranger KMS (HDFS encryption) on profiles with HDFS.',
   'installer.step4.header':'Choose Services',
   'installer.step4.body':'Choose which services you want to install on your cluster.',
   'installer.step4.headerFS':'Choose File System',

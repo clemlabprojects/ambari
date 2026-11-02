@@ -28,12 +28,21 @@
               {{action applyClusterProfile profile target="controller"}}>{{profile.displayName}}</button>
           {{/each}}
         </div>
-        <div class="checkbox">
-          {{view App.CheckboxView data-qa="cluster-profile-security" checkedBinding="controller.withSecurity" labelTranslate="installer.step4.profiles.withSecurity"}}
+        <div class="cluster-profile-security use-ambari-checkboxes" style="margin-top: 12px;">
+          {{#view App.CheckboxView data-qa="cluster-profile-security" checkedBinding="controller.withSecurity"
+            labelTranslate="installer.step4.profiles.withSecurity" labelIdentifier="cluster-profile-security"}}
+          {{/view}}
+          <div class="clearfix"></div>
         </div>
-        {{#if controller.selectedClusterProfile}}
-          <p class="step-description">{{controller.selectedClusterProfile.description}}</p>
-        {{/if}}
+        <div class="alert alert-info" style="margin: 12px 0 0;" {{QAAttr "cluster-profiles-info"}}>
+          {{#each profile in controller.clusterProfiles}}
+            <p {{QAAttr "cluster-profile-info"}}>
+              {{#if profile.isSelected}}<strong>{{profile.displayName}}</strong>{{else}}{{profile.displayName}}{{/if}}:
+              {{profile.description}}
+            </p>
+          {{/each}}
+          <p style="margin-bottom: 0;">{{t installer.step4.profiles.securityInfo}}</p>
+        </div>
       </div>
     </div>
   {{/if}}
