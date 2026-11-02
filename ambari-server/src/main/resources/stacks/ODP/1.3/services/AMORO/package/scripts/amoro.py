@@ -96,6 +96,8 @@ def amoro():
 
   if params.amoro_db_flavor == "MYSQL":
     setup_mysql_driver()
+  if params.ozone_manager_hosts:
+    setup_ozone_filesystem()
 
 
 def amoro_config():
@@ -309,6 +311,24 @@ def setup_mysql_driver():
   File(os.path.join(params.amoro_home, "lib", name),
        content=DownloadSource("{0}/{1}".format(params.jdk_location.rstrip("/"), name)),
        mode=0o644)
+
+
+
+def setup_ozone_filesystem():
+  """The Hadoop client Amoro ships has no ofs:// / o3fs:// filesystem: the terminal and the optimizers
+  cannot read a warehouse on Ozone. Amoro bundles the shaded Hadoop client, which takes the shaded Ozone
+  filesystem jar (the regular one needs the unshaded protobuf). Copied into lib: the launchers of the
+  server and of the optimizers only add the regular jar files of lib to the classpath."""
+  import params
+
+  jars = sorted(glob.glob(os.path.join(params.ozone_client_lib_dir, "ozone-filesystem-hadoop3-client-*.jar")))
+  if not jars:
+    Logger.warning("No Ozone filesystem jar in {0}: Amoro cannot read the tables stored on Ozone.".format(
+      params.ozone_client_lib_dir))
+    return
+  target = os.path.join(params.amoro_home, "lib", os.path.basename(jars[-1]))
+  Execute(("cp", "--remove-destination", jars[-1], target), sudo=True)
+  Execute(("chmod", "644", target), sudo=True)
 
 
 JDBC_SQL_RUNNER = """import java.nio.file.Files;

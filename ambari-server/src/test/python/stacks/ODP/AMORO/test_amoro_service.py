@@ -427,6 +427,30 @@ class TestAmoroAccess(unittest.TestCase):
                                      has_polaris_ozone_catalog=True).access_policies())
 
 
+class TestAmoroOzoneFilesystem(unittest.TestCase):
+
+  def setup(self, *jars):
+    import tempfile
+    lib = tempfile.mkdtemp()
+    for jar in jars:
+      open(os.path.join(lib, jar), "w").close()
+    amoro = load_amoro_scripts(ozone_client_lib_dir=lib, amoro_home="/usr/odp/current/amoro-server")
+    amoro.commands = []
+    amoro.Execute = lambda command, **kwargs: amoro.commands.append(command)
+    amoro.setup_ozone_filesystem()
+    return amoro, lib
+
+  def test_the_shaded_ozone_filesystem_goes_into_lib(self):
+    amoro, lib = self.setup("ozone-filesystem-hadoop3-2.1.0.jar", "ozone-filesystem-hadoop3-client-2.1.0.jar")
+    target = "/usr/odp/current/amoro-server/lib/ozone-filesystem-hadoop3-client-2.1.0.jar"
+    self.assertEqual([("cp", "--remove-destination", os.path.join(lib, "ozone-filesystem-hadoop3-client-2.1.0.jar"), target),
+                      ("chmod", "644", target)], amoro.commands)
+
+  def test_nothing_without_the_ozone_client(self):
+    amoro, _ = self.setup()
+    self.assertEqual([], amoro.commands)
+
+
 class TestAmoroPauseOptimizing(unittest.TestCase):
 
   def amoro(self, tables):

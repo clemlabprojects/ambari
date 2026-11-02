@@ -185,6 +185,7 @@ amoro_polaris_oidc = (bool(amoro_oidc_client_id and amoro_oidc_client_secret.str
 # Polaris vends none): a secret Ambari generates and sets on Ozone for the Amoro principal.
 ozone_security_enabled = _to_bool(default("/configurations/ozone-site/ozone.security.enabled", "false"))
 ozone_cmd = format("{stack_root}/current/ozone-client/bin/ozone")
+ozone_client_lib_dir = format("{stack_root}/current/ozone-client/share/ozone/lib")
 ozone_om_service_id = str(default("/configurations/ozone-site/ozone.om.internal.service.id", "")).strip()
 if not ozone_om_service_id:
   ozone_om_service_id = str(default("/configurations/ozone-site/ozone.om.service.ids", "")).split(",")[0].strip()
