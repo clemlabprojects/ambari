@@ -760,6 +760,12 @@ else:
 # need this to capture cluster name from where ranger hbase plugin is enabled
 cluster_name = config['clusterName']
 
+# Ranger policies of the service check user (ozone_smoke_ranger)
+ozone_smoke_ranger_url = str(default("/configurations/admin-properties/policymgr_external_url", "") or "").strip().rstrip("/")
+ozone_smoke_ranger_service = repo_name if enable_ranger_ozone else str(cluster_name) + "_ozone"
+ozone_smoke_ranger_admin_user = default("/configurations/ranger-env/admin_username", "admin")
+ozone_smoke_ranger_admin_password = default("/configurations/ranger-env/admin_password", "")
+
   # smoke user ozone ranger policy
 ranger_policy_config = {
     "isEnabled": "true",

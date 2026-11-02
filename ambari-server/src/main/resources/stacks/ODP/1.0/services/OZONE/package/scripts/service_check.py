@@ -26,6 +26,7 @@ from resource_management.core.source import StaticFile
 from resource_management.core.source import Template
 from resource_management.core.logger import Logger
 import functions
+from ozone_smoke_ranger import ensure_smoke_policies
 from ambari_commons import OSCheck, OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
 
@@ -75,6 +76,15 @@ class OzoneServiceCheckDefault(OzoneServiceCheck):
         break
 
     Logger.info("Using Ozone service-check configuration directory: {0}".format(service_check_conf_dir))
+
+    if params.enable_ranger_ozone:
+      if params.ozone_smoke_ranger_url and params.ozone_smoke_ranger_admin_password:
+        ensure_smoke_policies(params.ozone_smoke_ranger_url, params.ozone_smoke_ranger_service,
+                              params.ozone_smoke_ranger_admin_user, params.ozone_smoke_ranger_admin_password,
+                              params.smoke_test_user)
+      else:
+        Logger.warning("Ranger Admin URL or admin credentials (ranger-env) not set: the Ranger policies of the "
+                       "service check user are not ensured.")
 
     servicecheckcmd = format("{exec_tmp_dir}/ozone-smoke-init.sh {service_check_conf_dir}")
     smokeverifycmd = format("{exec_tmp_dir}/ozone-smoke-verify.sh {service_check_conf_dir} ozonesmokefile.txt ozone {om_service_id}")
