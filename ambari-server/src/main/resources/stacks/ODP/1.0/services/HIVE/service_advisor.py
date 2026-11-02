@@ -280,6 +280,35 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     return self.buildPathForServiceFilesystem(configurations, services, "hive-env", "hive_filesystem_type",
                                               "/user/{0}/scratch".format(hive_user))
 
+  def recommendHiveDatabaseConnection(self, configurations, services, hosts):
+    """
+    javax.jdo.option.ConnectionURL recommendations: the driver and the URL follow the selected database type.
+    """
+    hiveSiteProperties = self.getSiteProperties(services["configurations"], "hive-site")
+    hiveEnvProperties = self.getSiteProperties(services["configurations"], "hive-env")
+    putHiveEnvProperty = self.putProperty(configurations, "hive-env", services)
+    putHiveProperty = self.putProperty(configurations, "hive-site", services)
+
+    if hiveEnvProperties and self.checkSiteProperties(hiveEnvProperties, "hive_database", "hive_database_type"):
+      putHiveEnvProperty("hive_database_type", self.getDBTypeAlias(hiveEnvProperties["hive_database"]))
+    if hiveEnvProperties and hiveSiteProperties and self.checkSiteProperties(hiveSiteProperties, "javax.jdo.option.ConnectionDriverName") and self.checkSiteProperties(hiveEnvProperties, "hive_database"):
+      putHiveProperty("javax.jdo.option.ConnectionDriverName", self.getDBDriver(hiveEnvProperties["hive_database"]))
+    if hiveSiteProperties and hiveEnvProperties and self.checkSiteProperties(hiveSiteProperties, "ambari.hive.db.schema.name", "javax.jdo.option.ConnectionURL") and self.checkSiteProperties(hiveEnvProperties, "hive_database"):
+      # HiveServer2 is optional: without it, the Metastore is the database client
+      hiveServerHost = self.getHostWithComponent("HIVE", "HIVE_SERVER", services, hosts) or \
+                       self.getHostWithComponent("HIVE", "HIVE_METASTORE", services, hosts)
+      hiveDBConnectionURL = hiveSiteProperties["javax.jdo.option.ConnectionURL"]
+      protocol = self.getProtocol(hiveEnvProperties["hive_database"])
+      oldSchemaName = self.getOldValue(services, "hive-site", "ambari.hive.db.schema.name")
+      oldDBType = self.getOldValue(services, "hive-env", "hive_database")
+      # under these if constructions we are checking if hive server hostname available,
+      # if it's default db connection url with "localhost" or if schema name was changed or if db type was changed (only for db type change from default mysql to existing mysql)
+      # or if protocol according to current db type differs with protocol in db connection url(other db types changes)
+      if hiveServerHost is not None:
+        if (hiveDBConnectionURL and "//localhost" in hiveDBConnectionURL) or oldSchemaName or oldDBType or (protocol and hiveDBConnectionURL and not hiveDBConnectionURL.startswith(protocol)):
+          dbConnection = self.getDBConnectionString(hiveEnvProperties["hive_database"]).format(hiveServerHost["Hosts"]["host_name"], hiveSiteProperties["ambari.hive.db.schema.name"])
+          putHiveProperty("javax.jdo.option.ConnectionURL", dbConnection)
+
   def recommendHiveConfigurationsFromHDP30(self, configurations, clusterData, services, hosts):
     hiveSiteProperties = self.getSiteProperties(services["configurations"], "hive-site")
     hiveEnvProperties = self.getSiteProperties(services["configurations"], "hive-env")
@@ -354,24 +383,7 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
                     "-Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA -XX:+UseParallelGC -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps")
     putHiveProperty("hive.tez.container.size", containerSize)
 
-    # javax.jdo.option.ConnectionURL recommendations
-    if hiveEnvProperties and self.checkSiteProperties(hiveEnvProperties, "hive_database", "hive_database_type"):
-      putHiveEnvProperty("hive_database_type", self.getDBTypeAlias(hiveEnvProperties["hive_database"]))
-    if hiveEnvProperties and hiveSiteProperties and self.checkSiteProperties(hiveSiteProperties, "javax.jdo.option.ConnectionDriverName") and self.checkSiteProperties(hiveEnvProperties, "hive_database"):
-      putHiveProperty("javax.jdo.option.ConnectionDriverName", self.getDBDriver(hiveEnvProperties["hive_database"]))
-    if hiveSiteProperties and hiveEnvProperties and self.checkSiteProperties(hiveSiteProperties, "ambari.hive.db.schema.name", "javax.jdo.option.ConnectionURL") and self.checkSiteProperties(hiveEnvProperties, "hive_database"):
-      hiveServerHost = self.getHostWithComponent("HIVE", "HIVE_SERVER", services, hosts)
-      hiveDBConnectionURL = hiveSiteProperties["javax.jdo.option.ConnectionURL"]
-      protocol = self.getProtocol(hiveEnvProperties["hive_database"])
-      oldSchemaName = self.getOldValue(services, "hive-site", "ambari.hive.db.schema.name")
-      oldDBType = self.getOldValue(services, "hive-env", "hive_database")
-      # under these if constructions we are checking if hive server hostname available,
-      # if it's default db connection url with "localhost" or if schema name was changed or if db type was changed (only for db type change from default mysql to existing mysql)
-      # or if protocol according to current db type differs with protocol in db connection url(other db types changes)
-      if hiveServerHost is not None:
-        if (hiveDBConnectionURL and "//localhost" in hiveDBConnectionURL) or oldSchemaName or oldDBType or (protocol and hiveDBConnectionURL and not hiveDBConnectionURL.startswith(protocol)):
-          dbConnection = self.getDBConnectionString(hiveEnvProperties["hive_database"]).format(hiveServerHost["Hosts"]["host_name"], hiveSiteProperties["ambari.hive.db.schema.name"])
-          putHiveProperty("javax.jdo.option.ConnectionURL", dbConnection)
+    self.recommendHiveDatabaseConnection(configurations, services, hosts)
 
     # Transactions
     hs2Hosts = self.getHostsWithComponent("HIVE", "HIVE_SERVER", services, hosts)
