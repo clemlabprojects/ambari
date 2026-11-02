@@ -592,6 +592,17 @@ class TestAmoroSecurity(unittest.TestCase):
     self.assertEqual([], warnings(self.services(kerberos="true", oidc=True)))
     self.assertEqual([], warnings(self.services()))
 
+  def test_heap_size_saved_with_the_mb_suffix_is_valid(self):
+    def errors(heapsize):
+      services = self.services()
+      items = self.advisor.AmoroValidator().validateAmoroEnvProperties(
+        {"amoro_server_heapsize": heapsize}, {}, services["configurations"], services, self.HOSTS)
+      return [item["config-name"] for item in items if item["config-name"] == "amoro_server_heapsize"]
+    self.assertEqual([], errors("2048"))
+    self.assertEqual([], errors("2048m"))
+    self.assertEqual(["amoro_server_heapsize"], errors("lots"))
+    self.assertEqual(["amoro_server_heapsize"], errors("0m"))
+
   def test_knox_is_required_when_secure(self):
     def knox_errors(services):
       return [item for item in self.advisor.AmoroServiceAdvisor().getServiceComponentLayoutValidations(services, self.HOSTS)

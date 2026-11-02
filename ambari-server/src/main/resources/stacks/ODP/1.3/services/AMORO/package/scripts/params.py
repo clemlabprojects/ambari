@@ -17,6 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import os
+import re
 import socket
 
 from resource_management.libraries.functions import conf_select
@@ -78,7 +79,8 @@ amoro_log_dir = default("/configurations/amoro-env/amoro_log_dir", "/var/log/amo
 amoro_pid_dir = status_params.amoro_pid_dir
 amoro_pid_file = status_params.amoro_pid_file
 amoro_data_dir = default("/configurations/amoro-env/amoro_data_dir", "/var/lib/amoro")
-amoro_server_heapsize = int(default("/configurations/amoro-env/amoro_server_heapsize", 2048))
+# Ambari web saves the *_heapsize properties with an "m" (MB) suffix
+amoro_server_heapsize = int(re.search(r'\d+', str(default("/configurations/amoro-env/amoro_server_heapsize", 2048))).group(0))
 amoro_env_sh_template = config['configurations']['amoro-env']['content']
 amoro_log4j_template = config['configurations']['amoro-log4j']['content']
 

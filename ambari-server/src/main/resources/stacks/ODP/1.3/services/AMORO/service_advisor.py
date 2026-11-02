@@ -19,6 +19,7 @@ limitations under the License.
 
 import importlib.util
 import os
+import re
 import traceback
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -189,8 +190,12 @@ class AmoroValidator(service_advisor.ServiceAdvisor):
                                              "secret Polaris issues, which Ambari does not manage. Enable OIDC so that "
                                              "Ambari manages the OIDC client of Amoro.")})
     for name in ("amoro_optimizer_parallelism", "amoro_optimizer_memory", "amoro_server_heapsize"):
+      value = str(properties.get(name, 1))
+      if name == "amoro_server_heapsize":
+        # Ambari web saves the *_heapsize properties with an "m" (MB) suffix
+        value = re.sub(r"[mM]$", "", value)
       try:
-        if int(properties.get(name, 1)) <= 0:
+        if int(value) <= 0:
           raise ValueError()
       except ValueError:
         items.append({"config-name": name, "item": self.getErrorItem("Must be a positive integer.")})
