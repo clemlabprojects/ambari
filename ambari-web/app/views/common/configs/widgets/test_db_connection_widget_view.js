@@ -223,6 +223,14 @@ App.TestDbConnectionWidgetView = App.ConfigWidgetView.extend({
     }
     var params = $.extend(true, {}, {db_name: db_name}, connectionProperties, this.get('ambariProperties'));
     var filteredHosts =  Array.isArray(this.get('masterHostName.value')) ? this.get('masterHostName.value') : [this.get('masterHostName.value')];
+    filteredHosts = filteredHosts.filter(function (hostName) {
+      return typeof hostName === 'string' && hostName.trim().length > 0;
+    });
+    if (!filteredHosts.length) {
+      // a check without a host would be sent to no agent
+      this.onCreateActionError(null, 'error', Em.I18n.t('services.service.config.database.connection.noSourceHost'));
+      return;
+    }
     App.ajax.send({
       name: (isServiceInstalled) ? 'cluster.custom_action.create' : 'custom_action.create',
       sender: this,

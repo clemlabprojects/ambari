@@ -9847,6 +9847,30 @@ public class AmbariManagementControllerTest {
   }
 
   @Test
+  public void testCreateCustomActionUnregisteredHost() throws Exception {
+    String hostname1 = getUniqueName();
+    addHost(hostname1);
+
+    String action1 = getUniqueName();
+    ambariMetaInfo.addActionDefinition(new ActionDefinition(action1, ActionType.SYSTEM,
+        "", "", "", "action def description", TargetHostType.ANY,
+        Integer.valueOf("60"), null));
+
+    Map<String, String> requestProperties = new HashMap<>();
+    requestProperties.put(REQUEST_CONTEXT_PROPERTY, "Called from a test");
+
+    // !!! an empty host list in the request ("hosts": "") is parsed as one blank host name
+    for (String hostname : Arrays.asList("", getUniqueName())) {
+      List<RequestResourceFilter> resourceFilters = new ArrayList<>();
+      resourceFilters.add(new RequestResourceFilter(null, null, Arrays.asList(hostname1, hostname)));
+      ExecuteActionRequest actionRequest = new ExecuteActionRequest(null, null,
+          action1, resourceFilters, null, new HashMap<>(), false);
+      expectActionCreationErrorWithMessage(actionRequest, requestProperties,
+          "targets host '" + hostname + "' that is not registered");
+    }
+  }
+
+  @Test
   public void testCreateCustomActionNoCluster() throws Exception {
     String hostname1 = getUniqueName();
     String hostname2 = getUniqueName();

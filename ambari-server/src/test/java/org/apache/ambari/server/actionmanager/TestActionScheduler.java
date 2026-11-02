@@ -36,6 +36,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -266,6 +267,65 @@ public class TestActionScheduler {
     scheduler.doWork();
 
     EasyMock.verify(entityManagerProviderMock);
+  }
+
+  /**
+   * A command whose host has no role command in its stage (a task stored for a host that is not
+   * registered) fails its request instead of failing every scheduler pass.
+   */
+  @Test
+  public void testCommandWithoutRoleCommandAbortsRequest() throws Exception {
+    Properties properties = new Properties();
+    Configuration conf = new Configuration(properties);
+    Clusters fsm = mock(Clusters.class);
+    Cluster oneClusterMock = mock(Cluster.class);
+    Service serviceObj = mock(Service.class);
+    ServiceComponent scomp = mock(ServiceComponent.class);
+    ServiceComponentHost sch = mock(ServiceComponentHost.class);
+    UnitOfWork unitOfWork = mock(UnitOfWork.class);
+    AgentCommandsPublisher agentCommandsPublisher = mock(AgentCommandsPublisher.class);
+    when(fsm.getCluster(nullable(String.class))).thenReturn(oneClusterMock);
+    when(fsm.getClusterById(anyLong())).thenReturn(oneClusterMock);
+    when(oneClusterMock.getService(anyString())).thenReturn(serviceObj);
+    when(serviceObj.getServiceComponent(anyString())).thenReturn(scomp);
+    when(scomp.getServiceComponentHost(nullable(String.class))).thenReturn(sch);
+
+    Host host = mock(Host.class);
+    when(fsm.getHost(anyString())).thenReturn(host);
+    when(host.getState()).thenReturn(HostState.HEALTHY);
+    when(host.getHostName()).thenReturn(hostname);
+    when(host.getHostId()).thenReturn(hostId);
+
+    HostEntity hostEntity = new HostEntity();
+    hostEntity.setHostName(hostname);
+    hostEntity.setHostId(hostId);
+    hostDAO.merge(hostEntity);
+
+    Stage s = StageUtils.getATestStage(1, 977, hostname,
+      "{\"host_param\":\"param_value\"}", "{\"stage_param\":\"param_value\"}");
+    s.getExecutionCommandWrapper(hostname, "NAMENODE").getExecutionCommand().setHostname("");
+    List<Stage> stages = Collections.singletonList(s);
+
+    ActionDBAccessor db = mock(ActionDBAccessor.class);
+    HostRoleCommandDAO hostRoleCommandDAOMock = mock(HostRoleCommandDAO.class);
+    Mockito.doNothing().when(hostRoleCommandDAOMock).publishTaskCreateEvent(anyListOf(HostRoleCommand.class));
+    when(db.getCommandsInProgressCount()).thenReturn(stages.size());
+    when(db.getFirstStageInProgressPerRequest()).thenReturn(stages);
+
+    RequestEntity request = mock(RequestEntity.class);
+    when(request.isExclusive()).thenReturn(false);
+    when(request.getClusterHostInfo()).thenReturn(CLUSTER_HOST_INFO);
+    when(db.getRequestEntity(anyLong())).thenReturn(request);
+
+    ActionScheduler scheduler = new ActionScheduler(100, 5, db, fsm,
+        10000, new HostsMap((String) null), unitOfWork, null, conf, entityManagerProviderMock, hostRoleCommandDAOMock,
+        null, agentCommandsPublisher);
+    scheduler.setTaskTimeoutAdjustment(false);
+
+    scheduler.doWork();
+
+    verify(db, times(1)).abortOperation(1L);
+    verify(agentCommandsPublisher, never()).sendAgentCommand(any(Multimap.class));
   }
 
   private List<AgentCommand> waitForQueueSize(Long hostId, AgentCommandsPublisher agentCommandsPublisher,

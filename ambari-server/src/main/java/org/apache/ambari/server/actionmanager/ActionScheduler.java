@@ -483,6 +483,19 @@ class ActionScheduler implements Runnable {
           failed = hasPreviousStageFailed(stage);
         }
 
+        if (!failed) {
+          // A command without a role command in its stage (its host is not registered) could never
+          // be started: fail the request instead of failing every scheduler pass on it
+          for (ExecutionCommand cmd : commandsToSchedule) {
+            if (!stage.hasHostRoleCommand(cmd.getHostname(), cmd.getRole())) {
+              LOG.error("Command {} of request {} targets host '{}' that has no task in its stage, request will be aborted",
+                cmd.getRole(), request.getRequestId(), cmd.getHostname());
+              failed = true;
+              break;
+            }
+          }
+        }
+
         if (failed) {
           LOG.error("Operation completely failed, aborting request id: {}", stage.getRequestId());
           cancelHostRoleCommands(stage.getOrderedHostRoleCommands(), FAILED_TASK_ABORT_REASONING);

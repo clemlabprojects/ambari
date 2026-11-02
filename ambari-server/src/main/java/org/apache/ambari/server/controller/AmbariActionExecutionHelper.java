@@ -382,6 +382,15 @@ public class AmbariActionExecutionHelper {
       }
     }
 
+    // a task for a host that is not registered is stored without a host, and the action scheduler
+    // could then never start it
+    for (String hostName : targetHosts) {
+      if (StringUtils.isBlank(hostName) || !clusters.hostExists(hostName)) {
+        throw new AmbariException("Action " + actionContext.getActionName() + " targets host '" +
+          hostName + "' that is not registered");
+      }
+    }
+
     setAdditionalParametersForStageAccordingToAction(stage, actionContext);
 
     // create tasks for each host

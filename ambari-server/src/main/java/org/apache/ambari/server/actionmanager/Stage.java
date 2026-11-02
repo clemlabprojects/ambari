@@ -833,6 +833,16 @@ public class Stage {
   }
 
   /**
+   * @param hostname    the hostname; {@code null} for a server-side stage
+   * @param role        the role
+   * @return whether the stage has a role command for the host and role
+   */
+  public boolean hasHostRoleCommand(String hostname, String role) {
+    Map<String, HostRoleCommand> commands = hostRoleCommands.get(getSafeHost(hostname));
+    return commands != null && commands.containsKey(role);
+  }
+
+  /**
    * In this method we sum up all timeout values for all commands inside stage
    */
   public synchronized int getStageTimeout() {

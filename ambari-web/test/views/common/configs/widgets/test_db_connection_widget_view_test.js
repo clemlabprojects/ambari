@@ -73,6 +73,23 @@ describe('App.TestDbConnectionWidgetView', function () {
     }
   });
 
+  it('does not send a check without a source host', function () {
+    sinon.stub(App.Service, 'find').returns(Em.Object.create({isLoaded: false}));
+    sinon.stub(App.ajax, 'send');
+    sinon.stub(view, 'setResponseStatus');
+    try {
+      view.set('masterHostName', undefined);
+      view.createCustomAction();
+      expect(App.ajax.send.called).to.be.false;
+      expect(view.setResponseStatus.calledWith('failed')).to.be.true;
+      expect(view.get('responseFromServer')).to.equal(Em.I18n.t('services.service.config.database.connection.noSourceHost'));
+    } finally {
+      App.Service.find.restore();
+      App.ajax.send.restore();
+      view.setResponseStatus.restore();
+    }
+  });
+
   it('resolves the virtual Polaris source host property from wizard host assignments', function () {
     var required = {
       'jdbc.driver.url': 'polaris-application-properties/quarkus.datasource.jdbc.url',
