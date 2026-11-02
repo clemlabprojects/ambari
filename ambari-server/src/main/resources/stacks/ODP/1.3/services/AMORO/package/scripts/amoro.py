@@ -30,7 +30,7 @@ import urllib.request
 
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
-from resource_management.core.resources.system import Directory, Execute, File
+from resource_management.core.resources.system import Directory, Execute, File, Link
 from resource_management.core.source import DownloadSource, InlineTemplate
 
 LDAP_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.LdapPasswdAuthenticationProvider"
@@ -54,6 +54,14 @@ def amoro():
             group=params.user_group,
             mode=0o755,
             create_parents=True)
+  # Amoro writes the configuration files of the catalogs (hive-site.xml, krb5.conf, keytabs) under
+  # <user.dir>/amoro_krb_conf, and ams.sh sets user.dir to the root-owned package directory.
+  conf_cache_dir = os.path.join(params.amoro_data_dir, "amoro_krb_conf")
+  Directory(conf_cache_dir,
+            owner=params.amoro_user,
+            group=params.user_group,
+            mode=0o700)
+  Link(os.path.join(params.amoro_home, "amoro_krb_conf"), to=conf_cache_dir)
   # Files Ambari does not manage: the plugin configurations (table maintenance processes, execute
   # engines, Iceberg REST extension) and the log configuration of the optimizers. Seeded from the
   # packaged defaults, operator changes are kept.
