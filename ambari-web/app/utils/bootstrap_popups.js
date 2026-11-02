@@ -15,19 +15,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-(function() {
-    var script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.text=`setTimeout(()=>{const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]')
-    console.log("List is",tooltipTriggerList)
-    const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl))},3000)`
-    document.getElementsByTagName('head')[0].appendChild(script);
-    })();
-    
-    (function() {
-    var script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.text = `setTimeout(()=>{const popoverTriggerList = document.querySelectorAll('[data-bs-toggle="popover"]')
-    const popoverList = [...popoverTriggerList].map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl))},3000)`;
-    document.getElementsByTagName('head')[0].appendChild(script);
-    })();
+
+/**
+ * Creates the Bootstrap tooltips and popovers declared with data-bs-toggle. An element keeps the
+ * tooltip or popover it already has (App.tooltip, App.popover): Bootstrap allows one per element, and
+ * a second one would replace it while its tip is shown, which then never hides.
+ * @param {number} delay
+ */
+function initBootstrapPopups(delay) {
+  setTimeout(function () {
+    var bootstrap = window.bootstrap;
+    if (!bootstrap) {
+      return;
+    }
+    var hasPopup = function (element) {
+      return bootstrap.Tooltip.getInstance(element) || bootstrap.Popover.getInstance(element);
+    };
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (element) {
+      if (!hasPopup(element)) {
+        new bootstrap.Tooltip(element);
+      }
+    });
+    document.querySelectorAll('[data-bs-toggle="popover"]').forEach(function (element) {
+      if (!hasPopup(element)) {
+        new bootstrap.Popover(element);
+      }
+    });
+  }, delay);
+}
+
+initBootstrapPopups(3000);
+
+module.exports = initBootstrapPopups;
