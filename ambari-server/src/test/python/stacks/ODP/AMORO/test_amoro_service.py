@@ -511,6 +511,51 @@ class TestAmoroPauseOptimizing(unittest.TestCase):
     self.assertEqual("WARNING", alert.execute(configurations)[0])
 
 
+class TestAmoroOptimizerRestart(unittest.TestCase):
+  """After a restart, Amoro lists the optimizers of its database until their heartbeat timeout."""
+
+  def amoro(self, rounds):
+    import tempfile
+    amoro = load_amoro_scripts(amoro_data_dir=tempfile.mkdtemp(), amoro_optimizer_group="local",
+                               amoro_optimizer_parallelism=2)
+    amoro.time.sleep = lambda seconds: None
+    amoro.calls = []
+    listed = list(rounds)
+
+    def amoro_api(method, path, body=None, timeout=60, raw_body=None, content_type=None):
+      amoro.calls.append((method, path.split("?")[0]))
+      if method == "GET" and "/optimizers" in path:
+        return {"list": listed.pop(0) if len(listed) > 1 else listed[0]}
+      return None
+    amoro.amoro_api = amoro_api
+    return amoro
+
+  def started(self, amoro):
+    return [call for call in amoro.calls if call == ("POST", "/optimize/optimizers")]
+
+  def test_a_dead_optimizer_is_replaced_once_amoro_forgets_it(self):
+    dead = [{"jobId": "j1", "touchTime": 1000}]
+    amoro = self.amoro([dead, dead, []])
+    amoro.ensure_optimizer(since=5000)
+    self.assertEqual(1, len(self.started(amoro)))
+
+  def test_an_optimizer_sending_heartbeats_is_kept(self):
+    amoro = self.amoro([[{"jobId": "j1", "touchTime": 1000}], [{"jobId": "j1", "touchTime": 6000}]])
+    amoro.ensure_optimizer(since=5000)
+    self.assertEqual([], self.started(amoro))
+
+  def test_an_optimizer_is_started_when_the_dead_one_does_not_expire(self):
+    amoro = self.amoro([[{"jobId": "j1", "touchTime": 1000}]])
+    amoro.ensure_optimizer(since=5000, timeout=-1)
+    self.assertEqual(1, len(self.started(amoro)))
+
+  def test_stop_releases_the_optimizers(self):
+    amoro = self.amoro([[{"jobId": "j1"}, {"jobId": "j2"}]])
+    amoro.release_optimizers()
+    self.assertEqual([("DELETE", "/optimize/optimizers/j1"), ("DELETE", "/optimize/optimizers/j2")],
+                     [call for call in amoro.calls if call[0] == "DELETE"])
+
+
 class TestAmoroServiceAdvisor(unittest.TestCase):
   advisor = load_amoro_advisor()
 

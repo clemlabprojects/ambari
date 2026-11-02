@@ -428,20 +428,43 @@ def optimizers(group=None):
   return result.get("list", [])
 
 
-def ensure_optimizer():
-  """Starts the optimizer of the Ambari group when none is running, unless optimizing is paused."""
+def ensure_optimizer(since=None, timeout=90):
+  """Starts the optimizer of the Ambari group when none is running, unless optimizing is paused.
+
+  After a restart Amoro lists the optimizers of its database, dead ones included, until their heartbeat
+  timeout (optimizer.heart-beat-timeout, 1 min by default): with `since` (epoch ms, before the server
+  start), only an optimizer which sent a heartbeat since counts. A running one sends one every 10 s."""
   import params
 
   if is_optimizing_paused():
     Logger.warning("Optimizing is paused: no optimizer started. Run the Amoro service action "
                    "'Resume Optimizing' to resume table maintenance.")
     return
-  if optimizers():
-    return
+  deadline = time.time() + timeout
+  while True:
+    listed = optimizers()
+    if not listed:
+      break
+    if since is None or any(int(optimizer.get("touchTime") or 0) >= since for optimizer in listed):
+      return
+    if time.time() > deadline:
+      Logger.warning("Amoro still lists the optimizers {0}, which sent no heartbeat since its start.".format(
+        ", ".join(str(optimizer.get("jobId")) for optimizer in listed)))
+      break
+    Logger.info("Waiting for the optimizers listed by Amoro to send a heartbeat or to expire.")
+    time.sleep(10)
   amoro_api("POST", "/optimize/optimizers", {"optimizerGroup": params.amoro_optimizer_group,
                                              "parallelism": params.amoro_optimizer_parallelism})
   Logger.info("Started an optimizer in the Amoro optimizer group '{0}' (parallelism {1}).".format(
     params.amoro_optimizer_group, params.amoro_optimizer_parallelism))
+
+
+def release_optimizers():
+  """Releases the optimizers of the Ambari group: their container ends them, and Amoro forgets them, so
+  that the next start does not take their registrations for running optimizers."""
+  for optimizer in optimizers():
+    amoro_api("DELETE", "/optimize/optimizers/{0}".format(optimizer["jobId"]))
+    Logger.info("Released the optimizer {0}.".format(optimizer["jobId"]))
 
 
 # ---------------------------------------------------------------------------

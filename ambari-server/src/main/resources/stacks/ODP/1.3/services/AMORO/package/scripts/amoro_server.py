@@ -16,6 +16,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import os
+import time
+
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Execute
@@ -59,6 +62,7 @@ class AmoroServer(Script):
     amoro.setup_database()
 
     pid_file = params.amoro_pid_file
+    started = int(time.time() * 1000)
     Execute(format("{amoro_home}/bin/ams.sh start"),
             user=params.amoro_user,
             environment=amoro.amoro_environment(),
@@ -67,7 +71,7 @@ class AmoroServer(Script):
     amoro.wait_for_amoro()
     try:
       amoro.ensure_optimizer_group()
-      amoro.ensure_optimizer()
+      amoro.ensure_optimizer(since=started)
     except Fail as error:
       Logger.warning("Amoro is running but its optimizer could not be set up: {0}".format(error))
     amoro_access.setup_access()
@@ -81,12 +85,17 @@ class AmoroServer(Script):
     import params
     env.set_params(params)
 
+    if os.path.isfile(params.amoro_pid_file):
+      try:
+        amoro.release_optimizers()
+      except Fail as error:
+        Logger.warning("Could not release the optimizers through Amoro: {0}".format(error))
     Execute(format("{amoro_home}/bin/ams.sh stop"),
             user=params.amoro_user,
             environment=amoro.amoro_environment(),
             only_if=format("test -f {amoro_pid_file}"))
-    # The optimizers of the local container outlive the server: stop them with it. The server
-    # starts a new one at its next start.
+    # The optimizers of the local container outlive the server: end those left. The server starts a
+    # new one at its next start.
     optimizer_class = LOCAL_OPTIMIZER_CLASS
     Execute(format("pkill -u {amoro_user} -f {optimizer_class}"),
             user=params.amoro_user,
