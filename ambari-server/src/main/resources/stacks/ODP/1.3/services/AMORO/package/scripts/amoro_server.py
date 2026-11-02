@@ -87,8 +87,10 @@ class AmoroServer(Script):
             only_if=format("test -f {amoro_pid_file}"))
     # The optimizers of the local container outlive the server: stop them with it. The server
     # starts a new one at its next start.
-    Execute(format("pkill -u {amoro_user} -f {LOCAL_OPTIMIZER_CLASS}"),
-            only_if=format("pgrep -u {amoro_user} -f {LOCAL_OPTIMIZER_CLASS}"))
+    optimizer_class = LOCAL_OPTIMIZER_CLASS
+    Execute(format("pkill -u {amoro_user} -f {optimizer_class}"),
+            user=params.amoro_user,
+            only_if=format("pgrep -u {amoro_user} -f {optimizer_class}"))
 
   def register_catalogs(self, env):
     """REGISTER_CATALOGS: registers the Hive Metastore and Polaris Ozone catalogs missing in Amoro."""
