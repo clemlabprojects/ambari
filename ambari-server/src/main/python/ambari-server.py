@@ -183,7 +183,11 @@ def stop(args):
       os.kill(pid, signal.SIGKILL)
 
     pid_file_path = os.path.join(configDefaults.PID_DIR, PID_NAME)
-    os.remove(pid_file_path)
+    try:
+      os.remove(pid_file_path)
+    except FileNotFoundError:
+      # Already removed: systemd deletes the PIDFile of a unit whose process exited.
+      pass
     print("Ambari Server stopped")
     logger.info("Ambari Server stopped")
   else:

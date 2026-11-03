@@ -4916,6 +4916,19 @@ class TestAmbariServer(TestCase):
     self.assertTrue(removeMock.called)
     pass
 
+  @not_for_platform(PLATFORM_WINDOWS)
+  @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
+  @patch.object(_ambari_server_, "wait_for_server_to_stop", return_value = True)
+  @patch.object(_ambari_server_, "is_server_runing", return_value = (True, 123))
+  @patch("os.remove", side_effect = FileNotFoundError(2, "No such file or directory"))
+  @patch("os.kill")
+  def test_stop_when_the_pid_file_is_already_removed(self, kill_mock, remove_mock, is_server_runing_mock,
+                                                     wait_mock):
+    # systemd removes the PIDFile of a unit whose process exited: stop (and restart) carry on
+    _ambari_server_.stop(None)
+    self.assertTrue(kill_mock.called)
+    self.assertTrue(remove_mock.called)
+
   @only_for_platform(PLATFORM_WINDOWS)
   @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
   @patch("win32serviceutil.StopServiceWithDeps")
