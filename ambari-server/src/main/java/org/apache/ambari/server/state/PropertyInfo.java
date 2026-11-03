@@ -320,6 +320,11 @@ public class PropertyInfo {
     ADDITIONAL_USER_PROPERTY,
     NOT_MANAGED_HDFS_PATH,
     VALUE_FROM_PROPERTY_FILE,
-    KERBEROS_PRINCIPAL
+    KERBEROS_PRINCIPAL,
+    /**
+     * Secret of a service user on the Ozone S3 gateway: Ambari generates it, keeps it in its
+     * credential store and rotates it on request (see OzoneS3SecretsServerAction).
+     */
+    OZONE_S3_SECRET
   }
 }

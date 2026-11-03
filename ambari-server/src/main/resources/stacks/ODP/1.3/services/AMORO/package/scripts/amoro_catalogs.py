@@ -133,12 +133,15 @@ def fingerprint(data):
 # Catalog property holding the SHA-256 of the credentials Ambari last gave the catalog: Amoro keeps
 # them in its database and masks them in its API, so this is what start compares.
 FINGERPRINT = "ambari.credential-fingerprint"
+# The same for the Ozone S3 secret of the Polaris catalog (amoro_ozone_s3_secret).
+S3_FINGERPRINT = "ambari.s3-credential-fingerprint"
 
 
 def refresh_catalog_credentials(name):
   """Updates a registered catalog in place (tables and settings kept) when the credentials Ambari
   manages changed: the keytab of the Hive catalog (Regenerate Keytabs), the OIDC client secret of the
-  Polaris catalog (OIDC reconfigured). Both are followed by a restart, which runs this."""
+  Polaris catalog (OIDC reconfigured), its Ozone S3 secret (Rotate S3 Secrets). All are followed by a
+  restart, which runs this."""
   import params
 
   if name == params.amoro_hive_catalog_name and params.security_enabled:
@@ -149,18 +152,28 @@ def refresh_catalog_credentials(name):
     # Without file ids the stored site files are kept.
     update_catalog(detail, {"storage.type": "Hadoop"}, hive_kerberos_auth(), {FINGERPRINT: wanted})
     Logger.info("Refreshed the Kerberos credentials of the Amoro catalog '{0}'.".format(name))
-  elif name == params.polaris_catalog_name and params.amoro_polaris_oidc:
-    auth_properties = polaris_catalog_auth()
-    wanted = fingerprint(auth_properties["credential"])
+  elif name == params.polaris_catalog_name and (params.amoro_polaris_oidc or params.amoro_ozone_s3_secret):
     detail = amoro.amoro_api("GET", "/catalogs/" + urllib.parse.quote(name, safe=""))
-    if (detail.get("properties") or {}).get(FINGERPRINT) == wanted:
+    current = detail.get("properties") or {}
+    changes = {}
+    refreshed = []
+    if params.amoro_polaris_oidc:
+      auth_properties = polaris_catalog_auth()
+      wanted = fingerprint(auth_properties["credential"])
+      if current.get(FINGERPRINT) != wanted:
+        changes.update(auth_properties, **{FINGERPRINT: wanted})
+        refreshed.append("OIDC")
+    # The S3 secret comes back masked: Amoro keeps the stored one unless it is replaced.
+    auth = {k: v for k, v in (detail.get("authConfig") or {}).items() if isinstance(v, str)}
+    if params.amoro_ozone_s3_secret and current.get(S3_FINGERPRINT) != s3_credential_fingerprint():
+      auth = ozone_s3_auth()
+      changes[S3_FINGERPRINT] = s3_credential_fingerprint()
+      refreshed.append("Ozone S3")
+    if not changes:
       return
     storage = {k: v for k, v in (detail.get("storageConfig") or {}).items() if isinstance(v, str)}
-    # The S3 secret comes back masked: Amoro keeps the stored one.
-    auth = {k: v for k, v in (detail.get("authConfig") or {}).items() if isinstance(v, str)}
-    auth_properties[FINGERPRINT] = wanted
-    update_catalog(detail, storage, auth, auth_properties)
-    Logger.info("Refreshed the OIDC credentials of the Amoro catalog '{0}'.".format(name))
+    update_catalog(detail, storage, auth, changes)
+    Logger.info("Refreshed the {0} credentials of the Amoro catalog '{1}'.".format(" and ".join(refreshed), name))
 
 
 def update_catalog(detail, storage, auth, properties):
@@ -220,7 +233,7 @@ def register_polaris_catalog(name):
 
   properties = polaris_catalog_auth(token)
   grant_polaris_catalog(token, name)
-  access_key, secret_key = ozone_s3_credential()
+  auth = ozone_s3_auth()
 
   properties.update({
     "uri": params.polaris_url + "/api/catalog",
@@ -229,9 +242,9 @@ def register_polaris_catalog(name):
     "s3.path-style-access": str(storage_info.get("pathStyleAccess", True)).lower(),
   })
   properties[FINGERPRINT] = fingerprint(properties["credential"])
+  if params.amoro_ozone_s3_secret:
+    properties[S3_FINGERPRINT] = s3_credential_fingerprint()
   storage = {"storage.type": "S3", "storage.s3.endpoint": s3_endpoint, "storage.s3.region": s3_region}
-  auth = {"auth.type": "ak/sk", "auth.ak_sk.access_key": access_key,
-          "auth.ak_sk.secret_key": secret_key}
   amoro.amoro_api("POST", "/catalogs", catalog_body(name, "rest", storage, auth, properties))
 
 
@@ -358,12 +371,24 @@ def grant_polaris_catalog(token, catalog):
   Logger.info("Granted CATALOG_MANAGE_CONTENT on the Polaris catalog '{0}' to '{1}'.".format(catalog, principal))
 
 
-def ozone_s3_credential():
-  """(access key, secret) of the Amoro user on the Ozone S3 gateway. The secret is generated and set on
-  Ozone here, then kept by the Amoro catalog only: registering the catalog again replaces it."""
+def ozone_s3_auth():
+  access_key, secret_key = ozone_s3_credential()
+  return {"auth.type": "ak/sk", "auth.ak_sk.access_key": access_key, "auth.ak_sk.secret_key": secret_key}
+
+
+def s3_credential_fingerprint():
   import params
 
-  secret = secrets.token_urlsafe(30)
+  return fingerprint(params.amoro_user + ":" + params.amoro_ozone_s3_secret)
+
+
+def ozone_s3_credential():
+  """(access key, secret) of the Amoro user on the Ozone S3 gateway, the secret being set on Ozone here.
+  It is the secret Ambari manages (amoro_ozone_s3_secret); without one (an Ambari server that does not
+  generate it), a random secret only the Amoro catalog keeps."""
+  import params
+
+  secret = params.amoro_ozone_s3_secret or secrets.token_urlsafe(30)
   if not params.ozone_security_enabled:
     # Without Ozone security the S3 gateway checks no signature: the access key names the user.
     return params.amoro_user, secret
@@ -372,7 +397,7 @@ def ozone_s3_credential():
   match = re.search(r"AWS_ACCESS_KEY_ID=['\"]?([^'\"\s]+)", output) or re.search(r"awsAccessKey\s*[:=]\s*(\S+)", output)
   access_key = match.group(1) if match else params.amoro_principal
   run_ozone(["s3", "setsecret", "-s", secret, "-e"], secret=True)
-  Logger.info("Set a new Ozone S3 secret for '{0}'.".format(access_key))
+  Logger.info("Set the Ozone S3 secret of '{0}'.".format(access_key))
   return access_key, secret
 
 

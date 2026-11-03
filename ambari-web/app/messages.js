@@ -487,6 +487,9 @@ Em.I18n.translations = {
   'question.sure.stopAll':'Are you sure you want to stop all the components?',
   'question.sure.restartAll':'Are you sure you want to restart all the components?',
   'question.sure.regenerateKeytab.service': 'Are you sure you want to regenerate keytab file operations for a {0} service?',
+  'services.service.actions.rotateOzoneS3Secrets': 'Rotate S3 Secrets',
+  'services.service.actions.rotateOzoneS3Secrets.confirm': 'Ambari will generate new Ozone S3 secrets for the services using the Ozone S3 gateway (such as Polaris and Amoro). Restart those services afterwards: they apply their new secret on Ozone when they start, and keep using the current one until then. Continue?',
+  'services.service.actions.rotateOzoneS3Secrets.error': 'The Ozone S3 secrets could not be rotated',
   'question.sure.regenerateKeytab.host': 'Are you sure you want to regenerate keytab file operations for a {0} host?',
 
   'popup.highlight':'click to highlight',

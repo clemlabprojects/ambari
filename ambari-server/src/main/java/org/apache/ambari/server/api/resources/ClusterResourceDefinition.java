@@ -26,6 +26,7 @@ import org.apache.ambari.server.api.query.render.ClusterBlueprintRenderer;
 import org.apache.ambari.server.api.query.render.Renderer;
 import org.apache.ambari.server.controller.KerberosHelper;
 import org.apache.ambari.server.controller.spi.Resource;
+import org.apache.ambari.server.serveraction.ozone.OzoneS3SecretsServerAction;
 
 /**
  * Cluster resource definition.
@@ -92,6 +93,7 @@ public class ClusterResourceDefinition extends BaseResourceDefinition {
     directives.add(KerberosHelper.DIRECTIVE_COMPONENTS);
     directives.add(KerberosHelper.DIRECTIVE_IGNORE_CONFIGS);
     directives.add(KerberosHelper.DIRECTIVE_CONFIG_UPDATE_POLICY);
+    directives.add(OzoneS3SecretsServerAction.DIRECTIVE);
     return directives;
   }
 

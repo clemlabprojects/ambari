@@ -187,6 +187,8 @@ import org.apache.ambari.server.security.ldap.LdapSyncDto;
 import org.apache.ambari.server.serveraction.kerberos.KerberosInvalidConfigurationException;
 import org.apache.ambari.server.serveraction.kerberos.KerberosOperationException;
 import org.apache.ambari.server.serveraction.oidc.ConfigureOidcServerAction;
+import org.apache.ambari.server.serveraction.ozone.OzoneS3SecretsHelper;
+import org.apache.ambari.server.serveraction.ozone.OzoneS3SecretsServerAction;
 import org.apache.ambari.server.stack.ExtensionHelper;
 import org.apache.ambari.server.stack.RepoUtil;
 import org.apache.ambari.server.stageplanner.RoleGraph;
@@ -2064,6 +2066,23 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
         }
       }
     }
+    String ozoneS3SecretsOperation = (requestProperties == null) ? null
+      : requestProperties.get(OzoneS3SecretsServerAction.DIRECTIVE);
+    if (StringUtils.isNotEmpty(ozoneS3SecretsOperation)) {
+      if (!OzoneS3SecretsServerAction.OPERATION_ENSURE.equalsIgnoreCase(ozoneS3SecretsOperation)
+          && !OzoneS3SecretsServerAction.OPERATION_ROTATE.equalsIgnoreCase(ozoneS3SecretsOperation)) {
+        throw new IllegalArgumentException(String.format("Unexpected value for %s: %s. Expected: %s or %s",
+          OzoneS3SecretsServerAction.DIRECTIVE, ozoneS3SecretsOperation,
+          OzoneS3SecretsServerAction.OPERATION_ENSURE, OzoneS3SecretsServerAction.OPERATION_ROTATE));
+      }
+      if (!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, cluster.getResourceId(),
+          EnumSet.of(RoleAuthorization.CLUSTER_MANAGE_CREDENTIALS))) {
+        throw new AuthorizationException("The authenticated user does not have authorization to manage the Ozone S3 secrets");
+      }
+      requestStageContainer = injector.getInstance(OzoneS3SecretsHelper.class)
+        .addStage(cluster, requestStageContainer, ozoneS3SecretsOperation);
+    }
+
     if (fireAgentUpdates && (serviceConfigVersionResponse != null || nonServiceConfigsChanged)) {
       configHelper.updateAgentConfigs(Collections.singleton(cluster.getClusterName()));
     }
@@ -3224,6 +3243,12 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
           "Provision OIDC clients for installed services");
       }
 
+      OzoneS3SecretsHelper ozoneS3SecretsHelper = injector.getInstance(OzoneS3SecretsHelper.class);
+      if (ozoneS3SecretsHelper.isNeededOnInstall(cluster, getServicesInstalledFirstTime(changedScHosts))) {
+        requestStages = ozoneS3SecretsHelper.addStage(cluster, requestStages,
+          OzoneS3SecretsServerAction.OPERATION_ENSURE);
+      }
+
       List<Stage> stages = requestStages.getStages();
       LOG.debug("Created {} stages", ((stages != null) ? stages.size() : 0));
 
@@ -3232,6 +3257,29 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
     }
 
     return requestStages;
+  }
+
+  /**
+   * Names of the services with components going from INIT (or INSTALL_FAILED) to INSTALLED.
+   */
+  private Set<String> getServicesInstalledFirstTime(
+      Map<String, Map<State, List<ServiceComponentHost>>> changedScHosts) {
+    Set<String> serviceNames = new HashSet<>();
+    if (MapUtils.isEmpty(changedScHosts)) {
+      return serviceNames;
+    }
+    for (Map<State, List<ServiceComponentHost>> changedScHostStates : changedScHosts.values()) {
+      List<ServiceComponentHost> scHosts = (changedScHostStates == null) ? null : changedScHostStates.get(State.INSTALLED);
+      if (CollectionUtils.isEmpty(scHosts)) {
+        continue;
+      }
+      for (ServiceComponentHost scHost : scHosts) {
+        if (scHost.getState() == State.INIT || scHost.getState() == State.INSTALL_FAILED) {
+          serviceNames.add(scHost.getServiceName());
+        }
+      }
+    }
+    return serviceNames;
   }
 
   private Set<String> getServicesToProvisionOidcOnInstall(Cluster cluster,

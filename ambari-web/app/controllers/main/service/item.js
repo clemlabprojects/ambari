@@ -932,6 +932,33 @@ App.MainServiceItemController = Em.Controller.extend(App.SupportClientConfigsDow
     App.showAlertPopup(Em.I18n.t('common.error'), Em.I18n.t('alerts.notifications.regenerateKeytab.service.error').format(this.content.get('serviceName')));
   },
   /**
+   * Replaces the Ozone S3 secrets Ambari manages for the services using the Ozone S3 gateway
+   * (OZONE_S3_SECRET properties); the restart of those services applies them on Ozone.
+   */
+  rotateOzoneS3Secrets: function () {
+    var self = this;
+    return App.showConfirmationPopup(function () {
+      return App.ajax.send({
+        name: 'service.ozone.rotate_s3_secrets',
+        sender: self,
+        data: {
+          clusterName: App.get('clusterName')
+        },
+        success: 'rotateOzoneS3SecretsSuccess',
+        error: 'rotateOzoneS3SecretsError'
+      });
+    }, Em.I18n.t('services.service.actions.rotateOzoneS3Secrets.confirm'));
+  },
+
+  rotateOzoneS3SecretsSuccess: function () {
+    App.router.get('backgroundOperationsController').showPopup();
+  },
+
+  rotateOzoneS3SecretsError: function () {
+    App.showAlertPopup(Em.I18n.t('common.error'), Em.I18n.t('services.service.actions.rotateOzoneS3Secrets.error'));
+  },
+
+  /**
    * On click callback for <code>run compaction</code> button
    * @param event
    */

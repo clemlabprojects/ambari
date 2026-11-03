@@ -455,6 +455,12 @@ App.HostComponentActionMap = {
         cssClass: 'glyphicon glyphicon-stop',
         disabled: false
       },
+      ROTATE_OZONE_S3_SECRETS: {
+        action: 'rotateOzoneS3Secrets',
+        label: Em.I18n.t('services.service.actions.rotateOzoneS3Secrets'),
+        cssClass: 'glyphicon glyphicon-refresh',
+        disabled: false
+      },
       CREATE_OZONE_RANGER_POLICIES: {
         action: 'createOzoneRangerPolicies',
         customCommand: 'CREATE_OZONE_RANGER_POLICIES',

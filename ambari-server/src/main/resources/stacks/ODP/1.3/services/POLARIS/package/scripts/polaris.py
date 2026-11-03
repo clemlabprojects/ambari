@@ -747,8 +747,8 @@ def bootstrap_ozone_catalog(required=False):
       catalog_name=catalog_name,
     )
     if not access_id or not secret:
-      skip("could not resolve the Ozone S3 credentials (set polaris_ozone_principal_secret, then restart "
-           "Polaris).")
+      skip("could not resolve the Ozone S3 credentials (run Ozone > Actions > Rotate S3 Secrets, or set "
+           "polaris_ozone_principal_secret, then restart Polaris).")
       return
 
     Logger.info("Step 2/3: Creating Ozone volume '{0}' and bucket '{1}'.".format(volume_name, bucket_name))

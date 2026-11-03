@@ -523,8 +523,8 @@
     <name>polaris_ozone_principal_secret</name>
     <display-name>Polaris Ozone S3 Secret</display-name>
     <value></value>
-    <description>S3 secret of the Polaris service user on the Ozone S3 gateway (set with ozone s3 setsecret and stored in the Ozone catalog). Required when Ozone is installed. No default: choose a strong secret.</description>
-    <property-type>PASSWORD</property-type>
+    <description>S3 secret of the Polaris service user on the Ozone S3 gateway, applied with ozone s3 setsecret when Polaris starts and stored in the Ozone catalog. Ambari generates it when Polaris or Ozone is installed (Ozone > Actions > Rotate S3 Secrets replaces it); a value set here is kept.</description>
+    <property-type>PASSWORD OZONE_S3_SECRET</property-type>
     <value-attributes>
       <type>password</type>
       <empty-value-valid>true</empty-value-valid>

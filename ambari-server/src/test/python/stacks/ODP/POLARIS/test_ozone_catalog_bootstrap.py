@@ -65,7 +65,7 @@ class TestPolarisOzoneCatalogBootstrap(unittest.TestCase):
       load_polaris(polaris_ozone_s3_endpoint="").bootstrap_ozone_catalog(required=True)
 
 
-class TestPolarisOzoneSecretRequired(unittest.TestCase):
+class TestPolarisOzoneSecretValidation(unittest.TestCase):
   advisor = load_polaris_advisor()
 
   def errors(self, service_names, secret):
@@ -75,10 +75,14 @@ class TestPolarisOzoneSecretRequired(unittest.TestCase):
       services["configurations"]["polaris-env"]["properties"], {}, services["configurations"], services, {"items": []})
     return [item["config-name"] for item in items if item["config-name"] == "polaris_ozone_principal_secret"]
 
-  def test_the_secret_is_required_with_ozone(self):
-    self.assertEqual(["polaris_ozone_principal_secret"], self.errors(["POLARIS", "OZONE"], ""))
+  def test_an_empty_secret_is_left_to_ambari(self):
+    # Ambari generates it when the service is installed (OZONE_S3_SECRET).
+    self.assertEqual([], self.errors(["POLARIS", "OZONE"], ""))
     self.assertEqual([], self.errors(["POLARIS", "OZONE"], "s3-secret"))
     self.assertEqual([], self.errors(["POLARIS"], ""))
+
+  def test_the_former_default_secret_is_flagged(self):
+    self.assertEqual(["polaris_ozone_principal_secret"], self.errors(["POLARIS", "OZONE"], "ozone-engine-secret"))
 
 
 if __name__ == "__main__":

@@ -167,7 +167,8 @@ def load_amoro_catalogs(**overrides):
     krb5_conf_path="/etc/krb5.conf", amoro_user="amoro", amoro_optimizer_group="local",
     amoro_polaris_principal="amoro", polaris_authorization_type="ranger", polaris_ranger_service="c1_polaris",
     polaris_url="https://polaris:8443", polaris_realm="POLARIS", polaris_realm_header="Polaris-Realm",
-    ranger_admin_url="https://ranger:6182", ranger_admin_username="admin", ranger_admin_password="x")
+    ranger_admin_url="https://ranger:6182", ranger_admin_username="admin", ranger_admin_password="x",
+    amoro_ozone_s3_secret="")
   defaults.update(overrides)
   for key, value in defaults.items():
     setattr(params, key, value)
@@ -237,6 +238,17 @@ class TestAmoroCatalogs(unittest.TestCase):
     self.assertEqual((["s3", "setsecret", "-s", secret, "-e"], True), commands[-1])
     self.assertTrue(all(quiet for _, quiet in commands))
     self.assertNotEqual(secret, catalogs.ozone_s3_credential()[1])
+
+  def test_ozone_s3_secret_managed_by_ambari_is_set(self):
+    catalogs = load_amoro_catalogs(ozone_security_enabled=True, amoro_ozone_s3_secret="managed-secret")
+    commands = []
+
+    def run_ozone(args, secret=False):
+      commands.append(list(args))
+      return "export AWS_ACCESS_KEY_ID='amoro/edge.example.com@EXAMPLE.COM'" if args[1] == "getsecret" else ""
+    catalogs.run_ozone = run_ozone
+    self.assertEqual(("amoro/edge.example.com@EXAMPLE.COM", "managed-secret"), catalogs.ozone_s3_credential())
+    self.assertEqual(["s3", "setsecret", "-s", "managed-secret", "-e"], commands[-1])
 
   def test_ozone_without_security_needs_no_secret_on_ozone(self):
     catalogs = load_amoro_catalogs(ozone_security_enabled=False)
@@ -336,6 +348,35 @@ class TestAmoroCatalogCredentialRefresh(unittest.TestCase):
     self.assertEqual("https://polaris:8443/api/catalog", body["properties"]["uri"])
     self.assertEqual("********", body["authConfig"]["auth.ak_sk.secret_key"])
     self.assertEqual(self.POLARIS["storageConfig"], body["storageConfig"])
+
+  def test_rotated_s3_secret_is_set_on_ozone_and_in_the_polaris_catalog(self):
+    catalogs, _ = self.catalogs(dict(self.POLARIS), has_hive=False, has_polaris_ozone_catalog=True,
+                                amoro_polaris_oidc=False, ozone_security_enabled=True, amoro_ozone_s3_secret="rotated")
+    commands = []
+
+    def run_ozone(args, secret=False):
+      commands.append(list(args))
+      return "export AWS_ACCESS_KEY_ID='amoro/edge.example.com@EXAMPLE.COM'" if args[1] == "getsecret" else ""
+    catalogs.run_ozone = run_ozone
+    catalogs.polaris_catalog_auth = lambda token=None: self.fail("the OIDC credential is not Ambari's to refresh here")
+    catalogs.register_catalogs(required=True)
+    self.assertEqual(["s3", "setsecret", "-s", "rotated", "-e"], commands[-1])
+    body = catalogs.puts[0][2]
+    self.assertEqual({"auth.type": "ak/sk", "auth.ak_sk.access_key": "amoro/edge.example.com@EXAMPLE.COM",
+                      "auth.ak_sk.secret_key": "rotated"}, body["authConfig"])
+    self.assertEqual(catalogs.s3_credential_fingerprint(), body["properties"][catalogs.S3_FINGERPRINT])
+    self.assertEqual("old", body["properties"][catalogs.FINGERPRINT])
+    self.assertEqual(self.POLARIS["storageConfig"], body["storageConfig"])
+
+  def test_unchanged_s3_secret_leaves_the_polaris_catalog_alone(self):
+    catalogs, _ = self.catalogs(dict(self.POLARIS), amoro_ozone_s3_secret="same")
+    detail = dict(self.POLARIS, properties=dict(self.POLARIS["properties"],
+                                                **{catalogs.S3_FINGERPRINT: catalogs.s3_credential_fingerprint()}))
+    catalogs, _ = self.catalogs(detail, has_hive=False, has_polaris_ozone_catalog=True, amoro_polaris_oidc=False,
+                                amoro_ozone_s3_secret="same")
+    catalogs.run_ozone = lambda args, secret=False: self.fail("no ozone command expected")
+    catalogs.register_catalogs(required=True)
+    self.assertEqual([], catalogs.puts)
 
   def test_polaris_issued_credential_is_not_refreshed(self):
     catalogs, _ = self.catalogs(dict(self.POLARIS), has_hive=False, has_polaris_ozone_catalog=True, amoro_polaris_oidc=False)

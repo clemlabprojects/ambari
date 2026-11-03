@@ -257,6 +257,10 @@ App.MainServiceItemView = Em.View.extend(App.HiveInteractiveCheck, {
           });
         }
 
+        if (serviceName === 'OZONE' && App.isAuthorized('CLUSTER.MANAGE_CREDENTIALS')) {
+          options.push(actionMap.ROTATE_OZONE_S3_SECRETS);
+        }
+
         if (serviceName === 'HIVE' && App.Service.find().someProperty('serviceName', 'OZONE')) {
           var hiveMetastoreComponent = App.StackServiceComponent.find().findProperty('componentName', 'HIVE_METASTORE');
           if (hiveMetastoreComponent && (hiveMetastoreComponent.get('customCommands') || []).contains('CREATE_OZONE_RANGER_POLICIES')) {

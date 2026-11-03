@@ -2149,6 +2149,21 @@ var urls = {
     }
   },
 
+  'service.ozone.rotate_s3_secrets': {
+    'real': '/clusters/{clusterName}?ozone_s3_secrets=ROTATE',
+    'mock': '',
+    'type': 'PUT',
+    'format': function (data) {
+      return {
+        data: JSON.stringify({
+          "Clusters": {
+            "cluster_name": data.clusterName
+          }
+        })
+      }
+    }
+  },
+
   'admin.kerberos_security.regenerate_keytabs.host' : {
     'real': '/clusters/{clusterName}?regenerate_keytabs=all&regenerate_hosts={hostName}&config_update_policy=none',
     'mock': '',

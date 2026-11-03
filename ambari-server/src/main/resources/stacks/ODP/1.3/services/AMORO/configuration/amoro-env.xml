@@ -258,6 +258,19 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property require-input="false">
+    <name>amoro_ozone_s3_secret</name>
+    <display-name>Amoro Ozone S3 Secret</display-name>
+    <value></value>
+    <property-type>PASSWORD OZONE_S3_SECRET</property-type>
+    <description>S3 secret of the Amoro user on the Ozone S3 gateway, used by the Polaris Ozone catalog of Amoro and applied with ozone s3 setsecret when Amoro starts. Ambari generates it when Amoro or Ozone is installed (Ozone > Actions > Rotate S3 Secrets replaces it); a value set here is kept.</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
     <name>amoro_oidc_auth_server_url</name>
     <display-name>OIDC Issuer URL</display-name>
     <value></value>

@@ -183,6 +183,7 @@ amoro_polaris_principal = amoro_user
 # with credentials Polaris issues to the principal amoro_polaris_principal.
 amoro_oidc_client_id = str(default("/configurations/amoro-env/amoro_oidc_client_id", "")).strip()
 amoro_oidc_client_secret = str(default("/configurations/amoro-env/amoro_oidc_client_secret", ""))
+amoro_ozone_s3_secret = str(default("/configurations/amoro-env/amoro_ozone_s3_secret", "")).strip()
 amoro_oidc_auth_server_url = str(default("/configurations/amoro-env/amoro_oidc_auth_server_url", "")).strip().rstrip("/")
 polaris_credential_mode = str(polaris_app_properties.get("polaris.authentication.credential-mode", "internal")).strip().lower()
 amoro_polaris_oidc = (bool(amoro_oidc_client_id and amoro_oidc_client_secret.strip() and amoro_oidc_auth_server_url)
