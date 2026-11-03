@@ -43,6 +43,10 @@ limitations under the License.
 --rpc_encryption=required
 --keytab_file={{kudu_keytab}}
 --principal={{kudu_principal_name}}
+{# the web UI authenticates its users with Kerberos (SPNEGO), with the HTTP/_HOST principal of the keytab #}
+{% if kudu_webserver_require_spnego and '--webserver_require_spnego' not in tserver_additional_flags %}
+--webserver_require_spnego=true
+{% endif %}
 {% endif %}
 {% if kudu_ranger_authz_enabled %}
 {% if '--ranger_config_path' not in tserver_additional_flags %}

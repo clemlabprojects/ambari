@@ -64,6 +64,10 @@ limitations under the License.
 -kerberos_reinit_interval={{kerberos_reinit_interval}}
 -principal={{ impala_principal }}
 -keytab_file={{ impala_keytab }}
+{# the web UI authenticates its users with Kerberos (SPNEGO), with the HTTP/_HOST principal of the keytab #}
+{% if impala_webserver_require_spnego %}
+-webserver_require_spnego=true
+{% endif %}
 {% endif %}
 {% if client_services_ssl_enabled %}
 -ssl_server_certificate={{ssl_server_certificate}}

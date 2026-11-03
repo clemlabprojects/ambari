@@ -34,6 +34,10 @@
                 },
                 "configuration": "impala-env/impala_keytab"
               }
+            },
+            {
+              "name": "impala_state_store_http",
+              "reference": "/IMPALA/IMPALA_DAEMON/impala_http"
             }
           ]
         },
@@ -59,6 +63,10 @@
                 },
                 "configuration": "impala-env/impala_keytab"
               }
+            },
+            {
+              "name": "impala_catalog_service_http",
+              "reference": "/IMPALA/IMPALA_DAEMON/impala_http"
             }
           ]
         },
@@ -135,6 +143,18 @@
               "reference": "/smokeuser"
             }
           ]
+        }
+      ],
+      "identities": [
+        {
+          "name": "impala_spnego",
+          "reference": "/spnego",
+          "principal": {
+            "configuration": "impala-env/impala_spnego_principal"
+          },
+          "keytab": {
+            "configuration": "impala-env/impala_spnego_keytab"
+          }
         }
       ]
     }

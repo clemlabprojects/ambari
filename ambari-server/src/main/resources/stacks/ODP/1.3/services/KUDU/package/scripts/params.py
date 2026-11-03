@@ -49,6 +49,8 @@ kudu_log_dir = kudu_env['kudu_log_dir']
 kudu_run_dir = kudu_env['kudu_run_dir']
 ranger_kudu_receiver_fifo_dir = default('/configurations/kudu-env/ranger_kudu_receiver_fifo_dir', '/var/lib/kudu')
 kudu_enable_tls = str(default('/configurations/kudu-env/kudu_enable_tls', 'false')).lower() == 'true'
+# Kerberized cluster: the web UI requires SPNEGO unless the operator turns it off.
+kudu_webserver_require_spnego = str(default('/configurations/kudu-env/kudu_webserver_require_spnego', 'true')).lower() == 'true'
 kudu_tls_cert_file = default('/configurations/kudu-env/kudu_tls_cert_file', '/etc/kudu/conf/tls/kudu-server.crt')
 kudu_tls_private_key_file = default('/configurations/kudu-env/kudu_tls_private_key_file', '/etc/kudu/conf/tls/kudu-server.key')
 kudu_tls_ca_cert_file = default('/configurations/kudu-env/kudu_tls_ca_cert_file', '')

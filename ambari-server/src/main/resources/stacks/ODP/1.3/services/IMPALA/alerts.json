@@ -11,11 +11,13 @@
         "source": {
           "type": "WEB",
           "uri": {
-            "http": "localhost:{{impala-env/impala_catalog_webserver_port}}/healthz",
-            "https": "localhost:{{impala-env/impala_catalog_webserver_port}}/healthz",
+            "http": "0.0.0.0:{{impala-env/impala_catalog_webserver_port}}/healthz",
+            "https": "0.0.0.0:{{impala-env/impala_catalog_webserver_port}}/healthz",
             "https_property": "{{impala-env/client_services_ssl_enabled}}",
             "https_property_value": "true",
-            "connection_timeout": 5.0
+            "connection_timeout": 5.0,
+            "kerberos_keytab": "{{impala-env/impala_spnego_keytab}}",
+            "kerberos_principal": "{{impala-env/impala_spnego_principal}}"
           },
           "reporting": {
             "ok": {
@@ -56,7 +58,7 @@
         }
       }
     ],
-	"IMPALA_STATE_STORE": [
+    "IMPALA_STATE_STORE": [
       {
         "name": "impala_state_store_health",
         "label": "StateStore Health",
@@ -66,11 +68,13 @@
         "source": {
           "type": "WEB",
           "uri": {
-            "http": "localhost:{{impala-env/impala_statestore_webserver_port}}/healthz",
-            "https": "localhost:{{impala-env/impala_statestore_webserver_port}}/healthz",
+            "http": "0.0.0.0:{{impala-env/impala_statestore_webserver_port}}/healthz",
+            "https": "0.0.0.0:{{impala-env/impala_statestore_webserver_port}}/healthz",
             "https_property": "{{impala-env/client_services_ssl_enabled}}",
             "https_property_value": "true",
-            "connection_timeout": 5.0
+            "connection_timeout": 5.0,
+            "kerberos_keytab": "{{impala-env/impala_spnego_keytab}}",
+            "kerberos_principal": "{{impala-env/impala_spnego_principal}}"
           },
           "reporting": {
             "ok": {
@@ -111,7 +115,7 @@
         }
       }
     ],
-	"IMPALA_DAEMON": [
+    "IMPALA_DAEMON": [
       {
         "name": "impala_daemon_health",
         "label": "Impalad Health",
@@ -121,11 +125,13 @@
         "source": {
           "type": "WEB",
           "uri": {
-            "http": "localhost:{{impala-env/impala_daemon_webserver_port}}/healthz",
-            "https": "localhost:{{impala-env/impala_daemon_webserver_port}}/healthz",
+            "http": "0.0.0.0:{{impala-env/impala_daemon_webserver_port}}/healthz",
+            "https": "0.0.0.0:{{impala-env/impala_daemon_webserver_port}}/healthz",
             "https_property": "{{impala-env/client_services_ssl_enabled}}",
             "https_property_value": "true",
-            "connection_timeout": 5.0
+            "connection_timeout": 5.0,
+            "kerberos_keytab": "{{impala-env/impala_spnego_keytab}}",
+            "kerberos_principal": "{{impala-env/impala_spnego_principal}}"
           },
           "reporting": {
             "ok": {

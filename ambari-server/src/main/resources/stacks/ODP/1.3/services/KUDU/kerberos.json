@@ -25,6 +25,24 @@
                 },
                 "configuration": "kudu-env/kudu_keytab"
               }
+            },
+            {
+              "name": "kudu_master_http",
+              "principal": {
+                "value": "HTTP/_HOST@${realm}",
+                "type": "service"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/kudu.service.keytab",
+                "owner": {
+                  "name": "${kudu-env/kudu_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${kudu-env/kudu_group}",
+                  "access": ""
+                }
+              }
             }
           ]
         },
@@ -49,6 +67,24 @@
                   "access": ""
                 },
                 "configuration": "kudu-env/kudu_keytab"
+              }
+            },
+            {
+              "name": "kudu_tserver_http",
+              "principal": {
+                "value": "HTTP/_HOST@${realm}",
+                "type": "service"
+              },
+              "keytab": {
+                "file": "${keytab_dir}/kudu.service.keytab",
+                "owner": {
+                  "name": "${kudu-env/kudu_user}",
+                  "access": "r"
+                },
+                "group": {
+                  "name": "${kudu-env/kudu_group}",
+                  "access": ""
+                }
               }
             }
           ]

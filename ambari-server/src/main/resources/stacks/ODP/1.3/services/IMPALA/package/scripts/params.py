@@ -345,6 +345,8 @@ for key, value in impala_env.items():
 impala_template = impala_defaults + impala_catalog_template + impala_state_store_template + impala_server_template
 
 security_enabled = _as_bool(default("/configurations/cluster-env/security_enabled", False))
+# Kerberized cluster: the web UIs require SPNEGO unless the operator turns it off.
+impala_webserver_require_spnego = _as_bool(default("/configurations/impala-env/impala_webserver_require_spnego", True))
 
 # Kerberos-derived values are referenced while rendering templates even on
 # non-secure install paths; define safe defaults and only emit them in flags
