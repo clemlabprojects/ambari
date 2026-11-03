@@ -71,6 +71,8 @@ def load_amoro_scripts(**overrides):
   params.amoro_java_home = "/usr/lib/jvm/java-21"
   params.amoro_server_heapsize = 2048
   params.amoro_optimizer_container = "local"
+  params.amoro_data_dir = "/nonexistent/amoro-test"
+  params.amoro_optimizer_managed = True
   for key, value in overrides.items():
     if key == "site":
       params.amoro_site.update(value)
@@ -492,15 +494,16 @@ class TestAmoroPauseOptimizing(unittest.TestCase):
     amoro = self.amoro([[self.TABLE]] * 3)
     self.assertRaises(amoro.Fail, amoro.pause_optimizing, timeout=-1)
 
-  def test_paused_server_starts_no_optimizer_until_resumed(self):
+  def test_paused_group_keeps_no_optimizer_until_resumed(self):
     amoro = self.amoro([])
     amoro.pause_optimizing()
-    amoro.calls = []
-    amoro.ensure_optimizer()
-    self.assertEqual([], amoro.calls)
+    self.assertEqual("0", amoro.optimizer_group_properties()["dynamic-allocation.min-parallelism"])
+    # the min-parallelism is set to 0 before the optimizers are released
+    self.assertLess(amoro.calls.index(("POST", "/optimize/resourceGroups")),
+                    amoro.calls.index(("DELETE", "/optimize/optimizers/j1")))
     amoro.resume_optimizing()
     self.assertFalse(amoro.is_optimizing_paused())
-    self.assertIn(("POST", "/optimize/optimizers"), amoro.calls)
+    self.assertEqual("2", amoro.optimizer_group_properties()["dynamic-allocation.min-parallelism"])
     self.assertRaises(amoro.Fail, amoro.check_optimizing_paused)
 
   def test_alert_reports_the_paused_flag(self):
@@ -512,49 +515,55 @@ class TestAmoroPauseOptimizing(unittest.TestCase):
     self.assertEqual("WARNING", alert.execute(configurations)[0])
 
 
-class TestAmoroOptimizerRestart(unittest.TestCase):
-  """After a restart, Amoro lists the optimizers of its database until their heartbeat timeout."""
+class TestAmoroOptimizerGroup(unittest.TestCase):
+  """Amoro keeps the optimizer group at its min-parallelism: Ambari only declares the group."""
 
-  def amoro(self, rounds):
+  def amoro(self, groups=()):
     import tempfile
     amoro = load_amoro_scripts(amoro_data_dir=tempfile.mkdtemp(), amoro_optimizer_group="local",
-                               amoro_optimizer_parallelism=2)
-    amoro.time.sleep = lambda seconds: None
+                               amoro_optimizer_parallelism=2, amoro_optimizer_memory=2048, amoro_user="amoro",
+                               user_group="hadoop")
+    amoro.File = lambda path, action="create", **kwargs: open(path, "w").close() if action == "create" else os.remove(path)
     amoro.calls = []
-    listed = list(rounds)
 
     def amoro_api(method, path, body=None, timeout=60, raw_body=None, content_type=None):
-      amoro.calls.append((method, path.split("?")[0]))
+      amoro.calls.append((method, path.split("?")[0], body))
+      if method == "GET" and path.startswith("/optimize/resourceGroups"):
+        return [{"resourceGroup": {"name": name}} for name in groups]
       if method == "GET" and "/optimizers" in path:
-        return {"list": listed.pop(0) if len(listed) > 1 else listed[0]}
+        return {"list": [{"jobId": "j1"}, {"jobId": "j2"}]}
       return None
     amoro.amoro_api = amoro_api
     return amoro
 
-  def started(self, amoro):
-    return [call for call in amoro.calls if call == ("POST", "/optimize/optimizers")]
+  def group_writes(self, amoro):
+    return [(method, body["properties"]["dynamic-allocation.min-parallelism"])
+            for method, path, body in amoro.calls if path == "/optimize/resourceGroups" and method != "GET"]
 
-  def test_a_dead_optimizer_is_replaced_once_amoro_forgets_it(self):
-    dead = [{"jobId": "j1", "touchTime": 1000}]
-    amoro = self.amoro([dead, dead, []])
-    amoro.ensure_optimizer(since=5000)
-    self.assertEqual(1, len(self.started(amoro)))
+  def test_the_group_keeps_the_parallelism_running(self):
+    amoro = self.amoro()
+    amoro.ensure_optimizer_group()
+    self.assertEqual([("POST", "2")], self.group_writes(amoro))
+    amoro = self.amoro(groups=["local"])
+    amoro.ensure_optimizer_group()
+    self.assertEqual([("PUT", "2")], self.group_writes(amoro))
+    self.assertNotIn("POST", [method for method, path, body in amoro.calls if path == "/optimize/optimizers"])
 
-  def test_an_optimizer_sending_heartbeats_is_kept(self):
-    amoro = self.amoro([[{"jobId": "j1", "touchTime": 1000}], [{"jobId": "j1", "touchTime": 6000}]])
-    amoro.ensure_optimizer(since=5000)
-    self.assertEqual([], self.started(amoro))
+  def test_the_operator_can_manage_the_optimizers(self):
+    amoro = load_amoro_scripts(amoro_optimizer_managed=False, amoro_optimizer_parallelism=2, amoro_optimizer_memory=2048)
+    self.assertEqual("0", amoro.optimizer_group_properties()["dynamic-allocation.min-parallelism"])
 
-  def test_an_optimizer_is_started_when_the_dead_one_does_not_expire(self):
-    amoro = self.amoro([[{"jobId": "j1", "touchTime": 1000}]])
-    amoro.ensure_optimizer(since=5000, timeout=-1)
-    self.assertEqual(1, len(self.started(amoro)))
+  def test_check_interval_defaults_to_one_minute(self):
+    amoro = self.amoro()
+    self.assertEqual("1min", amoro.amoro_config()["ams"]["optimizer-group"]["min-parallelism-check-interval"])
+    amoro = load_amoro_scripts(site={"optimizer-group.min-parallelism-check-interval": "30s"})
+    self.assertEqual("30s", amoro.amoro_config()["ams"]["optimizer-group"]["min-parallelism-check-interval"])
 
   def test_stop_releases_the_optimizers(self):
-    amoro = self.amoro([[{"jobId": "j1"}, {"jobId": "j2"}]])
+    amoro = self.amoro(groups=["local"])
     amoro.release_optimizers()
-    self.assertEqual([("DELETE", "/optimize/optimizers/j1"), ("DELETE", "/optimize/optimizers/j2")],
-                     [call for call in amoro.calls if call[0] == "DELETE"])
+    self.assertEqual(["/optimize/optimizers/j1", "/optimize/optimizers/j2"],
+                     [path for method, path, body in amoro.calls if method == "DELETE"])
 
 
 class TestAmoroOptimizersOnYarn(unittest.TestCase):
@@ -616,8 +625,8 @@ class TestAmoroOptimizersOnYarn(unittest.TestCase):
     self.assertEqual("amoro", properties["export.HADOOP_USER_NAME"])
     self.assertEqual("optimize", properties["spark-conf.spark.yarn.queue"])
     self.assertNotIn("spark-conf.spark.kerberos.keytab", properties)
-    self.assertEqual({"memory": "2048", "spark-conf.spark.executor.cores": "1", "spark-conf.spark.executor.memory": "2048m",
-                      "spark-conf.spark.driver.memory": "1024m", "spark-conf.spark.dynamicAllocation.maxExecutors": "4"},
+    self.assertEqual({"memory": "2048", "dynamic-allocation.min-parallelism": "4", "spark-conf.spark.executor.cores": "1",
+                      "spark-conf.spark.executor.memory": "2048m", "spark-conf.spark.driver.memory": "1024m"},
                      amoro.optimizer_group_properties())
 
   def test_kerberos_submits_with_the_amoro_keytab(self):
@@ -628,9 +637,9 @@ class TestAmoroOptimizersOnYarn(unittest.TestCase):
     self.assertEqual("/etc/security/keytabs/amoro.service.keytab", properties["spark-conf.spark.kerberos.keytab"])
 
   def test_local_container_only_without_spark(self):
-    amoro = load_amoro_scripts(amoro_optimizer_memory=2048)
+    amoro = load_amoro_scripts(amoro_optimizer_memory=2048, amoro_optimizer_parallelism=2)
     self.assertEqual(["localContainer"], [c["name"] for c in amoro.amoro_config()["containers"]])
-    self.assertEqual({"memory": "2048"}, amoro.optimizer_group_properties())
+    self.assertEqual({"memory": "2048", "dynamic-allocation.min-parallelism": "2"}, amoro.optimizer_group_properties())
 
 
 class TestAmoroResourceRecommendations(unittest.TestCase):

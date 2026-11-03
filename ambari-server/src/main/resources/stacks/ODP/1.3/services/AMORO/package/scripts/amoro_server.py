@@ -17,7 +17,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import os
-import time
 
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
@@ -62,7 +61,6 @@ class AmoroServer(Script):
     amoro.setup_database()
 
     pid_file = params.amoro_pid_file
-    started = int(time.time() * 1000)
     Execute(format("{amoro_home}/bin/ams.sh start"),
             user=params.amoro_user,
             environment=amoro.amoro_environment(),
@@ -71,7 +69,6 @@ class AmoroServer(Script):
     amoro.wait_for_amoro()
     try:
       amoro.ensure_optimizer_group()
-      amoro.ensure_optimizer(since=started)
     except Fail as error:
       Logger.warning("Amoro is running but its optimizer could not be set up: {0}".format(error))
     amoro_access.setup_access()

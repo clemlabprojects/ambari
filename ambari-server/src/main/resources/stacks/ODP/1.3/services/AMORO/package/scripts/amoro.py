@@ -37,6 +37,7 @@ LDAP_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.LdapPasswdAuthenti
 DEFAULT_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.DefaultPasswdAuthenticationProvider"
 LOCAL_CONTAINER = "localContainer"
 SPARK_CONTAINER = "sparkContainer"
+MIN_PARALLELISM = "dynamic-allocation.min-parallelism"
 
 
 def amoro():
@@ -107,6 +108,9 @@ def amoro_config():
 
   site = {key: value for key, value in params.amoro_site.items() if str(value).strip() != ""}
   site["server-expose-host"] = params.amoro_server_address
+  # Amoro starts the optimizers of a group running below its min-parallelism: check every minute
+  # (5 minutes by default, so long without an optimizer after a restart).
+  site.setdefault("optimizer-group.min-parallelism-check-interval", "1min")
 
   ldap_url = str(site.get("http-server.login-auth-ldap-url", "")).strip()
   site["http-server.login-auth-provider"] = LDAP_LOGIN_PROVIDER if ldap_url else DEFAULT_LOGIN_PROVIDER
@@ -188,13 +192,18 @@ def optimizer_group_properties():
   the memory per thread of the local optimizer."""
   import params
 
-  properties = {"memory": str(params.amoro_optimizer_memory)}
+  # Amoro keeps the group at its min-parallelism: it starts optimizers when fewer threads run (none
+  # while optimizing is paused, nor when the operator manages the optimizers).
+  managed = params.amoro_optimizer_managed and not is_optimizing_paused()
+  min_parallelism = params.amoro_optimizer_parallelism if managed else 0
+  properties = {"memory": str(params.amoro_optimizer_memory),
+                MIN_PARALLELISM: str(min_parallelism)}
   if params.amoro_optimizer_container == "spark":
+    # spark.dynamicAllocation.maxExecutors: the threads of the optimizer (Spark container default).
     properties.update({
       "spark-conf.spark.executor.cores": "1",
       "spark-conf.spark.executor.memory": "{0}m".format(params.amoro_optimizer_memory),
       "spark-conf.spark.driver.memory": "{0}m".format(params.amoro_optimizer_spark_driver_memory),
-      "spark-conf.spark.dynamicAllocation.maxExecutors": str(params.amoro_optimizer_parallelism),
     })
   return properties
 
@@ -457,7 +466,9 @@ def wait_for_amoro(timeout=300):
 
 
 def ensure_optimizer_group():
-  """The optimizer group of Ambari, running its optimizers in the local or the Spark container."""
+  """The optimizer group of Ambari, running its optimizers in the local or the Spark container. Amoro
+  keeps it at its min-parallelism (optimizer_group_properties): it starts the optimizers, and starts
+  new ones when they die."""
   import params
 
   groups = amoro_api("GET", "/optimize/resourceGroups") or []
@@ -479,37 +490,6 @@ def optimizers(group=None):
   result = amoro_api("GET", "/optimize/optimizerGroups/{0}/optimizers?page=1&pageSize=1000".format(
     group or params.amoro_optimizer_group)) or {}
   return result.get("list", [])
-
-
-def ensure_optimizer(since=None, timeout=90):
-  """Starts the optimizer of the Ambari group when none is running, unless optimizing is paused.
-
-  After a restart Amoro lists the optimizers of its database, dead ones included, until their heartbeat
-  timeout (optimizer.heart-beat-timeout, 1 min by default): with `since` (epoch ms, before the server
-  start), only an optimizer which sent a heartbeat since counts. A running one sends one every 10 s."""
-  import params
-
-  if is_optimizing_paused():
-    Logger.warning("Optimizing is paused: no optimizer started. Run the Amoro service action "
-                   "'Resume Optimizing' to resume table maintenance.")
-    return
-  deadline = time.time() + timeout
-  while True:
-    listed = optimizers()
-    if not listed:
-      break
-    if since is None or any(int(optimizer.get("touchTime") or 0) >= since for optimizer in listed):
-      return
-    if time.time() > deadline:
-      Logger.warning("Amoro still lists the optimizers {0}, which sent no heartbeat since its start.".format(
-        ", ".join(str(optimizer.get("jobId")) for optimizer in listed)))
-      break
-    Logger.info("Waiting for the optimizers listed by Amoro to send a heartbeat or to expire.")
-    time.sleep(10)
-  amoro_api("POST", "/optimize/optimizers", {"optimizerGroup": params.amoro_optimizer_group,
-                                             "parallelism": params.amoro_optimizer_parallelism})
-  Logger.info("Started an optimizer in the Amoro optimizer group '{0}' (parallelism {1}).".format(
-    params.amoro_optimizer_group, params.amoro_optimizer_parallelism))
 
 
 def release_optimizers():
@@ -548,6 +528,8 @@ def pause_optimizing(timeout=900):
 
   File(paused_flag(), content="Optimizing paused by Ambari\n", owner=params.amoro_user,
        group=params.user_group, mode=0o644)
+  # min-parallelism 0 first, or Amoro would start the released optimizers again.
+  ensure_optimizer_group()
   for optimizer in optimizers(group="all"):
     amoro_api("DELETE", "/optimize/optimizers/{0}".format(optimizer["jobId"]))
     Logger.info("Released the optimizer {0} of the group '{1}'.".format(optimizer["jobId"], optimizer.get("groupName")))
@@ -571,10 +553,12 @@ def pause_optimizing(timeout=900):
 
 
 def resume_optimizing():
+  import params
+
   File(paused_flag(), action="delete")
   ensure_optimizer_group()
-  ensure_optimizer()
-  Logger.info("Optimizing resumed.")
+  Logger.info("Optimizing resumed: Amoro starts the optimizers of the group '{0}'.".format(
+    params.amoro_optimizer_group))
 
 
 def check_optimizing_paused():

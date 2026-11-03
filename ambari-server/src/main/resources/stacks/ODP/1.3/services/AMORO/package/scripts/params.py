@@ -87,6 +87,8 @@ amoro_log4j_template = config['configurations']['amoro-log4j']['content']
 amoro_optimizer_group = str(default("/configurations/amoro-env/amoro_optimizer_group", "local")).strip() or "local"
 amoro_optimizer_parallelism = int(default("/configurations/amoro-env/amoro_optimizer_parallelism", 2))
 amoro_optimizer_memory = int(default("/configurations/amoro-env/amoro_optimizer_memory", 2048))
+# Amoro keeps amoro_optimizer_parallelism threads running in the group (min-parallelism), unless off.
+amoro_optimizer_managed = str(default("/configurations/amoro-env/amoro_optimizer_managed", "true")).strip().lower() != "false"
 # Optimizers as Spark applications on YARN ("spark") or processes on the Amoro host ("local").
 amoro_optimizer_container = str(default("/configurations/amoro-env/amoro_optimizer_container", "local")).strip().lower() or "local"
 amoro_optimizer_yarn_queue = str(default("/configurations/amoro-env/amoro_optimizer_yarn_queue", "default")).strip() or "default"

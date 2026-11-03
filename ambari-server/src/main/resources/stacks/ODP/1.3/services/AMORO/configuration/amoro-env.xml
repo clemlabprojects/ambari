@@ -106,6 +106,28 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
+    <name>amoro_optimizer_managed</name>
+    <value>true</value>
+    <display-name>Amoro Keeps the Optimizers Running</display-name>
+    <description>If set to Yes, Amoro keeps Optimizer Min Parallelism threads running in the optimizer group of Ambari (dynamic-allocation.min-parallelism): it starts the optimizers, and starts new ones when they die. If set to No, the group keeps no minimum: start and release its optimizers from the Amoro dashboard.</description>
+    <value-attributes>
+      <type>value-list</type>
+      <overridable>false</overridable>
+      <entries>
+        <entry>
+          <value>true</value>
+          <label>Yes</label>
+        </entry>
+        <entry>
+          <value>false</value>
+          <label>No</label>
+        </entry>
+      </entries>
+      <selection-cardinality>1</selection-cardinality>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>amoro_optimizer_container</name>
     <display-name>Optimizer Container</display-name>
     <value>local</value>
@@ -154,9 +176,9 @@
   </property>
   <property>
     <name>amoro_optimizer_parallelism</name>
-    <display-name>Optimizer Parallelism</display-name>
+    <display-name>Optimizer Min Parallelism</display-name>
     <value>2</value>
-    <description>Number of optimizing threads of the optimizer started by Ambari (Spark container: the maximum number of executors). Recommended from the cores of the Amoro host, or from the YARN capacity.</description>
+    <description>Optimizing threads Amoro keeps running in the optimizer group (dynamic-allocation.min-parallelism): it starts optimizers when fewer threads run, for instance after an optimizer died. Spark container: the maximum number of executors of the optimizer. Recommended from the cores of the Amoro host, or from the YARN capacity.</description>
     <value-attributes>
       <type>int</type>
       <minimum>1</minimum>
@@ -169,7 +191,7 @@
     <name>amoro_optimizer_memory</name>
     <display-name>Optimizer Memory</display-name>
     <value>2048</value>
-    <description>Memory per optimizing thread (MB). Local container: the optimizer process gets Optimizer Parallelism x this memory. Spark container: the memory of each Spark executor, which runs one thread. Recommended from the Amoro host, or from the YARN container limits.</description>
+    <description>Memory per optimizing thread (MB). Local container: an optimizer process gets its threads x this memory. Spark container: the memory of each Spark executor, which runs one thread. Recommended from the Amoro host, or from the YARN container limits.</description>
     <value-attributes>
       <type>int</type>
       <minimum>512</minimum>
