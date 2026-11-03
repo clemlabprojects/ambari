@@ -66,6 +66,9 @@ class AlertCollector():
       for cluster,alert_map in self.__buckets.items():
         for alert_name in list(alert_map.keys()):
           alert = alert_map[alert_name]
+          # the collected results of base_alert carry no uuid: nothing to match on
+          if 'uuid' not in alert:
+            continue
           if alert['uuid'] == alert_uuid:
             self.remove(cluster, alert_name)
     finally:

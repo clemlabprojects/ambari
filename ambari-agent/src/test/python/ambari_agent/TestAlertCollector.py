@@ -166,6 +166,23 @@ class TestAlertCollector(TestCase):
 
     self.assertEqual(controller._AlertCollector__buckets, {'TestCluster': {'AlertName1': alert1, 'AlertName2': alert2}})
 
+  def test_remove_by_uuid_skips_results_without_uuid(self):
+    # base_alert collects its results without uuid: a reschedule must not fail on them
+    alert1 = {
+      'name': 'AlertName1',
+      'clusterId': '52',
+      'state': 'OK'
+    }
+    controller = AlertCollector()
+    controller._AlertCollector__buckets = {
+      'TestCluster': {
+        'AlertName1': alert1
+      }
+    }
+    controller.remove_by_uuid('11')
+
+    self.assertEqual(controller._AlertCollector__buckets, {'TestCluster': {'AlertName1': alert1}})
+
   def test_alerts(self):
     alert1 = {
       'name': 'AlertName1',
