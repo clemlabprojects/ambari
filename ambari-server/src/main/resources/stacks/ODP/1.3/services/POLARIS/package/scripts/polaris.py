@@ -704,8 +704,13 @@ def bootstrap_ozone_catalog(required=False):
   """
   import params
 
+  def skip(reason):
+    if required:
+      raise Fail("Polaris Ozone catalog bootstrap failed: {0}".format(reason))
+    Logger.warning("Skipping Ozone catalog bootstrap; {0}".format(reason))
+
   if not getattr(params, "has_ozone_service", False):
-    Logger.warning("Skipping Ozone catalog bootstrap; OZONE service not detected on this cluster.")
+    skip("OZONE service not detected on this cluster.")
     return
 
   catalog_name = str(getattr(params, "polaris_ozone_catalog_name", "")).strip()
@@ -716,16 +721,16 @@ def bootstrap_ozone_catalog(required=False):
   path_style_access = bool(getattr(params, "polaris_ozone_s3_path_style_access", True))
 
   if not catalog_name:
-    Logger.warning("Skipping Ozone catalog bootstrap; catalog name not configured.")
+    skip("catalog name not configured.")
     return
   if not base_location:
-    Logger.warning("Skipping Ozone catalog bootstrap; base location not configured.")
+    skip("base location not configured.")
     return
   if not allowed_locations:
-    Logger.warning("Skipping Ozone catalog bootstrap; allowed locations not configured.")
+    skip("allowed locations not configured.")
     return
   if not s3_endpoint:
-    Logger.warning("Skipping Ozone catalog bootstrap; Ozone S3 endpoint not configured.")
+    skip("Ozone S3 endpoint not configured.")
     return
 
   ozone_security = getattr(params, "ozone_security_enabled", False)
@@ -742,7 +747,8 @@ def bootstrap_ozone_catalog(required=False):
       catalog_name=catalog_name,
     )
     if not access_id or not secret:
-      Logger.warning("Skipping Ozone catalog bootstrap; could not resolve Ozone S3 credentials.")
+      skip("could not resolve the Ozone S3 credentials (set polaris_ozone_principal_secret, then restart "
+           "Polaris).")
       return
 
     Logger.info("Step 2/3: Creating Ozone volume '{0}' and bucket '{1}'.".format(volume_name, bucket_name))
@@ -767,6 +773,8 @@ def bootstrap_ozone_catalog(required=False):
     Logger.info("Polaris Ozone catalog bootstrap completed (catalog={0}).".format(catalog_name))
 
   except Exception as err:
+    if required and isinstance(err, Fail):
+      raise
     if required:
       raise Fail("Polaris Ozone catalog bootstrap failed: {0}".format(err))
     Logger.warning("Polaris Ozone catalog bootstrap failed: {0}".format(err))
