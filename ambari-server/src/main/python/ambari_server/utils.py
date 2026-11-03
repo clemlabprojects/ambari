@@ -161,9 +161,9 @@ def save_main_pid_ex(pids, pidfile, exclude_list=[], skip_daemonize=False):
 
 def get_live_pids_count(pids):
   """
-    Check pids for existence
+    Check pids for existence (PID Items of looking_for_pid)
   """
-  return len([pid for pid in pids if pid_exists(pid)])
+  return len([item for item in pids if pid_exists(item["pid"])])
 
 def wait_for_ui_start(ambari_server_ui_port, pid, timeout=1):
 

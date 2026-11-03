@@ -151,6 +151,14 @@ class TestUtils(TestCase):
     self.assertEqual(pid_exists_mock.call_count, 4)
     self.assertEqual(kill_mock.call_count, 1)
 
+  @patch.object(utils, 'pid_exists')
+  def test_get_live_pids_count(self, pid_exists_mock):
+    # the PID Items of looking_for_pid, when the server PID could not be saved
+    pid_exists_mock.side_effect = lambda pid: pid == "222"
+    self.assertEqual(1, utils.get_live_pids_count([{"pid": "111", "exe": "/exe1", "cmd": ""},
+                                                   {"pid": "222", "exe": "/exe2", "cmd": ""}]))
+    self.assertEqual(0, utils.get_live_pids_count([]))
+
   @patch('os.path.isfile')
   @patch('builtins.open')
   @patch('os.remove')
