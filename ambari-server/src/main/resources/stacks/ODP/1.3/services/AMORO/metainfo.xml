@@ -191,6 +191,10 @@
 
       <themes>
         <theme>
+          <fileName>theme.json</fileName>
+          <default>true</default>
+        </theme>
+        <theme>
           <fileName>credentials.json</fileName>
           <default>true</default>
         </theme>

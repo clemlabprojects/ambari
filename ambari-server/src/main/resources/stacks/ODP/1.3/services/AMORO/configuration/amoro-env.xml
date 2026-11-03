@@ -88,7 +88,7 @@
     <value-attributes>
       <type>int</type>
       <minimum>512</minimum>
-      <maximum>65536</maximum>
+      <maximum>32768</maximum>
       <unit>MB</unit>
       <increment-step>256</increment-step>
       <overridable>false</overridable>
@@ -182,7 +182,7 @@
     <value-attributes>
       <type>int</type>
       <minimum>1</minimum>
-      <maximum>64</maximum>
+      <maximum>32</maximum>
       <overridable>false</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -195,7 +195,7 @@
     <value-attributes>
       <type>int</type>
       <minimum>512</minimum>
-      <maximum>65536</maximum>
+      <maximum>16384</maximum>
       <unit>MB</unit>
       <increment-step>256</increment-step>
       <overridable>false</overridable>

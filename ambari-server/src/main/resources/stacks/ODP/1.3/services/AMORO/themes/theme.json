@@ -1,0 +1,213 @@
+{
+  "name": "default",
+  "description": "Settings theme of the Amoro service: optimizers and server resources",
+  "configuration": {
+    "layouts": [
+      {
+        "name": "default",
+        "tabs": [
+          {
+            "name": "settings",
+            "display-name": "Settings",
+            "layout": {
+              "tab-columns": "1",
+              "tab-rows": "2",
+              "sections": [
+                {
+                  "name": "section-amoro-optimizers",
+                  "display-name": "Optimizers",
+                  "row-index": "0",
+                  "column-index": "0",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "2",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-amoro-optimizers-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "display-name": "Optimizer Group"
+                    },
+                    {
+                      "name": "subsection-amoro-optimizers-col2",
+                      "row-index": "0",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1",
+                      "display-name": "Spark on YARN"
+                    }
+                  ]
+                },
+                {
+                  "name": "section-amoro-server",
+                  "display-name": "Amoro Management Service",
+                  "row-index": "1",
+                  "column-index": "0",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "2",
+                  "section-rows": "1",
+                  "subsections": [
+                    {
+                      "name": "subsection-amoro-server-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "placement": {
+      "configuration-layout": "default",
+      "configs": [
+        {
+          "config": "amoro-env/amoro_optimizer_managed",
+          "subsection-name": "subsection-amoro-optimizers-col1"
+        },
+        {
+          "config": "amoro-env/amoro_optimizer_container",
+          "subsection-name": "subsection-amoro-optimizers-col1"
+        },
+        {
+          "config": "amoro-env/amoro_optimizer_parallelism",
+          "subsection-name": "subsection-amoro-optimizers-col1"
+        },
+        {
+          "config": "amoro-env/amoro_optimizer_memory",
+          "subsection-name": "subsection-amoro-optimizers-col1"
+        },
+        {
+          "config": "amoro-env/amoro_optimizer_group",
+          "subsection-name": "subsection-amoro-optimizers-col1"
+        },
+        {
+          "config": "amoro-env/amoro_optimizer_yarn_queue",
+          "subsection-name": "subsection-amoro-optimizers-col2",
+          "depends-on": [
+            {
+              "configs": [
+                "amoro-env/amoro_optimizer_container"
+              ],
+              "if": "${amoro-env/amoro_optimizer_container} === spark",
+              "then": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "amoro-env/amoro_optimizer_spark_driver_memory",
+          "subsection-name": "subsection-amoro-optimizers-col2",
+          "depends-on": [
+            {
+              "configs": [
+                "amoro-env/amoro_optimizer_container"
+              ],
+              "if": "${amoro-env/amoro_optimizer_container} === spark",
+              "then": {
+                "property_value_attributes": {
+                  "visible": true
+                }
+              },
+              "else": {
+                "property_value_attributes": {
+                  "visible": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "config": "amoro-env/amoro_server_heapsize",
+          "subsection-name": "subsection-amoro-server-col1"
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "amoro-env/amoro_optimizer_managed",
+        "widget": {
+          "type": "toggle"
+        }
+      },
+      {
+        "config": "amoro-env/amoro_optimizer_container",
+        "widget": {
+          "type": "combo"
+        }
+      },
+      {
+        "config": "amoro-env/amoro_optimizer_parallelism",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "int"
+            }
+          ]
+        }
+      },
+      {
+        "config": "amoro-env/amoro_optimizer_memory",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "MB"
+            }
+          ]
+        }
+      },
+      {
+        "config": "amoro-env/amoro_optimizer_group",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-env/amoro_optimizer_yarn_queue",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "amoro-env/amoro_optimizer_spark_driver_memory",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "MB"
+            }
+          ]
+        }
+      },
+      {
+        "config": "amoro-env/amoro_server_heapsize",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "MB"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
