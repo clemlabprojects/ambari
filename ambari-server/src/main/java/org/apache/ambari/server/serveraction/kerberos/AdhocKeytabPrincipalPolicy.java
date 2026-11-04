@@ -145,16 +145,7 @@ public class AdhocKeytabPrincipalPolicy {
    * @throws SystemException          if the cluster's own identities could not be determined
    */
   public void verify(Cluster cluster, String principal, String namespace) throws SystemException {
-    Matcher matcher = (principal == null) ? null : PRINCIPAL_PATTERN.matcher(principal.trim());
-    if (matcher == null || !matcher.matches()) {
-      throw new IllegalArgumentException(String.format(
-          "'%s' is not a valid principal for an ad-hoc keytab; expected name@REALM or name/host@REALM.", principal));
-    }
-    if (namespace == null || !NAMESPACE_PATTERN.matcher(namespace.trim()).matches()) {
-      throw new IllegalArgumentException(String.format(
-          "'%s' is not a valid Kubernetes namespace; an ad-hoc keytab request names the namespace that receives the keytab.",
-          namespace));
-    }
+    Matcher matcher = parse(principal, namespace);
 
     String requested = principal.trim();
     String ns = namespace.trim();
@@ -204,6 +195,79 @@ public class AdhocKeytabPrincipalPolicy {
       return;
     }
 
+    requireNamedAfterNamespace(requested, primary, instance, ns, realm);
+  }
+
+  /**
+   * Verifies that an ad-hoc keytab may be issued for the principal in a KDC no cluster manages: the KDC of a KDPS
+   * platform context, such as the Active Directory of a CDP cluster or a FreeIPA Ambari does not manage. The rules of
+   * {@link #verify} apply, except those that need a cluster: the principals and service accounts of the platform are
+   * not known here, so a principal is only accepted when it is named after the namespace that receives the keytab (or
+   * allowed explicitly), and the issuer never resets the key of a principal that already exists
+   * ({@link AdhocKeytabGenerator}).
+   *
+   * @param principal        the requested principal
+   * @param namespace        the Kubernetes namespace that receives the keytab
+   * @param realm            the Kerberos realm of the platform context
+   * @param kdcAdministrator the principal of the KDC administrator account the request uses
+   * @throws IllegalArgumentException if the principal or the namespace is malformed, or the realm is missing
+   * @throws AuthorizationException   if the principal is one Ambari must not issue a keytab for
+   */
+  public void verifyForExternalKdc(String principal, String namespace, String realm, String kdcAdministrator)
+      throws AuthorizationException {
+    Matcher matcher = parse(principal, namespace);
+    if (StringUtils.isBlank(realm)) {
+      throw new IllegalArgumentException("The Kerberos realm of the platform context is required.");
+    }
+
+    String requested = principal.trim();
+    String ns = namespace.trim();
+    String primary = matcher.group(1).toLowerCase(Locale.ROOT);
+    String instance = (matcher.group(2) == null) ? null : matcher.group(2).toLowerCase(Locale.ROOT);
+    String principalRealm = matcher.group(3);
+
+    if (!realm.trim().equalsIgnoreCase(principalRealm)) {
+      throw refused(requested, String.format("its realm '%s' is not the Kerberos realm '%s' of the platform context",
+          principalRealm, realm.trim()));
+    }
+    if (RESERVED_PRIMARIES.contains(primary) || "admin".equals(instance) || ("k".equals(primary) && "m".equals(instance))) {
+      throw refused(requested, "it belongs to the Kerberos or directory infrastructure");
+    }
+    if (isAdministrator(kdcAdministrator, requested, principalRealm)) {
+      throw refused(requested, "it is the KDC administrator account the platform context uses");
+    }
+    if (isExplicitlyAllowed(requested)) {
+      return;
+    }
+    requireNamedAfterNamespace(requested, primary, instance, ns, principalRealm);
+  }
+
+  /**
+   * The principal parsed as {@code name[/host]@REALM}.
+   *
+   * @throws IllegalArgumentException if the principal is not well formed or the namespace is not a Kubernetes name
+   */
+  private static Matcher parse(String principal, String namespace) {
+    Matcher matcher = (principal == null) ? null : PRINCIPAL_PATTERN.matcher(principal.trim());
+    if (matcher == null || !matcher.matches()) {
+      throw new IllegalArgumentException(String.format(
+          "'%s' is not a valid principal for an ad-hoc keytab; expected name@REALM or name/host@REALM.", principal));
+    }
+    if (namespace == null || !NAMESPACE_PATTERN.matcher(namespace.trim()).matches()) {
+      throw new IllegalArgumentException(String.format(
+          "'%s' is not a valid Kubernetes namespace; an ad-hoc keytab request names the namespace that receives the keytab.",
+          namespace));
+    }
+    return matcher;
+  }
+
+  /**
+   * Refuses a principal that is not named after the namespace receiving its keytab.
+   *
+   * @throws AuthorizationException naming the expected shapes
+   */
+  private void requireNamedAfterNamespace(String requested, String primary, String instance, String ns, String realm)
+      throws AuthorizationException {
     if (!isNamedAfterNamespace(primary, instance, ns)) {
       throw refused(requested, String.format(
           "it is not named after the namespace '%s' that receives the keytab (expected <service>-%s@%s with a "
@@ -369,14 +433,19 @@ public class AdhocKeytabPrincipalPolicy {
       LOG.debug("KDC administrator credentials of cluster {} are not readable: {}", clusterName, e.getMessage());
       return false;
     }
-    String administrator = (credential == null) ? null : credential.getPrincipal();
+    return isAdministrator((credential == null) ? null : credential.getPrincipal(), requested, clusterRealm);
+  }
+
+  /** Whether the requested principal is the KDC administrator account, written with or without its realm. */
+  private static boolean isAdministrator(String administrator, String requested, String realm) {
     if (StringUtils.isBlank(administrator)) {
       return false;
     }
-    if (!administrator.contains("@") && StringUtils.isNotBlank(clusterRealm)) {
-      administrator = administrator + "@" + clusterRealm;
+    String account = administrator.trim();
+    if (!account.contains("@") && StringUtils.isNotBlank(realm)) {
+      account = account + "@" + realm;
     }
-    return administrator.equalsIgnoreCase(requested);
+    return account.equalsIgnoreCase(requested);
   }
 
   /**

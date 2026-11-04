@@ -399,6 +399,51 @@ public class AdhocKeytabPrincipalPolicyTest {
     }
   }
 
+  // ---- a KDC no cluster manages: a KDPS platform context's, such as a CDP cluster's Active Directory ----
+
+  private static final String AD_REALM = "AD.EXAMPLE.COM";
+
+  @Test
+  public void testExternalKdcAcceptsTheReleasePrincipalsOfTheNamespace() throws Exception {
+    policy().verifyForExternalKdc("trino-analytics@" + AD_REALM, NAMESPACE, AD_REALM, "cm-kdc");
+    policy().verifyForExternalKdc("superset-dashboard-analytics@" + AD_REALM, NAMESPACE, AD_REALM, "cm-kdc");
+    policy().verifyForExternalKdc("jupyterhub/jupyterhub.analytics.svc@" + AD_REALM, NAMESPACE, AD_REALM, "cm-kdc");
+  }
+
+  @Test
+  public void testExternalKdcRefusesThePrincipalsOfTheOtherPlatform() throws Exception {
+    // The Hive and HDFS accounts of the CDP cluster are not named after the namespace: never issued, never rotated.
+    assertRefusedExternal("hive/cdp-master.ad.example.com@" + AD_REALM, "not named after the namespace 'analytics'");
+    assertRefusedExternal("hdfs@" + AD_REALM, "not named after the namespace 'analytics'");
+  }
+
+  @Test
+  public void testExternalKdcRefusesAnotherRealmTheInfrastructureAndItsAdministrator() throws Exception {
+    assertRefusedExternal("trino-analytics@" + REALM, "is not the Kerberos realm 'AD.EXAMPLE.COM' of the platform context");
+    assertRefusedExternal("krbtgt/AD.EXAMPLE.COM@" + AD_REALM, "Kerberos or directory infrastructure");
+    assertRefusedExternal("cm-kdc@" + AD_REALM, "the KDC administrator account the platform context uses");
+    try {
+      policy().verifyForExternalKdc("trino-analytics@" + AD_REALM, NAMESPACE, AD_REALM, "trino-analytics@" + AD_REALM);
+      fail("The administrator account named with its realm must be refused too");
+    } catch (AuthorizationException e) {
+      assertTrue(e.getMessage(), e.getMessage().contains("KDC administrator"));
+    }
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testExternalKdcNeedsTheRealmOfThePlatformContext() throws Exception {
+    policy().verifyForExternalKdc("trino-analytics@" + AD_REALM, NAMESPACE, " ", "cm-kdc");
+  }
+
+  private void assertRefusedExternal(String principal, String reason) throws Exception {
+    try {
+      policy().verifyForExternalKdc(principal, NAMESPACE, AD_REALM, "cm-kdc");
+      fail("Expected '" + principal + "' to be refused in the platform context's KDC");
+    } catch (AuthorizationException e) {
+      assertTrue(e.getMessage(), e.getMessage().contains(reason));
+    }
+  }
+
   private AdhocKeytabPrincipalPolicy policy() {
     return policy(kerberosHelper, configHelper);
   }
