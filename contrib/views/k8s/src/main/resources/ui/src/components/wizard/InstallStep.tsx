@@ -213,7 +213,7 @@ const InstallStep: React.FC<InstallStepProps> = ({
                   <Alert type="info" showIcon
                     message={`Written as the profile ${filesProfile.name} says`}
                     description={<>
-                      {filesProfile.chartPath ? <>The chart is copied to <code>{filesProfile.chartPath}</code>, with the profile's files around it. </> : 'The profile\'s files are written. '}
+                      {filesProfile.chartPath ? <>The chart is copied to <code>{filesProfile.chartPath}</code>{filesProfile.chartValues === 'merged' ? <>, its <code>values.yaml</code> with this deploy's values merged in as Helm installs them</> : null}, with the profile's files around it. </> : 'The profile\'s files are written. '}
                       {filesProfile.delivery?.mode === 'pullRequest'
                         ? `The change is proposed in a pull request from a branch starting with ${filesProfile.delivery.branchPrefix || 'kdps/'}.`
                         : 'The change is committed to the base branch.'}

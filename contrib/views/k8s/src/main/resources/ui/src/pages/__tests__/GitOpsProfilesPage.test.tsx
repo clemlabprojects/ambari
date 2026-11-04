@@ -17,10 +17,11 @@
  */
 
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import GitOpsProfilesPage from '../GitOpsProfilesPage';
 import { blankProfile } from '../../components/gitops/profileDraft';
+import { saveGitOpsProfile } from '../../api/client';
 
 const mockExample = { ...blankProfile('gitops-example'), description: 'One values file per environment', version: 2 };
 
@@ -73,6 +74,24 @@ describe('the GitOps profiles page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /GitOps profiles/ }));
     expect(await screen.findByRole('button', { name: /New profile/ })).toBeInTheDocument();
+  });
+
+  it('writes the chart values as Helm installs them once asked, and only with a chart folder', async () => {
+    (saveGitOpsProfile as jest.Mock).mockImplementation((p: any) => Promise.resolve({ ...p, version: 3 }));
+    await openExample();
+
+    expect(screen.getByRole('radio', { name: 'As published' })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: "With the deploy's values merged in" }));
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+
+    await waitFor(() => expect(saveGitOpsProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'gitops-example', chartPath: 'chart', chartValues: 'merged' })));
+
+    // Without a chart folder there is no values.yaml to write: the choice goes back to as published.
+    fireEvent.change(screen.getAllByDisplayValue('chart')[0], { target: { value: '' } });
+    expect(screen.getByRole('radio', { name: 'As published' }).closest('.ant-radio-wrapper'))
+      .toHaveClass('ant-radio-wrapper-checked');
+    expect(screen.getByRole('radio', { name: "With the deploy's values merged in" })).toBeDisabled();
   });
 
   it('opens the fields reference from the header, and from a file adds a field to its path', async () => {

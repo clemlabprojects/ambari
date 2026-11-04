@@ -276,6 +276,32 @@ public class FluxGitOpsBackendProfileTest {
     }
 
     @Test
+    public void theChartsValuesAreWrittenAsHelmInstallsThemWhenTheProfileMergesThem() throws Exception {
+        GitOpsProfile p = environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
+        publishedChart.put("values.yaml", bytes("image:\n  registry: \"\"\n  tag: \"476\"\nserver:\n  workers: 1\n"));
+        backend().apply(request(), null);
+        assertEquals("copied as published by default", "image:\n  registry: \"\"\n  tag: \"476\"\nserver:\n  workers: 1\n",
+                published("main", "chart/values.yaml"));
+
+        p.chartValues = GitOpsProfile.CHART_VALUES_MERGED;
+        profiles.save(p);
+        Map<String, String> overrides = new LinkedHashMap<>();
+        overrides.put("image.registry", "registry.example.org");
+        overrides.put("global.imagePullSecrets[0]", "regcred");
+        backend().commit(request(), new DeploymentContext("charts", "1.43.20", null, null, null, null, null),
+                new FluxGitOpsBackend.PlannedRelease(overrides, false));
+
+        String chartValues = published("main", "chart/values.yaml");
+        assertTrue(chartValues, chartValues.startsWith("# Written by KDPS for analytics/trino: the defaults of chart "
+                + "trino 1.43.20 with the deploy's values merged in, as Helm installs them.\n"));
+        assertTrue(chartValues, chartValues.contains("image:\n  registry: \"registry.example.org\"\n  tag: \"476\"\n"));
+        assertTrue(chartValues, chartValues.contains("server:\n  workers: 2\n"));
+        assertTrue(chartValues, chartValues.contains("imagePullSecrets:\n  - \"regcred\"\n"));
+        assertFalse("no secret of the deploy", chartValues.contains(BIND_PASSWORD));
+        assertEquals("the rest as published", "kind: Deployment\n", published("main", "chart/templates/deployment.yaml"));
+    }
+
+    @Test
     public void aFileTheTeamOwnsIsLeftAsItIsAndTheChartIsReplacedAsAWhole() throws Exception {
         environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
         backend().apply(request(), null);

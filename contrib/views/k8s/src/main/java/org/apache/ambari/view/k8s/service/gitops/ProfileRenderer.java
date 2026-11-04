@@ -85,6 +85,15 @@ public final class ProfileRenderer {
         if (profile.chartPath != null && !profile.chartPath.isBlank()) {
             repositoryPath(profile.chartPath, "the chart path");
         }
+        if (profile.chartValues != null && !GitOpsProfile.CHART_VALUES_PUBLISHED.equals(profile.chartValues)
+                && !GitOpsProfile.CHART_VALUES_MERGED.equals(profile.chartValues)) {
+            throw new IllegalArgumentException("The chart values must be 'published' or 'merged'.");
+        }
+        if (GitOpsProfile.CHART_VALUES_MERGED.equals(profile.chartValues)
+                && (profile.chartPath == null || profile.chartPath.isBlank())) {
+            throw new IllegalArgumentException("The deploy's values are merged into the chart's values.yaml: the "
+                    + "profile needs a chart folder to copy the chart to.");
+        }
         if (profile.delivery == null || !(GitOpsProfile.DELIVERY_PULL_REQUEST.equals(profile.delivery.mode)
                 || GitOpsProfile.DELIVERY_COMMIT.equals(profile.delivery.mode))) {
             throw new IllegalArgumentException("The delivery must be 'pullRequest' or 'commit'.");

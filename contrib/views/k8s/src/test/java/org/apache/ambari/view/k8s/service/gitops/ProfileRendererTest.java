@@ -68,6 +68,22 @@ class ProfileRendererTest {
     }
 
     @Test
+    void theChartValuesAreCopiedOrMergedAndMergedOnlyIntoACopiedChart() {
+        GitOpsProfile p = environmentsLayout();
+        assertEquals(GitOpsProfile.CHART_VALUES_PUBLISHED, p.chartValues, "as published unless the profile says so");
+        p.chartValues = GitOpsProfile.CHART_VALUES_MERGED;
+        ProfileRenderer.validate(p);
+
+        p.chartPath = null;
+        IllegalArgumentException noChart = assertThrows(IllegalArgumentException.class, () -> ProfileRenderer.validate(p));
+        assertTrue(noChart.getMessage().contains("needs a chart folder"), noChart.getMessage());
+
+        p.chartPath = "chart";
+        p.chartValues = "overlay";
+        assertThrows(IllegalArgumentException.class, () -> ProfileRenderer.validate(p));
+    }
+
+    @Test
     void aPathAndATemplateCanNameTheClusterDeployedTo() {
         GitOpsProfile p = environmentsLayout();
         p.files.add(rule("clusters/{{ cluster }}/{{ namespace }}/values.yaml", GitOpsProfile.MODE_ALWAYS,

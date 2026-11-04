@@ -21,6 +21,7 @@ import org.apache.ambari.view.k8s.service.cluster.ClusterRef;
 import org.apache.ambari.view.k8s.store.InstanceSettings;
 import org.apache.ambari.view.k8s.service.helm.HelmClientDefault;
 import org.apache.ambari.view.k8s.service.gitops.ChartFetcher;
+import org.apache.ambari.view.k8s.service.gitops.ChartValues;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfile;
 import org.apache.ambari.view.k8s.service.gitops.GitOpsProfileStore;
 import org.apache.ambari.view.k8s.service.gitops.ProfilePreview;
@@ -520,6 +521,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
                 chartFiles = chartFetcher().fetch(repositoryUrl, chart, version, work);
             } finally {
                 deleteRecursively(work);
+            }
+            if (GitOpsProfile.CHART_VALUES_MERGED.equals(profile.chartValues)) {
+                // The chart's values.yaml as Helm installs the chart with this deploy's values: the chart folder then
+                // deploys as KDPS would, with no other values file.
+                chartFiles = new LinkedHashMap<>(chartFiles);
+                chartFiles.put("values.yaml", ChartValues.merged(chartFiles.get("values.yaml"), split.publicValues(),
+                        "Written by KDPS for " + namespace + "/" + release + ": the defaults of chart " + chart + " "
+                                + version + " with the deploy's values merged in, as Helm installs them.",
+                        valuesSecretName == null ? "The deploy has no password or secret value."
+                                : "Passwords and secrets are not here: they are in the Secret " + valuesSecretName
+                                        + " of namespace " + namespace + ", key values.yaml."));
             }
             // Now that the chart's own entries are known: no rule replaces one of them.
             String chartPath = repositoryPathText(chartDir);

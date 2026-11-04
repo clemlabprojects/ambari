@@ -428,7 +428,17 @@ const SettingsForm: React.FC<{ draft: GitOpsProfile; editable: boolean; update: 
           </Form.Item>
           <Form.Item label="Chart folder"
             extra="Where the chart is copied, complete and as its repository publishes it. Its own files (Chart.yaml, values.yaml, templates/, charts/…) are replaced on every deploy; other folders inside it, such as environments/, can hold the profile's files and your team's. Leave empty to copy no chart (Argo CD then pulls it from the chart repository).">
-            <Input value={draft.chartPath} placeholder="chart" onChange={e => update({ chartPath: e.target.value })} />
+            <Input value={draft.chartPath} placeholder="chart" onChange={e => update({ chartPath: e.target.value, ...(e.target.value.trim() ? {} : { chartValues: 'published' }) })} />
+          </Form.Item>
+          <Form.Item label="Chart values.yaml"
+            extra={draft.chartPath?.trim()
+              ? 'Merged: the chart folder holds what Helm installs, the chart\'s defaults with this deploy\'s values (image registry, pull Secret, TLS, Kerberos…), so Argo CD needs no other values file. Passwords and secrets stay in the Secret {{ secretValues.secretName }} names.'
+              : 'Set a chart folder to choose how its values.yaml is written.'}>
+            <Radio.Group value={draft.chartValues || 'published'} disabled={!editable || !draft.chartPath?.trim()}
+              onChange={e => update({ chartValues: e.target.value })}>
+              <Radio value="published">As published</Radio>
+              <Radio value="merged">With the deploy's values merged in</Radio>
+            </Radio.Group>
           </Form.Item>
           <Form.Item label="Protected paths" extra="Files KDPS never writes nor deletes, as glob patterns such as docs/**.">
             <Select mode="tags" value={draft.protect} onChange={v => update({ protect: v })} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder="docs/**" />
@@ -488,7 +498,7 @@ const SelectionPane: React.FC<{
           team's: select this folder and use New folder or New file to add one. Preview the files to list the chart's
           own files.
         </Typography.Paragraph>
-        <Input addonBefore="Folder" value={draft.chartPath} disabled={!editable} onChange={e => update({ chartPath: e.target.value })} style={{ maxWidth: 420 }} />
+        <Input addonBefore="Folder" value={draft.chartPath} disabled={!editable} onChange={e => update({ chartPath: e.target.value, ...(e.target.value.trim() ? {} : { chartValues: 'published' }) })} style={{ maxWidth: 420 }} />
       </Space>
     );
   }

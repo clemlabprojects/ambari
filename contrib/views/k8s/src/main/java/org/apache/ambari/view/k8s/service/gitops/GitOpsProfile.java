@@ -45,6 +45,14 @@ public class GitOpsProfile {
     public static final String DELIVERY_PULL_REQUEST = "pullRequest";
     public static final String DELIVERY_COMMIT = "commit";
 
+    /** The chart's values.yaml is copied as published. */
+    public static final String CHART_VALUES_PUBLISHED = "published";
+    /**
+     * The chart's values.yaml is written as Helm installs the chart: its defaults with the deploy's values merged in
+     * ({@link ChartValues}), so that the chart folder deploys as KDPS would, with no other values file.
+     */
+    public static final String CHART_VALUES_MERGED = "merged";
+
     /** Unique; also how a deploy names the profile it used. */
     public String name;
     public String description;
@@ -55,6 +63,8 @@ public class GitOpsProfile {
     public int version = 1;
     /** Where the complete chart is copied, relative to the repository root; null for no chart in the repository. */
     public String chartPath;
+    /** How the chart's values.yaml is written: {@link #CHART_VALUES_PUBLISHED} or {@link #CHART_VALUES_MERGED}. */
+    public String chartValues = CHART_VALUES_PUBLISHED;
     /** Constants of the profile, read by templates as {@code vars.<name>}. */
     public Map<String, String> variables = new LinkedHashMap<>();
     public Delivery delivery = new Delivery();

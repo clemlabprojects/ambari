@@ -2232,6 +2232,8 @@ export interface GitOpsProfile {
   builtIn?: boolean;
   version?: number;
   chartPath?: string;
+  /** How the chart's values.yaml is written: as published, or with the deploy's values merged in as Helm installs them. */
+  chartValues?: 'published' | 'merged';
   variables: Record<string, string>;
   delivery: { mode: 'pullRequest' | 'commit'; branchPrefix?: string; tag?: string };
   files: GitOpsFileRule[];
