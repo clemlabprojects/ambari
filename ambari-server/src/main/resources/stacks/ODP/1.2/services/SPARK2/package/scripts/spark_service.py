@@ -109,7 +109,7 @@ def spark_service(name, upgrade_type=None, action=None):
       try:
         Execute(params.spark_history_server_start,
                 user=params.spark_user,
-                environment={'JAVA_HOME': params.java_home},
+                environment={'JAVA_HOME': params.java_home, 'SPARK_DAEMON_JAVA_OPTS': params.spark_daemon_java_opts},
                 not_if=historyserver_no_op_test)
       except:
         show_logs(params.spark_log_dir, user=params.spark_user)

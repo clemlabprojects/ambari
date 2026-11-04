@@ -31,6 +31,7 @@ from resource_management.libraries.functions.version import format_stack_version
 from resource_management.libraries.functions.copy_tarball import get_sysprep_skip_copy_tarballs_hdfs
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.default import default
+from resource_management.libraries.functions.expect import expect
 from resource_management.libraries.functions import get_kinit_path
 from resource_management.libraries.functions.get_not_managed_resources import get_not_managed_resources
 from resource_management.libraries.resources.hdfs_resource import HdfsResource
@@ -89,6 +90,16 @@ if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE,
 spark_daemon_memory = config['configurations']['spark2-env']['spark_daemon_memory']
 spark_thrift_server_conf_file = spark_conf + "/spark-thrift-sparkconf.conf"
 java_home = config['ambariLevelParams']['java_home']
+java_version = expect("/ambariLevelParams/java_version", int)
+# Spark 2.4 predates the Java module system: on JDK 9+ its daemons need the JDK internals Spark and Hadoop
+# reach by reflection (Hadoop KerberosUtil reads sun.security.krb5.Config). Given to the daemons through
+# SPARK_DAEMON_JAVA_OPTS, not spark2-env: that template is copied into the cluster configuration at install,
+# and Java 8 refuses these options.
+spark_daemon_java_opts = "" if java_version < 9 else " ".join(
+  ["--add-opens=java.base/{0}=ALL-UNNAMED".format(package) for package in (
+    "java.lang", "java.lang.invoke", "java.lang.reflect", "java.io", "java.net", "java.nio", "java.util",
+    "java.util.concurrent", "java.util.concurrent.atomic", "sun.nio.ch", "sun.nio.cs", "sun.security.action",
+    "sun.util.calendar")] + ["--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"])
 
 hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
 hdfs_principal_name = config['configurations']['hadoop-env']['hdfs_principal_name']
