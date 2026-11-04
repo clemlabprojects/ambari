@@ -467,6 +467,23 @@ class CommandServiceReleaseRepairActionsTest {
     }
 
     @Test
+    void aRegenerationWritesTheSecretTheReleaseWasDeployedWith() throws Exception {
+        // The wizard named the Secret after the release name it proposed before the operator changed it.
+        managedKerberizedCluster();
+        release("kdc-trino", "TRINO", null, null);
+        secrets.putKeytab(NS, "trino-keytab", "kdc-trino", TRINO_PRINCIPAL, keytab(TRINO_PRINCIPAL, 4));
+        byte[] issued = keytab(TRINO_PRINCIPAL, 5);
+        ambari.issues(issued);
+
+        String id = service.planReleaseKeytabRegeneration(NS, "kdc-trino", new MultivaluedHashMap<>(), BASE_URI);
+        service.runNextStep(id);
+        awaitState(id, CommandState.SUCCEEDED);
+
+        assertArrayEquals(issued, secrets.get(NS, "trino-keytab", "service.keytab"), "the Secret its pods mount");
+        assertNull(secrets.get(NS, "kdc-trino-keytab", "service.keytab"));
+    }
+
+    @Test
     void aReleaseOnAContextWithAKdcAccountHasItsKeytabRegeneratedThere() {
         externalContext(false, false, "CORP.EXAMPLE.COM");
         service.contextHoldsKdcAccount = CONTEXT::equals;

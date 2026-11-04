@@ -5253,6 +5253,13 @@ public class CommandService {
                     kerberosRealm
             );
             String keyNameInSecret = resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab");
+            // The Secret the release was deployed with, which its pods mount: the wizard may have named it otherwise.
+            String deployedSecret = releaseKeytabSecret(namespace, releaseName, principalFqdn);
+            if (deployedSecret != null && !deployedSecret.equals(secretName)) {
+                LOG.info("Release {}/{} keeps the keytab of {} in Secret {}, not {}", namespace, releaseName,
+                        principalFqdn, deployedSecret, secretName);
+                secretName = deployedSecret;
+            }
 
             // Entries sharing a principal and a Secret (Trino's coordinator and workers) need one keytab, and
             // issuing it twice could change the key twice.
@@ -14485,6 +14492,25 @@ public class CommandService {
 
     /** A keytab read from a Secret: the data key holding it and its bytes. */
     record StoredKeytab(String secretName, String key, byte[] bytes, String release) {}
+
+    /** The Secret KDPS wrote the keytab of {@code principal} in for {@code release}, by its labels; null when none. */
+    String releaseKeytabSecret(String namespace, String release, String principal) {
+        try {
+            List<io.fabric8.kubernetes.api.model.Secret> secrets = kubernetesService.listSecretsWithLabel(namespace,
+                    KEYTAB_PRINCIPAL_LABEL, keytabPrincipalLabel(principal));
+            for (io.fabric8.kubernetes.api.model.Secret secret : secrets == null
+                    ? List.<io.fabric8.kubernetes.api.model.Secret>of() : secrets) {
+                Map<String, String> labels = secret == null || secret.getMetadata() == null ? null
+                        : secret.getMetadata().getLabels();
+                if (labels != null && release.equals(labels.get(KEYTAB_RELEASE_LABEL))) {
+                    return secret.getMetadata().getName();
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not list the keytab Secrets of {} in {}: {}", principal, namespace, e.toString());
+        }
+        return null;
+    }
 
     /**
      * The other keytab Secrets KDPS wrote in {@code namespace} for {@code principal}: releases of one service in a
