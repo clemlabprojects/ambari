@@ -65,6 +65,15 @@ class TestPolarisOzoneCatalogBootstrap(unittest.TestCase):
       load_polaris(polaris_ozone_s3_endpoint="").bootstrap_ozone_catalog(required=True)
 
 
+class TestRangerOzonePolicyUser(unittest.TestCase):
+
+  def test_the_policy_names_the_short_user_of_a_kerberos_access_id(self):
+    polaris = load_polaris()
+    self.assertEqual("polaris", polaris._ranger_user_name("polaris/master03.example.com@EXAMPLE.COM"))
+    self.assertEqual("polaris", polaris._ranger_user_name("polaris@EXAMPLE.COM"))
+    self.assertEqual("kdps-release", polaris._ranger_user_name("kdps-release"))
+
+
 class TestPolarisOzoneSecretValidation(unittest.TestCase):
   advisor = load_polaris_advisor()
 

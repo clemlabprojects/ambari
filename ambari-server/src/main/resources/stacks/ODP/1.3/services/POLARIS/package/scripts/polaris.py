@@ -1056,6 +1056,12 @@ def _set_native_ozone_acl(access_id, volume_name, bucket_name, require_kerberos)
   )
 
 
+def _ranger_user_name(access_id):
+  """User a Ranger Ozone policy names for an S3 access id: under Kerberos the access id is the principal
+  (polaris/host@REALM), while Ranger, and the Ozone authorizer, know its short name (polaris)."""
+  return str(access_id).split("/")[0].split("@")[0]
+
+
 def _create_ranger_ozone_policy(access_id, volume_name, bucket_name):
   import params
 
@@ -1105,7 +1111,7 @@ def _create_ranger_ozone_policy(access_id, volume_name, bucket_name):
       "key": {"values": ["*"], "isExcludes": False, "isRecursive": False},
     },
     "policyItems": [{
-      "users": [access_id],
+      "users": [_ranger_user_name(access_id)],
       "groups": [],
       "accesses": [{"type": "all", "isAllowed": True}],
       "delegateAdmin": True
