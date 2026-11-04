@@ -114,6 +114,55 @@ def yarn_optimizer_resources(max_allocation_mb, cluster_mb, cluster_vcores):
   return memory, max(2, min(32, threads))
 
 
+def optimizer_queue_path(queue):
+  """Capacity Scheduler path of the optimizer queue (amoro_optimizer_yarn_queue may omit root.)."""
+  queue = str(queue or "default").strip() or "default"
+  return queue if queue == "root" or queue.startswith("root.") else "root." + queue
+
+
+def queue_acl_allows(acl, user):
+  """Whether a YARN ACL ("users groups", "*" for everyone; YARN's default) names the user."""
+  acl = "*" if acl is None else str(acl)
+  if acl.strip() == "*":
+    return True
+  return user in acl.strip().partition(" ")[0].split(",")
+
+
+def queue_acl_with_user(acl, user):
+  """The ACL with the user added to its users (its groups kept)."""
+  users, _, groups = str(acl).strip().partition(" ")
+  names = [name for name in users.split(",") if name]
+  return ",".join(names + [user]) + (" " + groups if groups else "")
+
+
+def queue_submit_acls(configurations, services, path):
+  """(property, ACL) of the submit ACLs of the queue and its parents, the queue first."""
+  parts = path.split(".")
+  acls = []
+  for depth in range(len(parts), 0, -1):
+    name = "yarn.scheduler.capacity.{0}.acl_submit_applications".format(".".join(parts[:depth]))
+    acls.append((name, get_property(configurations, services, "capacity-scheduler", name)))
+  return acls
+
+
+def amoro_queue_acl_needed(configurations, services):
+  """The submit ACL to give the optimizer queue so that the Amoro user can submit its Spark optimizers, or
+  None: optimizers not on YARN, Ranger authorizing the queues, or the queue or a parent already allowing it."""
+  if str(get_property(configurations, services, "amoro-env", "amoro_optimizer_container") or "local").strip() != "spark":
+    return None
+  if str(get_property(configurations, services, "ranger-yarn-plugin-properties",
+                      "ranger-yarn-plugin-enabled") or "No").strip().lower() == "yes":
+    return None
+  user = str(get_property(configurations, services, "amoro-env", "amoro_user") or "amoro").strip()
+  acls = queue_submit_acls(configurations, services,
+                           optimizer_queue_path(get_property(configurations, services, "amoro-env",
+                                                             "amoro_optimizer_yarn_queue")))
+  if any(queue_acl_allows(acl, user) for _, acl in acls):
+    return None
+  name, acl = acls[0]
+  return name, queue_acl_with_user(acl, user)
+
+
 def amoro_env_changed(services, name):
   """Whether the operator just changed amoro-env/name (configuration change request)."""
   return any(change.get("type") == "amoro-env" and change.get("name") == name
@@ -147,6 +196,7 @@ class AmoroRecommender(service_advisor.ServiceAdvisor):
     self.recommendAmoroLdapConfigurations(configurations, services)
     self.recommendAmoroOptimizerContainer(configurations, services, hosts)
     self.recommendAmoroResources(configurations, services, hosts)
+    self.recommendAmoroQueueAcl(configurations, services)
     if get_amoro_security_modes(configurations, services):
       self.putProperty(configurations, "amoro-site", services)("http-server.ssl.enabled", "true")
 
@@ -222,6 +272,17 @@ class AmoroRecommender(service_advisor.ServiceAdvisor):
       return
     put("amoro_optimizer_memory", memory)
     put("amoro_optimizer_parallelism", parallelism)
+
+  def recommendAmoroQueueAcl(self, configurations, services):
+    """Without the Ranger YARN plugin the Capacity Scheduler ACLs decide who submits to a queue, and enabling
+    Kerberos narrows them to yarn and the smoke user (YARN kerberos.json): the Amoro user is added to the
+    submit ACL of its optimizer queue. Also run on the Kerberos recommendations, which override the
+    Kerberos descriptor values."""
+    if "YARN" not in self.get_services_list(services):
+      return
+    needed = amoro_queue_acl_needed(configurations, services)
+    if needed:
+      self.putProperty(configurations, "capacity-scheduler", services)(needed[0], needed[1])
 
   def recommendAmoroLdapConfigurations(self, configurations, services):
     """The dashboard LDAP login defaults to the directory Ranger synchronizes users from."""
@@ -299,6 +360,12 @@ class AmoroValidator(service_advisor.ServiceAdvisor):
         and not optimizers_on_yarn_available(installed)):
       items.append({"config-name": "amoro_optimizer_container",
                     "item": self.getErrorItem("The Spark optimizer container needs YARN and Spark3 in the cluster.")})
+    needed = amoro_queue_acl_needed(dict(configurations, **{"amoro-env": {"properties": properties}}), services)
+    if needed and "YARN" in installed:
+      items.append({"config-name": "amoro_optimizer_yarn_queue",
+                    "item": self.getWarnItem("YARN refuses the Amoro optimizers: the Amoro user is not allowed to "
+                                             "submit to this queue. Set {0} to {1}, or authorize the queue with "
+                                             "Ranger.".format(needed[0], needed[1]))})
     if str(properties.get("amoro_optimizer_container", "local")).strip() == "spark":
       # one executor per thread: its memory plus the overhead YARN adds must fit the largest container
       try:

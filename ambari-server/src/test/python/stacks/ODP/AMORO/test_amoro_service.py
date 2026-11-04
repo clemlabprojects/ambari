@@ -781,6 +781,46 @@ class TestAmoroOptimizersOnYarn(unittest.TestCase):
     self.assertEqual(["amoro_optimizer_container"], errors(["YARN"]))
     self.assertEqual([], errors(["YARN", "SPARK3"]))
 
+  def queue_acl(self, capacity_scheduler, env=None, ranger_yarn=None):
+    services = self.services(["YARN", "SPARK3"], env=dict({"amoro_optimizer_container": "spark", "amoro_user": "amoro",
+                                                           "amoro_optimizer_yarn_queue": "default"}, **(env or {})))
+    services["configurations"]["capacity-scheduler"] = {"properties": dict(capacity_scheduler)}
+    if ranger_yarn:
+      services["configurations"]["ranger-yarn-plugin-properties"] = {"properties": {"ranger-yarn-plugin-enabled": ranger_yarn}}
+    configurations = {}
+    self.advisor.AmoroRecommender().recommendAmoroQueueAcl(configurations, services)
+    return configurations.get("capacity-scheduler", {}).get("properties", {}), services
+
+  KERBEROS_ACLS = {"yarn.scheduler.capacity.root.acl_submit_applications": "yarn,ambari-qa",
+                   "yarn.scheduler.capacity.root.default.acl_submit_applications": "yarn,yarn"}
+
+  def test_kerberos_queue_acls_get_the_amoro_user(self):
+    recommended, _ = self.queue_acl(self.KERBEROS_ACLS)
+    self.assertEqual({"yarn.scheduler.capacity.root.default.acl_submit_applications": "yarn,yarn,amoro"}, recommended)
+
+  def test_queue_acls_already_allowing_amoro_are_kept(self):
+    self.assertEqual({}, self.queue_acl({})[0])  # unset: YARN allows everyone
+    self.assertEqual({}, self.queue_acl(dict(self.KERBEROS_ACLS, **{"yarn.scheduler.capacity.root.acl_submit_applications": "*"}))[0])
+    self.assertEqual({}, self.queue_acl(dict(self.KERBEROS_ACLS, **{
+      "yarn.scheduler.capacity.root.default.acl_submit_applications": "yarn,amoro"}))[0])
+    self.assertEqual({}, self.queue_acl(self.KERBEROS_ACLS, env={"amoro_optimizer_container": "local"})[0])
+
+  def test_ranger_authorizes_the_queues_instead(self):
+    self.assertEqual({}, self.queue_acl(self.KERBEROS_ACLS, ranger_yarn="Yes")[0])
+
+  def test_queue_acl_groups_are_kept(self):
+    recommended, _ = self.queue_acl({"yarn.scheduler.capacity.root.acl_submit_applications": " ",
+                                     "yarn.scheduler.capacity.root.etl.acl_submit_applications": "yarn hadoop"},
+                                    env={"amoro_optimizer_yarn_queue": "root.etl"})
+    self.assertEqual({"yarn.scheduler.capacity.root.etl.acl_submit_applications": "yarn,amoro hadoop"}, recommended)
+
+  def test_validator_warns_when_amoro_cannot_submit(self):
+    _, services = self.queue_acl(self.KERBEROS_ACLS)
+    items = self.advisor.AmoroValidator().validateAmoroEnvProperties(
+      services["configurations"]["amoro-env"]["properties"], {}, services["configurations"], services, {"items": []})
+    self.assertTrue(any(item["config-name"] == "amoro_optimizer_yarn_queue" and "yarn,yarn,amoro" in item["message"]
+                        for item in items))
+
   def test_spark_executors_must_fit_the_largest_yarn_container(self):
     def errors(memory, max_allocation):
       services = self.services(["YARN", "SPARK3"])
