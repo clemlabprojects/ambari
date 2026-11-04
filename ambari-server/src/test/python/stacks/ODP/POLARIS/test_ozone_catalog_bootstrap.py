@@ -74,6 +74,32 @@ class TestRangerOzonePolicyUser(unittest.TestCase):
     self.assertEqual("kdps-release", polaris._ranger_user_name("kdps-release"))
 
 
+class TestSecretsStayOutOfTheTaskLog(unittest.TestCase):
+  """resource_management logs the content of a File unless it is a PasswordString."""
+
+  # the SQL statements that create the Polaris database user embed its password
+  SECRET_PATTERN = r"password|secret|\bstatement\b"
+
+  def test_secret_file_contents_are_password_strings(self):
+    import ast
+    import re
+    tree = ast.parse((SCRIPTS / "polaris.py").read_text())
+    unmasked = []
+    for node in ast.walk(tree):
+      if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "File":
+        for keyword in node.keywords:
+          source = ast.unparse(keyword.value)
+          if keyword.arg == "content" and re.search(self.SECRET_PATTERN, source.lower()) \
+              and not source.startswith("PasswordString("):
+            unmasked.append("line {0}: {1}".format(node.lineno, source))
+    self.assertEqual([], unmasked)
+
+  def test_the_logger_hides_a_password_string(self):
+    from resource_management.core.utils import PasswordString
+    self.assertEqual("[PROTECTED]", repr(PasswordString("s3-secret")))
+    self.assertEqual("s3-secret", str(PasswordString("s3-secret")))
+
+
 class TestPolarisOzoneSecretValidation(unittest.TestCase):
   advisor = load_polaris_advisor()
 

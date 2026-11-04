@@ -35,6 +35,7 @@ from resource_management.core.logger import Logger
 from resource_management.core.exceptions import ExecutionFailed, Fail
 from resource_management.core.resources.system import Directory, Execute, File
 from resource_management.core.source import DownloadSource, InlineTemplate, Template
+from resource_management.core.utils import PasswordString
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.get_user_call_output import get_user_call_output
 from resource_management.libraries.resources.properties_file import PropertiesFile
@@ -370,8 +371,9 @@ def setup_database():
 
   for idx, statement in enumerate(statements):
     sql_file = "{0}/polaris-db-bootstrap-{1}.sql".format(params.polaris_pid_dir, idx)
+    # the statements carry the password of the Polaris database user
     File(sql_file,
-         content=statement,
+         content=PasswordString(statement),
          owner=params.polaris_user,
          group=params.user_group,
          mode=0o600
@@ -1382,7 +1384,7 @@ def _polaris_catalog_get(catalog_name):
   ])
 
   try:
-    File(admin_secret_file, content=str(params.polaris_admin_password),
+    File(admin_secret_file, content=PasswordString(str(params.polaris_admin_password)),
          owner=polaris_user, group=params.user_group, mode=0o600)
     File(wrapper_script, content=wrapper_content,
          owner=polaris_user, group=params.user_group, mode=0o700)
@@ -1555,11 +1557,11 @@ def _create_catalog(
   retries = 5
   retry_sleep = 3
   try:
-    File(admin_secret_file, content=str(params.polaris_admin_password),
+    File(admin_secret_file, content=PasswordString(str(params.polaris_admin_password)),
          owner=polaris_user, group=params.user_group, mode=0o600)
     File(s3_access_file, content=str(access_key_id),
          owner=polaris_user, group=params.user_group, mode=0o600)
-    File(s3_secret_file, content=str(secret_key),
+    File(s3_secret_file, content=PasswordString(str(secret_key)),
          owner=polaris_user, group=params.user_group, mode=0o600)
     File(wrapper_script, content=wrapper_content,
          owner=polaris_user, group=params.user_group, mode=0o700)
@@ -1740,7 +1742,7 @@ def _run_postgres_sql(sql_file, jdbc_url, db_user=None, db_password=None):
 
   password_file = format("{polaris_pid_dir}/polaris-db-admin-password.txt")
   File(password_file,
-       content=db_password,
+       content=PasswordString(db_password),
        owner=params.polaris_user,
        group=params.user_group,
        mode=0o600
