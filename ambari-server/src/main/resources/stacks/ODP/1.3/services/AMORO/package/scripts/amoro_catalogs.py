@@ -401,8 +401,9 @@ def ozone_s3_credential():
   if not params.ozone_security_enabled:
     # Without Ozone security the S3 gateway checks no signature: the access key names the user.
     return params.amoro_user, secret
-  # getsecret creates the S3 identity of the principal (and prints its first secret, hence quiet).
-  output = run_ozone(["s3", "getsecret", "-e"], secret=True)
+  # getsecret creates the S3 identity of the principal (and prints its first secret, hence quiet); once it
+  # exists, getsecret fails with S3_SECRET_ALREADY_EXISTS and the access key is the principal.
+  output = run_ozone(["s3", "getsecret", "-e"], secret=True, accept="S3_SECRET_ALREADY_EXISTS")
   match = re.search(r"AWS_ACCESS_KEY_ID=['\"]?([^'\"\s]+)", output) or re.search(r"awsAccessKey\s*[:=]\s*(\S+)", output)
   access_key = match.group(1) if match else params.amoro_principal
   run_ozone(["s3", "setsecret", "-s", secret, "-e"], secret=True)
@@ -410,8 +411,9 @@ def ozone_s3_credential():
   return access_key, secret
 
 
-def run_ozone(args, secret=False):
-  """Runs the ozone shell as the Amoro user, with its Kerberos identity."""
+def run_ozone(args, secret=False, accept=None):
+  """Runs the ozone shell as the Amoro user, with its Kerberos identity. A failure whose output contains
+  `accept` is an answer, not an error."""
   import params
 
   command = [params.ozone_cmd, "--config", params.hadoop_conf_dir] + list(args)
@@ -421,8 +423,8 @@ def run_ozone(args, secret=False):
     shlex.quote(params.kinit_path_local), shlex.quote(params.amoro_keytab), shlex.quote(params.amoro_principal),
     " ".join(shlex.quote(part) for part in command))
   code, out, err = get_user_call_output(shell, user=params.amoro_user, is_checked_call=False, quiet=secret)
-  if code != 0:
-    raise Fail("ozone {0} failed: {1}".format(args[1], (err or out or "").strip()[:300]))
+  if code != 0 and not (accept and accept in "{0}{1}".format(out, err)):
+    raise Fail("ozone {0} failed: {1}".format(args[1], (err or out or "").strip()[-300:]))
   return "\n".join(filter(None, [out, err]))
 
 

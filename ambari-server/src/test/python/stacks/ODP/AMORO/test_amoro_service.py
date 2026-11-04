@@ -253,7 +253,7 @@ class TestAmoroCatalogs(unittest.TestCase):
     catalogs = load_amoro_catalogs(ozone_security_enabled=True)
     commands = []
 
-    def run_ozone(args, secret=False):
+    def run_ozone(args, secret=False, accept=None):
       commands.append((list(args), secret))
       return "export AWS_ACCESS_KEY_ID='amoro/edge.example.com@EXAMPLE.COM'" if args[1] == "getsecret" else ""
     catalogs.run_ozone = run_ozone
@@ -268,7 +268,7 @@ class TestAmoroCatalogs(unittest.TestCase):
     catalogs = load_amoro_catalogs(ozone_security_enabled=True, amoro_ozone_s3_secret="managed-secret")
     commands = []
 
-    def run_ozone(args, secret=False):
+    def run_ozone(args, secret=False, accept=None):
       commands.append(list(args))
       return "export AWS_ACCESS_KEY_ID='amoro/edge.example.com@EXAMPLE.COM'" if args[1] == "getsecret" else ""
     catalogs.run_ozone = run_ozone
@@ -277,7 +277,7 @@ class TestAmoroCatalogs(unittest.TestCase):
 
   def test_ozone_without_security_needs_no_secret_on_ozone(self):
     catalogs = load_amoro_catalogs(ozone_security_enabled=False)
-    catalogs.run_ozone = lambda args, secret=False: self.fail("no ozone command expected")
+    catalogs.run_ozone = lambda args, secret=False, accept=None: self.fail("no ozone command expected")
     self.assertEqual("amoro", catalogs.ozone_s3_credential()[0])
 
   def test_polaris_auth_uses_the_ambari_managed_oidc_client(self):
@@ -348,6 +348,24 @@ class TestAmoroPrivateFiles(unittest.TestCase):
       catalogs.register_catalogs(required=True)
 
 
+class TestAmoroOzoneShell(unittest.TestCase):
+
+  def catalogs_returning(self, result):
+    catalogs = load_amoro_catalogs(ozone_cmd="/usr/odp/current/ozone-client/bin/ozone", ozone_om_service_id="omservice",
+                                   kinit_path_local="/usr/bin/kinit")
+    catalogs.get_user_call_output = lambda shell, **ignored: result
+    return catalogs
+
+  def test_an_accepted_answer_is_not_an_error(self):
+    catalogs = self.catalogs_returning((255, "", "WARN ... \nS3_SECRET_ALREADY_EXISTS Secret for 'amoro' already exists"))
+    self.assertIn("S3_SECRET_ALREADY_EXISTS", catalogs.run_ozone(["s3", "getsecret", "-e"], accept="S3_SECRET_ALREADY_EXISTS"))
+
+  def test_other_failures_fail(self):
+    catalogs = self.catalogs_returning((255, "", "PERMISSION_DENIED"))
+    with self.assertRaises(catalogs.Fail):
+      catalogs.run_ozone(["s3", "getsecret", "-e"], accept="S3_SECRET_ALREADY_EXISTS")
+
+
 class TestAmoroCatalogCredentialRefresh(unittest.TestCase):
 
   def catalogs(self, detail, **overrides):
@@ -409,7 +427,7 @@ class TestAmoroCatalogCredentialRefresh(unittest.TestCase):
                                 amoro_polaris_oidc=False, ozone_security_enabled=True, amoro_ozone_s3_secret="rotated")
     commands = []
 
-    def run_ozone(args, secret=False):
+    def run_ozone(args, secret=False, accept=None):
       commands.append(list(args))
       return "export AWS_ACCESS_KEY_ID='amoro/edge.example.com@EXAMPLE.COM'" if args[1] == "getsecret" else ""
     catalogs.run_ozone = run_ozone
@@ -429,7 +447,7 @@ class TestAmoroCatalogCredentialRefresh(unittest.TestCase):
                                                 **{catalogs.S3_FINGERPRINT: catalogs.s3_credential_fingerprint()}))
     catalogs, _ = self.catalogs(detail, has_hive=False, has_polaris_ozone_catalog=True, amoro_polaris_oidc=False,
                                 amoro_ozone_s3_secret="same")
-    catalogs.run_ozone = lambda args, secret=False: self.fail("no ozone command expected")
+    catalogs.run_ozone = lambda args, secret=False, accept=None: self.fail("no ozone command expected")
     catalogs.register_catalogs(required=True)
     self.assertEqual([], catalogs.puts)
 
