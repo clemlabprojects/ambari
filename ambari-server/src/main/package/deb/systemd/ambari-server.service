@@ -21,5 +21,8 @@
   ExecStartPre=/bin/sleep 30
   ExecStart=/etc/init.d/ambari-server start
   ExecStop=/etc/init.d/ambari-server stop
+  # A non-root server (ambari-server.user) is started through su, whose PAM session (pam_systemd) moves it out
+  # of the service cgroup: without this, systemd sees no process left and stops the server right away.
+  RemainAfterExit=yes
   [Install]
   WantedBy=multi-user.target
