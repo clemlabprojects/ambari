@@ -234,6 +234,19 @@
     <on-ambari-upgrade add="true"/>
   </property>
   <property require-input="false">
+    <name>amoro_truststore_password</name>
+    <display-name>Truststore Password</display-name>
+    <value></value>
+    <property-type>PASSWORD</property-type>
+    <description>Password of the truststore, required to read the certificates of a PKCS12 truststore. Empty: the password of the Hadoop client truststore (ssl-client) when it is the same file. Ambari then gives the server a JKS copy of the truststore, readable without a password.</description>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property require-input="false">
     <name>amoro_oidc_client_id</name>
     <display-name>OIDC Client ID</display-name>
     <value></value>

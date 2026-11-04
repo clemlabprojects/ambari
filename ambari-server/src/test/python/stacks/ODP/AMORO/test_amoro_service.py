@@ -134,6 +134,31 @@ class TestAmoroConfig(unittest.TestCase):
                   '-Djavax.net.ssl.trustStoreType=JKS"', amoro.jvm_properties())
     self.assertTrue(amoro.jvm_properties().startswith("xms=2048\nxmx=2048\n"))
 
+  def test_truststore_without_password_is_used_as_is(self):
+    _, amoro = self.config(amoro_truststore_path="/etc/security/serverKeys/truststore.jks", amoro_truststore_type="JKS",
+                           amoro_truststore_password="")
+    self.assertEqual(("/etc/security/serverKeys/truststore.jks", "JKS"), amoro.jvm_truststore())
+
+  def test_truststore_with_password_becomes_a_jks_copy_without_password_on_the_command_line(self):
+    _, amoro = self.config(amoro_truststore_path="/etc/security/serverKeys/truststore.jks", amoro_truststore_type="JKS",
+                           amoro_truststore_password="s3cret", amoro_jvm_truststore_path="/var/lib/amoro/truststore.jks",
+                           amoro_java_home="/usr/lib/jvm/java-21", amoro_user="amoro", user_group="hadoop")
+    files, commands = [], []
+    amoro.File = lambda path, **kwargs: files.append((path, kwargs))
+    amoro.Execute = lambda command, **kwargs: commands.append(command)
+    self.assertEqual(("/var/lib/amoro/truststore.jks", "JKS"), amoro.jvm_truststore())
+    command = commands[0]
+    self.assertEqual("/usr/lib/jvm/java-21/bin/keytool", command[0])
+    self.assertNotIn("s3cret", " ".join(command))
+    self.assertIn("-srcstorepass:file", command)
+    self.assertIn("-deststorepass:file", command)
+    written = [kwargs["content"] for _, kwargs in files if "content" in kwargs]
+    self.assertTrue(all(isinstance(content, amoro.PasswordString) for content in written))
+    deleted = [path for path, kwargs in files if kwargs.get("action") == "delete"]
+    self.assertIn("/var/lib/amoro/truststore.jks.source-password", deleted)
+    self.assertIn('-Djavax.net.ssl.trustStore=/var/lib/amoro/truststore.jks -Djavax.net.ssl.trustStoreType=JKS',
+                  amoro.jvm_properties(("/var/lib/amoro/truststore.jks", "JKS")))
+
   def test_yaml_round_trip(self):
     try:
       import yaml

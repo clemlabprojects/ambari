@@ -147,6 +147,13 @@ amoro_truststore_path = str(default("/configurations/amoro-env/amoro_truststore_
 if amoro_truststore_path and not os.path.isfile(amoro_truststore_path):
   amoro_truststore_path = ""
 amoro_truststore_type = str(default("/configurations/amoro-env/amoro_truststore_type", "JKS")).strip() or "JKS"
+# The certificates of a PKCS12 truststore are only readable with its password. Empty: the password of the
+# Hadoop client truststore (ssl-client) when Amoro uses that same file.
+amoro_truststore_password = str(default("/configurations/amoro-env/amoro_truststore_password", ""))
+if not amoro_truststore_password and amoro_truststore_path and amoro_truststore_path == \
+    str(default("/configurations/ssl-client/ssl.client.truststore.location", "")).strip():
+  amoro_truststore_password = str(default("/configurations/ssl-client/ssl.client.truststore.password", ""))
+amoro_jvm_truststore_path = os.path.join(amoro_data_dir, "truststore.jks")
 
 # Catalogs registered by Ambari (REGISTER_CATALOGS, start): the Hive Metastore, and the Ozone
 # catalog Ambari manages in Polaris.

@@ -22,6 +22,7 @@ import base64
 import glob
 import json
 import os
+import secrets
 import shlex
 import ssl
 import time
@@ -32,6 +33,7 @@ from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Directory, Execute, File, Link
 from resource_management.core.source import DownloadSource, InlineTemplate
+from resource_management.core.utils import PasswordString
 
 LDAP_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.LdapPasswdAuthenticationProvider"
 DEFAULT_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.DefaultPasswdAuthenticationProvider"
@@ -81,7 +83,7 @@ def amoro():
        group=params.user_group,
        mode=0o600)
   File(os.path.join(params.amoro_conf_dir, "jvm.properties"),
-       content=jvm_properties(),
+       content=jvm_properties(jvm_truststore()),
        owner=params.amoro_user,
        group=params.user_group,
        mode=0o644)
@@ -260,15 +262,42 @@ def _yaml_scalar(value):
   return json.dumps(str(value))
 
 
-def jvm_properties():
+def jvm_truststore():
+  """(path, type) of the truststore of the server JVM. With a truststore password, a JKS copy of the cluster
+  truststore owned by Amoro: Java reads the trusted certificates of a JKS file without its password, which
+  then stays off the command line of the server (ps), unlike -Djavax.net.ssl.trustStorePassword."""
   import params
 
+  if not params.amoro_truststore_path or not params.amoro_truststore_password:
+    return params.amoro_truststore_path, params.amoro_truststore_type
+  target = params.amoro_jvm_truststore_path
+  source_password = target + ".source-password"
+  target_password = target + ".password"
+  File(source_password, content=PasswordString(params.amoro_truststore_password), owner=params.amoro_user, mode=0o600)
+  File(target_password, content=PasswordString(secrets.token_urlsafe(24)), owner=params.amoro_user, mode=0o600)
+  File(target, action="delete")
+  try:
+    # the source type is detected by keytool (a PKCS12 file named .jks is common)
+    Execute((os.path.join(params.amoro_java_home, "bin", "keytool"), "-importkeystore", "-noprompt",
+             "-srckeystore", params.amoro_truststore_path, "-srcstorepass:file", source_password,
+             "-destkeystore", target, "-deststoretype", "JKS", "-deststorepass:file", target_password),
+            user=params.amoro_user)
+  finally:
+    File(source_password, action="delete")
+    File(target_password, action="delete")
+  File(target, owner=params.amoro_user, group=params.user_group, mode=0o640)
+  return target, "JKS"
+
+
+def jvm_properties(truststore=None):
+  import params
+
+  path, store_type = truststore or (params.amoro_truststore_path, params.amoro_truststore_type)
   options = "-XX:NewRatio=1 -XX:SurvivorRatio=3 -XX:+ExitOnOutOfMemoryError"
-  if params.amoro_truststore_path:
+  if path:
     # The cluster CA, for the TLS clients of the server (Polaris). Not JAVA_TOOL_OPTIONS in env.sh: the
     # scripts parse the first line "java -version" prints, which the JVM would replace by "Picked up ...".
-    options += " -Djavax.net.ssl.trustStore={0} -Djavax.net.ssl.trustStoreType={1}".format(
-      params.amoro_truststore_path, params.amoro_truststore_type)
+    options += " -Djavax.net.ssl.trustStore={0} -Djavax.net.ssl.trustStoreType={1}".format(path, store_type)
   return "xms={0}\nxmx={0}\njmx.remote.port=\nextra.options=\"{1}\"\n".format(params.amoro_server_heapsize, options)
 
 
