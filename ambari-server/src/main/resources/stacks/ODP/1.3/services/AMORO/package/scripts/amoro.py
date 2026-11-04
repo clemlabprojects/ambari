@@ -193,6 +193,11 @@ def spark_container():
     # Dynamic allocation (on by default in Amoro) without the YARN shuffle service: the optimizer
     # shuffles nothing, its idle executors go back to YARN.
     "spark-conf.spark.dynamicAllocation.shuffleTracking.enabled": "true",
+    # The tasks AMS sends are Java-serialized Iceberg objects of its iceberg-core: the job jar carries the same
+    # classes, while the iceberg-spark-runtime of the Spark jars relocates Iceberg's dependencies (Avro), which
+    # changes their serialVersionUID (InvalidClassException org.apache.iceberg.BaseFile). The job jar first.
+    "spark-conf.spark.driver.userClassPathFirst": "true",
+    "spark-conf.spark.executor.userClassPathFirst": "true",
   }
   if params.security_enabled:
     # Submitted with the keytab instead of --proxy-user, which also renews the delegation tokens.
