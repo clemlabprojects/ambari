@@ -438,6 +438,48 @@ public class AmbariActionClient {
         }
     }
 
+    /** A keytab Ambari server issued from a platform context's KDC. */
+    public record IssuedKeytab(byte[] keytab, String sha256, Integer kvno, boolean created) {}
+
+    /**
+     * Issues the keytab of a principal from a platform context's KDC: Ambari server creates the principal, or exports
+     * the key of one it may, with the KDC account stored under {@code alias} ({@code POST /kerberos/adhoc_keytab}), and
+     * answers with the keytab. Ambari server only resets the key of an account KDPS created for the namespace.
+     *
+     * @param namespace the Kubernetes namespace that receives the keytab, which the principal must be named after
+     * @param newKey    whether an existing principal gets a new key, which Ambari only gives an account KDPS created
+     *                  for the namespace
+     * @throws IOException with Ambari server's reason when the principal is refused or the KDC fails
+     */
+    public IssuedKeytab issueContextKeytab(String alias, String principal, String namespace, boolean newKey)
+            throws Exception {
+        String url = ambariApiBase + "/kerberos/adhoc_keytab";
+        JsonObject body = new JsonObject();
+        body.addProperty("credential_alias", alias);
+        body.addProperty("principal", principal);
+        body.addProperty("namespace", namespace);
+        if (newKey) {
+            body.addProperty("new_key", true);
+        }
+        try (InputStream is = stream.readFrom(url, "POST", body.toString(),
+                withStdHeaders(Map.of("Content-Type", "application/json")))) {
+            String answer = is == null ? "" : new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            if (answer.isBlank()) {
+                throw new IOException("Empty answer from " + url);
+            }
+            JsonObject root = answer(answer, url);
+            String keytab = jsonString(root, "keytab");
+            if (keytab == null || keytab.isBlank()) {
+                throw new IOException("Ambari server answered without a keytab for " + principal);
+            }
+            JsonElement kvno = root.get("kvno");
+            JsonElement created = root.get("created");
+            return new IssuedKeytab(java.util.Base64.getDecoder().decode(keytab), jsonString(root, "sha256"),
+                    kvno == null || kvno.isJsonNull() ? null : kvno.getAsInt(),
+                    created != null && !created.isJsonNull() && created.getAsBoolean());
+        }
+    }
+
     /**
      * Tests a platform context's KDC account, as stored in Ambari's credential store under {@code alias}: Ambari server
      * opens the KDC with it ({@code POST /kerberos/adhoc_keytab/test}) and issues nothing.

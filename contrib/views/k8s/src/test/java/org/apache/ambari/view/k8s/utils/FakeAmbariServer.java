@@ -62,7 +62,7 @@ public final class FakeAmbariServer implements AutoCloseable {
     /** Every authorization a cluster operator may hold, all granted to the operator. */
     private static final List<String> AUTHORIZATIONS = List.of("CLUSTER.VIEW_STATUS_INFO", "CLUSTER.VIEW_CONFIGS",
             "CLUSTER.TOGGLE_KERBEROS", "SERVICE.MODIFY_CONFIGS", "SERVICE.RUN_CUSTOM_COMMAND", "AMBARI.MANAGE_VIEWS",
-            "VIEW.USE");
+            "AMBARI.MANAGE_SETTINGS", "VIEW.USE");
 
     private final MockWebServer server = new MockWebServer();
     private final String cluster;

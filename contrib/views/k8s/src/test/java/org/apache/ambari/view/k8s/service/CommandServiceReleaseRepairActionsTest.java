@@ -467,6 +467,34 @@ class CommandServiceReleaseRepairActionsTest {
     }
 
     @Test
+    void aReleaseOnAContextWithAKdcAccountHasItsKeytabRegeneratedThere() {
+        externalContext(false, false, "CORP.EXAMPLE.COM");
+        service.contextHoldsKdcAccount = CONTEXT::equals;
+        release("trino", "TRINO", CONTEXT, null);
+        secrets.putKeytab(NS, "trino-keytab", "trino", "trino-" + NS + "@CORP.EXAMPLE.COM",
+                keytab("trino-" + NS + "@CORP.EXAMPLE.COM", 4));
+
+        String id = service.planReleaseKeytabRegeneration(NS, "trino", new MultivaluedHashMap<>(), BASE_URI);
+
+        Map<String, Object> issue = paramsOf(step(id, CommandType.KEYTAB_ISSUE_PRINCIPAL));
+        assertEquals(CONTEXT, issue.get(CommandService.KDC_CONTEXT_PARAM));
+        assertEquals("trino-" + NS + "@CORP.EXAMPLE.COM", issue.get("principalFqdn"));
+        assertEquals(Boolean.TRUE, issue.get(CommandService.FORCE_REISSUE_PARAM));
+    }
+
+    @Test
+    void aReleaseOnAContextWithAKdcAccountKeepsTheKeytabItsOperatorGave() {
+        externalContext(false, false, "CORP.EXAMPLE.COM");
+        service.contextHoldsKdcAccount = CONTEXT::equals;
+        release("trino", "TRINO", CONTEXT, null);
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> service.planReleaseKeytabRegeneration(NS, "trino", new MultivaluedHashMap<>(), BASE_URI));
+
+        assertTrue(refused.getMessage().contains("holds no keytab KDPS issued"), refused.getMessage());
+    }
+
+    @Test
     void aStoredKeytabTheKdcRejectsIsIssuedAgain() throws Exception {
         managedKerberizedCluster();
         secrets.putKeytab(NS, "trino-keytab", "trino", TRINO_PRINCIPAL, keytab(TRINO_PRINCIPAL, 4));
@@ -702,6 +730,10 @@ class CommandServiceReleaseRepairActionsTest {
 
     /** An external platform context, with the Keycloak and Ranger administrator credentials asked for. */
     private void externalContext(boolean keycloakAdmin, boolean rangerAdmin) {
+        externalContext(keycloakAdmin, rangerAdmin, null);
+    }
+
+    private void externalContext(boolean keycloakAdmin, boolean rangerAdmin, String realm) {
         view.as("admin");
         ContextRequest context = new ContextRequest();
         context.id = CONTEXT;
@@ -714,6 +746,9 @@ class CommandServiceReleaseRepairActionsTest {
         if (keycloakAdmin) {
             context.config.put("adminClientId", "kdps-admin");
             context.secrets.put("adminClientSecret", "Keycloak-Admin-Secret");
+        }
+        if (realm != null) {
+            context.config.put("realm", realm);
         }
         if (rangerAdmin) {
             context.config.put("rangerUrl", "http://ranger.cdp.example.com:6080");

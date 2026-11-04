@@ -50,6 +50,14 @@ class AmbariPermissionPreflightTest {
   }
 
   @Test
+  void keytabsFromAContextKdcNeedAnAmbariAdministrator() {
+    // Ambari server creates them with the KDC account the context keeps in its credential store.
+    assertEquals(List.of(AmbariPermissionPreflight.MANAGE_SETTINGS),
+        AmbariPermissionPreflight.requiredFor(KERBERIZED_TRINO_PLAN, false, true));
+    assertEquals(List.of(), AmbariPermissionPreflight.requiredFor(List.of("HELM_DEPLOY"), false, true));
+  }
+
+  @Test
   void eachPermissionIsListedOnceAndUnknownStepsAreIgnored() {
     List<AmbariPermissionPreflight.Requirement> required = AmbariPermissionPreflight.requiredFor(List.of(
         "KEYTAB_ISSUE_PRINCIPAL", "KEYTAB_ISSUE_PRINCIPAL", "NOT_A_STEP", "OM_RANGER_TAGSYNC_REGISTER",

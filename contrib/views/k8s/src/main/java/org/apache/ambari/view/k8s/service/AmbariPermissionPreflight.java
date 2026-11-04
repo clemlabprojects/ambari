@@ -63,6 +63,10 @@ public final class AmbariPermissionPreflight {
             "read the cluster's Kerberos state and the settings of the services the release connects to");
     static final Requirement TOGGLE_KERBEROS = new Requirement("CLUSTER.TOGGLE_KERBEROS",
             "Enable/disable Kerberos", "create the release's Kerberos keytabs");
+    /** Keytabs from a platform context's KDC: Ambari server issues them for its administrators only. */
+    static final Requirement MANAGE_SETTINGS = new Requirement("AMBARI.MANAGE_SETTINGS",
+            "Manage Ambari settings (Ambari administrator)", "create the release's Kerberos keytabs in the platform "
+            + "context's KDC");
     static final Requirement MANAGE_VIEWS = new Requirement("AMBARI.MANAGE_VIEWS",
             "Manage Ambari Views", "create the release's Ambari view instance");
     static final Requirement MODIFY_CONFIGS = new Requirement("SERVICE.MODIFY_CONFIGS",
@@ -115,6 +119,23 @@ public final class AmbariPermissionPreflight {
      * @return the required authorizations; empty when no step uses the operator's Ambari session
      */
     public static List<Requirement> requiredFor(Collection<String> stepTypes, boolean managedContext) {
+        return requiredFor(stepTypes, managedContext, false);
+    }
+
+    /**
+     * As {@link #requiredFor(Collection, boolean)}, the keytabs being issued from a platform context's KDC when
+     * {@code keytabsFromContextKdc}: that needs an Ambari administrator, not the cluster's Kerberos toggle.
+     */
+    public static List<Requirement> requiredFor(Collection<String> stepTypes, boolean managedContext,
+                                                boolean keytabsFromContextKdc) {
+        List<Requirement> required = requiredForSteps(stepTypes, managedContext);
+        if (keytabsFromContextKdc && required.contains(TOGGLE_KERBEROS)) {
+            required.set(required.indexOf(TOGGLE_KERBEROS), MANAGE_SETTINGS);
+        }
+        return required;
+    }
+
+    private static List<Requirement> requiredForSteps(Collection<String> stepTypes, boolean managedContext) {
         List<Requirement> required = new ArrayList<>();
         if (stepTypes == null) {
             return required;

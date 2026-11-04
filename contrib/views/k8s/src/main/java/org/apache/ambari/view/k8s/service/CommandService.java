@@ -42,6 +42,7 @@ import org.apache.ambari.view.k8s.model.FormField;
 import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.requests.KeytabRequest;
 import org.apache.ambari.view.k8s.store.CommandEntity;
+import org.apache.ambari.view.k8s.store.KdpsContextEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoEntity;
 import org.apache.ambari.view.k8s.store.HelmRepoRepo;
@@ -229,6 +230,33 @@ public class CommandService {
      * package-private so tests, which have no KDC, can replace it.
      */
     KeytabLogin keytabLogin = CommandService::loginWithKeytab;
+
+    /** Logs in with a keytab against a platform context's realm, with its krb5.conf. Replaced by tests. */
+    ContextKeytabLogin contextKeytabLogin = CommandService::kinitWithKeytab;
+
+    /**
+     * Root parameter naming the platform context whose KDC issues the release's keytabs (ContextKdcAccount): the issue
+     * step then asks Ambari server's {@code /kerberos/adhoc_keytab} instead of the cluster's.
+     */
+    static final String KDC_CONTEXT_PARAM = "_kdcContextId";
+
+    /** The payload reference of a keytab a platform context's KDC issued, already stored in its Secret. */
+    static final String CONTEXT_KDC_PAYLOAD_PREFIX = "context-kdc:";
+
+    /** Whether a platform context holds a KDC account; null asks the context's record. Set by tests. */
+    java.util.function.Predicate<String> contextHoldsKdcAccount;
+
+    private boolean holdsKdcAccount(String contextId) {
+        if (contextHoldsKdcAccount != null) {
+            return contextHoldsKdcAccount.test(contextId);
+        }
+        try {
+            return new ContextService(ctx).kdcAccount().exists(contextId);
+        } catch (RuntimeException e) {
+            LOG.warn("Could not tell whether context {} holds a KDC account: {}", contextId, e.toString());
+            return false;
+        }
+    }
     /** Taking back the tag sync account of a deploy that did not install its release, and resuming it, one at a time. */
     private final Object tagSyncTakeBackLock = new Object();
     private final Map<String, DeploymentBackend> deploymentBackends = new ConcurrentHashMap<>();
@@ -2696,8 +2724,11 @@ public class CommandService {
             return "Kerberos regeneration is only supported in PRE_PROVISIONED mode (current: " + kerberosInjectionMode
                     + ").";
         }
-        // A release on another platform context gets its Kerberos only from the keytab Secret the operator gives,
-        // never from the KDC of the cluster this Ambari manages: nothing to issue here.
+        // A release on another platform context gets its Kerberos from the keytab Secret the operator gives, never
+        // from the KDC of the cluster this Ambari manages, unless the context holds a KDC account to issue them with.
+        if (!target.managed() && keytabsFromContextKdc(target)) {
+            return null;
+        }
         if (!target.managed()) {
             return "Kerberos for release " + release + " does not come from the cluster this Ambari manages but from "
                     + (ContextService.KIND_NONE.equals(target.kind()) ? "no platform context"
@@ -2716,6 +2747,14 @@ public class CommandService {
             return "Kerberos is disabled on cluster " + target.cluster() + "; keytab regeneration skipped.";
         }
         return null;
+    }
+
+    /** Whether the keytabs of a release on a platform context come from that context's KDC account. */
+    private boolean keytabsFromContextKdc(ReleaseActionTarget target) {
+        return !target.managed() && !ContextService.KIND_NONE.equals(target.kind()) && target.contextId() != null
+                && holdsKdcAccount(target.contextId()) && target.resolved() != null
+                && target.resolved().getResolvedFields() != null
+                && !stringValue(target.resolved().getResolvedFields().get("kerberos.realm")).isBlank();
     }
 
     /** Why "Reapply Ranger repository" cannot run for a release, or null when it can. */
@@ -5129,8 +5168,10 @@ public class CommandService {
             throw new IllegalArgumentException("Service definition for " + releaseMetadata.getServiceKey() + " has no Kerberos entries.");
         }
 
-        // Resolve Kerberos realm from Ambari.
-        String kerberosRealm = resolveKerberosRealmFromAmbari(ambariActionClient, clusterName);
+        // The realm of the context's KDC, or of the cluster's.
+        boolean fromContextKdc = keytabsFromContextKdc(target);
+        String kerberosRealm = fromContextKdc ? target.resolved().getResolvedFields().get("kerberos.realm")
+                : resolveKerberosRealmFromAmbari(ambariActionClient, clusterName);
         if (kerberosRealm == null || kerberosRealm.isBlank()) {
             throw new IllegalStateException("Kerberos realm is empty; cannot regenerate keytabs.");
         }
@@ -5162,6 +5203,9 @@ public class CommandService {
         // Without it, the keytab step reuses the keytab the Secret holds and nothing is regenerated.
         rootParams.put(FORCE_REISSUE_PARAM, true);
         target.putInto(rootParams, baseUri, callerHeaders);
+        if (fromContextKdc) {
+            rootParams.put(KDC_CONTEXT_PARAM, target.contextId());
+        }
         rootParams.put("_callerHeaders", AmbariActionClient.headersToPersistableMap(callerHeaders));
 
         List<String> childCommandIds = new ArrayList<>();
@@ -5216,6 +5260,13 @@ public class CommandService {
                 LOG.info("Keytab of {} in Secret {} already planned; entry {} shares it", principalFqdn, secretName, entryKey);
                 continue;
             }
+            // Only a keytab KDPS stored is regenerated in a context's KDC: a release deployed with the operator's own
+            // keytab Secret keeps it, and its account in that KDC, if any, keeps its key.
+            if (fromContextKdc && !isReusableKeytab(
+                    this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret), principalFqdn)) {
+                LOG.info("Secret {}/{} holds no keytab of {}: not regenerated", namespace, secretName, principalFqdn);
+                continue;
+            }
             // A principal is issued once; another Secret holding it gets that keytab copied.
             Map<String, Object> stepParams = rootParams;
             if (!issuedPrincipals.add(principalFqdn)) {
@@ -5239,6 +5290,11 @@ public class CommandService {
             keytabStepsAdded = true;
         }
 
+        if (!keytabStepsAdded && fromContextKdc) {
+            throw new IllegalArgumentException("Release " + namespace + "/" + releaseName + " holds no keytab KDPS "
+                    + "issued from the KDC of its platform context '" + target.contextName() + "': it uses the keytab "
+                    + "Secret it was deployed with. Rotate that keytab, then restart the release.");
+        }
         if (!keytabStepsAdded) {
             throw new IllegalStateException("No keytab steps were scheduled for release " + releaseName);
         }
@@ -8598,12 +8654,29 @@ public class CommandService {
         String selectedContextIdForKrb = stringValue(params.get("_platformContextId"));
         boolean externalContextSelected = selectedContextIdForKrb != null && !selectedContextIdForKrb.isBlank()
                 && !ContextService.DEFAULT_CONTEXT_ID.equals(selectedContextIdForKrb);
+        // A context holding a KDC account has the release's principals created in its own KDC (ContextKdcAccount):
+        // Kerberos is then on as with an external keytab, which still wins when the operator gives one.
+        String kdcContextId = externalContextSelected && !externalKeytabProvided && contextKerberized
+                && serviceNeedsKerberosIdentity && holdsKdcAccount(selectedContextIdForKrb)
+                ? selectedContextIdForKrb : null;
+        if (kdcContextId != null) {
+            if (contextKrb5 == null || contextKrb5.isBlank()) {
+                throw new IllegalStateException("Platform context '" + kdcContextId + "' creates the principals of "
+                        + request.getServiceKey() + " in its KDC, but holds no krb5.conf: the pods could not reach that "
+                        + "KDC to log in. Paste the realm's krb5.conf in the context's Kerberos settings, then deploy "
+                        + "again.");
+            }
+            params.put(KDC_CONTEXT_PARAM, kdcContextId);
+            LOG.info("The keytabs of {}/{} are issued from the KDC of platform context '{}'", request.getNamespace(),
+                    request.getReleaseName(), kdcContextId);
+        }
         if (externalContextSelected) {
             boolean localKerberos = kerberosEnabled;
-            kerberosEnabled = externalKeytabProvided; // external → keytab-driven only
+            kerberosEnabled = externalKeytabProvided || kdcContextId != null; // external → keytab or context KDC
             if (localKerberos != kerberosEnabled) {
                 LOG.info("External context '{}' selected: ignoring the local cluster's Kerberos state ({}); "
-                        + "Kerberos for this deploy is {} (driven only by the step-3 external keytab).",
+                        + "Kerberos for this deploy is {} (driven only by the step-3 external keytab or the "
+                        + "context's KDC account).",
                         selectedContextIdForKrb, localKerberos, kerberosEnabled ? "ENABLED" : "DISABLED");
             }
             params.put("kerberosClusterEnabled", kerberosEnabled);
@@ -8616,7 +8689,7 @@ public class CommandService {
         // the view creates neither the krb5.conf ConfigMap nor wires the keytab, and the pod later dies with
         // the opaque "MountVolume.SetUp failed ... configmap <release>-krb5-conf not found". Fail NOW with an
         // actionable message pointing at the missing keytab selection.
-        if (externalContextSelected && !externalKeytabProvided
+        if (externalContextSelected && !externalKeytabProvided && kdcContextId == null
                 && (deployHasKerberizedExternalTarget(request, ctxResolvedKrbFields)
                     || (contextKerberized && serviceNeedsKerberosIdentity))) {
             String realm = ctxResolvedKrbFields.getOrDefault("kerberos.realm", "");
@@ -8634,9 +8707,13 @@ public class CommandService {
         List<Map<String, Object>> kerberosEntryList = normalizeKerberosEntries(request.getKerberos());
         String kerberosRealm = null;
         if (kerberosEnabled) {
-            kerberosRealm = resolveKerberosRealmFromAmbari(ambariActionClient, cluster);
+            // The principals of a context's KDC are in that context's realm, not the cluster's.
+            kerberosRealm = kdcContextId != null ? ctxResolvedKrbFields.get("kerberos.realm")
+                    : resolveKerberosRealmFromAmbari(ambariActionClient, cluster);
         }
-        boolean ambariAvailable = ambariActionClient != null && cluster != null && !cluster.isBlank();
+        // A context's KDC is reached through Ambari server without any cluster.
+        boolean ambariAvailable = kdcContextId != null
+                || (ambariActionClient != null && cluster != null && !cluster.isBlank());
         List<PlannedKeytab> plannedKeytabs = planPreProvisionedKeytabs(request, preProvisionedKerberosMode,
                 externalKeytabProvided, kerberosEnabled, ambariAvailable, kerberosEntryList, kerberosRealm);
 
@@ -8663,7 +8740,7 @@ public class CommandService {
                 ambariStepsKnownUpFront(plannedKeytabs, keytab -> keytabAlreadyStored(request.getNamespace(), keytab),
                         declaresAmbariViewInstance(request.getServiceKey()),
                         polarisProvisionUsesAmbari(request.getFormValues())),
-                usesManagedContext(params)));
+                usesManagedContext(params), params.get(KDC_CONTEXT_PARAM) != null));
         String missingAmbariPermission = ambariPermissions.check(requiredUpFront);
         if (missingAmbariPermission != null) {
             throw new IllegalStateException(missingAmbariPermission);
@@ -12314,6 +12391,8 @@ public class CommandService {
                     // keytab another release of the namespace holds for the same principal is copied, not issued
                     // again, so the two releases keep the same key.
                     boolean forceReissue = "true".equalsIgnoreCase(String.valueOf(childParams.get(FORCE_REISSUE_PARAM)));
+                    KeytabLogin login = keytabLoginFor(stringValue(childParams.get(KDC_CONTEXT_PARAM)));
+                    boolean storedKeytabRejected = false;
                     {
                         String reuseNs  = (String) childParams.get("namespace");
                         String reuseSec = (String) childParams.get("secretName");
@@ -12327,11 +12406,12 @@ public class CommandService {
                                         this.kubernetesService.readOpaqueSecretKeyAsBytes(reuseNs, reuseSec, reuseKey);
                                 Integer rejectedVersion = null;
                                 if (isReusableKeytab(existing, principalFqdn)
-                                        && Boolean.FALSE.equals(keytabLogin.authenticates(existing.get(), principalFqdn))) {
+                                        && Boolean.FALSE.equals(login.authenticates(existing.get(), principalFqdn))) {
                                     appendCommandLog(id, "The keytab in Secret " + reuseNs + "/" + reuseSec
                                             + " no longer logs " + principalFqdn + " in (its key changed in the KDC,"
                                             + " or the KDC no longer knows the principal)");
                                     rejectedVersion = keytabKeyVersion(existing.get(), principalFqdn);
+                                    storedKeytabRejected = true;
                                     existing = Optional.empty();
                                 }
                                 // Reuse ONLY when the stored keytab is actually for the principal we're about
@@ -12361,7 +12441,7 @@ public class CommandService {
                                             reuseNs, reuseSec, principalFqdn);
                                 }
                                 Map<String, Object> copied = siblingKeytabToCopy(id, reuseNs, reuseSec, principalFqdn,
-                                        rejectedVersion);
+                                        rejectedVersion, login);
                                 if (copied != null) {
                                     String prior = priorKeytabSha256(reuseNs, reuseSec, reuseKey);
                                     if (prior != null) copied.put(PRIOR_KEYTAB_SHA256, prior);
@@ -12400,6 +12480,60 @@ public class CommandService {
 
                     // Build Ambari API base from the same host the View is running on
                     String ambariApiBase = baseUri.resolve("/api/v1").toString();
+
+                    // A platform context's KDC: Ambari server issues the keytab without any cluster and answers with it.
+                    String kdcContextId = stringValue(childParams.get(KDC_CONTEXT_PARAM));
+                    if (!kdcContextId.isEmpty()) {
+                        String keytabNs = (String) childParams.get("namespace");
+                        String keytabSecret = (String) childParams.get("secretName");
+                        String keytabKey = stringValue(childParams.get("keyNameInSecret"));
+                        if (keytabKey.isBlank()) keytabKey = "service.keytab";
+                        String priorKeytab = priorKeytabSha256(keytabNs, keytabSecret, keytabKey);
+                        // A new key for a regeneration, or when the KDC refused the stored one: Ambari would otherwise
+                        // give back the current key where the KDC can export it.
+                        boolean newKey = forceReissue || storedKeytabRejected;
+                        AmbariActionClient.IssuedKeytab issued;
+                        try {
+                            issued = new AmbariActionClient(ctx, ambariApiBase, authHeaders).issueContextKeytab(
+                                    ContextKdcAccount.aliasOf(kdcContextId), principalFqdn, keytabNs, newKey);
+                        } catch (java.io.IOException refused) {
+                            // Not retried: Ambari server refused the principal, or the KDC did, and asking again
+                            // gives the same answer.
+                            String why = "The KDC of platform context '" + kdcContextId + "' did not issue the keytab of "
+                                    + principalFqdn + ": " + trim(refused.getMessage());
+                            appendCommandLog(id, why);
+                            throw new IllegalStateException(why, refused);
+                        }
+                        appendCommandLog(id, (issued.created() ? "Created " : newKey ? "Gave a new key to "
+                                : "Issued the keytab of ") + principalFqdn + " in the KDC of platform context '"
+                                + kdcContextId + "'" + (issued.kvno() == null ? "" : " (key version " + issued.kvno() + ")"));
+                        // Stored at once, the Secret being the only copy: the KDC may not give this key back.
+                        try {
+                            this.kubernetesService.createNamespace(keytabNs);
+                        } catch (Exception ignore) {
+                            // the namespace may already exist
+                        }
+                        this.kubernetesService.createOrUpdateOpaqueSecret(keytabNs, keytabSecret, keytabKey,
+                                issued.keytab(), keytabSecretLabels(stringValue(childParams.get("releaseName")),
+                                        principalFqdn), KdpsReleaseObjects.annotations(keytabNs), Boolean.TRUE);
+                        String issuedSha256 = sha256Hex(issued.keytab());
+                        Optional<byte[]> stored =
+                                this.kubernetesService.readOpaqueSecretKeyAsBytes(keytabNs, keytabSecret, keytabKey);
+                        if (stored.isEmpty() || !issuedSha256.equals(sha256Hex(stored.get()))) {
+                            throw new IllegalStateException("The keytab of " + principalFqdn + " was issued but Secret "
+                                    + keytabNs + "/" + keytabSecret + " does not hold it; run the operation again: a "
+                                    + "new key is then given to the account KDPS created.");
+                        }
+                        Map<String, Object> res = new LinkedHashMap<>();
+                        res.put("kdcContext", kdcContextId);
+                        res.put("payloadRef", CONTEXT_KDC_PAYLOAD_PREFIX + kdcContextId);
+                        res.put("payloadSha256", issuedSha256);
+                        res.put("created", issued.created());
+                        if (issued.kvno() != null) res.put("kvno", issued.kvno());
+                        if (priorKeytab != null) res.put(PRIOR_KEYTAB_SHA256, priorKeytab);
+                        childSt.setResultJson(gson.toJson(res));
+                        break;
+                    }
 
                     // Resolve target cluster (bound view or auto-discover)
                     String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
@@ -12616,10 +12750,16 @@ public class CommandService {
                     if (baseUriStr == null || baseUriStr.isBlank()) {
                         throw new IllegalStateException("Missing baseUri in command params (_baseUri)");
                     }
-                    String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
-                    Map<String,String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
-                    String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
-                    var ambariActionClient = new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders);
+                    // The issue step already stored a keytab a platform context's KDC issued: no cluster to ask.
+                    KeytabPayloads payloads;
+                    if (payloadRef.startsWith(CONTEXT_KDC_PAYLOAD_PREFIX)) {
+                        payloads = KeytabPayloads.STORED_BY_ISSUER;
+                    } else {
+                        String ambariApiBase = URI.create(baseUriStr).resolve("/api/v1").toString();
+                        Map<String,String> authHeaders = AmbariActionClient.toAuthHeaders(childParams.get("_callerHeaders"));
+                        String cluster = this.commandUtils.resolveClusterName(baseUriStr, authHeaders);
+                        payloads = KeytabPayloads.of(new AmbariActionClient(ctx, ambariApiBase, cluster, authHeaders));
+                    }
 
                     String verifiedSha256 = null;
                     Optional<byte[]> existingSecretBytes =
@@ -12633,7 +12773,7 @@ public class CommandService {
                         afterKeytabStored(root, id, namespace, secretName, keytabPrincipal, keytabRelease, keytabBefore,
                                 existingSecretBytes.get(), payloadSha256);
                         try {
-                            ambariActionClient.ackAdhocKeytabPayload(payloadRef);
+                            payloads.ack(payloadRef);
                         } catch (Exception ackEx) {
                             throw new CommandUtils.RetryableException("Secret already present but failed to acknowledge payload: " + trim(ackEx.getMessage()), ackEx);
                         }
@@ -12643,8 +12783,7 @@ public class CommandService {
                     if (verifiedSha256 == null) {
                         byte[] keytabBytes = null;
                         try {
-                            String keytabB64 = ambariActionClient.readAdhocKeytabPayload(payloadRef);
-                            keytabBytes = java.util.Base64.getDecoder().decode(keytabB64);
+                            keytabBytes = payloads.read(payloadRef);
                         } catch (Exception payloadEx) {
                             Optional<byte[]> secretBytesAfterReadFailure =
                                     this.kubernetesService.readOpaqueSecretKeyAsBytes(namespace, secretName, keyNameInSecret);
@@ -12695,7 +12834,7 @@ public class CommandService {
                                         keytabBefore, keytabBytes, verifiedSha256);
 
                                 try {
-                                    ambariActionClient.ackAdhocKeytabPayload(payloadRef);
+                                    payloads.ack(payloadRef);
                                 } catch (Exception ackEx) {
                                     throw new CommandUtils.RetryableException("Secret verified but failed to acknowledge keytab payload: " + trim(ackEx.getMessage()), ackEx);
                                 }
@@ -14104,6 +14243,132 @@ public class CommandService {
         return new String(bytes, StandardCharsets.UTF_8);
     }
 
+    /** Where the Secret step reads an issued keytab from and acknowledges it. */
+    interface KeytabPayloads {
+        byte[] read(String payloadRef) throws Exception;
+
+        void ack(String payloadRef) throws Exception;
+
+        /** Ambari's payload store, for keytabs a cluster's KDC issued. */
+        static KeytabPayloads of(AmbariActionClient client) {
+            return new KeytabPayloads() {
+                @Override
+                public byte[] read(String payloadRef) throws Exception {
+                    return java.util.Base64.getDecoder().decode(client.readAdhocKeytabPayload(payloadRef));
+                }
+
+                @Override
+                public void ack(String payloadRef) throws Exception {
+                    client.ackAdhocKeytabPayload(payloadRef);
+                }
+            };
+        }
+
+        /**
+         * Keytabs a platform context's KDC issued, which the issue step stored in the Secret itself: nothing to read
+         * back, the Secret holding another keytab means it changed since.
+         */
+        KeytabPayloads STORED_BY_ISSUER = new KeytabPayloads() {
+            @Override
+            public byte[] read(String payloadRef) {
+                throw new IllegalStateException("Keytab payload '" + payloadRef + "' was not found: the Secret changed "
+                        + "since the keytab was issued; run the operation again");
+            }
+
+            @Override
+            public void ack(String payloadRef) {
+                // nothing is kept anywhere else
+            }
+        };
+    }
+
+    /** A keytab login against a realm given by its krb5.conf, see {@link KeytabLogin#authenticates}. */
+    @FunctionalInterface
+    interface ContextKeytabLogin {
+        Boolean authenticates(String krb5Conf, byte[] keytab, String principal);
+    }
+
+    /**
+     * How the keytabs of a step are checked: against the platform context's KDC, with its krb5.conf, when the context
+     * issues them; else with the Ambari server's Kerberos configuration.
+     */
+    KeytabLogin keytabLoginFor(String kdcContextId) {
+        if (kdcContextId == null || kdcContextId.isBlank()) {
+            return keytabLogin;
+        }
+        String krb5Conf = null;
+        try {
+            KdpsContextEntity context = new ContextService(ctx).get(kdcContextId);
+            Map<String, Object> config = context == null || context.getConfigJson() == null ? null
+                    : gson.fromJson(context.getConfigJson(), new com.google.gson.reflect.TypeToken<Map<String, Object>>() {
+                    }.getType());
+            krb5Conf = config == null ? null : stringValue(config.get("krb5Conf"));
+        } catch (RuntimeException e) {
+            LOG.warn("Could not read the krb5.conf of platform context {}: {}", kdcContextId, e.toString());
+        }
+        if (krb5Conf == null || krb5Conf.isBlank()) {
+            return (keytab, principal) -> null;
+        }
+        String conf = krb5Conf;
+        return (keytab, principal) -> contextKeytabLogin.authenticates(conf, keytab, principal);
+    }
+
+    /**
+     * One {@code kinit} of the principal with the keytab, with the realm's krb5.conf: a process of its own, since the
+     * JVM's Kerberos configuration is Ambari's and may not know the realm. One attempt only: failed logins count toward
+     * an Active Directory account lockout.
+     *
+     * @return as {@link KeytabLogin#authenticates}; null as well when kinit is not installed
+     */
+    static Boolean kinitWithKeytab(String krb5Conf, byte[] keytab, String principal) {
+        java.nio.file.Path dir = null;
+        try {
+            try {
+                dir = java.nio.file.Files.createTempDirectory("kdps-kinit",
+                        java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                                java.nio.file.attribute.PosixFilePermissions.fromString("rwx------")));
+            } catch (UnsupportedOperationException notPosix) {
+                dir = java.nio.file.Files.createTempDirectory("kdps-kinit");
+            }
+            java.nio.file.Path conf = java.nio.file.Files.writeString(dir.resolve("krb5.conf"), krb5Conf);
+            java.nio.file.Path keytabFile = java.nio.file.Files.write(dir.resolve("check.keytab"), keytab);
+            ProcessBuilder kinit = new ProcessBuilder("kinit", "-k", "-t", keytabFile.toString(), principal);
+            kinit.environment().put("KRB5_CONFIG", conf.toString());
+            kinit.environment().put("KRB5CCNAME", "FILE:" + dir.resolve("ccache"));
+            kinit.redirectErrorStream(true);
+            Process process = kinit.start();
+            if (!process.waitFor(30, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                LOG.info("Could not check the stored keytab of {} against its KDC (kinit timed out); it is used as it is",
+                        principal);
+                return null;
+            }
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            if (process.exitValue() == 0) {
+                return Boolean.TRUE;
+            }
+            Boolean verdict = failedKeytabLoginVerdict(new IllegalStateException(output));
+            LOG.info(Boolean.FALSE.equals(verdict) ? "The KDC rejects the stored keytab of {}: {}"
+                    : "Could not check the stored keytab of {} against its KDC ({}); it is used as it is", principal, output);
+            return verdict;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (java.io.IOException e) {
+            LOG.info("Could not check the stored keytab of {} against its KDC ({}); it is used as it is", principal,
+                    e.toString());
+            return null;
+        } finally {
+            if (dir != null) {
+                try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.walk(dir)) {
+                    files.sorted(Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
+                } catch (java.io.IOException ignored) {
+                    // a temporary directory the JVM's temp cleanup removes
+                }
+            }
+        }
+    }
+
     /** Tells whether a keytab still logs its principal in to the KDC. */
     @FunctionalInterface
     interface KeytabLogin {
@@ -14193,7 +14458,8 @@ public class CommandService {
         if (why.contains("pre-authentication") || why.contains("preauthentication")
                 || why.contains("integrity check") || why.contains("checksum failed")
                 || why.contains("specified version of key is not available")
-                || why.contains("client not found") || why.contains("principal_unknown")) {
+                || why.contains("client not found") || why.contains("principal_unknown")
+                || why.contains("not found in kerberos database") || why.contains("password incorrect")) {
             return Boolean.FALSE;
         }
         return null;
@@ -14339,6 +14605,12 @@ public class CommandService {
      */
     Map<String, Object> siblingKeytabToCopy(String commandId, String namespace, String ownSecret, String principal,
                                             Integer rejectedVersion) {
+        return siblingKeytabToCopy(commandId, namespace, ownSecret, principal, rejectedVersion, keytabLogin);
+    }
+
+    /** @param login how a keytab is checked against the principal's KDC */
+    Map<String, Object> siblingKeytabToCopy(String commandId, String namespace, String ownSecret, String principal,
+                                            Integer rejectedVersion, KeytabLogin login) {
         StoredKeytab newest = null;
         int newestVersion = -1;
         for (StoredKeytab sibling : siblingKeytabs(namespace, ownSecret, principal)) {
@@ -14354,7 +14626,7 @@ public class CommandService {
         String source = namespace + "/" + newest.secretName();
         boolean usable = rejectedVersion != null
                 ? newestVersion > rejectedVersion
-                : !Boolean.FALSE.equals(keytabLogin.authenticates(newest.bytes(), principal));
+                : !Boolean.FALSE.equals(login.authenticates(newest.bytes(), principal));
         if (!usable) {
             appendCommandLog(commandId, "The keytab of " + principal + " in Secret " + source
                     + " is outdated too: issuing a new one");
