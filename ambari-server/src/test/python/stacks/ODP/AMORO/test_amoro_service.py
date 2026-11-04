@@ -753,6 +753,19 @@ class TestAmoroOptimizersOnYarn(unittest.TestCase):
     self.assertEqual(["amoro_optimizer_container"], errors(["YARN"]))
     self.assertEqual([], errors(["YARN", "SPARK3"]))
 
+  def test_spark_executors_must_fit_the_largest_yarn_container(self):
+    def errors(memory, max_allocation):
+      services = self.services(["YARN", "SPARK3"])
+      services["configurations"]["yarn-site"] = {"properties": {"yarn.scheduler.maximum-allocation-mb": max_allocation}}
+      items = self.advisor.AmoroValidator().validateAmoroEnvProperties(
+        {"amoro_optimizer_container": "spark", "amoro_optimizer_memory": memory}, {}, services["configurations"],
+        services, {"items": []})
+      return [item for item in items if item["config-name"] == "amoro_optimizer_memory"]
+    # dev11: 2048 MB per thread + 384 MB overhead against a 2048 MB largest container
+    self.assertIn("1664 MB or less", errors("2048", "2048")[0]["message"])
+    self.assertEqual([], errors("1536", "2048"))
+    self.assertEqual([], errors("2048", "8192"))
+
   def test_spark_container_submits_to_yarn(self):
     amoro = load_amoro_scripts(**self.SPARK)
     containers = {c["name"]: c for c in amoro.amoro_config()["containers"]}

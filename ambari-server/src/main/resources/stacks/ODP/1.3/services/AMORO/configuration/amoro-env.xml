@@ -185,6 +185,24 @@
       <maximum>32</maximum>
       <overridable>false</overridable>
     </value-attributes>
+    <depends-on>
+      <property>
+        <type>amoro-env</type>
+        <name>amoro_optimizer_container</name>
+      </property>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.scheduler.maximum-allocation-mb</name>
+      </property>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.nodemanager.resource.memory-mb</name>
+      </property>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.nodemanager.resource.cpu-vcores</name>
+      </property>
+    </depends-on>
     <on-ambari-upgrade add="true"/>
   </property>
   <property>
@@ -200,6 +218,24 @@
       <increment-step>256</increment-step>
       <overridable>false</overridable>
     </value-attributes>
+    <depends-on>
+      <property>
+        <type>amoro-env</type>
+        <name>amoro_optimizer_container</name>
+      </property>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.scheduler.maximum-allocation-mb</name>
+      </property>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.nodemanager.resource.memory-mb</name>
+      </property>
+      <property>
+        <type>yarn-site</type>
+        <name>yarn.nodemanager.resource.cpu-vcores</name>
+      </property>
+    </depends-on>
     <on-ambari-upgrade add="true"/>
   </property>
   <property require-input="false">

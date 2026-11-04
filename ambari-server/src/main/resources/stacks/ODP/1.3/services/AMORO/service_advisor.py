@@ -299,6 +299,22 @@ class AmoroValidator(service_advisor.ServiceAdvisor):
         and not optimizers_on_yarn_available(installed)):
       items.append({"config-name": "amoro_optimizer_container",
                     "item": self.getErrorItem("The Spark optimizer container needs YARN and Spark3 in the cluster.")})
+    if str(properties.get("amoro_optimizer_container", "local")).strip() == "spark":
+      # one executor per thread: its memory plus the overhead YARN adds must fit the largest container
+      try:
+        executor_mb = int(str(properties.get("amoro_optimizer_memory", 0))) + SPARK_EXECUTOR_OVERHEAD_MB
+        max_allocation_mb = int(float(str(get_property(configurations, services, "yarn-site",
+                                                       "yarn.scheduler.maximum-allocation-mb") or 0)))
+      except ValueError:
+        executor_mb = max_allocation_mb = 0
+      if 0 < max_allocation_mb < executor_mb:
+        items.append({"config-name": "amoro_optimizer_memory",
+                      "item": self.getErrorItem(
+                        "An optimizer executor needs {0} MB (memory per thread + {1} MB overhead), more than the "
+                        "largest YARN container ({2} MB, yarn.scheduler.maximum-allocation-mb): YARN refuses it. "
+                        "Lower the memory per thread to {3} MB or less.".format(
+                          executor_mb, SPARK_EXECUTOR_OVERHEAD_MB, max_allocation_mb,
+                          max_allocation_mb - SPARK_EXECUTOR_OVERHEAD_MB))})
     for name in ("amoro_optimizer_parallelism", "amoro_optimizer_memory", "amoro_server_heapsize",
                  "amoro_optimizer_spark_driver_memory"):
       value = str(properties.get(name, 1))
