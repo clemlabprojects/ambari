@@ -233,3 +233,28 @@ ranger_ozone_enabled = str(default("/configurations/ranger-ozone-plugin-properti
 ranger_ozone_service = str(default("/configurations/ranger-ozone-security/ranger.plugin.ozone.service.name", "")).strip()
 if not ranger_ozone_service or ranger_ozone_service == "{{repo_name}}":
   ranger_ozone_service = "{0}_ozone".format(cluster_name)
+
+# HDFS home of the Amoro user: Spark on YARN stages the optimizer job under /user/<amoro_user>/.sparkStaging.
+has_namenode = len(default("/clusterHostInfo/namenode_hosts", [])) > 0
+amoro_hdfs_home = "/user/" + amoro_user
+if has_namenode:
+  import functools
+  from resource_management.libraries.functions import stack_select
+  from resource_management.libraries.functions.get_not_managed_resources import get_not_managed_resources
+  from resource_management.libraries.resources.hdfs_resource import HdfsResource
+
+  HdfsResource = functools.partial(
+    HdfsResource,
+    user=config['configurations']['hadoop-env']['hdfs_user'],
+    hdfs_resource_ignore_file="/var/lib/ambari-agent/data/.hdfs_resource_ignore",
+    security_enabled=security_enabled,
+    keytab=config['configurations']['hadoop-env']['hdfs_user_keytab'],
+    kinit_path_local=kinit_path_local,
+    hadoop_bin_dir=stack_select.get_hadoop_dir("bin"),
+    hadoop_conf_dir=hadoop_conf_dir,
+    principal_name=config['configurations']['hadoop-env']['hdfs_principal_name'],
+    hdfs_site=config['configurations']['hdfs-site'],
+    default_fs=config['configurations']['core-site']['fs.defaultFS'],
+    immutable_paths=get_not_managed_resources(),
+    dfs_type=default("/clusterLevelParams/dfs_type", ""),
+  )

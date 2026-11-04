@@ -100,6 +100,7 @@ def amoro():
               owner=params.amoro_user,
               group=params.user_group,
               mode=0o644)
+  create_hdfs_home()
   File(os.path.join(params.amoro_conf_dir, "env.sh"),
        content=InlineTemplate(params.amoro_env_sh_template),
        owner=params.amoro_user,
@@ -273,6 +274,21 @@ def _yaml_scalar(value):
   if isinstance(value, (dict, list)):
     return "{}" if isinstance(value, dict) else "[]"
   return json.dumps(str(value))
+
+
+def create_hdfs_home():
+  """HDFS home of the Amoro user when the optimizers run on YARN: spark-submit stages the optimizer job under
+  /user/<amoro_user>/.sparkStaging, which the amoro user cannot create in /user (owned by hdfs)."""
+  import params
+
+  if params.amoro_optimizer_container != "spark" or not params.has_namenode:
+    return
+  params.HdfsResource(params.amoro_hdfs_home,
+                      type="directory",
+                      action="create_on_execute",
+                      owner=params.amoro_user,
+                      mode=0o755)
+  params.HdfsResource(None, action="execute")
 
 
 def amoro_hive_site():

@@ -134,6 +134,21 @@ class TestAmoroConfig(unittest.TestCase):
                   '-Djavax.net.ssl.trustStoreType=JKS"', amoro.jvm_properties())
     self.assertTrue(amoro.jvm_properties().startswith("xms=2048\nxmx=2048\n"))
 
+  def test_hdfs_home_only_for_optimizers_on_yarn(self):
+    calls = []
+    def hdfs_resource(path, **kwargs):
+      calls.append((path, kwargs.get("action"), kwargs.get("owner")))
+    amoro = load_amoro_scripts(amoro_optimizer_container="spark", has_namenode=True, amoro_user="amoro",
+                           amoro_hdfs_home="/user/amoro", HdfsResource=hdfs_resource)
+    amoro.create_hdfs_home()
+    self.assertEqual([("/user/amoro", "create_on_execute", "amoro"), (None, "execute", None)], calls)
+    calls[:] = []
+    amoro = load_amoro_scripts(amoro_optimizer_container="local", has_namenode=True, HdfsResource=hdfs_resource)
+    amoro.create_hdfs_home()
+    amoro = load_amoro_scripts(amoro_optimizer_container="spark", has_namenode=False, HdfsResource=hdfs_resource)
+    amoro.create_hdfs_home()
+    self.assertEqual([], calls)
+
   def test_hive_site_of_amoro_has_no_password(self):
     _, amoro = self.config(hive_site={"hive.metastore.uris": "thrift://hms:9083",
                                       "javax.jdo.option.ConnectionPassword": "db-secret",
