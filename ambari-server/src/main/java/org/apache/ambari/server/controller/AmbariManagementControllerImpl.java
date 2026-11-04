@@ -3234,6 +3234,13 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
         }
       }
 
+      // before the OIDC clients: a failing OIDC provider must not leave the Ozone S3 secrets ungenerated
+      OzoneS3SecretsHelper ozoneS3SecretsHelper = injector.getInstance(OzoneS3SecretsHelper.class);
+      if (ozoneS3SecretsHelper.isNeededOnInstall(cluster, getServicesInstalledFirstTime(changedScHosts))) {
+        requestStages = ozoneS3SecretsHelper.addStage(cluster, requestStages,
+          OzoneS3SecretsServerAction.OPERATION_ENSURE);
+      }
+
       if (!servicesToProvisionOidc.isEmpty()) {
         requestStages = kerberosHelper.configureOidc(
           cluster,
@@ -3241,12 +3248,6 @@ public class AmbariManagementControllerImpl implements AmbariManagementControlle
           servicesToProvisionOidc,
           ConfigureOidcServerAction.OPERATION_ENSURE,
           "Provision OIDC clients for installed services");
-      }
-
-      OzoneS3SecretsHelper ozoneS3SecretsHelper = injector.getInstance(OzoneS3SecretsHelper.class);
-      if (ozoneS3SecretsHelper.isNeededOnInstall(cluster, getServicesInstalledFirstTime(changedScHosts))) {
-        requestStages = ozoneS3SecretsHelper.addStage(cluster, requestStages,
-          OzoneS3SecretsServerAction.OPERATION_ENSURE);
       }
 
       List<Stage> stages = requestStages.getStages();
