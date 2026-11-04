@@ -226,7 +226,16 @@ def om_server_is_bootstrapped():
   import params
   bootstrapped_path = format("{params.ozone_manager_db_dirs}/om/current/VERSION")
   Logger.info(format("Checking if OM VERSION file exists at {bootstrapped_path}"))
-  return os.path.exists(bootstrapped_path)
+  if not os.path.exists(bootstrapped_path):
+    return False
+  # with Ozone security the init also obtains the OM certificate from the SCM; an init interrupted before
+  # that leaves a VERSION without omCertSerialId, and is run again
+  if params.security_enabled:
+    with open(bootstrapped_path) as version_file:
+      if "omCertSerialId=" not in version_file.read():
+        Logger.info("The OM storage has no certificate yet: running the OM initialization again")
+        return False
+  return True
 
 def wait_for_om_leader_to_be_active(ozone_binary='ozone', afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):
   import params
@@ -346,7 +355,8 @@ def wait_ozone_scm_safemode(ozone_binary, afterwait_sleep=0, execute_kinit=False
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
   #Logger.info("Waiting up to {0} minutes for the SCM Server to leave Safemode...".format(sleep_minutes))
   if params.security_enabled and execute_kinit:
-    kinit_command = format("{params.kinit_path_local} -kt {params.ozone_scm_user_keytab} {params.ozone_scm_principal_name}")
+    # the OM identity: an OM host does not necessarily hold the SCM keytab
+    kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
     Execute(kinit_command, user=params.ozone_user, logoutput=True)
   timeout = retries*(sleep_seconds+afterwait_sleep)
 
@@ -382,6 +392,14 @@ def bootstrap_server(env=None):
       cd_access = "a",
       mode = 0o755,
   )
+  # with Ozone security, om --init/--bootstrap writes the OM certificates under hdds.metadata.dir, which
+  # ozone_service only creates later: on a host without another Ozone component the init failed on it
+  Directory( params.ozone_hdds_metadata_dir,
+      owner = params.ozone_user,
+      create_parents = True,
+      cd_access = "a",
+      mode = 0o755,
+  )
   
   conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-manager'])
   if om_server_is_bootstrapped():
@@ -392,7 +410,7 @@ def bootstrap_server(env=None):
       if params.hostname.lower() in params.ozone_ha_om_active:
         Logger.info("Ozone Manager HA is enabled")
         Logger.info("Waiting for Ozone SCM primordial node before initializing om. Waiting...")
-        wait_ozone_scm_safemode(params.ozone_cmd)
+        wait_ozone_scm_safemode(params.ozone_cmd, execute_kinit=True)
         Logger.info("Ozone OM is the first leader. Initializing")
          # bootstrapp the primary node
         try:
@@ -434,7 +452,7 @@ def bootstrap_server(env=None):
     else:
       Logger.info("Ozone Manager HA is disabled")
       Logger.info("Waiting for Ozone SCM primordial node before initializing om. Waiting...")
-      wait_ozone_scm_safemode(params.ozone_cmd)
+      wait_ozone_scm_safemode(params.ozone_cmd, execute_kinit=True)
       try:
         Logger.info(format("Bootstrapping om node..."))
         Execute(format("ozone --config {conf_dir} om --init"),
