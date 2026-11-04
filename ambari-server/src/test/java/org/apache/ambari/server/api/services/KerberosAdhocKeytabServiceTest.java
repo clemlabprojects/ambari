@@ -71,8 +71,15 @@ public class KerberosAdhocKeytabServiceTest {
     boolean exists;
     boolean closed;
 
+    boolean refuseAccount;
+    final List<String> lookups = new ArrayList<>();
+
     @Override
-    public void open(PrincipalKeyCredential administratorCredential, String defaultRealm, Map<String, String> kerberosConfiguration) {
+    public void open(PrincipalKeyCredential administratorCredential, String defaultRealm, Map<String, String> kerberosConfiguration)
+        throws KerberosOperationException {
+      if (refuseAccount) {
+        throw new KerberosOperationException("LDAP: error code 49 - invalid credentials");
+      }
       admin = administratorCredential;
       realm = defaultRealm;
       env = kerberosConfiguration;
@@ -85,7 +92,14 @@ public class KerberosAdhocKeytabServiceTest {
 
     @Override
     public boolean principalExists(String principal, boolean service) {
+      lookups.add(principal);
       return exists;
+    }
+
+    @Override
+    public boolean testAdministratorCredentials() {
+      calls.add("test credentials");
+      return true;
     }
 
     @Override
@@ -305,6 +319,50 @@ public class KerberosAdhocKeytabServiceTest {
     assertEquals(403, response.getStatus());
     assertFalse(String.valueOf(response.getEntity()).contains("keytab\""));
     assertTrue(aliasesRead.isEmpty());
+  }
+
+  private static String testRequest(String alias) {
+    JsonObject body = new JsonObject();
+    body.addProperty("credential_alias", alias);
+    return body.toString();
+  }
+
+  @Test
+  public void aStoredRecordIsTestedWithoutIssuingAnything() {
+    Response response = service.test(testRequest(ALIAS));
+
+    assertEquals(200, response.getStatus());
+    JsonObject answer = json(response);
+    assertTrue(answer.get("ok").getAsBoolean());
+    assertTrue(answer.get("message").getAsString(), answer.get("message").getAsString()
+        .contains("OU=cloudera,DC=ad,DC=example,DC=com can be searched"));
+    assertTrue(kdc.calls.contains("test credentials"));
+    assertEquals("the organizational unit is searched", List.of("kdps-connection-test@AD.EXAMPLE.COM"), kdc.lookups);
+    assertFalse("nothing created", kdc.calls.stream().anyMatch(c -> c.startsWith("create")));
+    assertTrue(kdc.closed);
+  }
+
+  @Test
+  public void aRecordTheKdcRefusesSaysWhy() {
+    kdc.refuseAccount = true;
+
+    Response response = service.test(testRequest(ALIAS));
+
+    assertEquals(502, response.getStatus());
+    String message = json(response).get("message").getAsString();
+    assertTrue(message, message.contains("did not accept cm-kdc@AD.EXAMPLE.COM"));
+    assertTrue(message, message.contains("invalid credentials"));
+    assertFalse(message, message.contains("cm-kdc-password"));
+  }
+
+  @Test
+  public void theTestTakesNoKdcSettingFromTheRequestEither() {
+    JsonObject body = JsonParser.parseString(testRequest(ALIAS)).getAsJsonObject();
+    body.addProperty("ldap_url", "ldaps://attacker.example.com");
+
+    assertEquals(400, service.test(body.toString()).getStatus());
+    assertEquals(400, service.test(testRequest("kdc.admin.credential")).getStatus());
+    assertTrue(aliasesRead.toString(), aliasesRead.isEmpty());
   }
 
   @Test

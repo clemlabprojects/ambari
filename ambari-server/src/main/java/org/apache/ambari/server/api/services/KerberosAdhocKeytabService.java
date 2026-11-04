@@ -242,49 +242,14 @@ public class KerberosAdhocKeytabService {
   // ContentTypeOverrideFilter turns application/json into text/plain for every API request
   @Consumes({MediaType.TEXT_PLAIN, MediaType.APPLICATION_JSON})
   public Response issue(String body) {
-    if (!AuthorizationHelper.isAuthorized(ResourceType.AMBARI, null, REQUIRED_AUTHORIZATIONS)) {
-      return error(Response.Status.FORBIDDEN, "Only an Ambari administrator may issue keytabs from a platform "
-          + "context's KDC.");
+    Checked checked = checkedRequest(body);
+    if (checked.refusal != null) {
+      return checked.refusal;
     }
-
-    JsonObject request;
-    try {
-      JsonElement parsed = JsonParser.parseString(StringUtils.defaultString(body));
-      request = parsed.isJsonObject() ? parsed.getAsJsonObject() : null;
-    } catch (RuntimeException e) {
-      request = null;
-    }
-    if (request == null) {
-      return error(Response.Status.BAD_REQUEST, "The request body must be a JSON object.");
-    }
-
-    for (String field : KDC_FIELDS) {
-      if (request.has(field)) {
-        return error(Response.Status.BAD_REQUEST, "'" + field + "' is not taken from the request: the KDC, its "
-            + "account and its settings come from the platform context's stored record (credential_alias).");
-      }
-    }
-    String principal = text(request, "principal");
-    String namespace = text(request, "namespace");
-    String alias = text(request, "credential_alias");
-    if (alias == null || !CONTEXT_CREDENTIAL_ALIAS.matcher(alias.toLowerCase(Locale.ROOT)).matches()) {
-      return error(Response.Status.BAD_REQUEST, "credential_alias must be the alias KDPS stored a platform context's "
-          + "KDC record under (kdps.context.<id>.kdc.admin).");
-    }
-    alias = alias.toLowerCase(Locale.ROOT);
-
-    String stored = secretForAlias.apply(alias);
-    if (StringUtils.isEmpty(stored)) {
-      return error(Response.Status.BAD_REQUEST, "No KDC record is stored under '" + alias + "': save the platform "
-          + "context's KDC account again.");
-    }
-    KdcRecord record;
-    try {
-      record = KdcRecord.parse(stored);
-    } catch (IllegalArgumentException e) {
-      return error(Response.Status.BAD_REQUEST, "The KDC record stored under '" + alias + "' " + e.getMessage()
-          + ": save the platform context's KDC account again.");
-    }
+    String principal = text(checked.request, "principal");
+    String namespace = text(checked.request, "namespace");
+    String alias = checked.alias;
+    KdcRecord record = checked.record;
 
     try {
       principalPolicy.verifyForExternalKdc(principal, namespace, record.realm, record.administrator);
@@ -322,6 +287,122 @@ public class KerberosAdhocKeytabService {
       String reason = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
       audit(alias, principal, namespace, "Failed: " + reason);
       return error(Response.Status.BAD_GATEWAY, "The KDC did not issue the keytab of '" + principal + "': " + reason);
+    } finally {
+      if (handler != null) {
+        try {
+          handler.close();
+        } catch (Exception e) {
+          LOG.warn("Error closing the KDC connection: {}", e.getMessage());
+        }
+      }
+    }
+  }
+
+  /** A request that passed the checks every call shares, or the answer refusing it. */
+  private static final class Checked {
+    JsonObject request;
+    String alias;
+    KdcRecord record;
+    Response refusal;
+
+    static Checked refused(Response refusal) {
+      Checked checked = new Checked();
+      checked.refusal = refusal;
+      return checked;
+    }
+  }
+
+  /**
+   * The checks every call shares: an Ambari administrator, a JSON object naming no KDC setting itself, the alias of a
+   * platform context's KDC record, and that record.
+   */
+  private Checked checkedRequest(String body) {
+    if (!AuthorizationHelper.isAuthorized(ResourceType.AMBARI, null, REQUIRED_AUTHORIZATIONS)) {
+      return Checked.refused(error(Response.Status.FORBIDDEN, "Only an Ambari administrator may use a platform "
+          + "context's KDC."));
+    }
+
+    JsonObject request;
+    try {
+      JsonElement parsed = JsonParser.parseString(StringUtils.defaultString(body));
+      request = parsed.isJsonObject() ? parsed.getAsJsonObject() : null;
+    } catch (RuntimeException e) {
+      request = null;
+    }
+    if (request == null) {
+      return Checked.refused(error(Response.Status.BAD_REQUEST, "The request body must be a JSON object."));
+    }
+
+    for (String field : KDC_FIELDS) {
+      if (request.has(field)) {
+        return Checked.refused(error(Response.Status.BAD_REQUEST, "'" + field + "' is not taken from the request: the "
+            + "KDC, its account and its settings come from the platform context's stored record (credential_alias)."));
+      }
+    }
+    String alias = text(request, "credential_alias");
+    if (alias == null || !CONTEXT_CREDENTIAL_ALIAS.matcher(alias.toLowerCase(Locale.ROOT)).matches()) {
+      return Checked.refused(error(Response.Status.BAD_REQUEST, "credential_alias must be the alias KDPS stored a "
+          + "platform context's KDC record under (kdps.context.<id>.kdc.admin)."));
+    }
+    alias = alias.toLowerCase(Locale.ROOT);
+
+    String stored = secretForAlias.apply(alias);
+    if (StringUtils.isEmpty(stored)) {
+      return Checked.refused(error(Response.Status.BAD_REQUEST, "No KDC record is stored under '" + alias + "': save "
+          + "the platform context's KDC account again."));
+    }
+    KdcRecord record;
+    try {
+      record = KdcRecord.parse(stored);
+    } catch (IllegalArgumentException e) {
+      return Checked.refused(error(Response.Status.BAD_REQUEST, "The KDC record stored under '" + alias + "' "
+          + e.getMessage() + ": save the platform context's KDC account again."));
+    }
+    Checked checked = new Checked();
+    checked.request = request;
+    checked.alias = alias;
+    checked.record = record;
+    return checked;
+  }
+
+  /**
+   * Tests a platform context's KDC record without issuing anything: the KDC answers and takes the administrator
+   * account, and, for Active Directory, the organizational unit new accounts go to can be searched.
+   * Body: {@code credential_alias}. Answer: {@code ok} and {@code message}; 502 with the KDC's reason otherwise.
+   */
+  @POST
+  @ApiIgnore
+  @Path("test")
+  @Produces(MediaType.APPLICATION_JSON)
+  // ContentTypeOverrideFilter turns application/json into text/plain for every API request
+  @Consumes({MediaType.TEXT_PLAIN, MediaType.APPLICATION_JSON})
+  public Response test(String body) {
+    Checked checked = checkedRequest(body);
+    if (checked.refusal != null) {
+      return checked.refusal;
+    }
+    KdcRecord record = checked.record;
+    KerberosOperationHandler handler = null;
+    try {
+      handler = handlerFactory.getKerberosOperationHandler(record.kdcType);
+      handler.open(new PrincipalKeyCredential(record.administrator, record.password), record.realm,
+          record.kerberosEnv("kdps-test"));
+      handler.testAdministratorCredentials();
+      if (record.kdcType == KDCType.ACTIVE_DIRECTORY) {
+        // A search under the organizational unit: a container that does not exist fails here, not at the first deploy.
+        handler.principalExists("kdps-connection-test@" + record.realm, false);
+      }
+      Map<String, Object> answer = new LinkedHashMap<>();
+      answer.put("ok", true);
+      answer.put("message", "The " + record.kdcType + " KDC of realm " + record.realm + " accepts " + record.administrator
+          + (record.kdcType == KDCType.ACTIVE_DIRECTORY ? ", and its organizational unit "
+          + record.settings.get("container_dn") + " can be searched." : "."));
+      return Response.ok(GSON.toJson(answer), MediaType.APPLICATION_JSON_TYPE).build();
+    } catch (Exception e) {
+      LOG.warn("The KDC record {} did not pass its test: {}", checked.alias, e.toString());
+      return error(Response.Status.BAD_GATEWAY, "The " + record.kdcType + " KDC of realm " + record.realm
+          + " did not accept " + record.administrator + ": "
+          + StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName()));
     } finally {
       if (handler != null) {
         try {
