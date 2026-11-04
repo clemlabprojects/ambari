@@ -134,6 +134,14 @@ class TestAmoroConfig(unittest.TestCase):
                   '-Djavax.net.ssl.trustStoreType=JKS"', amoro.jvm_properties())
     self.assertTrue(amoro.jvm_properties().startswith("xms=2048\nxmx=2048\n"))
 
+  def test_hive_site_of_amoro_has_no_password(self):
+    _, amoro = self.config(hive_site={"hive.metastore.uris": "thrift://hms:9083",
+                                      "javax.jdo.option.ConnectionPassword": "db-secret",
+                                      "hive.server2.keystore.password": "ks-secret",
+                                      "fs.s3a.secret.key": "s3-secret", "custom.token": "hidden-by-ambari"},
+                           hive_site_attributes={"hidden": {"custom.token": "HIVE_CLIENT,CONFIG_DOWNLOAD"}})
+    self.assertEqual({"hive.metastore.uris": "thrift://hms:9083"}, amoro.amoro_hive_site())
+
   def test_truststore_without_password_is_used_as_is(self):
     _, amoro = self.config(amoro_truststore_path="/etc/security/serverKeys/truststore.jks", amoro_truststore_type="JKS",
                            amoro_truststore_password="")
@@ -217,10 +225,12 @@ class TestAmoroCatalogs(unittest.TestCase):
 
   def test_hive_catalog_uploads_configurations_and_keytab(self):
     catalogs = load_amoro_catalogs()
-    catalogs.os.path.isfile = lambda path: True
+    catalogs.read_private_file = lambda path: b"<configuration/>"
     uploads = []
     catalogs.upload_file = lambda path: uploads.append(path) or "f{0}".format(len(uploads))
-    catalogs.register_catalogs(required=True)
+    from unittest import mock
+    with mock.patch.object(catalogs.os.path, "isfile", lambda path: True):
+      catalogs.register_catalogs(required=True)
     method, path, body = catalogs.calls[-1]
     self.assertEqual(("POST", "/catalogs"), (method, path))
     self.assertEqual("hive", body["type"])
@@ -229,6 +239,7 @@ class TestAmoroCatalogs(unittest.TestCase):
                      body["storageConfig"])
     self.assertEqual({"auth.type": "kerberos", "auth.kerberos.principal": "amoro/edge.example.com@EXAMPLE.COM",
                       "auth.kerberos.keytab": "f4", "auth.kerberos.krb5": "f5"}, body["authConfig"])
+    self.assertEqual(catalogs.fingerprint(b"<configuration/>"), body["properties"][catalogs.HIVE_SITE_FINGERPRINT])
 
   def test_registered_catalogs_are_left_alone(self):
     catalogs = load_amoro_catalogs(security_enabled=False)
@@ -405,6 +416,21 @@ class TestAmoroCatalogCredentialRefresh(unittest.TestCase):
     self.assertEqual("id-" + os.path.basename(keytab), body["authConfig"]["auth.kerberos.keytab"])
     self.assertEqual("1", body["properties"]["x"])
     self.assertEqual(catalogs.hive_credential_fingerprint(), body["properties"][catalogs.FINGERPRINT])
+
+  def test_changed_hive_site_is_uploaded_again(self):
+    import tempfile
+    conf = tempfile.mkdtemp()
+    for name in ("hive-site.xml", "core-site.xml"):
+      with open(os.path.join(conf, name), "w") as site:
+        site.write("<configuration/>")
+    catalogs, keytab = self.catalogs(dict(self.HIVE), hive_conf_dir=conf, hadoop_conf_dir=conf)
+    detail = dict(self.HIVE, properties={catalogs.FINGERPRINT: catalogs.hive_credential_fingerprint(),
+                                         catalogs.HIVE_SITE_FINGERPRINT: "password-bearing"})
+    catalogs, _ = self.catalogs(detail, hive_conf_dir=conf, hadoop_conf_dir=conf)
+    catalogs.register_catalogs(required=True)
+    body = catalogs.puts[0][2]
+    self.assertEqual("id-hive-site.xml", body["storageConfig"]["hive.site"])
+    self.assertEqual(catalogs.fingerprint(b"<configuration/>"), body["properties"][catalogs.HIVE_SITE_FINGERPRINT])
 
   POLARIS = {"name": "ozone", "type": "rest", "optimizerGroup": "local", "tableFormatList": ["ICEBERG"], "tableProperties": {},
              "properties": {"credential": "********", "uri": "https://polaris:8443/api/catalog", "ambari.credential-fingerprint": "old"},

@@ -88,6 +88,21 @@ def register_catalogs(required=False):
 def register_hive_catalog(name):
   import params
 
+  storage = hive_storage()
+  properties = {HIVE_SITE_FINGERPRINT: hive_site_fingerprint()}
+  if params.security_enabled:
+    auth = hive_kerberos_auth()
+    properties[FINGERPRINT] = hive_credential_fingerprint()
+  else:
+    auth = {"auth.type": "simple", "auth.simple.hadoop_username": params.amoro_user}
+
+  amoro.amoro_api("POST", "/catalogs", catalog_body(name, "hive", storage, auth, properties))
+
+
+def hive_storage():
+  """Storage config of the Hive catalog: the client configuration files, uploaded to Amoro."""
+  import params
+
   storage = {"storage.type": "Hadoop"}
   for key, path in (("hadoop.core.site", os.path.join(params.hadoop_conf_dir, "core-site.xml")),
                     ("hadoop.hdfs.site", os.path.join(params.hadoop_conf_dir, "hdfs-site.xml")),
@@ -96,15 +111,14 @@ def register_hive_catalog(name):
       storage[key] = upload_file(path)
     elif key != "hadoop.hdfs.site":
       raise Fail("{0} is missing on this host.".format(path))
+  return storage
 
-  properties = {}
-  if params.security_enabled:
-    auth = hive_kerberos_auth()
-    properties[FINGERPRINT] = hive_credential_fingerprint()
-  else:
-    auth = {"auth.type": "simple", "auth.simple.hadoop_username": params.amoro_user}
 
-  amoro.amoro_api("POST", "/catalogs", catalog_body(name, "hive", storage, auth, properties))
+def hive_site_fingerprint():
+  import params
+
+  path = os.path.join(params.hive_conf_dir, "hive-site.xml")
+  return fingerprint(read_private_file(path)) if os.path.isfile(path) else ""
 
 
 def hive_kerberos_auth():
@@ -135,23 +149,42 @@ def fingerprint(data):
 FINGERPRINT = "ambari.credential-fingerprint"
 # The same for the Ozone S3 secret of the Polaris catalog (amoro_ozone_s3_secret).
 S3_FINGERPRINT = "ambari.s3-credential-fingerprint"
+# The same for the hive-site.xml uploaded with the Hive catalog (the copy Ambari writes for Amoro).
+HIVE_SITE_FINGERPRINT = "ambari.hive-site-fingerprint"
 
 
 def refresh_catalog_credentials(name):
   """Updates a registered catalog in place (tables and settings kept) when the credentials Ambari
-  manages changed: the keytab of the Hive catalog (Regenerate Keytabs), the OIDC client secret of the
+  manages changed: the keytab and hive-site of the Hive catalog (Regenerate Keytabs, Hive configuration
+  changes, or a catalog registered with the password-bearing hive-site of the cluster), the OIDC client secret of the
   Polaris catalog (OIDC reconfigured), its Ozone S3 secret (Rotate S3 Secrets). All are followed by a
   restart, which runs this."""
   import params
 
-  if name == params.amoro_hive_catalog_name and params.security_enabled:
-    wanted = hive_credential_fingerprint()
+  if name == params.amoro_hive_catalog_name:
+    site_wanted = hive_site_fingerprint()
+    credential_wanted = hive_credential_fingerprint() if params.security_enabled else ""
+    if not site_wanted and not credential_wanted:
+      return
     detail = amoro.amoro_api("GET", "/catalogs/" + urllib.parse.quote(name, safe=""))
-    if (detail.get("properties") or {}).get(FINGERPRINT) == wanted:
+    current = detail.get("properties") or {}
+    changes = {}
+    if site_wanted and current.get(HIVE_SITE_FINGERPRINT) != site_wanted:
+      changes[HIVE_SITE_FINGERPRINT] = site_wanted
+    if credential_wanted and current.get(FINGERPRINT) != credential_wanted:
+      changes[FINGERPRINT] = credential_wanted
+    if not changes:
       return
     # Without file ids the stored site files are kept.
-    update_catalog(detail, {"storage.type": "Hadoop"}, hive_kerberos_auth(), {FINGERPRINT: wanted})
-    Logger.info("Refreshed the Kerberos credentials of the Amoro catalog '{0}'.".format(name))
+    storage = hive_storage() if HIVE_SITE_FINGERPRINT in changes else {"storage.type": "Hadoop"}
+    if params.security_enabled:
+      auth = hive_kerberos_auth()
+    else:
+      auth = {"auth.type": "simple", "auth.simple.hadoop_username": params.amoro_user}
+    update_catalog(detail, storage, auth, changes)
+    Logger.info("Refreshed the {0} of the Amoro catalog '{1}'.".format(
+      " and ".join(label for key, label in ((FINGERPRINT, "Kerberos credentials"),
+                                            (HIVE_SITE_FINGERPRINT, "client configuration")) if key in changes), name))
   elif name == params.polaris_catalog_name and (params.amoro_polaris_oidc or params.amoro_ozone_s3_secret):
     detail = amoro.amoro_api("GET", "/catalogs/" + urllib.parse.quote(name, safe=""))
     current = detail.get("properties") or {}

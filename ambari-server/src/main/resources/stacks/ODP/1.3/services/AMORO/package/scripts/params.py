@@ -140,8 +140,13 @@ amoro_jdbc_url = str(amoro_db_properties.get("amoro.jdbc.url", "")).strip() or a
 
 # Client configurations of the cluster (env.sh, Hive catalog of Amoro).
 hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
-hive_conf_dir = "/etc/hive/conf"
 has_hive = len(default("/clusterHostInfo/hive_metastore_hosts", [])) > 0
+# Hive client configuration of Amoro (HIVE_CONF_DIR, uploaded with the Hive catalog): a copy of hive-site
+# Ambari writes for the amoro user, without its passwords. The cluster /etc/hive/conf/hive-site.xml is 0600
+# hive on the Hive server hosts, and carries the password of the metastore database.
+hive_site = dict(default("/configurations/hive-site", {})) if has_hive else {}
+hive_site_attributes = default("/configurationAttributes/hive-site", {})
+hive_conf_dir = os.path.join(amoro_conf_dir, "hive") if hive_site else "/etc/hive/conf"
 krb5_conf_path = "/etc/krb5.conf"
 amoro_truststore_path = str(default("/configurations/amoro-env/amoro_truststore_path", "")).strip()
 if amoro_truststore_path and not os.path.isfile(amoro_truststore_path):

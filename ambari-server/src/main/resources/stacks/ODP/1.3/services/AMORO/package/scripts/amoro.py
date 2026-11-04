@@ -34,6 +34,7 @@ from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Directory, Execute, File, Link
 from resource_management.core.source import DownloadSource, InlineTemplate
 from resource_management.core.utils import PasswordString
+from resource_management.libraries.resources.xml_config import XmlConfig
 
 LDAP_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.LdapPasswdAuthenticationProvider"
 DEFAULT_LOGIN_PROVIDER = "org.apache.amoro.server.authentication.DefaultPasswdAuthenticationProvider"
@@ -87,6 +88,18 @@ def amoro():
        owner=params.amoro_user,
        group=params.user_group,
        mode=0o644)
+  if params.hive_site:
+    Directory(params.hive_conf_dir,
+              owner=params.amoro_user,
+              group=params.user_group,
+              mode=0o755)
+    XmlConfig("hive-site.xml",
+              conf_dir=params.hive_conf_dir,
+              configurations=amoro_hive_site(),
+              configuration_attributes=params.hive_site_attributes,
+              owner=params.amoro_user,
+              group=params.user_group,
+              mode=0o644)
   File(os.path.join(params.amoro_conf_dir, "env.sh"),
        content=InlineTemplate(params.amoro_env_sh_template),
        owner=params.amoro_user,
@@ -260,6 +273,17 @@ def _yaml_scalar(value):
   if isinstance(value, (dict, list)):
     return "{}" if isinstance(value, dict) else "[]"
   return json.dumps(str(value))
+
+
+def amoro_hive_site():
+  """hive-site of the cluster without its secrets (metastore database password, keystore passwords, S3 keys):
+  Amoro only needs the metastore client settings, and uploads this file into its database with the Hive
+  catalog. Secrets are the properties Ambari hides (password properties) and the names that say so."""
+  import params
+
+  hidden = (params.hive_site_attributes or {}).get("hidden", {})
+  return {name: value for name, value in params.hive_site.items()
+          if name not in hidden and "password" not in name.lower() and "secret" not in name.lower()}
 
 
 def jvm_truststore():
