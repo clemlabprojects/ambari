@@ -69,7 +69,7 @@ import com.google.inject.Inject;
 /**
  * Implementation of <code>KerberosOperationHandler</code> to created principal in Active Directory
  */
-public class ADKerberosOperationHandler extends KerberosOperationHandler {
+public class ADKerberosOperationHandler extends KerberosOperationHandler implements KdcAccountDescriptions {
 
   private static final Logger LOG = LoggerFactory.getLogger(ADKerberosOperationHandler.class);
 
@@ -616,5 +616,65 @@ public class ADKerberosOperationHandler extends KerberosOperationHandler {
   @Override
   public void ensureHostExists(String hostname) throws KerberosOperationException {
       return; // nothing to do
+  }
+
+  @Override
+  public String getAccountDescription(String principal) throws KerberosOperationException {
+    Attribute description = accountAttribute(principal, "description");
+    try {
+      return description == null || description.size() == 0 ? null : String.valueOf(description.get());
+    } catch (NamingException e) {
+      throw new KerberosOperationException(String.format("Can not read the description of %s: %s", principal,
+          e.getMessage()), e);
+    }
+  }
+
+  @Override
+  public void setAccountDescription(String principal, String description) throws KerberosOperationException {
+    try {
+      String dn = findPrincipalDN(createDeconstructPrincipal(principal).getNormalizedPrincipal());
+      if (dn == null) {
+        throw new KerberosPrincipalDoesNotExistException(principal);
+      }
+      ldapContext.modifyAttributes(new LdapName(dn), new ModificationItem[]{
+          new ModificationItem(DirContext.REPLACE_ATTRIBUTE, new BasicAttribute("description", description))});
+    } catch (NamingException e) {
+      throw new KerberosOperationException(String.format("Can not set the description of %s: %s", principal,
+          e.getMessage()), e);
+    }
+  }
+
+  /**
+   * The key version number Active Directory holds for the principal's account ({@code msDS-KeyVersionNumber}), which a
+   * keytab entry must carry to be accepted by services checking it.
+   *
+   * @return the key version number, or null when the directory does not give it
+   */
+  public Integer getKeyVersionNumber(String principal) throws KerberosOperationException {
+    Attribute kvno = accountAttribute(principal, "msDS-KeyVersionNumber");
+    try {
+      return kvno == null || kvno.size() == 0 ? null : Integer.valueOf(String.valueOf(kvno.get()).trim());
+    } catch (NamingException | NumberFormatException e) {
+      LOG.warn("Can not read the key version number of {}: {}", principal, e.getMessage());
+      return null;
+    }
+  }
+
+  /** One attribute of the principal's account, or null when the account or the attribute does not exist. */
+  private Attribute accountAttribute(String principal, String attribute) throws KerberosOperationException {
+    if (!isOpen()) {
+      throw new KerberosOperationException("This operation handler has not been opened");
+    }
+    try {
+      String dn = findPrincipalDN(createDeconstructPrincipal(principal).getNormalizedPrincipal());
+      if (dn == null) {
+        return null;
+      }
+      Attributes attributes = ldapContext.getAttributes(new LdapName(dn), new String[]{attribute});
+      return attributes == null ? null : attributes.get(attribute);
+    } catch (NamingException e) {
+      throw new KerberosOperationException(String.format("Can not read %s of %s: %s", attribute, principal,
+          e.getMessage()), e);
+    }
   }
 }

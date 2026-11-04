@@ -218,7 +218,7 @@ public class KerberosAdhocKeytabService {
             + "  \"servicePrincipalName\": \"$principal_name\","
             + "#end"
             + "\"userPrincipalName\": \"$normalized_principal\","
-            + "\"description\": \"Created by KDPS for namespace " + namespace + "\","
+            + "\"description\": \"" + ownerOf(namespace) + "\","
             + "\"unicodePwd\": \"$password\","
             + "\"accountExpires\": \"0\","
             + "\"userAccountControl\": \"66048\""
@@ -228,12 +228,19 @@ public class KerberosAdhocKeytabService {
     }
   }
 
+  /** The description of the accounts KDPS creates for a namespace, which lets Ambari reset their key later. */
+  static String ownerOf(String namespace) {
+    return "Created by KDPS for namespace " + namespace;
+  }
+
   /**
    * Issues the keytab of a principal of a platform context's KDC.
    * <p/>
    * Body: {@code principal}, {@code namespace} (the Kubernetes namespace that receives the keytab) and
    * {@code credential_alias} (the platform context's stored {@link KdcRecord}); a request naming the KDC or its
-   * settings itself is refused. Answer: {@code principal}, {@code kvno}, {@code created}, {@code keytab} (base64),
+   * settings itself is refused. An existing principal's current key is exported when the KDC allows it; otherwise,
+   * or with {@code new_key: true}, its key is reset, only when KDPS created its account for that namespace (see
+   * {@link #ownerOf}). Answer: {@code principal}, {@code kvno}, {@code created}, {@code keytab} (base64),
    * {@code sha256}.
    */
   @POST
@@ -268,7 +275,10 @@ public class KerberosAdhocKeytabService {
           record.kerberosEnv(namespace.trim()));
       LOG.info("Issuing an ad-hoc keytab for '{}' (namespace {}) from the {} KDC of realm {}", principal, namespace,
           record.kdcType, record.realm);
-      AdhocKeytabGenerator.Result issued = AdhocKeytabGenerator.issue(handler, principal.trim(), false, LOG::info);
+      boolean newKey = checked.request.has("new_key") && checked.request.get("new_key").isJsonPrimitive()
+          && checked.request.get("new_key").getAsBoolean();
+      AdhocKeytabGenerator.Result issued = AdhocKeytabGenerator.issueOwned(handler, principal.trim(),
+          ownerOf(namespace.trim()), newKey, LOG::info);
       audit(alias, principal, namespace, null);
       Map<String, Object> answer = new LinkedHashMap<>();
       answer.put("principal", principal.trim());

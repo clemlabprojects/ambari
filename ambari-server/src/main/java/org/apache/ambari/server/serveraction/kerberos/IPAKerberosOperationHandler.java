@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  * It is assumed that the IPA admin tools are installed and that the ipa shell command is
  * available
  */
-public class IPAKerberosOperationHandler extends KDCKerberosOperationHandler {
+public class IPAKerberosOperationHandler extends KDCKerberosOperationHandler implements KdcAccountDescriptions {
   private final static Logger LOG = LoggerFactory.getLogger(IPAKerberosOperationHandler.class);
 
   /**
@@ -220,6 +220,47 @@ public class IPAKerberosOperationHandler extends KDCKerberosOperationHandler {
 
     // Always return 0 since we do not have a key to get a key number for.
     return 0;
+  }
+
+  /** Only user accounts carry a description; KDPS's principals are users. */
+  @Override
+  public String getAccountDescription(String principal) throws KerberosOperationException {
+    if (!isOpen()) {
+      throw new KerberosOperationException("This operation handler has not been opened");
+    }
+    DeconstructedPrincipal deconstructedPrincipal = createDeconstructPrincipal(principal);
+    if (deconstructedPrincipal.getInstance() != null) {
+      return null;
+    }
+    ShellCommandUtil.Result result = invokeIpa(new String[]{"user-show", deconstructedPrincipal.getPrimary(), "--all",
+        "--raw"});
+    if (!result.isSuccessful() || result.getStdout() == null) {
+      return null;
+    }
+    for (String line : result.getStdout().split("\\R")) {
+      String trimmed = line.trim();
+      if (trimmed.toLowerCase(java.util.Locale.ROOT).startsWith("description:")) {
+        return trimmed.substring("description:".length()).trim();
+      }
+    }
+    return null;
+  }
+
+  @Override
+  public void setAccountDescription(String principal, String description) throws KerberosOperationException {
+    if (!isOpen()) {
+      throw new KerberosOperationException("This operation handler has not been opened");
+    }
+    DeconstructedPrincipal deconstructedPrincipal = createDeconstructPrincipal(principal);
+    if (deconstructedPrincipal.getInstance() != null) {
+      throw new KerberosOperationException("FreeIPA keeps no description for service principal " + principal);
+    }
+    ShellCommandUtil.Result result = invokeIpa(new String[]{"user-mod", deconstructedPrincipal.getPrimary(),
+        "--setattr=description=" + description});
+    if (!result.isSuccessful()) {
+      throw new KerberosOperationException(String.format("Failed to set the description of %s\nSTDOUT: %s\nSTDERR: %s",
+          principal, result.getStdout(), result.getStderr()));
+    }
   }
 
   /**

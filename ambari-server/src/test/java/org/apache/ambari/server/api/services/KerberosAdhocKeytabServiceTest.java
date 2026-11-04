@@ -42,6 +42,7 @@ import org.apache.ambari.server.security.TestAuthenticationFactory;
 import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
 import org.apache.ambari.server.serveraction.kerberos.AdhocKeytabPrincipalPolicy;
 import org.apache.ambari.server.serveraction.kerberos.KDCType;
+import org.apache.ambari.server.serveraction.kerberos.KdcAccountDescriptions;
 import org.apache.ambari.server.serveraction.kerberos.KerberosOperationException;
 import org.apache.ambari.server.serveraction.kerberos.KerberosOperationHandler;
 import org.apache.ambari.server.serveraction.kerberos.KerberosOperationHandlerFactory;
@@ -56,15 +57,17 @@ import com.google.gson.JsonParser;
 
 /**
  * POST /api/v1/kerberos/adhoc_keytab: a keytab from a platform context's KDC, for Ambari administrators, with the
- * administrator password read only from a KDPS context alias, and never a reset of an existing principal.
+ * administrator password read only from a KDPS context alias, and never a reset of an existing principal KDPS did not
+ * create for the namespace.
  */
 public class KerberosAdhocKeytabServiceTest {
 
   private static final String ALIAS = "kdps.context.cdp-prod.kdc.admin";
 
   /** An Active Directory: creates accounts, never exports an existing key. */
-  private static class FakeAd extends KerberosOperationHandler {
+  private static class FakeAd extends KerberosOperationHandler implements KdcAccountDescriptions {
     final List<String> calls = new ArrayList<>();
+    String description;
     PrincipalKeyCredential admin;
     String realm;
     Map<String, String> env;
@@ -121,6 +124,17 @@ public class KerberosAdhocKeytabServiceTest {
 
     @Override
     public void ensureHostExists(String hostname) {
+    }
+
+    @Override
+    public String getAccountDescription(String principal) {
+      return description;
+    }
+
+    @Override
+    public void setAccountDescription(String principal, String description) {
+      calls.add("describe " + principal);
+      this.description = description;
     }
 
     @Override
@@ -280,6 +294,30 @@ public class KerberosAdhocKeytabServiceTest {
 
     assertEquals(409, response.getStatus());
     assertTrue(json(response).get("message").getAsString().contains("was not changed"));
+    assertTrue(kdc.calls.toString(), kdc.calls.isEmpty());
+  }
+
+  @Test
+  public void anAccountKdpsCreatedForTheNamespaceGetsANewKeyWhenItsKeytabIsLost() {
+    // Active Directory cannot give the key back: the account's description says KDPS created it for this namespace.
+    kdc.exists = true;
+    kdc.description = "Created by KDPS for namespace analytics";
+
+    Response response = service.issue(request("trino-analytics@AD.EXAMPLE.COM", ALIAS));
+
+    assertEquals(200, response.getStatus());
+    assertFalse(json(response).get("created").getAsBoolean());
+    assertEquals(List.of("reset trino-analytics@AD.EXAMPLE.COM"), kdc.calls);
+  }
+
+  @Test
+  public void anAccountKdpsCreatedForAnotherNamespaceIsNotReset() {
+    kdc.exists = true;
+    kdc.description = "Created by KDPS for namespace finance";
+
+    Response response = service.issue(request("trino-analytics@AD.EXAMPLE.COM", ALIAS));
+
+    assertEquals(409, response.getStatus());
     assertTrue(kdc.calls.toString(), kdc.calls.isEmpty());
   }
 

@@ -104,6 +104,29 @@ public class AdhocKeytabGeneratorTest {
     }
   }
 
+  /** A KDC keeping who created each account, as Active Directory and FreeIPA users do. */
+  static class DescribedKdc extends FakeKdc implements KdcAccountDescriptions {
+    String description;
+
+    @Override
+    public String getAccountDescription(String principal) {
+      return description;
+    }
+
+    boolean refuseDescription;
+
+    @Override
+    public void setAccountDescription(String principal, String description) throws KerberosOperationException {
+      if (refuseDescription) {
+        throw new KerberosOperationException("ipa: error: no such option");
+      }
+      calls.add("describe");
+      this.description = description;
+    }
+  }
+
+  private static final String OWNER = "Created by KDPS for namespace analytics";
+
   private static String text(AdhocKeytabGenerator.Result result) {
     return new String(result.getKeytab(), StandardCharsets.UTF_8);
   }
@@ -169,5 +192,64 @@ public class AdhocKeytabGeneratorTest {
     AdhocKeytabGenerator.issue(kdc, "jupyterhub/jupyterhub.analytics.svc@IPA.EXAMPLE.COM", false, line -> { });
 
     assertEquals("host jupyterhub.analytics.svc", kdc.calls.get(0));
+  }
+
+  @Test
+  public void aNewAccountIsMarkedAsTheCallers() throws Exception {
+    DescribedKdc kdc = new DescribedKdc();
+
+    AdhocKeytabGenerator.issueOwned(kdc, "trino-analytics@IPA.EXAMPLE.COM", OWNER, false, line -> { });
+
+    assertEquals(OWNER, kdc.description);
+  }
+
+  @Test
+  public void anAccountMarkedAsTheCallersGetsANewKeyWhenItCannotBeExported() throws Exception {
+    DescribedKdc kdc = new DescribedKdc();
+    kdc.exists = true;
+    kdc.description = OWNER;
+
+    AdhocKeytabGenerator.Result result =
+        AdhocKeytabGenerator.issueOwned(kdc, "trino-analytics@AD.EXAMPLE.COM", OWNER, false, line -> { });
+
+    assertTrue(kdc.calls.toString(), kdc.calls.contains("reset"));
+    assertEquals("key from password 4", text(result));
+  }
+
+  @Test
+  public void aNewKeyIsGivenOnlyToAnAccountMarkedAsTheCallers() throws Exception {
+    DescribedKdc kdc = new DescribedKdc();
+    kdc.exists = true;
+    kdc.canExport = true;
+    kdc.description = OWNER;
+
+    AdhocKeytabGenerator.Result regenerated =
+        AdhocKeytabGenerator.issueOwned(kdc, "trino-analytics@MIT.EXAMPLE.COM", OWNER, true, line -> { });
+
+    assertFalse("a new key is asked for, not the current one: " + kdc.calls, kdc.calls.contains("export"));
+    assertEquals("key from password 4", text(regenerated));
+
+    kdc.description = "Created by KDPS for namespace finance";
+    try {
+      AdhocKeytabGenerator.issueOwned(kdc, "trino-analytics@MIT.EXAMPLE.COM", OWNER, true, line -> { });
+      fail("The account of another namespace must keep its key");
+    } catch (AdhocKeytabGenerator.ExistingPrincipalException e) {
+      assertTrue(e.getMessage(), e.getMessage().contains("was not changed"));
+    }
+    assertEquals(4, kdc.kvno);
+  }
+
+  @Test
+  public void aNewAccountThatCannotBeMarkedIsRemoved() throws Exception {
+    // Unmarked, no later request could give it a key.
+    DescribedKdc kdc = new DescribedKdc();
+    kdc.refuseDescription = true;
+
+    try {
+      AdhocKeytabGenerator.issueOwned(kdc, "trino-analytics@IPA.EXAMPLE.COM", OWNER, false, line -> { });
+      fail("The keytab of an unmarked account must not be issued");
+    } catch (KerberosOperationException e) {
+      assertTrue(kdc.calls.toString(), kdc.calls.contains("remove"));
+    }
   }
 }
