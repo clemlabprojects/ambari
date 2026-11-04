@@ -764,6 +764,12 @@ export const probeRemoteContext = (req: {
  * Live "test connection & list clusters" for a Cloudera Manager, used before a CDP context is
  * saved. The password authenticates only this probe and is never persisted.
  */
+/** Tests the KDC account saved with a context: Ambari server opens the context's KDC with it, issuing nothing. */
+export const testContextKdcAccount = (id: string): Promise<{ ok: boolean; message?: string; error?: string }> =>
+  fetchJson<{ ok: boolean; message?: string; error?: string }>(`/contexts/${encodeURIComponent(id)}/kdc/test`, {
+    method: "POST",
+  });
+
 export const probeCdpContext = (req: {
   cmUrl: string;
   cmUsername: string;

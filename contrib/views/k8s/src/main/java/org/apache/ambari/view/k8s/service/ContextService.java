@@ -132,6 +132,12 @@ public class ContextService {
         this.settings = new InstanceSettings(ctx);
     }
 
+    /** The contexts' KDC accounts, kept in Ambari's credential store. Overridden by tests. */
+    public ContextKdcAccount kdcAccount() {
+        return new ContextKdcAccount(ContextKdcAccount.credentialStore(
+                new org.apache.ambari.view.k8s.utils.AmbariAliasResolver(viewContext)));
+    }
+
     // ------------------------------------------------------------------ CRUD
 
     /**
@@ -382,6 +388,9 @@ public class ContextService {
                 }
             }
         }
+        // The KDC administrator password goes to Ambari's credential store with the KDC it is for, never to the view's
+        // settings (ContextKdcAccount).
+        String kdcPassword = secrets.remove(ContextKdcAccount.PASSWORD_KEY);
         // On a REMOTE context the only realm an operator could enter was the Polaris one, so a bare
         // "realm" from an older client is that realm, kept under its own key from now on.
         if (KIND_REMOTE.equals(request.kind) && config.containsKey(LEGACY_REALM_KEY)
@@ -438,6 +447,16 @@ public class ContextService {
                 }
             }
         }
+        // Checked and stored before the context is written: a refused KDC account leaves the context as it was.
+        // Only a context that names a KDC, or held an account it no longer names, touches the credential store.
+        boolean hadKdcAccount = keys.contains(ContextKdcAccount.PASSWORD_KEY);
+        boolean namesKdc = ContextKdcAccount.namesKdc(config);
+        boolean holdsKdcAccount = (namesKdc || hadKdcAccount) && kdcAccount().apply(request.id, config, kdcPassword);
+        keys.remove(ContextKdcAccount.PASSWORD_KEY);
+        if (holdsKdcAccount) {
+            // Shown as a saved password; the value is in Ambari's credential store only.
+            keys.add(ContextKdcAccount.PASSWORD_KEY);
+        }
         entity.setSecretKeys(String.join(",", keys));
 
         String now = Instant.now().toString();
@@ -461,6 +480,10 @@ public class ContextService {
             throw new IllegalStateException("The default (managed) context cannot be deleted.");
         }
         KdpsContextEntity entity = repo.findById(id);
+        if (entity != null && entity.getSecretKeys() != null
+                && List.of(entity.getSecretKeys().split(",")).contains(ContextKdcAccount.PASSWORD_KEY)) {
+            kdcAccount().remove(id);
+        }
         if (entity != null && entity.getSecretKeys() != null) {
             for (String name : entity.getSecretKeys().split(",")) {
                 if (!name.isBlank()) {

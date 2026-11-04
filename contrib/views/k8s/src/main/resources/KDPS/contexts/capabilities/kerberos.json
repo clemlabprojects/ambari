@@ -26,8 +26,76 @@
       "type": "textarea",
       "appliesTo": "EXTERNAL,CDP",
       "placeholder": "[libdefaults]\n  default_realm = CDP.EXAMPLE.COM\n[realms]\n  CDP.EXAMPLE.COM = {\n    kdc = kdc.cdp.example.com\n  }\n[domain_realm]\n  .cdp.example.com = CDP.EXAMPLE.COM",
-      "help": "Optional. Paste the krb5.conf for this platform's realm(s). When set, services deployed against this context mount THIS krb5.conf (with in-cluster hostname canonicalization disabled) instead of the hosting cluster's /etc/krb5.conf \u2014 required when the backend (e.g. CDP) is in a different Kerberos realm than the Ambari cluster.",
+      "help": "Optional. Paste the krb5.conf for this platform's realm(s). When set, services deployed against this context mount THIS krb5.conf (with in-cluster hostname canonicalization disabled) instead of the hosting cluster's /etc/krb5.conf — required when the backend (e.g. CDP) is in a different Kerberos realm than the Ambari cluster.",
       "group": "Security & Authentication"
+    },
+    {
+      "name": "kdcType",
+      "label": "KDC type",
+      "type": "enum",
+      "options": [
+        "none",
+        "active-directory",
+        "ipa",
+        "mit-kdc"
+      ],
+      "appliesTo": "EXTERNAL,CDP",
+      "group": "KDC account (release principals)",
+      "help": "Set it to let KDPS create the Kerberos principals and keytabs of the releases deployed with this context, in this platform's KDC (Ambari server does it, through /kerberos/adhoc_keytab). none: give each release an existing keytab Secret instead. KDPS only creates principals named after the release's namespace and never resets an existing one."
+    },
+    {
+      "name": "kdcAdminPrincipal",
+      "label": "KDC account",
+      "type": "string",
+      "placeholder": "cm-kdc@CORP.EXAMPLE.COM",
+      "appliesTo": "EXTERNAL,CDP",
+      "group": "KDC account (release principals)",
+      "help": "The account KDPS creates principals with. For a CDP cluster, the account Cloudera Manager uses (Administration > Security > Kerberos Credentials): it already has the rights on Cloudera Manager's organizational unit."
+    },
+    {
+      "name": "kdcAdminPassword",
+      "label": "KDC account password",
+      "type": "password",
+      "secret": true,
+      "appliesTo": "EXTERNAL,CDP",
+      "group": "KDC account (release principals)",
+      "help": "Kept in Ambari's credential store with the KDC it is for, never in KDPS. Needed again whenever the KDC type, realm, account, LDAPS URL or KDC host changes."
+    },
+    {
+      "name": "kdcLdapUrl",
+      "label": "Active Directory LDAPS URL",
+      "type": "string",
+      "placeholder": "ldaps://dc01.corp.example.com",
+      "appliesTo": "EXTERNAL,CDP",
+      "group": "KDC account (release principals)",
+      "help": "Active Directory only; ldaps:// only. Ambari server must trust the AD's certificate authority (ambari-server setup-security, import-certificate)."
+    },
+    {
+      "name": "kdcContainerDn",
+      "label": "Organizational unit",
+      "type": "string",
+      "placeholder": "OU=hadoop,DC=corp,DC=example,DC=com",
+      "appliesTo": "EXTERNAL,CDP",
+      "group": "KDC account (release principals)",
+      "help": "Active Directory only: where the release accounts are created. For a CDP cluster, Cloudera Manager's (its Active Directory Suffix setting)."
+    },
+    {
+      "name": "kdcEncryptionTypes",
+      "label": "Encryption types",
+      "type": "string",
+      "placeholder": "aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96",
+      "appliesTo": "EXTERNAL,CDP",
+      "group": "KDC account (release principals)",
+      "help": "The key types of the keytabs, space-separated. Left empty: AES 256 and AES 128."
+    },
+    {
+      "name": "kdcAdminServerHost",
+      "label": "Admin server host",
+      "type": "string",
+      "placeholder": "ipa.example.com",
+      "appliesTo": "EXTERNAL,CDP",
+      "group": "KDC account (release principals)",
+      "help": "FreeIPA and MIT only: the kadmin / IPA server. Left empty: the KDC host above."
     }
   ]
 }

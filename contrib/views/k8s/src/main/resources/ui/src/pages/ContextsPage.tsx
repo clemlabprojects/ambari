@@ -29,7 +29,7 @@ import {
 } from "@ant-design/icons";
 import {
   getContexts, saveContext, deleteContext, getResolvedContext, getContextSchema,
-  probeRemoteContext, probeCdpContext, preflightContext, type PreflightResult,
+  probeRemoteContext, probeCdpContext, preflightContext, testContextKdcAccount, type PreflightResult,
   type PlatformContext, type ResolvedContext, type ContextCapabilitySchema,
   type RemoteProbeResult,
 } from "../api/client";
@@ -37,6 +37,9 @@ import { storageKey, storedValue } from "../utils/contextFieldKeys";
 import "./Page.css";
 
 const { Title, Text, Paragraph } = Typography;
+
+/** The kerberos capability's group of KDC account fields (kerberos.json), where its Test button goes. */
+const KDC_ACCOUNT_GROUP = "KDC account (release principals)";
 
 export default function ContextsPage() {
   const [contexts, setContexts] = useState<PlatformContext[]>([]);
@@ -55,6 +58,8 @@ export default function ContextsPage() {
   // remote Ambari version. Reset whenever the modal (re)opens.
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<RemoteProbeResult | null>(null);
+  // The test of the KDC account saved with the context being edited.
+  const [kdcTest, setKdcTest] = useState<{ loading?: boolean; ok?: boolean; text?: string } | null>(null);
   const [preflightLoadingId, setPreflightLoadingId] = useState<string | null>(null);
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
 
@@ -215,6 +220,25 @@ export default function ContextsPage() {
         <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 4, fontWeight: 600 }}>
           {g}
         </Paragraph>
+        {g === KDC_ACCOUNT_GROUP && editing && (
+          <div style={{ marginBottom: 12 }}>
+            <Space wrap>
+              <Button size="small" icon={<KeyOutlined />} loading={kdcTest?.loading} onClick={async () => {
+                setKdcTest({ loading: true });
+                try {
+                  const r = await testContextKdcAccount(editing.id);
+                  setKdcTest({ ok: r.ok, text: r.ok ? r.message : r.error });
+                } catch (e: any) {
+                  setKdcTest({ ok: false, text: e?.message || "The test could not be run." });
+                }
+              }}>Test the saved KDC account</Button>
+              <Text type="secondary">Tests what is saved: save your changes first.</Text>
+            </Space>
+            {kdcTest?.text && (
+              <Alert type={kdcTest.ok ? "success" : "error"} showIcon message={kdcTest.text} style={{ marginTop: 8 }} />
+            )}
+          </div>
+        )}
         {entries.filter((e) => groupOf(e) === g).map(({ cap, f }) => {
           const key = fieldKey(cap, f.name);
           let input: React.ReactNode;
@@ -242,6 +266,7 @@ export default function ContextsPage() {
   const openAdd = () => {
     setEditing(null);
     setProbeResult(null);
+    setKdcTest(null);
     form.resetFields();
     const init: any = { kind: "EXTERNAL", verifySsl: true };
     externalFields().forEach(({ cap, f }) => {
@@ -254,6 +279,7 @@ export default function ContextsPage() {
   const openEdit = (ctx: PlatformContext) => {
     setEditing(ctx);
     setProbeResult(null);
+    setKdcTest(null);
     form.resetFields();
     const vals: any = { id: ctx.id, name: ctx.name, kind: ctx.kind,
       clusterName: ctx.clusterName, description: ctx.description };

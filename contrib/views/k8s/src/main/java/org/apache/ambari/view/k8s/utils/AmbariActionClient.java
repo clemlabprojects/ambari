@@ -438,6 +438,27 @@ public class AmbariActionClient {
         }
     }
 
+    /**
+     * Tests a platform context's KDC account, as stored in Ambari's credential store under {@code alias}: Ambari server
+     * opens the KDC with it ({@code POST /kerberos/adhoc_keytab/test}) and issues nothing.
+     *
+     * @return what Ambari server says the KDC accepted
+     * @throws IOException with Ambari server's reason when the KDC or the record is refused
+     */
+    public String testContextKdc(String alias) throws Exception {
+        String url = ambariApiBase + "/kerberos/adhoc_keytab/test";
+        JsonObject body = new JsonObject();
+        body.addProperty("credential_alias", alias);
+        try (InputStream is = stream.readFrom(url, "POST", body.toString(),
+                withStdHeaders(Map.of("Content-Type", "application/json")))) {
+            String answer = is == null ? "" : new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            if (answer.isBlank()) {
+                throw new IOException("Empty answer from " + url);
+            }
+            return jsonString(answer(answer, url), "message");
+        }
+    }
+
     public void ackAdhocKeytabPayload(String payloadRef) throws Exception {
         if (payloadRef == null || payloadRef.isBlank()) {
             throw new IllegalArgumentException("payloadRef cannot be null or blank");

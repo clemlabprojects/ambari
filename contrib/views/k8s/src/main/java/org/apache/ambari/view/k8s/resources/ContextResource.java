@@ -40,6 +40,7 @@ import org.apache.ambari.view.k8s.model.ContextRequest;
 import org.apache.ambari.view.k8s.model.ResolvedContext;
 import org.apache.ambari.view.k8s.security.AuthHelper;
 import org.apache.ambari.view.k8s.security.MasterKeyUnavailableException;
+import org.apache.ambari.view.k8s.service.ContextKdcAccount;
 import org.apache.ambari.view.k8s.service.ContextService;
 import org.apache.ambari.view.k8s.service.ServiceAdvisorService;
 import org.apache.ambari.view.k8s.store.KdpsContextEntity;
@@ -260,6 +261,28 @@ public class ContextResource {
             return Response.ok(result).build();
         } catch (Exception e) {
             LOG.warn("probe-cdp failed: {}", e.toString());
+            return Response.ok(java.util.Map.of("ok", false, "error", String.valueOf(e.getMessage()))).build();
+        }
+    }
+
+    /**
+     * Tests the KDC account saved with a context: Ambari server opens the context's KDC with the stored record and
+     * issues nothing. Called with the operator's Ambari session, which Ambari server requires to be an Ambari
+     * administrator. Returns {@code {ok, message}} or {@code {ok:false, error}}.
+     */
+    @POST
+    @Path("{id}/kdc/test")
+    public Response testKdcAccount(@PathParam("id") String id, @Context HttpHeaders headers) {
+        auth().checkConfigurationPermission();
+        try {
+            if (!new ContextService(viewContext).kdcAccount().exists(id)) {
+                return Response.ok(java.util.Map.of("ok", false, "error", "Context '" + id + "' holds no KDC account: "
+                        + "set its KDC type and account, and save it first.")).build();
+            }
+            String message = ambariClient(headers).testContextKdc(ContextKdcAccount.aliasOf(id));
+            return Response.ok(java.util.Map.of("ok", true, "message", String.valueOf(message))).build();
+        } catch (Exception e) {
+            LOG.warn("KDC account test of context {} failed: {}", id, e.toString());
             return Response.ok(java.util.Map.of("ok", false, "error", String.valueOf(e.getMessage()))).build();
         }
     }
