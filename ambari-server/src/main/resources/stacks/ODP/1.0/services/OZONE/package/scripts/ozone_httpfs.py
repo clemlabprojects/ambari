@@ -26,6 +26,7 @@ from ozone_service import ozone_service
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Directory, Execute, File
+from resource_management.libraries.functions.setup_credential_file import setup_credential_file
 from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.check_process_status import check_process_status

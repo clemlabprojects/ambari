@@ -35,6 +35,7 @@ import os
 from ambari_commons.constants import SERVICE
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Directory, Execute, File
+from resource_management.libraries.functions.setup_credential_file import setup_credential_file
 
 
 class OzoneRecon(Script):
