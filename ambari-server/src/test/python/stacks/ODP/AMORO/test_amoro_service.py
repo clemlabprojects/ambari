@@ -553,11 +553,24 @@ class TestAmoroAccess(unittest.TestCase):
                                                                 "/warehouse/tablespace/external/hive"],
                   has_polaris_ozone_catalog=False, polaris_catalog_base_location="s3://c1/polaris/",
                   ranger_hdfs_enabled=True, ranger_hdfs_service="c1_hadoop",
-                  ranger_ozone_enabled=True, ranger_ozone_service="c1_ozone")
+                  ranger_ozone_enabled=True, ranger_ozone_service="c1_ozone",
+                  amoro_optimizer_container="local", amoro_optimizer_yarn_queue="default",
+                  ranger_yarn_enabled=True, ranger_yarn_service="c1_yarn")
     values.update(overrides)
     for key, value in values.items():
       setattr(params, key, value)
     return load_module("amoro_access", SERVICE / "package/scripts/amoro_access.py")
+
+  def test_spark_optimizers_get_submit_on_their_ranger_yarn_queue(self):
+    policies = self.access(amoro_optimizer_container="spark", ranger_hdfs_enabled=False).access_policies()
+    self.assertEqual([("c1_yarn", "amoro-yarn-optimizer-queue", {"queue": ["root.default"]}, ["submit-app"], ())],
+                     policies)
+    queue = self.access(amoro_optimizer_container="spark", ranger_hdfs_enabled=False,
+                        amoro_optimizer_yarn_queue="root.etl").access_policies()[0][2]
+    self.assertEqual({"queue": ["root.etl"]}, queue)
+    self.assertEqual([], self.access(amoro_optimizer_container="local", ranger_hdfs_enabled=False).access_policies())
+    self.assertEqual([], self.access(amoro_optimizer_container="spark", ranger_hdfs_enabled=False,
+                                     ranger_yarn_enabled=False).access_policies())
 
   def test_storage_locations(self):
     access = self.access()

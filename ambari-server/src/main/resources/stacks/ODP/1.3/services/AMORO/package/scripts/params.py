@@ -233,6 +233,10 @@ ranger_ozone_enabled = str(default("/configurations/ranger-ozone-plugin-properti
 ranger_ozone_service = str(default("/configurations/ranger-ozone-security/ranger.plugin.ozone.service.name", "")).strip()
 if not ranger_ozone_service or ranger_ozone_service == "{{repo_name}}":
   ranger_ozone_service = "{0}_ozone".format(cluster_name)
+ranger_yarn_enabled = str(default("/configurations/ranger-yarn-plugin-properties/ranger-yarn-plugin-enabled", "No")).lower() == "yes"
+ranger_yarn_service = str(default("/configurations/ranger-yarn-security/ranger.plugin.yarn.service.name", "")).strip()
+if not ranger_yarn_service or ranger_yarn_service == "{{repo_name}}":
+  ranger_yarn_service = "{0}_yarn".format(cluster_name)
 
 # HDFS home of the Amoro user: Spark on YARN stages the optimizer job under /user/<amoro_user>/.sparkStaging.
 has_namenode = len(default("/clusterHostInfo/namenode_hosts", [])) > 0

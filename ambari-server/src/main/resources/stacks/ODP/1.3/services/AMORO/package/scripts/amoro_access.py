@@ -18,7 +18,8 @@ limitations under the License.
 
 Data access of the Amoro user: its optimizers rewrite the files of the tables Amoro maintains and
 delete the expired and orphan ones, in the Hive warehouse (HDFS or Ozone) and in the bucket of the
-Polaris Ozone catalog. With the Ranger HDFS and Ozone plugins, Ambari grants it through Ranger policies.
+Polaris Ozone catalog; on YARN, Amoro submits its optimizers to the optimizer queue. With the Ranger HDFS,
+Ozone and YARN plugins, Ambari grants these through Ranger policies.
 """
 import urllib.parse
 
@@ -32,6 +33,7 @@ OZONE_VOLUME_ACCESSES = ["read", "list"]
 OZONE_BUCKET_ACCESSES = ["read", "write", "create", "list", "delete"]
 # Volume of the buckets served by the Ozone S3 gateway.
 S3_VOLUME = "s3v"
+YARN_QUEUE_ACCESSES = ["submit-app"]
 
 
 def setup_access(required=False):
@@ -41,7 +43,7 @@ def setup_access(required=False):
 
   policies = access_policies()
   if not policies:
-    Logger.info("No Ranger-authorized HDFS or Ozone data for Amoro: no access to set up.")
+    Logger.info("No Ranger-authorized HDFS or Ozone data, nor YARN queue, for Amoro: no access to set up.")
     return
   errors = []
   for service, name, resources, accesses, recursive in policies:
@@ -80,6 +82,12 @@ def access_policies():
     for volume, bucket in buckets:
       policies.append((params.ranger_ozone_service, "amoro-ozone-{0}-{1}".format(volume, bucket),
                        {"volume": [volume], "bucket": [bucket], "key": ["*"]}, OZONE_BUCKET_ACCESSES, ()))
+  if params.amoro_optimizer_container == "spark" and params.ranger_yarn_enabled:
+    # Ranger YARN queues are full paths; with the Ranger authorizer the queue ACLs do not apply
+    queue = params.amoro_optimizer_yarn_queue
+    queue = queue if queue == "root" or queue.startswith("root.") else "root." + queue
+    policies.append((params.ranger_yarn_service, "amoro-yarn-optimizer-queue", {"queue": [queue]},
+                     YARN_QUEUE_ACCESSES, ()))
   return policies
 
 
