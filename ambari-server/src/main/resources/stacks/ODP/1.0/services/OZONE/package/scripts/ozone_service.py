@@ -23,6 +23,7 @@ from ambari_commons.constants import  UPGRADE_TYPE_NON_ROLLING, UPGRADE_TYPE_ROL
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.core.shell import as_sudo
+from resource_management.core.exceptions import Fail
 from resource_management.core.resources.system import Execute, File, Directory
 
 import os

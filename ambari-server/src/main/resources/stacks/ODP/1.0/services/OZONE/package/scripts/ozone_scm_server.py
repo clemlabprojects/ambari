@@ -68,9 +68,9 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     """
     import params
     env.set_params(params)
-    finalize_ozone_storage_container_upgrade()
+    self.finalize_ozone_storage_container_upgrade()
 
-  def finalize_ozone_storage_container_upgrade():
+  def finalize_ozone_storage_container_upgrade(self):
     import params
     """
       At this point, the cluster is upgraded to a pre-finalized state and fully operational.
@@ -79,21 +79,17 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     """
     cmd_env = {'JAVA_HOME': params.java_home }
     conf_dir = os.path.join(params.ozone_base_conf_dir, params.ROLE_NAME_MAP_CONF['ozone-scm'])
-    finalize_cmd = format("ozone --config {conf_dir} ") + "scm finalizeupgrade"
+    finalize_cmd = format("ozone --config {conf_dir} admin scm finalizeupgrade")
     if params.security_enabled:
-      kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
+      kinit_command = format("{params.kinit_path_local} -kt {params.ozone_scm_user_keytab} {params.ozone_scm_principal_name}")
       Execute(kinit_command, user=params.ozone_user, logoutput=True)
-    try:
-      Execute(finalize_cmd,
-        user = params.ozone_user,
-        environment = cmd_env,
-        path = params.hadoop_ozone_bin_dir,
-        logoutput=True
-      )
-      return 
-    except Fail:
-      Logger.error("Failed to prepare Finalize Ozone SCM after upgrade")
-      return
+    # a failure fails the upgrade step instead of leaving the cluster silently pre-finalized
+    Execute(finalize_cmd,
+      user = params.ozone_user,
+      environment = cmd_env,
+      path = params.hadoop_ozone_bin_dir,
+      logoutput=True
+    )
 
   def start(self, env, upgrade_type=None):
     import params

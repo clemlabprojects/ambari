@@ -38,6 +38,8 @@ from resource_management.core.resources.system import Directory, Execute, File
 from resource_management.libraries.functions.setup_credential_file import setup_credential_file
 
 import sys, os
+import pwd
+import grp
 import upgrade
 import time
 
@@ -270,15 +272,13 @@ def prepare_om_server_for_upgrade():
       if params.security_enabled:
         kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
         Execute(kinit_command, user=params.ozone_user, logoutput=True)
-      try:
-        Execute(format("ozone --config {conf_dir} admin om prepare -id={params.ozone_om_ha_current_cluster_nameservice}"),
-          user = params.ozone_user,
-          environment = cmd_env,
-          path = params.hadoop_ozone_bin_dir,
-          logoutput=True
-        )
-      except Fail:
-        Logger.error("Failed to prepare Ozone Manager for upgrade")
+      # a failure fails the upgrade step: the OMs must not be restarted unprepared
+      Execute(format("ozone --config {conf_dir} admin om prepare -id={params.ozone_om_ha_current_cluster_nameservice}"),
+        user = params.ozone_user,
+        environment = cmd_env,
+        path = params.hadoop_ozone_bin_dir,
+        logoutput=True
+      )
   return
 
 
@@ -294,17 +294,15 @@ def finalize_ozone_manager_upgrade():
   if params.security_enabled:
     kinit_command = format("{params.kinit_path_local} -kt {params.ozone_om_user_keytab} {params.ozone_om_principal_name}")
     Execute(kinit_command, user=params.ozone_user, logoutput=True)
-  try:
-    Execute(format("ozone --config {conf_dir} admin om finalizeupgrade -id={params.ozone_om_ha_current_cluster_nameservice}"),
-      user = params.ozone_user,
-      environment = cmd_env,
-      path = params.hadoop_ozone_bin_dir,
-      logoutput=True
-    )
-    return 
-  except Fail:
-    Logger.error("Failed to prepare Ozone Manager for upgrade")
-    return
+  # without OM HA there is no service id: the command then uses the OM address of ozone-site
+  service_option = format(" -id={params.ozone_om_ha_current_cluster_nameservice}") if params.ozone_om_ha_is_enabled else ""
+  # a failure fails the upgrade step instead of leaving the cluster silently pre-finalized
+  Execute(format("ozone --config {conf_dir} admin om finalizeupgrade") + service_option,
+    user = params.ozone_user,
+    environment = cmd_env,
+    path = params.hadoop_ozone_bin_dir,
+    logoutput=True
+  )
 
 
 def wait_for_om_leader_to_be_started(ozone_binary='ozone', afterwait_sleep=0, execute_kinit=False, retries=115, sleep_seconds=10):

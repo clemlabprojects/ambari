@@ -162,6 +162,8 @@ metric_prop_file_name = "hadoop-metrics2-hbase.properties"
 
 # not supporting 32 bit jdk.
 java64_home = config['ambariLevelParams']['java_home']
+# the upgrade and wait helpers of the OM and SCM scripts run their ozone commands with JAVA_HOME=java_home
+java_home = java64_home
 java_version = expect("/ambariLevelParams/java_version", int)
 
 pid_dir = config['configurations']['ozone-env']['ozone_pid_dir_prefix']
@@ -422,6 +424,11 @@ if security_enabled:
   ## ozone recon
   recon_jaas_princ = config['configurations']['ozone-site']['ozone.recon.kerberos.principal'].replace('_HOST',_hostname_lowercase)
   recon_keytab_path = config['configurations']['ozone-site']['ozone.recon.kerberos.keytab.file']
+  # the identities the OM and SCM scripts kinit with for their admin commands (upgrade prepare/finalize, waits)
+  ozone_om_user_keytab = om_keytab_path
+  ozone_om_principal_name = om_jaas_princ
+  ozone_scm_user_keytab = scm_keytab_path
+  ozone_scm_principal_name = scm_jaas_princ
 
 smoke_user_keytab = config['configurations']['cluster-env']['smokeuser_keytab']
 ozone_user_keytab = config['configurations']['ozone-env']['ozone_user_keytab']
