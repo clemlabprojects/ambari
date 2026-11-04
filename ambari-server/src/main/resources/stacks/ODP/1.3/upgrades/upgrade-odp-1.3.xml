@@ -39,6 +39,9 @@
     <check>org.apache.ambari.server.checks.LZOCheck</check>
     <!-- ODP: Amoro optimizing must be paused (AMORO service action Pause Optimizing) before upgrading. -->
     <check>org.apache.ambari.server.checks.AmoroOptimizingPausedCheck</check>
+    <!-- ODP: Apache Ozone only supports non-rolling upgrades (its Zero Downtime Upgrade is unreleased): a cluster
+         with Ozone takes the Express upgrade. Rolling pack only. -->
+    <check>org.apache.ambari.server.checks.OzoneRollingUpgradeCheck</check>
 
     <configuration>
       <!-- Configuration properties for all pre-reqs including required pre-reqs -->

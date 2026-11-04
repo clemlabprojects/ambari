@@ -128,6 +128,14 @@ public class AmbariMetaInfoOdpAmoroTest {
     }
   }
 
+  @Test
+  public void testOnlyTheRollingUpgradePackRejectsOzone() throws Exception {
+    Map<String, UpgradePack> packs = metaInfo.getUpgradePacks("ODP", "1.3");
+    String check = "org.apache.ambari.server.checks.OzoneRollingUpgradeCheck";
+    assertTrue(packs.get("upgrade-odp-1.3").getPrerequisiteChecks().contains(check));
+    assertTrue(!packs.get("nonrolling-upgrade-odp-1.3").getPrerequisiteChecks().contains(check));
+  }
+
   private static ComponentInfo findComponent(List<ComponentInfo> components, String name) {
     for (ComponentInfo component : components) {
       if (name.equals(component.getName())) {

@@ -363,6 +363,16 @@ public class CheckDescription {
                   "'Amoro Optimizing Paused' (up to a minute), then re-run the checks. Run 'Resume Optimizing' " +
                   "once the upgrade is finalized.").build());
 
+  public static CheckDescription OZONE_ROLLING_UPGRADE = new CheckDescription("OZONE_ROLLING_UPGRADE",
+      PrereqCheckType.SERVICE,
+      "Ozone does not support a rolling upgrade",
+      new ImmutableMap.Builder<String, String>()
+          .put(AbstractCheckDescriptor.DEFAULT,
+              "Apache Ozone only supports non-rolling upgrades: all Ozone components are stopped, the Ozone " +
+                  "Managers are restarted in upgrade mode, then the cluster is finalized. Its rolling upgrade " +
+                  "(Zero Downtime Upgrade) is not available for the Ozone version of this stack. Choose the " +
+                  "Express upgrade.").build());
+
   public static CheckDescription JAVA_VERSION = new CheckDescription("JAVA_VERSION",
       PrereqCheckType.CLUSTER,
       "Verify Java version requirement",
