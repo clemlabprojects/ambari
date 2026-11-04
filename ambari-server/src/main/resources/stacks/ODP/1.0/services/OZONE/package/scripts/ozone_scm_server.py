@@ -106,7 +106,7 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
       if params.is_hdfs_enabled:
         setup_credential_file(params.java64_home, None,
                           params.ozone_scm_credential_file_path, 'ozone', params.user_group,
-                          passwords, 'ozone-scm', separator )
+                          passwords, 'ozone-storage-container-manager', separator )
       else:
         setup_credential_ozone(params.java64_home,
                       params.ozone_scm_credential_file_path, 'ozone', params.user_group,
