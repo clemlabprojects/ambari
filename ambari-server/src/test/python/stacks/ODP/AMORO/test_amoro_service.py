@@ -293,6 +293,36 @@ class TestAmoroCatalogs(unittest.TestCase):
                      requests[-1])
 
 
+class TestAmoroPrivateFiles(unittest.TestCase):
+
+  def test_a_file_the_agent_cannot_read_is_read_through_sudo(self):
+    catalogs = load_amoro_catalogs()
+    read = []
+    catalogs.sudo.read_file = lambda path: read.append(path) or b"<configuration/>"
+
+    def denied(path, mode="r"):
+      raise PermissionError(13, "Permission denied", path)
+    catalogs.open = denied
+    self.assertEqual(b"<configuration/>", catalogs.read_private_file("/etc/hive/conf/hive-site.xml"))
+    self.assertEqual(["/etc/hive/conf/hive-site.xml"], read)
+
+  def test_a_readable_file_does_not_use_sudo(self):
+    catalogs = load_amoro_catalogs()
+    catalogs.sudo.read_file = lambda path: self.fail("no sudo for a readable file")
+    with open(TEST_KEYTAB, "rb") as keytab:
+      self.assertEqual(keytab.read(), catalogs.read_private_file(TEST_KEYTAB))
+
+  def test_any_registration_error_only_warns_at_start(self):
+    catalogs = load_amoro_catalogs(has_hive=True)
+
+    def broken(name):
+      raise PermissionError(13, "Permission denied", "/etc/hive/conf/hive-site.xml")
+    catalogs.register_hive_catalog = broken
+    catalogs.register_catalogs(required=False)
+    with self.assertRaises(catalogs.Fail):
+      catalogs.register_catalogs(required=True)
+
+
 class TestAmoroCatalogCredentialRefresh(unittest.TestCase):
 
   def catalogs(self, detail, **overrides):

@@ -32,6 +32,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from resource_management.core import sudo
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.libraries.functions.get_user_call_output import get_user_call_output
@@ -73,7 +74,7 @@ def register_catalogs(required=False):
         continue
       register(name)
       Logger.info("Registered the Amoro catalog '{0}'.".format(name))
-    except Fail as error:
+    except Exception as error:  # a file it cannot read is no reason to fail the start either
       errors.append("{0}: {1}".format(name, error))
       Logger.warning("Could not register the Amoro catalog '{0}': {1}".format(name, error))
   if errors and required:
@@ -118,8 +119,7 @@ def hive_kerberos_auth():
 def hive_credential_fingerprint():
   import params
 
-  with open(params.amoro_keytab, "rb") as keytab:
-    return fingerprint(keytab.read() + params.amoro_principal.encode("utf-8"))
+  return fingerprint(read_private_file(params.amoro_keytab) + params.amoro_principal.encode("utf-8"))
 
 
 def fingerprint(data):
@@ -194,10 +194,19 @@ def catalog_body(name, catalog_type, storage, auth, properties):
           "tableProperties": {}, "tableFormatList": ["ICEBERG"]}
 
 
+def read_private_file(path):
+  """Content of a file the agent may not read itself: hive-site.xml (0600 hive) or the Amoro keytab when the
+  Ambari agent runs as a non-root user; read through sudo then."""
+  try:
+    with open(path, "rb") as source:
+      return source.read()
+  except PermissionError:
+    return sudo.read_file(path)
+
+
 def upload_file(path):
   """Uploads a file (client configuration, keytab) to Amoro, which stores it in its database; returns its id."""
-  with open(path, "rb") as source:
-    content = source.read()
+  content = read_private_file(path)
   boundary = uuid.uuid4().hex
   body = b"".join([
     "--{0}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{1}\"\r\n"
