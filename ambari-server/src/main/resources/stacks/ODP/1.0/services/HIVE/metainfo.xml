@@ -303,7 +303,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat8,redhat9,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>redhat8,redhat9,redhat10,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>hive_${stack_version}</name>
@@ -330,7 +330,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>redhat8,redhat9,redhat7,amazonlinux2</osFamily>
+          <osFamily>redhat8,redhat9,redhat10,redhat7,amazonlinux2</osFamily>
           <packages>
             <package>
               <name>mariadb-server</name>
@@ -340,7 +340,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24</osFamily>
+          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24,ubuntu26</osFamily>
           <packages>
             <package>
               <name>hive-${stack_version}</name>
@@ -351,7 +351,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>amazonlinux2,redhat6,debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24</osFamily>
+          <osFamily>amazonlinux2,redhat6,debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24,ubuntu26</osFamily>
           <packages>
             <package>
               <name>mysql-server</name>

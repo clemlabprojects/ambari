@@ -370,7 +370,7 @@
 
         <!-- removing snappy for RHEL 8  -->
         <osSpecific>
-          <osFamily>redhat8,redhat9</osFamily>
+          <osFamily>redhat8,redhat9,redhat10</osFamily>
           <packages>
             <package>
               <name>hadoop_${stack_version}</name>
@@ -418,7 +418,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>debian9,ubuntu22,ubuntu24</osFamily>
+          <osFamily>debian9,ubuntu22,ubuntu24,ubuntu26</osFamily>
           <packages>
             <package>
               <name>hadoop-${stack_version}-client</name>

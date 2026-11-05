@@ -205,7 +205,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat8,redhat9,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>redhat8,redhat9,redhat10,redhat7,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>flink_${stack_version}</name>
@@ -213,7 +213,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>ubuntu22,ubuntu24</osFamily>
+          <osFamily>ubuntu22,ubuntu24,ubuntu26</osFamily>
           <packages>
             <package>
               <name>flink-${stack_version}</name>

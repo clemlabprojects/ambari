@@ -78,7 +78,7 @@ limitations under the License.
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12,redhat8,redhat9</osFamily>
+          <osFamily>redhat7,amazonlinux2,redhat6,suse11,suse12,redhat8,redhat9,redhat10</osFamily>
           <packages>
             <package>
               <name>kudu_${stack_version}</name>
@@ -89,7 +89,7 @@ limitations under the License.
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>ubuntu18,ubuntu20,ubuntu22,ubuntu24</osFamily>
+          <osFamily>ubuntu18,ubuntu20,ubuntu22,ubuntu24,ubuntu26</osFamily>
           <packages>
             <package>
               <name>kudu-${stack_version}</name>

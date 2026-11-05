@@ -152,7 +152,7 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat8,redhat7,redhat9,amazonlinux2,redhat6,suse11,suse12</osFamily>
+          <osFamily>redhat8,redhat7,redhat9,redhat10,amazonlinux2,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>ambari-infra-solr-client</name>
@@ -166,7 +166,7 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24</osFamily>
+          <osFamily>debian7,debian9,ubuntu12,ubuntu14,ubuntu16,ubuntu22,ubuntu24,ubuntu26</osFamily>
           <packages>
             <package>
               <name>ambari-infra-solr-client</name>
