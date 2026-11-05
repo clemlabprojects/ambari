@@ -512,6 +512,7 @@
     <description>Optional inline secret used for symmetric-key token broker mode.</description>
     <value-attributes>
       <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
