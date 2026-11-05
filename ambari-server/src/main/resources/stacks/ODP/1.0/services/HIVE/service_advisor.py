@@ -107,6 +107,35 @@ except Exception as e:
   traceback.print_exc()
   print("Failed to load parent")
 
+
+def hive_queue_paths(*queue_lists):
+  """Capacity Scheduler paths (root.<queue>) of the Tez session queues, root.default without any."""
+  paths = []
+  for queues in queue_lists:
+    for queue in str(queues or "").split(","):
+      queue = queue.strip()
+      if queue:
+        path = queue if queue == "root" or queue.startswith("root.") else "root." + queue
+        if path not in paths:
+          paths.append(path)
+  return paths or ["root.default"]
+
+
+def queue_acl_allows(acl, user):
+  """Whether a YARN ACL ("users groups", "*" for everyone; YARN's default) names the user."""
+  acl = "*" if acl is None else str(acl)
+  if acl.strip() == "*":
+    return True
+  return user in acl.strip().partition(" ")[0].split(",")
+
+
+def queue_acl_with_user(acl, user):
+  """The ACL with the user added to its users (its groups kept)."""
+  users, _, groups = str(acl).strip().partition(" ")
+  names = [name for name in users.split(",") if name]
+  return ",".join(names + [user]) + (" " + groups if groups else "")
+
+
 class HiveServiceAdvisor(service_advisor.ServiceAdvisor):
 
   def __init__(self, *args, **kwargs):
@@ -211,6 +240,7 @@ class HiveServiceAdvisor(service_advisor.ServiceAdvisor):
 
     recommender = HiveRecommender()
     recommender.recommendHiveConfigurationsFromHDP30(configurations, clusterData, services, hosts)
+    recommender.recommendHiveQueueAcl(configurations, services)
 
 
 
@@ -891,6 +921,35 @@ class HiveRecommender(service_advisor.ServiceAdvisor):
     else:
       self.logger.error("Problem retrieving YARN queues. Skipping updating HIVE Server Interactve "
                    "'hive.server2.tez.default.queues' property attributes.")
+
+  def recommendHiveQueueAcl(self, configurations, services):
+    """Without the Ranger YARN plugin the Capacity Scheduler ACLs decide who submits to a queue, and enabling
+    Kerberos narrows them to yarn and the smoke user (YARN kerberos.json): the Hive user, which runs the Tez
+    sessions of HiveServer2, is added to the submit ACL of their queues. With the plugin, HiveServer2 start
+    creates a Ranger YARN policy instead (hive_yarn_ranger.py). Also run on the Kerberos recommendations,
+    which override the Kerberos descriptor values."""
+    if "YARN" not in self.get_services_list(services):
+      return
+
+    def get(config_type, name):
+      for source in (configurations, services.get("configurations", {})):
+        value = source.get(config_type, {}).get("properties", {}).get(name)
+        if value is not None:
+          return value
+      return None
+
+    if str(get("ranger-yarn-plugin-properties", "ranger-yarn-plugin-enabled") or "No").strip().lower() == "yes":
+      return
+    user = str(get("hive-env", "hive_user") or "hive").strip() or "hive"
+    put = self.putProperty(configurations, "capacity-scheduler", services)
+    for path in hive_queue_paths(get("hive-site", "hive.server2.tez.default.queues"), get("tez-site", "tez.queue.name")):
+      parts = path.split(".")
+      acls = []
+      for depth in range(len(parts), 0, -1):
+        name = "yarn.scheduler.capacity.{0}.acl_submit_applications".format(".".join(parts[:depth]))
+        acls.append((name, get("capacity-scheduler", name)))
+      if not any(queue_acl_allows(acl, user) for _, acl in acls):
+        put(acls[0][0], queue_acl_with_user(acls[0][1], user))
 
 
 class HiveValidator(service_advisor.ServiceAdvisor):

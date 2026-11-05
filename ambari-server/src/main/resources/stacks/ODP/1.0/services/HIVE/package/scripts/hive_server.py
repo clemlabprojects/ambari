@@ -23,6 +23,7 @@ from hive import hive
 import hive_server_upgrade
 from hive_service import hive_service
 from setup_ranger_hive import setup_ranger_hive
+from hive_yarn_ranger import setup_hive_yarn_ranger_policy
 
 # Ambari Commons & Resource Management Imports
 from resource_management.core.logger import Logger
@@ -50,6 +51,7 @@ class HiveServer(Script):
     self.configure(env) # FOR SECURITY
 
     setup_ranger_hive(upgrade_type=upgrade_type)
+    setup_hive_yarn_ranger_policy()
     hive_service('hiveserver2', action = 'start', upgrade_type=upgrade_type)
 
 

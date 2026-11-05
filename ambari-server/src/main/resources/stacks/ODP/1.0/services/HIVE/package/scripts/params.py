@@ -33,6 +33,7 @@ import ambari_simplejson as json # simplejson is much faster comparing to Python
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from hive_ozone_ranger import hive_ozone_buckets
+from hive_yarn_ranger import yarn_queue_paths
 from resource_management.core.shell import checked_call
 from resource_management.core.utils import PasswordString
 from resource_management.libraries import functions
@@ -672,6 +673,16 @@ if not hive_ozone_ranger_service or hive_ozone_ranger_service == "{{repo_name}}"
   hive_ozone_ranger_service = str(config['clusterName']) + "_ozone"
 hive_ozone_ranger_admin_user = default("/configurations/ranger-env/admin_username", "admin")
 hive_ozone_ranger_admin_password = default("/configurations/ranger-env/admin_password", "")
+
+# Ranger YARN policy of the Hive user on the queues of its Tez sessions (see hive_yarn_ranger.py)
+hive_yarn_ranger_enabled = \
+  str(default("/configurations/ranger-yarn-plugin-properties/ranger-yarn-plugin-enabled", "No")).strip().lower() == "yes"
+hive_yarn_ranger_service = str(default("/configurations/ranger-yarn-security/ranger.plugin.yarn.service.name", "") or "").strip()
+if not hive_yarn_ranger_service or hive_yarn_ranger_service == "{{repo_name}}":
+  hive_yarn_ranger_service = str(config['clusterName']) + "_yarn"
+hive_yarn_queues = yarn_queue_paths(
+  default("/configurations/hive-site/hive.server2.tez.default.queues", ""),
+  default("/configurations/tez-site/tez.queue.name", "")) or ["root.default"]
 
 import functools
 #create partial functions with common arguments for every HdfsResource call
