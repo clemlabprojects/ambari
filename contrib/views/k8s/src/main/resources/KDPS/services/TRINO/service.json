@@ -2046,7 +2046,7 @@
           "type": "string",
           "required": true,
           "excludeFromValues": true,
-          "help": "Public DNS name of the service, e.g. trino.example.com.", "helpMore": "On OpenShift it must sit under the cluster's ingress domain (…apps-<cluster>); leave it blank to let OpenShift assign one.\nWith OIDC it is also the sign-in redirect (https://<host>/oauth2/callback): register it in the identity provider.",
+          "help": "Public DNS name of the service, e.g. data.example.com.", "helpMore": "On OpenShift it must sit under the cluster's ingress domain (…apps-<cluster>); leave it blank to let OpenShift assign one.\nWith OIDC it is also the sign-in redirect (https://<host>/oauth2/callback): register it in the identity provider.",
           "condition": {
             "field": "ingress.enabled",
             "value": true

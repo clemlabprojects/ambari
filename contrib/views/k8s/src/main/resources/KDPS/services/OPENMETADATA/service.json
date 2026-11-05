@@ -1316,13 +1316,13 @@
       "type": "group",
       "capability": "openshift",
       "collapsed": true,
-      "help": "Name of the OM databaseService whose table tags Ranger TagSync propagates (the Trino service KDPS registers, or the Hive service fed by Atlas federation, e.g. 'hive-<cluster>'). Without this mapping TagSync targets a Ranger service named '<OM service>_trino', which does not exist, and every upload is rejected. Default 'trino-clemlab' matches the OM Trino connection KDPS creates.",
+      "help": "Options for OpenShift clusters only.",
       "fields": [
         {
           "name": "runAsUser",
           "label": "Run pods as a specific UID (optional)",
           "type": "number",
-          "help": "Leave blank (recommended): OpenShift's restricted-v2 SCC assigns an arbitrary non-root UID from the project's range automatically. Set a UID only if you must pin one — it MUST fall inside the namespace's openshift.io/sa.scc.uid-range annotation, otherwise admission rejects the pods."
+          "help": "Leave blank: OpenShift picks a UID from the project's range.", "helpMore": "Set a UID only if you must pin one. It must fall inside the namespace's openshift.io/sa.scc.uid-range annotation, or admission rejects the pods."
         }
       ]
     },
@@ -1332,13 +1332,13 @@
       "type": "group",
       "capability": "openshift",
       "collapsed": true,
-      "help": "On OpenShift the bundled OpenSearch needs root + privileged (sysctl vm.max_map_count) init containers that the restricted-v2 SCC rejects. Point OpenMetadata at an EXTERNAL OpenSearch instead — entering a host below disables the bundled OpenSearch. The external endpoint must be network-reachable from the OpenMetadata pod; the chart connects over plain host:port with no username/password and no custom-CA truststore, so use an unauthenticated endpoint (or an in-cluster service) for now.",
+      "help": "On OpenShift, point OpenMetadata at an external OpenSearch.", "helpMore": "The bundled OpenSearch needs root and privileged init containers (vm.max_map_count) that OpenShift's restricted-v2 SCC rejects. Entering a host below turns it off.\nThe chart connects over plain host:port, without credentials or a custom CA: use an unauthenticated endpoint or an in-cluster Service.",
       "fields": [
         {
           "name": "externalOpensearch.host",
           "label": "OpenSearch host",
           "type": "string",
-          "help": "Hostname or in-cluster Service of the external OpenSearch (e.g. opensearch.search.svc.cluster.local). Leave blank to keep the bundled OpenSearch — note it will NOT schedule under restricted-v2."
+          "help": "Host or in-cluster Service of the external OpenSearch. Blank: the bundled one.", "helpMore": "e.g. opensearch.search.svc.cluster.local. The bundled OpenSearch does not start under OpenShift's restricted-v2 SCC."
         },
         {
           "name": "externalOpensearch.port",
@@ -1358,7 +1358,7 @@
             { "label": "https", "value": "https" }
           ],
           "condition": { "field": "externalOpensearch.host", "operator": "non-empty" },
-          "help": "http or https. https against an endpoint with a private CA is not yet supported (no JVM truststore wiring on the OpenMetadata side)."
+          "help": "http or https.", "helpMore": "https with a private CA is not supported yet."
         }
       ]
     },
@@ -1389,14 +1389,14 @@
           "label": "Admin users (comma-separated)",
           "type": "string",
           "defaultValue": "admin",
-          "help": "Usernames granted the OpenMetadata Admin role (e.g. admin, lbakalian). These expand to AUTHORIZER_ADMIN_PRINCIPALS. OpenMetadata grants admin by username only — group-based admin is not supported, so list each admin user explicitly here."
+          "help": "User names given the OpenMetadata Admin role, comma separated.", "helpMore": "OpenMetadata grants Admin by user name only, not by group: list each administrator."
         },
         {
           "name": "security.principalDomain",
           "label": "Admin email domain",
           "type": "string",
           "defaultFromProfile": "oidc.principalDomain",
-          "help": "Email domain used when bootstrap-creating admin user records (sets AUTHORIZER_PRINCIPAL_DOMAIN). Must match the 'email' claim domain your IdP issues for those users (e.g. example.com). Pre-filled from the selected Security Profile (oidc.principalDomain) — itself bootstrapped from cluster oidc-env. Override here per-deploy if needed. If left blank with no upstream value, OpenMetadata falls back to 'open-metadata.org' — which will cause 'Account already exists' on first OIDC login when your IdP email domain differs."
+          "help": "Email domain of the admin users, as your identity provider issues it.", "helpMore": "Filled from the security profile (oidc.principalDomain). Blank with no profile value, OpenMetadata uses open-metadata.org, and the first OIDC login fails with 'Account already exists' when your domain differs."
         }
       ]
     },
@@ -1404,7 +1404,7 @@
       "name": "authenticationConfig",
       "label": "Authentication",
       "type": "group",
-      "help": "Choose how users authenticate to OpenMetadata. 'oidc' requires a Keycloak realm to be configured in Ambari. 'ldap' requires an accessible LDAP/AD directory.",
+      "help": "How users sign in: OIDC needs a Keycloak realm, LDAP a reachable directory.",
       "fields": [
         {
           "name": "global.security.auth.mode",
@@ -1443,7 +1443,7 @@
           "label": "JWKS URI override",
           "type": "string",
           "placeholder": "Default: {issuerUrl}/protocol/openid-connect/certs",
-          "help": "Leave empty for Keycloak — the chart derives the JWKS URI automatically from the issuer URL (<issuerUrl>/protocol/openid-connect/certs). Only set this for non-Keycloak OIDC providers that expose their public keys at a different endpoint.",
+          "help": "Leave blank for Keycloak; set only for another OIDC provider.", "helpMore": "For Keycloak it is derived from the issuer: <issuer>/protocol/openid-connect/certs.",
           "condition": {
             "field": "global.security.auth.mode",
             "value": "oidc"
@@ -1577,7 +1577,7 @@
           "type": "k8s-discovery",
           "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
           "excludeFromValues": true,
-          "help": "Trino coordinator consumed by OM's Trino connector. KDPS registers it in OM as the Trino service trino-<release> when 'Enable Trino base ingestion' is on."
+          "help": "Trino coordinator OpenMetadata reads metadata from.", "helpMore": "With 'Enable Trino base ingestion', KDPS registers it in OpenMetadata as the Trino service trino-<release>."
         },
         {
           "name": "ui_trino_host_override",
@@ -1598,7 +1598,7 @@
           "label": "Deploy bundled Airflow",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Deploys the openmetadata-dependencies sub-chart alongside OM. Needed for Atlas federation or any scheduled ingestion. Auto-flipped ON if Atlas federation is enabled."
+          "help": "Deploys the bundled Airflow. Turned on by Atlas federation and ingestion."
         },
         {
           "name": "dependencies.airflow.scheduler.replicas",
@@ -1625,7 +1625,7 @@
           "label": "Expose Airflow UI via ingress",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Mount the bundled Airflow API server behind an Ingress so operators can browse DAG runs in a browser. Off by default — Airflow is reachable only from in-cluster OM otherwise. Hostname is derived from the OM ingress host with '-airflow' suffix when ingress is enabled on OM.",
+          "help": "Expose the Airflow UI to browse pipeline runs.", "helpMore": "Its host is the OpenMetadata host with an -airflow suffix. Off, Airflow is reachable from OpenMetadata only.",
           "condition": {
             "field": "dependencies.enabled",
             "value": true
@@ -1636,7 +1636,7 @@
           "label": "Persist Airflow logs (requires RWX storage)",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Off (default): each Airflow pod uses an emptyDir mount for /opt/airflow/logs — per-pod, ephemeral, OK for dev / KubernetesExecutor where worker log read happens via the worker's own /logs endpoint. On: the chart creates a ReadWriteMany PVC for shared log storage across scheduler/worker/triggerer/api-server pods. RWX is REQUIRED — works with NFS, EFS, CephFS, etc. Single-node dev clusters using local-path do NOT support RWX. When you need persistence on a non-RWX cluster, fill the 'Existing PVC' field below with a pre-created PVC instead.",
+          "help": "Keep Airflow logs on a shared volume. Needs ReadWriteMany storage.", "helpMore": "Off, each Airflow pod keeps its logs in its own temporary volume, enough for tests.\nOn, the chart creates a ReadWriteMany volume (NFS, EFS, CephFS…). local-path does not support it: on such a cluster, give a volume you created under 'Existing PVC'.",
           "condition": {
             "field": "dependencies.enabled",
             "value": true
@@ -1647,7 +1647,7 @@
           "label": "Log PVC size",
           "type": "string",
           "defaultValue": "10Gi",
-          "help": "Size of the RWX PVC the airflow chart creates for shared logs. Only used when 'Persist Airflow logs' is on AND 'Existing PVC' is empty.",
+          "help": "Size of the shared log volume the chart creates.", "helpMore": "Used only when no existing PVC is given.",
           "condition": {
             "field": "dependencies.airflow.logs.persistence.enabled",
             "value": true
@@ -1658,7 +1658,7 @@
           "label": "Storage class (must support RWX)",
           "type": "string",
           "defaultValue": "",
-          "help": "Examples: nfs-csi-default, efs-sc, rook-cephfs, longhorn (RWX class). Leave empty to use the cluster default — but ONLY if the cluster default supports RWX. On most kubeadm clusters the default is local-path (RWO only), which will leave this PVC stuck Pending.",
+          "help": "Storage class supporting ReadWriteMany. Blank: the default.", "helpMore": "e.g. nfs-csi, efs-sc, rook-cephfs, longhorn. Leave it blank only if the cluster's default supports ReadWriteMany; local-path does not, and the volume stays Pending.",
           "condition": {
             "field": "dependencies.airflow.logs.persistence.enabled",
             "value": true
@@ -1669,20 +1669,20 @@
           "label": "Existing PVC name (optional)",
           "type": "string",
           "defaultValue": "",
-          "help": "If you already created a PVC ahead of deploy (in this release's namespace), name it here — the chart will use that instead of creating a new one. Useful when the cluster default storage class doesn't support RWX and you want to provision the PVC manually with a different class. When set, the size + storage class fields above are ignored.",
+          "help": "A volume claim you created, used instead of a new one.", "helpMore": "In the release namespace. Size and storage class above are then ignored.",
           "condition": {
             "field": "dependencies.airflow.logs.persistence.enabled",
             "value": true
           }
         }
       ],
-      "help": "Deploy the openmetadata-dependencies sub-chart (Airflow 3.0.2 + the OM ingestion runner image). Required to run any OM pipeline (Atlas federation, Trino metadata ingest, etc.). Disable only if you connect to an external Airflow."
+      "help": "Airflow and the ingestion runner, needed by every OpenMetadata pipeline.", "helpMore": "Atlas federation and Trino or Hive ingestion run there. Turn it off only to use an external Airflow."
     },
     {
       "name": "atlasFederation",
       "label": "Atlas Federation",
       "type": "group",
-      "help": "Federate an Apache Atlas catalog through OpenMetadata. The post-install Job creates the Atlas metadataService, the matching databaseService, and an Airflow-scheduled ingestion pipeline. Requires the bundled ingestion runner (section above). OpenMetadata signs in to Atlas with a user name and password: either through the file-based user store of Atlas (when it is already enabled, or when you allow it below) or, on an Atlas that signs users in against LDAP, with an LDAP service account you provide in a Secret.",
+      "help": "Brings the context's Atlas catalog into OpenMetadata.", "helpMore": "Creates the Atlas and database services and a scheduled ingestion pipeline; needs the bundled Airflow. OpenMetadata signs in to Atlas with a user name and password: Atlas's file users, or an LDAP service account given in a Secret.",
       "fields": [
         {
           "name": "atlasFederation.enabled",
@@ -1691,14 +1691,14 @@
           "defaultValue": false,
           "autoEnableWhenContext": "atlas",
           "advisor": "recommend_atlas",
-          "help": "When ON, KDPS federates the Atlas of the selected Platform Context into OpenMetadata: it provisions the federation user, grants read access (Ranger or simple authz), and registers the Atlas service + ingestion pipeline via OM REST. The Atlas URL, authentication and authorization all come from the Platform Context selected for this deployment — there is nothing else to configure here."
+          "help": "Federate the platform context's Atlas into OpenMetadata.", "helpMore": "KDPS creates the federation user, grants it read access (Ranger or Atlas simple authorization) and registers the Atlas service and its pipeline. Everything comes from the platform context."
         },
         {
           "name": "atlasFederation.existingSecret",
           "label": "Existing Secret (service account)",
           "type": "string",
           "defaultValue": "",
-          "help": "Optional. Name of a Secret in this release's namespace with the keys 'username' and 'password' for the account OpenMetadata signs in to Atlas with. Required when Atlas signs users in against LDAP: the account must be an existing LDAP service account, and nothing is created or changed in Atlas (this applies even if Atlas also has file authentication on). With Ranger, KDPS grants the account read access; with the Atlas simple authorizer it does not, so add the account (or a group it belongs to) to Atlas's atlas-simple-authz-policy.json yourself. On an Atlas that has file authentication and no LDAP, it replaces the password KDPS would generate for the federation user. The Secret is read when the federation steps run, after the chart is installed, so it may be created by the install (for example by external-secrets). Blank = KDPS creates and manages the account.",
+          "help": "Secret with 'username' and 'password' of the account used for Atlas.", "helpMore": "Optional, in the release namespace. Required when Atlas signs users in against LDAP: use an existing LDAP service account; nothing is changed in Atlas.\nWith Ranger, KDPS grants the account read access; with Atlas simple authorization, add it to atlas-simple-authz-policy.json yourself.\nBlank: KDPS creates and manages the account. The Secret may be created by the install itself, e.g. by external-secrets.",
           "condition": {
             "field": "atlasFederation.enabled",
             "value": true
@@ -1710,7 +1710,7 @@
           "type": "boolean",
           "defaultValue": false,
           "excludeFromValues": true,
-          "help": "Only needed when Atlas has no file-based user store enabled and no LDAP service account Secret is given above (for example a Kerberos-only Atlas). When ticked, KDPS turns Atlas file authentication on in Ambari and creates a dedicated non-administrator user for OpenMetadata. WARNING: with file authentication on, the Atlas scripts also add a local administrator account to Atlas, a password-based way in next to Kerberos or LDAP. Leave it off to keep Atlas as it is: the deployment then stops with a message instead of changing Atlas.",
+          "help": "Lets KDPS turn on Atlas file authentication to create OpenMetadata's user.", "helpMore": "Only for an Atlas with no file users and no LDAP account given above (e.g. Kerberos only). Warning: file authentication also adds a local Atlas administrator, a password way in next to Kerberos or LDAP. Off, the deploy stops with a message instead of changing Atlas.",
           "condition": {
             "field": "atlasFederation.enabled",
             "value": true
@@ -1732,7 +1732,7 @@
           "label": "Target OM database services",
           "type": "string",
           "defaultValue": "",
-          "help": "Comma-separated OM databaseService names that receive Atlas hive_table entities. Blank = the Hive base ingestion service of this release (its explicit name, else hive-<cluster>), so both fields stay aligned.",
+          "help": "OpenMetadata services that receive Atlas tables. Blank: the Hive ingestion's.", "helpMore": "Comma separated. Blank follows the Hive base ingestion service of this release.",
           "condition": {
             "field": "atlasFederation.enabled",
             "value": true
@@ -1744,7 +1744,7 @@
       "name": "baseIngestion",
       "label": "Base Metadata Ingestion (Hive / Trino)",
       "type": "group",
-      "help": "Ingest Hive table metadata directly into OpenMetadata. This is layer 1 of Atlas+Hive federation: it creates the OM Hive database service and its tables; the Atlas Federation section below then enriches those tables with Atlas lineage and tags. Requires the bundled ingestion runner (Airflow) — enabling this turns it on automatically.",
+      "help": "Ingests Hive and Trino table metadata directly into OpenMetadata.", "helpMore": "It creates the database services and their tables; Atlas federation then adds Atlas lineage and tags to them. Turns the bundled Airflow on.",
       "fields": [
         {
           "name": "baseIngestion.hiveEnabled",
@@ -1753,14 +1753,14 @@
           "defaultValue": false,
           "autoEnableWhenContext": "hive",
           "advisor": "recommend_hive",
-          "help": "When ON, KDPS creates an OM Hive databaseService and a scheduled metadata ingestion pipeline that connects directly to HiveServer2. For Atlas+Hive federation, enable this together with Atlas Federation below."
+          "help": "Ingest table metadata from the context's HiveServer2 on a schedule.", "helpMore": "Turn it on together with Atlas federation to federate Atlas and Hive."
         },
         {
           "name": "baseIngestion.hiveServiceName",
           "label": "OM database service name",
           "type": "string",
           "defaultValue": "",
-          "help": "Name of the OpenMetadata Hive databaseService to create. Blank = hive-<cluster> (the platform context's cluster, e.g. hive-mycluster). Atlas Federation's 'Target OM database services' follows it when left blank.",
+          "help": "Name of the OpenMetadata Hive service. Blank: hive-<cluster>.", "helpMore": "Atlas federation's target services follow it when left blank.",
           "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
         },
         {
@@ -1769,7 +1769,7 @@
           "type": "context-resolved",
           "contextField": "hive.hs2HostPort",
           "placeholder": "hs2.example.com:10001",
-          "help": "Delivered by KDPS from the selected context (HTTP-transport endpoint). Toggle Override only to point at a specific HS2; on an external context without Ambari, enter it here.",
+          "help": "From the platform context. Override only to use another HiveServer2.", "helpMore": "On an external context without Ambari, enter it here.",
           "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
         },
         {
@@ -1778,7 +1778,7 @@
           "type": "context-resolved",
           "contextField": "hive.scheme",
           "placeholder": "hive+https",
-          "help": "Delivered by KDPS (hive+https / hive+http / hive), derived from the context's hive-site transport.mode + use.SSL. Toggle Override only to force a scheme.",
+          "help": "From the platform context. Override only to force a scheme.", "helpMore": "hive+https, hive+http or hive, from the context's transport mode and SSL setting.",
           "condition": { "field": "baseIngestion.hiveEnabled", "value": true },
           "externalFields": [
             {
@@ -1805,7 +1805,7 @@
           "type": "context-resolved",
           "contextField": "hive.authMode",
           "placeholder": "kerberos",
-          "help": "Delivered by KDPS from hive.server2.authentication (kerberos/ldap/none). kerberos uses SPNEGO via the Airflow keytab renewer. Toggle Override only to force it.",
+          "help": "From the platform context. Override only to force it.", "helpMore": "kerberos uses SPNEGO with the keytab Airflow renews.",
           "condition": { "field": "baseIngestion.hiveEnabled", "value": true }
         },
         {
@@ -1855,7 +1855,7 @@
           "requiredWhenContext": { "field": "hive.authMode", "equals": "kerberos" },
           "condition": { "field": "baseIngestion.hiveEnabled", "value": true },
           "excludeFromValues": true,
-          "help": "Only when the selected Platform Context is EXTERNAL and its Hive / Atlas live in a DIFFERENT Kerberos realm (e.g. CDP). Pick a Kubernetes Secret in the release namespace holding key 'service.keytab' (the service keytab issued by the backend realm's KDC). The ingestion pods auto-detect the principal from it (klist), so you only need the keytab. Create it first, e.g.: kubectl -n <ns> create secret generic om-cdp-keytab --from-file=service.keytab=./oma-ing.keytab. Leave blank when the context's realm is the same as the Ambari cluster — KDPS then mints the ingestion keytab automatically. This one keytab is used by ALL federated-service ingestion (Hive, Atlas, HDFS)."
+          "help": "Secret with the ingestion keytab from another realm. Blank: KDPS issues it.", "helpMore": "Only for an external context whose KDC KDPS cannot reach (no KDC account on the context). Key 'service.keytab'; the principal is read from it. It serves all federated ingestion: Hive, Atlas, HDFS.\nkubectl -n <ns> create secret generic om-keytab --from-file=service.keytab=./om-ingestion.keytab"
         }
 ,
         {
@@ -1863,14 +1863,14 @@
           "label": "Enable Trino base ingestion",
           "type": "boolean",
           "defaultValue": false,
-          "help": "When ON, KDPS registers the Trino coordinator selected under 'Trino Coordinator' as an OpenMetadata Trino database service (basic auth with the release's KDPS service user over HTTPS — needs a KDPS Trino release on chart >= 1.43.13 with 'Let KDPS manage catalogs' on) plus a scheduled metadata ingestion. OM entities then carry Trino's own shape (service.catalog.schema.table), so tags set in OM land on exactly the Trino resource in Ranger — KDPS fills the Ranger TagSync mapping below automatically. Also flips 'Deploy bundled Airflow' on."
+          "help": "Ingest the Trino coordinator above, so OpenMetadata tags reach Trino.", "helpMore": "KDPS registers it as an OpenMetadata Trino service, signed in as the release's KDPS user over HTTPS (Trino chart 1.43.13+ with 'Let KDPS manage catalogs'), with a scheduled ingestion. Tags set in OpenMetadata then match Trino's resources in Ranger, and KDPS fills the TagSync mapping below. Turns the bundled Airflow on."
         },
         {
           "name": "baseIngestion.trinoServiceName",
           "label": "OM database service name (Trino)",
           "type": "string",
           "defaultValue": "",
-          "help": "Name of the OpenMetadata Trino databaseService KDPS creates. Blank = trino-<release> (the selected Trino release, e.g. trino-sec). It becomes the 'OM database service whose tags are synced' for Ranger TagSync.",
+          "help": "Name of the OpenMetadata Trino service. Blank: trino-<release>.", "helpMore": "It becomes the service whose tags Ranger TagSync syncs.",
           "condition": { "field": "baseIngestion.trinoEnabled", "value": true }
         },
         {
@@ -1903,7 +1903,7 @@
       "name": "rangerTagSync",
       "label": "Ranger TagSync",
       "type": "group",
-      "help": "Wires OpenMetadata as a Ranger TagSync source (RANGER-4978). Tags applied to tables/columns in OpenMetadata are propagated to Ranger and enforced on Trino queries. Ranger TagSync keeps its other tag sources, Atlas included.",
+      "help": "Sends tags set in OpenMetadata to Ranger, enforced on Trino.", "helpMore": "OpenMetadata becomes a source of Ranger TagSync (RANGER-4978); its other sources, Atlas included, stay.",
       "fields": [
         {
           "name": "rangerTagSyncEnabled",
@@ -1913,7 +1913,7 @@
           "excludeFromValues": true,
           "autoEnableWhenContext": ["ranger", "atlas"],
           "seedFromValue": "ranger.tagSync.enabled",
-          "help": "Registers OpenMetadata as a tag source of the platform's Ranger TagSync after the install, then restarts Ranger TagSync once so it pulls OpenMetadata tags. Needs 'Deploy bundled Airflow', an OpenMetadata API address Ranger TagSync can reach (the ingress host, or the override below), and an ingestion-bot token that expires (see 'OM bot JWT' below): until there is one, the deploy skips the registration with a warning. That token is also what every OpenMetadata ingestion pipeline runs with, so its expiry stops ingestion too. Auto-enabled only when the selected Platform Context exposes BOTH Ranger and Atlas (a tag source and a tag store). Off: KDPS does not change the platform's Ranger TagSync; it only reports what it finds there that needs attention (the Atlas tag source turned off, a bot token stored in clear)."
+          "help": "Registers OpenMetadata as a tag source of the platform's Ranger TagSync.", "helpMore": "Done after the install, then Ranger TagSync restarts once. Needs the bundled Airflow, an OpenMetadata address TagSync can reach, and an ingestion-bot token that expires (see below): until then the step is skipped with a warning.\nOn by default when the context exposes both Ranger and Atlas. Off, KDPS changes nothing in Ranger TagSync and only reports problems it sees there."
         },
         {
           "name": "rangerTagSyncToken",
@@ -1921,7 +1921,7 @@
           "type": "password",
           "required": false,
           "excludeFromValues": true,
-          "help": "Leave empty: KDPS reads the OpenMetadata ingestion-bot token itself and stores it in Ranger TagSync's configuration as a password property: Ambari masks it, and on the Ranger TagSync host keeps it in a credential store rather than in the configuration file. KDPS only hands over a token that expires, and OpenMetadata creates the bot with one that never does: after the first install, regenerate it in OpenMetadata (Settings > Bots > ingestion-bot) with an expiry (for example 90 days). The ingestion-bot is also the identity of every OpenMetadata ingestion pipeline (the Hive and Trino ingestion and the Atlas federation included): when its token expires, all ingestion stops, not only Ranger TagSync. After each regeneration, run the release's 'Re-register Ranger TagSync source', 'Re-register Hive ingestion', 'Re-register Trino ingestion' and 'Re-register Atlas federation' actions (those the Releases page shows) so Ranger TagSync gets the new token and OpenMetadata redeploys the pipelines with it, and redeploy any other pipeline from OpenMetadata. Renew it before it expires: KDPS's OpenMetadata steps warn once less than 30 days are left.",
+          "help": "Leave blank: KDPS reads the ingestion-bot token itself.", "helpMore": "It is stored as a password in Ranger TagSync's configuration (masked by Ambari, in a credential store on the host). KDPS only uses a token that expires: after the first install, regenerate the ingestion-bot token in OpenMetadata (Settings > Bots) with an expiry, e.g. 90 days.\nThat bot runs every ingestion pipeline: when its token expires, all ingestion stops. After each regeneration, run the release's 'Re-register …' actions so TagSync and the pipelines get the new token. KDPS warns 30 days before it expires.",
           "condition": {
             "field": "rangerTagSyncEnabled",
             "value": true
@@ -1944,7 +1944,7 @@
           "label": "OM API endpoint as seen from Ranger TagSync (optional)",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Defaults to 'https://<ingressHost>/api' when ingress is on. Override if TagSync reaches OM via a different host (DMZ, in-cluster Service URL, etc.).",
+          "help": "OpenMetadata API address Ranger TagSync uses. Blank: https://<ingress host>/api.", "helpMore": "Set it when TagSync reaches OpenMetadata another way (DMZ, in-cluster Service).",
           "seedFromValue": "ranger.tagSync.endpoint",
           "seedUnlessEquals": "https://${ingress.host}/api",
           "condition": {
@@ -1957,7 +1957,7 @@
           "label": "OM database service whose tags are synced",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the OM databaseService representing Trino. TagSync watches tags under this service. With 'Enable Trino base ingestion' on, KDPS sets it to the OM Trino service it registers (trino-<release> unless you named it) and your value is overridden. Without Trino base ingestion, type the OM service name explicitly.",
+          "help": "OpenMetadata Trino service whose tags are synced.", "helpMore": "With Trino base ingestion on, KDPS sets it to the service it registers and overrides this value. Without it, type the service name.",
           "seedFromValue": "ranger.tagSync.trinoIngestionServiceFqn",
           "condition": {
             "field": "rangerTagSyncEnabled",
@@ -1970,7 +1970,7 @@
           "label": "Ranger service that receives the tags",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the Ranger service of type 'trino' that receives the tags: the Trino release's Ranger repository (ranger.serviceName, by default <release>-<namespace>). With 'Enable Trino base ingestion' on, KDPS fills it from the registered Trino release and your value is overridden. Without it, type the Ranger service name; left blank, no mapping is written and Ranger rejects the tags.",
+          "help": "Ranger Trino service that receives the tags.", "helpMore": "The Trino release's Ranger repository, <release>-<namespace> by default. With Trino base ingestion on, KDPS fills it. Blank without it: no mapping is written and Ranger rejects the tags.",
           "seedFromValue": "ranger.tagSync.rangerTrinoServiceName",
           "condition": {
             "field": "rangerTagSyncEnabled",
@@ -2104,7 +2104,7 @@
           "type": "monitoring-discovery",
           "excludeFromValues": true,
           "autoSelectSingle": true,
-          "help": "Finds the Prometheus already running on the cluster (any namespace, any release name) and fills the fields below from it."
+          "help": "Finds the Prometheus already on the cluster and fills the fields below."
         },
         {
           "name": "monitoring.namespace",
@@ -2149,7 +2149,7 @@
           "type": "boolean",
           "defaultValue": false,
           "autoEnableWhenCapability": "ingress",
-          "help": "Expose the service through a Kubernetes Ingress. Required when an authentication profile (OIDC / LDAP-over-SSL) is selected in Step 1 — OAuth callbacks need a public hostname and HTTPS."
+          "help": "Expose the service through an Ingress (a Route on OpenShift).", "helpMore": "Required with an authentication profile (OIDC, LDAP over TLS): sign-in needs a public hostname and HTTPS."
         },
         {
           "name": "ingress.ingressClassName",
@@ -2159,7 +2159,7 @@
           "defaultValue": "nginx",
           "capability": "kubernetes",
           "keepWhenHidden": true,
-          "help": "Ingress class name (e.g. 'nginx', 'openshift-default'). Leave empty for the default controller. Hidden on OpenShift, where the HAProxy Router (Route) owns routing rather than an nginx Ingress class.",
+          "help": "Ingress class, e.g. nginx. Blank: the default controller.", "helpMore": "Hidden on OpenShift, where Routes handle the traffic.",
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -2195,7 +2195,7 @@
           "type": "select",
           "defaultValue": "signedByAmbariCA",
           "excludeFromValues": true,
-          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1. On Upgrade/Config this starts on **Keep current certificate**: the release keeps the certificate it serves and nothing is replaced (a release serving plain HTTP starts on **None**). Choose another mode only to replace that certificate; you are asked to confirm, and a Secret kept by cert-manager or an external Secret store is never overwritten.",
+          "help": "Where the service's TLS certificate comes from.", "helpMore": "Sign via cert-manager: recommended when cert-manager is installed (renews automatically).\nSign with Company CA: a CA uploaded under Security → Certificate Authorities.\nSign with Ambari Internal CA: for tests, browsers warn.\nModes whose system is not installed are hidden. TLS is required with an authentication profile.\nOn Upgrade/Config this starts on 'Keep current certificate' (or 'None' for plain HTTP). Pick another mode only to replace the certificate; you are asked to confirm, and a Secret kept by cert-manager or an external store is never overwritten.",
           "options": [
             {
               "label": "Keep current certificate",
@@ -2277,7 +2277,7 @@
           "label": "Target Secret name",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the kubernetes.io/tls Secret the view will create from the uploaded cert/key. Leave blank to use the default `<releaseName>-ingress-tls` (computed server-side at deploy time).",
+          "help": "Secret created from the uploaded certificate. Blank: <release>-ingress-tls.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "uploadLeaf"
@@ -2289,7 +2289,7 @@
           "type": "secret-discovery",
           "lookupLabel": "ambari.clemlab.com/resource-type=issuing-ca",
           "excludeFromValues": true,
-          "help": "Pick a Company Issuing CA from the PKI registry. The view mints a leaf TLS cert signed by this CA before installing the chart. KDPS keeps the CAs for every cluster it deploys to, and signs the leaf itself: the CA key is never written to the release's cluster. Upload CAs via Security → Certificate Authorities.",
+          "help": "Company CA that signs the service's certificate.", "helpMore": "KDPS signs the certificate itself: the CA key never goes to the release's cluster. Upload CAs under Security → Certificate Authorities.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "signedByCompanyCA"
@@ -2315,7 +2315,7 @@
           "label": "ClusterIssuer",
           "type": "cluster-issuer-discovery",
           "excludeFromValues": true,
-          "help": "Pick a cert-manager ClusterIssuer or Issuer. The view writes a Certificate resource pre-install; cert-manager mints the Secret and auto-renews it before expiry.",
+          "help": "cert-manager issuer that signs and renews the certificate.", "helpMore": "KDPS writes a Certificate before the install; cert-manager creates the Secret and renews it before it expires.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "signedByClusterIssuer"
@@ -2349,7 +2349,7 @@
           "label": "Remote key / path",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Path/key in the upstream store. For Vault PKI: 'pki/issue/<role>'. For Vault KV: 'secret/data/tls/<name>'. For AWS Secrets Manager: the secret name.",
+          "help": "Path of the certificate in the external store.", "helpMore": "Vault PKI: pki/issue/<role>. Vault KV: secret/data/tls/<name>. AWS Secrets Manager: the secret's name.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "sourcedFromExternalSecret"
@@ -2376,7 +2376,7 @@
             "field": "ingress.enabled",
             "value": true
           },
-          "help": "OpenShift only. Space-separated IP addresses or CIDR ranges allowed to reach the Route, e.g. '10.0.0.0/8 172.16.20.0/24'. Set it when the cluster requires the haproxy.router.openshift.io/ip_whitelist annotation on every Route. Leave blank to allow all sources."
+          "help": "Source IPs or CIDRs allowed to reach the Route, space separated. Blank: all.", "helpMore": "OpenShift only, e.g. 10.0.0.0/8 172.16.20.0/24. Set it when the cluster requires the haproxy.router.openshift.io/ip_whitelist annotation on every Route."
         },
         {
           "name": "ingressTuning",
@@ -2393,7 +2393,7 @@
               "label": "proxy-buffer-size",
               "type": "string",
               "excludeFromValues": true,
-              "help": "nginx.ingress.kubernetes.io/proxy-buffer-size. Leave blank to use chart default (16k under OIDC/OAuth, otherwise nginx default 4k/8k). Bump if you see 502 + 'upstream sent too big header' on OAuth callbacks."
+              "help": "nginx proxy-buffer-size. Blank: the chart's default.", "helpMore": "16k under OIDC, else nginx's default (4k/8k). Raise it on 502 'upstream sent too big header' after sign-in."
             },
             {
               "name": "ingress.tuning.proxyBuffersNumber",
@@ -2432,7 +2432,7 @@
             }
           ],
           "collapsed": true,
-          "help": "Advanced — usually leave blank. nginx ingress annotations (proxy buffers / timeouts). Chart-side defaults are sensible for the common case; expand if you need to override (large headers on OAuth, long-running queries, big uploads)."
+          "help": "Advanced nginx settings: usually leave blank.", "helpMore": "Override them for large OAuth headers, long-running queries or big uploads."
         }
       ]
     },
