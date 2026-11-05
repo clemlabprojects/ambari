@@ -438,6 +438,36 @@ class CommandServiceRedeployDefaultsTest {
     }
 
     @Test
+    void aKeytabTheContextKdcIssuedIsNotTakenForAnOperatorsOne() throws Exception {
+        // Taken for an external keytab, it went to the Hive connection field and the pods lost their service keytab.
+        recordRelease("cdp-prod", "1.43.14");
+        CommandService service = service(null);
+        set(service, "contextHoldsKdcAccount", (java.util.function.Predicate<String>) "cdp-prod"::equals);
+        when(k8s.getHelmReleaseValues(NS, RELEASE)).thenReturn(kerberizedValues(KEYTAB_SECRET));
+        Secret issued = keytabSecret(false);
+        issued.getMetadata().setLabels(CommandService.keytabSecretLabels(RELEASE, PRINCIPAL));
+        when(k8s.getSecret(NS, KEYTAB_SECRET)).thenReturn(issued);
+
+        service.submitDeploy(pageRedeployRequest(kerberizedValues(KEYTAB_SECRET), "cdp-prod"), null, null, null, null,
+                null, null, null);
+
+        assertFalse(CommandService.deployUsesExternalKeytab(sentRequest.get().getFormValues()),
+                "the deploy issues or reuses it through the context's KDC");
+    }
+
+    @Test
+    void aReleaseWhoseContextIssuesItsKeytabsIsNotRefusedForAMissingOne() throws Exception {
+        recordRelease("cdp-prod", "1.43.14");
+        CommandService service = service(null);
+        set(service, "contextHoldsKdcAccount", (java.util.function.Predicate<String>) "cdp-prod"::equals);
+        when(k8s.getHelmReleaseValues(NS, RELEASE)).thenReturn(kerberizedValues(null));
+
+        service.submitDeploy(resyncRequest(kerberizedValues(null)), null, null, null, null, null, null, null);
+
+        assertNotNull(sentRequest.get(), "the deploy issues the keytab from the context's KDC");
+    }
+
+    @Test
     void aKeytabSecretWithoutAPrincipalKeepsThePrincipalTheCatalogsRunWith() throws Exception {
         recordRelease("cdp-prod", "1.43.14");
         Map<String, Object> deployed = kerberizedValues(KEYTAB_SECRET);

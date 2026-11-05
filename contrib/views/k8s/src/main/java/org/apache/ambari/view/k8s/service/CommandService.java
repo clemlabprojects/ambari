@@ -6963,6 +6963,12 @@ public class CommandService {
                 deployed, "global.security.kerberos.injectionMode"));
         String secretName = stringValue(ConfigResolutionService.getByDottedPath(deployed, KERBEROS_KEYTAB_SECRET_PATH));
         if (!KERBEROS_INJECTION_MODE_PRE_PROVISIONED.equalsIgnoreCase(injectionMode) || secretName.isEmpty()) {
+            if (holdsKdcAccount(contextId)) {
+                // Kerberos stays on: the deploy issues the keytab from the context's KDC, or reuses the one it stored.
+                LOG.info("Redeploy of {}/{} names no keytab: platform context '{}' issues it", namespace, release,
+                        contextId);
+                return;
+            }
             throw new IllegalStateException("Cannot redeploy " + release + ": it runs with Kerberos against platform"
                     + " context '" + contextId + "', but this deploy names no external keytab and none could be found"
                     + " in the release's values. Deploying without one would turn Kerberos off, and the pods would lose"
@@ -6979,6 +6985,12 @@ public class CommandService {
             // The deploy reads the Secret again when it applies the keytab, and stops there if it is missing.
             LOG.warn("Could not read keytab Secret {}/{}; looking for its principal in the release's values: {}",
                     namespace, secretName, e.toString());
+        }
+        if (secret != null && issuedFromContextKdc(secret, contextId)) {
+            // Not an operator's keytab: the context's KDC issued it, and the deploy reuses it through its keytab steps.
+            LOG.info("Redeploy of {}/{}: Secret {} holds a keytab KDPS issued from the KDC of platform context '{}'",
+                    namespace, release, secretName, contextId);
+            return;
         }
         if (secretRead && secret == null) {
             throw new IllegalStateException("Cannot redeploy " + release + ": it runs with Kerberos against platform"
@@ -7014,6 +7026,16 @@ public class CommandService {
         request.setFormValues(form);
         LOG.info("Redeploy of {}/{} names no external keytab: keeping the one it runs with (Secret {})",
                 namespace, release, secretName);
+    }
+
+    /**
+     * Whether a keytab Secret was written by KDPS with a keytab the KDC of platform context {@code contextId} issued:
+     * KDPS's labels, on a context holding a KDC account. An operator's keytab Secret carries no such labels.
+     */
+    private boolean issuedFromContextKdc(io.fabric8.kubernetes.api.model.Secret secret, String contextId) {
+        Map<String, String> labels = secret.getMetadata() == null ? null : secret.getMetadata().getLabels();
+        return labels != null && VIEW_MANAGED_BY.equals(labels.get("app.kubernetes.io/managed-by"))
+                && labels.containsKey(KEYTAB_PRINCIPAL_LABEL) && holdsKdcAccount(contextId);
     }
 
     /** Whether the deploy's own values set global.security.kerberos.enabled to false: Kerberos off on purpose. */
