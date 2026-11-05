@@ -20,6 +20,7 @@ package org.apache.ambari.server.controller.internal;
 
  import static org.easymock.EasyMock.anyLong;
 import static org.easymock.EasyMock.anyObject;
+import static org.easymock.EasyMock.anyString;
 import static org.easymock.EasyMock.capture;
 import static org.easymock.EasyMock.createMock;
 import static org.easymock.EasyMock.createNiceMock;
@@ -199,6 +200,8 @@ public class ClusterStackVersionResourceProviderTest {
     stageFactory = createNiceMock(StageFactory.class);
 
     clusters = createNiceMock(Clusters.class);
+    // the hosts of the install commands are registered
+    expect(clusters.hostExists(anyString())).andReturn(true).anyTimes();
     actionManager = createNiceMock(ActionManager.class);
     managementController = createMock(AmbariManagementController.class);
 

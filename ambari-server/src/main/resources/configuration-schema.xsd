@@ -171,6 +171,7 @@
       <xs:enumeration value="NOT_MANAGED_HDFS_PATH"/>
       <xs:enumeration value="VALUE_FROM_PROPERTY_FILE"/>
       <xs:enumeration value="KERBEROS_PRINCIPAL"/>
+      <xs:enumeration value="OZONE_S3_SECRET"/>
     </xs:restriction>
   </xs:simpleType>
 </xs:schema>
