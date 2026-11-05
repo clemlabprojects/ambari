@@ -2,7 +2,7 @@
   "label": "OpenMetadata",
   "chart": "openmetadata",
   "secretName": "registry-credentials",
-  "version": "1.13.35",
+  "version": "1.13.36",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",
@@ -2788,5 +2788,26 @@
         }
       }
     ]
-  }
+  },
+  "gitOpsSecretReferences": [
+    {
+      "_comment": "A GitOps profile commits the values to Git: each secret goes to a Secret of the release namespace, which the values name (StackServiceDef.gitOpsSecretReferences). The Hive ingestion password is read by KDPS's own step, never by the chart."
+    },
+    {
+      "secret": "kdps-auth",
+      "keys": {
+        "global.security.auth.ldap.bindPassword": "bind-password",
+        "global.security.auth.oidc.clientSecret": "oidc-client-secret"
+      },
+      "reference": "global.security.auth.existingSecret",
+      "range": ">=1.13.36",
+      "label": "the security profile's bind password or OIDC client secret"
+    },
+    {
+      "omit": true,
+      "keys": {
+        "baseIngestion.hivePassword": ""
+      }
+    }
+  ]
 }

@@ -75,6 +75,9 @@ public class FluxGitOpsBackendProfileTest {
     private GitOpsProfileStore profiles;
     private final FakePullRequests pullRequests = new FakePullRequests();
     private final Map<String, String> secretPayloads = new ConcurrentHashMap<>();
+    /** The Secrets the committed values name, as written: their keys and values, and their labels. */
+    private final Map<String, Map<String, String>> referencedSecrets = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, String>> referencedSecretLabels = new ConcurrentHashMap<>();
     private final Map<String, K8sReleaseEntity> releases = new ConcurrentHashMap<>();
     /** Ambari's credential store, as a deploy keeps the release's Git token in it. */
     private final Map<String, String> storedCredentials = new ConcurrentHashMap<>();
@@ -144,6 +147,13 @@ public class FluxGitOpsBackendProfileTest {
                     new String((byte[]) inv.getArgument(3), StandardCharsets.UTF_8));
             return null;
         }).when(k8s).createOrUpdateOpaqueSecret(anyString(), anyString(), anyString(), any(byte[].class), anyMap(), any(), any());
+        doAnswer(inv -> {
+            Map<String, String> data = new LinkedHashMap<>();
+            ((Map<String, byte[]>) inv.getArgument(2)).forEach((k, v) -> data.put(k, new String(v, StandardCharsets.UTF_8)));
+            referencedSecrets.put(inv.getArgument(0) + "/" + inv.getArgument(1), data);
+            referencedSecretLabels.put(inv.getArgument(0) + "/" + inv.getArgument(1), inv.getArgument(3));
+            return null;
+        }).when(k8s).createOrUpdateOpaqueSecret(anyString(), anyString(), anyMap(), anyMap(), anyMap());
         doAnswer(inv -> {
             secretPayloads.remove(inv.getArgument(0) + "/" + inv.getArgument(1));
             return null;
@@ -269,9 +279,12 @@ public class FluxGitOpsBackendProfileTest {
         assertEquals("# Runbook\n", published("main", "docs/runbook.md"));
         assertNull("no Flux manifest", published("main", "clusters/default/analytics/trino/helmrelease.yaml"));
 
-        // The secret values stay in the cluster, in the Secret the team's file names.
-        String secretName = owners.substring(owners.indexOf("secretValues: ") + "secretValues: ".length()).trim();
-        assertTrue(secretPayloads.get("analytics/" + secretName).contains(BIND_PASSWORD));
+        // The secret values stay in the cluster, in a Secret the committed values name: what applies the repository
+        // (Argo CD) needs nothing else.
+        assertTrue(instanceValues, instanceValues.contains("existingSecret: \"trino-kdps-auth\""));
+        assertEquals(Map.of("bind-password", BIND_PASSWORD), referencedSecrets.get("analytics/trino-kdps-auth"));
+        assertTrue(owners, owners.endsWith("secretValues: \n"));
+        assertTrue("no values Secret to merge", secretPayloads.isEmpty());
         assertEquals("environments", releases.values().iterator().next().getGitProfile());
     }
 
@@ -410,7 +423,7 @@ public class FluxGitOpsBackendProfileTest {
         environmentsProfile(GitOpsProfile.DELIVERY_COMMIT);
         backend().apply(requestIn("analytics"), null);
         backend().apply(requestIn("team-b"), null);
-        String analyticsSecret = secretPayloads.keySet().stream().filter(k -> k.startsWith("analytics/")).findFirst()
+        String analyticsSecret = referencedSecrets.keySet().stream().filter(k -> k.startsWith("analytics/")).findFirst()
                 .orElseThrow();
 
         backend().destroy("analytics", "trino");
@@ -420,7 +433,9 @@ public class FluxGitOpsBackendProfileTest {
         assertNotNull("the chart is shared", published("main", "chart/Chart.yaml"));
         assertNotNull("the team's file stays", published("main", "OWNERS.md"));
         assertEquals("# Runbook\n", published("main", "docs/runbook.md"));
-        assertFalse("the secret values KDPS kept are gone", secretPayloads.containsKey(analyticsSecret));
+        // The uninstall of the release removes it with the other objects KDPS wrote for the release.
+        assertTrue(referencedSecretLabels.get(analyticsSecret).toString(), referencedSecretLabels.get(analyticsSecret)
+                .entrySet().containsAll(org.apache.ambari.view.k8s.service.KdpsReleaseObjects.labels("trino").entrySet()));
     }
 
     /** The profile with its values file moved under the cluster, as the multi-cluster refusal asks. */
@@ -578,7 +593,7 @@ public class FluxGitOpsBackendProfileTest {
 
     /** The values Secret of the test release, as the deploy names it. */
     private static String secretName() {
-        return "trino-kdps-values";
+        return "trino-kdps-auth";
     }
 
     @Test

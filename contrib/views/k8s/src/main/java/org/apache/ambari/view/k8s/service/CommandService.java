@@ -8166,7 +8166,7 @@ public class CommandService {
      *   "&lt;=X.Y.Z" / "&lt;X.Y.Z"  upper bounds
      * Multiple constraints separated by commas (AND).
      */
-    static boolean isChartVersionCompatible(String actual, String range) {
+    public static boolean isChartVersionCompatible(String actual, String range) {
         if (range == null || range.isBlank()) return true;
         String act = actual.trim();
         // strip leading 'v'

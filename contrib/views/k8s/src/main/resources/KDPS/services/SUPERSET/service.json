@@ -2,7 +2,7 @@
   "label": "Superset",
   "chart": "apache/superset",
   "secretName": "registry-credentials",
-  "version": "0.12.52",
+  "version": "0.12.53",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -1710,5 +1710,34 @@
         }
       }
     ]
-  }
+  },
+  "gitOpsSecretReferences": [
+    {
+      "_comment": "A GitOps profile commits the values to Git: each secret goes to a Secret of the release namespace, which the values name (StackServiceDef.gitOpsSecretReferences)."
+    },
+    {
+      "secret": "kdps-auth",
+      "keys": {
+        "global.security.auth.ldap.bindPassword": "bind-password",
+        "global.security.auth.ad.bindPassword": "bind-password",
+        "global.security.auth.oidc.clientSecret": "oidc-client-secret"
+      },
+      "reference": "global.security.auth.existingSecret",
+      "range": ">=0.12.53",
+      "label": "the security profile's bind password or OIDC client secret"
+    },
+    {
+      "secret": "kdps-env",
+      "map": "extraSecretEnv",
+      "referenceList": "envFromSecrets",
+      "label": "the SECRET_KEY"
+    },
+    {
+      "secret": "kdps-extra-config",
+      "map": "extraConfigs",
+      "reference": "extraConfigsExistingSecret",
+      "range": ">=0.12.53",
+      "label": "the datasource files, which hold the database connection passwords"
+    }
+  ]
 }

@@ -28,7 +28,7 @@ describe('the fields a profile can use', () => {
     expect(byField.cluster).toBe('k8s21');
     expect(byField['chart.version']).toBe('1.43.20');
     expect(byField.chartPath).toBe('chart');
-    expect(byField['secretValues.secretName']).toBe('trino-kdps-values');
+    expect(byField['secretValues.secretName']).toBeUndefined();
     expect(byField['vars.team']).toBe('data');
     expect(rows.map(r => r.field)).toEqual(expect.arrayContaining(['values', 'instances', 'images', 'deployedBy', 'timestamp']));
     expect(rows.some(r => r.field === 'vars.')).toBe(false);

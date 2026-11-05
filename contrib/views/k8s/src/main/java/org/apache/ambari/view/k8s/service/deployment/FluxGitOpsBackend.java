@@ -67,6 +67,7 @@ import org.apache.ambari.view.k8s.service.TrustBundleService;
 import org.apache.ambari.view.k8s.service.SecurityProfileService;
 import org.apache.ambari.view.k8s.service.SecurityMappingService;
 import org.apache.ambari.view.k8s.service.CommandService;
+import org.apache.ambari.view.k8s.service.KdpsReleaseObjects;
 import org.apache.ambari.view.k8s.service.DependencyRules;
 import org.apache.ambari.view.k8s.service.FluxApiVersions;
 import org.apache.ambari.view.k8s.service.ConfigResolutionService;
@@ -753,12 +754,17 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         values.remove("_ov");
         addServicePasswords(secrets, serviceKey, request, values);
         secrets.addValuesAtPaths(values);
+        GitOpsSecretReferences.Applied referenced = referenceSecrets(serviceKey, namespace, release, version, values);
         GitOpsSecretValues.Split split = secrets.split(values);
-        String valuesSecretName = split.hasSecrets() ? GitOpsSecretValues.secretName(release) : null;
-
-        if (valuesSecretName != null) {
-            notes.add("Passwords and secrets are not in the files: the deploy puts them in the Secret "
-                    + valuesSecretName + " (key " + GitOpsSecretValues.VALUES_KEY + ") of namespace " + namespace + ".");
+        if (split.hasSecrets()) {
+            // The deploy refuses it: say so before the operator deploys.
+            throw new IllegalStateException(unreferencedSecrets(namespace, release, split));
+        }
+        String valuesSecretName = null;
+        if (!referenced.referenced().isEmpty()) {
+            notes.add("Passwords and secrets are not in the files: the deploy writes them to the Secret"
+                    + (referenced.referenced().size() == 1 ? " " : "s ") + String.join(", ", referenced.referenced())
+                    + " of namespace " + namespace + ", which the files name.");
         }
         String repoUrl = git.getRepoUrl() == null || git.getRepoUrl().isBlank() ? null : git.getRepoUrl().trim();
         Path work = Files.createTempDirectory(fluxRoot, "preview-");
@@ -2193,9 +2199,21 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         }
         secrets.addValuesAtPaths(mergedValues);
 
+        // A file profile's release is applied by what reads the repository (Argo CD, a pipeline), which cannot merge
+        // values kept in a Secret: each secret goes to a Secret of its own and the committed values name it. The
+        // request keeps its values, which KDPS's own steps read.
+        Map<String, Object> committedValues = mergedValues;
+        GitOpsSecretReferences.Applied referencedSecrets = null;
+        if (filesProfile != null) {
+            committedValues = copyOfValues(mergedValues);
+            referencedSecrets = referenceSecrets(serviceKey, namespace, release, version, committedValues);
+        }
         // Passwords and secrets go to a Secret in the release namespace, read by the HelmRelease (spec.valuesFrom).
         // They are removed from spec.values, not blanked: Flux merges spec.values over valuesFrom.
-        GitOpsSecretValues.Split split = secrets.split(mergedValues);
+        GitOpsSecretValues.Split split = secrets.split(committedValues);
+        if (filesProfile != null && split.hasSecrets()) {
+            throw new IllegalStateException(unreferencedSecrets(namespace, release, split));
+        }
         List<ValuesSecret> valuesSecrets = new ArrayList<>();
         String valuesSecretName = null;
         if (split.hasSecrets()) {
@@ -2291,6 +2309,9 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         // its Secret.
         writeSourceSecrets(sourceSecrets, namespace, release);
         List<ValuesSecret> secretsWritten = writeValuesSecrets(valuesSecrets);
+        if (referencedSecrets != null) {
+            writeReferencedSecrets(namespace, release, referencedSecrets.secrets());
+        }
 
         String commitMsg = filesProfile != null
                 ? "KDPS deploy " + namespace + "/" + release + " (profile " + filesProfile.name + ")"
@@ -5552,6 +5573,97 @@ public class FluxGitOpsBackend implements DeploymentBackend {
      * @return the Secrets written
      * @throws IllegalStateException when a Secret cannot be written; nothing is committed then
      */
+    /**
+     * Moves the secret values of a file profile's deploy into Secrets of the release namespace, as the service
+     * definition says ({@code gitOpsSecretReferences}), and names those Secrets in {@code values} instead.
+     */
+    private GitOpsSecretReferences.Applied referenceSecrets(String serviceKey, String namespace, String release,
+                                                            String version, Map<String, Object> values) {
+        List<Map<String, Object>> rules = null;
+        if (serviceKey != null && !serviceKey.isBlank()) {
+            try {
+                rules = stackDefinitionService.getServiceDefinition(serviceKey).gitOpsSecretReferences;
+            } catch (Exception ex) {
+                LOG.warn("Could not read the secret references of service {}: {}", serviceKey, ex.toString());
+            }
+        }
+        return GitOpsSecretReferences.apply(values, rules, release, version,
+                name -> secretExists(namespace, name), CommandService::isChartVersionCompatible);
+    }
+
+    private boolean secretExists(String namespace, String name) {
+        try {
+            return kubernetesService.getSecret(namespace, name) != null;
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    /** Why a file profile's deploy stops: secret values no rule of the service definition moves to a Secret. */
+    static String unreferencedSecrets(String namespace, String release, GitOpsSecretValues.Split split) {
+        List<String> paths = new ArrayList<>();
+        collectPaths(split.secretValues(), "", paths);
+        return "GitOps deploy of " + namespace + "/" + release + " stopped: the chart would get " + String.join(", ", paths)
+                + " only from the values, which a GitOps profile commits to Git, and no Secret can hold "
+                + (paths.size() == 1 ? "it" : "them") + " instead. Nothing was committed. Leave "
+                + (paths.size() == 1 ? "this setting" : "these settings") + " empty, or deploy with Helm directly.";
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void collectPaths(Map<String, Object> node, String prefix, List<String> out) {
+        for (Map.Entry<String, Object> e : node.entrySet()) {
+            String path = prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey();
+            if (e.getValue() instanceof Map<?, ?> child && !child.isEmpty()) {
+                collectPaths((Map<String, Object>) child, path, out);
+            } else {
+                out.add(path);
+            }
+        }
+    }
+
+    /** A deep copy of chart values: maps and lists are copied, other values shared. */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> copyOfValues(Map<String, Object> values) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        values.forEach((k, v) -> copy.put(k, copyOfValue(v)));
+        return copy;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object copyOfValue(Object value) {
+        if (value instanceof Map<?, ?> map) return copyOfValues((Map<String, Object>) map);
+        if (value instanceof List<?> list) return new ArrayList<>(list.stream().map(FluxGitOpsBackend::copyOfValue).toList());
+        return value;
+    }
+
+    /**
+     * Writes the Secrets a file profile's committed values name, with the release's labels so its uninstall removes
+     * them. A Secret given key by key keeps the keys this deploy does not carry.
+     */
+    private void writeReferencedSecrets(String namespace, String release,
+                                        List<GitOpsSecretReferences.SecretToWrite> secrets) {
+        for (GitOpsSecretReferences.SecretToWrite secret : secrets) {
+            Map<String, byte[]> data = new LinkedHashMap<>();
+            if (!secret.replace()) {
+                try {
+                    io.fabric8.kubernetes.api.model.Secret existing = kubernetesService.getSecret(namespace, secret.name());
+                    if (existing != null && existing.getData() != null) {
+                        existing.getData().forEach((k, v) -> data.put(k, java.util.Base64.getDecoder().decode(v)));
+                    }
+                } catch (Exception ex) {
+                    LOG.debug("Secret {}/{} not read before its update: {}", namespace, secret.name(), ex.toString());
+                }
+            }
+            secret.data().forEach((k, v) -> data.put(k, v.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            Map<String, String> labels = new LinkedHashMap<>(KdpsReleaseObjects.labels(release));
+            labels.put(MANAGED_BY_LABEL, MANAGED_BY_VALUE);
+            kubernetesService.createOrUpdateOpaqueSecret(namespace, secret.name(), data, labels,
+                    KdpsReleaseObjects.annotations(namespace));
+            logFluxInfo(namespace, release, "secrets", "Stored secret values in Secret %s, which the committed values name",
+                    secret.name());
+        }
+    }
+
     private List<ValuesSecret> writeValuesSecrets(List<ValuesSecret> valuesSecrets) {
         List<ValuesSecret> written = new ArrayList<>();
         for (ValuesSecret valuesSecret : valuesSecrets) {

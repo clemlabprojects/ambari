@@ -225,6 +225,18 @@ public class StackServiceDef {
     public Map<String, Object> secretChartVersions;
 
     /**
+     * How a GitOps deploy with a repository-layout profile keeps each secret value out of Git: KDPS writes it into a
+     * Secret of the release namespace and commits only that Secret's name, so whatever applies the repository (Argo CD,
+     * a pipeline) needs nothing but the files. Each rule: {@code secret} (the Secret, named {@code <release>-<secret>}),
+     * then either {@code keys} (value path to Secret key; all present values move together) or {@code map} (a map of
+     * values whose entries become the keys); {@code reference} (the value path given the Secret's name) or
+     * {@code referenceList} (a list the name is added to); optional {@code range}, the chart versions that read it, and
+     * {@code label}. A rule with {@code omit} only keeps its values out of Git: KDPS's own steps read them. See
+     * {@code GitOpsSecretReferences}. Entries starting with "_" are comments.
+     */
+    public List<Map<String, Object>> gitOpsSecretReferences;
+
+    /**
      * Secrets of credentials KDPS creates for the release before Helm installs it (an administrator password, the
      * passwords of the bundled databases), with random values kept from one deploy to the next and across an
      * uninstall; the chart only gets their names. See {@link GeneratedSecret} and {@code GeneratedSecretService}.

@@ -3318,5 +3318,41 @@
         }
       }
     ]
-  }
+  },
+  "gitOpsSecretReferences": [
+    {
+      "_comment": "A GitOps profile commits the values to Git: each secret goes to a Secret of the release namespace, which the values name (StackServiceDef.gitOpsSecretReferences)."
+    },
+    {
+      "secret": "kdps-auth",
+      "keys": {
+        "global.security.auth.ldap.bindPassword": "bind-password",
+        "global.security.auth.ad.bindPassword": "bind-password",
+        "global.security.auth.oidc.clientSecret": "oidc-client-secret"
+      },
+      "reference": "global.security.auth.existingSecret",
+      "range": ">=1.43.16",
+      "label": "the security profile's bind password or OIDC client secret"
+    },
+    {
+      "secret": "kdps-polaris",
+      "keys": {
+        "polarisCredential.clientId": "client_id",
+        "polarisCredential.clientSecret": "client_secret"
+      },
+      "reference": "polarisCredential.secretRef.name",
+      "range": ">=1.43.10",
+      "label": "the Polaris client credentials"
+    },
+    {
+      "secret": "kdps-s3",
+      "keys": {
+        "s3Credential.accessKey": "access_key",
+        "s3Credential.secretKey": "secret_key"
+      },
+      "reference": "s3Credential.secretRef.name",
+      "range": ">=1.43.10",
+      "label": "the S3 keys of the Iceberg catalog"
+    }
+  ]
 }
