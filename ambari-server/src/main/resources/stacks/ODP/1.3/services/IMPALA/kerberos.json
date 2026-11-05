@@ -5,9 +5,9 @@
       "configurations": [
         {
           "core-site": {
-            "hadoop.proxyuser.${impala/user}.groups": "*",
-            "hadoop.proxyuser.${impala/user}.hosts": "*",
-            "hadoop.proxyuser.${impala/user}.users": "*"
+            "hadoop.proxyuser.${impala-env/impala_user}.groups": "*",
+            "hadoop.proxyuser.${impala-env/impala_user}.hosts": "*",
+            "hadoop.proxyuser.${impala-env/impala_user}.users": "*"
           }
         }
       ],
