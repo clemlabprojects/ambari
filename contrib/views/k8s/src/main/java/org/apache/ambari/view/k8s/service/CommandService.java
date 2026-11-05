@@ -1300,11 +1300,27 @@ public class CommandService {
             String secretName = deployedKeytabSecretOr(request.getNamespace(), request.getReleaseName(), principalFqdn,
                     resolveKerberosEntrySecretName(kerberosEntry, serviceName, request.getNamespace(),
                             request.getReleaseName(), kerberosRealm));
+            String keyNameInSecret = resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab");
+            // Entries for the same principal, Secret and key (Trino's coordinator and workers) share one keytab:
+            // issuing it twice would reset the key again where the KDC cannot export it.
+            String sharedWith = null;
+            for (PlannedKeytab p : planned) {
+                if (p.principalFqdn().equals(principalFqdn) && p.secretName().equals(secretName)
+                        && p.keyNameInSecret().equals(keyNameInSecret)) {
+                    sharedWith = p.entryKey();
+                    break;
+                }
+            }
+            if (sharedWith != null) {
+                LOG.info("Kerberos entry {} uses the keytab of entry {} ({} in {}/{}); issued once", entryKey,
+                        sharedWith, principalFqdn, secretName, keyNameInSecret);
+                continue;
+            }
             planned.add(new PlannedKeytab(
                     entryKey,
                     principalFqdn,
                     secretName,
-                    resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab"),
+                    keyNameInSecret,
                     resolveStringValue(kerberosEntry.get("mountPath"), "/etc/security/keytabs"),
                     resolveStringValue(kerberosEntry.get("principalValuePath"), "")));
         }

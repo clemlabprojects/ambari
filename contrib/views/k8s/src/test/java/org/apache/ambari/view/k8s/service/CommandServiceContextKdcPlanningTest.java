@@ -101,6 +101,19 @@ class CommandServiceContextKdcPlanningTest {
     }
 
     @Test
+    void theCoordinatorAndWorkerKeytabIsIssuedOnce() throws Exception {
+        // Trino's coordinator and worker entries name the same principal, Secret and key: one issuance, since a second
+        // one would reset the key again on a KDC that cannot export it.
+        externalContext(KRB5_CONF);
+        fixture.service.contextHoldsKdcAccount = CONTEXT::equals;
+
+        List<String> types = DeployPlanningFixture.types(fixture.steps(fixture.plan(trinoOnTheContext())));
+
+        assertEquals(1, types.stream().filter(CommandType.KEYTAB_ISSUE_PRINCIPAL.name()::equals).count(), types.toString());
+        assertEquals(1, types.stream().filter(CommandType.KEYTAB_CREATE_SECRET.name()::equals).count(), types.toString());
+    }
+
+    @Test
     void aGitOpsDeployIssuesTheKeytabsInTheClusterToo() throws Exception {
         // Only the chart values go to Git: the keytab Secret is written by KDPS in the release namespace, as for a
         // direct deploy, and the values point the chart at it.

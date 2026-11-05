@@ -41,16 +41,6 @@ KEYTAB_CREATE_SECRET
     secretName = trino-keytab
     keyNameInSecret = service.keytab
     kerberosEntryKey = coordinator
-KEYTAB_ISSUE_PRINCIPAL
-    principalFqdn = trino-analytics@EXAMPLE.COM
-    secretName = trino-keytab
-    keyNameInSecret = service.keytab
-    kerberosEntryKey = worker
-KEYTAB_CREATE_SECRET
-    principalFqdn = trino-analytics@EXAMPLE.COM
-    secretName = trino-keytab
-    keyNameInSecret = service.keytab
-    kerberosEntryKey = worker
 OIDC_REGISTER_CLIENT
     oidcClientId = trino-analytics
     oidcRedirectUri = https://trino.example.org/oauth2/callback
