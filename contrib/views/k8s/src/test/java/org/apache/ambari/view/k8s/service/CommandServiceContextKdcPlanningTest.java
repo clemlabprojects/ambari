@@ -101,6 +101,27 @@ class CommandServiceContextKdcPlanningTest {
     }
 
     @Test
+    void aGitOpsDeployIssuesTheKeytabsInTheClusterToo() throws Exception {
+        // Only the chart values go to Git: the keytab Secret is written by KDPS in the release namespace, as for a
+        // direct deploy, and the values point the chart at it.
+        externalContext(KRB5_CONF);
+        fixture.service.contextHoldsKdcAccount = CONTEXT::equals;
+        HelmDeployRequest request = trinoOnTheContext();
+
+        String id = fixture.service.planReleaseDeploy(request, "charts", request.getVersion(),
+                "http://ambari.test/commands", DeployPlanningFixture.adminHeaders(),
+                java.net.URI.create(fixture.ambari.baseUri()), null, true);
+
+        List<CommandEntity> steps = fixture.steps(id);
+        Map<String, Object> issue = fixture.params(step(steps, CommandType.KEYTAB_ISSUE_PRINCIPAL.name()));
+        assertEquals(CONTEXT, issue.get(CommandService.KDC_CONTEXT_PARAM));
+        step(steps, CommandType.KEYTAB_CREATE_SECRET.name());
+        List<String> types = DeployPlanningFixture.types(steps);
+        assertTrue(types.indexOf(CommandType.KEYTAB_CREATE_SECRET.name()) < types.size() - 1, types.toString());
+        assertTrue(types.stream().noneMatch(t -> t.equals("HELM_DEPLOY")), "committed to Git, not installed: " + types);
+    }
+
+    @Test
     void withoutAKdcAccountTheDeployStillAsksForAnExternalKeytab() throws Exception {
         externalContext(KRB5_CONF);
         fixture.service.contextHoldsKdcAccount = id -> false;
