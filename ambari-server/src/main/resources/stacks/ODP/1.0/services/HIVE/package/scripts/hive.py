@@ -718,6 +718,11 @@ def fill_conf_dir(component_conf_dir):
       mode=0o644
     )
 
+  # bin/hive puts the component conf dir first on the classpath, before the HBase conf dir it
+  # appends: /etc/hbase/conf holds a core-site.xml of its own, stale until HBase restarts, so the
+  # current core-site is rendered here.
+  create_core_site_xml(component_conf_dir)
+
   setup_isolated_hadoop_conf(component_conf_dir)
 
 def setup_isolated_hadoop_conf(component_conf_dir):
