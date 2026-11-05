@@ -1486,8 +1486,8 @@
           "name": "superset.openstreetmapServerUrl",
           "label": "OpenStreetMap Server URL",
           "type": "string",
-          "required": true,
-          "help": "URL of the OpenStreetMap server used by Superset."
+          "required": false,
+          "help": "URL of the OpenStreetMap server used by Superset. Leave blank to keep Superset's default map tiles."
         },
         {
           "name": "supersetWorker.concurrency",

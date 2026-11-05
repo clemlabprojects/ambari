@@ -97,3 +97,34 @@ export function requiredUnlessAnyErrors(fields: FormFieldDef[] | undefined, valu
   walk(fields);
   return errors;
 }
+
+/**
+ * Every required field of a service form left empty in the wizard state, each prefixed with its group: the form marks
+ * them, but its rules only show once a field is touched and the steps did not check them, so a release could go to
+ * Helm without, say, Superset's SECRET_KEY, and never start. Fields (or groups) hidden by their `condition` or by the
+ * platform are skipped, and so are switches, which are never empty.
+ *
+ * @param fields   the service form (service.json `form`)
+ * @param values   the wizard state: form values, release name, etc.
+ * @param platform the detected platform (openshift, kubernetes), for fields shown on one platform only
+ */
+export function requiredFieldErrors(fields: FormFieldDef[] | undefined, values: unknown, platform?: string): string[] {
+  const errors: string[] = [];
+  const hidden = new Set(hiddenPaths(fields, platform));
+  const walk = (list: FormFieldDef[] | undefined, group?: string) => {
+    for (const f of list || []) {
+      const condition = (f as any)?.condition as FieldCondition | undefined;
+      if (!f || !conditionMet(condition, condition ? getAtStr(values, condition.field) : undefined)) continue;
+      if (f.type === 'group' && Array.isArray(f.fields)) {
+        walk(f.fields, f.label);
+        continue;
+      }
+      if (!(f as any).required || !f.name || hidden.has(f.name) || f.type === 'boolean') continue;
+      const value = getAtStr(values, f.name);
+      if (typeof value === 'number' || holdsValue(value)) continue;
+      errors.push(`${group ? `${group} - ` : ''}${f.label || f.name}: this field is required.`);
+    }
+  };
+  walk(fields);
+  return errors;
+}

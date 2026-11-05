@@ -40,7 +40,7 @@ import { deploySubmittedMessage } from '../components/common/operationOutcome';
 import { useClusterCapabilities, fieldCapabilityAvailable } from '../components/ServiceInstallationModal/capabilities';
 import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
-import { requiredUnlessAnyErrors } from '../components/ServiceInstallationModal/requiredUnless';
+import { requiredFieldErrors, requiredUnlessAnyErrors } from '../components/ServiceInstallationModal/requiredUnless';
 import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPayload';
 import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecretReplacement, describeIngressTlsChange, ingressTlsChange, ingressTlsNotice, keptCertificateHostProblem, KEEP_CURRENT_TLS, offersKeepCurrentTls, securityProfileIngress, seedKeepCurrentTls, unconfirmedTlsReplacement, upgradeChartFormValues, type CurrentIngressTls } from '../components/ServiceInstallationModal/ingressTls';
 import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
@@ -861,7 +861,9 @@ const ServiceWizardPage: React.FC = () => {
   // be filled in unless another one is (JupyterHub's allowed groups, without which nobody can sign in) is checked
   // here, on what the wizard holds. True when the deploy may go ahead; otherwise each error is shown.
   const formRulesPass = (): boolean => {
-    const errors = requiredUnlessAnyErrors(Array.isArray(def?.form) ? def.form : undefined, installValues, platform);
+    const form = Array.isArray(def?.form) ? def.form : undefined;
+    const errors = [...requiredFieldErrors(form, installValues, platform),
+      ...requiredUnlessAnyErrors(form, installValues, platform)];
     errors.forEach(error => message.error(error, 10));
     return errors.length === 0;
   };
@@ -1170,6 +1172,8 @@ const ServiceWizardPage: React.FC = () => {
       description={exposure.lines.map((line, i) => <div key={i}>{line}</div>)} />
   ) : null;
 
+  /** Index of the 'Chart Settings' step in `steps`. */
+  const CHART_SETTINGS_STEP = 2;
   const steps = React.useMemo(() => {
     if (!def) return [];
     return [
@@ -1447,7 +1451,11 @@ const ServiceWizardPage: React.FC = () => {
       </Text>
       {current > 0 && <Button onClick={() => setCurrent(current - 1)} disabled={submitting}>Previous</Button>}
       {current < steps.length - 1 &&
-       <Button type="primary" onClick={() => setCurrent(current + 1)} disabled={(current === 3 && hasInvalidPasswords) || (current === 0 && !contextChosen)}>Next</Button>}
+       <Button type="primary" onClick={() => {
+         // The Chart Settings step holds the service's own form: its required fields are checked on leaving it.
+         if (current === CHART_SETTINGS_STEP && !formRulesPass()) return;
+         setCurrent(current + 1);
+       }} disabled={(current === 3 && hasInvalidPasswords) || (current === 0 && !contextChosen)}>Next</Button>}
       {current === steps.length - 1 && previewsGit &&
        <Button onClick={runGitPreview} loading={gitPreviewLoading} disabled={submitting}>
          Preview Git repository{Object.keys(fileEdits).length ? ` (${Object.keys(fileEdits).length} edited)` : ''}
