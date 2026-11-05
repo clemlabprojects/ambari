@@ -1244,7 +1244,8 @@ const HelmReleasesPage: React.FC = () => {
             // How the release reaches the cluster, and for a GitOps profile where it stands in Git.
             const by = deployedBy(combined);
             extraTags.push(<Tooltip key="deployed-by" title={by.mark.label === 'Git · Flux' && fluxTip ? fluxTip : by.mark.tip}><Tag color={by.mark.color}>{by.mark.label}</Tag></Tooltip>);
-            const notInstalledYet = !!by.state && by.state.label !== 'Installed';
+            // A GitOps profile's release: where it stands (in Git, running, out of sync) rather than Helm's status.
+            const showGitState = !!by.state && by.state.label !== 'Installed';
             if (combined.gitPendingDelete) extraTags.push(<Tooltip key="pending-delete" title={combined.message || 'The removal waits for its pull request to be merged'}><Tag color="volcano">Removal pending</Tag></Tooltip>);
             if (combined.deploymentMode === 'FLUX_GITOPS' && combined.sourceStatus) {
               const isReady = combined.sourceStatus?.toLowerCase() === 'true' || combined.sourceStatus?.toLowerCase() === 'ready';
@@ -1261,7 +1262,7 @@ const HelmReleasesPage: React.FC = () => {
             return (
               <Space size={4} direction="vertical" align="start">
                 <Space size={4}>
-                  {notInstalledYet ? (
+                  {showGitState ? (
                     <Tooltip title={by.state!.tip}><Tag color={by.state!.color}>{by.state!.label}</Tag></Tooltip>
                   ) : (
                     <Tooltip title={combined.message || fluxTip || 'Release status'}>

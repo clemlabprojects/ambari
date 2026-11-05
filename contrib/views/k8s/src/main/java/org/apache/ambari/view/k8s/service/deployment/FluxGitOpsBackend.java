@@ -755,6 +755,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         addServicePasswords(secrets, serviceKey, request, values);
         secrets.addValuesAtPaths(values);
         GitOpsSecretReferences.Applied referenced = referenceSecrets(serviceKey, namespace, release, version, values);
+        addGitOpsReleaseLabel(values, release);
         GitOpsSecretValues.Split split = secrets.split(values);
         if (split.hasSecrets()) {
             // The deploy refuses it: say so before the operator deploys.
@@ -2207,6 +2208,7 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         if (filesProfile != null) {
             committedValues = copyOfValues(mergedValues);
             referencedSecrets = referenceSecrets(serviceKey, namespace, release, version, committedValues);
+            addGitOpsReleaseLabel(committedValues, release);
         }
         // Passwords and secrets go to a Secret in the release namespace, read by the HelmRelease (spec.valuesFrom).
         // They are removed from spec.values, not blanked: Flux merges spec.values over valuesFrom.
@@ -3117,6 +3119,13 @@ public class FluxGitOpsBackend implements DeploymentBackend {
             LOG.debug("Helm status of {}/{} unavailable: {}", namespace, releaseName, e.toString());
         }
         if (dto == null) {
+            // Applied without Helm (Argo CD renders the chart and applies it): its workloads say how it runs.
+            List<Map<String, Object>> workloads = kubernetesService.workloadsOfRelease(namespace, releaseName);
+            if (!workloads.isEmpty()) {
+                dto = observedRelease(namespace, releaseName, meta, workloads);
+            }
+        }
+        if (dto == null) {
             dto = new HelmReleaseDTO();
             dto.name = releaseName;
             dto.namespace = namespace;
@@ -3134,6 +3143,101 @@ public class FluxGitOpsBackend implements DeploymentBackend {
         dto.gitPrNumber = meta.getGitPrNumber();
         dto.gitPrState = meta.getGitPrState();
         return dto;
+    }
+
+    /**
+     * The state of a release written with a file profile and applied without Helm, from its workloads: running when
+     * they are all ready, the chart version they run (the chart's labels), and what applied them.
+     *
+     * @param workloads as {@link KubernetesService#workloadsOfRelease} lists them, not empty
+     */
+    static HelmReleaseDTO observedRelease(String namespace, String releaseName, K8sReleaseEntity meta,
+                                          List<Map<String, Object>> workloads) {
+        HelmReleaseDTO dto = new HelmReleaseDTO();
+        dto.name = releaseName;
+        dto.namespace = namespace;
+        dto.chart = meta.getChartRef();
+        dto.version = meta.getVersion();
+        dto.installed = Boolean.TRUE;
+        int ready = 0;
+        for (Map<String, Object> w : workloads) {
+            if (asInt(w.get("readyReplicas")) >= asInt(w.get("replicas"))) ready++;
+        }
+        dto.status = ready == workloads.size() ? "deployed" : "pending_upgrade";
+        dto.runningVersion = runningChartVersion(meta.getChartRef(), workloads);
+        dto.appliedBy = appliedBy(releaseName, workloads);
+        StringBuilder message = new StringBuilder("Applied from Git")
+                .append(dto.appliedBy == null ? "" : " by " + dto.appliedBy)
+                .append(": ").append(ready).append(" of ").append(workloads.size()).append(" workloads ready.");
+        if (dto.runningVersion != null && dto.version != null && !dto.runningVersion.equals(dto.version)) {
+            message.append(" Git holds chart ").append(dto.version).append(", the cluster runs ").append(dto.runningVersion)
+                    .append(": the latest change is not applied yet.");
+        }
+        dto.message = message.toString();
+        dto.reconcileMessage = dto.message;
+        return dto;
+    }
+
+    private static int asInt(Object value) {
+        return value instanceof Number n ? n.intValue() : 0;
+    }
+
+    /**
+     * The chart version the workloads run, from the chart's label ({@code helm.sh/chart}, or {@code chart} for the
+     * Superset chart): {@code <chart>-<version>}. Null when no workload carries one.
+     */
+    static String runningChartVersion(String chartRef, List<Map<String, Object>> workloads) {
+        String chartName = chartRef == null ? null : chartRef.substring(chartRef.lastIndexOf('/') + 1);
+        for (Map<String, Object> w : workloads) {
+            Map<?, ?> labels = w.get("labels") instanceof Map<?, ?> m ? m : Map.of();
+            for (String key : List.of("helm.sh/chart", "chart")) {
+                Object raw = labels.get(key);
+                if (raw == null) continue;
+                String value = String.valueOf(raw);
+                // A sub-chart's workload (postgresql-17.0.1) is not the release's chart.
+                if (chartName != null) {
+                    if (value.startsWith(chartName + "-")) return value.substring(chartName.length() + 1);
+                    continue;
+                }
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("-(\\d+\\.\\d+[^\\s]*)$").matcher(value);
+                if (m.find()) return m.group(1);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * What applied the workloads: the Argo CD application its tracking annotation or label names (an Argo CD label
+     * replaces the release's {@code app.kubernetes.io/instance} with the application's name). Null when nothing says.
+     */
+    static String appliedBy(String releaseName, List<Map<String, Object>> workloads) {
+        for (Map<String, Object> w : workloads) {
+            Map<?, ?> annotations = w.get("annotations") instanceof Map<?, ?> m ? m : Map.of();
+            Map<?, ?> labels = w.get("labels") instanceof Map<?, ?> m ? m : Map.of();
+            Object tracking = annotations.get("argocd.argoproj.io/tracking-id");
+            if (tracking != null) {
+                return "Argo CD application " + String.valueOf(tracking).split(":", 2)[0];
+            }
+            Object argoInstance = labels.get("argocd.argoproj.io/instance");
+            if (argoInstance != null) {
+                return "Argo CD application " + argoInstance;
+            }
+            Object instance = labels.get("app.kubernetes.io/instance");
+            if (instance != null && !releaseName.equals(String.valueOf(instance))) {
+                return "Argo CD application " + instance;
+            }
+        }
+        return null;
+    }
+
+    /** Names the release in the labels of every resource its chart renders (commonLabels), whatever applies it. */
+    static void addGitOpsReleaseLabel(Map<String, Object> values, String release) {
+        Map<String, Object> labels = new LinkedHashMap<>();
+        if (values.get("commonLabels") instanceof Map<?, ?> existing) {
+            existing.forEach((k, v) -> labels.put(String.valueOf(k), v));
+        }
+        labels.put(KubernetesService.GITOPS_RELEASE_LABEL, release);
+        values.put("commonLabels", labels);
     }
 
     /** Deletes the Secret holding the secret values of a release written with a file profile; never fails. */

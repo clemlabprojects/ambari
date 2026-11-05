@@ -57,6 +57,8 @@ public class HelmReleaseDTO {
     public String gitProfile; // the GitOps profile the release is written with; null for the Flux layout
     public Boolean gitPendingDelete; // true while the uninstall waits for its removal pull request to be merged
     public Boolean installed; // false for a GitOps release Helm does not list (not installed by Flux yet, or removed)
+    public String runningVersion; // GitOps profile release applied without Helm: the chart version its workloads run
+    public String appliedBy; // GitOps profile release applied without Helm: what applied it, e.g. "Argo CD application x"
     public String gitPath;
     public String gitRepoUrl;
     public String gitPrUrl;

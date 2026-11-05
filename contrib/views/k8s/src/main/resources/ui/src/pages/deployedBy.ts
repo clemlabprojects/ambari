@@ -29,7 +29,8 @@ export interface Mark {
  * written to Git with a GitOps profile for an Argo CD or a CI to deploy. For the last, `state` says where the release
  * stands, since KDPS does not install it: what Helm reports only applies once something installed it.
  */
-export function deployedBy(release: Pick<HelmRelease, 'deploymentMode' | 'gitProfile' | 'installed' | 'gitPrState'>)
+export function deployedBy(release: Pick<HelmRelease, 'deploymentMode' | 'gitProfile' | 'installed' | 'gitPrState'
+  | 'version' | 'runningVersion' | 'appliedBy'>)
   : { mark: Mark; state?: Mark } {
   if (release.deploymentMode !== 'FLUX_GITOPS') {
     return { mark: { label: 'Helm', color: 'default', tip: 'Installed by KDPS with Helm.' } };
@@ -43,7 +44,20 @@ export function deployedBy(release: Pick<HelmRelease, 'deploymentMode' | 'gitPro
     tip: `Written to Git with the GitOps profile ${profile}. Your Argo CD or CI deploys it from the repository.`,
   };
   const prState = (release.gitPrState || '').toLowerCase();
-  if (prState && prState !== 'merged' && prState !== 'closed') {
+  const prOpen = !!prState && prState !== 'merged' && prState !== 'closed';
+  // Applied without Helm (Argo CD renders the chart): its workloads tell the version it runs and what applied it,
+  // which says more than an open pull request once a previous change runs.
+  const by = release.appliedBy ? ` by ${release.appliedBy}` : '';
+  if (release.runningVersion && release.version && release.runningVersion !== release.version) {
+    return { mark, state: { label: 'Out of sync', color: 'orange',
+      tip: `Git holds chart v${release.version}; the cluster runs v${release.runningVersion}, applied${by || ' from Git'}. `
+        + (prOpen ? 'The change waits for its pull request to be merged.' : 'The latest change is not applied yet.') } };
+  }
+  if (release.runningVersion || release.appliedBy) {
+    return { mark, state: { label: 'Running', color: 'green',
+      tip: `Applied from Git${by}${release.runningVersion ? `, chart v${release.runningVersion}` : ''}.` } };
+  }
+  if (prOpen) {
     return { mark, state: { label: 'Pull request open', color: 'purple', tip: 'The change waits for its pull request to be merged; what reads the repository installs it then.' } };
   }
   if (release.installed === false) {

@@ -2,7 +2,7 @@
   "label": "OpenMetadata",
   "chart": "openmetadata",
   "secretName": "registry-credentials",
-  "version": "1.13.36",
+  "version": "1.13.37",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",

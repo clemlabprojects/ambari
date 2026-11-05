@@ -33,4 +33,32 @@ describe('how a release reaches the cluster', () => {
     expect(deployedBy({ ...p, installed: false, gitPrState: 'merged' }).state!.label).toBe('In Git, not installed yet');
     expect(deployedBy({ ...p, installed: true }).state!.label).toBe('Installed');
   });
+
+  describe('a GitOps profile release applied without Helm', () => {
+    const profile = { deploymentMode: 'FLUX_GITOPS', gitProfile: 'environments', installed: true } as const;
+
+    it('is running, with what applied it', () => {
+      const { state } = deployedBy({ ...profile, version: '0.12.54', runningVersion: '0.12.54',
+        appliedBy: 'Argo CD application superset-prod' });
+      expect(state?.label).toBe('Running');
+      expect(state?.tip).toContain('Argo CD application superset-prod');
+    });
+
+    it('is out of sync while the cluster runs another chart version than Git holds', () => {
+      const { state } = deployedBy({ ...profile, version: '0.12.54', runningVersion: '0.12.53' });
+      expect(state?.label).toBe('Out of sync');
+      expect(state?.tip).toContain('v0.12.54');
+      expect(state?.tip).toContain('v0.12.53');
+    });
+
+    it('shows what runs while the next change waits for its pull request', () => {
+      const { state } = deployedBy({ ...profile, gitPrState: 'open', version: '0.12.54', runningVersion: '0.12.53' });
+      expect(state?.label).toBe('Out of sync');
+      expect(state?.tip).toContain('waits for its pull request');
+    });
+
+    it('installed by Helm stays as before', () => {
+      expect(deployedBy(profile).state?.label).toBe('Installed');
+    });
+  });
 });

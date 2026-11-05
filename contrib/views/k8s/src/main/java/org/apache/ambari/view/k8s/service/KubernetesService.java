@@ -5099,6 +5099,63 @@ public class KubernetesService {
      * image, and age. Cluster-wide when {@code namespace} is null/blank.
      */
     public List<Map<String, Object>> listDeployments(String namespace) {
+        return listDeploymentsIn(namespace);
+    }
+
+    /**
+     * Label a GitOps deploy with a repository-layout profile commits into the release's {@code commonLabels}: it finds
+     * the release's resources however they were applied, Argo CD replacing {@code app.kubernetes.io/instance} with the
+     * name of its own Application.
+     */
+    public static final String GITOPS_RELEASE_LABEL = "kdps.clemlab.com/gitops-release";
+
+    /**
+     * The Deployments and StatefulSets of a release applied from Git without Helm (Argo CD, a pipeline applying the
+     * rendered chart): those carrying {@link #GITOPS_RELEASE_LABEL} or the chart's own release labels. All of them,
+     * not the first selector that matches: a chart labels its own workloads {@code release=} while its database
+     * sub-chart labels its StatefulSet {@code app.kubernetes.io/instance=}. Each: kind, name, replicas, readyReplicas,
+     * labels, annotations. Empty when none is found or they cannot be listed.
+     */
+    public List<Map<String, Object>> workloadsOfRelease(String namespace, String release) {
+        if (namespace == null || namespace.isBlank() || release == null || release.isBlank()) {
+            return java.util.Collections.emptyList();
+        }
+        try {
+            checkConfiguration();
+            Map<String, Map<String, Object>> out = new LinkedHashMap<>();
+            for (Map<String, String> selector : List.of(Map.of(GITOPS_RELEASE_LABEL, release),
+                    Map.of("app.kubernetes.io/instance", release), Map.of("release", release))) {
+                for (var d : client.apps().deployments().inNamespace(namespace).withLabels(selector).list().getItems()) {
+                    out.putIfAbsent("Deployment/" + d.getMetadata().getName(), workload("Deployment", d.getMetadata(),
+                            d.getSpec() == null ? null : d.getSpec().getReplicas(),
+                            d.getStatus() == null ? null : d.getStatus().getReadyReplicas()));
+                }
+                for (var s : client.apps().statefulSets().inNamespace(namespace).withLabels(selector).list().getItems()) {
+                    out.putIfAbsent("StatefulSet/" + s.getMetadata().getName(), workload("StatefulSet", s.getMetadata(),
+                            s.getSpec() == null ? null : s.getSpec().getReplicas(),
+                            s.getStatus() == null ? null : s.getStatus().getReadyReplicas()));
+                }
+            }
+            return new ArrayList<>(out.values());
+        } catch (Exception e) {
+            LOG.warn("Could not list the workloads of {}/{}: {}", namespace, release, e.toString());
+        }
+        return java.util.Collections.emptyList();
+    }
+
+    private static Map<String, Object> workload(String kind, io.fabric8.kubernetes.api.model.ObjectMeta meta,
+                                                Integer replicas, Integer readyReplicas) {
+        Map<String, Object> w = new LinkedHashMap<>();
+        w.put("kind", kind);
+        w.put("name", meta == null ? null : meta.getName());
+        w.put("replicas", replicas == null ? 1 : replicas);
+        w.put("readyReplicas", readyReplicas == null ? 0 : readyReplicas);
+        w.put("labels", meta == null || meta.getLabels() == null ? Map.of() : meta.getLabels());
+        w.put("annotations", meta == null || meta.getAnnotations() == null ? Map.of() : meta.getAnnotations());
+        return w;
+    }
+
+    private List<Map<String, Object>> listDeploymentsIn(String namespace) {
         try {
             checkConfiguration();
             var deployList = (namespace != null && !namespace.isBlank())

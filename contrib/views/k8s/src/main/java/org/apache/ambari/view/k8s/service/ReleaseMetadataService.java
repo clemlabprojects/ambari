@@ -865,6 +865,14 @@ public class ReleaseMetadataService {
                     .withLabels(selector)
                     .list()
                     .getItems();
+            // A release applied from Git by Argo CD carries Argo CD's application name in that label: KDPS's own label.
+            if (ingresses.isEmpty()) {
+                ingresses = client.network().v1().ingresses()
+                        .inNamespace(namespace)
+                        .withLabel(KubernetesService.GITOPS_RELEASE_LABEL, releaseName)
+                        .list()
+                        .getItems();
+            }
             // Fallback: if no labeled ingress, try name-based contains releaseName
             if (ingresses.isEmpty()) {
                 ingresses = client.network().v1().ingresses()

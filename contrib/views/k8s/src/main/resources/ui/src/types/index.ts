@@ -47,6 +47,10 @@ export interface HelmRelease {
   gitCommitMode?: string; // DIRECT_COMMIT | PR_MODE, as the release was last deployed
   gitPendingDelete?: boolean; // the uninstall waits for its removal pull request to be merged
   installed?: boolean; // false: a GitOps release Helm does not list (not installed by Flux yet, or removed by it)
+  /** A GitOps profile release applied without Helm: the chart version its workloads run. */
+  runningVersion?: string;
+  /** A GitOps profile release applied without Helm: what applied it, e.g. "Argo CD application x". */
+  appliedBy?: string;
   gitPath?: string;
   gitRepoUrl?: string;
   /** The GitOps profile the release is written with; absent for the Flux layout. */

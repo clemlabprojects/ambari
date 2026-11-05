@@ -2,7 +2,7 @@
   "label": "Superset",
   "chart": "apache/superset",
   "secretName": "registry-credentials",
-  "version": "0.12.53",
+  "version": "0.12.54",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",

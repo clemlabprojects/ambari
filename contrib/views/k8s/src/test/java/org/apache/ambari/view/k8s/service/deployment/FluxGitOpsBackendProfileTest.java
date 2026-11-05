@@ -282,6 +282,8 @@ public class FluxGitOpsBackendProfileTest {
         // The secret values stay in the cluster, in a Secret the committed values name: what applies the repository
         // (Argo CD) needs nothing else.
         assertTrue(instanceValues, instanceValues.contains("existingSecret: \"trino-kdps-auth\""));
+        // Whatever applies the repository, KDPS finds the release's resources by this label.
+        assertTrue(instanceValues, instanceValues.contains("kdps.clemlab.com/gitops-release: \"trino\""));
         assertEquals(Map.of("bind-password", BIND_PASSWORD), referencedSecrets.get("analytics/trino-kdps-auth"));
         assertTrue(owners, owners.endsWith("secretValues: \n"));
         assertTrue("no values Secret to merge", secretPayloads.isEmpty());

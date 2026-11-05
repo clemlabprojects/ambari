@@ -389,6 +389,12 @@ public class HelmResource {
                             if (refreshed.gitPendingDelete != null) {
                                 releaseDto.gitPendingDelete = refreshed.gitPendingDelete;
                             }
+                            // A file profile's release applied without Helm: what its workloads say.
+                            if (refreshed.installed != null) {
+                                releaseDto.installed = refreshed.installed;
+                            }
+                            releaseDto.runningVersion = refreshed.runningVersion;
+                            releaseDto.appliedBy = refreshed.appliedBy;
                         }
                     }
 
