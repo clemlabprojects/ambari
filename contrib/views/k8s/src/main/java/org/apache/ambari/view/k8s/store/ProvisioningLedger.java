@@ -77,8 +77,29 @@ public final class ProvisioningLedger {
     /** A Ranger repository KDPS created for the release. */
     public record RangerRepository(String contextId, String name) {}
 
-    /** A Kerberos principal KDPS had issued for the release, and the Secret its keytab was written to. */
-    public record Principal(String principal, String secret) {}
+    /**
+     * A Kerberos principal KDPS had issued for the release, and the Secret its keytab was written to.
+     *
+     * @param kdcContextId the platform context whose KDC issued it; null for the Ambari cluster's KDC (or a release
+     *                     deployed before KDPS recorded it)
+     * @param created      whether KDPS created the account in that KDC, rather than issued a keytab of one that existed;
+     *                     null when not known
+     * @param kvno         the key version of the last keytab issued; null when not known
+     * @param issuedAt     when the last keytab was issued (ISO-8601)
+     * @param issuedBy     the Ambari user whose operation issued it
+     */
+    public record Principal(String principal, String secret, String kdcContextId, Boolean created, Integer kvno,
+                            String issuedAt, String issuedBy) {
+
+        /** A principal recorded with nothing more known. */
+        public Principal(String principal, String secret) {
+            this(principal, secret, null, null, null, null, null);
+        }
+
+        boolean samePrincipal(Principal other) {
+            return other != null && Objects.equals(principal, other.principal) && Objects.equals(secret, other.secret);
+        }
+    }
 
     /**
      * The OpenMetadata federation user KDPS wrote into the managed cluster's {@code atlas-env}, and whether KDPS
@@ -163,7 +184,28 @@ public final class ProvisioningLedger {
 
     public void addRangerRepository(RangerRepository repository) { addOnce(rangerRepositories, repository); }
 
-    public void addPrincipal(Principal principal) { addOnce(principals, principal); }
+    /**
+     * Records an issued principal; one already recorded with the same Secret is updated with what the latest deploy
+     * knows (a deploy reusing the stored keytab knows nothing new), and stays created by KDPS when an earlier deploy
+     * created its account (a redeploy finds it existing).
+     */
+    public void addPrincipal(Principal principal) {
+        if (principal == null || principal.principal() == null) return;
+        Principal merged = principal;
+        for (Principal p : principals) {
+            if (p.samePrincipal(principal)) {
+                merged = new Principal(principal.principal(), principal.secret(),
+                        principal.kdcContextId() != null ? principal.kdcContextId() : p.kdcContextId(),
+                        Boolean.TRUE.equals(p.created()) ? Boolean.TRUE
+                                : principal.created() != null ? principal.created() : p.created(),
+                        principal.kvno() != null ? principal.kvno() : p.kvno(),
+                        principal.issuedAt() != null ? principal.issuedAt() : p.issuedAt(),
+                        principal.issuedAt() != null ? principal.issuedBy() : p.issuedBy());
+            }
+        }
+        principals.removeIf(principal::samePrincipal);
+        principals.add(merged);
+    }
 
     public void setAtlasFederation(AtlasFederation federation) {
         // A redeploy does not undo what an earlier one turned on: the uninstall still has to know.
@@ -255,7 +297,9 @@ public final class ProvisioningLedger {
                 ledger.addRangerRepository(new RangerRepository(contextOf(n, ledgerContext), text(n, "name")));
             }
             for (JsonNode n : root.path("principals")) {
-                ledger.addPrincipal(new Principal(text(n, "name"), text(n, "secret")));
+                ledger.addPrincipal(new Principal(text(n, "name"), text(n, "secret"), text(n, "kdc"),
+                        n.has("new") ? n.get("new").asBoolean() : null, n.has("kvno") ? n.get("kvno").asInt() : null,
+                        text(n, "at"), text(n, "by")));
             }
             JsonNode atlas = root.path("atlas");
             if (atlas.isObject()) {
@@ -323,7 +367,13 @@ public final class ProvisioningLedger {
         }
         if (!principals.isEmpty()) {
             ArrayNode a = root.putArray("principals");
-            principals.forEach(p -> put(put(a.addObject(), "name", p.principal()), "secret", p.secret()));
+            for (Principal p : principals) {
+                ObjectNode n = put(put(put(a.addObject(), "name", p.principal()), "secret", p.secret()), "kdc",
+                        p.kdcContextId());
+                if (p.created() != null) n.put("new", p.created());
+                if (p.kvno() != null) n.put("kvno", p.kvno());
+                put(put(n, "at", p.issuedAt()), "by", p.issuedBy());
+            }
         }
         if (atlasFederation != null) {
             ObjectNode n = put(root.putObject("atlas"), "user", atlasFederation.username());

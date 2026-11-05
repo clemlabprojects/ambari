@@ -246,8 +246,8 @@ public final class ExternalCleanup {
             else cleanup.kept.add(new Leftover(describe(r), "kept with the policies in it, unless the uninstall also"
                     + " removes the Ranger repositories", null));
         }
-        l.principals().forEach(p -> cleanup.kept.add(new Leftover(describe(p),
-                "KDPS cannot delete Kerberos principals; delete it once nothing uses it", null)));
+        l.principals().forEach(p -> cleanup.kept.add(new Leftover(describe(p), Boolean.FALSE.equals(p.created())
+                ? EXISTED_BEFORE_KDPS : "KDPS cannot delete Kerberos principals; delete it once nothing uses it", null)));
         if (l.atlasFederation() != null) {
             String sharedReason = cleanup.atlasFederationSharedReason();
             if (sharedReason != null) {
@@ -432,6 +432,10 @@ public final class ExternalCleanup {
     // ---------- Kerberos ----------
 
     private void reportPrincipal(ProvisioningLedger.Principal principal) {
+        if (Boolean.FALSE.equals(principal.created())) {
+            kept.add(new Leftover(describe(principal), EXISTED_BEFORE_KDPS, null));
+            return;
+        }
         String sharedWith = null;
         if (otherReleases != null) {
             for (Map.Entry<String, ProvisioningLedger> other : otherReleases.entrySet()) {
@@ -456,7 +460,10 @@ public final class ExternalCleanup {
         }
         // Its keytab Secret goes with the release's other objects; the principal itself stays in the KDC.
         left.add(new Leftover(describe(principal), "KDPS cannot delete Kerberos principals; no other release uses it",
-                "kadmin -q \"delprinc -force " + principal.principal() + "\""));
+                principal.kdcContextId() == null ? "kadmin -q \"delprinc -force " + principal.principal() + "\""
+                        : "delete the account in the KDC of platform context '" + principal.kdcContextId() + "' (FreeIPA: "
+                        + "ipa user-del; Active Directory: the account in the organizational unit), whose description "
+                        + "reads 'Created by KDPS for namespace ...'"));
     }
 
     // ---------- Atlas ----------
@@ -646,8 +653,12 @@ public final class ExternalCleanup {
     }
 
     static String describe(ProvisioningLedger.Principal p) {
-        return "Kerberos principal " + p.principal();
+        return "Kerberos principal " + p.principal()
+                + (p.kdcContextId() == null ? "" : " of the KDC of platform context '" + p.kdcContextId() + "'");
     }
+
+    /** Why the uninstall leaves an account KDPS only issued a keytab of. */
+    static final String EXISTED_BEFORE_KDPS = "the account existed before KDPS issued its keytab: not KDPS's to delete";
 
     static String describe(ProvisioningLedger.AtlasFederation f) {
         return "Atlas federation user '" + f.username() + "' in atlas-env";

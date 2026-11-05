@@ -263,4 +263,38 @@ class ProvisioningLedgerTest {
         assertEquals(1, record.oidcClients().size());
         assertTrue(record.isTruncated());
     }
+
+    @Test
+    void aPrincipalKeepsItsKdcWhoCreatedItsAccountAndItsLastIssuance() {
+        String principal = "superset-dashboard-bi@AD.EXAMPLE.COM";
+        ProvisioningLedger ledger = new ProvisioningLedger();
+        ledger.addPrincipal(new ProvisioningLedger.Principal(principal, "superset-keytab", "cdp-prod", true, 1,
+                "2026-11-05T10:00:00Z", "admin"));
+        // A redeploy reusing the stored keytab issued nothing: what the first deploy recorded stays.
+        ledger.addPrincipal(new ProvisioningLedger.Principal(principal, "superset-keytab", "cdp-prod", null, null, null,
+                null));
+        // A regeneration finds the account existing: KDPS still created it.
+        ledger.addPrincipal(new ProvisioningLedger.Principal(principal, "superset-keytab", "cdp-prod", false, 3,
+                "2026-11-06T09:00:00Z", "ops"));
+
+        ProvisioningLedger read = ProvisioningLedger.parse(ledger.toJson());
+
+        assertEquals(List.of(new ProvisioningLedger.Principal(principal, "superset-keytab", "cdp-prod", true, 3,
+                "2026-11-06T09:00:00Z", "ops")), read.principals());
+    }
+
+    @Test
+    void aReusedKeytabDoesNotChangeTheLastIssuance() {
+        String principal = "trino-bi@IPA.EXAMPLE.COM";
+        ProvisioningLedger ledger = new ProvisioningLedger();
+        ledger.addPrincipal(new ProvisioningLedger.Principal(principal, "trino-keytab", "ipa", false, 2,
+                "2026-11-05T10:00:00Z", "admin"));
+        ledger.addPrincipal(new ProvisioningLedger.Principal(principal, "trino-keytab", "ipa", null, null, null, null));
+
+        ProvisioningLedger.Principal kept = ledger.principals().get(0);
+        assertEquals(Boolean.FALSE, kept.created());
+        assertEquals(2, kept.kvno());
+        assertEquals("admin", kept.issuedBy());
+        assertEquals(1, ledger.principals().size());
+    }
 }

@@ -16,6 +16,19 @@ export interface ReleaseEndpoint {
   internal?: boolean;
 }
 
+/** A Kerberos principal KDPS issued a keytab of for a release, and the Secret holding it. */
+export interface ReleasePrincipal {
+  principal: string;
+  secret?: string | null;
+  /** The platform context whose KDC issued it; none for the Ambari cluster's KDC. */
+  kdcContextId?: string | null;
+  /** Whether KDPS created the account, rather than issued a keytab of one that existed; unknown when absent. */
+  created?: boolean | null;
+  kvno?: number | null;
+  issuedAt?: string | null;
+  issuedBy?: string | null;
+}
+
 export interface HelmRelease {
   id: string;
   name: string;
@@ -76,6 +89,8 @@ export interface HelmRelease {
   lastHandledReconcileAt?: string;
   // ---- mapping from chart definition to release ----
   endpoints?: ReleaseEndpoint[];
+  /** The Kerberos principals KDPS issued keytabs of for the release (its provisioning ledger). */
+  kerberosPrincipals?: ReleasePrincipal[];
 }
 
 export interface ClusterNode {

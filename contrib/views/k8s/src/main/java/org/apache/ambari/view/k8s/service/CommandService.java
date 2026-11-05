@@ -13172,8 +13172,11 @@ public class CommandService {
                 String issuedPrincipal = stringValue(childParams.get("principalFqdn"));
                 String keytabSecret = stringValue(childParams.get("secretName"));
                 if (!issuedPrincipal.isBlank()) {
-                    recordProvisioning(childParams, ledger -> ledger.addPrincipal(new ProvisioningLedger.Principal(issuedPrincipal,
-                            keytabSecret.isBlank() ? null : keytabSecret)));
+                    String issuingContext = stringValue(childParams.get(KDC_CONTEXT_PARAM));
+                    ProvisioningLedger.Principal issued = issuedPrincipalRecord(issuedPrincipal,
+                            keytabSecret.isBlank() ? null : keytabSecret, issuingContext.isBlank() ? null : issuingContext,
+                            childSt.getResultJson(), childSt.getCreatedBy());
+                    recordProvisioning(childParams, ledger -> ledger.addPrincipal(issued));
                 }
             }
             childSt.setState(CommandState.SUCCEEDED.name());
@@ -19027,6 +19030,39 @@ public class CommandService {
      * @param stepParams the step's parameters, which name the release
      * @param change     what to add to the release's ledger
      */
+    /**
+     * What the keytab step tells of the principal it issued: the platform context whose KDC issued it and, from its
+     * result, whether the account was created and the key version. A step that reused the stored keytab issued
+     * nothing: no time nor user then, so the ledger keeps the last issuance's.
+     */
+    static ProvisioningLedger.Principal issuedPrincipalRecord(String principal, String secret, String kdcContext,
+                                                              String resultJson, String issuedBy) {
+        Boolean created = null;
+        Integer kvno = null;
+        boolean reused = false;
+        try {
+            com.google.gson.JsonElement parsed = resultJson == null ? null : com.google.gson.JsonParser.parseString(resultJson);
+            if (parsed != null && parsed.isJsonObject()) {
+                com.google.gson.JsonObject result = parsed.getAsJsonObject();
+                reused = result.has("reused") && result.get("reused").isJsonPrimitive()
+                        && result.get("reused").getAsBoolean();
+                if (result.has("created") && result.get("created").isJsonPrimitive()) {
+                    created = result.get("created").getAsBoolean();
+                }
+                if (result.has("kvno") && result.get("kvno").isJsonPrimitive()) {
+                    kvno = result.get("kvno").getAsInt();
+                }
+            }
+        } catch (RuntimeException unreadable) {
+            // recorded with what is known
+        }
+        if (reused) {
+            return new ProvisioningLedger.Principal(principal, secret, kdcContext, null, null, null, null);
+        }
+        return new ProvisioningLedger.Principal(principal, secret, kdcContext, created, kvno, Instant.now().toString(),
+                issuedBy == null || issuedBy.isBlank() ? null : issuedBy);
+    }
+
     void recordProvisioning(Map<String, Object> stepParams,
                             java.util.function.Consumer<ProvisioningLedger> change) {
         if (stepParams == null) return;

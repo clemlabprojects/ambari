@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -476,5 +477,33 @@ class ExternalCleanupTest {
         assertEquals(List.of("a"), map.get("removed"));
         assertEquals(List.of(Map.of("object", "b", "reason", "why", "command", "cmd")), map.get("left"));
         assertEquals(List.of(), map.get("kept"));
+    }
+
+    @Test
+    void anAccountThatExistedBeforeKdpsIsNeverProposedForDeletion() {
+        ProvisioningLedger ledger = new ProvisioningLedger();
+        ledger.addPrincipal(new ProvisioningLedger.Principal("hive-bi@AD.EXAMPLE.COM", "hive-keytab", "cdp-prod", false,
+                4, "2026-11-05T10:00:00Z", "admin"));
+
+        ExternalCleanup.Report report = ExternalCleanup.run(NS, RELEASE, ledger, ExternalCleanup.Mode.CREDENTIALS, true,
+                Map.of(), platform);
+
+        assertTrue(report.left().isEmpty(), report.left().toString());
+        assertTrue(report.kept().stream().anyMatch(l -> l.reason().equals(ExternalCleanup.EXISTED_BEFORE_KDPS)));
+    }
+
+    @Test
+    void anAccountKdpsCreatedInAContextsKdcIsLeftWithWhereToDeleteIt() {
+        ProvisioningLedger ledger = new ProvisioningLedger();
+        ledger.addPrincipal(new ProvisioningLedger.Principal("superset-dashboard-bi@AD.EXAMPLE.COM", "superset-keytab",
+                "cdp-prod", true, 1, "2026-11-05T10:00:00Z", "admin"));
+
+        ExternalCleanup.Report report = ExternalCleanup.run(NS, RELEASE, ledger, ExternalCleanup.Mode.CREDENTIALS, true,
+                Map.of(), platform);
+
+        ExternalCleanup.Leftover left = report.left().stream()
+                .filter(l -> l.object().contains("superset-dashboard-bi@AD.EXAMPLE.COM")).findFirst().orElseThrow();
+        assertTrue(left.object().contains("platform context 'cdp-prod'"), left.object());
+        assertFalse(left.command().contains("kadmin"), left.command());
     }
 }

@@ -321,6 +321,7 @@ public class HelmResource {
                 releaseDto.securityProfile = metadata.getSecurityProfile();
                 releaseDto.deploymentMode = metadata.getDeploymentMode();
                 copyGitRecord(metadata, releaseDto);
+                copyKerberosRecord(metadata, releaseDto);
 
                 if (metadata.getSecurityProfile() != null && !metadata.getSecurityProfile().isBlank()) {
                     try {
@@ -486,6 +487,28 @@ public class HelmResource {
         }
     }
 
+    /**
+     * The Kerberos principals KDPS recorded issuing for the release (its provisioning ledger): which KDC, whether KDPS
+     * created the account, and the Secret holding its keytab. Nothing when none is recorded.
+     */
+    static void copyKerberosRecord(K8sReleaseEntity metadata, HelmReleaseDTO dto) {
+        List<ProvisioningLedger.Principal> principals = metadata.provisioningLedger().principals();
+        if (principals.isEmpty()) return;
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (ProvisioningLedger.Principal p : principals) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("principal", p.principal());
+            row.put("secret", p.secret());
+            row.put("kdcContextId", p.kdcContextId());
+            row.put("created", p.created());
+            row.put("kvno", p.kvno());
+            row.put("issuedAt", p.issuedAt());
+            row.put("issuedBy", p.issuedBy());
+            out.add(row);
+        }
+        dto.kerberosPrincipals = out;
+    }
+
     /** The releases Helm lists, in {@code namespace} or, when it is {@code null}, in every namespace it can read. */
     List<Release> helmReleases(String namespace) {
         return helm().list(namespace, getKubeconfigContents());
@@ -639,6 +662,7 @@ public class HelmResource {
                 status.platformContextId = metadata.getPlatformContextId();
                 status.deploymentMode = metadata.getDeploymentMode();
                 copyGitRecord(metadata, status);
+                copyKerberosRecord(metadata, status);
                 status.securityProfile = metadata.getSecurityProfile();
             }
             return Response.ok(status).build();

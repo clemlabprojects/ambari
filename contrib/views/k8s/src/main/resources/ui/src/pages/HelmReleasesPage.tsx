@@ -28,6 +28,7 @@ import type { KubePod } from '../types/KubeTypes';
 import type { AvailableServices } from '../types/ServiceTypes';
 import type { HelmRelease } from '../types';
 import { deployedBy } from './deployedBy';
+import ReleasePrincipals from './ReleasePrincipals';
 import { gitOptionsForRelease, NOT_INSTALLED_BY_FLUX, notInstalledByFlux, releaseRedeployPayload, rollbackHeldInGit, ROLLBACK_IN_GIT } from './releaseRedeploy';
 import { deploySubmittedMessage } from '../components/common/operationOutcome';
 import { offersCatalogs } from './releaseCatalogs';
@@ -1480,6 +1481,8 @@ const HelmReleasesPage: React.FC = () => {
                         ) : <Text type="secondary">No external endpoint (Route/Ingress) discovered.</Text>}
                       </div>
                     </div>
+
+                    <ReleasePrincipals principals={rel.kerberosPrincipals} />
 
                     {/* Live workloads — real health from the cluster */}
                     <div>

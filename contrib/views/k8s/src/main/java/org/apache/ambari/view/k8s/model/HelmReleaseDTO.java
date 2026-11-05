@@ -79,6 +79,11 @@ public class HelmReleaseDTO {
     public String conditionSummary;
     public String sourceConditionSummary;
     public List<ReleaseEndpointDTO> endpoints;
+    /**
+     * The Kerberos principals KDPS issued keytabs of for the release: principal, secret, kdcContextId (null for the
+     * Ambari cluster's KDC), created (whether KDPS created the account), kvno, issuedAt, issuedBy.
+     */
+    public List<java.util.Map<String, Object>> kerberosPrincipals;
 
     private static String parseVersionFromChart(String chart) {
         if (chart == null || chart.isBlank()) return null;
