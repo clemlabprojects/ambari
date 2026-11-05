@@ -27,6 +27,9 @@ import { ClusterStatusProvider } from './context/ClusterStatusContext.tsx';
 import { ViewedClusterProvider } from './context/ViewedClusterContext';
 import { ThemeModeProvider, useThemeMode } from './context/ThemeModeContext.tsx';
 import { ReduceMotionProvider, useReduceMotion } from './context/ReduceMotionContext.tsx';
+import { configureLocalMonaco } from './monacoLocal';
+
+configureLocalMonaco(import.meta.url);
 
 /**
  * Interface and code faces (self-hosted in fonts.css), with safe system fallbacks. IBM Plex reads clearly at console
