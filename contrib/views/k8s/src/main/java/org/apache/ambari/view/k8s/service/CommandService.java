@@ -243,6 +243,10 @@ public class CommandService {
     /** The payload reference of a keytab a platform context's KDC issued, already stored in its Secret. */
     static final String CONTEXT_KDC_PAYLOAD_PREFIX = "context-kdc:";
 
+    /** Per platform context and principal: see the keytab issue step. */
+    private static final java.util.concurrent.ConcurrentMap<String, Object> CONTEXT_KDC_PRINCIPAL_LOCKS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     /** Whether a platform context holds a KDC account; null asks the context's record. Set by tests. */
     java.util.function.Predicate<String> contextHoldsKdcAccount;
 
@@ -12529,6 +12533,10 @@ public class CommandService {
                         // A new key for a regeneration, or when the KDC refused the stored one: Ambari would otherwise
                         // give back the current key where the KDC can export it.
                         boolean newKey = forceReissue || storedKeytabRejected;
+                        // One operation at a time issues a principal's keytab and stores it: two at once would each
+                        // get a key, and a Secret could keep the one the KDC replaced.
+                        synchronized (CONTEXT_KDC_PRINCIPAL_LOCKS.computeIfAbsent(kdcContextId + "/"
+                                + principalFqdn.toLowerCase(Locale.ROOT), key -> new Object())) {
                         AmbariActionClient.IssuedKeytab issued;
                         try {
                             issued = new AmbariActionClient(ctx, ambariApiBase, authHeaders).issueContextKeytab(
@@ -12569,6 +12577,7 @@ public class CommandService {
                         if (issued.kvno() != null) res.put("kvno", issued.kvno());
                         if (priorKeytab != null) res.put(PRIOR_KEYTAB_SHA256, priorKeytab);
                         childSt.setResultJson(gson.toJson(res));
+                        }
                         break;
                     }
 
@@ -14358,6 +14367,10 @@ public class CommandService {
      * @return as {@link KeytabLogin#authenticates}; null as well when kinit is not installed
      */
     static Boolean kinitWithKeytab(String krb5Conf, byte[] keytab, String principal) {
+        if (principal == null || !KINIT_PRINCIPAL.matcher(principal).matches()) {
+            LOG.warn("Not checking the stored keytab of '{}' against its KDC: not a principal name", principal);
+            return null;
+        }
         java.nio.file.Path dir = null;
         try {
             try {
@@ -14367,7 +14380,7 @@ public class CommandService {
             } catch (UnsupportedOperationException notPosix) {
                 dir = java.nio.file.Files.createTempDirectory("kdps-kinit");
             }
-            java.nio.file.Path conf = java.nio.file.Files.writeString(dir.resolve("krb5.conf"), krb5Conf);
+            java.nio.file.Path conf = java.nio.file.Files.writeString(dir.resolve("krb5.conf"), krb5ConfForKinit(krb5Conf));
             java.nio.file.Path keytabFile = java.nio.file.Files.write(dir.resolve("check.keytab"), keytab);
             ProcessBuilder kinit = new ProcessBuilder("kinit", "-k", "-t", keytabFile.toString(), principal);
             kinit.environment().put("KRB5_CONFIG", conf.toString());
@@ -14404,6 +14417,37 @@ public class CommandService {
                 }
             }
         }
+    }
+
+    /** A principal kinit cannot take for one of its options. */
+    static final java.util.regex.Pattern KINIT_PRINCIPAL =
+            java.util.regex.Pattern.compile("^[A-Za-z0-9_][A-Za-z0-9._/$+-]*@[A-Za-z0-9.-]+$");
+
+    /** The krb5.conf sections a kinit needs; the others ([plugins], [dbmodules], ...) can load code into it. */
+    private static final Set<String> KINIT_SECTIONS = Set.of("libdefaults", "realms", "domain_realm", "capaths");
+
+    /**
+     * A platform context's krb5.conf for the kinit Ambari runs: the sections a login needs only, without the directives
+     * that read other files ({@code include}, {@code includedir}) or load modules ({@code module},
+     * {@code plugin_base_dir}). The context's settings are typed in the view, the kinit runs as Ambari server.
+     */
+    static String krb5ConfForKinit(String krb5Conf) {
+        StringBuilder out = new StringBuilder();
+        boolean keep = true;
+        for (String line : krb5Conf.split("\\R")) {
+            String trimmed = line.trim();
+            java.util.regex.Matcher section = java.util.regex.Pattern.compile("^\\[\\s*([^\\]]*?)\\s*\\]").matcher(trimmed);
+            if (section.find()) {
+                keep = KINIT_SECTIONS.contains(section.group(1).toLowerCase(Locale.ROOT));
+            } else if (trimmed.matches("(?i)^(include|includedir|module)(\\s.*)?$")
+                    || trimmed.matches("(?i)^plugin_base_dir\\s*=.*")) {
+                continue;
+            }
+            if (keep) {
+                out.append(line).append('\n');
+            }
+        }
+        return out.toString();
     }
 
     /** Tells whether a keytab still logs its principal in to the KDC. */

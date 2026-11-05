@@ -92,13 +92,24 @@ class ContextKdcAccountTest {
     void aSaveWithoutThePasswordKeepsItWhileTheKdcIsTheSame() {
         accounts.apply("cdp-prod", activeDirectory(), "s3cret");
         Map<String, Object> config = activeDirectory();
-        config.put("kdcContainerDn", "OU=kdps,DC=corp,DC=example,DC=com");
         config.put("kdcEncryptionTypes", "aes256-cts-hmac-sha1-96");
 
         assertTrue(accounts.apply("cdp-prod", config, ""));
 
         assertEquals("s3cret", record().get("password").getAsString());
-        assertEquals("OU=kdps,DC=corp,DC=example,DC=com", record().get("container_dn").getAsString());
+        assertEquals("aes256-cts-hmac-sha1-96", record().get("encryption_types").getAsString());
+    }
+
+    @Test
+    void settingsTheKdcToolsCouldTakeAsSyntaxAreRefused() {
+        for (String[] change : new String[][]{{"kdcAdminPrincipal", "-q delprinc"}, {"kdcLdapUrl", "ldaps://dc01 -x"},
+                {"kdcContainerDn", "OU=a\", \"servicePrincipalName\": \"b"}, {"realm", "CORP.EXAMPLE.COM\n[plugins]"}}) {
+            Map<String, Object> config = activeDirectory();
+            config.put(change[0], change[1]);
+
+            assertThrows(IllegalArgumentException.class, () -> accounts.apply("cdp-prod", config, "s3cret"), change[0]);
+        }
+        assertFalse(accounts.exists("cdp-prod"));
     }
 
     @Test
@@ -106,7 +117,9 @@ class ContextKdcAccountTest {
         accounts.apply("cdp-prod", activeDirectory(), "s3cret");
         String before = store.records.get(ALIAS);
         for (String[] change : new String[][]{{"kdcLdapUrl", "ldaps://attacker.example.com"},
-                {"kdcAdminPrincipal", "other@CORP.EXAMPLE.COM"}, {"realm", "OTHER.EXAMPLE.COM"}, {"kdcType", "mit-kdc"}}) {
+                {"kdcAdminPrincipal", "other@CORP.EXAMPLE.COM"}, {"realm", "OTHER.EXAMPLE.COM"}, {"kdcType", "mit-kdc"},
+                // Where the accounts go: an organizational unit may carry rights a context editor should not hand out.
+                {"kdcContainerDn", "OU=Domain Admins,DC=corp,DC=example,DC=com"}}) {
             Map<String, Object> config = activeDirectory();
             config.put(change[0], change[1]);
             config.put("kdcHost", "kdc.example.com");

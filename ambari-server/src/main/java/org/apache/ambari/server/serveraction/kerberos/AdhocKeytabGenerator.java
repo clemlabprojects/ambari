@@ -102,7 +102,11 @@ public final class AdhocKeytabGenerator {
    * account is given {@code owner} as its description, and the key of an existing one is only reset when its
    * description is {@code owner}, so an account someone else created keeps working.
    *
-   * @param owner  the description telling the accounts of the caller, such as {@code Created by KDPS for namespace ns}
+   * An existing principal whose account does not carry {@code owner} gets no keytab at all, not even an export of its
+   * current key: its keytab would let the caller act as whoever uses it.
+   *
+   * @param owner  the description telling the accounts of the caller, such as
+   *               {@code Created by KDPS for namespace ns of platform context c}
    * @param newKey whether an existing principal gets a new key even when its current one could be exported
    * @throws ExistingPrincipalException when the principal exists and its key may not be reset, or cannot be exported
    */
@@ -135,6 +139,12 @@ public final class AdhocKeytabGenerator {
     File tmpKeytab = File.createTempFile("adhoc_", ".keytab");
     try {
       Integer kvno;
+      if (exists && owner != null && !mayReset.mayReset(principal)) {
+        throw new ExistingPrincipalException(String.format("Principal '%s' already exists, but its account was not "
+            + "created for this request (its description is not '%s'; a KDC without account descriptions, such as MIT, "
+            + "keeps none). It was neither exported nor changed. Give its keytab as an existing Secret, or have its "
+            + "account removed so that a new one is created.", principal, owner));
+      }
       if (exists) {
         // The current key is exported without rekeying when the KDC allows it: rotating on each issuance desynced
         // the keytabs KDPS had put in Secrets from the KDC ("Preauthentication failed").

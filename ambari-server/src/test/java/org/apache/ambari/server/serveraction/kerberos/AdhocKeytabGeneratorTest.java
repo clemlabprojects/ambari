@@ -234,9 +234,25 @@ public class AdhocKeytabGeneratorTest {
       AdhocKeytabGenerator.issueOwned(kdc, "trino-analytics@MIT.EXAMPLE.COM", OWNER, true, line -> { });
       fail("The account of another namespace must keep its key");
     } catch (AdhocKeytabGenerator.ExistingPrincipalException e) {
-      assertTrue(e.getMessage(), e.getMessage().contains("was not changed"));
+      assertTrue(e.getMessage(), e.getMessage().contains("neither exported nor changed"));
     }
     assertEquals(4, kdc.kvno);
+  }
+
+  @Test
+  public void anAccountOfSomeoneElseIsNotEvenExported() throws Exception {
+    // Its current key would let the caller act as whoever uses the account, without anyone noticing.
+    DescribedKdc kdc = new DescribedKdc();
+    kdc.exists = true;
+    kdc.canExport = true;
+    kdc.description = "Created by KDPS for namespace finance";
+
+    try {
+      AdhocKeytabGenerator.issueOwned(kdc, "trino-analytics@IPA.EXAMPLE.COM", OWNER, false, line -> { });
+      fail("The keytab of an account someone else created must not be issued");
+    } catch (AdhocKeytabGenerator.ExistingPrincipalException e) {
+      assertFalse(kdc.calls.toString(), kdc.calls.contains("export"));
+    }
   }
 
   @Test

@@ -24,6 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -91,6 +93,12 @@ public class KerberosAdhocKeytabService {
 
   private static final Gson GSON = new Gson();
 
+  /**
+   * One issuance at a time per principal of a KDC: two requests resetting the same key at once would each answer with a
+   * keytab, and only the last key the KDC took is valid.
+   */
+  private static final ConcurrentMap<String, Object> PRINCIPAL_LOCKS = new ConcurrentHashMap<>();
+
   @Inject
   private static KerberosOperationHandlerFactory injectedHandlerFactory;
 
@@ -155,6 +163,26 @@ public class KerberosAdhocKeytabService {
     private static final String[] SETTINGS = {"ldap_url", "container_dn", "encryption_types", "kdc_hosts",
         "admin_server_host"};
 
+    private static final String HOST = "[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?";
+    static final Pattern REALM = Pattern.compile("^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$");
+    /** An account name, never an option of the KDC's tools nor the syntax of a file or template they are given. */
+    static final Pattern ACCOUNT = Pattern.compile("^[A-Za-z0-9_][A-Za-z0-9._/$+-]*(@[A-Za-z0-9.-]+)?$");
+
+    /**
+     * What each setting may hold: the handlers write them into kadmin and ipa command lines, krb5.conf files and LDAP
+     * requests.
+     */
+    private static final Map<String, Pattern> SETTING_FORMATS = new LinkedHashMap<>();
+    static {
+      // ldap:// is refused for Active Directory below, saying why.
+      SETTING_FORMATS.put("ldap_url", Pattern.compile("^ldaps?://" + HOST + "/?$", Pattern.CASE_INSENSITIVE));
+      // A distinguished name on one line: the account template quotes it.
+      SETTING_FORMATS.put("container_dn", Pattern.compile("^[^\\p{Cntrl}\"]{1,1024}$"));
+      SETTING_FORMATS.put("encryption_types", Pattern.compile("^[a-z0-9-]+([ ,]+[a-z0-9-]+)*$"));
+      SETTING_FORMATS.put("kdc_hosts", Pattern.compile("^" + HOST + "([ ,]+" + HOST + ")*$"));
+      SETTING_FORMATS.put("admin_server_host", Pattern.compile("^" + HOST + "$"));
+    }
+
     /** @throws IllegalArgumentException saying what is wrong with the stored record, never its password */
     static KdcRecord parse(String stored) {
       JsonObject json;
@@ -182,10 +210,19 @@ public class KerberosAdhocKeytabService {
       if (StringUtils.isBlank(realm) || StringUtils.isBlank(administrator) || StringUtils.isEmpty(password)) {
         throw new IllegalArgumentException("lacks the realm, the administrator account or its password");
       }
+      if (!REALM.matcher(realm.trim()).matches()) {
+        throw new IllegalArgumentException("names an invalid realm");
+      }
+      if (!ACCOUNT.matcher(administrator.trim()).matches()) {
+        throw new IllegalArgumentException("names an invalid administrator account");
+      }
       KdcRecord record = new KdcRecord(type, realm.trim(), administrator.trim(), password);
       for (String setting : SETTINGS) {
         String value = text(json, setting);
         if (StringUtils.isNotBlank(value)) {
+          if (!SETTING_FORMATS.get(setting).matcher(value.trim()).matches()) {
+            throw new IllegalArgumentException("has an invalid " + setting);
+          }
           record.settings.put(setting, value.trim());
         }
       }
@@ -204,11 +241,11 @@ public class KerberosAdhocKeytabService {
 
     /**
      * The kerberos-env the handler is opened with: the record's settings and, for Active Directory, a fixed account
-     * template, Ambari's default plus a description naming the namespace, which tells a KDPS account apart.
+     * template, Ambari's default plus the description telling a KDPS account apart.
      *
-     * @param namespace a Kubernetes namespace name, already validated: it cannot carry template syntax
+     * @param owner {@link #ownerOf} a validated namespace and context id: it cannot carry template syntax
      */
-    Map<String, String> kerberosEnv(String namespace) {
+    Map<String, String> kerberosEnv(String owner) {
       Map<String, String> env = new LinkedHashMap<>(settings);
       if (kdcType == KDCType.ACTIVE_DIRECTORY) {
         env.put("ad_create_attributes_template", "{"
@@ -218,7 +255,7 @@ public class KerberosAdhocKeytabService {
             + "  \"servicePrincipalName\": \"$principal_name\","
             + "#end"
             + "\"userPrincipalName\": \"$normalized_principal\","
-            + "\"description\": \"" + ownerOf(namespace) + "\","
+            + "\"description\": \"" + owner + "\","
             + "\"unicodePwd\": \"$password\","
             + "\"accountExpires\": \"0\","
             + "\"userAccountControl\": \"66048\""
@@ -228,9 +265,18 @@ public class KerberosAdhocKeytabService {
     }
   }
 
-  /** The description of the accounts KDPS creates for a namespace, which lets Ambari reset their key later. */
-  static String ownerOf(String namespace) {
-    return "Created by KDPS for namespace " + namespace;
+  /**
+   * The description of the accounts KDPS creates for a namespace of a platform context, which lets Ambari give them a
+   * keytab again later. The context is named as well: another context's Kubernetes cluster may have a namespace of the
+   * same name in the same KDC.
+   */
+  static String ownerOf(String namespace, String contextId) {
+    return "Created by KDPS for namespace " + namespace + " of platform context " + contextId;
+  }
+
+  /** The context id of a validated credential alias, {@code kdps.context.<id>.kdc.admin}. */
+  static String contextIdOf(String alias) {
+    return alias.substring("kdps.context.".length(), alias.length() - ".kdc.admin".length());
   }
 
   /**
@@ -238,9 +284,9 @@ public class KerberosAdhocKeytabService {
    * <p/>
    * Body: {@code principal}, {@code namespace} (the Kubernetes namespace that receives the keytab) and
    * {@code credential_alias} (the platform context's stored {@link KdcRecord}); a request naming the KDC or its
-   * settings itself is refused. An existing principal's current key is exported when the KDC allows it; otherwise,
-   * or with {@code new_key: true}, its key is reset, only when KDPS created its account for that namespace (see
-   * {@link #ownerOf}). Answer: {@code principal}, {@code kvno}, {@code created}, {@code keytab} (base64),
+   * settings itself is refused. An existing principal gets a keytab only when KDPS created its account for that
+   * namespace and context (see {@link #ownerOf}): its current key is exported when the KDC allows it; otherwise, or
+   * with {@code new_key: true}, its key is reset. Answer: {@code principal}, {@code kvno}, {@code created}, {@code keytab} (base64),
    * {@code sha256}.
    */
   @POST
@@ -268,17 +314,27 @@ public class KerberosAdhocKeytabService {
       return error(Response.Status.FORBIDDEN, e.getMessage());
     }
 
+    String owner = ownerOf(namespace.trim(), contextIdOf(alias));
+    Object principalLock = PRINCIPAL_LOCKS.computeIfAbsent(alias + "/" + principal.trim().toLowerCase(Locale.ROOT),
+        key -> new Object());
+    synchronized (principalLock) {
+      return issueLocked(checked.request, alias, record, principal, namespace, owner);
+    }
+  }
+
+  private Response issueLocked(JsonObject request, String alias, KdcRecord record, String principal, String namespace,
+                               String owner) {
     KerberosOperationHandler handler = null;
     try {
       handler = handlerFactory.getKerberosOperationHandler(record.kdcType);
       handler.open(new PrincipalKeyCredential(record.administrator, record.password), record.realm,
-          record.kerberosEnv(namespace.trim()));
+          record.kerberosEnv(owner));
       LOG.info("Issuing an ad-hoc keytab for '{}' (namespace {}) from the {} KDC of realm {}", principal, namespace,
           record.kdcType, record.realm);
-      boolean newKey = checked.request.has("new_key") && checked.request.get("new_key").isJsonPrimitive()
-          && checked.request.get("new_key").getAsBoolean();
-      AdhocKeytabGenerator.Result issued = AdhocKeytabGenerator.issueOwned(handler, principal.trim(),
-          ownerOf(namespace.trim()), newKey, LOG::info);
+      boolean newKey = request.has("new_key") && request.get("new_key").isJsonPrimitive()
+          && request.get("new_key").getAsBoolean();
+      AdhocKeytabGenerator.Result issued = AdhocKeytabGenerator.issueOwned(handler, principal.trim(), owner, newKey,
+          LOG::info);
       audit(alias, principal, namespace, null);
       Map<String, Object> answer = new LinkedHashMap<>();
       answer.put("principal", principal.trim());
@@ -396,7 +452,7 @@ public class KerberosAdhocKeytabService {
     try {
       handler = handlerFactory.getKerberosOperationHandler(record.kdcType);
       handler.open(new PrincipalKeyCredential(record.administrator, record.password), record.realm,
-          record.kerberosEnv("kdps-test"));
+          record.kerberosEnv(ownerOf("kdps-test", contextIdOf(checked.alias))));
       handler.testAdministratorCredentials();
       if (record.kdcType == KDCType.ACTIVE_DIRECTORY) {
         // A search under the organizational unit: a container that does not exist fails here, not at the first deploy.

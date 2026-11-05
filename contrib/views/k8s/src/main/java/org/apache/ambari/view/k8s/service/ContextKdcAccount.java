@@ -38,8 +38,8 @@ import java.util.regex.Pattern;
  * there and the password only ever goes to the KDC it was entered for. The password is never kept in the view's
  * settings nor returned.
  * <p/>
- * Changing what the password is sent to (the KDC type, realm, account, LDAPS URL or KDC hosts) needs the password
- * again; the organizational unit and encryption types may change without it.
+ * Changing what the password is sent to (the KDC type, realm, account, LDAPS URL or KDC hosts) or where the accounts
+ * go (the organizational unit) needs the password again; the encryption types may change without it.
  */
 public class ContextKdcAccount {
 
@@ -61,9 +61,33 @@ public class ContextKdcAccount {
     /** The context ids Ambari server accepts in an alias. */
     private static final Pattern CONTEXT_ID = Pattern.compile("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$");
 
-    /** The record fields the password is bound to. */
+    /**
+     * The record fields the password is bound to: where it is sent, and where the accounts it creates go (an
+     * organizational unit may carry rights a context editor should not hand out).
+     */
     private static final List<String> BOUND = List.of("kdc_type", "realm", "admin_principal", "ldap_url", "kdc_hosts",
-            "admin_server_host");
+            "admin_server_host", "container_dn");
+
+    private static final String HOST = "[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?";
+
+    /** What Ambari server accepts in a record (KerberosAdhocKeytabService.KdcRecord), told at save. */
+    private static final Map<String, Pattern> FORMATS = Map.of(
+            "realm", Pattern.compile("^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$"),
+            "admin_principal", Pattern.compile("^[A-Za-z0-9_][A-Za-z0-9._/$+-]*(@[A-Za-z0-9.-]+)?$"),
+            "ldap_url", Pattern.compile("^ldaps://" + HOST + "/?$", Pattern.CASE_INSENSITIVE),
+            "container_dn", Pattern.compile("^[^\\p{Cntrl}\"]{1,1024}$"),
+            "encryption_types", Pattern.compile("^[a-z0-9-]+([ ,]+[a-z0-9-]+)*$"),
+            "kdc_hosts", Pattern.compile("^" + HOST + "([ ,]+" + HOST + ")*$"),
+            "admin_server_host", Pattern.compile("^" + HOST + "$"));
+
+    private static final Map<String, String> FORMAT_HINTS = Map.of(
+            "realm", "letters, digits, dots and dashes",
+            "admin_principal", "an account name such as admin@REALM, without spaces",
+            "ldap_url", "ldaps://host or ldaps://host:port",
+            "container_dn", "one line, without double quotes",
+            "encryption_types", "encryption type names separated by spaces",
+            "kdc_hosts", "host or host:port names separated by spaces or commas",
+            "admin_server_host", "a host or host:port");
 
     private static final Gson GSON = new Gson();
 
@@ -154,6 +178,14 @@ public class ContextKdcAccount {
             String adminServer = text(config, ADMIN_SERVER_KEY);
             record.addProperty("kdc_hosts", kdcHost);
             record.addProperty("admin_server_host", adminServer.isEmpty() ? kdcHost : adminServer);
+        }
+
+        for (Map.Entry<String, Pattern> format : FORMATS.entrySet()) {
+            String value = value(record, format.getKey());
+            if (value != null && !format.getValue().matcher(value).matches()) {
+                throw new IllegalArgumentException("The KDC " + format.getKey().replace('_', ' ') + " must be "
+                        + FORMAT_HINTS.get(format.getKey()) + ".");
+            }
         }
 
         String alias = aliasOf(contextId);

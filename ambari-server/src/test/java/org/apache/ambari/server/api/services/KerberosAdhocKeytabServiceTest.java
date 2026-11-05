@@ -242,7 +242,7 @@ public class KerberosAdhocKeytabServiceTest {
     assertFalse(kdc.env.containsKey("executable_search_paths"));
     assertFalse(kdc.env.containsKey("kdc_create_attributes"));
     String template = kdc.env.get("ad_create_attributes_template");
-    assertTrue(template, template.contains("\"description\": \"Created by KDPS for namespace analytics\""));
+    assertTrue(template, template.contains("\"description\": \"Created by KDPS for namespace analytics of platform context cdp-prod\""));
     assertFalse(template, template.contains("forName"));
     assertEquals(1, audited.size());
     String audit = audited.get(0).getAuditMessage();
@@ -293,7 +293,7 @@ public class KerberosAdhocKeytabServiceTest {
     Response response = service.issue(request("trino-analytics@AD.EXAMPLE.COM", ALIAS));
 
     assertEquals(409, response.getStatus());
-    assertTrue(json(response).get("message").getAsString().contains("was not changed"));
+    assertTrue(json(response).get("message").getAsString().contains("neither exported nor changed"));
     assertTrue(kdc.calls.toString(), kdc.calls.isEmpty());
   }
 
@@ -301,7 +301,7 @@ public class KerberosAdhocKeytabServiceTest {
   public void anAccountKdpsCreatedForTheNamespaceGetsANewKeyWhenItsKeytabIsLost() {
     // Active Directory cannot give the key back: the account's description says KDPS created it for this namespace.
     kdc.exists = true;
-    kdc.description = "Created by KDPS for namespace analytics";
+    kdc.description = "Created by KDPS for namespace analytics of platform context cdp-prod";
 
     Response response = service.issue(request("trino-analytics@AD.EXAMPLE.COM", ALIAS));
 
@@ -313,12 +313,45 @@ public class KerberosAdhocKeytabServiceTest {
   @Test
   public void anAccountKdpsCreatedForAnotherNamespaceIsNotReset() {
     kdc.exists = true;
-    kdc.description = "Created by KDPS for namespace finance";
+    kdc.description = "Created by KDPS for namespace finance of platform context cdp-prod";
 
     Response response = service.issue(request("trino-analytics@AD.EXAMPLE.COM", ALIAS));
 
     assertEquals(409, response.getStatus());
     assertTrue(kdc.calls.toString(), kdc.calls.isEmpty());
+  }
+
+  @Test
+  public void anAccountKdpsCreatedForTheSameNamespaceOfAnotherContextIsNotReset() {
+    // Another context's Kubernetes cluster may have its own namespace analytics, in the same Active Directory.
+    kdc.exists = true;
+    kdc.description = "Created by KDPS for namespace analytics of platform context cdp-test";
+
+    Response response = service.issue(request("trino-analytics@AD.EXAMPLE.COM", ALIAS));
+
+    assertEquals(409, response.getStatus());
+    assertTrue(kdc.calls.toString(), kdc.calls.isEmpty());
+  }
+
+  @Test
+  public void aRecordWhoseSettingsCouldReachTheKdcToolsAsSyntaxIsRefused() {
+    String[][] bad = {
+        {"admin_principal", "-q delprinc@AD.EXAMPLE.COM"},
+        {"realm", "AD.EXAMPLE.COM\n[plugins]"},
+        {"container_dn", "OU=x\", \"servicePrincipalName\": \"y"},
+        {"ldap_url", "ldaps://dc01.ad.example.com/?x"},
+        {"kdc_hosts", "kdc01 -x"},
+    };
+    for (String[] setting : bad) {
+      JsonObject record = JsonParser.parseString(record("ldaps://dc01.ad.example.com")).getAsJsonObject();
+      record.addProperty(setting[0], setting[1]);
+      storedRecord = record.toString();
+
+      Response response = service.issue(request("trino-analytics@AD.EXAMPLE.COM", ALIAS));
+
+      assertEquals(setting[0], 400, response.getStatus());
+      assertNull("the KDC was not opened", kdc.admin);
+    }
   }
 
   @Test

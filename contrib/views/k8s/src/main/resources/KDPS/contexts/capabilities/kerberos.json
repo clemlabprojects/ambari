@@ -59,7 +59,7 @@
       "secret": true,
       "appliesTo": "EXTERNAL,CDP",
       "group": "KDC account (release principals)",
-      "help": "Kept in Ambari's credential store with the KDC it is for, never in KDPS. Needed again whenever the KDC type, realm, account, LDAPS URL or KDC host changes."
+      "help": "Kept in Ambari's credential store with the KDC it is for, never in KDPS. Needed again whenever the KDC type, realm, account, LDAPS URL, KDC host or organizational unit changes."
     },
     {
       "name": "kdcLdapUrl",
