@@ -18,6 +18,7 @@
 
 import React from 'react';
 import { Card, Form, Input, Select, Typography, Alert } from 'antd';
+import { MoreHelpIcon } from './moreHelp';
 import type { ExternalAuthTargetFormField, ExternalServiceTarget } from '../../types/ServiceTypes';
 import { useExternalAuthTarget } from './ExternalAuthTargetsContext';
 
@@ -71,7 +72,7 @@ const ExternalAuthTargetField: React.FC<{ field: ExternalAuthTargetFormField }> 
     return (
         <Card
             size="small"
-            title={field.label || `External ${targetEntry.label} authentication`}
+            title={<>{field.label || `External ${targetEntry.label} authentication`}<MoreHelpIcon field={field as any} /></>}
             style={{ marginBottom: 16, background: 'var(--inset)' }}
         >
             {field.help && (

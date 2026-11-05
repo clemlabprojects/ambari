@@ -66,6 +66,6 @@ describe('Superset administrator login', () => {
     const admin = def.generatedSecrets.find((s: any) => s.key === 'admin');
     expect(admin.secretNameTemplate).toBe('{{releaseName}}-superset-admin');
     expect(admin.values['init.adminUser.existingSecret']).toBe('{{secretName}}');
-    expect(breakGlass.help).toContain('<release>-superset-admin');
+    expect([breakGlass.help, breakGlass.helpMore].filter(Boolean).join(' ')).toContain('<release>-superset-admin');
   });
 });

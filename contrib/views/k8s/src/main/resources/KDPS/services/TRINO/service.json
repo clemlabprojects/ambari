@@ -1825,7 +1825,7 @@
           "name": "runAsUser",
           "label": "Run pods as a specific UID (optional)",
           "type": "number",
-          "help": "Leave blank (recommended): OpenShift's restricted-v2 SCC assigns an arbitrary non-root UID from the project's range automatically. Set a UID only if you must pin one — it MUST fall inside the namespace's openshift.io/sa.scc.uid-range annotation, otherwise admission rejects the pods."
+          "help": "Leave blank: OpenShift picks a UID from the project's range.", "helpMore": "Set a UID only if you must pin one. It must fall inside the namespace's openshift.io/sa.scc.uid-range annotation, or admission rejects the pods."
         }
       ]
     },
@@ -1868,7 +1868,7 @@
           "label": "Collect metrics (ServiceMonitor)",
           "type": "boolean",
           "defaultValue": true,
-          "help": "Lets OpenShift monitoring scrape Trino; needs the monitoring-edit role in the project. Required by worker autoscaling: turn autoscaling off to turn this off."
+          "help": "Lets Prometheus scrape the service. Required by worker autoscaling.", "helpMore": "On OpenShift this needs the monitoring-edit role in the project. To turn it off, turn worker autoscaling off first."
         }
       ]
     },
@@ -1884,7 +1884,7 @@
           "type": "monitoring-discovery",
           "excludeFromValues": true,
           "autoSelectSingle": true,
-          "help": "Finds the Prometheus already running on the cluster (any namespace, any release name) and fills the fields below from it."
+          "help": "Finds the Prometheus already on the cluster and fills the fields below."
         },
         {
           "name": "monitoring.namespace",
@@ -1906,7 +1906,7 @@
             "field": "monitoring.discovery",
             "operator": "empty"
           },
-          "help": "Release of the Prometheus stack: builds the Prometheus address when none is given below, and is put on the ServiceMonitors as their release label."
+          "help": "Helm release of the Prometheus stack.", "helpMore": "Used to build the Prometheus address when none is given, and set as the release label on the ServiceMonitors."
         },
         {
           "name": "monitoring.url",
@@ -1955,7 +1955,7 @@
           "type": "keda-discovery",
           "excludeFromValues": true,
           "autoSelectSingle": true,
-          "help": "Finds the KEDA operator already on the cluster, which worker autoscaling then uses. When none is found, KDPS installs KEDA in the namespace below."
+          "help": "Finds the KEDA operator already on the cluster, used by worker autoscaling.", "helpMore": "When none is found, KDPS installs KEDA in the namespace below."
         },
         {
           "name": "keda.namespace",
@@ -2024,7 +2024,7 @@
           "type": "boolean",
           "defaultValue": false,
           "autoEnableWhenCapability": "ingress",
-          "help": "Expose the service through a Kubernetes Ingress. Required when an authentication profile (OIDC / LDAP-over-SSL) is selected in Step 1 — OAuth callbacks need a public hostname and HTTPS."
+          "help": "Expose the service through an Ingress (a Route on OpenShift).", "helpMore": "Required with an authentication profile (OIDC, LDAP over TLS): sign-in needs a public hostname and HTTPS."
         },
         {
           "name": "ingress.ingressClassName",
@@ -2046,7 +2046,7 @@
           "type": "string",
           "required": true,
           "excludeFromValues": true,
-          "help": "Public DNS name the edge routes to (e.g. service.example.com). On OpenShift this becomes the Route host and must sit under the cluster ingress domain (…apps-<cluster>) to resolve — or leave it blank to let OpenShift auto-assign a reachable host. Under OIDC/OAuth this host is also the login redirect (https://<host>/oauth2/callback), so register it in the identity provider.",
+          "help": "Public DNS name of the service, e.g. trino.example.com.", "helpMore": "On OpenShift it must sit under the cluster's ingress domain (…apps-<cluster>); leave it blank to let OpenShift assign one.\nWith OIDC it is also the sign-in redirect (https://<host>/oauth2/callback): register it in the identity provider.",
           "condition": {
             "field": "ingress.enabled",
             "value": true
@@ -2070,7 +2070,7 @@
           "type": "select",
           "defaultValue": "signedByAmbariCA",
           "excludeFromValues": true,
-          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1. On Upgrade/Config this starts on **Keep current certificate**: the release keeps the certificate it serves and nothing is replaced (a release serving plain HTTP starts on **None**). Choose another mode only to replace that certificate; you are asked to confirm, and a Secret kept by cert-manager or an external Secret store is never overwritten.",
+          "help": "Where the service's TLS certificate comes from.", "helpMore": "Sign via cert-manager: recommended when cert-manager is installed (renews automatically).\nSign with Company CA: a CA uploaded under Security → Certificate Authorities.\nSign with Ambari Internal CA: for tests, browsers warn.\nModes whose system is not installed are hidden. TLS is required with an authentication profile.\nOn Upgrade/Config this starts on 'Keep current certificate' (or 'None' for plain HTTP). Pick another mode only to replace the certificate; you are asked to confirm, and a Secret kept by cert-manager or an external store is never overwritten.",
           "options": [
             {
               "label": "Keep current certificate",
@@ -2152,7 +2152,7 @@
           "label": "Target Secret name",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the kubernetes.io/tls Secret the view will create from the uploaded cert/key. Leave blank to use the default `<releaseName>-ingress-tls` (computed server-side at deploy time).",
+          "help": "Secret created from the uploaded certificate. Blank: <release>-ingress-tls.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "uploadLeaf"
@@ -2164,7 +2164,7 @@
           "type": "secret-discovery",
           "lookupLabel": "ambari.clemlab.com/resource-type=issuing-ca",
           "excludeFromValues": true,
-          "help": "Pick a Company Issuing CA from the PKI registry. The view mints a leaf TLS cert signed by this CA before installing the chart. KDPS keeps the CAs for every cluster it deploys to, and signs the leaf itself: the CA key is never written to the release's cluster. Upload CAs via Security → Certificate Authorities.",
+          "help": "Company CA that signs the service's certificate.", "helpMore": "KDPS signs the certificate itself: the CA key never goes to the release's cluster. Upload CAs under Security → Certificate Authorities.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "signedByCompanyCA"
@@ -2190,7 +2190,7 @@
           "label": "ClusterIssuer",
           "type": "cluster-issuer-discovery",
           "excludeFromValues": true,
-          "help": "Pick a cert-manager ClusterIssuer or Issuer. The view writes a Certificate resource pre-install; cert-manager mints the Secret and auto-renews it before expiry.",
+          "help": "cert-manager issuer that signs and renews the certificate.", "helpMore": "KDPS writes a Certificate before the install; cert-manager creates the Secret and renews it before it expires.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "signedByClusterIssuer"
@@ -2224,7 +2224,7 @@
           "label": "Remote key / path",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Path/key in the upstream store. For Vault PKI: 'pki/issue/<role>'. For Vault KV: 'secret/data/tls/<name>'. For AWS Secrets Manager: the secret name.",
+          "help": "Path of the certificate in the external store.", "helpMore": "Vault PKI: pki/issue/<role>. Vault KV: secret/data/tls/<name>. AWS Secrets Manager: the secret's name.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "sourcedFromExternalSecret"
@@ -2251,7 +2251,7 @@
             "field": "ingress.enabled",
             "value": true
           },
-          "help": "OpenShift only. Space-separated IP addresses or CIDR ranges allowed to reach the Route, e.g. '10.0.0.0/8 172.16.20.0/24'. Set it when the cluster requires the haproxy.router.openshift.io/ip_whitelist annotation on every Route. Leave blank to allow all sources."
+          "help": "Source IPs or CIDRs allowed to reach the Route, space separated. Blank: all.", "helpMore": "OpenShift only, e.g. 10.0.0.0/8 172.16.20.0/24. Set it when the cluster requires the haproxy.router.openshift.io/ip_whitelist annotation on every Route."
         },
         {
           "name": "ingressTuning",
@@ -2268,7 +2268,7 @@
               "label": "proxy-buffer-size",
               "type": "string",
               "excludeFromValues": true,
-              "help": "nginx.ingress.kubernetes.io/proxy-buffer-size. Leave blank to use chart default (16k under OIDC/OAuth, otherwise nginx default 4k/8k). Bump if you see 502 + 'upstream sent too big header' on OAuth callbacks."
+              "help": "nginx proxy-buffer-size. Blank: the chart's default.", "helpMore": "16k under OIDC, else nginx's default (4k/8k). Raise it on 502 'upstream sent too big header' after sign-in."
             },
             {
               "name": "ingress.tuning.proxyBuffersNumber",
@@ -2307,7 +2307,7 @@
             }
           ],
           "collapsed": true,
-          "help": "Advanced — usually leave blank. nginx ingress annotations (proxy buffers / timeouts). Chart-side defaults are sensible for the common case; expand if you need to override (large headers on OAuth, long-running queries, big uploads)."
+          "help": "Advanced nginx settings: usually leave blank.", "helpMore": "Override them for large OAuth headers, long-running queries or big uploads."
         }
       ]
     },
@@ -2323,7 +2323,7 @@
           "defaultValue": true,
           "excludeFromValues": true,
           "seedFromValue": "server.config.https.enabled",
-          "help": "On by default: Trino terminates TLS itself (keystore signed by the internal CA). On OpenShift the Route serves the ingress certificate and re-encrypts to Trino, checking Trino's certificate against the internal CA; internal clients (Superset, dbt, OpenMetadata) must use https on the HTTPS port. Turned off, TLS stops at the edge: authenticated traffic, tokens included, crosses the pod network in clear text, and 'Let KDPS manage catalogs' (Custom catalogs) is turned off, since Trino only accepts password logins over HTTPS."
+          "help": "Trino serves HTTPS itself. Keep it on.", "helpMore": "The keystore is signed by the internal CA; on OpenShift the Route re-encrypts to Trino. Internal clients (Superset, dbt, OpenMetadata) must use https on the HTTPS port.\nTurned off, authenticated traffic, tokens included, crosses the pod network in clear text, and 'Let KDPS manage catalogs' is turned off: Trino accepts password logins only over HTTPS."
         },
         {
           "name": "tls.https.autoGenerate",
@@ -2375,7 +2375,7 @@
           "label": "Keystore password",
           "type": "password",
           "defaultValue": "",
-          "help": "Leave blank to generate a random one. With your own keystore (keystore generation off), the password is stored in the <keystore Secret>-pass Secret, from which Trino reads it. If you created that Secret yourself, it must already hold this password; leave the field blank to keep the one it holds.",
+          "help": "Leave blank to generate one.", "helpMore": "With your own keystore it is kept in the <keystore Secret>-pass Secret. If you created that Secret yourself, it must already hold this password; leave the field blank to keep it.",
           "excludeFromValues": true,
           "condition": {
             "field": "tls.https.enabled",
@@ -2451,7 +2451,7 @@
           "label": "Memory request",
           "type": "string",
           "defaultValue": "8Gi",
-          "help": "Same as the memory limit by default, so Kubernetes reserves the memory and gives the pod the Guaranteed QoS class: it is not among the first pods evicted when the node runs short of memory. Requests count against the project quota. Cannot be higher than the limit.",
+          "help": "Defaults to the memory limit. Cannot exceed it.", "helpMore": "Equal to the limit, Kubernetes reserves the memory and the pod is among the last evicted when the node runs short. Requests count against the project quota.",
           "resourceCheck": { "kind": "memoryRequest", "limitField": "coordinator.resources.limits.memory" }
         },
         {
@@ -2473,7 +2473,7 @@
           "defaultValue": "",
           "placeholder": "75% of the memory limit",
           "omitWhenBlank": true,
-          "help": "Leave blank to give Java 75% of the memory limit (6G for 8Gi); the heap then follows the limit when you change it. To set it yourself, use the Java format (for example 6G or 6144M) and keep it at 70-80% of the memory limit: Java also needs memory outside the heap, and the pod is killed when it goes over the limit.",
+          "help": "Leave blank: 75% of the memory limit, following it.", "helpMore": "To set it, use the Java format (6G, 6144M) and keep it at 70-80% of the memory limit: Java needs memory outside the heap, and the pod is killed when it goes over the limit.",
           "resourceCheck": { "kind": "javaHeap", "limitField": "coordinator.resources.limits.memory", "blankSizedByChartFrom": "1.43.15" }
         },
         {
@@ -2514,7 +2514,7 @@
           "label": "Memory request per worker",
           "type": "string",
           "defaultValue": "8Gi",
-          "help": "Same as the memory limit by default, so Kubernetes reserves the memory and gives each worker the Guaranteed QoS class: workers are not among the first pods evicted when the node runs short of memory. Requests count against the project quota, for every worker autoscaling adds. Cannot be higher than the limit.",
+          "help": "Defaults to the memory limit. Cannot exceed it.", "helpMore": "Equal to the limit, Kubernetes reserves the memory and workers are among the last evicted. Requests count against the project quota, for every worker autoscaling adds.",
           "resourceCheck": { "kind": "memoryRequest", "limitField": "worker.resources.limits.memory" }
         },
         {
@@ -2536,7 +2536,7 @@
           "defaultValue": "",
           "placeholder": "75% of the memory limit",
           "omitWhenBlank": true,
-          "help": "Leave blank to give Java 75% of the memory limit (6G for 8Gi); the heap then follows the limit when you change it. To set it yourself, use the Java format (for example 6G or 6144M) and keep it at 70-80% of the memory limit: Java also needs memory outside the heap, and the pod is killed when it goes over the limit.",
+          "help": "Leave blank: 75% of the memory limit, following it.", "helpMore": "To set it, use the Java format (6G, 6144M) and keep it at 70-80% of the memory limit: Java needs memory outside the heap, and the pod is killed when it goes over the limit.",
           "resourceCheck": { "kind": "javaHeap", "limitField": "worker.resources.limits.memory", "blankSizedByChartFrom": "1.43.15" }
         },
         {
@@ -2709,7 +2709,7 @@
             }
           ],
           "defaultValue": "ranger",
-          "help": "Access control for the Trino coordinator. 'Disabled (allow all)' runs Trino with its built-in allow-all system access control (no restrictions); 'Ranger' enforces the policies of the selected Platform Context's Ranger. NOTE: the value 'properties' is the chart's generic file/properties mode — combined with the allow-all line below it means 'no access control'."
+          "help": "Disabled lets everyone do everything; Ranger enforces the context's policies.", "helpMore": "With Disabled, no Ranger repository or plugin is set up."
         },
         {
           "name": "accessControl.properties",
@@ -2717,7 +2717,7 @@
           "type": "string",
           "condition": { "field": "accessControl.type", "value": "properties" },
           "defaultValue": "access-control.name=allow-all",
-          "help": "Contents of the coordinator's access-control.properties. Defaults to Trino's built-in allow-all (no restrictions), which is what 'Disabled (allow all)' means. Advanced operators may override it (e.g. a file-based rules provider). Required by the chart whenever access control type is 'properties'."
+          "help": "Contents of access-control.properties. Default: allow all.", "helpMore": "Override it only for another rules provider, such as a file-based one."
         },
         {
           "name": "rangerAdminUrl",
@@ -2726,7 +2726,7 @@
           "contextField": "ranger.rangerUrl",
           "condition": { "field": "accessControl.type", "value": "ranger" },
           "excludeFromValues": true,
-          "help": "The Ranger of the selected Platform Context (right panel) whose policies Trino's plugin enforces. Resolved by KDPS from the context."
+          "help": "The Ranger whose policies Trino enforces, from the platform context."
         },
         {
           "name": "tagSync.enabled",
@@ -2735,7 +2735,7 @@
           "defaultValue": false,
           "condition": { "field": "accessControl.type", "value": "ranger" },
           "autoEnableWhenContext": "atlasTags",
-          "help": "Projects the Platform Context's Atlas classifications onto Trino's Ranger service so tag-based masking, row-filtering and access policies apply to Trino the way they do for Hive/Impala. On by default when the context exposes Atlas tags. KDPS gives this release a Ranger account of its own for this, kept in the Secret <release>-tagsync-ranger of the release's project, with a new password at every deploy; turning this off or uninstalling the release disables it. Ranger lets only its administrators write tags, so that account is a Ranger administrator: anyone who can read Secrets in the project can use it to change any Ranger policy. Turn this on only where those people may be Ranger administrators."
+          "help": "Applies the context's Atlas tags to Trino through Ranger tag policies.", "helpMore": "Tag-based masking, row filters and access policies then apply to Trino as they do to Hive and Impala. On by default when the context exposes Atlas tags.\nKDPS gives the release its own Ranger account for this, kept in the Secret <release>-tagsync-ranger. Ranger lets only administrators write tags, so that account is a Ranger administrator: anyone who can read Secrets in the project can change any Ranger policy with it. Turn this on only where those people may be Ranger administrators."
         },
         {
           "name": "ranger.audit.solrMode",
@@ -2748,7 +2748,7 @@
           ],
           "defaultValue": "auto",
           "condition": { "field": "accessControl.type", "value": "ranger" },
-          "help": "Where Trino's Ranger audit events go, so they show in the Ranger Admin audit page. 'Follow the platform context' audits to Solr when the context's Ranger does (read from the cluster for a managed or remote context, or set on the context). 'On' and 'Off' decide for this release alone."
+          "help": "Send Ranger audit events to Solr, shown in Ranger's audit page.", "helpMore": "'Follow the platform context' audits to Solr when the context's Ranger does. 'On' and 'Off' decide for this release only."
         },
         {
           "name": "ranger.audit.solrUrls",
@@ -2758,7 +2758,7 @@
           "omitWhenBlank": true,
           "placeholder": "http://solr.example.com:8886/solr/ranger_audits",
           "condition": { "field": "ranger.audit.solrMode", "value": "on" },
-          "help": "Solr endpoint(s) for the audit events, comma separated. Replaces the platform context's Solr endpoint, ZooKeeper included. Leave blank to use the platform context's."
+          "help": "Solr URLs for the audit, comma separated. Blank: the context's.", "helpMore": "Replaces the context's Solr endpoint, ZooKeeper included."
         },
         {
           "name": "ranger.audit.solrZookeepers",
@@ -2768,7 +2768,7 @@
           "omitWhenBlank": true,
           "placeholder": "zk1.example.com:2181/infra-solr",
           "condition": { "field": "ranger.audit.solrMode", "value": "on" },
-          "help": "ZooKeeper connection string (with chroot) of a SolrCloud, instead of Solr URLs. Replaces the platform context's Solr endpoint, URLs included. Leave blank to use the platform context's."
+          "help": "ZooKeeper of a SolrCloud, with its chroot. Blank: the context's.", "helpMore": "Use it instead of Solr URLs. Replaces the context's Solr endpoint, URLs included."
         },
         {
           "name": "ranger.audit.hdfsMode",
@@ -2781,7 +2781,7 @@
           ],
           "defaultValue": "auto",
           "condition": { "field": "accessControl.type", "value": "ranger" },
-          "help": "Audit events written to HDFS files. 'Follow the platform context' audits to HDFS when the context's Ranger does. 'On' and 'Off' decide for this release alone. The cluster's Hadoop configuration (core-site and hdfs-site) must reach the Trino pods to resolve the HDFS address."
+          "help": "Write Ranger audit events to HDFS files.", "helpMore": "'Follow the platform context' audits to HDFS when the context's Ranger does. 'On' and 'Off' decide for this release only. The pods need the cluster's core-site and hdfs-site to reach HDFS."
         },
         {
           "name": "ranger.audit.hdfsDir",
@@ -2791,7 +2791,7 @@
           "omitWhenBlank": true,
           "placeholder": "hdfs://namenode.example.com:8020/ranger/audit",
           "condition": { "field": "ranger.audit.hdfsMode", "value": "on" },
-          "help": "Directory the audit files are written to, with the file system in front. Leave blank to use the platform context's."
+          "help": "HDFS directory for the audit files, with its file system. Blank: the context's."
         },
         {
           "name": "ranger.audit.log4j",
@@ -2799,7 +2799,7 @@
           "type": "boolean",
           "defaultValue": true,
           "condition": { "field": "accessControl.type", "value": "ranger" },
-          "help": "Keeps writing the audit events to the Trino pod log (kubectl logs) as well as to the destinations above."
+          "help": "Also write the audit events to the Trino pod log."
         },
         {
           "name": "nodePort.port",
@@ -2823,7 +2823,7 @@
           "type": "boolean",
           "defaultValue": false,
           "autoEnableWhenContext": "hive",
-          "help": "When ON, KDPS creates a Trino 'hive' catalog connected to the Hive Metastore of the selected Platform Context (right panel). Auto-enabled when the selected context exposes Hive."
+          "help": "Adds a 'hive' catalog on the context's Hive Metastore.", "helpMore": "On by default when the selected context exposes Hive."
         },
         {
           "name": "hiveCatalog.metastoreUri",
@@ -2832,7 +2832,7 @@
           "contextField": "hive.metastoreUri",
           "condition": { "field": "hiveCatalog.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Delivered by KDPS from the selected Platform Context. Toggle Override only to point the catalog at a specific metastore (for example an external context without an Ambari to resolve it)."
+          "help": "From the platform context. Override only to use another metastore."
         },
         {
           "name": "hive.externalKeytabSecret",
@@ -2840,7 +2840,7 @@
           "type": "secret-discovery",
           "requiredWhenContext": { "field": "kerberos.enabled", "equals": "true" },
           "excludeFromValues": true,
-          "help": "Only for an EXTERNAL platform context (no Ambari to issue keytabs), e.g. a CDP backend in a DIFFERENT Kerberos realm. Pick a Kubernetes Secret in the release namespace holding key 'service.keytab' (the Trino SERVICE keytab issued by the backend realm's KDC). This is the Trino service identity — it mounts globally at /etc/security/keytabs/service.keytab and is used for EVERY Kerberos-authenticated backend Trino talks to: Hive metastore, HDFS, the Ranger plugin, and any other federated ODP service (not Hive only). Providing it selects PRE_PROVISIONED mode with your keytab instead of an Ambari-issued one; leave blank for a same-realm MANAGED (Ambari) context. Set the matching principal in the field below. Create it first, e.g.: kubectl -n <ns> create secret generic trino-cdp-keytab --from-file=service.keytab=./trino.keytab."
+          "help": "Secret holding Trino's keytab from another realm. Blank: KDPS issues it.", "helpMore": "Only for an external context whose KDC KDPS cannot reach (no KDC account on the context). The Secret, in the release namespace, holds key 'service.keytab'. It is Trino's identity for every Kerberos backend: Hive Metastore, HDFS, Ranger.\nCreate it first: kubectl -n <ns> create secret generic trino-keytab --from-file=service.keytab=./trino.keytab"
         },
         {
           "name": "hive.externalKeytabPrincipal",
@@ -2849,21 +2849,21 @@
           "excludeFromValues": true,
           "condition": { "field": "hive.externalKeytabSecret", "operator": "non-empty" },
           "placeholder": "svc-trino@CDP.EXAMPLE.COM",
-          "help": "The Kerberos principal inside the external keytab above — the identity Trino authenticates AS to Hive / HDFS / Ranger. Set it per deploy so each Trino service can carry its own principal (not a shared/generic one). If left blank, KDPS falls back to a 'principal' key in the Secret. Only used when an external keytab is selected."
+          "help": "Principal of the keytab above. Blank: the Secret's 'principal' key."
         },
         {
           "name": "hadoopGroupMapping",
           "label": "Hadoop LDAP group mapping",
           "type": "group",
           "collapsed": true,
-          "help": "Resolves Hadoop groups from an LDAP/FreeIPA directory. Needed for group-based Ranger policies to apply to Trino queries (the Trino container has no SSSD). See HADOOP-LDAP-GROUP-MAPPING.md.",
+          "help": "Reads Hadoop groups from LDAP, for group-based Ranger policies.", "helpMore": "The Trino container has no SSSD to resolve groups.",
       "fields": [
         {
           "name": "hadoopConf.groupMapping.enabled",
           "label": "Enable LDAP group mapping",
           "type": "boolean",
           "defaultValue": false,
-          "help": "When on, an init container merges the LdapGroupsMapping properties into core-site.xml when the pod starts. Needs Trino chart 1.43.0 or later."
+          "help": "Adds the LDAP group mapping to core-site.xml at pod start. Chart 1.43.0+."
         },
         {
           "name": "hadoopConf.groupMapping.ldap.url",
@@ -2882,7 +2882,7 @@
           "label": "Bind user",
           "type": "string",
           "defaultValue": "",
-          "help": "DN of the service account that queries the directory (IPA hides memberOf from anonymous reads, so an authenticated bind is required), e.g. uid=hadoop-group-mapping,cn=users,cn=accounts,dc=example,dc=com",
+          "help": "DN of the account that reads the directory.", "helpMore": "FreeIPA hides group membership from anonymous reads. Example: uid=hadoop-group-mapping,cn=users,cn=accounts,dc=example,dc=com",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2894,7 +2894,7 @@
           "label": "Secret holding the password",
           "type": "string",
           "defaultValue": "",
-          "help": "Kubernetes Secret in the target namespace (create it beforehand) holding the bind account's password. The chart mounts it read-only at /etc/hadoop/ldap-bind/password.",
+          "help": "Secret holding that account's password. Create it first.", "helpMore": "In the release namespace. Mounted read-only at /etc/hadoop/ldap-bind/password.",
           "condition": {
             "field": "hadoopConf.groupMapping.enabled",
             "value": true
@@ -2994,7 +2994,7 @@
           "type": "boolean",
           "defaultValue": false,
           "autoEnableWhenContext": "polaris",
-          "help": "When ON, KDPS creates a Trino 'iceberg' catalog backed by the Apache Polaris REST catalog of the selected Platform Context (right panel), so Trino reads and writes Iceberg tables natively. Auto-enabled when the selected context exposes Polaris (ODP: the Ambari-managed POLARIS service). Prerequisites on the Polaris side: polaris.realm-context.require-header=false (Trino cannot send the realm header) and the Polaris TLS CA in the Trino truststore."
+          "help": "Adds an 'iceberg' catalog on the context's Polaris REST catalog.", "helpMore": "On by default when the context exposes Polaris. On the Polaris side: polaris.realm-context.require-header=false, and its TLS CA in Trino's truststore."
         },
         {
           "name": "icebergCatalog.provision",
@@ -3003,7 +3003,7 @@
           "defaultValue": true,
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "ON (default): KDPS gives this release its own Polaris identity and creates a catalog and object-store bucket named after the release and namespace. Re-installing the same release re-uses them instead of creating more. OFF: nothing is created — KDPS only mints the identity and grants it on the catalog named below, which is how you attach a release to a catalog you already manage."
+          "help": "KDPS creates the catalog and its bucket, named after the release.", "helpMore": "Reinstalling the release reuses them. Off: nothing is created; KDPS grants this release on the catalog named below."
         },
         {
           "name": "icebergCatalog.restUri",
@@ -3012,7 +3012,7 @@
           "contextField": "polaris.restUri",
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Delivered by KDPS from the selected Platform Context (for example https://polaris-host:8443/api/catalog). Toggle Override only for a context without an Ambari to resolve it."
+          "help": "From the platform context. Override only without an Ambari to resolve it."
         },
         {
           "name": "icebergCatalog.warehouse",
@@ -3021,7 +3021,7 @@
           "contextField": "polaris.catalog",
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Name of the Polaris catalog Trino mounts as its 'iceberg' catalog. When KDPS creates the catalog it is named after the release and namespace and this field is ignored; with creation off, override it with the name of the catalog you want this release to use."
+          "help": "Polaris catalog Trino mounts as 'iceberg'.", "helpMore": "Ignored when KDPS creates the catalog (named after the release and namespace). With creation off, set the catalog to use."
         },
         {
           "name": "icebergCatalog.credentialSecret",
@@ -3029,7 +3029,7 @@
           "type": "secret-discovery",
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Optional. A Kubernetes Secret in the release namespace holding keys 'client_id' and 'client_secret' of a Polaris principal granted a catalog role on the catalog above. When set, it takes precedence over the Client ID / Client secret fields below. Create it first, e.g.: kubectl -n <ns> create secret generic trino-polaris --from-literal=client_id=... --from-literal=client_secret=..."
+          "help": "Secret with a Polaris principal's client_id and client_secret.", "helpMore": "Optional; takes precedence over the fields below. Create it first: kubectl -n <ns> create secret generic trino-polaris --from-literal=client_id=… --from-literal=client_secret=…"
         },
         {
           "name": "icebergCatalog.clientId",
@@ -3037,7 +3037,7 @@
           "type": "string",
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "OAuth2 client id of the Polaris principal Trino authenticates as (Polaris internal authentication). KDPS stores it in a chart-managed Kubernetes Secret and the catalog references it as ${ENV:POLARIS_CLIENT_ID} — the secret never appears in the catalog ConfigMap."
+          "help": "Client ID of the Polaris principal Trino uses.", "helpMore": "Kept in a Secret; the catalog reads it from the environment, never from its ConfigMap."
         },
         {
           "name": "icebergCatalog.clientSecret",
@@ -3055,7 +3055,7 @@
           "contextField": "ozone.s3Endpoint",
           "condition": { "field": "icebergCatalog.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Where the catalog's Iceberg tables are stored. Delivered by KDPS from the selected Platform Context's Ozone S3 gateway, the same store Polaris on the cluster uses. Toggle Override to point at another S3-compatible store; leave the override BLANK to use AWS S3 — then supply AWS credentials in the override group below."
+          "help": "Where Iceberg tables are stored: the context's Ozone S3 by default.", "helpMore": "Override it for another S3-compatible store; leave the override blank for AWS S3 and give credentials below."
         },
         {
           "name": "icebergCatalog.s3Region",
@@ -3072,14 +3072,14 @@
           "type": "group",
           "collapsed": true,
           "condition": { "field": "icebergCatalog.enabled", "value": true },
-          "help": "Only for a store that is not the context's Ozone: AWS S3 or another S3-compatible service. Credentials given here are used to create the bucket and are handed to Trino when the store cannot vend them through Polaris (no STS).",
+          "help": "Only for AWS S3 or another S3 store than the context's Ozone.", "helpMore": "These credentials create the bucket, and go to Trino when the store cannot vend them through Polaris (no STS).",
           "fields": [
             {
               "name": "icebergCatalog.s3CredentialSecret",
               "label": "Existing S3 credential Secret",
               "type": "secret-discovery",
               "excludeFromValues": true,
-              "help": "Kubernetes Secret in the release namespace with keys 'access_key' and 'secret_key'. When set, it takes precedence over the two fields below and KDPS disables Polaris credential vending for this catalog."
+              "help": "Secret with keys access_key and secret_key. Overrides the fields below.", "helpMore": "Credential vending through Polaris is then turned off for this catalog."
             },
             {
               "name": "icebergCatalog.s3AccessKey",
@@ -3111,7 +3111,7 @@
           "label": "Allow catalogs to be created at runtime (CREATE CATALOG, no restart)",
           "type": "boolean",
           "defaultValue": false,
-          "help": "Turns on Trino dynamic catalog management: the coordinator keeps a writable catalog store seeded from the catalogs below, so CREATE CATALOG / DROP CATALOG work immediately without a restart, and Ranger authorises them per user (catalog-level create/drop). Catalogs created only at runtime do not survive a pod restart - define them in this section to keep them. Needs chart 1.43.12 or later; the deploy is refused otherwise."
+          "help": "Allows CREATE CATALOG and DROP CATALOG without a restart. Chart 1.43.12+.", "helpMore": "Ranger authorizes them per user. Catalogs created only at runtime are lost when the pod restarts: define them in this section to keep them."
         },
         {
           "name": "kdps.serviceUser.enabled",
@@ -3122,7 +3122,7 @@
             "field": "tls.https.enabled",
             "value": true
           },
-          "help": "Adds a dedicated Trino login for KDPS (a file password user beside your LDAP/OIDC/Kerberos setup) and grants it 'impersonate' in Ranger. The Catalogs action on the release then runs CREATE/DROP CATALOG as you, so Ranger decides what you may do. Needs chart 1.43.13 or later and 'Enable internal HTTPS' (Internal HTTPS, on by default): Trino only accepts password logins over HTTPS, so this option is hidden and turned off while internal HTTPS is off. With it on, Trino asks every client for a password: without a security profile, kdps is its only login, an administrator. KDPS generates its password into the Secret ending in -kdps-service-user in the release namespace (key password)."
+          "help": "Lets the Catalogs action of the release run as you, under Ranger.", "helpMore": "Adds a KDPS login to Trino (a file password user) and grants it 'impersonate' in Ranger, so CREATE/DROP CATALOG run as you. Needs chart 1.43.13+ and 'Enable internal HTTPS'.\nWith it on, Trino asks every client for a password; without a security profile, kdps is its only login, an administrator. Its password is in the Secret ending in -kdps-service-user (key password)."
         },
         {
           "name": "customCatalogs.refs",
@@ -3130,7 +3130,7 @@
           "type": "trino-catalog-select",
           "excludeFromValues": true,
           "defaultValue": [],
-          "help": "Catalogs defined once on the Trino Catalogs page and attached here. Each selected catalog's properties are copied into this release at deploy time (the release keeps that copy until you re-apply it from Upgrade/Config). Add a catalog to the list from the Trino Catalogs page. A catalog that references ${ENV:KEY} needs the Secret holding KEY under 'Secrets with catalog credentials' below."
+          "help": "Catalogs defined on the Trino Catalogs page, copied into this release.", "helpMore": "The release keeps that copy until you reapply it from Upgrade/Config. A catalog using ${ENV:KEY} needs the Secret holding KEY under 'Secrets with catalog credentials'."
         },
         {
           "name": "customCatalogs.text",
@@ -3141,7 +3141,7 @@
           "excludeFromValues": true,
           "defaultValue": "",
           "placeholder": "[postgres_prod]\nconnector.name=postgresql\nconnection-url=jdbc:postgresql://db.example.com:5432/analytics\nconnection-user=trino\nconnection-password=${ENV:PG_PASSWORD}\n\n[kafka_events]\nconnector.name=kafka\nkafka.nodes=broker.example.com:9092",
-          "help": "One section per catalog: a [name] header followed by that catalog's .properties lines. Each becomes a Trino catalog of that name and any connector Trino supports will work. connector.name is required. The Hive and Iceberg catalogs above are built by KDPS from the platform context - configure them there, not here. Credentials cannot be written inline: put them in a Secret selected under 'Secrets with catalog credentials' and reference each key as ${ENV:KEY}."
+          "help": "Extra catalogs: a [name] header, then its .properties lines.", "helpMore": "connector.name is required. The Hive and Iceberg catalogs are configured above, not here. Credentials cannot be inline: reference them as ${ENV:KEY} from a Secret under 'Secrets with catalog credentials'."
         },
         {
           "name": "catalogCredentialSecrets",
@@ -3149,7 +3149,7 @@
           "type": "secret-discovery",
           "multiple": true,
           "defaultValue": [],
-          "help": "Kubernetes Secrets in the release namespace holding the passwords and keys of the catalogs above (reusable or additional). Every key of each Secret becomes an environment variable of the Trino pods: reference it in the catalog as ${ENV:KEY}, e.g. connection-password=${ENV:PG_PASSWORD}. The credential then never sits in the catalog ConfigMap or in KDPS. Create the Secret first, e.g.: kubectl -n <ns> create secret generic postgres-prod-credentials --from-literal=PG_PASSWORD=... Restart Trino after changing a Secret. Needs chart 1.43.16 or later."
+          "help": "Secrets whose keys catalogs reference as ${ENV:KEY}. Chart 1.43.16+.", "helpMore": "Every key becomes an environment variable of the Trino pods, e.g. connection-password=${ENV:PG_PASSWORD}; credentials never sit in the catalog ConfigMap or in KDPS. Restart Trino after changing a Secret.\nkubectl -n <ns> create secret generic postgres-credentials --from-literal=PG_PASSWORD=…"
         }
       ]
     }

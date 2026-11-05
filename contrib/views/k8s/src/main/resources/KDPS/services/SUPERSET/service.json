@@ -988,14 +988,14 @@
       "lookupLabel": "app.kubernetes.io/name=clemlab-trino,app.kubernetes.io/component=coordinator",
       "targetHost": "ui_trino_host",
       "targetPort": "ui_trino_port",
-      "help": "Select a running Trino instance to auto-fill the host/port below. Trino discovered here is normally one deployed by an Ambari K8s view."
+      "help": "Pick a running Trino to fill its host and port below."
     },
     {
       "name": "ui_trino_host",
       "label": "Trino host",
       "type": "string",
       "excludeFromValues": true,
-      "help": "Auto-filled when you pick a discovered Trino above. Set it manually if Trino was deployed outside KDPS. Leave blank to skip the Trino database connection."
+      "help": "Filled when you pick a Trino above. Blank: no Trino connection.", "helpMore": "Set it by hand for a Trino deployed outside KDPS."
     },
     {
       "name": "ui_trino_port",
@@ -1003,7 +1003,7 @@
       "type": "number",
       "defaultValue": 8080,
       "excludeFromValues": true,
-      "help": "Trino coordinator port. Auto-filled when you pick a discovered Trino above (8080 for plain HTTP, the HTTPS port when TLS/LDAP/OIDC is enabled)."
+      "help": "Trino coordinator port, filled when you pick a Trino above.", "helpMore": "8080 for plain HTTP; the HTTPS port when Trino uses TLS, LDAP or OIDC."
     },
     {
       "name": "ui_trino_auth_mode",
@@ -1019,7 +1019,7 @@
         { "label": "Kerberos (SPNEGO)", "value": "kerberos" },
         { "label": "OIDC / JWT (service token, SSO)", "value": "oidc" }
       ],
-      "help": "How Superset authenticates to the Trino coordinator — match the security profile Trino was deployed with (usually the same as your cluster profile). Superset ALWAYS impersonates the logged-in user (their username becomes the Trino session user), so Ranger authorises each person individually no matter which mode is chosen. OIDC uses a Keycloak service token minted by a refresh sidecar (the Superset OIDC client must have service accounts enabled), and requires the Trino coordinator's JWT authenticator (Trino chart >= 1.43.7). A Trino deployed by KDPS accepts only tokens minted for it, so KDPS adds that Trino's audience to the Superset client's tokens; any other Trino must accept the audience your identity provider puts in them."
+      "help": "Match the security profile Trino was deployed with.", "helpMore": "Superset always runs queries as the logged-in user, so Ranger authorizes each person whatever the mode.\nOIDC uses a Keycloak service token (the Superset OIDC client needs service accounts enabled) and Trino's JWT authenticator (Trino chart 1.43.7+). A Trino deployed by KDPS accepts only tokens minted for it, and KDPS adds its audience to Superset's tokens; another Trino must accept the audience your identity provider sets."
     },
     {
       "name": "ui_trino_catalog",
@@ -1029,7 +1029,7 @@
       "required": true,
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_host", "operator": "non-empty" },
-      "help": "Default catalog for the Superset → Trino connection (e.g. hive, iceberg); it becomes the path of the SQLAlchemy URI. Required: without it Trino rejects every SQL Lab query that selects a schema with 'Schema is set but catalog is not'. Other catalogs stay reachable with catalog.schema.table."
+      "help": "Default catalog of the Trino connection, e.g. hive or iceberg. Required.", "helpMore": "Without it Trino rejects SQL Lab queries that pick a schema ('Schema is set but catalog is not'). Other catalogs stay reachable as catalog.schema.table."
     },
     {
       "name": "ui_trino_svc_user",
@@ -1037,7 +1037,7 @@
       "type": "string",
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_auth_mode", "value": "ldap" },
-      "help": "LDAP/AD service account Superset uses to authenticate the connection to Trino. Queries still RUN as the logged-in user (impersonation); this account only needs permission to impersonate."
+      "help": "Account Superset signs in to Trino with; it only needs to impersonate.", "helpMore": "Queries still run as the logged-in user."
     },
     {
       "name": "ui_trino_svc_password",
@@ -1045,7 +1045,7 @@
       "type": "password",
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_auth_mode", "value": "ldap" },
-      "help": "Password for the Trino service account above. It is written into the release's datasource import file, which chart 0.12.49 and later keep in a Kubernetes Secret (the deploy is refused with an older chart)."
+      "help": "Password of the Trino account above. Kept in a Secret (chart 0.12.49+)."
     },
     {
       "name": "ui_trino_ranger_service",
@@ -1053,7 +1053,7 @@
       "type": "string",
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_host", "operator": "non-empty" },
-      "help": "Optional. The Ranger repository that governs the target Trino. Leave blank for a Trino deployed by KDPS: the repo it registered (<release>-<namespace>) is looked up from the host above. Set it only when the repo is named differently, e.g. an externally managed Trino."
+      "help": "Blank for a Trino deployed by KDPS: its Ranger repository is found.", "helpMore": "Set it when the Trino's Ranger repository has another name, e.g. an externally managed Trino."
     },
     {
       "name": "ui_trino_oidc_principal",
@@ -1061,7 +1061,7 @@
       "type": "string",
       "excludeFromValues": true,
       "condition": { "field": "ui_trino_auth_mode", "value": "oidc" },
-      "help": "Optional. The principal the Trino JWT authenticator derives from Superset's service token (jwt.principal-field, default the preferred_username claim — for a Keycloak client-credentials token that is usually 'service-account-<client-id>'). If set, KDPS grants it 'impersonate' on Trino user '*' in the Trino Ranger repository, which Superset needs to run queries as the logged-in user. If you leave it blank, add that policy for the account in Ranger yourself (the exact principal depends on your Keycloak claim mapping): without the principal or that policy, Trino refuses every Superset query."
+      "help": "Principal Trino sees for Superset's token, to grant it 'impersonate'.", "helpMore": "Usually service-account-<client-id> for a Keycloak client-credentials token (Trino's jwt.principal-field, default preferred_username). KDPS then grants it 'impersonate' on Trino user '*' in Ranger.\nLeft blank, add that Ranger policy yourself: without it, Trino refuses every Superset query."
     },
     {
       "name": "hiveDatabase",
@@ -1074,7 +1074,7 @@
           "type": "boolean",
           "defaultValue": false,
           "autoEnableWhenContext": "hive",
-          "help": "When ON, KDPS creates a Superset database connection (PyHive) to the HiveServer2 of the selected Platform Context (right panel). Auth and transport follow the context; queries impersonate the logged-in user (hive.server2.proxy.user), so Ranger authorizes and audits the end user."
+          "help": "Adds a Superset connection to the context's HiveServer2.", "helpMore": "Authentication and transport follow the context; queries run as the logged-in user (hive.server2.proxy.user), so Ranger authorizes and audits each person."
         },
         {
           "name": "hiveDb.hostPort",
@@ -1092,7 +1092,7 @@
           "contextField": "hive.authMode",
           "condition": { "field": "hiveDb.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Delivered by KDPS from the context (kerberos / ldap / none). The Superset Hive connection is built to match it."
+          "help": "From the platform context: kerberos, ldap or none."
         },
         {
           "name": "hiveDb.transportMode",
@@ -1101,7 +1101,7 @@
           "contextField": "hive.transportMode",
           "condition": { "field": "hiveDb.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Delivered by KDPS from the context (hive.server2.transport.mode). binary → the connection uses the PyHive hive:// driver; http (or unknown) → the impyla impala:// driver over HTTP. Override only to force a driver."
+          "help": "From the platform context. Override only to force a driver.", "helpMore": "binary uses the PyHive hive:// driver; http (or unknown) uses impyla impala:// over HTTP."
         },
         {
           "name": "hiveDb.scheme",
@@ -1110,7 +1110,7 @@
           "contextField": "hive.scheme",
           "condition": { "field": "hiveDb.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "http or https for an HTTP-transport HiveServer2 (Knox is always https). Delivered by KDPS from the context; Override only to force it."
+          "help": "http or https for HiveServer2 over HTTP (Knox: https). From the context."
         },
         {
           "name": "hiveDb.httpPath",
@@ -1132,7 +1132,7 @@
           ],
           "condition": { "field": "hiveDb.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "HTTPS transport only. 'Verify' uses the CA bundle the chart mounts (REQUESTS_CA_BUNDLE); the HiveServer2/Knox certificate must chain to it."
+          "help": "HTTPS only: check the HiveServer2 or Knox certificate.", "helpMore": "Verify uses the CA bundle the chart mounts; the certificate must chain to it."
         },
         {
           "name": "hiveDb.ldapUser",
@@ -1140,7 +1140,7 @@
           "type": "string",
           "condition": { "field": "hiveDb.enabled", "value": true },
           "excludeFromValues": true,
-          "help": "Only when the context's Hive authentication is LDAP (HiveServer2 in LDAP mode, or Knox). Superset authenticates the connection with this account and impersonates the logged-in user (hive.server2.proxy.user), so the account needs hadoop.proxyuser rights on the cluster."
+          "help": "LDAP account Superset signs in to Hive with (LDAP Hive only).", "helpMore": "Queries run as the logged-in user, so the account needs hadoop.proxyuser rights on the cluster."
         },
         {
           "name": "hiveDb.ldapPassword",
@@ -1148,7 +1148,7 @@
           "type": "password",
           "condition": { "field": "hiveDb.ldapUser", "operator": "non-empty" },
           "excludeFromValues": true,
-          "help": "Password of the LDAP service account above. It is written into the release's datasource import file, which chart 0.12.49 and later keep in a Kubernetes Secret (the deploy is refused with an older chart), and encrypted by Superset in its metadata database."
+          "help": "Password of the LDAP account above. Kept in a Secret (chart 0.12.49+).", "helpMore": "Superset also encrypts it in its metadata database."
         },
         {
           "name": "hiveDb.externalKeytabSecret",
@@ -1157,7 +1157,7 @@
           "condition": { "field": "hiveDb.enabled", "value": true },
           "requiredWhenContext": { "field": "hive.authMode", "equals": "kerberos" },
           "excludeFromValues": true,
-          "help": "Required when the selected Platform Context is EXTERNAL/CDP/REMOTE and its Hive uses Kerberos: KDPS cannot mint a principal in that realm, so the pod authenticates with this keytab. Pick a Kubernetes Secret in the release namespace holding key 'keytab' (the service keytab issued by the backend realm's KDC) and set the matching principal below. Create it first, e.g.: kubectl -n <ns> create secret generic superset-cdp-keytab --from-file=keytab=./superset.keytab. Leave blank on the Ambari-managed context (the pod then uses the Ambari-issued keytab)."
+          "help": "Secret with Superset's keytab from another realm. Blank: KDPS issues it.", "helpMore": "Only for an external context with a Kerberos Hive whose KDC KDPS cannot reach (no KDC account on the context). The Secret, in the release namespace, holds key 'keytab'; set its principal below.\nkubectl -n <ns> create secret generic superset-keytab --from-file=keytab=./superset.keytab"
         },
         {
           "name": "hiveDb.externalKeytabPrincipal",
@@ -1166,7 +1166,7 @@
           "condition": { "field": "hiveDb.externalKeytabSecret", "operator": "non-empty" },
           "excludeFromValues": true,
           "placeholder": "superset@CDP.EXAMPLE.COM",
-          "help": "The Kerberos principal inside the external keytab above — the identity the Superset kinit sidecar authenticates AS to Hive. Set it per deploy so each Superset service can carry its own principal. If left blank, KDPS falls back to a 'principal' key in the Secret. Only used when an external keytab is selected."
+          "help": "Principal of the keytab above. Blank: the Secret's 'principal' key."
         }
       ]
     },
@@ -1181,7 +1181,7 @@
           "type": "boolean",
           "defaultValue": false,
           "autoEnableWhenCapability": "ingress",
-          "help": "Expose the service through a Kubernetes Ingress. Required when an authentication profile (OIDC / LDAP-over-SSL) is selected in Step 1 — OAuth callbacks need a public hostname and HTTPS."
+          "help": "Expose the service through an Ingress (a Route on OpenShift).", "helpMore": "Required with an authentication profile (OIDC, LDAP over TLS): sign-in needs a public hostname and HTTPS."
         },
         {
           "name": "ingress.ingressClassName",
@@ -1227,7 +1227,7 @@
           "type": "select",
           "defaultValue": "signedByAmbariCA",
           "excludeFromValues": true,
-          "help": "Pick how this service gets its TLS leaf. Recommended path is **Sign via cert-manager** when cert-manager is installed in the cluster (auto-renewal, standard K8s pattern). Fall back to **Sign with Company CA** (if you've uploaded one to the PKI registry) or **Sign with Ambari Internal CA** (testing only, browsers will warn). Options whose backing system isn't installed are hidden automatically. TLS is mandatory when an auth profile is selected in Step 1. On Upgrade/Config this starts on **Keep current certificate**: the release keeps the certificate it serves and nothing is replaced (a release serving plain HTTP starts on **None**). Choose another mode only to replace that certificate; you are asked to confirm, and a Secret kept by cert-manager or an external Secret store is never overwritten.",
+          "help": "Where the service's TLS certificate comes from.", "helpMore": "Sign via cert-manager: recommended when cert-manager is installed (renews automatically).\nSign with Company CA: a CA uploaded under Security → Certificate Authorities.\nSign with Ambari Internal CA: for tests, browsers warn.\nModes whose system is not installed are hidden. TLS is required with an authentication profile.\nOn Upgrade/Config this starts on 'Keep current certificate' (or 'None' for plain HTTP). Pick another mode only to replace the certificate; you are asked to confirm, and a Secret kept by cert-manager or an external store is never overwritten.",
           "options": [
             {
               "label": "Keep current certificate",
@@ -1309,7 +1309,7 @@
           "label": "Target Secret name",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Name of the kubernetes.io/tls Secret the view will create from the uploaded cert/key. Leave blank to use the default `<releaseName>-ingress-tls` (computed server-side at deploy time).",
+          "help": "Secret created from the uploaded certificate. Blank: <release>-ingress-tls.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "uploadLeaf"
@@ -1321,7 +1321,7 @@
           "type": "secret-discovery",
           "lookupLabel": "ambari.clemlab.com/resource-type=issuing-ca",
           "excludeFromValues": true,
-          "help": "Pick a Company Issuing CA from the PKI registry. The view mints a leaf TLS cert signed by this CA before installing the chart. KDPS keeps the CAs for every cluster it deploys to, and signs the leaf itself: the CA key is never written to the release's cluster. Upload CAs via Security → Certificate Authorities.",
+          "help": "Company CA that signs the service's certificate.", "helpMore": "KDPS signs the certificate itself: the CA key never goes to the release's cluster. Upload CAs under Security → Certificate Authorities.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "signedByCompanyCA"
@@ -1347,7 +1347,7 @@
           "label": "ClusterIssuer",
           "type": "cluster-issuer-discovery",
           "excludeFromValues": true,
-          "help": "Pick a cert-manager ClusterIssuer or Issuer. The view writes a Certificate resource pre-install; cert-manager mints the Secret and auto-renews it before expiry.",
+          "help": "cert-manager issuer that signs and renews the certificate.", "helpMore": "KDPS writes a Certificate before the install; cert-manager creates the Secret and renews it before it expires.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "signedByClusterIssuer"
@@ -1381,7 +1381,7 @@
           "label": "Remote key / path",
           "type": "string",
           "excludeFromValues": true,
-          "help": "Path/key in the upstream store. For Vault PKI: 'pki/issue/<role>'. For Vault KV: 'secret/data/tls/<name>'. For AWS Secrets Manager: the secret name.",
+          "help": "Path of the certificate in the external store.", "helpMore": "Vault PKI: pki/issue/<role>. Vault KV: secret/data/tls/<name>. AWS Secrets Manager: the secret's name.",
           "condition": {
             "field": "ingress.tlsMode",
             "value": "sourcedFromExternalSecret"
@@ -1408,7 +1408,7 @@
             "field": "ingress.enabled",
             "value": true
           },
-          "help": "OpenShift only. Space-separated IP addresses or CIDR ranges allowed to reach the Route, e.g. '10.0.0.0/8 172.16.20.0/24'. Set it when the cluster requires the haproxy.router.openshift.io/ip_whitelist annotation on every Route. Leave blank to allow all sources."
+          "help": "Source IPs or CIDRs allowed to reach the Route, space separated. Blank: all.", "helpMore": "OpenShift only, e.g. 10.0.0.0/8 172.16.20.0/24. Set it when the cluster requires the haproxy.router.openshift.io/ip_whitelist annotation on every Route."
         },
         {
           "name": "ingressTuning",
@@ -1425,7 +1425,7 @@
               "label": "proxy-buffer-size",
               "type": "string",
               "excludeFromValues": true,
-              "help": "nginx.ingress.kubernetes.io/proxy-buffer-size. Leave blank to use chart default (16k under OIDC/OAuth, otherwise nginx default 4k/8k). Bump if you see 502 + 'upstream sent too big header' on OAuth callbacks."
+              "help": "nginx proxy-buffer-size. Blank: the chart's default.", "helpMore": "16k under OIDC, else nginx's default (4k/8k). Raise it on 502 'upstream sent too big header' after sign-in."
             },
             {
               "name": "ingress.tuning.proxyBuffersNumber",
@@ -1464,7 +1464,7 @@
             }
           ],
           "collapsed": true,
-          "help": "Advanced — usually leave blank. nginx ingress annotations (proxy buffers / timeouts). Chart-side defaults are sensible for the common case; expand if you need to override (large headers on OAuth, long-running queries, big uploads)."
+          "help": "Advanced nginx settings: usually leave blank.", "helpMore": "Override them for large OAuth headers, long-running queries or big uploads."
         }
       ]
     },
@@ -1480,7 +1480,7 @@
           "required": true,
           "excludeFromValues": true,
           "seedFromValues": ["extraSecretEnv.SUPERSET_SECRET_KEY", "extraEnv.SUPERSET_SECRET_KEY"],
-          "help": "Superset SECRET_KEY used for session and CSRF signing, and to encrypt the database passwords Superset stores. Kept in a Kubernetes Secret. On an upgrade it is filled with the key the release runs with: keep it, or the stored database passwords can no longer be decrypted."
+          "help": "Signs sessions and encrypts stored database passwords. Required.", "helpMore": "Kept in a Secret. On an upgrade it holds the key the release runs with: keep it, or the stored database passwords can no longer be decrypted.\nGenerate one with: openssl rand -base64 42"
         },
         {
           "name": "superset.openstreetmapServerUrl",
@@ -1494,7 +1494,7 @@
           "label": "Worker processes",
           "type": "number",
           "defaultValue": 4,
-          "help": "Celery worker processes running SQL Lab asynchronous queries, reports and alerts. Without a number Celery starts one per CPU of the node, which on a large bare-metal node means dozens of processes and a worker pod killed for memory. Raise the worker memory limit below with it (about 400 MiB per process). Needs chart 0.12.52 or later; an older chart ignores it."
+          "help": "Celery worker processes for SQL Lab, reports and alerts.", "helpMore": "Blank, Celery starts one per CPU of the node: dozens on a large node, and a worker killed for memory. Allow about 400 MiB of worker memory per process. Chart 0.12.52+."
         },
         {
           "name": "supersetWorker.resources.limits.memory",
@@ -1528,7 +1528,7 @@
           "type": "boolean",
           "defaultValue": false,
           "excludeFromValues": true,
-          "help": "When ON, at each login Superset grants any role whose NAME matches one of the user's AD/LDAP or OIDC groups — looked up live from the DB, so a role you create in the Superset UI takes effect on the next login with NO restart. Use the pattern below to restrict which role names may be auto-granted."
+          "help": "Grants, at each login, the roles named like the user's groups.", "helpMore": "Groups come from LDAP, AD or OIDC; roles are looked up live, so a role created in Superset applies at the next login, without a restart. Restrict them with the pattern below."
         },
         {
           "name": "security.dynamicRolePattern",
@@ -1536,14 +1536,14 @@
           "type": "string",
           "excludeFromValues": true,
           "condition": { "field": "security.dynamicRoleFromGroup", "value": true },
-          "help": "Optional regex a role name must match to be auto-granted (e.g. ^ad_). Leave blank to allow any role whose name matches a group. Recommended in production so an arbitrary IdP group cannot match a sensitive role like Admin or sql_lab."
+          "help": "Regex a role name must match to be granted, e.g. ^ad_.", "helpMore": "Recommended in production, so a directory group cannot match a sensitive role such as Admin. Blank: any role named like a group."
         },
         {
           "name": "global.security.auth.localLoginFallback",
           "label": "Break-glass local sign-in",
           "type": "boolean",
           "defaultValue": false,
-          "help": "With an LDAP, Active Directory or OIDC security profile, lets the local administrator 'admin' sign in when the directory or the identity provider is unavailable: on the login form (LDAP, AD) or at /login/local (OIDC). Leave it off otherwise: while it is on, anyone who can reach Superset can try local passwords. The administrator's password is generated at the first install and kept in the Secret <release>-superset-admin. Needs chart 0.12.50 or later."
+          "help": "Lets the local 'admin' sign in when the directory or IdP is down.", "helpMore": "On the login form (LDAP, AD) or at /login/local (OIDC). While on, anyone reaching Superset can try local passwords: leave it off otherwise. The password is in the Secret <release>-superset-admin. Chart 0.12.50+."
         }
       ]
     },
@@ -1559,7 +1559,7 @@
           "name": "runAsUser",
           "label": "Run pods as a specific UID (optional)",
           "type": "number",
-          "help": "Leave blank (recommended): OpenShift's restricted-v2 SCC assigns an arbitrary non-root UID from the project's range automatically. Set a UID only if you must pin one — it MUST fall inside the namespace's openshift.io/sa.scc.uid-range annotation, otherwise admission rejects the pods."
+          "help": "Leave blank: OpenShift picks a UID from the project's range.", "helpMore": "Set a UID only if you must pin one. It must fall inside the namespace's openshift.io/sa.scc.uid-range annotation, or admission rejects the pods."
         }
       ]
     }

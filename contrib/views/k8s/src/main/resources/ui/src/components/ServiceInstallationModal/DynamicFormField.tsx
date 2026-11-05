@@ -29,6 +29,7 @@ import { monitoringFieldsFromDiscovery, parseDiscoveryChoice } from './discovery
 import OpenShiftMonitoringNotice from './OpenShiftMonitoringNotice';
 import { resourceCheckError } from './resourceChecks';
 import { conditionMet, requiredUnlessAnyError } from './requiredUnless';
+import { MoreHelpIcon, moreHelpTooltip } from './moreHelp';
 import { patternRules } from '../../utils/nameRules';
 import type { Rule } from 'antd/lib/form';
 import { ApiOutlined } from '@ant-design/icons';
@@ -124,6 +125,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
               label: (
                 <span>
                   {field.label}
+                  <MoreHelpIcon field={field as any} />
                   {(field as any).help && (
                     <Typography.Text type="secondary" style={{ marginLeft: 8, fontWeight: 'normal' }}>
                       — {(field as any).help.length > 80
@@ -139,7 +141,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         );
       }
       return (
-        <Card title={field.label} size="small" style={{ marginBottom: 16 }}>
+        <Card title={<>{field.label}<MoreHelpIcon field={field as any} /></>} size="small" style={{ marginBottom: 16 }}>
           {children}
         </Card>
       );
@@ -230,7 +232,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           );
         }
         return wrapLinked(
-          <Form.Item name={nameParts} label={field.label} rules={rules} help={f.help}
+          <Form.Item name={nameParts} label={field.label} tooltip={moreHelpTooltip(field as any)} rules={rules} help={f.help}
             extra={ctxResolved.kind === 'EXTERNAL'
               ? 'External context — provide this value; KDPS computes the connection from it.'
               : undefined}>
@@ -242,7 +244,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       // Override switch. Left off, the override stays blank and the engine uses the context
       // value (host:port / scheme / auth are all delivered by KDPS, not typed by the operator).
       return wrapLinked(
-        <Form.Item label={field.label} help={f.help} style={{ marginBottom: 16 }}>
+        <Form.Item label={field.label} tooltip={moreHelpTooltip(field as any)} help={f.help} style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Tag color="blue" style={{ fontSize: 13, padding: '2px 10px', margin: 0 }}>
               <ApiOutlined /> {ctxResolved.value}
@@ -282,7 +284,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     }
     case 'select':
       return (
-        <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
+        <Form.Item name={nameParts} label={field.label} tooltip={moreHelpTooltip(field as any)} rules={rules} help={field.help}>
           <Select disabled={disabledProp}>
             {(field as any).options
               // Options can declare `capability: "certManager" | "externalSecrets"` so the
@@ -300,7 +302,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       );
     case 'number':
       return (
-        <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
+        <Form.Item name={nameParts} label={field.label} tooltip={moreHelpTooltip(field as any)} rules={rules} help={field.help}>
           <InputNumber style={{ width: '100%' }} disabled={disabledProp}
             min={(field as any).min} max={(field as any).max} />
         </Form.Item>
@@ -308,14 +310,14 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
     case 'boolean':
       return wrapLinked(
         <Form.Item name={nameParts} valuePropName="checked" help={field.help} style={{ marginBottom: 8 }}>
-          <Checkbox disabled={disabledProp}>{field.label}</Checkbox>
+          <Checkbox disabled={disabledProp}>{field.label}<MoreHelpIcon field={field as any} /></Checkbox>
         </Form.Item>
       );
     case 'trino-catalog-select':
       // Reusable Trino catalogs (ids). The backend snapshots the selected catalogs' properties into
       // the release values at deploy time, so the value never carries the properties themselves.
       return (
-        <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
+        <Form.Item name={nameParts} label={field.label} tooltip={moreHelpTooltip(field as any)} rules={rules} help={field.help}>
           <TrinoCatalogSelect disabled={disabledProp} />
         </Form.Item>
       );
@@ -324,7 +326,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
       // than a single scalar (e.g. extra Trino catalogs as plain .properties sections), so the
       // content is deliberately NOT interpreted here.
       return (
-        <Form.Item name={nameParts} label={field.label} rules={rules} help={field.help}>
+        <Form.Item name={nameParts} label={field.label} tooltip={moreHelpTooltip(field as any)} rules={rules} help={field.help}>
           <Input.TextArea
             disabled={disabledProp}
             rows={(field as any).rows || 10}
@@ -363,7 +365,7 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
         ? { extra: field.help, dependencies }
         : field.pattern ? { extra: field.help } : { help: field.help };
       return (
-        <Form.Item name={nameParts} label={field.label} rules={[...rules, ...checkRules]} {...helpProps}>
+        <Form.Item name={nameParts} label={field.label} tooltip={moreHelpTooltip(field as any)} rules={[...rules, ...checkRules]} {...helpProps}>
           <Input
             disabled={disabledProp}
             placeholder={field.placeholder}

@@ -114,7 +114,8 @@ describe.each(SERVICES)('%s service.json — the TLS mode field', (svc) => {
     expect(keep).toEqual({ label: 'Keep current certificate', value: KEEP_CURRENT_TLS, upgradeOnly: true });
     expect(field.excludeFromValues).toBe(true);
     expect(field.defaultValue).toBe('signedByAmbariCA');
-    expect(field.help).toContain('Keep current certificate');
+    // The line under the field, or its details behind the ⓘ.
+    expect([field.help, field.helpMore].filter(Boolean).join(' ')).toContain('Keep current certificate');
   });
 });
 

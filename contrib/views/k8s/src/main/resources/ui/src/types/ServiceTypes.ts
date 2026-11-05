@@ -2,7 +2,10 @@
 export interface FormFieldBase {
   name: string;
   label: string;
+  /** One line under the field: what it is and what to enter. */
   help?: string;
+  /** The details, behind an ⓘ next to the label (see moreHelp.tsx). */
+  helpMore?: string;
   /**
    * Makes the field mandatory when the selected Platform Context is not the Ambari-managed one
    * and the context resolves `field` (a "<capability>.<field>" key) to `equals` — e.g. the

@@ -175,8 +175,8 @@ describe('TRINO service.json — "Let KDPS manage catalogs" needs internal HTTPS
     const https = field('httpsInternal', 'tls.https.enabled');
     expect(option.defaultValue).toBe(true);
     expect(option.condition).toEqual({ field: 'tls.https.enabled', value: true });
-    expect(option.help).toContain(`'${https.label}'`);
-    expect(https.help).toContain("'Let KDPS manage catalogs'");
+    expect([option.help, option.helpMore].filter(Boolean).join(' ')).toContain(`'${https.label}'`);
+    expect([https.help, https.helpMore].filter(Boolean).join(' ')).toContain("'Let KDPS manage catalogs'");
   });
 
 

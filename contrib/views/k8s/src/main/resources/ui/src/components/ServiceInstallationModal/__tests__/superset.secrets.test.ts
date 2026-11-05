@@ -89,7 +89,7 @@ describe('Superset datasource credentials', () => {
   it('the help texts say where the passwords are kept, and from which chart', () => {
     for (const help of [field('hiveDatabase', 'hiveDb.ldapPassword').help,
       def.form.find((f: any) => f.name === 'ui_trino_svc_password').help]) {
-      expect(help).toContain('chart 0.12.49 and later keep in a Kubernetes Secret');
+      expect(help).toContain('Kept in a Secret (chart 0.12.49+)');
     }
     for (const path of ['hiveDb.ldapPassword', 'ui_trino_svc_password']) {
       expect(def.secretChartVersions[path].range).toBe('>=0.12.49');

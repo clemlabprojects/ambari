@@ -94,7 +94,8 @@ describe('unauthenticatedExposure', () => {
   it('tells the operator the KDPS login and where its password is', () => {
     const find = (fields: any[]): any => fields.reduce((hit: any, f: any) =>
       hit || (f.name === 'kdps.serviceUser.enabled' ? f : f.type === 'group' ? find(f.fields || []) : undefined), undefined);
-    const help = find(TRINO.form).help;
+    const found = find(TRINO.form);
+    const help = [found.help, found.helpMore].filter(Boolean).join(' ');
     expect(help).toContain('kdps is its only login');
     expect(help).toContain('-kdps-service-user');
     expect(help).toContain('(key password)');

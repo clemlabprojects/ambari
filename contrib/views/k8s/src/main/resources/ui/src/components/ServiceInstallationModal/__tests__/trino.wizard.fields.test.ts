@@ -44,6 +44,7 @@ describe('Trino wizard fields', () => {
     const walk = (fields: any[]) => fields.forEach((f: any) => {
       if (f.label) texts.push(f.label);
       if (f.help) texts.push(f.help);
+      if (f.helpMore) texts.push(f.helpMore);
       if (Array.isArray(f.fields)) walk(f.fields);
     });
     walk(svc.form);
@@ -76,7 +77,8 @@ describe('Trino secrets stay out of ConfigMaps', () => {
     expect(f.excludeFromValues).toBeUndefined();
     expect(f.defaultValue).toEqual([]);
     expect(svc.featureChartVersions.catalogCredentialSecrets).toBe('>=1.43.16');
-    expect(field('customCatalogs', 'customCatalogs.text').help).toContain('Secrets with catalog credentials');
+    const text = field('customCatalogs', 'customCatalogs.text');
+    expect([text.help, text.helpMore].filter(Boolean).join(' ')).toContain('Secrets with catalog credentials');
   });
 
   it('an upgrade drops the secrets an earlier version left in the values and keeps the credential Secrets', () => {

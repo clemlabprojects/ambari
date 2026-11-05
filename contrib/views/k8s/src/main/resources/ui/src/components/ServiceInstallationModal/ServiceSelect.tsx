@@ -18,6 +18,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Form, Select, AutoComplete, Button, Divider, Space, Typography } from 'antd';
+import { moreHelpTooltip } from './moreHelp';
 import { PlusOutlined } from '@ant-design/icons';
 import type { ClusterService } from '../../types/ServiceTypes';
 import { getClusterServices, getDiscoveredK8sServices, getDiscoveredK8sSecrets, getDiscoveredClusterIssuers, getDiscoveredSecretStores, getMonitoringDiscovery, getKedaDiscovery } from '../../api/client';
@@ -165,7 +166,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
   // freeform: true → AutoComplete (discovered options as suggestions + free text input)
   if (field.freeform) {
     return (
-      <Form.Item name={nameParts} label={field.label} help={field.help} rules={rules}>
+      <Form.Item name={nameParts} label={field.label} tooltip={moreHelpTooltip(field)} help={field.help} rules={rules}>
         <AutoComplete
           options={services.map(s => ({ label: s.label, value: s.value }))}
           allowClear
@@ -177,7 +178,7 @@ const ServiceSelect: React.FC<ServiceSelectProps> = ({ field, onValueSelect, rul
   }
 
   return (
-      <Form.Item name={nameParts} label={field.label} help={field.help} rules={rules}>
+      <Form.Item name={nameParts} label={field.label} tooltip={moreHelpTooltip(field)} help={field.help} rules={rules}>
         <Select
             loading={isLoading}
             allowClear

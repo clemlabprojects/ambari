@@ -33,7 +33,10 @@ public class FormField {
     public String type; // string, boolean, number, select, group, k8s-discovery, etc.
     public boolean required;
     public Object defaultValue;
+    /** One line under the field: what it is and what to enter. */
     public String help;
+    /** The details of {@link #help}, which the wizard shows behind an icon next to the label. */
+    public String helpMore;
     public boolean excludeFromValues;
     /**
      * Marks a text field that holds a secret although it is not typed as a password, e.g. an S3 access key or

@@ -54,7 +54,7 @@ describe.each([
     expect(heap.resourceCheck).toEqual({
       kind: 'javaHeap', limitField: `${role}.resources.limits.memory`, blankSizedByChartFrom: '1.43.15',
     });
-    expect(heap.help).toContain('70-80% of the memory limit');
+    expect([heap.help, heap.helpMore].filter(Boolean).join(' ')).toContain('70-80% of the memory limit');
     expect(heap.label).toMatch(/\(optional\)$/);
   });
 });
