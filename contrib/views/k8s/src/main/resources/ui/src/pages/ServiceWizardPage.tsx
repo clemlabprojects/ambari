@@ -41,6 +41,7 @@ import { useClusterCapabilities, fieldCapabilityAvailable } from '../components/
 import { applyFormDefaults, buildChartValues, seedFieldsFromValues } from '../components/ServiceInstallationModal/chartValues';
 import { resourceCheckErrors } from '../components/ServiceInstallationModal/resourceChecks';
 import { requiredFieldErrors, requiredUnlessAnyErrors } from '../components/ServiceInstallationModal/requiredUnless';
+import { followReleaseName, keytabSecretName, tlsSecretName } from '../components/ServiceInstallationModal/derivedSecretNames';
 import { buildTlsPayload } from '../components/ServiceInstallationModal/tlsPayload';
 import { buildIngressTlsPayload, describeCurrentIngressTls, describeExistingSecretReplacement, describeIngressTlsChange, ingressTlsChange, ingressTlsNotice, keptCertificateHostProblem, KEEP_CURRENT_TLS, offersKeepCurrentTls, securityProfileIngress, seedKeepCurrentTls, unconfirmedTlsReplacement, upgradeChartFormValues, type CurrentIngressTls } from '../components/ServiceInstallationModal/ingressTls';
 import { unauthenticatedExposure } from '../components/ServiceInstallationModal/unauthenticatedExposure';
@@ -139,6 +140,16 @@ const ServiceWizardPage: React.FC = () => {
 
   const upgradeState = (location.state as any)?.mode === 'upgrade' ? (location.state as any) : undefined;
   const isUpgrade = !!upgradeState;
+
+  // The Secret names derived from the release name follow it as the operator types it (an upgrade keeps the release's).
+  const releaseNameSeen = React.useRef<string | undefined>(undefined);
+  React.useEffect(() => {
+    const previous = releaseNameSeen.current;
+    releaseNameSeen.current = installValues?.releaseName;
+    if (isUpgrade || previous === undefined) return;
+    setInstallValues((current: any) => followReleaseName(def, current, previous));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [installValues?.releaseName]);
   // Fields an upgrade seeds from the deployed release (service.json `seedFromValue`), filled or left at
   // the default the chart runs when the release has no value. They show what runs, so the auto-enable
   // defaults below must not switch them.
@@ -248,23 +259,11 @@ const ServiceWizardPage: React.FC = () => {
             // Seed TLS defaults from service definition (if any).
             // This keeps TLS entries visible in the form and makes bindings able to pick up default values,
             // including resolved secret names so the user sees sensible defaults.
-            const resolveTpl = (tpl: string | undefined, ctx: any) =>
-              (tpl || '').replace(/{{\s*([^}]+)\s*}}/g, (_m, raw) => {
-                const path = String(raw || '').trim().split('.').filter(Boolean);
-                let cur: any = ctx;
-                for (const p of path) {
-                  if (cur == null) return '';
-                  cur = cur[p];
-                }
-                return cur == null ? '' : String(cur);
-              });
             if (Array.isArray((svcDef as any)?.tls) && (svcDef as any).tls.length > 0) {
               const tlsObj: any = {};
               (svcDef as any).tls.forEach((t: any) => {
                 if (!t?.key) return;
-                const secretName = t.secretNameTemplate
-                  ? resolveTpl(t.secretNameTemplate, initial)
-                  : `${initial.releaseName}-${t.key}-tls`;
+                const secretName = tlsSecretName(t, initial);
                 const pwdSecret = (t.defaults && t.defaults.passwordSecretName)
                   ? t.defaults.passwordSecretName
                   : `${secretName}-pass`;
@@ -285,9 +284,7 @@ const ServiceWizardPage: React.FC = () => {
               const kerberosObj: any = {};
               (svcDef as any).kerberos.forEach((k: any) => {
                 if (!k?.key) return;
-                const secretName = k.secretNameTemplate
-                  ? resolveTpl(k.secretNameTemplate, initial)
-                  : `${initial.releaseName}-keytab`;
+                const secretName = keytabSecretName(k, initial);
                 kerberosObj[k.key] = {
                   ...(k.defaults || {}),
                   enabled: k.enabled !== false,

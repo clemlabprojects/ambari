@@ -1145,13 +1145,8 @@ public class CommandService {
                     kerberosRealm == null ? "" : kerberosRealm
             );
             resolvedPrincipal = normalizeKerberosPrincipalLength(resolvedPrincipal);
-            String secretName = resolveKerberosEntrySecretName(
-                    kerberosEntry,
-                    serviceName,
-                    namespace,
-                    releaseName,
-                    kerberosRealm
-            );
+            String secretName = deployedKeytabSecretOr(namespace, releaseName, resolvedPrincipal,
+                    resolveKerberosEntrySecretName(kerberosEntry, serviceName, namespace, releaseName, kerberosRealm));
             String keyNameInSecret = resolveStringValue(kerberosEntry.get("keyNameInSecret"), "service.keytab");
             String mountPath = resolveStringValue(kerberosEntry.get("mountPath"), "/etc/security/keytabs");
 
@@ -1298,13 +1293,9 @@ public class CommandService {
             }
             validateKerberosPrincipal(principalFqdn);
 
-            String secretName = resolveKerberosEntrySecretName(
-                    kerberosEntry,
-                    serviceName,
-                    request.getNamespace(),
-                    request.getReleaseName(),
-                    kerberosRealm
-            );
+            String secretName = deployedKeytabSecretOr(request.getNamespace(), request.getReleaseName(), principalFqdn,
+                    resolveKerberosEntrySecretName(kerberosEntry, serviceName, request.getNamespace(),
+                            request.getReleaseName(), kerberosRealm));
             planned.add(new PlannedKeytab(
                     entryKey,
                     principalFqdn,
@@ -14531,6 +14522,21 @@ public class CommandService {
 
     /** A keytab read from a Secret: the data key holding it and its bytes. */
     record StoredKeytab(String secretName, String key, byte[] bytes, String release) {}
+
+    /**
+     * The Secret the release already keeps the keytab of {@code principal} in, else {@code named}: a redeploy keeps the
+     * Secret its pods mount, even when the wizard named it after another release name.
+     */
+    String deployedKeytabSecretOr(String namespace, String release, String principal, String named) {
+        if (kubernetesService == null || namespace == null || release == null || principal == null) return named;
+        String deployed = releaseKeytabSecret(namespace, release, principal);
+        if (deployed != null && !deployed.equals(named)) {
+            LOG.info("Release {}/{} keeps the keytab of {} in Secret {}, not {}", namespace, release, principal, deployed,
+                    named);
+            return deployed;
+        }
+        return named;
+    }
 
     /** The Secret KDPS wrote the keytab of {@code principal} in for {@code release}, by its labels; null when none. */
     String releaseKeytabSecret(String namespace, String release, String principal) {
