@@ -2934,6 +2934,18 @@ public class CommandService {
     }
 
     /**
+     * Whether the form sets the release's access control to something other than Ranger ({@code accessControl.type},
+     * Trino's "Disabled (allow all)" for instance): the deploy then talks to no Ranger. The wizard sends the service's
+     * Ranger block on every platform context, since an upgrade is how Ranger is turned on later.
+     */
+    static boolean accessControlTurnsRangerOff(HelmDeployRequest request) {
+        if (request == null || request.getFormValues() == null) return false;
+        Object accessControlType = ConfigResolutionService.getByDottedPath(request.getFormValues(), "accessControl.type");
+        return accessControlType != null && !String.valueOf(accessControlType).isBlank()
+                && !"ranger".equalsIgnoreCase(String.valueOf(accessControlType).trim());
+    }
+
+    /**
      * Resolve the Ranger repository name for the current release.
      * Uses the repository name property defined in the Ranger plugin settings.
      *
@@ -8567,6 +8579,11 @@ public class CommandService {
             throw new IllegalStateException(wiringProblem);
         }
 
+        if (accessControlTurnsRangerOff(request) && request.getRanger() != null) {
+            LOG.info("Access control of {}/{} is not Ranger: no Ranger repository nor plugin configuration is planned",
+                    request.getNamespace(), request.getReleaseName());
+            request.setRanger(null);
+        }
         Map<String, Map<String, Object>> ranger = request.getRanger();
         String cluster = null;
         boolean ambariManagesNoCluster = false;

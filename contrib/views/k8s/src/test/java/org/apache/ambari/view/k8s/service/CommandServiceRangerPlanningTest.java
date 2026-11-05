@@ -23,6 +23,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
 import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
+import org.apache.ambari.view.k8s.requests.HelmDeployRequest;
 import org.apache.ambari.view.k8s.store.CommandEntity;
 import org.apache.ambari.view.k8s.store.CommandStatusEntity;
 import org.junit.jupiter.api.AfterEach;
@@ -137,6 +138,20 @@ class CommandServiceRangerPlanningTest {
         fixture.kerberos(true);
 
         List<CommandEntity> steps = fixture.steps(fixture.plan(fixture.trino(false)));
+
+        assertTrue(steps.stream().noneMatch(s -> s.getType().startsWith("RANGER_")), DeployPlanningFixture.types(steps)::toString);
+        assertNull(client.configMaps().inNamespace(NS).withName(SECURITY_CONFIG_MAP).get());
+        assertFalse(DeployPlanningFixture.overrides(fixture.params(step(steps, "HELM_DEPLOY"))).containsKey("ranger.serviceName"));
+    }
+
+    @Test
+    void accessControlDisabledInTheFormTalksToNoRanger() throws Exception {
+        // The wizard sends the Ranger block on every platform context: "Disabled (allow all)" must still mean no Ranger.
+        fixture.kerberos(true);
+        HelmDeployRequest request = fixture.trino(true);
+        request.getFormValues().put("accessControl", new LinkedHashMap<>(Map.of("type", "properties")));
+
+        List<CommandEntity> steps = fixture.steps(fixture.plan(request));
 
         assertTrue(steps.stream().noneMatch(s -> s.getType().startsWith("RANGER_")), DeployPlanningFixture.types(steps)::toString);
         assertNull(client.configMaps().inNamespace(NS).withName(SECURITY_CONFIG_MAP).get());
