@@ -311,7 +311,7 @@ class TestAmoroCatalogs(unittest.TestCase):
                                    amoro_oidc_client_secret="s3cr3t", amoro_oidc_auth_server_url="https://kc/realms/odp")
     catalogs.oidc_token_endpoint = lambda: "https://kc/realms/odp/protocol/openid-connect/token"
     catalogs.polaris_principal_credentials = lambda token: self.fail("no Polaris-issued credential with OIDC")
-    self.assertEqual({"credential": "c1-amoro:s3cr3t", "scope": "openid",
+    self.assertEqual({"credential": "c1-amoro:s3cr3t", "scope": "openid", "token-exchange-enabled": "false",
                       "oauth2-server-uri": "https://kc/realms/odp/protocol/openid-connect/token"},
                      catalogs.polaris_catalog_auth("token"))
 
@@ -462,6 +462,32 @@ class TestAmoroCatalogCredentialRefresh(unittest.TestCase):
     self.assertEqual("https://polaris:8443/api/catalog", body["properties"]["uri"])
     self.assertEqual("********", body["authConfig"]["auth.ak_sk.secret_key"])
     self.assertEqual(self.POLARIS["storageConfig"], body["storageConfig"])
+
+  def test_oidc_catalog_without_client_credentials_renewal_is_updated(self):
+    # registered before token-exchange-enabled: its token expired after the OIDC token lifespan
+    catalogs, _ = self.catalogs(dict(self.POLARIS), amoro_polaris_oidc=True, amoro_oidc_client_id="c1-amoro",
+                                amoro_oidc_client_secret="same")
+    properties = dict(self.POLARIS["properties"], **{"oauth2-server-uri": "https://kc/token", "scope": "openid",
+                                                     catalogs.FINGERPRINT: catalogs.fingerprint("c1-amoro:same")})
+    catalogs, _ = self.catalogs(dict(self.POLARIS, properties=properties), has_hive=False, has_polaris_ozone_catalog=True,
+                                security_enabled=False, amoro_polaris_oidc=True, amoro_oidc_client_id="c1-amoro",
+                                amoro_oidc_client_secret="same")
+    catalogs.oidc_token_endpoint = lambda: "https://kc/token"
+    catalogs.register_catalogs(required=True)
+    self.assertEqual("false", catalogs.puts[0][2]["properties"]["token-exchange-enabled"])
+
+  def test_complete_oidc_catalog_is_left_alone(self):
+    catalogs, _ = self.catalogs(dict(self.POLARIS), amoro_polaris_oidc=True, amoro_oidc_client_id="c1-amoro",
+                                amoro_oidc_client_secret="same")
+    properties = dict(self.POLARIS["properties"], **{"oauth2-server-uri": "https://kc/token", "scope": "openid",
+                                                     "token-exchange-enabled": "false",
+                                                     catalogs.FINGERPRINT: catalogs.fingerprint("c1-amoro:same")})
+    catalogs, _ = self.catalogs(dict(self.POLARIS, properties=properties), has_hive=False, has_polaris_ozone_catalog=True,
+                                security_enabled=False, amoro_polaris_oidc=True, amoro_oidc_client_id="c1-amoro",
+                                amoro_oidc_client_secret="same")
+    catalogs.oidc_token_endpoint = lambda: "https://kc/token"
+    catalogs.register_catalogs(required=True)
+    self.assertEqual([], catalogs.puts)
 
   def test_rotated_s3_secret_is_set_on_ozone_and_in_the_polaris_catalog(self):
     catalogs, _ = self.catalogs(dict(self.POLARIS), has_hive=False, has_polaris_ozone_catalog=True,

@@ -193,7 +193,9 @@ def refresh_catalog_credentials(name):
     if params.amoro_polaris_oidc:
       auth_properties = polaris_catalog_auth()
       wanted = fingerprint(auth_properties["credential"])
-      if current.get(FINGERPRINT) != wanted:
+      # the credential comes back masked: its fingerprint tells whether it changed
+      if current.get(FINGERPRINT) != wanted or any(
+          current.get(key) != value for key, value in auth_properties.items() if key != "credential"):
         changes.update(auth_properties, **{FINGERPRINT: wanted})
         refreshed.append("OIDC")
     # The S3 secret comes back masked: Amoro keeps the stored one unless it is replaced.
@@ -296,8 +298,10 @@ def polaris_catalog_auth(token=None):
   import params
 
   if params.amoro_polaris_oidc:
+    # The Iceberg REST client renews its token by token exchange unless told otherwise, which the OIDC
+    # provider refuses to this client: it gets a new token with its client id and secret instead.
     return {"credential": "{0}:{1}".format(params.amoro_oidc_client_id, params.amoro_oidc_client_secret),
-            "oauth2-server-uri": oidc_token_endpoint(), "scope": "openid"}
+            "oauth2-server-uri": oidc_token_endpoint(), "scope": "openid", "token-exchange-enabled": "false"}
   client_id, client_secret = polaris_principal_credentials(token or polaris_admin_token())
   return {"credential": "{0}:{1}".format(client_id, client_secret),
           "oauth2-server-uri": params.polaris_url + "/api/catalog/v1/oauth/tokens", "scope": "PRINCIPAL_ROLE:ALL"}
