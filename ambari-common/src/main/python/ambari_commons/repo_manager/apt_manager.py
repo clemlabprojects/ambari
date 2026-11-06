@@ -270,6 +270,11 @@ class AptManager(GenericManager):
     # reuse the previously computed 'exists' value to avoid calling _check_existence() twice
     elif getattr(context, 'is_upgrade', False) or getattr(context, 'use_repos', None) or not exists:
       cmd = self.properties.install_cmd[getattr(context, 'log_output', False)]
+      if getattr(context, 'keep_installed_versions', False):
+        # apt also upgrades the installed packages built from the same source package (the unversioned
+        # zookeeper with zookeeper-<version>...), and removes the packages of the installed stack
+        # version which depend on their exact version
+        cmd = cmd[:1] + ['-o', 'APT::Get::Upgrade-By-Source-Package=false'] + cmd[1:]
       copied_sources_files = []
       is_tmp_dir_created = False
       if getattr(context, 'use_repos', None):

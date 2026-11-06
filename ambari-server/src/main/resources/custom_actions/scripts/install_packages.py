@@ -421,7 +421,8 @@ class InstallPackages(Script):
       installation_context = RepoCallContext(
         ignore_errors=False,
         retry_on_repo_unavailability=agent_stack_retry_on_unavailability,
-        retry_count=agent_stack_retry_count
+        retry_count=agent_stack_retry_count,
+        keep_installed_versions=True
       )
 
       for package in filtered_package_list:

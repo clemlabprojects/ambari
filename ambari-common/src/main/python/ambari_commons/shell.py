@@ -104,10 +104,11 @@ class RepoCallContext(object):
   skip_repos = None
   is_upgrade = False
   action_force = False  # currently only for install action
+  keep_installed_versions = False  # currently only for apt installs
 
   def __init__(self, ignore_errors=True, retry_count=2, retry_sleep=30, retry_on_repo_unavailability=False,
                retry_on_locked=True, log_output=True, use_repos=None, skip_repos=None,
-               is_upgrade=False, action_force=False):
+               is_upgrade=False, action_force=False, keep_installed_versions=False):
     """
     :type ignore_errors bool
     :type retry_count int
@@ -118,6 +119,7 @@ class RepoCallContext(object):
     :type use_repos dict
     :type skip_repos set|list
     :type is_upgrade bool
+    :type keep_installed_versions bool: leave the installed packages of other stack versions untouched
     """
     self.ignore_errors = ignore_errors
     self.retry_count = retry_count
@@ -129,6 +131,7 @@ class RepoCallContext(object):
     self.skip_repos = skip_repos
     self.is_upgrade = is_upgrade
     self.action_force = action_force
+    self.keep_installed_versions = keep_installed_versions
 
   @property
   def retry_count(self):
