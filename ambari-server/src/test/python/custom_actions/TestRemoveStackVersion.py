@@ -48,6 +48,7 @@ class TestRemoveStackVersion(RMFTestCase):
   @patch("resource_management.libraries.functions.repo_version_history.write_actual_version_to_history_file")
   @patch("resource_management.libraries.functions.stack_tools.get_stack_tool_package", new = MagicMock(return_value="hdp-select"))
   @patch("os.listdir", new = MagicMock(return_value=["somefile"]))
+  @patch("resource_management.libraries.functions.stack_tools.get_stack_tool_path", new = MagicMock(return_value="/usr/bin/odp-select"))
   def test_normal_flow(self,
                        write_actual_version_to_history_file_mock,
                        read_actual_version_from_history_file_mock,
@@ -75,6 +76,10 @@ class TestRemoveStackVersion(RMFTestCase):
                       {'remove_previous_stacks': {'exit_code': 0,
                        'message': 'Stack version 2.1.0.0-400 successfully removed!'}})
     self.assertResourceCalled('Execute', ('rm', '-f', '/usr/odp2.1.0.0-400'),
+                              sudo = True,
+                              )
+    # the packages of the removed version may have deleted the current links
+    self.assertResourceCalled('Execute', ('ambari-python-wrap', '/usr/bin/odp-select', 'set', 'all', '2.2.0.1-885'),
                               sudo = True,
                               )
     self.assertNoMoreResources()

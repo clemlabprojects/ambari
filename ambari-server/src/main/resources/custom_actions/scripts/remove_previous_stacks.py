@@ -47,6 +47,16 @@ class RemovePreviousStacks(Script):
 
     for low_version in versions_to_remove:
       self.remove_stack_version(structured_output, low_version)
+    if versions_to_remove:
+      self.select_version(version)
+
+  def select_version(self, version):
+    """
+    The packages of a removed version may delete the stack root current links whatever version
+    they point to (ODP debs before 1.3.2.0): points them all to the version kept again.
+    """
+    stack_selector_path = stack_tools.get_stack_tool_path(stack_tools.STACK_SELECTOR_NAME)
+    Execute(('ambari-python-wrap', stack_selector_path, 'set', 'all', version), sudo=True)
 
   def remove_stack_version(self, structured_output, version):
     # check simlinks not refer to version for remove
