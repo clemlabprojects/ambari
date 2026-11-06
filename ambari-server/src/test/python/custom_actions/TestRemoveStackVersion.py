@@ -37,6 +37,8 @@ class TestRemoveStackVersion(RMFTestCase):
     return [
       ["pkg12_1_0_0_400", "1.0", "repo"],
       ["pkg22_1_0_1_885", "2.0", "repo2"],
+      ["hadoop-2-1-0-0-400", "1.0", "repo"],
+      ["hadoop-2-2-0-1-885", "2.0", "repo2"],
       ["hdp-select2_1_0_1_885", "2.0", "repo2"]
     ]
 
@@ -71,6 +73,8 @@ class TestRemoveStackVersion(RMFTestCase):
     self.assertEqual(stack_versions_mock.call_args[0][0], '/usr/odp')
 
     self.assertResourceCalled('Package', "pkg12_1_0_0_400", action=["remove"])
+    # deb package names carry the version with dashes
+    self.assertResourceCalled('Package', "hadoop-2-1-0-0-400", action=["remove"])
     self.assertTrue(put_structured_out_mock.called)
     self.assertEqual(put_structured_out_mock.call_args[0][0],
                       {'remove_previous_stacks': {'exit_code': 0,

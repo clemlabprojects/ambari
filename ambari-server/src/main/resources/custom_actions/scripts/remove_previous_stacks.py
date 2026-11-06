@@ -83,12 +83,15 @@ class RemovePreviousStacks(Script):
 
   def get_packages_to_remove(self, version):
     packages = []
-    formated_version = version.replace('.', '_').replace('-', '_')
+    # the version is in the rpm package names with underscores (hadoop_1_3_1_0_58), in the deb ones
+    # with dashes (hadoop-1-3-1-0-58)
+    formated_versions = [re.sub(r'[.-]', separator, version) for separator in ('_', '-')]
     all_installed_packages = self.pkg_provider.all_installed_packages()
 
     all_installed_packages = [package[0] for package in all_installed_packages]
     for package in all_installed_packages:
-      if formated_version in package and self.stack_tool_package not in package:
+      if any(formated_version in package for formated_version in formated_versions) \
+          and self.stack_tool_package not in package:
         packages.append(package)
         Logger.info("%s added to remove" % (package))
     return packages
