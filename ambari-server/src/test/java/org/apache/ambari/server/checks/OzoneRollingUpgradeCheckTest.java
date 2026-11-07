@@ -55,7 +55,7 @@ public class OzoneRollingUpgradeCheckTest {
     PrerequisiteCheck result = perform(UpgradeType.ROLLING);
     Assert.assertEquals(PrereqCheckStatus.FAIL, result.getStatus());
     Assert.assertTrue(result.getFailedOn().contains("OZONE"));
-    Assert.assertTrue(result.getFailReason().contains("Express upgrade"));
+    Assert.assertTrue(result.getFailReason().contains("Use Express mode"));
   }
 
   @Test
