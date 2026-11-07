@@ -486,10 +486,14 @@ def run_admin_bootstrap():
   if "," in bootstrap_user or "," in bootstrap_password:
     raise Fail("polaris_admin_username and polaris_admin_password must not contain commas for admin bootstrap.")
 
+  # The root credentials go through a file readable by Polaris only, never on the command line, which the
+  # task log shows: {realm: {client-id, client-secret}} (YAML, of which JSON is a subset).
+  credentials_file = os.path.join(params.polaris_pid_dir, "bootstrap-credentials.json")
+  credentials = dict((realm, {"client-id": bootstrap_user, "client-secret": bootstrap_password}) for realm in realms)
   bootstrap_cmd_parts = [format("{polaris_home}/bin/admin"), "bootstrap"]
   for realm in realms:
     bootstrap_cmd_parts.extend(["-r", realm])
-    bootstrap_cmd_parts.extend(["-c", "{0},{1},{2}".format(realm, bootstrap_user, bootstrap_password)])
+  bootstrap_cmd_parts.extend(["--credentials-file", credentials_file])
   bootstrap_cmd = " ".join(shlex.quote(part) for part in bootstrap_cmd_parts)
 
   admin_cfg = "{0}/admin.properties".format(params.polaris_conf_dir)
@@ -518,6 +522,9 @@ def run_admin_bootstrap():
   # cannot clobber the Java 17+ home needed by Quarkus.
   java_home_override = "export JAVA_HOME={0}".format(shlex.quote(params.polaris_java_home))
   Logger.info("Running Polaris admin bootstrap for realms: {0}".format(", ".join(realms)))
+  Directory(params.polaris_pid_dir, owner=params.polaris_user, group=params.user_group, create_parents=True)
+  File(credentials_file, content=PasswordString(json.dumps(credentials)), owner=params.polaris_user,
+       group=params.user_group, mode=0o600)
   try:
     Execute(
       "source {0}/polaris-env.sh; {1}; {2}".format(
@@ -530,6 +537,8 @@ def run_admin_bootstrap():
       Logger.info("Polaris metastore is already bootstrapped; skipping.")
       return
     raise
+  finally:
+    File(credentials_file, action="delete")
 
 
 # ---------------------------------------------------------------------------

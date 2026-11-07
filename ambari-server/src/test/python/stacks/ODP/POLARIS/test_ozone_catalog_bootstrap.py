@@ -18,6 +18,7 @@ limitations under the License.
 """
 
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -93,6 +94,26 @@ class TestSecretsStayOutOfTheTaskLog(unittest.TestCase):
               and not source.startswith("PasswordString("):
             unmasked.append("line {0}: {1}".format(node.lineno, source))
     self.assertEqual([], unmasked)
+
+  def test_the_admin_bootstrap_takes_the_root_secret_from_a_file(self):
+    polaris = load_polaris(application_properties={"polaris.persistence.type": "relational-jdbc"},
+                           polaris_bootstrap_realms_raw="POLARIS", polaris_admin_username="root",
+                           polaris_admin_password="root-s3cr3t", polaris_conf_dir="/etc/polaris/conf",
+                           polaris_java_home="/usr/lib/jvm/java-21", polaris_user="polaris", user_group="hadoop",
+                           polaris_pid_dir="/var/run/polaris")
+    calls = []
+    polaris.Execute = lambda command, **kwargs: calls.append(("Execute", command))
+    polaris.File = lambda path, **kwargs: calls.append(("File", path, kwargs.get("content"), kwargs.get("action")))
+    polaris.Directory = lambda *args, **kwargs: None
+    polaris.format = lambda template: template.replace("{polaris_home}", "/usr/odp/current/polaris-server")
+    polaris.run_admin_bootstrap()
+
+    written, command, deleted = calls
+    self.assertNotIn("root-s3cr3t", command[1])
+    self.assertIn("bootstrap -r POLARIS --credentials-file /var/run/polaris/bootstrap-credentials.json", command[1])
+    self.assertEqual("[PROTECTED]", repr(written[2]))
+    self.assertEqual({"POLARIS": {"client-id": "root", "client-secret": "root-s3cr3t"}}, json.loads(str(written[2])))
+    self.assertEqual(("File", "/var/run/polaris/bootstrap-credentials.json", None, "delete"), deleted)
 
   def test_the_logger_hides_a_password_string(self):
     from resource_management.core.utils import PasswordString
