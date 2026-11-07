@@ -545,7 +545,9 @@ if enable_ranger_yarn and is_supported_yarn_ranger:
 
   ranger_plugin_config['setup.additional.default.policies'] = "true"
   ranger_plugin_config['default-policy.1.name'] = "Service Check User Policy for Yarn"
-  ranger_plugin_config['default-policy.1.resource.queue'] = service_check_queue_name
+  # the Ranger YARN plugin authorizes the queue path (root.default): a policy on "default" never matches
+  ranger_plugin_config['default-policy.1.resource.queue'] = \
+    service_check_queue_name if service_check_queue_name.startswith("root.") else "root." + service_check_queue_name
   ranger_plugin_config['default-policy.1.policyItem.1.users'] = policy_user
   ranger_plugin_config['default-policy.1.policyItem.1.accessTypes'] = "submit-app"
 
