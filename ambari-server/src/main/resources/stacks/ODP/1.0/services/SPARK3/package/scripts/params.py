@@ -147,14 +147,17 @@ else:
   spark_history_server_host = "localhost"
 
 # spark-defaults params
-ui_ssl_enabled = default("configurations/spark3-defaults/spark.ssl.enabled", False)
+# a string: "false" must not enable it
+ui_ssl_enabled = str(default("/configurations/spark3-defaults/spark.ssl.enabled", "false")).strip().lower() == "true"
 
 spark_yarn_historyServer_address = default(spark_history_server_host, "localhost")
 spark_history_scheme = "http"
 spark_history_ui_port = config['configurations']['spark3-defaults']['spark.history.ui.port']
 
 if ui_ssl_enabled:
-  spark_history_ui_port = str(int(spark_history_ui_port) + 400)
+  # the HTTPS port of the History Server: spark.ssl.historyServer.port, else the Spark default (UI port + 400)
+  spark_history_ui_port = str(default("/configurations/spark3-defaults/spark.ssl.historyServer.port", "") or "").strip() or \
+    str(int(spark_history_ui_port) + 400)
   spark_history_scheme = "https"
 
 
