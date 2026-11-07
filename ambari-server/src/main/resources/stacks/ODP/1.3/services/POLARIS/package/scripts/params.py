@@ -269,9 +269,9 @@ else:
     if tls_key in application_properties:
       del application_properties[tls_key]
 
-  insecure_requests = str(application_properties.get("quarkus.http.insecure-requests", "")).strip().lower()
-  if insecure_requests not in ("enabled", "redirect", "disabled"):
-    application_properties["quarkus.http.insecure-requests"] = "enabled"
+  # Quarkus refuses the key without TLS ("Cannot set quarkus.http.insecure-requests without enabling SSL"),
+  # whatever its value: plain HTTP is all it serves then.
+  application_properties.pop("quarkus.http.insecure-requests", None)
 
 polaris_auth_type = str(application_properties.get("polaris.authentication.type", "internal")).strip().lower()
 if polaris_auth_type not in ("internal", "external", "mixed"):

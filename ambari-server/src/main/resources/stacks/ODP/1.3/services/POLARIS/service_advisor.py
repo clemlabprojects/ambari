@@ -755,16 +755,8 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
           "config-name": "quarkus.http.insecure-requests",
           "item": self.getErrorItem("quarkus.http.insecure-requests must be one of: enabled, redirect, disabled")
         })
-    else:
-      if insecure_requests != "enabled":
-        validation_items.append({
-          "config-name": "quarkus.http.insecure-requests",
-          "item": self.getErrorItem(
-            "quarkus.http.insecure-requests must be enabled when polaris_ssl_enabled=false"
-          )
-        })
-
-      # The TLS store settings may stay filled in: params.py drops them from the runtime properties without TLS.
+    # Without TLS, params.py drops quarkus.http.insecure-requests (Quarkus refuses it) and the TLS store
+    # settings from the runtime properties: their values do not matter.
 
     ssl_port = str(properties.get("quarkus.http.ssl-port", "")).strip()
     if ssl_port and not ssl_port.isdigit():
