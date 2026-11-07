@@ -153,23 +153,23 @@ polaris_ozone_s3_endpoint = str(default("/configurations/polaris-env/polaris_ozo
 polaris_ozone_s3_region = str(default("/configurations/polaris-env/polaris_ozone_s3_region", "us-east-1")).strip() or "us-east-1"
 polaris_ozone_s3_path_style_access = _to_bool(default("/configurations/polaris-env/polaris_ozone_s3_path_style_access", "true"), True)
 polaris_ssl_enabled = _to_bool(default("/configurations/polaris-env/polaris_ssl_enabled", "false"), False)
-# The Polaris server consumes the cluster-wide JKS keystore/truststore laid down by the
-# ambari-api ansible role (same pattern used by HDFS, YARN, etc. via ssl-server.json.j2).
-# We deliberately do not auto-generate or rebuild key material here — operators provide it.
-polaris_ssl_keystore_password = str(default("/configurations/polaris-env/polaris_ssl_keystore_password", "changeit"))
-polaris_ssl_truststore_password = str(default("/configurations/polaris-env/polaris_ssl_truststore_password", "changeit"))
+# TLS material is the operator's: the keystore, truststore and PEM paths and the passwords come from the
+# configuration only (no default store, no default password). The service advisor requires them when TLS
+# is enabled.
+polaris_ssl_keystore_password = str(default("/configurations/polaris-env/polaris_ssl_keystore_password", ""))
+polaris_ssl_truststore_password = str(default("/configurations/polaris-env/polaris_ssl_truststore_password", ""))
+polaris_ssl_key_password = str(default("/configurations/polaris-env/polaris_ssl_key_password", ""))
 polaris_ssl_keystore_password_escaped = polaris_ssl_keystore_password.replace("'", "'\"'\"'")
 polaris_ssl_truststore_password_escaped = polaris_ssl_truststore_password.replace("'", "'\"'\"'")
+polaris_ssl_key_password_escaped = polaris_ssl_key_password.replace("'", "'\"'\"'")
 # MCP server (Python/uvicorn) and Console (nginx) cannot read JKS, so they take PEMs.
-# Defaults point at the same /etc/security/serverKeys/server.{public,key}.pem the
-# ambari-api ansible role lays down (cluster-CA-signed), avoiding any auto-generation.
 polaris_mcp_tls_enabled = _to_bool(default("/configurations/polaris-env/polaris_mcp_tls_enabled", "false"), False)
-polaris_mcp_tls_cert_file = str(default("/configurations/polaris-env/polaris_mcp_tls_cert_file", "/etc/security/serverKeys/server.public.pem")).strip()
-polaris_mcp_tls_key_file = str(default("/configurations/polaris-env/polaris_mcp_tls_key_file", "/etc/security/serverKeys/server.key.pem")).strip()
-polaris_mcp_tls_ca_file = str(default("/configurations/polaris-env/polaris_mcp_tls_ca_file", "/etc/security/serverKeys/ca.cert.pem")).strip()
+polaris_mcp_tls_cert_file = str(default("/configurations/polaris-env/polaris_mcp_tls_cert_file", "")).strip()
+polaris_mcp_tls_key_file = str(default("/configurations/polaris-env/polaris_mcp_tls_key_file", "")).strip()
+polaris_mcp_tls_ca_file = str(default("/configurations/polaris-env/polaris_mcp_tls_ca_file", "")).strip()
 polaris_console_tls_enabled = _to_bool(default("/configurations/polaris-env/polaris_console_tls_enabled", "false"), False)
-polaris_console_tls_cert_file = str(default("/configurations/polaris-env/polaris_console_tls_cert_file", "/etc/security/serverKeys/server.public.pem")).strip()
-polaris_console_tls_key_file = str(default("/configurations/polaris-env/polaris_console_tls_key_file", "/etc/security/serverKeys/server.key.pem")).strip()
+polaris_console_tls_cert_file = str(default("/configurations/polaris-env/polaris_console_tls_cert_file", "")).strip()
+polaris_console_tls_key_file = str(default("/configurations/polaris-env/polaris_console_tls_key_file", "")).strip()
 polaris_jaas_conf_template = config['configurations']['polaris-jaas-conf']['content']
 
 polaris_start_command = default("/configurations/polaris-env/polaris_start_command", "").strip()
@@ -239,22 +239,8 @@ if polaris_ssl_enabled:
   if insecure_requests not in ("enabled", "redirect", "disabled"):
     application_properties["quarkus.http.insecure-requests"] = "redirect"
 
-  # Default to the cluster-wide JKS keystore laid down by the ambari-api ansible role
-  # (same /etc/security/serverKeys/keystore.jks pattern used by HDFS, YARN, etc.).
-  # Operators can override these in polaris-application-properties if they keep their
-  # Polaris key material in a different store.
-  if not str(application_properties.get("quarkus.http.ssl.certificate.key-store-file", "")).strip():
-    application_properties["quarkus.http.ssl.certificate.key-store-file"] = "/etc/security/serverKeys/keystore.jks"
   if not str(application_properties.get("quarkus.http.ssl.certificate.key-store-file-type", "")).strip():
     application_properties["quarkus.http.ssl.certificate.key-store-file-type"] = "JKS"
-  # Intentionally do NOT default key-store-key-alias: each host's cluster keystore.jks
-  # contains exactly one entry whose alias is the FQDN, and Quarkus will pick the only
-  # entry when the alias property is absent. Forcing a static alias here would break
-  # cluster-keystore deployments. Operators that pre-build a multi-alias keystore can
-  # set the alias explicitly in polaris-application-properties.
-
-  if not str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
-    application_properties["quarkus.http.ssl.certificate.trust-store-file"] = "/etc/security/serverKeys/truststore.jks"
   if not str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file-type", "")).strip():
     application_properties["quarkus.http.ssl.certificate.trust-store-file-type"] = "JKS"
 
@@ -262,6 +248,9 @@ if polaris_ssl_enabled:
   if not str(application_properties.get("quarkus.http.ssl.certificate.key-store-key-alias", "")).strip():
     application_properties.pop("quarkus.http.ssl.certificate.key-store-key-alias", None)
   application_properties["quarkus.http.ssl.certificate.key-store-password"] = "${POLARIS_SSL_KEYSTORE_PASSWORD}"
+  # without a key password Quarkus uses the keystore password (clusters set up before the property existed)
+  if polaris_ssl_key_password:
+    application_properties["quarkus.http.ssl.certificate.key-store-key-password"] = "${POLARIS_SSL_KEY_PASSWORD}"
   if str(application_properties.get("quarkus.http.ssl.certificate.trust-store-file", "")).strip():
     application_properties["quarkus.http.ssl.certificate.trust-store-password"] = "${POLARIS_SSL_TRUSTSTORE_PASSWORD}"
 else:
@@ -272,6 +261,7 @@ else:
     "quarkus.http.ssl.certificate.key-store-file-type",
     "quarkus.http.ssl.certificate.key-store-key-alias",
     "quarkus.http.ssl.certificate.key-store-password",
+    "quarkus.http.ssl.certificate.key-store-key-password",
     "quarkus.http.ssl.certificate.trust-store-file",
     "quarkus.http.ssl.certificate.trust-store-file-type",
     "quarkus.http.ssl.certificate.trust-store-password",

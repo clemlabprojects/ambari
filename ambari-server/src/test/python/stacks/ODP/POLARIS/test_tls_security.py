@@ -84,6 +84,46 @@ class TestPolarisTlsSecurity(unittest.TestCase):
     self.assertEqual(("true", "true", "true"), (env["polaris_ssl_enabled"], env["polaris_mcp_tls_enabled"], env["polaris_console_tls_enabled"]))
     self.assertEqual("https", env["polaris_protocol"])
 
+  def test_tls_material_is_not_recommended(self):
+    # until auto-TLS, the operator enters the stores, PEM files and passwords
+    services = self.services("true", "internal")
+    configurations = {}
+    self.advisor.PolarisRecommender().recommendPolarisTlsConfigurations(configurations, services)
+    recommended = dict(configurations["polaris-env"]["properties"],
+                       **configurations.get("polaris-application-properties", {}).get("properties", {}))
+    for name in ("polaris_ssl_keystore_password", "polaris_ssl_truststore_password", "polaris_ssl_key_password",
+                 "polaris_mcp_tls_cert_file", "polaris_mcp_tls_key_file", "polaris_console_tls_cert_file",
+                 "polaris_console_tls_key_file", "quarkus.http.ssl.certificate.key-store-file",
+                 "quarkus.http.ssl.certificate.trust-store-file"):
+      self.assertNotIn(name, recommended)
+
+  TLS_ON = {"polaris_ssl_enabled": "true", "polaris_protocol": "https", "polaris_mcp_tls_enabled": "true",
+            "polaris_console_tls_enabled": "true"}
+  TLS_MATERIAL = {"polaris_ssl_keystore_password": "ks", "polaris_ssl_key_password": "key",
+                  "polaris_ssl_truststore_password": "ts", "polaris_mcp_tls_cert_file": "/tls/mcp.pem",
+                  "polaris_mcp_tls_key_file": "/tls/mcp.key", "polaris_console_tls_cert_file": "/tls/console.pem",
+                  "polaris_console_tls_key_file": "/tls/console.key"}
+
+  def material_errors(self, polaris_env, app_props):
+    services = self.services("true", "internal", polaris_env)
+    services["configurations"]["polaris-application-properties"]["properties"].update(app_props)
+    validator = self.advisor.PolarisValidator()
+    hosts = {"items": [{"Hosts": {"host_name": "h1"}}]}
+    items = validator.validatePolarisEnvProperties(polaris_env, {}, services["configurations"], services, hosts)
+    items += validator.validatePolarisApplicationProperties(
+      services["configurations"]["polaris-application-properties"]["properties"], {}, services["configurations"], services, hosts)
+    return sorted(item["config-name"] for item in items if item["level"] == "ERROR" and "enter" in item["message"])
+
+  def test_tls_material_is_required_when_tls_is_enabled(self):
+    self.assertEqual(sorted(list(self.TLS_MATERIAL) + ["quarkus.http.ssl.certificate.key-store-file",
+                                                       "quarkus.http.ssl.certificate.trust-store-file"]),
+                     self.material_errors(dict(self.TLS_ON), {}))
+    self.assertEqual([], self.material_errors(dict(self.TLS_ON, **self.TLS_MATERIAL),
+                                              {"quarkus.http.ssl.certificate.key-store-file": "/tls/polaris.jks",
+                                               "quarkus.http.ssl.certificate.trust-store-file": "/tls/truststore.jks"}))
+    self.assertEqual([], self.material_errors({"polaris_ssl_enabled": "false", "polaris_mcp_tls_enabled": "false",
+                                               "polaris_console_tls_enabled": "false"}, {}))
+
 
 if __name__ == "__main__":
   unittest.main()

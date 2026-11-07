@@ -343,6 +343,12 @@ class AmoroValidator(service_advisor.ServiceAdvisor):
 
   def validateAmoroEnvProperties(self, properties, recommendedDefaults, configurations, services, hosts):
     items = []
+    # the TLS material is entered by the operator (no default store nor password)
+    if str(get_property(configurations, services, "amoro-site", "http-server.ssl.enabled") or "false").lower() == "true":
+      for name in ("amoro_truststore_path", "amoro_truststore_password"):
+        if not str(properties.get(name, "")).strip():
+          items.append({"config-name": name,
+                        "item": self.getErrorItem("Required when the dashboard TLS is enabled.")})
     site = get_property(configurations, services, "amoro-site", "http-server.authorization.enabled")
     ldap_url = str(get_property(configurations, services, "amoro-site", "http-server.login-auth-ldap-url") or "").strip()
     if ldap_url and str(site or "false").lower() == "true" and not str(properties.get("amoro_admin_ldap_group_dn", "")).strip():

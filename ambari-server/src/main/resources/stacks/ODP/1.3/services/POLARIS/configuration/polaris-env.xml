@@ -163,12 +163,12 @@
   <property>
     <name>polaris_ssl_keystore_password</name>
     <display-name>Polaris TLS Keystore Password</display-name>
-    <value>changeit</value>
-    <description>Password used for Polaris TLS server keystore.</description>
+    <value></value>
+    <description>Password of the Polaris TLS keystore (TLS Keystore File). Required when TLS is enabled.</description>
     <property-type>PASSWORD</property-type>
     <value-attributes>
       <type>password</type>
-      <empty-value-valid>false</empty-value-valid>
+      <empty-value-valid>true</empty-value-valid>
       <overridable>false</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -176,12 +176,25 @@
   <property>
     <name>polaris_ssl_truststore_password</name>
     <display-name>Polaris TLS Truststore Password</display-name>
-    <value>changeit</value>
-    <description>Password used for Polaris TLS truststore.</description>
+    <value></value>
+    <description>Password of the Polaris TLS truststore (TLS Truststore File). Required when TLS is enabled.</description>
     <property-type>PASSWORD</property-type>
     <value-attributes>
       <type>password</type>
-      <empty-value-valid>false</empty-value-valid>
+      <empty-value-valid>true</empty-value-valid>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>polaris_ssl_key_password</name>
+    <display-name>Polaris TLS Key Password</display-name>
+    <value></value>
+    <description>Password of the private key in the Polaris TLS keystore (the keystore password when the key has the same). Required when TLS is enabled.</description>
+    <property-type>PASSWORD</property-type>
+    <value-attributes>
+      <type>password</type>
+      <empty-value-valid>true</empty-value-valid>
       <overridable>false</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -323,9 +336,10 @@
   <property>
     <name>polaris_mcp_tls_cert_file</name>
     <display-name>Polaris MCP TLS Certificate File</display-name>
-    <value>/etc/security/serverKeys/server.public.pem</value>
-    <description>PEM certificate chain file used by POLARIS_MCP_SERVER HTTPS endpoint.</description>
+    <value></value>
+    <description>PEM certificate chain file used by POLARIS_MCP_SERVER HTTPS endpoint. Required when its TLS is enabled.</description>
     <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
       <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -333,9 +347,10 @@
   <property>
     <name>polaris_mcp_tls_key_file</name>
     <display-name>Polaris MCP TLS Key File</display-name>
-    <value>/etc/security/serverKeys/server.key.pem</value>
-    <description>PEM private key file used by POLARIS_MCP_SERVER HTTPS endpoint.</description>
+    <value></value>
+    <description>PEM private key file used by POLARIS_MCP_SERVER HTTPS endpoint. Required when its TLS is enabled.</description>
     <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
       <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -343,7 +358,7 @@
   <property>
     <name>polaris_mcp_tls_ca_file</name>
     <display-name>Polaris MCP TLS CA File</display-name>
-    <value>/etc/security/serverKeys/ca.cert.pem</value>
+    <value></value>
     <description>Optional PEM CA bundle for MCP TLS server configuration.</description>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
@@ -448,9 +463,10 @@
   <property>
     <name>polaris_console_tls_cert_file</name>
     <display-name>Polaris Console TLS Certificate File</display-name>
-    <value>/etc/security/serverKeys/server.public.pem</value>
-    <description>PEM certificate chain file used by POLARIS_CONSOLE HTTPS endpoint.</description>
+    <value></value>
+    <description>PEM certificate chain file used by POLARIS_CONSOLE HTTPS endpoint. Required when its TLS is enabled.</description>
     <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
       <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -458,9 +474,10 @@
   <property>
     <name>polaris_console_tls_key_file</name>
     <display-name>Polaris Console TLS Key File</display-name>
-    <value>/etc/security/serverKeys/server.key.pem</value>
-    <description>PEM private key file used by POLARIS_CONSOLE HTTPS endpoint.</description>
+    <value></value>
+    <description>PEM private key file used by POLARIS_CONSOLE HTTPS endpoint. Required when its TLS is enabled.</description>
     <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
       <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -684,6 +701,7 @@ export POLARIS_TOOLS_HOME={{polaris_tools_home}}
 export POLARIS_SSL_ENABLED={{polaris_ssl_enabled}}
 export POLARIS_SSL_KEYSTORE_PASSWORD='{{polaris_ssl_keystore_password_escaped}}'
 export POLARIS_SSL_TRUSTSTORE_PASSWORD='{{polaris_ssl_truststore_password_escaped}}'
+export POLARIS_SSL_KEY_PASSWORD='{{polaris_ssl_key_password_escaped}}'
 
 # MCP server defaults
 export POLARIS_BASE_URL={{polaris_mcp_base_url}}

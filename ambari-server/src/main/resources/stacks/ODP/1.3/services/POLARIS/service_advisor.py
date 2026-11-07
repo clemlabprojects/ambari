@@ -212,10 +212,6 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     if "polaris_ssl_enabled" not in polaris_env:
       put_polaris_env("polaris_ssl_enabled", "false")
-    if not str(polaris_env.get("polaris_ssl_keystore_password", "")).strip():
-      put_polaris_env("polaris_ssl_keystore_password", "changeit")
-    if not str(polaris_env.get("polaris_ssl_truststore_password", "")).strip():
-      put_polaris_env("polaris_ssl_truststore_password", "changeit")
 
     ssl_enabled = str(polaris_env.get("polaris_ssl_enabled", "false")).strip().lower() == "true"
 
@@ -226,22 +222,12 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       put_polaris_env("polaris_mcp_tls_enabled", "true")
       put_polaris_env("polaris_console_tls_enabled", "true")
 
-    # MCP and Console default to the cluster-CA-signed PEMs that the ambari-api ansible
-    # role lays down at /etc/security/serverKeys/. No auto-generation: operators are
-    # expected to provide all TLS material (same pattern as HDFS/YARN/etc.).
+    # The TLS material (stores, PEM files, passwords) is the operator's to enter: nothing is recommended
+    # for it, and the validators require it when TLS is enabled.
     if "polaris_mcp_tls_enabled" not in polaris_env:
       put_polaris_env("polaris_mcp_tls_enabled", "true" if ssl_enabled else "false")
-    if not str(polaris_env.get("polaris_mcp_tls_cert_file", "")).strip():
-      put_polaris_env("polaris_mcp_tls_cert_file", "/etc/security/serverKeys/server.public.pem")
-    if not str(polaris_env.get("polaris_mcp_tls_key_file", "")).strip():
-      put_polaris_env("polaris_mcp_tls_key_file", "/etc/security/serverKeys/server.key.pem")
-
     if "polaris_console_tls_enabled" not in polaris_env:
       put_polaris_env("polaris_console_tls_enabled", "true" if ssl_enabled else "false")
-    if not str(polaris_env.get("polaris_console_tls_cert_file", "")).strip():
-      put_polaris_env("polaris_console_tls_cert_file", "/etc/security/serverKeys/server.public.pem")
-    if not str(polaris_env.get("polaris_console_tls_key_file", "")).strip():
-      put_polaris_env("polaris_console_tls_key_file", "/etc/security/serverKeys/server.key.pem")
 
     mcp_tls_enabled = str(
       polaris_env.get("polaris_mcp_tls_enabled", "true" if ssl_enabled else "false")
@@ -280,12 +266,10 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       self._recommendPolarisTlsStoreDefaults(app_props, put_app_props)
 
   def _recommendPolarisTlsStoreDefaults(self, app_props, put_app_props):
-    # The cluster-wide stores laid down for every service (HDFS, YARN, ...). Each host's keystore holds one key entry
-    # whose alias is the host FQDN, so no alias is recommended: Quarkus uses the only entry.
+    # Only the store types: the store files are the operator's to enter. Without a key alias, Quarkus uses
+    # the only key entry of the keystore.
     defaults = (
-      ("quarkus.http.ssl.certificate.key-store-file", "/etc/security/serverKeys/keystore.jks"),
       ("quarkus.http.ssl.certificate.key-store-file-type", "JKS"),
-      ("quarkus.http.ssl.certificate.trust-store-file", "/etc/security/serverKeys/truststore.jks"),
       ("quarkus.http.ssl.certificate.trust-store-file-type", "JKS"),
     )
     for name, value in defaults:
@@ -666,6 +650,15 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
       polaris_env = self.getServicesSiteProperties(services, "polaris-env") or {}
     ssl_enabled = str(polaris_env.get("polaris_ssl_enabled", "false")).strip().lower() == "true"
 
+    if ssl_enabled:
+      for name, what in (("quarkus.http.ssl.certificate.key-store-file", "the path of the TLS keystore"),
+                         ("quarkus.http.ssl.certificate.trust-store-file", "the path of the TLS truststore")):
+        if not str(properties.get(name, "")).strip():
+          validation_items.append({
+            "config-name": name,
+            "item": self.getErrorItem("TLS is enabled: enter {0}.".format(what))
+          })
+
     if "quarkus.log.console.enable" in properties:
       validation_items.append({
         "config-name": "quarkus.log.console.enable",
@@ -804,16 +797,23 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
         "item": self.getErrorItem("polaris_ssl_enabled should be true when polaris_protocol=https")
       })
 
+    # The TLS material is entered by the operator (no default store nor password)
+    required = []
     if ssl_enabled:
-      if not str(properties.get("polaris_ssl_keystore_password", "")).strip():
+      required += [("polaris_ssl_keystore_password", "the password of the TLS keystore"),
+                   ("polaris_ssl_key_password", "the password of the key in the TLS keystore"),
+                   ("polaris_ssl_truststore_password", "the password of the TLS truststore")]
+    if str(properties.get("polaris_mcp_tls_enabled", "false")).strip().lower() == "true":
+      required += [("polaris_mcp_tls_cert_file", "the PEM certificate of the MCP server"),
+                   ("polaris_mcp_tls_key_file", "the PEM private key of the MCP server")]
+    if str(properties.get("polaris_console_tls_enabled", "false")).strip().lower() == "true":
+      required += [("polaris_console_tls_cert_file", "the PEM certificate of the Console"),
+                   ("polaris_console_tls_key_file", "the PEM private key of the Console")]
+    for name, what in required:
+      if not str(properties.get(name, "")).strip():
         validation_items.append({
-          "config-name": "polaris_ssl_keystore_password",
-          "item": self.getWarnItem("polaris_ssl_keystore_password should be set when TLS is enabled")
-        })
-      if not str(properties.get("polaris_ssl_truststore_password", "")).strip():
-        validation_items.append({
-          "config-name": "polaris_ssl_truststore_password",
-          "item": self.getWarnItem("polaris_ssl_truststore_password should be set when TLS is enabled")
+          "config-name": name,
+          "item": self.getErrorItem("TLS is enabled: enter {0}.".format(what))
         })
 
     mcp_transport = str(properties.get("polaris_mcp_transport", "http")).lower()

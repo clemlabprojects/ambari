@@ -252,8 +252,8 @@
   <property>
     <name>amoro_truststore_path</name>
     <display-name>Truststore Path</display-name>
-    <value>/etc/security/clientKeys/all.jks</value>
-    <description>Truststore holding the cluster CA, used by the Amoro Management Service to reach Polaris over TLS. Ignored when the file does not exist on the Amoro host.</description>
+    <value></value>
+    <description>Truststore of the certificates Amoro trusts on its outbound TLS connections (Polaris, Ranger, OIDC provider). Required when the dashboard TLS is enabled.</description>
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
       <overridable>false</overridable>
@@ -274,7 +274,7 @@
     <display-name>Truststore Password</display-name>
     <value></value>
     <property-type>PASSWORD</property-type>
-    <description>Password of the truststore, required to read the certificates of a PKCS12 truststore. Empty: the password of the Hadoop client truststore (ssl-client) when it is the same file. Ambari then gives the server a JKS copy of the truststore, readable without a password.</description>
+    <description>Password of the truststore, required to read the certificates of a PKCS12 truststore. Required when the dashboard TLS is enabled. Ambari gives the server a JKS copy of the truststore, readable without a password.</description>
     <value-attributes>
       <type>password</type>
       <empty-value-valid>true</empty-value-valid>

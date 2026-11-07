@@ -1043,6 +1043,24 @@ class TestAmoroSecurity(unittest.TestCase):
       {"admin-password": "x", "http-server.ssl.enabled": "false"}, {}, services["configurations"], services, self.HOSTS)
     self.assertIn(("http-server.ssl.enabled", "ERROR"), [(i["config-name"], i["level"]) for i in items])
 
+  def test_tls_material_is_entered_by_the_operator(self):
+    # until auto-TLS: no default store nor password, and the truststore is required with the dashboard TLS
+    services = self.services(kerberos="true")
+    configurations = {}
+    self.advisor.AmoroRecommender().recommendAmoroConfigurations(configurations, {}, services, self.HOSTS)
+    recommended = dict(configurations["amoro-site"]["properties"], **configurations.get("amoro-env", {}).get("properties", {}))
+    for name in ("http-server.ssl.keystore-path", "http-server.ssl.keystore-password", "amoro_truststore_path",
+                 "amoro_truststore_password"):
+      self.assertNotIn(name, recommended)
+
+    def errors(env, ssl_enabled):
+      services["configurations"]["amoro-site"] = {"properties": {"http-server.ssl.enabled": ssl_enabled}}
+      items = self.advisor.AmoroValidator().validateAmoroEnvProperties(env, {}, services["configurations"], services, self.HOSTS)
+      return sorted(i["config-name"] for i in items if i["level"] == "ERROR" and i["config-name"].startswith("amoro_truststore"))
+    self.assertEqual(["amoro_truststore_password", "amoro_truststore_path"], errors({}, "true"))
+    self.assertEqual([], errors({"amoro_truststore_path": "/tls/truststore.jks", "amoro_truststore_password": "x"}, "true"))
+    self.assertEqual([], errors({}, "false"))
+
   def test_kerberos_without_oidc_warns_about_the_polaris_credential(self):
     def warnings(services):
       services["services"] += [{"StackServices": {"service_name": name}, "components": []} for name in ("POLARIS", "OZONE")]
