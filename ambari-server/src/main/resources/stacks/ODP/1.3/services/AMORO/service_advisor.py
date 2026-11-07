@@ -199,6 +199,19 @@ class AmoroRecommender(service_advisor.ServiceAdvisor):
     self.recommendAmoroQueueAcl(configurations, services)
     if get_amoro_security_modes(configurations, services):
       self.putProperty(configurations, "amoro-site", services)("http-server.ssl.enabled", "true")
+    self.recommendAmoroTlsVisibility(configurations, services)
+
+  def recommendAmoroTlsVisibility(self, configurations, services):
+    """The TLS material is required (empty-value-valid false) when the dashboard TLS is enabled, and hidden
+    otherwise: Ambari neither shows nor requires a hidden property."""
+    ssl = "true" if str(get_property(configurations, services, "amoro-site", "http-server.ssl.enabled")
+                        or "false").strip().lower() == "true" else "false"
+    put_site_attr = self.putPropertyAttribute(configurations, "amoro-site")
+    put_env_attr = self.putPropertyAttribute(configurations, "amoro-env")
+    for name in ("http-server.ssl.keystore-path", "http-server.ssl.keystore-password"):
+      put_site_attr(name, "visible", ssl)
+    for name in ("amoro_truststore_path", "amoro_truststore_password"):
+      put_env_attr(name, "visible", ssl)
 
   def recommendAmoroDatabaseConfigurations(self, configurations, services):
     put_db_props = self.putProperty(configurations, "amoro-db-properties", services)

@@ -168,7 +168,7 @@
     <property-type>PASSWORD</property-type>
     <value-attributes>
       <type>password</type>
-      <empty-value-valid>true</empty-value-valid>
+      <empty-value-valid>false</empty-value-valid>
       <overridable>false</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -181,7 +181,7 @@
     <property-type>PASSWORD</property-type>
     <value-attributes>
       <type>password</type>
-      <empty-value-valid>true</empty-value-valid>
+      <empty-value-valid>false</empty-value-valid>
       <overridable>false</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -194,7 +194,7 @@
     <property-type>PASSWORD</property-type>
     <value-attributes>
       <type>password</type>
-      <empty-value-valid>true</empty-value-valid>
+      <empty-value-valid>false</empty-value-valid>
       <overridable>false</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -339,7 +339,7 @@
     <value></value>
     <description>PEM certificate chain file used by POLARIS_MCP_SERVER HTTPS endpoint. Required when its TLS is enabled.</description>
     <value-attributes>
-      <empty-value-valid>true</empty-value-valid>
+      <empty-value-valid>false</empty-value-valid>
       <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -350,7 +350,7 @@
     <value></value>
     <description>PEM private key file used by POLARIS_MCP_SERVER HTTPS endpoint. Required when its TLS is enabled.</description>
     <value-attributes>
-      <empty-value-valid>true</empty-value-valid>
+      <empty-value-valid>false</empty-value-valid>
       <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -466,7 +466,7 @@
     <value></value>
     <description>PEM certificate chain file used by POLARIS_CONSOLE HTTPS endpoint. Required when its TLS is enabled.</description>
     <value-attributes>
-      <empty-value-valid>true</empty-value-valid>
+      <empty-value-valid>false</empty-value-valid>
       <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
@@ -477,7 +477,7 @@
     <value></value>
     <description>PEM private key file used by POLARIS_CONSOLE HTTPS endpoint. Required when its TLS is enabled.</description>
     <value-attributes>
-      <empty-value-valid>true</empty-value-valid>
+      <empty-value-valid>false</empty-value-valid>
       <overridable>true</overridable>
     </value-attributes>
     <on-ambari-upgrade add="true"/>

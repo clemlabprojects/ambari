@@ -265,6 +265,35 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       # Polaris TLS is disabled.
       self._recommendPolarisTlsStoreDefaults(app_props, put_app_props)
 
+    self._recommendPolarisTlsVisibility(configurations, services)
+
+  def _recommendPolarisTlsVisibility(self, configurations, services):
+    """The TLS material is required (empty-value-valid false) where its TLS is enabled, and hidden elsewhere: Ambari
+    neither shows nor requires a hidden property."""
+    def enabled(name):
+      # the recommended value, else the current one (the recommendations only hold what they changed)
+      return str(self._get_property(configurations, services, "polaris-env", name) or "false").strip().lower() == "true"
+
+    put_env_attr = self.putPropertyAttribute(configurations, "polaris-env")
+    put_app_attr = self.putPropertyAttribute(configurations, "polaris-application-properties")
+    put_ssl_attr = self.putPropertyAttribute(configurations, "ranger-polaris-policymgr-ssl")
+    ssl = "true" if enabled("polaris_ssl_enabled") else "false"
+    mcp = "true" if enabled("polaris_mcp_tls_enabled") else "false"
+    console = "true" if enabled("polaris_console_tls_enabled") else "false"
+    for name in ("polaris_ssl_keystore_password", "polaris_ssl_key_password", "polaris_ssl_truststore_password"):
+      put_env_attr(name, "visible", ssl)
+    for name in ("quarkus.http.ssl.certificate.key-store-file", "quarkus.http.ssl.certificate.trust-store-file"):
+      put_app_attr(name, "visible", ssl)
+    for name in ("polaris_mcp_tls_cert_file", "polaris_mcp_tls_key_file", "polaris_mcp_tls_ca_file"):
+      put_env_attr(name, "visible", mcp)
+    for name in ("polaris_console_tls_cert_file", "polaris_console_tls_key_file"):
+      put_env_attr(name, "visible", console)
+    # the plugin truststore holds the Ranger Admin certificate: needed when Ranger Admin uses HTTPS
+    ranger_https = self._is_ranger_plugin_enabled(configurations, services) and str(
+      self._get_property(configurations, services, "admin-properties", "policymgr_external_url") or "").strip().lower().startswith("https://")
+    for name in ("xasecure.policymgr.clientssl.truststore", "xasecure.policymgr.clientssl.truststore.password"):
+      put_ssl_attr(name, "visible", "true" if ranger_https else "false")
+
   def _recommendPolarisTlsStoreDefaults(self, app_props, put_app_props):
     # Only the store types: the store files are the operator's to enter. Without a key alias, Quarkus uses
     # the only key entry of the keystore.

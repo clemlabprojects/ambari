@@ -157,5 +157,43 @@ class TestPolarisTlsSecurity(unittest.TestCase):
     self.assertEqual([], errors({"create_db_dbuser": "false"}))
 
 
+  def visibility(self, services):
+    configurations = {}
+    self.advisor.PolarisRecommender().recommendPolarisTlsConfigurations(configurations, services)
+    attrs = {}
+    for site in ("polaris-env", "polaris-application-properties", "ranger-polaris-policymgr-ssl"):
+      for name, values in configurations.get(site, {}).get("property_attributes", {}).items():
+        if "visible" in values:
+          attrs[name] = values["visible"]
+    return attrs
+
+  def test_tls_material_is_shown_and_required_only_where_tls_is_enabled(self):
+    # with Kerberos the advisor enables every TLS: all the material is shown (and required by the definitions)
+    shown = self.visibility(self.services("true", "internal"))
+    for name in ("polaris_ssl_keystore_password", "polaris_ssl_key_password", "polaris_ssl_truststore_password",
+                 "quarkus.http.ssl.certificate.key-store-file", "quarkus.http.ssl.certificate.trust-store-file",
+                 "polaris_mcp_tls_cert_file", "polaris_mcp_tls_key_file", "polaris_console_tls_cert_file",
+                 "polaris_console_tls_key_file"):
+      self.assertEqual("true", shown[name], name)
+    # without TLS nothing is shown, so nothing is required
+    hidden = self.visibility(self.services("false", "internal"))
+    self.assertEqual({"false"}, set(hidden.values()))
+    # the operator's switches decide when the advisor does not force them
+    mixed = self.visibility(self.services("false", "internal", {"polaris_ssl_enabled": "true", "polaris_mcp_tls_enabled": "false",
+                                                                "polaris_console_tls_enabled": "true"}))
+    self.assertEqual(("true", "false", "true"), (mixed["polaris_ssl_keystore_password"], mixed["polaris_mcp_tls_cert_file"],
+                                                 mixed["polaris_console_tls_cert_file"]))
+
+  def test_ranger_plugin_truststore_is_shown_with_an_https_ranger_admin(self):
+    def shown(url, plugin):
+      services = self.services("false", "internal")
+      services["configurations"]["admin-properties"] = {"properties": {"policymgr_external_url": url}}
+      services["configurations"]["ranger-polaris-plugin-properties"] = {"properties": {"ranger-polaris-plugin-enabled": plugin}}
+      return self.visibility(services)["xasecure.policymgr.clientssl.truststore"]
+    self.assertEqual("true", shown("https://ranger:6182", "Yes"))
+    self.assertEqual("false", shown("http://ranger:6080", "Yes"))
+    self.assertEqual("false", shown("https://ranger:6182", "No"))
+
+
 if __name__ == "__main__":
   unittest.main()

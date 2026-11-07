@@ -1061,6 +1061,16 @@ class TestAmoroSecurity(unittest.TestCase):
     self.assertEqual([], errors({"amoro_truststore_path": "/tls/truststore.jks", "amoro_truststore_password": "x"}, "true"))
     self.assertEqual([], errors({}, "false"))
 
+  def test_tls_material_is_shown_and_required_only_with_the_dashboard_tls(self):
+    def visible(services):
+      configurations = {}
+      self.advisor.AmoroRecommender().recommendAmoroConfigurations(configurations, {}, services, self.HOSTS)
+      return dict((name, values["visible"]) for site in ("amoro-site", "amoro-env")
+                  for name, values in configurations.get(site, {}).get("property_attributes", {}).items() if "visible" in values)
+    self.assertEqual({"http-server.ssl.keystore-path": "true", "http-server.ssl.keystore-password": "true",
+                      "amoro_truststore_path": "true", "amoro_truststore_password": "true"}, visible(self.services(kerberos="true")))
+    self.assertEqual({"false"}, set(visible(self.services()).values()))
+
   def test_kerberos_without_oidc_warns_about_the_polaris_credential(self):
     def warnings(services):
       services["services"] += [{"StackServices": {"service_name": name}, "components": []} for name in ("POLARIS", "OZONE")]
