@@ -21,32 +21,40 @@
 <configuration>
   <property>
     <name>xasecure.policymgr.clientssl.keystore</name>
-    <value>/etc/polaris/conf/ranger-plugin-keystore.jks</value>
-    <description>Java keystore file</description>
+    <value></value>
+    <description>Client keystore of the Ranger plugin, for a Ranger Admin requiring client certificates (two-way TLS). Empty: no client certificate.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>xasecure.policymgr.clientssl.keystore.password</name>
-    <value>myKeyFilePassword</value>
+    <value></value>
     <property-type>PASSWORD</property-type>
-    <description>Password for keystore</description>
+    <description>Password of the plugin client keystore. Required when a client keystore is set.</description>
     <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
       <type>password</type>
     </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>xasecure.policymgr.clientssl.truststore</name>
-    <value>/etc/polaris/conf/ranger-plugin-truststore.jks</value>
-    <description>Java truststore file</description>
+    <value></value>
+    <description>Truststore of the Ranger plugin, with the certificate of the Ranger Admin. Required when Ranger Admin uses HTTPS.</description>
+    <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
+    </value-attributes>
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>xasecure.policymgr.clientssl.truststore.password</name>
-    <value>changeit</value>
+    <value></value>
     <property-type>PASSWORD</property-type>
-    <description>Java truststore password</description>
+    <description>Password of the plugin truststore. Required when Ranger Admin uses HTTPS.</description>
     <value-attributes>
+      <empty-value-valid>true</empty-value-valid>
       <type>password</type>
     </value-attributes>
     <on-ambari-upgrade add="false"/>

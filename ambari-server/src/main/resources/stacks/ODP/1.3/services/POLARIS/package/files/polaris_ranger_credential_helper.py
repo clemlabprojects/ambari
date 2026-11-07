@@ -67,6 +67,11 @@ def call_keystore(libpath, filepath, alias, value="", getorcreate="get"):
     # Idempotent overwrite: best-effort delete (ignore failure when the alias or
     # provider does not exist yet), then create.
     _run(base + ["delete", alias, "-provider", final_provider, "-f"])
+    if not value:
+      # CredentialShell refuses an empty value: a store without password (no client keystore for a one-way TLS
+      # Ranger Admin) has no alias.
+      print("Alias {0} not created: empty value.".format(alias))
+      return
     rc, out, err = _run(base + ["create", alias, "-value", value, "-provider", final_provider])
     if rc != 0:
       sys.stderr.write("ERROR creating alias '{0}' (rc={1}): {2}\n".format(alias, rc, err or out))

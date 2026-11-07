@@ -503,11 +503,40 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
     self.as_super.__init__(*args, **kwargs)
     self.validators = [
       ("ranger-polaris-plugin-properties", self.validateRangerPolarisPluginProperties),
+      ("ranger-polaris-policymgr-ssl", self.validateRangerPolarisPolicymgrSsl),
       ("ranger-polaris-audit", self.validateRangerPolarisAudit),
       ("polaris-db-properties", self.validatePolarisDbProperties),
       ("polaris-application-properties", self.validatePolarisApplicationProperties),
       ("polaris-env", self.validatePolarisEnvProperties)
     ]
+
+  def validateRangerPolarisPolicymgrSsl(self, properties, recommendedDefaults, configurations, services, hosts):
+    """The TLS stores of the Ranger plugin are entered by the operator: the truststore when Ranger Admin uses
+    HTTPS, and the password of a client keystore (two-way TLS) when one is set."""
+    def get(site, name):
+      for source in (configurations, services.get("configurations", {})):
+        value = source.get(site, {}).get("properties", {}).get(name)
+        if value is not None:
+          return value
+      return None
+
+    validation_items = []
+    plugin_enabled = str(get("ranger-polaris-plugin-properties", "ranger-polaris-plugin-enabled") or "No").lower() == "yes"
+    https = str(get("admin-properties", "policymgr_external_url") or "").strip().lower().startswith("https://")
+    required = []
+    if plugin_enabled and https:
+      required += [("xasecure.policymgr.clientssl.truststore", "the truststore with the Ranger Admin certificate"),
+                   ("xasecure.policymgr.clientssl.truststore.password", "the password of the plugin truststore")]
+    if plugin_enabled and str(properties.get("xasecure.policymgr.clientssl.keystore", "")).strip():
+      required.append(("xasecure.policymgr.clientssl.keystore.password", "the password of the plugin client keystore"))
+    for name, what in required:
+      if not str(properties.get(name, "")).strip():
+        validation_items.append({
+          "config-name": name,
+          "item": self.getErrorItem("Ranger Admin uses HTTPS: enter {0}.".format(what)
+                                    if "truststore" in name else "Enter {0}.".format(what))
+        })
+    return self.toConfigurationValidationProblems(validation_items, "ranger-polaris-policymgr-ssl")
 
   def validateRangerPolarisPluginProperties(self, properties, recommendedDefaults, configurations, services, hosts):
     validation_items = []

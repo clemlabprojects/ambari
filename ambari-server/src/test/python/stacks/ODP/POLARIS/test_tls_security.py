@@ -125,5 +125,26 @@ class TestPolarisTlsSecurity(unittest.TestCase):
                                                "polaris_console_tls_enabled": "false"}, {}))
 
 
+  def ranger_ssl_errors(self, ssl_props, url="https://ranger:6182", plugin="Yes"):
+    services = self.services("true", "internal")
+    services["configurations"]["admin-properties"] = {"properties": {"policymgr_external_url": url}}
+    services["configurations"]["ranger-polaris-plugin-properties"] = {"properties": {"ranger-polaris-plugin-enabled": plugin}}
+    items = self.advisor.PolarisValidator().validateRangerPolarisPolicymgrSsl(ssl_props, {}, services["configurations"], services,
+                                                                             {"items": [{"Hosts": {"host_name": "h1"}}]})
+    return sorted(item["config-name"] for item in items if item["level"] == "ERROR")
+
+  def test_ranger_plugin_tls_stores_are_entered_by_the_operator(self):
+    truststore = {"xasecure.policymgr.clientssl.truststore": "/tls/truststore.jks",
+                  "xasecure.policymgr.clientssl.truststore.password": "ts"}
+    self.assertEqual(["xasecure.policymgr.clientssl.truststore", "xasecure.policymgr.clientssl.truststore.password"],
+                     self.ranger_ssl_errors({}))
+    # no client keystore: one-way TLS
+    self.assertEqual([], self.ranger_ssl_errors(dict(truststore)))
+    self.assertEqual(["xasecure.policymgr.clientssl.keystore.password"],
+                     self.ranger_ssl_errors(dict(truststore, **{"xasecure.policymgr.clientssl.keystore": "/tls/client.jks"})))
+    self.assertEqual([], self.ranger_ssl_errors({}, url="http://ranger:6080"))
+    self.assertEqual([], self.ranger_ssl_errors({}, plugin="No"))
+
+
 if __name__ == "__main__":
   unittest.main()
