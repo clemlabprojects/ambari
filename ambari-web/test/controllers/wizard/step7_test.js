@@ -247,6 +247,47 @@ describe('App.InstallerStep7Controller', function () {
     });
   });
 
+  describe('#getUntestedRequiredDatabases', function () {
+
+    beforeEach(function () {
+      this.setup = Em.Object.create({name: 'create_db_dbuser', value: 'true'});
+      installerStep7Controller.set('content', {
+        services: Em.A([Em.Object.create({serviceName: 'POLARIS', displayName: 'Polaris', isSelected: true, isInstalled: false})])
+      });
+      installerStep7Controller.set('stepConfigs', Em.A([Em.Object.create({serviceName: 'POLARIS', configs: Em.A([
+        this.setup,
+        Em.Object.create({name: 'db_root_user', value: 'postgres'}),
+        Em.Object.create({name: 'db_user', value: 'polaris'})
+      ])})]));
+      this.mockDB = sinon.stub(App.db, 'get');
+    });
+
+    afterEach(function () {
+      this.mockDB.restore();
+    });
+
+    it('requires the administrator test when the database setup is enabled', function () {
+      this.mockDB.returns({});
+      expect(installerStep7Controller.getUntestedRequiredDatabases().mapProperty('administrator')).to.eql([true]);
+    });
+
+    it('accepts the administrator test passed with the current values', function () {
+      this.mockDB.returns({db_root_user: 'postgres'});
+      expect(installerStep7Controller.getUntestedRequiredDatabases()).to.be.empty;
+    });
+
+    it('rejects a test passed with other values', function () {
+      this.mockDB.returns({db_root_user: 'admin'});
+      expect(installerStep7Controller.getUntestedRequiredDatabases()).to.have.length(1);
+    });
+
+    it('requires the database user test without the database setup', function () {
+      this.setup.set('value', 'false');
+      this.mockDB.returns({db_root_user: 'postgres'});
+      expect(installerStep7Controller.getUntestedRequiredDatabases().mapProperty('administrator')).to.eql([false]);
+    });
+  });
+
   describe.skip('#checkDatabaseConnectionTest', function () {
 
     beforeEach(function () {

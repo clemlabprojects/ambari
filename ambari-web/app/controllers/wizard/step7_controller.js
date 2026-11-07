@@ -1654,8 +1654,60 @@ App.WizardStep7Controller = Em.Controller.extend(App.ServerValidatorMixin, App.E
     return this.moveNext();
   },
 
+  /**
+   * Polaris and Amoro set their database up at start (or use it) with the settings of the wizard: unless the
+   * database Test Connection passed with the current values, their start fails. With the database setup enabled,
+   * the test is the one of the database administrator (the service database does not exist yet), else the one
+   * of the service database user.
+   * @returns {{serviceName: string, displayName: string, administrator: boolean}[]} the services still to test
+   * @method getUntestedRequiredDatabases
+   */
+  getUntestedRequiredDatabases: function () {
+    return ['POLARIS', 'AMORO'].map(function (serviceName) {
+      var service = this.get('content.services').findProperty('serviceName', serviceName);
+      var stepConfig = this.get('stepConfigs').findProperty('serviceName', serviceName);
+      if (!service || !service.get('isSelected') || service.get('isInstalled') || !stepConfig) return null;
+      var serviceConfigs = stepConfig.get('configs');
+      var setup = serviceConfigs.findProperty('name', 'create_db_dbuser');
+      var administrator = !!setup && String(setup.get('value')) === 'true';
+      var tested = App.db.get('tmp', serviceName + '_connection') || {};
+      var testedWithCurrentValues = tested.hasOwnProperty(administrator ? 'db_root_user' : 'db_user') &&
+        Object.keys(tested).every(function (name) {
+          var config = serviceConfigs.findProperty('name', name);
+          return !config || config.get('value') === tested[name];
+        });
+      return testedWithCurrentValues ? null : {
+        serviceName: serviceName,
+        displayName: service.get('displayName'),
+        administrator: administrator
+      };
+    }, this).compact();
+  },
+
+  /**
+   * No "Proceed Anyway": the services cannot start without their database.
+   * @method showDatabaseConnectionRequiredPopup
+   */
+  showDatabaseConnectionRequiredPopup: function (untested, deferred) {
+    var self = this;
+    var body = untested.map(function (service) {
+      return Em.I18n.t('installer.step7.popup.database.connection.required.' +
+        (service.administrator ? 'administrator' : 'user')).format(service.displayName);
+    }).join(' ');
+    return App.showAlertPopup(Em.I18n.t('installer.step7.popup.database.connection.required.header'), body, function () {
+      self.set('submitButtonClicked', false);
+      App.set('router.nextBtnClickInProgress', false);
+      deferred.reject();
+    });
+  },
+
   checkDatabaseConnectionTest: function () {
     var deferred = $.Deferred();
+    var untestedRequired = this.getUntestedRequiredDatabases();
+    if (untestedRequired.length) {
+      this.showDatabaseConnectionRequiredPopup(untestedRequired, deferred);
+      return deferred;
+    }
     var configMap = [
       {
         serviceName: 'OOZIE',
